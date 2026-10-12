@@ -33,6 +33,11 @@ import java.util.Deque;
  * {@link #celtium$fontBatchSummary()} so the verification line is unchanged either way.</li>
  * <li><b>The target witness.</b> The run key today has no target, so a run can span a switch between the main
  * framebuffer and another one and be drawn into the wrong pass; this class includes the target identity in the key.</li>
+ * <li><b>The draw-state witness.</b> The owner's batch path reads the live blend/depth/cull/colour-mask/scissor state
+ * when it builds the group a run is submitted as, so a run appended under one draw state and submitted under another
+ * is drawn with the state of the submission. The key covered colour, texture, alpha test, target and matrices; it did
+ * not cover the rest of the state the group captures. This class now does, through the default methods on
+ * {@link FontRunState}, and counts the runs that witness closes in {@link #celtium$fontStateSummary()}.</li>
  * </ul>
  */
 public final class FontBatch {
@@ -80,6 +85,54 @@ public final class FontBatch {
 
         /** The current model-view matrix, 16 floats. */
         float[] modelView();
+
+        /**
+         * The draw state the run's quads will actually be drawn under, read at submit time by the owner's batch
+         * path: {@code ImmediateGroup} captures the decoded GL state (blend, depth, cull) and the scissor box into
+         * the group it builds, and a group is only built when the held run is finally offered.
+         * <p>
+         * These are part of the run key for the same reason the matrices are, and the reason is measured twice over
+         * already: a run held across a matrix change came out as garbled menu buttons, a rotated splash and
+         * block-like copyright text, and the scissor had to be captured per group because a group spanning a scissor
+         * change was clipped by whatever rectangle was live at record time. The colour, texture, alpha test, target
+         * and matrices were in the key; the rest of the state the group captures was not, so a run appended under
+         * one draw state and submitted under another is drawn with the state of the *submission*, not of its first
+         * quad. That is the hole this witness closes.
+         * <p>
+         * Defaults are "no change": a state view that does not answer them keeps the old behaviour exactly, which is
+         * what makes the wiring one commit per side.
+         */
+        default boolean depthTestEnabled() {
+            return true;
+        }
+
+        /** Whether depth writes are on, which the group's pipeline state carries with the test. */
+        default boolean depthWriteEnabled() {
+            return true;
+        }
+
+        /** Whether blending is on. */
+        default boolean blendEnabled() {
+            return true;
+        }
+
+        /** Whether face culling is on (the glyph strip's winding is the game's, not this class's, to change). */
+        default boolean cullEnabled() {
+            return false;
+        }
+
+        /** The colour write mask, {@code 0xF} when every channel is written. */
+        default int colorMask() {
+            return 0xF;
+        }
+
+        /**
+         * The scissor rectangle the run will be clipped by, packed as {@code (x << 48) | (y << 32) | (w << 16) | h},
+         * or {@code 0} when the scissor is off. Packed rather than four calls because this is read per glyph.
+         */
+        default long scissorKey() {
+            return 0L;
+        }
     }
 
     /**
@@ -196,6 +249,17 @@ public final class FontBatch {
     private long pendingColorBits;
     private boolean pendingAlphaTest;
     private float pendingAlphaRef;
+    /**
+     * The draw state the run will be submitted under, as read when the run was started. The owner's batch path reads
+     * the live state when it builds the group, so a run held across a change of any of these is drawn with the wrong
+     * one - see {@link FontRunState#depthTestEnabled()}.
+     */
+    private boolean pendingDepthTest = true;
+    private boolean pendingDepthWrite = true;
+    private boolean pendingBlend = true;
+    private boolean pendingCull;
+    private int pendingColorMask = 0xF;
+    private long pendingScissorKey;
     private boolean pendingActive;
     /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
     private final float[] pendingProjection = new float[16];
@@ -207,6 +271,12 @@ public final class FontBatch {
     private int flushedIntervening;
     private int flushedBoundary;
     private int flushedStateChange;
+    /**
+     * Runs that were closed because the draw state the group captures at submit time changed since the run's first
+     * quad. Counted apart from {@link #flushedStateChange} so a leg can say whether the witness ever fired, and kept
+     * out of {@code celtium$fontBatchSummary()} because that string is quoted by past acceptances byte for byte.
+     */
+    private int flushedDrawState;
     /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
     private long quadsAppended;
     private long batchesStarted;
@@ -287,9 +357,18 @@ public final class FontBatch {
             long colourBits = celtium$fontColourBits(view);
             boolean alphaTest = view.alphaTestEnabled();
             float alphaRef = view.alphaFuncReference();
+            boolean depthTest = view.depthTestEnabled();
+            boolean depthWrite = view.depthWriteEnabled();
+            boolean blend = view.blendEnabled();
+            boolean cull = view.cullEnabled();
+            int colorMask = view.colorMask();
+            long scissorKey = view.scissorKey();
             if (this.pendingActive
                     && !celtium$fontRunMatches(formatId, vertexStride, drawMode, texture, colourBits, alphaTest,
-                            alphaRef, view)) {
+                            alphaRef, depthTest, depthWrite, blend, cull, colorMask, scissorKey, view)) {
+                if (celtium$drawStateDiffers(depthTest, depthWrite, blend, cull, colorMask, scissorKey)) {
+                    this.flushedDrawState++;
+                }
                 celtium$flushPendingFontBatch("state-change");
             }
             if (!this.pendingActive) {
@@ -301,6 +380,12 @@ public final class FontBatch {
                 this.pendingColorBits = colourBits;
                 this.pendingAlphaTest = alphaTest;
                 this.pendingAlphaRef = alphaRef;
+                this.pendingDepthTest = depthTest;
+                this.pendingDepthWrite = depthWrite;
+                this.pendingBlend = blend;
+                this.pendingCull = cull;
+                this.pendingColorMask = colorMask;
+                this.pendingScissorKey = scissorKey;
                 System.arraycopy(view.projection(), 0, this.pendingProjection, 0, 16);
                 System.arraycopy(view.modelView(), 0, this.pendingModelView, 0, 16);
                 this.pendingTargetIdentity = view.targetIdentity();
@@ -368,19 +453,37 @@ public final class FontBatch {
     }
 
     private boolean celtium$fontRunMatches(int formatId, int stride, int drawMode, int texture, long colourBits,
-                                           boolean alphaTest, float alphaRef, FontRunState view) {
+                                           boolean alphaTest, float alphaRef, boolean depthTest, boolean depthWrite,
+                                           boolean blend, boolean cull, int colorMask, long scissorKey,
+                                           FontRunState view) {
         // The matrix pair is part of the witness, exactly as it is for the normal path's group key: a run that spans a
         // matrix change is drawn with one matrix for all of its quads. Leaving it out was measured as the garbled
         // menu - the button labels, the rotated splash text and the copyright line came out as blocks while the
         // unscaled footer text stayed legible, because the scaled and rotated draws were merged into a run opened
         // under a different transform.
+        // The draw state is the same contract one step further out: the owner's batch path reads the live state when
+        // it builds the group, so a run held across a change of blend, depth, cull, colour mask or scissor is drawn
+        // under the state of its submission rather than of its first quad - and the tooltip's two passes are the
+        // measured case where that difference can be seen: the shadow pass is submitted inside the vanilla
+        // disableDepth/enableDepth bracket and the main pass is submitted after it.
         return this.pendingFormatId == formatId && this.pendingStride == stride
                 && this.pendingDrawMode == drawMode && this.pendingTexture == texture
                 && this.pendingColorBits == colourBits && this.pendingAlphaTest == alphaTest
                 && Float.compare(this.pendingAlphaRef, alphaRef) == 0
+                && this.pendingDepthTest == depthTest && this.pendingDepthWrite == depthWrite
+                && this.pendingBlend == blend && this.pendingCull == cull
+                && this.pendingColorMask == colorMask && this.pendingScissorKey == scissorKey
                 && this.pendingTargetIdentity == view.targetIdentity()
                 && java.util.Arrays.equals(this.pendingProjection, view.projection())
                 && java.util.Arrays.equals(this.pendingModelView, view.modelView());
+    }
+
+    /** Whether the difference that closed the run was in the draw state rather than in colour/texture/matrices. */
+    private boolean celtium$drawStateDiffers(boolean depthTest, boolean depthWrite, boolean blend, boolean cull,
+                                             int colorMask, long scissorKey) {
+        return this.pendingDepthTest != depthTest || this.pendingDepthWrite != depthWrite
+                || this.pendingBlend != blend || this.pendingCull != cull
+                || this.pendingColorMask != colorMask || this.pendingScissorKey != scissorKey;
     }
 
     private void celtium$ensurePendingFontCapacity(int bytes) {
@@ -547,6 +650,22 @@ public final class FontBatch {
                 + " retainedDroppedRuns=" + this.retainedDroppedRuns
                 + " retainedDroppedQuads=" + this.retainedDroppedQuads
                 + " retainedControlDrops=" + this.retainedControlDrops;
+    }
+
+    /**
+     * The draw-state witness, for a leg to read: how many runs were closed because the blend/depth/cull/colour-mask/
+     * scissor state the owner captures at submit time changed since the run's first quad. Deliberately not part of
+     * {@link #celtium$fontBatchSummary()}: that string is quoted by past acceptances and compared byte for byte, so a
+     * new counter may not appear in it.
+     */
+    public String celtium$fontStateSummary() {
+        return "fontDrawStateFlushes=" + this.flushedDrawState
+                + " depthTest=" + this.pendingDepthTest
+                + " depthWrite=" + this.pendingDepthWrite
+                + " blend=" + this.pendingBlend
+                + " cull=" + this.pendingCull
+                + " colorMask=" + Integer.toHexString(this.pendingColorMask)
+                + " scissor=" + Long.toHexString(this.pendingScissorKey);
     }
 
     /** Whether a run is open. Read by the owner's entry flush, which must close it before any other draw is recorded. */

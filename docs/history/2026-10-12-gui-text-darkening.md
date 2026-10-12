@@ -137,3 +137,96 @@ Two more facts from the user's own logs (their instance jar md5 `2747418bc071642
   `CELTIUM_GROUP_BOUNDS` (`groupBoundsFormat=2`) and compare `texMat`, `state`, `colour0` and `vertexColour0`
   between the shadow-run group and the main-run group of the same line - the instrument already prints every one
   of those fields, and that is the only place a per-pass difference can still be hiding.
+
+## task-66 (2026-10-12): the second pass, and the state the coalesced run is submitted under
+
+Owner: **gui-text**; write scope `FontBatch.java` + `scripts/cpu-contract/*`. The HEI acceptance frame is the
+reproduction: the vanilla item tooltip `(660,315)-(820,355)` ("Gold Ore", GUI scale 3) keeps only 238 of its
+828 main-pass ink pixels (`shadow_without_main` 585/797), against 0/693 on the GL reference, on both candidate
+builds (`543745fbe076f15d`, `7bd467145b0d28e4`), pixel for pixel.
+
+### What the originals say, and what the reconstruction proves
+
+`FontRenderer.drawString` (SRG `func_175065_a`, `FontRenderer.java:325-342`) runs the string twice - shadow at
+`(x+1,y+1)` in the shadow colour, main at `(x,y)` in the main colour - and `renderDefaultChar`
+(`:230-249`) gives each glyph one quad whose cell, width and texture coordinates come from `ascii.png` and the
+width table `readFontTexture` builds from it. A CPU reconstruction of exactly that (new instrument
+`scripts/cpu-contract/font-second-pass-check.py`) predicts the reference frame's ink **exactly**: 828 of 828,
+no pixel of one set outside the other, per glyph 153/108/63/144/144/81/135 all complete. So the model is the
+original's, and the 590 missing pixels on the candidate frames are the frame's, not the model's.
+
+The measurement also fixes the *shape* of the loss, which rules out the hypotheses this round started from:
+
+* **not** the atlas, the glyph cell, the pen advance, the UV range or the quad geometry: the surviving main ink
+  is a **strict subset** of the reference's white pixels, at the same positions (candidate-only = 0), i.e. the
+  right texels in the right places, with the fragment simply absent - the tooltip's own background shows
+  through, and where the shadow pass inked, the shadow shows;
+* **not** the capture's or the batcher's vertex arithmetic: a simulation of the real per-glyph stream (4
+  vertices per glyph, the two-vertex degenerate separator between glyphs) reproduces the reference at IoU 1.000,
+  and every single-vertex corruption of that stream (delete/duplicate/replace-with-neighbour over all 40
+  vertices), every primitive reinterpretation (strip / triangle list / quad split / fan) and every shift of the
+  ink scores below 0.34 against the candidate;
+* **not** the first pass: reconstructing the shadow pass alone - its ink shifted by one GUI pixel, minus what
+  the main pass covers - matches the candidate's shadow pixels at IoU 0.996 (797 predicted, 800 measured, 3
+  stray). The shadow pass is complete; only the second pass loses ink;
+* **not** a frame-wide or scene-wide capture artefact: in the candidate frame the *only* white ink missing is
+  the tooltip's (a tile scan over 40x40 px tiles finds the loss in four tiles, all at `y=320`), and the frame
+  has slightly *more* white ink than the reference overall. The extra `(63,63,63)` pixels the whole-frame
+  instrument counts elsewhere are the world behind the GUI, not text shadows.
+
+### The mechanism this round fixes: the run key does not carry the draw state
+
+The two passes are two separate runs: the colour witness closes the shadow run inside `drawString`, and the
+main run waits for the next flush point. The owner's batch path reads the draw state **when it builds the
+group** - `ImmediateGroup` captures the decoded blend/depth/cull state (`state`, `stateKey`), the colour mask,
+the texture matrix and the scissor box (`scissorBox`, `scissorEnabled`) at accept time - so a run appended
+under one draw state and submitted under another is drawn with the state of the *submission*, not of its first
+quad. `FontBatch.celtium$fontRunMatches` covered colour, texture, alpha test, target and the matrices (the last
+one because the same hole was measured as garbled menu buttons, a rotated splash and block-like copyright
+text); it did **not** cover blend, depth test/write, cull, colour mask or scissor.
+
+The tooltip is the case where that matters: Forge draws it inside `GlStateManager.disableDepth()` ...
+`enableDepth()`, so the shadow pass is submitted inside that bracket and the main pass - which stays in the
+run - is submitted after it. That is the one asymmetry the two passes have, and it is on the code path the
+measurement above proves is the only place the difference can be (the geometry, the UVs and the capture's
+vertex stream are the original's).
+
+**Fix** (in this unit's scope, `FontBatch.java`): the run key now carries the draw state through six new
+`FontRunState` accessors - `depthTestEnabled`, `depthWriteEnabled`, `blendEnabled`, `cullEnabled`,
+`colorMask`, `scissorKey` - all **default methods** ("no change"), so a state view that does not answer them
+keeps today's behaviour exactly and the wiring is one commit per side. The runs this closes are counted in a
+new `celtium$fontStateSummary()` (`fontDrawStateFlushes=…`), deliberately **not** added to
+`celtium$fontBatchSummary()`: that string is quoted by past acceptances byte for byte, and the CPU contract
+check pins its keys.
+
+**Fix, backend half (Lead's file, anchor+replacement sent separately):** the anonymous
+`FontBatch.FontRunState` at `VulkanTerrainGpuBackend.java:1161` overrides the six accessors from
+`immediateState` (`depthTestEnabled()`, `depthMask()`, `blendEnabled()`, `cullEnabled()`, `colorMask()`) and
+from `CeltiumGlStub` (`scissorTest()`/`scissorCalled()`/`scissorX()`/`scissorY()`/`scissorWidth()`/
+`scissorHeight()` packed into `scissorKey()`). Until that lands the witness is inert (the defaults answer), so
+this commit cannot change any picture on its own.
+
+### The CPU check that fails before and passes after
+
+`scripts/cpu-contract/FontBatchContractCheck.java` (extended, 38 checks): a dynamic proxy answers the state
+view, a quad is appended, exactly one draw-state field changes, a second quad is appended, and the check reads
+how many runs the sink received - one means the change closed the run, zero means the two quads would be drawn
+under the state of the second.
+
+| build | result |
+|---|---|
+| pre-fix (`HEAD`, `FontBatch.java` before this commit) | **7 failed**, exit 1: the interface declares no witness, and no run is closed on a depth/depth-write/blend/cull/colour-mask/scissor change |
+| post-fix | **38 checks, 0 failed**, exit 0; the pinned summary keys are unchanged and the new counter stays out of them |
+
+and the picture instrument, on the frames that exist:
+
+| frame | predicted ink | drawn | coverage | exit |
+|---|---|---|---|---|
+| `hei-ref-list` GL reference | 828 | 828 | 1.000 | 0 |
+| `hei-cand` (`543745fbe076f15d`) | 828 | 238 | 0.287 | 1 |
+| `hei-cand2` (`7bd467145b0d28e4`) | 828 | 238 | 0.287 | 1 |
+
+The picture *after* the fix needs a leg (`-Dceltium.font.batching=false` is the one-flag control: with
+batching off every glyph is submitted where it is drawn, so the two passes cannot be separated by a
+submission; if the tooltip then keeps its ink, the mechanism above is confirmed and the witness is what closes
+it). This round did not take that leg: the Lead owns the GPU.

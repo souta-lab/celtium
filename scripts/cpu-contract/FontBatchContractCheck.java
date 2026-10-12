@@ -130,9 +130,127 @@ public final class FontBatchContractCheck {
         return batch;
     }
 
+    /**
+     * The draw-state witness is driven through a dynamic proxy rather than a second {@code implements} class, so this
+     * check compiles against the pre-fix FontBatch as well as the fixed one: before the fix the interface does not
+     * declare {@code depthTestEnabled} and friends, so the batch never asks and the proxy's answers are never read -
+     * which is exactly the failing case the contract below is about.
+     */
+    private static final class ProxyState implements java.lang.reflect.InvocationHandler {
+        boolean depthTest = true;
+        boolean depthWrite = true;
+        boolean blend = true;
+        boolean cull;
+        int colorMask = 0xF;
+        long scissorKey;
+        final FontBatch.FontRunState view;
+
+        ProxyState() {
+            this.view = (FontBatch.FontRunState) java.lang.reflect.Proxy.newProxyInstance(
+                    FontBatchContractCheck.class.getClassLoader(),
+                    new Class<?>[] {FontBatch.FontRunState.class}, this);
+        }
+
+        public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {
+            switch (method.getName()) {
+                case "stalled":
+                case "matricesDirty":
+                    return Boolean.FALSE;
+                case "mainTarget":
+                    return Boolean.TRUE;
+                case "targetIdentity":
+                    return 1L;
+                case "texture2dEnabled":
+                    return Boolean.TRUE;
+                case "boundTextureName":
+                    return 42;
+                case "whiteTextureId":
+                    return 7;
+                case "colorRed":
+                case "colorGreen":
+                case "colorBlue":
+                case "colorAlpha":
+                    return Float.valueOf(1.0F);
+                case "alphaTestEnabled":
+                case "cullEnabled":
+                    return Boolean.valueOf(method.getName().equals("cullEnabled") ? this.cull : false);
+                case "alphaFuncReference":
+                    return Float.valueOf(0.0F);
+                case "projection":
+                case "modelView":
+                    return new float[16];
+                case "depthTestEnabled":
+                    return Boolean.valueOf(this.depthTest);
+                case "depthWriteEnabled":
+                    return Boolean.valueOf(this.depthWrite);
+                case "blendEnabled":
+                    return Boolean.valueOf(this.blend);
+                case "colorMask":
+                    return Integer.valueOf(this.colorMask);
+                case "scissorKey":
+                    return Long.valueOf(this.scissorKey);
+                default:
+                    return null;
+            }
+        }
+    }
+
     private static long quad(FontBatch batch, ByteBuffer source) {
         return batch.celtium$fontAppend(Integer.valueOf(FORMAT_ID), STRIDE, FORMAT_ID,
                 MemoryUtil.memAddress(source, 0), 4, DRAW_MODE) ? 1 : 0;
+    }
+
+    /** {@return whether {@code FontRunState} declares {@code name}} - the witness may not exist yet. */
+    private static boolean hasWitness(String name) {
+        try {
+            FontBatch.FontRunState.class.getMethod(name);
+            return true;
+        } catch (NoSuchMethodException missing) {
+            return false;
+        }
+    }
+
+    /**
+     * Appends one quad, changes exactly one draw-state field, appends another, and reports how many runs the sink saw.
+     * One means the run was closed by the change; zero means the quads were still merged into a run that would be
+     * submitted under the state of its *second* quad - the defect this contract is about. {@code -1} means an append
+     * was refused, which is a failure of its own.
+     */
+    private static int heldAcross(String field, ByteBuffer source) {
+        ProxyState held = new ProxyState();
+        Sink sink = new Sink();
+        FontBatch batch = new FontBatch();
+        batch.celtium$setFontRunState(held.view);
+        batch.celtium$setFontRunSink(sink);
+        if (quad(batch, source) != 1L) {
+            return -1;
+        }
+        switch (field) {
+            case "depthTest":
+                held.depthTest = false;
+                break;
+            case "depthWrite":
+                held.depthWrite = false;
+                break;
+            case "blend":
+                held.blend = false;
+                break;
+            case "cull":
+                held.cull = true;
+                break;
+            case "colorMask":
+                held.colorMask = 0x7;
+                break;
+            case "scissor":
+                held.scissorKey = 0x0001000200030004L;
+                break;
+            default:
+                break;
+        }
+        if (quad(batch, source) != 1L) {
+            return -1;
+        }
+        return sink.runs.size();
     }
 
     public static void main(String[] args) {
@@ -212,12 +330,28 @@ public final class FontBatchContractCheck {
             check("retention queue is empty after the retry", batch.celtium$retainedRunCount(), 0);
         }
 
-        // 5. The verification summary's field names and order, which the CELTIUM_VERIFY line quotes.
+        // 5. The draw-state witness: a run must not be held across a change of the state the owner's batch path reads
+        //    when it builds the group a run is submitted as (blend, depth, cull, colour mask, scissor). The owner
+        //    reads that state at submit time, so a held run is drawn under the state of its *submission* rather than
+        //    of its first quad - the same contract as the matrices, one step further out, and measured the same way.
+        //    Before the fix the interface does not even declare the witness, so the batch cannot see the change.
+        check("the interface declares the draw-state witness", hasWitness("depthTestEnabled")
+                && hasWitness("depthWriteEnabled") && hasWitness("blendEnabled") && hasWitness("cullEnabled")
+                && hasWitness("colorMask") && hasWitness("scissorKey"), true);
+        check("a run held across a depth-test change is closed", heldAcross("depthTest", source), 1);
+        check("a run held across a depth-write change is closed", heldAcross("depthWrite", source), 1);
+        check("a run held across a blend change is closed", heldAcross("blend", source), 1);
+        check("a run held across a cull change is closed", heldAcross("cull", source), 1);
+        check("a run held across a colour-mask change is closed", heldAcross("colorMask", source), 1);
+        check("a run held across a scissor change is closed", heldAcross("scissor", source), 1);
+
+        // 6. The verification summary's field names and order, which the CELTIUM_VERIFY line quotes.
         String summary = batch.celtium$fontBatchSummary();
         check("summary keys are unchanged and in order", Arrays.toString(keys(summary)),
                 "[fontRunsStarted, fontQuadsAppended, fontStripSeparators, flushedIntervening, flushedBoundary,"
                         + " flushedStateChange, appendMillis]");
         check("retention counters stay out of that string", summary.contains("retained"), false);
+        check("the draw-state counter stays out of that string", summary.contains("fontDrawStateFlushes"), false);
 
         MemoryUtil.memFree(source);
         batch.close();
