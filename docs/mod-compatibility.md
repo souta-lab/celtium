@@ -242,10 +242,23 @@ java.lang.NoSuchMethodError: 'net.minecraft.item.Item net.minecraft.item.Item.ge
 **What that is and is not.** The decompiled, patched source this project builds against *has* that method
 (`.celtium-work/mc-sources/net/minecraft/item/Item.java:125`, and vanilla uses it at `:1990`/`:1994`), so the mod's
 call is legitimate against the source - the failure is between the mod's compiled references and Cleanroom
-0.6.13-alpha's runtime. The exact mechanism (a remapping difference, a patched-away overload, or the mod being built
-against a different Forge) was **not** determined, and this row does not claim one. What it does establish is the
-practical fact for the cohort: **a third-party 1.12.2 mod cannot be assumed to load here**, so every candidate needs a
-load check before it is used as an acceptance vehicle.
+0.6.13-alpha's runtime.
+
+Two checks narrowed it, and one hypothesis was **ruled out**: the jar is the **reobfuscated release**, not a
+development build, so "Modrinth served a deobf jar that calls MCP names" is false - all 251 classes were scanned and
+**zero** of them reference `getItemFromBlock` by its MCP name, while `func_150898_a` (its SRG name) appears in
+`BlockController`, `BlockDrawers`, `BlockFramingTable` and others. So the mod asks for the right name and the runtime
+does not resolve it; the MCP name in the crash text is Cleanroom's own deobfuscation of the trace, not the caller's
+reference. The remaining candidates - Cleanroom's patched `Item` not carrying that static, or the call being
+transformed by a coremod on the way in (Fugue is installed and exists to patch incompatible mods) - were **not**
+separated, and this row does not claim one.
+
+What it does establish is the practical fact for the cohort: **a third-party 1.12.2 mod cannot be assumed to load
+here**, so every candidate needs a load check before it is used as an acceptance vehicle. Cleanroom's own
+[incompatibility list](https://github.com/CleanroomMC/Cleanroom/issues/15) and the
+[modpack preparation wiki](https://github.com/CleanroomMC/cleanroom-website/blob/main/docs/wiki/end-user-guide/preparing-your-modpack.md)
+list the known cases (Scala/javax/ASM classes, and mods superseded by Fugue-patched forks); this one is not among
+them, so it is either a Fugue gap or a genuinely incompatible mod.
 
 **Action taken**: both jars were removed from the shared Prism instance immediately (a crashing mod breaks every
 leg), and the instance was re-verified: 6 mods locked, `fixtureStatus=PASSED`, `presentedImageVerdict=PASSED`,
