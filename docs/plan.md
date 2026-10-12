@@ -393,6 +393,16 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.392 **round 193: R3a `ModelGeometryCache` 納品（gap 5点を申告）— 裁定はすべて「挙動を変えない」側**
+
+- **納品**: `ModelGeometryCache.java`（state＋`build`/`borrow`/`meshBorrowed`/`releaseAfterWorldTeardown`/`releaseAll`/`invalidate`＋accessor 群 ✓、backend 未編集・build/leg なし ✓）。移す field 表（`MODEL_MESH_BUILD` 10829・`MODEL_QUAD_LIMIT` 12469・`modelMeshes` 10832・`modelMissingMeshes` 10844・`modelMeshContractFailures` 10846・log 系 10848-10850・`modelMeshQuads` 10861・`modelMeshFailure` 10862）と method 表（`celtium$buildModelMeshes` 10630-10805・call site 9648・teardown 9091-9096/9169-9175・borrow 10976-10992・report 読 600/602/643/8558/10954-10959/10965/10981）を提示 ✓。**移さない**: draw 側（`modelDraws` 10840・`modelDrawRefusals` 10841・`modelLastRefusal` 10852・`MODEL_DRAW` 12483・`CELTIUM_MODEL_*` 108）✓。
+- **裁定（すべて plan §9.2 に従い挙動不変）**:
+  1. **`invalidate()` を resource reload に配線しない** — 今日の invalidation は **generation 駆動の再 build そのもの**（10650/10666）で reload hook は存在しない ✓。`invalidate()` は**明示 drop の入口**として残し、呼び手を捏造しない ✓。
+  2. **counter の寿命を現状のまま**（`modelDraws`/`modelDrawRefusals` は **static**＝reload/world switch を跨いで census を保つ必要があるため（10834-10842 のコメント・実測 "cancelled 1022 対 draws 526"）✓、`modelMissingMeshes` は **instance** ✓）。**非対称は finding として記録**し、抽出中に意味を変えない ✓。
+  3. **teardown は byte-for-byte**: world teardown（9091）は表を clear するだけで `modelMeshQuads`/`modelMeshFailure` を reset **しない** → `invalidate()` の reset を外させる ✓（配線が leg の報告を変えないように ✓）。
+  4. **borrow/return は `GroupStamp` を R3a に入れない** ✓（今日は明示 return が無く、`meshBorrowed` が `celtium$openImmediateGroup` 3677 で立ち `releaseRetiredImmediateGroups` 6247-6256 が group を外すだけ ✓）。述語を明示した半分が正しく、**loan の対は `GroupStamp`/`ImmediateGroup` と一緒の独立 unit** ✓。
+  5. per-pass の builder 呼び出しは不変（frame latch を足さない ✓）。
+
 ## 0.391 **round 192: `framebufferReplacing` の2 clearer 等価性が証明され、配線が完全に確定**
 
 - **証明（frame-composite・commit にそのまま載せられる形）**: 2つの clearer は**「clearer としては等価」だが「メソッドとしては等価でない」**。
