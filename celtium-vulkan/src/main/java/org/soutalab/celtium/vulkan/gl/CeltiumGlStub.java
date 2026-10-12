@@ -127,6 +127,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
     private static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
     private static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
+    // Step 1 of the loading-screen unit: glBegin/glEnd leave the generic no-op table so the *site* that opens a
+    // legacy immediate-mode run can be proven rather than counted. Forge's SplashProgress draws the loading screen
+    // with glBegin(GL_QUADS) (SplashProgress.java:294/:353/:416) straight through GL11, which under the GL-less
+    // window reached SEM_NOOP and drew nothing; the no-op census showed glVertex3f=152460/glBegin=38115/glEnd=38115
+    // but a count is not a site. This step only names the callers; the vertex recording and the submit are the next
+    // two steps, each landing on its own.
+    private static final int SEM_BEGIN = 68;           // (mode) -> the site that opens an immediate-mode run
+    private static final int SEM_END = 69;             // () -> the site that closes it
     private static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
     private static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
     private static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
@@ -383,6 +391,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glDisableClientState", R_VOID, SEM_DISABLE, A_INT);
         fn("glVertexPointer", R_VOID, SEM_VERTEX_POINTER, A_INT, A_INT, A_INT, A_PTR);
         fn("glDrawArrays", R_VOID, SEM_DRAW_ARRAYS, A_INT, A_INT, A_INT);
+        fn("glBegin", R_VOID, SEM_BEGIN, A_INT);
+        fn("glEnd", R_VOID, SEM_END);
         // ---- the blend and colour-write state (BH-07, BH-10): the two the games' own wrappers reach through
         // OpenGlHelper rather than through a GlStateManager field, which is why a mixin hook could not see them.
         // Read from the original: `GlStateManager.blendFunc(int,int)` calls `GL11.glBlendFunc` directly, while both
@@ -425,7 +435,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glShadeModel", "glFogf", "glFogfv", "glFogi", "glFogiv", "glTexEnvi", "glTexEnvf", "glTexEnviv",
                 "glTexEnvfv", "glTexGeni", "glTexGenf", "glTexGeniv", "glTexGenfv", "glAlphaFunc", "glNormal3f",
                 "glNormal3b", "glNormal3fv", "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glSecondaryColor3f",
-                "glTexCoord2f", "glMultiTexCoord2f", "glVertex3f", "glBegin", "glEnd",
+                "glTexCoord2f", "glMultiTexCoord2f", "glVertex3f",
                 "glLoadIdentity", "glLoadMatrixf", "glLoadMatrixd", "glPushMatrix",
                 "glPopMatrix", "glOrtho", "glFrustum", "glTranslatef", "glTranslated", "glRotatef", "glRotated",
                 "glScalef", "glScaled", "glGenerateMipmap", "glSamplerParameteri",
@@ -1709,6 +1719,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                             + " site=[" + celtium$callSite(8) + "]");
                 }
                 return 0L;
+            case SEM_BEGIN:
+                celtium$noteImmediateBegin((int) c[0]);
+                return 0L;
+            case SEM_END:
+                BEGIN_END_CALLS.incrementAndGet();
+                return 0L;
             case SEM_DRAW_ARRAYS:
                 drawArrays((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
@@ -1896,6 +1912,50 @@ public final class CeltiumGlStub implements FunctionProvider {
             new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
     /** The first accepted draw, in one line: the evidence that the layout decoded as position-only really did. */
     private static volatile String drawArrayFirst = "none";
+
+    /** glBegin/glEnd arrivals, and the distinct (mode, site) pairs already named, bounded to eight. */
+    private static final java.util.concurrent.atomic.AtomicLong BEGIN_END_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.Set<String> IMMEDIATE_SITES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.concurrent.atomic.AtomicLong IMMEDIATE_VERTICES =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Names the site that opens a legacy immediate-mode run, once per (mode, site).
+     * <p>
+     * Bounded to eight lines and deduplicated, so a menu frame that opens thousands of runs adds eight lines rather
+     * than thousands. The point is attribution, not volume: the loading screen's three {@code glBegin(GL_QUADS)}
+     * sites in Forge's {@code SplashProgress} have to be visible as callers before the recording and submit steps
+     * can be judged - the no-op census's {@code glBegin=38115} says how many, not who.
+     */
+    private static void celtium$noteImmediateBegin(int mode) {
+        BEGIN_END_CALLS.incrementAndGet();
+        if (IMMEDIATE_SITES.size() >= 8) {
+            return;
+        }
+        String site = mode + "@" + celtium$callSite(6);
+        if (IMMEDIATE_SITES.add(site)) {
+            System.out.println("[Celtium] CELTIUM_IMMEDIATE_BEGIN mode=" + mode + "(" + immediateModeName(mode)
+                    + ") calls=" + BEGIN_END_CALLS.get() + " site=[" + celtium$callSite(6) + "]");
+        }
+    }
+
+    /** {@return the GL primitive mode's name}, so the census line is readable without the enum. */
+    private static String immediateModeName(int mode) {
+        switch (mode) {
+            case 0x0000: return "GL_POINTS";
+            case 0x0001: return "GL_LINES";
+            case 0x0003: return "GL_LINE_STRIP";
+            case 0x0004: return "GL_TRIANGLES";
+            case 0x0005: return "GL_TRIANGLE_STRIP";
+            case 0x0006: return "GL_TRIANGLE_FAN";
+            case 0x0007: return "GL_QUADS";
+            case 0x0008: return "GL_QUAD_STRIP";
+            case 0x0009: return "GL_POLYGON";
+            default: return "mode" + mode;
+        }
+    }
 
     private static void celtium$noteDrawArrayRefusal(String reason) {
         DRAWARRAY_REFUSED.incrementAndGet();
