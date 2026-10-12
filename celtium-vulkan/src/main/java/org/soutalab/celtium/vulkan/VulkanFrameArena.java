@@ -35,8 +35,14 @@ public final class VulkanFrameArena {
     private static final int SLOT_COUNT = 2;
     /** Every slice starts on this boundary: it satisfies the 4-byte rule for vertex attributes and 32-bit indices. */
     private static final int SLICE_ALIGNMENT = 16;
-    private static final long INITIAL_VERTEX_BYTES = 1L << 20;
-    private static final long INITIAL_INDEX_BYTES = 1L << 18;
+    // The initial sizes are properties so the growth path (HostBuffer.ensureCapacity) can be crossed on demand: on the
+    // pinned validation scene a frame peaks at 781 KB of vertices and 215 KB of indices, which never reaches the 1 MiB
+    // and 256 KiB defaults, so the audit's B05 acceptance (a submit before and after the growth) is unreachable with
+    // them. Lowering these in a leg crosses the same code path with the same submits; the defaults are unchanged.
+    private static final long INITIAL_VERTEX_BYTES =
+            Math.max(1L << 12, Long.getLong("celtium.vulkan.frameArenaInitialVertexBytes", 1L << 20).longValue());
+    private static final long INITIAL_INDEX_BYTES =
+            Math.max(1L << 12, Long.getLong("celtium.vulkan.frameArenaInitialIndexBytes", 1L << 18).longValue());
     private static final long MAX_VERTEX_BYTES = 16L << 20;
     private static final long MAX_INDEX_BYTES = 4L << 20;
 
@@ -445,7 +451,9 @@ public final class VulkanFrameArena {
                 this.vertices = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
             } else {
-                this.vertices.ensureCapacity(align(target));
+                // The old allocation may be read by the frame this slot is already submitted for; its completion
+                // epoch is the ticket (audit B05 - the deferred queue's fence was measured too early).
+                this.vertices.ensureCapacity(align(target), this.epoch);
             }
             return true;
         }
@@ -464,7 +472,7 @@ public final class VulkanFrameArena {
                 this.indices = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true);
             } else {
-                this.indices.ensureCapacity(align(target));
+                this.indices.ensureCapacity(align(target), this.epoch);
             }
             return true;
         }
