@@ -307,6 +307,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.327 **round 133: video-settings chain の report site を確認 — chain は capture 時に走るため `pinSections` が capture を止めていた可能性**
+
+- **コード確認（Lead）**: chain は capture の時点で走り、その report site は
+  **`videoSettingsChainError`・`videoSettingsChainScreen`・`videoSettingsChainTitle`・`videoSettingsChain`・`videoSettingsOptionName`**（`:6059-6091`）。
+  `videoSettingsChain` は「**captured screen に optionsRowList が無い**」または「**row list に option button が見つからない**」という**理由文字列**も持つ。
+  ＝**私の `r123-e` の report にはこれらが1つも無い**＝**chain のコードが走っていない**（`celtium$videoSettingsExercised` `:823` が立っていない）。
+- **次の確認点（1つ・コードを読めば決まる）**: **`pinSections` が capture を保留したまま 150 s が終わった可能性**。
+  `celtium$captureDue()` は `pinSections > 0` のとき **section 数が安定して n 以下になるまで capture しない**ため、
+  **`pinSections=60` が capture を止めれば chain も走らない**。＝**video-settings の leg は `pinSections` 無し（または緩い閾値）で打つべき**。
+  ＝**scene の chain は「capture 時」に走る**という前提を、次に leg を打つ前に確認する。
+- **この round の規律の追補**: **「scene が何を必要とするか」に加えて「capture がいつ発火するか」を原典で確認する**
+  （`captureDue` の条件と chain の発火点が別々にあるため）。＝**同型の失敗4回目を避けるための記録**。
+- **未了は変わらず**: frame-close pairing・BH-14・**goal (e) 4 phase（leg は capture 未発火）**・`scissorCapturedGroups=0`・主要mod対応・Intel UHD630。
+
 ## 0.326 **round 132: `scene=videoSettings` の定義を原典で確認 — `VIDEO_SETTINGS("videoSettings", true, true)`＋較正は **guiScale=3・固定 pose** 前提**
 
 - **コード確認（Lead）**: `ValidationClient` の scene 列挙は **`VIDEO_SETTINGS("videoSettings", true, true)`**（`:356`・**2つの真偽値＝GUI 保持と entity 捕捉**）。
