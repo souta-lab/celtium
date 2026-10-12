@@ -339,6 +339,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.352 **round 159: blend-state が BH-03・04・23・34 を着地・受入（4件）— 解決済み 27 件へ**
+
+- **BH-03（`7117bbdf3`）受入済み**: shader が実際に読む位置（push offset 100/112）で数える計器を追加（`alphaSelectorCounts`/`lastAlphaPushRef`/`alphaReferenceValues`）。
+  同一 jar `ab798f27`・一旗対照・両脚 clean: 既定 `selectors=[0x0:1852 0x204:2455]`（0x0204=GL_GREATER）対 `alphaFuncOverride=515` で `[0x0:1744 0x203:2380]`。
+  参照は両脚 `refs=[0.0 0.1 0.5 0.004]`＝**ゲームが設定した複数の閾値がそのまま届いている**。
+  **併せて property の欠陥を1つ修正**: slot 14 の 0 は「無効」なので、無条件 override は**無効な batch の test をオンにして閾値0で捨てていた**（修正前 `[0x203:4536]` で 0x0 が消滅）。今は比較が有効な batch にだけ効く。
+- **BH-34（`c906bb0e5`）受入済み**: 修正は既に着地済みで受入を追加。`texEnvProbe` が GL_TEXTURE_ENV_MODE を int/float 両 API で設定し `glGetTexEnviv` で読み戻す。
+  脚 bs44（PASSED・clean）: `before=8448 afterInt=8448 afterFloat=8448 afterIntCombine=34160 afterFloatCombine=34160 verdict="int and float agree"`。
+- **BH-04 colour 半分（`ca52c0a1a`）受入済み**: 境界は既に着地済み・fixture の既存 probe が finding の症例そのもの。制御旗 `-Dceltium.vulkan.groupColour=false` を追加。
+  同一 jar・両脚 PASSED・clean: 既定 左(255,0,0)/右**(0,255,0)** 対 対照 左(255,0,0)/右**(255,0,0)**（＝後続 draw が前の色で描かれる旧形）。
+- **BH-23（`9d26c4079`）受入済み**: (1) **sampler 確認が announcement block の下にあり**、consume 済み announced image はその手前で return するため**announcement 経由で毎回返る texture は一度も再確認されなかった** → 確認を lookup の先頭へ移動。
+  **同一 jar で `minFromRecord=14` 対 `3`**（14件中11件が飛ばされていた）。(2) `mipmapMode` の常時 LINEAR を記録された `GL_TEXTURE_MIN_FILTER` から導出（9984/9985→NEAREST・9986/9987→LINEAR・未記録は従来どおり）。
+  **やらないと決めたこと**: 非 mipmap filter を maxLod=0 に読み替えること（chain の権威は記録された `GL_TEXTURE_MAX_LEVEL`）。**未行使と明記**: この scene は `*_MIPMAP_NEAREST` を記録しないので新しい分岐は発火していない。
+- **BH-09（Lead `218ea2120`）**: 修正着地（group が開いた時に scissor が無効なら **live 記録を採る**・`scissorLateCapturedGroups` で区別）。
+  **受入は未取得**（カウンタ summary が F3 の Celeritas 節経由でしか届かず、3 leg で「0 ではなく不在」だった）。
+  **計器を修正**: summary を **world teardown と frame 120 の2つの trigger**から `CELTIUM_VERIFY via=…` として1回印字（`638529520`・`d3d4f0a81`）。
+- **解決済みは 27 件へ**（`docs/history/2026-10-11-code-bughunt.md` の冒頭も更新）。**未解決は 9 件**（BH-14・17・18・20・21・24・26・33・35）＋**BH-09 は修正着地・受入未取得**。
+
 ## 0.351 **round 158: GUI 文字の暗転は「現行ツリーでは再現せず」で閉じた（gui-text）— 私の §0.342 仮説は測定で反証**
 
 - **反証（私の記録の訂正）**: §0.342 で私が書いた「**影パスの暗色が本体パスに漏れる**」説は**測定で否定**された。
