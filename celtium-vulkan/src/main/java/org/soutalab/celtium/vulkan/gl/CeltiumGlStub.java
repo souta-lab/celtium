@@ -1881,6 +1881,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             new java.util.concurrent.atomic.AtomicInteger();
 
     private static void celtium$noteUnknownSymbol(String name) {
+        // The key printed on the F3 panel and in the log must itself be drawable text: a caller that hands
+        // getFunctionAddress something other than a printable name - a truncated buffer, a raw pointer value, a
+        // C string without its terminator - was recorded verbatim, and the census line then rendered those bytes as
+        // the mojibake line the F3 screenshot shows (a mixture of CJK cells, box glyphs and quote fragments where the
+        // GL symbol names should have been). GL entry points are printable ASCII; anything else is escaped per
+        // character so the census still says what arrived without asking the font for a glyph that is not there.
+        name = sanitizeSymbolName(name);
         java.util.concurrent.atomic.AtomicLong counter = UNKNOWN_SYMBOLS.get(name);
         if (counter == null) {
             counter = new java.util.concurrent.atomic.AtomicLong();
@@ -1922,6 +1929,33 @@ public final class CeltiumGlStub implements FunctionProvider {
         return frames.length() == 0 ? "(no frame above the stub)" : frames.toString();
     }
 
+    /**
+     * {@return the name with every byte outside printable ASCII escaped as {@code \xNN}, or {@code "<empty>"} when the
+     * caller asked for the empty name}. GL entry points are short printable identifiers; a name that disagrees is a
+     * caller that handed the lookup a buffer that was not a name, and the census has to show its arrival without
+     * drawing undrawable glyphs. Names longer than 64 characters are truncated - an unterminated read keeps decoding
+     * until the buffer runs out.
+     */
+    private static String sanitizeSymbolName(String name) {
+        if (name == null || name.isEmpty()) {
+            return "<empty>";
+        }
+        int limit = Math.min(name.length(), 64);
+        StringBuilder out = new StringBuilder(limit + 8);
+        for (int i = 0; i < limit; i++) {
+            char c = name.charAt(i);
+            if (c >= 0x20 && c <= 0x7E && c != ' ' && c != '=') {
+                out.append(c);
+            } else {
+                out.append(String.format("\\x%02x", (int) c));
+            }
+        }
+        if (name.length() > limit) {
+            out.append("...(+").append(name.length() - limit).append(')');
+        }
+        return out.toString();
+    }
+
     /** {@return the unmodelled entry points that were called, most frequent first}. */
     public static String unknownSymbolSummary() {
         if (UNKNOWN_SYMBOLS.isEmpty()) {
@@ -1939,7 +1973,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             summary.append(entry.getKey()).append('=').append(entry.getValue().get());
             if (shown >= 24) {
-                summary.append(" …(").append(entries.size() - shown).append(" more)");
+                summary.append(" ...(").append(entries.size() - shown).append(" more)");
                 break;
             }
         }

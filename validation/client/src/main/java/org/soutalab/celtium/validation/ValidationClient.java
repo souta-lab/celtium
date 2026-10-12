@@ -781,6 +781,8 @@ public final class ValidationClient {
      * menu-phase request keyed on world ticks never fires. 0 disables the menu dump.
      */
     private int celtium$clientTicks;
+    /** One-shot flag for the unicode-font reproduction leg; the setter only has to run once. */
+    private boolean unicodeFontApplied;
     private final int celtium$menuDumpTick =
             Integer.getInteger("celtium.validation.dumpPresentedMenuTick", 0).intValue();
     private boolean celtium$menuDumpRequested;
@@ -2829,6 +2831,14 @@ public final class ValidationClient {
         if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
         celtium$clientTicks++;
+        // The unicode font surface: every string routes through renderUnicodeChar, which a locale like ja_jp selects
+        // automatically - and which every isolated leg so far has skipped, because the fresh game dir launches in
+        // en_us. The flag reproduces `forceUnicodeFont` (same setUnicodeFlag call Minecraft makes at init).
+        if (!unicodeFontApplied && Boolean.getBoolean("celtium.validation.unicodeFont") && mc.fontRenderer != null) {
+            unicodeFontApplied = true;
+            mc.fontRenderer.setUnicodeFlag(true);
+            report.addProperty("unicodeFontApplied", Boolean.TRUE);
+        }
         // N02 acceptance probe: display-list add/recompile/delete/re-use, off unless -Dceltium.validation.modelLifecycle.
         ModelListLifecycleProbe.tick(mc, worldTicks);
         celtium$sampleFramebufferSize(mc);
