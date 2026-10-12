@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.393 **round 194: R3a 裁定反映（319行）／B12 計器着地・B11 の所有権移譲／監査 P1 の進行**
+
+- **R3a 反映完了（weather-water）**: `ModelGeometryCache.java` **319行**。`invalidate()` は `modelMeshQuads` に触れなくなり（9091 の world-teardown と同一挙動 ✓）、javadoc に「**今日は呼び手なしの明示 drop 入口**・reload の invalidation は `build()` の generation 駆動（10650/10666）そのもの」と明記 ✓。`borrow`/`meshBorrowed`（貸与規則の述語）・`releaseAfterWorldTeardown`（9091）・`releaseAll`（9169）は **byte-for-byte** ✓。counter の寿命（`modelDraws`/`modelDrawRefusals` static・`modelMissingMeshes` instance）は現状維持 ✓。
+- **B12 計器着地（perf-ring `70872f64c`・additive で挙動不変）**: `VulkanSwapchain.java:80-81` のプール/cursor、選択 `:799`（**acquire の前**に決定）、`vkAcquireNextImageKHR` `:807`、image 判明 `:830`。**構造上の理由**を確定: semaphore は acquire の**引数**で image は戻り値なので「acquired image で index」は直接表現できない ✓。`acquireSemaphoreOwnerImage[]` に semaphore→image を記録し、**spec が禁じる再利用**を `acquireSemaphoreReusesWhileOwned` で数える計器＋`acquireOwnershipSummary()` ✓（まず測る、の方針どおり ✓）。**修正 (a) frame-in-flight ごとに1 semaphore／(b) fence acquire で submit wait list から外す**は **sync 変更＝両GPU leg 必須**なので**モラトリアム解除後** ✓。
+- **B11 の所有権を `VulkanPostChain.java` へ移譲**（frame-composite の B10 は `45a69668a` で完了・未了なし ✓）: 32-slot ring の実在位置は `:292/:293/:303/:540-550/:1490-1505/:875`。**未所有なのは「フレームをまたぐ wrap」**（N16 拒否は同一 recording 内のみ ✗）＝`VUID-vkUpdateDescriptorSets-None-03047` の形。**修正は slot ごとの generation/sequence を更新直前に確認し、未完なら既存 exhaustion と同様に拒否**（新たな wait を足さない＝R6 の禁止条件に適合 ✓）。ticket は `VulkanContext.completedEpoch()`/`completedSubmissions` ✓。**拒否パスなので sync 変更なし・leg 不要**の見込み ✓ → perf-ring が実装中。
+- **モラトリアム（ユーザー指示）**: 全配線が入るまで build/leg を回さない ✓。新クラスは未参照なので現時点の緑は保たれる ✓。
+
 ## 0.392 **round 193: R3a `ModelGeometryCache` 納品（gap 5点を申告）— 裁定はすべて「挙動を変えない」側**
 
 - **納品**: `ModelGeometryCache.java`（state＋`build`/`borrow`/`meshBorrowed`/`releaseAfterWorldTeardown`/`releaseAll`/`invalidate`＋accessor 群 ✓、backend 未編集・build/leg なし ✓）。移す field 表（`MODEL_MESH_BUILD` 10829・`MODEL_QUAD_LIMIT` 12469・`modelMeshes` 10832・`modelMissingMeshes` 10844・`modelMeshContractFailures` 10846・log 系 10848-10850・`modelMeshQuads` 10861・`modelMeshFailure` 10862）と method 表（`celtium$buildModelMeshes` 10630-10805・call site 9648・teardown 9091-9096/9169-9175・borrow 10976-10992・report 読 600/602/643/8558/10954-10959/10965/10981）を提示 ✓。**移さない**: draw 側（`modelDraws` 10840・`modelDrawRefusals` 10841・`modelLastRefusal` 10852・`MODEL_DRAW` 12483・`CELTIUM_MODEL_*` 108）✓。
