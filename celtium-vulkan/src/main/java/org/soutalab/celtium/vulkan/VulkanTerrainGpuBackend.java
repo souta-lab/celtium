@@ -2456,6 +2456,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * {@code frustum} and the perspective helper each built a throwaway array per call on a path the matrix census
      * counts in hundreds per frame. The consumers ({@code immediateState.loadMatrix}/{@code multiplyMatrix}) copy
      * the values out before returning, so sharing one array is safe.
+     * <p>
+     * <b>Every builder must fill all sixteen elements</b>, and that rule was broken here in a way that cost the main
+     * menu its background: {@code ortho} writes {0,5,10,12,13,14,15} and the perspective builders write
+     * {0,5,10,11,14}, so a perspective built after an ortho kept the ortho's translation in [12] and [13] and its 1
+     * in [15]. A GL projection's [12]/[13] are the x/y terms of <em>w</em>, not a translation, so the panorama's
+     * cube was divided by {@code w = -x + y - 0.101z + 1} instead of {@code w = -z}: measured on the main menu
+     * (round 226, jar f9d64a91e), the six faces' clip-space corners came out at NDC x[-4.28..-0.08] y[0.25..3.12]
+     * and painted 0.8% of the 256x256 box per frame, so the copy never repainted its rectangle and the menu's
+     * background stayed the blur's own fixed point. The world was unaffected because its projection follows another
+     * perspective rather than the GUI's ortho - which is exactly why the symptom looked like "the menu only".
      */
     private final float[] matrixScratch = new float[16];
     private final float[] glProjection = new float[16];
@@ -4737,6 +4747,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         float radians = (float) Math.toRadians(fovDegrees * 0.5F);
         float f = 1.0F / (float) Math.tan(radians);
         float[] frustum = this.matrixScratch;
+        // The panorama's projection: this is the one that inherits the GUI ortho's [12]/[13] and [15] because the
+        // four builders share this scratch and each writes only its own elements - see the field's note. The fix is
+        // not here yet: zeroing the scratch in all four builders (round 226) turned every presented frame black
+        // (early/menu/world dumps mean 0.0, distinct 1) on a leg whose frame image still held a real picture, so the
+        // leak is real and the repair has to land as one work unit with its own verification.
         frustum[0] = f / aspect;
         frustum[5] = f;
         frustum[10] = (far + near) / (near - far);

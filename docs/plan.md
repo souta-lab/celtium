@@ -395,6 +395,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.426b **round 226: 根因を特定 — 共有 `matrixScratch` の部分書き込みで perspective が GUI ortho の [12]/[13]/[15] を継承していた（＝menu の panorama が w=-x+y-0.101z+1 で割られていた）。素朴な修正は全フレームを黒にしたので撤回し、修復は独立作業単位へ**
+
+- **機序（コードで確定）**: `VulkanTerrainGpuBackend.matrixScratch`（`:2460`）を**4つの builder が共有**し、各々が自分の要素だけ書く — `glOrtho` は {0,5,10,12,13,14,15}、`perspective`/`glFrustum` は {0,5,10,11,14}、six-plane `frustum` は {0,5,8,9,10,11,14}、`applyDerivedProjection`（gluPerspective）は {0,5,10,11,14} ✓。GL の projection で [12]/[13] は **w の x/y 項**（平行移動ではない）なので、**GUI ortho の後に作られた perspective は [12]=-1, [13]=+1, [15]=1 を継承**し、`w = m[12]x + m[13]y + m[3]z + m[15]` が `w = -z` にならない ✓。
+- **実測がこの値と一致**: 6面の stored projection は `proj=[0.577,0,0,0, 0,0.577,0,0, 0,0,-1.01,-1.0, -1.0,1.0,-0.101,1.0]` ✓ ＝ col2 は正しい gluPerspective（m22=-1.01, m32=-1.0）✓ だが col3 = (-1,1,-0.101,1) ＝ **GUI ortho の translation (-1,+1) と [15]=1 が残っている** ✓（同じ scratch の GUI ortho は `CELTIUM_ORTHO l=0 r=480 b=270 t=0 …` ＝ 480×270 で translation (-1,+1,-2,1) ✓）。これが §0.425b の「診断の mvp と印字行列が一致しない」の正体でもある ✓（印字行列自体が壊れていた ✓）。
+- **症状の形が全部説明できる**: menu だけ壊れて world は正常 ✓（world の projection は `mirrorGluPerspective`（`:3859`・scratch 不使用）側で、menu の `drawPanorama` は `applyDerivedProjection`（scratch 使用）✓）、回転を含む geometry だけが外れる ✓（6面の clip は NDC x[-4.28..-0.08] y[0.25..3.12] で中心を含まず、box の 0.8% しか塗らない ✓ ⇔ 軸並行の GUI は同じ壊れた行列でも目立たない ✓）。
+- **素朴な修正（4 builder 全部で `Arrays.fill(matrix,0)`）は撤回** ✓: 実測で early/menu/world の presented dump が**全て mean=(0,0,0) distinct=1** になり（leg `r212-panmatrix-scratchfix`・fixtureStatus=FAILED_PRESENTED_IMAGE）、同じ leg の **frame image の box は実画像のまま**（mean=(103.8,116,124.9) distinct=18105 ✓）だったので、**描画ではなく present 側が黒くなった** ✓。＝ leak は本物だが、ゼロ化は**別の経路が依存している何か**を壊す ⇒ 修復は「単一 helper に集約＋present を壊さないことの検証」を1作業単位として行う ✓（担当 task-72 の推奨もこれ ✓ `docs/notes-matrix-scratch.md`・commit `612c4a658`）。
+- **現状のツリー**: 4箇所の fill は revert 済み ✓（`Arrays.fill` 0箇所 ✓ build green ✓）、leak の機序と測定はこの節と `:2460` の javadoc に残した ✓。次の一手: (a) scratch を「ゼロ化して返す」ヘルパに集約 ✓、(b) 4 builder を1つずつ戻して黒の発生源を bisect（同じ jar で flag ではなく一時的な切替で）✓、(c) present の readback と frame image を同時に dump して「描画は生きているのに present が黒い」ことを毎回確認 ✓。
+
 ## 0.425b **round 225（進行中）: cube の 6 面は「別々の正しい直交基底」だが、box に描いているのは 0.9%/frame だけ。depth・scissor・回転欠落は全て棄却**
 
 - **6 面の full model-view を実測**（`CELTIUM_MATRIX_DUMP` を texture 46..51 の最初の 6 group にも広げた ✓・leg `r212-panmatrix-matrices2`・jar `3d7fd7b`-era・AMD）。6 面の法線（model の z 軸像）は **(+0.494,+0.327,-0.806) / (+0.171,-0.945,-0.279) / その反転 / その反転 / (+0.853,0,+0.522) / その反転** ＝ **3 組の反平行・相互直交** ✓（内積 ≈ 0.0005 以下 ✓）で translation は全て (0.008,0.008,0) ✓ ⇒ **立方体はカメラを正しく囲んでいる** ✓。§0.426 の「6 面が同一象限」は **bounds（4 頂点の min/max）の読み違い**で、向きの重複ではなかった ✓ — 撤回する ✓。
