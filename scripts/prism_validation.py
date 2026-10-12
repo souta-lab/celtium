@@ -156,6 +156,8 @@ def main():
     parser.add_argument("--java", type=Path)
     parser.add_argument("--game-dir", type=Path, help="Create a fresh isolated game directory")
     parser.add_argument("--mod", type=Path, action="append", default=[])
+    parser.add_argument("--exclude-instance-mod", action="append", default=[],
+                        help="Glob of instance mods not to copy into the test game dir (e.g. 'StorageDrawers-*'); the instance itself is untouched")
     parser.add_argument("--library", type=Path, action="append", default=[], help="Extra test-only classpath jar; the source profile stays unchanged")
     parser.add_argument("--force-x11", action="store_true",
                         help="Hide the Wayland socket from the game so GLFW uses the Xwayland display instead; the "
@@ -219,7 +221,7 @@ def main():
     # its frozen copies. Excluding only the exact supplied names was not enough: a worker who freezes the build under a
     # different file name (to keep two legs on one hash) then gets the instance's jar copied alongside it, and the game
     # dies on a duplicate mod id - which cost fog-path a leg before this line existed.
-    ignored_mods = ("celtium-forge-*.jar", "celtium-validation-client-*.jar") + tuple(supplied)
+    ignored_mods = ("celtium-forge-*.jar", "celtium-validation-client-*.jar") + tuple(supplied) + tuple(args.exclude_instance_mod)
     for name in ("mods", "config", "resourcepacks", "saves"):
         source = source_game / name
         if source.is_dir():
