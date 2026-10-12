@@ -912,6 +912,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long groupCreateCpuNanos;
     private int groupCreateCount;
     private long appendNanos;
+    private long groupDrawNanos;
+    private int groupDrawCount;
     private int appendCount;
     /** The GL query the custom-program shutter makes per batch, timed: it is a synchronising call on some drivers. */
     private long programQueryNanos;
@@ -8337,6 +8339,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixCopyMillis=" + (this.matrixCopyNanos / 1000000L)
                 + " captureStateMillis=" + (this.captureStateNanos / 1000000L)
                 + " stateKeyMillis=" + (this.stateKeyNanos / 1000000L)
+                + " groupDrawCount=" + this.groupDrawCount
+                + " groupDrawMillis=" + (this.groupDrawNanos / 1000000L)
                 + " groupCloneCount=" + this.groupCloneCount
                 + " groupCloneMillis=" + (this.groupCloneNanos / 1000000L)
                 + " preTransformedGroups=" + this.preTransformedGroups
@@ -13190,6 +13194,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // overlay's draws and disables it immediately after, so a group flushed later used to read the
                 // disabled state and draw the overlay with no bias at all (measured: 62 glPolygonOffset calls, the
                 // overlay in the frame, and immediateDepthBiasedGroups=0).
+                long groupDrawStart = System.nanoTime();
                 boolean offsetEnabled = group.polygonOffsetEnabled;
                 float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
                 float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
@@ -13216,6 +13221,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
+                this.groupDrawNanos += System.nanoTime() - groupDrawStart;
+                this.groupDrawCount++;
                 int batches = group.batches;
                 this.immediateRecordedBatches += batches;
                 if (target != this.mainTargetIdentity) this.offTargetRecordedBatches += batches;
