@@ -657,7 +657,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " shaderProgramRefusals=" + this.shaderProgramRefusals
                 + " shaderProgramRefusedIds=" + this.shaderProgramRefusedIds
                 + " shaderProgramRefusedPrograms=" + this.shaderProgramRefusedPrograms
-                    + " textureRefusals=" + this.textureRefusalsBeforeAccept
+                    + " textureRefusals=" + this.textureStats.textureRefusalsBeforeAccept()
                     + " accepted=" + this.frameAccepted);
         }
         if (HANDOFF_TIMINGS && this.frameTarget != null) {
@@ -1032,7 +1032,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int refusedBeforeAppend;
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
-    private int announcedUploads;
     /**
      * Invalidation requests that were not honoured because there is no GL texture to re-read.
      * <p>
@@ -1053,8 +1052,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private static final boolean GLESS_KEEPS_INVALIDATIONS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glessKeepsInvalidations", "true"));
-    private int animatedImageFills;
-    private int directMirrorFromAnnouncement;
     /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
     private int readbackSkippedAfterAnnouncement;
     /** Why a preflight returned no descriptor, split by cause so the refusal can be acted on. */
@@ -1170,6 +1167,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
     private final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
+
+    /** The texture domain's counters (refactoring plan R2, stage 3). */
+    private final TextureStatistics textureStats = new TextureStatistics();
 
     {
         this.fontBatch.celtium$setFontRunState(new FontBatch.FontRunState() {
@@ -1304,7 +1304,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
     private int animatedAnnounceDiagnostics;
-    private int dynamicTextureFills;
     private int dynamicAnnounceDiagnostics;
     private String lastInvalidationOrigin = "unknown";
     /** The texture ids whose invalidation origin has been printed. */
@@ -1319,16 +1318,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Map<Long, java.util.concurrent.atomic.AtomicInteger> offTargetBatchesByTarget =
             new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
     private int offTargetRefusals;
-    private int textureRefusalsBeforeAccept;
     /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
-    private int boundTextureComparisons;
     /** Announces that carried the size from the game instead of asking OpenGL for it. */
-    private int announcedDynamicTextures;
     /** Whether the game has set a colour yet, i.e. whether the state mirror's colour can be trusted. */
     private boolean colorMirrorHasValue;
     /** Which source the format-7 colour came from, reported so a run says whether the mirror is really in use. */
-    private int colorMirrorUses;
-    private int boundTextureMismatches;
 
     /**
      * Checks the state mirror's bound texture against what OpenGL answers.
@@ -1348,11 +1342,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // (525 samples, 0 mismatches) is recorded in the plan. Turn it on to re-check after a change to the mirror.
             return;
         }
-        this.boundTextureComparisons++;
+        this.textureStats.noteBoundTextureComparison();
         int live = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
         if (live != mirrored) {
-            this.boundTextureMismatches++;
-            if (this.boundTextureMismatches <= 3) {
+            this.textureStats.noteBoundTextureMismatch();
+            if (this.textureStats.boundTextureMismatches() <= 3) {
                 record("bound texture mirror mismatch: mirror=" + mirrored + " gl=" + live);
             }
         }
@@ -1858,14 +1852,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Set<String> gluPerspectiveSkips = new java.util.LinkedHashSet<String>();
     private int matrixModeCalls;
     private int loadIdentityCalls;
-    private int bindTextureCalls;
     /**
      * Binds the hook skipped because the mirror already held the name. Counted here rather than in the mixin so it
      * prints in the same summary as {@code bindTextureCalls} (the forwards) and {@code immediateStateCalls} (every
      * mirror call): the chain's size is then visible in every leg instead of only in the bounded
      * {@code CELTIUM_UNIT_BIND} lines, which is the reading that hid the per-glyph arrivals once already.
      */
-    private int bindShortCircuits;
     private VulkanTextureRegistry textureRegistry;
     private int immediateFlushes;
     private int pendingImmediateIndices;
@@ -3149,10 +3141,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // single row, so every texel past the first row fell outside the array the consumer reads and was written as
         // transparent - measured as a light map whose row 0 held the noon gradient and whose rows 1..15 were black,
         // which is the black terrain this replaces.
-        this.announcedDynamicTextures++;
+        this.textureStats.noteAnnouncedDynamicTexture();
         if (this.textureRegistry.announceFullPixels(glTextureId, new int[][] { pixels }, width, height, 0, 0)) {
-            this.animatedImageFills++;
-            this.dynamicTextureFills++;
+            this.textureStats.noteAnimatedImageFill();
+            this.textureStats.noteDynamicTextureFill();
         }
     }
 
@@ -3215,7 +3207,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.textureRegistry = celtium$registry();
         }
         this.textureRegistry.announceImage(glTextureId, image);
-        this.announcedUploads++;
+        this.textureStats.noteAnnouncedUpload();
     }
 
     /**
@@ -3240,7 +3232,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " atlasGlId=" + this.atlasSourceGlId);
         }
         if (this.textureRegistry.announceFullPixels(bound, data, width, height, x, y)) {
-            this.animatedImageFills++;
+            this.textureStats.noteAnimatedImageFill();
         }
     }
 
@@ -3296,11 +3288,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
                     // The write that invalidated this mirror handed its pixels over, and they went into this image.
                     this.textureRegistry.consumeReadback(glTextureId);
-                    this.directMirrorFromAnnouncement++;
+                    this.textureStats.noteDirectMirrorFromAnnouncement();
                     this.readbackSkippedAfterAnnouncement++;
                 } else if (this.textureRegistry != null
                         && this.textureRegistry.applyAnnouncedTo(this.atlasTexture, glTextureId)) {
-                    this.directMirrorFromAnnouncement++;
+                    this.textureStats.noteDirectMirrorFromAnnouncement();
                 } else {
                     this.atlasTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                     if (this.textureRegistry != null) {
@@ -3316,11 +3308,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
                     this.textureRegistry.consumeReadback(glTextureId);
-                    this.directMirrorFromAnnouncement++;
+                    this.textureStats.noteDirectMirrorFromAnnouncement();
                     this.readbackSkippedAfterAnnouncement++;
                 } else if (this.textureRegistry != null
                         && this.textureRegistry.applyAnnouncedTo(this.lightmapTexture, glTextureId)) {
-                    this.directMirrorFromAnnouncement++;
+                    this.textureStats.noteDirectMirrorFromAnnouncement();
                 } else {
                     this.lightmapTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                     if (this.textureRegistry != null) {
@@ -3348,7 +3340,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private void celtium$establishAtlasImage(int glTextureId, VulkanGlTexture image, String what) {
         if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
             this.textureRegistry.consumeReadback(glTextureId);
-            this.directMirrorFromAnnouncement++;
+            this.textureStats.noteDirectMirrorFromAnnouncement();
             this.readbackSkippedAfterAnnouncement++;
             return;
         }
@@ -3838,7 +3830,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void bindTexture(int glTextureId) {
         this.immediateState.bindTexture(glTextureId);
         this.immediateStateCalls++;
-        this.bindTextureCalls++;
+        this.textureStats.noteBindTextureCall();
     }
 
     /**
@@ -3852,7 +3844,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (!this.immediateState.bindWouldChangeNothing(glTextureId)) {
             return false;
         }
-        this.bindShortCircuits++;
+        this.textureStats.noteBindShortCircuit();
         return true;
     }
 
@@ -5839,7 +5831,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // have to read it.
                 if ((formatId == 7 || formatId == 6 || formatId == 9) && this.colorMirrorHasValue) {
                     // No GL query: the colour the game last set, from the same state mirror everything else uses.
-                    this.colorMirrorUses++;
+                    this.textureStats.noteColorMirrorUse();
                     this.currentGroupColor = new float[] {this.immediateState.colorRed(),
                             this.immediateState.colorGreen(), this.immediateState.colorBlue(),
                             this.immediateState.colorAlpha()};
@@ -5879,7 +5871,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             if (this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
-                this.textureRefusalsBeforeAccept++;
+                this.textureStats.noteTextureRefusalBeforeAccept();
                 this.refusedBeforeAppend++;
                 // Order (S10): what is already accepted is drawn before this batch goes to GL.
                 this.flushPendingBeforeGlDraw();
@@ -8351,10 +8343,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
-                + " boundTextureSamples=" + this.boundTextureComparisons
-                + " boundTextureMismatches=" + this.boundTextureMismatches
-                + " announcedDynamicTextures=" + this.announcedDynamicTextures
-                + " colorMirrorUses=" + this.colorMirrorUses
+                + " boundTextureSamples=" + this.textureStats.boundTextureComparisons()
+                + " boundTextureMismatches=" + this.textureStats.boundTextureMismatches()
+                + " announcedDynamicTextures=" + this.textureStats.announcedDynamicTextures()
+                + " colorMirrorUses=" + this.textureStats.colorMirrorUses()
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
@@ -8390,7 +8382,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
                 + " imageUploadsSkipped="
                 + (this.textureRegistry != null ? this.textureRegistry.imageUploadsSkipped() : 0)
-                + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
+                + " announcedUploads=" + this.textureStats.announcedUploads() + " animatedImageFills=" + this.textureStats.animatedImageFills()
                 + " textureCopiesServed=" + this.textureCopyService.textureCopiesServed()
                 + " textureCopiesRefused=" + this.textureCopyService.textureCopiesRefused()
                 + " textureCopiesReusedInFrame=" + this.textureCopyService.textureCopiesReusedInFrame()
@@ -8413,8 +8405,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " windowFramesMarkedPresentable=" + this.windowFramesMarkedPresentable
                 + " lastPairClearRefusal=[" + this.lastPairClearRefusal + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
-                + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
-                + " dynamicTextureFills=" + this.dynamicTextureFills
+                + " directMirrorFromAnnouncement=" + this.textureStats.directMirrorFromAnnouncement()
+                + " dynamicTextureFills=" + this.textureStats.dynamicTextureFills()
                 + " readbackByOrigin=" + (this.textureRegistry != null ? this.textureRegistry.readbackByOrigin() : "none")
                 + " mirrorsCreatedByAnnouncement="
                 + (this.textureRegistry != null ? this.textureRegistry.createdByAnnouncement() : 0)
@@ -8428,7 +8420,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateRefusal=" + celtium$refusalText().replace(' ', '_')
                 + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals
                 + " offTargetRefusals=" + this.offTargetRefusals
-                + " textureRefusalsBeforeAccept=" + this.textureRefusalsBeforeAccept
+                + " textureRefusalsBeforeAccept=" + this.textureStats.textureRefusalsBeforeAccept()
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
@@ -8518,8 +8510,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
                 // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
                 // make impossible - 248 lines against 1,628,711 arrivals is what they actually said.
-                + " bindTextureCalls=" + this.bindTextureCalls
-                + " bindShortCircuits=" + this.bindShortCircuits
+                + " bindTextureCalls=" + this.textureStats.bindTextureCalls()
+                + " bindShortCircuits=" + this.textureStats.bindShortCircuits()
                 + " immediateStateCalls=" + this.immediateStateCalls
                 + " immediateGroupsDiscarded=" + this.immediateGroupsDiscarded
                 + " immediateGroupsKeptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
@@ -8590,7 +8582,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + this.skippedGluPerspectives + ",gluSites:" + this.gluPerspectiveShapes.size()
                 + ",gluSkipSites:" + this.gluPerspectiveSkips.size()
                 + ",mode:" + this.matrixModeCalls + ",identity:" + this.loadIdentityCalls
-                + ",texture:" + this.bindTextureCalls;
+                + ",texture:" + this.textureStats.bindTextureCalls();
     }
 
     @Override
