@@ -5801,7 +5801,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // group after the first kept the first group's target - the main framebuffer - and the batches offered while a
                 // second framebuffer was bound were enqueued as main-target work. That is why the off-target pass found an
                 // empty queue every run (audit A10/A32). Resetting the flag keeps the older path consistent as well.
-                celtium$notePairNameSamplingDraw(boundTexture);
+                if (TARGET_CENSUS_ENABLED) {
+                    celtium$notePairNameSamplingDraw(boundTexture);
+                }
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
@@ -5937,10 +5939,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
                 this.currentGroupBlendDst = this.immediateStatistics.blendObserved() ? this.observedBlendDst
                         : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                Long pair = Long.valueOf((((long) this.currentGroupBlendSrc) << 20) | this.currentGroupBlendDst);
-                Integer seen = this.blendPairs.get(pair);
-                this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
-                celtium$notePairNameSamplingDraw(boundTexture);
+                if (TARGET_CENSUS_ENABLED) {
+                    Long pair = Long.valueOf((((long) this.currentGroupBlendSrc) << 20) | this.currentGroupBlendDst);
+                    Integer seen = this.blendPairs.get(pair);
+                    this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+                    celtium$notePairNameSamplingDraw(boundTexture);
+                }
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupTexMatrix = celtium$textureAffine();
