@@ -8795,6 +8795,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preTransformedVertices=" + this.immediateStatistics.preTransformedVertices()
                 + " selfCompositeSkips=" + this.immediateStatistics.selfCompositeSkips()
                 + " pairNameSamplingDraws=" + this.pairNameSamplingDraws
+                + " presentedDumpFailure=" + (this.swapchain == null ? "none" : this.swapchain.lastDumpFailure())
                 + " " + celtium$pairLayoutSummary()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " fastMergedBatches=" + this.immediateStatistics.fastMergedBatches()

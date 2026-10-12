@@ -248,6 +248,18 @@ public final class VulkanSwapchain {
     private static final int DUMP_RETRY_CAP = 8;
     /** The last reason a requested presented-image dump did not write, for the report. */
     private String lastDumpFailure = "none";
+
+    /**
+     * {@return the last reason a requested presented-image dump did not write}.
+     * <p>
+     * Exposed because the bridge leg measured the case this exists for: the fixture recorded
+     * {@code pictureRequested_world} with the right path at tick 200, the presented image was read back, and no dump
+     * file existed in the run directory (leg r212-world-glref2). The write has four ways to fail - a zero image
+     * handle, a null readback, a write error, a missing parent - and without this the report cannot say which.
+     */
+    public String lastDumpFailure() {
+        return this.lastDumpFailure;
+    }
     private boolean lastDumpWritten;
 
     /**
