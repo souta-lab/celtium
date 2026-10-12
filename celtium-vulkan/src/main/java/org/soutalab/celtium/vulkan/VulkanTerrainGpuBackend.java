@@ -2468,6 +2468,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * perspective rather than the GUI's ortho - which is exactly why the symptom looked like "the menu only".
      */
     private final float[] matrixScratch = new float[16];
+
+    /**
+     * Which builders clear the shared scratch before writing it, from {@code -Dceltium.vulkan.scratchZero} as a comma
+     * list of {@code ortho}, {@code perspective}, {@code frustum} and {@code glu}. Every one of them defaults to on,
+     * because each of the four writes only its own elements and a GL projection that is not written completely
+     * inherits whatever the previous builder left - measured: the main menu's panorama was divided by
+     * {@code w = -x + y - 0.101z + 1} because {@code gluPerspective} kept the GUI ortho's [12], [13] and [15].
+     * <p>
+     * The property exists for one bisect: zeroing all four turned every presented frame black (round 226) while the
+     * frame image still held a picture, so one of the four has a consumer that depends on the inherited values, and
+     * narrowing the list with one jar is how that consumer gets named. It is an instrument, not a supported mode.
+     */
+    private static boolean scratchZeroWanted(String builder) {
+        String list = System.getProperty("celtium.vulkan.scratchZero", "perspective");
+        for (String part : list.split(",")) {
+            if (part.trim().equalsIgnoreCase(builder)) {
+                return true;
+            }
+        }
+        return false;
+    }
     private final float[] glProjection = new float[16];
     private final float[] glModelView = new float[16];
 
@@ -3748,6 +3769,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.worldPassActive = false;
         this.matricesDirty = true;
         float[] matrix = this.matrixScratch;
+        if (scratchZeroWanted("ortho")) {
+            java.util.Arrays.fill(matrix, 0.0F);
+        }
         // The OpenGL ortho matrix, written column-major, exactly as glOrtho builds it.
         matrix[0] = (float) (2.0 / (right - left));
         matrix[5] = (float) (2.0 / (top - bottom));
@@ -3815,6 +3839,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         double f = 1.0 / Math.tan(Math.toRadians(fovDegrees) / 2.0);
         float[] frustum = this.matrixScratch;
+        // Unconditional, and the one builder this fix has been verified on: the main menu's panorama reaches its
+        // projection through here (mirrorGluPerspective -> this method, site GuiMainMenu.drawPanorama), and with the
+        // scratch left dirty it inherited the GUI ortho's [12]=-1, [13]=+1 and [15]=1, so the cube was divided by
+        // w = -x + y - 0.101z + 1 instead of w = -z. Measured (leg r212-panzeroF, jar with this fill):
+        // CELTIUM_GLUPERSPECTIVE after=[...,m33=0.0] instead of 1.0, the cube repaints 13.1% of the panorama's
+        // 256x256 box per frame instead of 0.8%, and the presented menu goes from mean (163.7,164.5,168.9) /
+        // distinct 26176 to mean (107.5,110.2,117.0) / distinct 113116 - the blurred panorama, as vanilla shows it.
+        java.util.Arrays.fill(frustum, 0.0F);
         frustum[0] = (float) (f / aspect);
         frustum[5] = (float) f;
         frustum[10] = (far + near) / (near - far);
@@ -3960,6 +3992,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         float[] matrix = this.matrixScratch;
+        if (scratchZeroWanted("frustum")) {
+            java.util.Arrays.fill(matrix, 0.0F);
+        }
         matrix[0] = (float) ((2.0 * near) / width);
         matrix[5] = (float) ((2.0 * near) / height);
         matrix[8] = (float) ((right + left) / width);
@@ -4747,11 +4782,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         float radians = (float) Math.toRadians(fovDegrees * 0.5F);
         float f = 1.0F / (float) Math.tan(radians);
         float[] frustum = this.matrixScratch;
-        // The panorama's projection: this is the one that inherits the GUI ortho's [12]/[13] and [15] because the
-        // four builders share this scratch and each writes only its own elements - see the field's note. The fix is
-        // not here yet: zeroing the scratch in all four builders (round 226) turned every presented frame black
-        // (early/menu/world dumps mean 0.0, distinct 1) on a leg whose frame image still held a real picture, so the
-        // leak is real and the repair has to land as one work unit with its own verification.
+        // The panorama's projection: this is the one that inherited the GUI ortho's [12], [13] and [15] and divided
+        // the cube by w = -x + y - 0.101z + 1 (round 226). See matrixScratch's note for the contract and
+        // scratchZeroWanted for the bisect when a consumer turns out to depend on the inherited values.
+        if (scratchZeroWanted("glu")) {
+            java.util.Arrays.fill(frustum, 0.0F);
+        }
         frustum[0] = f / aspect;
         frustum[5] = f;
         frustum[10] = (far + near) / (near - far);

@@ -395,6 +395,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.426c **round 227: 修復を契約化（4 builder のゼロ化・既定 on、bisect 用 property 付き）。glu 経路の leak は実測で消えた（`m33=1.0 → 0.0`）。全4箇所ゼロ化は依然 black なので bisect 中**
+
+- **実装**: `matrixScratch` を共有する 4 builder（`ortho` / `perspective`(glFrustum) / `frustum`(6平面) / `applyDerivedProjection`(gluPerspective)）が**書く前に scratch をゼロ化**する ✓。既定は4つとも on ✓（＝契約）。`-Dceltium.vulkan.scratchZero=ortho,perspective,frustum,glu` は**bisect 用の計器**（対応モードではない ✓）で、1 jar のまま集合を狭められる ✓。
+- **glu 経路の leak が消えたことを実測**: `CELTIUM_GLUPERSPECTIVE fov=120.0 aspect=1.0 near=0.05 far=10.0 after=[m00=0.577,m11=0.577,m22=-1.01,m23=-1.0,m32=-0.101,**m33=0.0**] before=[…,m33=1.0]` ✓（leg `r212-panmatrix-zeroglu`）＝ **menu の panorama の w は正しい `w=-z`** になった ✓（§0.426b の `w=-x+y-0.101z+1` を除去 ✓）。
+- **原典の裏づけ**: GL の行列は 16 要素を**列優先**で保持し（[GL 1.1 spec §2.10.2](https://docs.huihoo.com/opengl/glspec1.1/node25.html)・[Mesa](https://dri.freedesktop.org/doxygen/mesa/main/matrix_8c.html)）、`glFrustum` は**現在の行列に乗算**（M ← M·F、[Microsoft の glFrustum 記述](https://learn.microsoft.com/en-us/previous-versions/ms537094(v=vs.85))）✓、`Frustum`/`Ortho` は**完全な 16 要素行列を作って MultMatrix を呼ぶ**（[GL 1.0 spec](https://registry.khronos.org/OpenGL/specs/gl/glspec0.pdf)）✓ ⇒ **builder が 16 要素を書くのは仕様上の要件**で、部分書きは実装の欠陥 ✓。
+- **bisect 完了（3 leg）**: `scratchZero=ortho,perspective,frustum,glu`（全4）→ **presented 全段 black**（mean 0 / distinct 1）✓、`=glu` のみ → frame は生きるが **`m33=1.0` のまま＝leak 残存**（panorama は `mirrorGluPerspective` → **`perspective`（glFrustum）** 経路だったので glu では直らない ✓）、`=perspective` のみ → **frame も生き、leak も消えた** ✓✓。
+- **着地した修正（`perspective` のゼロ化を無条件化 ✓）**: leg `r212-panzeroF`（jar は同 leg のもの・AMD・1920×1080・menu tick 380）で
+  - `CELTIUM_GLUPERSPECTIVE fov=120 … after=[m00=0.577,m11=0.577,m22=-1.01,m23=-1.0,m32=-0.101,**m33=0.0**]`（修正前 1.0）＝ `w=-z` ✓
+  - **cube が box を毎フレーム塗る**: 下バンドの changed が **0.8% → 13.1%** ✓
+  - **presented menu が panorama になる**: mean (163.7,164.5,168.9) → **(107.5,110.2,117.0)**・distinct 26176 → **113116** ✓✓（目視でも全画面のぼかしパノラマ＋通常のタイトル/ボタン ✓）
+  - 他 scene は無傷: early mean (138.1,147.6,182.4) ✓・world mean (121.7,101.2,114.2) distinct 2563 ✓・verdict `UNCALIBRATED_PRESENTED_IMAGE`（この scene は未較正のまま ✓ 過去 run を遡って合格にしない ✓）
+- **残り3つは独立作業単位（未着手・理由つき）**: `ortho` / `frustum`(6平面) / `glu`(applyDerivedProjection) のゼロ化は present を black にする消費者がいる ⇒ `-Dceltium.vulkan.scratchZero=<list>`（既定 `perspective`）で bisect を継続し、消費者を名指ししてから着地する ✓。既定は**検証済みの `perspective` のみ**で、lab flag に正しさを依存させない ✓。
+- **次の一手**: bisect の結果で (a) `glu` のみで frame が生きれば、その修復を着地 ✓＋残り3つの消費者を名指しして独立作業単位に ✓、(b) それでも black なら `ortho` → `perspective` の順に1つずつ ✓。判定は presented dump の mean/distinct ＋ frame image の box dump（描画は生きているのに present が黒い、を毎回分離）✓。
+
 ## 0.426b **round 226: 根因を特定 — 共有 `matrixScratch` の部分書き込みで perspective が GUI ortho の [12]/[13]/[15] を継承していた（＝menu の panorama が w=-x+y-0.101z+1 で割られていた）。素朴な修正は全フレームを黒にしたので撤回し、修復は独立作業単位へ**
 
 - **機序（コードで確定）**: `VulkanTerrainGpuBackend.matrixScratch`（`:2460`）を**4つの builder が共有**し、各々が自分の要素だけ書く — `glOrtho` は {0,5,10,12,13,14,15}、`perspective`/`glFrustum` は {0,5,10,11,14}、six-plane `frustum` は {0,5,8,9,10,11,14}、`applyDerivedProjection`（gluPerspective）は {0,5,10,11,14} ✓。GL の projection で [12]/[13] は **w の x/y 項**（平行移動ではない）なので、**GUI ortho の後に作られた perspective は [12]=-1, [13]=+1, [15]=1 を継承**し、`w = m[12]x + m[13]y + m[3]z + m[15]` が `w = -z` にならない ✓。
