@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.395 **round 196: R3b `FontBatch` 納品（gap 5点）— 拒否時の glyph 喪失を修正として採る／target witness は意図的な挙動変更**
+
+- **納品**: `FontBatch.java`（新規・backend 未編集・Gradle build/leg なし・単体 `javac -proc:none` exit 0 ✓）。移す field 表（`:1680-1696`・`:1702`・`:1709-1717`・`:1723`・`:4943`）と method 表（`:4863-4941`/`:4952-4954`/`:4959-4973`/`:4975-4988`/`:4990-5003`/`:5010-5074`/`:5077-5088`/`:1705-1707`）、配線点（flush 4箇所 `:4604`/`:4655`/`:5146`/`:8085`・matrix boundary 10箇所・外部2箇所 `CeltiumFontGlyphCapture.java:743/:1247`）を提示 ✓。設計は backend 非参照・15値の `FontRunState` view＋`RunSink`（apply/restore は sink 側）✓。**`celtium$fontBatchSummary()` の文字列は1文字も不変** ✓（保持 counter は `celtium$fontRetentionSummary()` に分離 ✓）。
+- **gap①（最重要・修正として採用）**: **今日は拒否/例外時に font run の bytes を捨てる** ✗（`:5040-5042` で先に inactive 化・`:5064-5066` は理由を書くだけ）。既存の再 queue（`:6138-6150`・`:847`）は **group 単位**で別機構 ✓ →「挙動不変」と「glyph を失わない」は両立しない ✓。**保持を修正として採用（既定 ON）**、`-Dceltium.font.retaining=false` は**診断用の対照**（`nativeTextureCopy=false` と同じ形 ✓）。plan の「恒久的な正しさを lab flag に依存させない」に従い、**flag は正しさの条件ではない** ✓。**記録には「実装済・拒否 run が出る leg までは未行使」と正直に書く** ✓（受入行は byte-identical ✓）。
+- **gap③（意図的な挙動変更・これが唯一）**: 現行 run key に **target witness が無い** ✗（`:4875` は run の開始を止めるだけ）→ run が target をまたぎ得る＝§5.4 の target/alias 契約と同じ穴 ✓。`pendingTargetIdentity` を key に追加 ✓＝**独立の証拠**を要求（main↔非 main をまたぐ leg か、target 切替で key が変わる CPU 検査 ✓）。抽出に黙って混ぜない ✓。
+- **gap②④⑤**: per-target queue の所有は **R3b 後半**（immediate の受理/queue/record）✓、拒否理由は owner 側で付与 ✓、`close()` は任意・未配線 ✓。順序規則（glyph run を他の draw 種別の記録前に閉じる＝`submitImmediateBatch :5146` の entry flush）は**そのまま** ✓。
+- **配線（Lead の一括パスに追加）**: `FontBatch` の field 生成・`FontRunState`/`RunSink` 実装（sink が `:5050-5073` の apply/restore を引き取る）・呼び出し置換（6＋10＋外部2）・`celtium$fontBatchSummary()` の文字列不変を `verify_line_check.py` で確認 ✓。
+
 ## 0.394 **round 195: B10 の拒否経路が ring スロットを漏らす（新規発見・B11 の unit で閉じる）／`VulkanPostChain.java` 移譲完了**
 
 - **新規発見（frame-composite の申し送り）**: `recordPasses` は記録の最後（`requireTargetGeneration` :1021）で**例外を投げ得る**（記録中に frame target が置換された場合の意図した拒否 ✓）。一方 ring の会計は**記録開始時**にリセットされ（`:875` `setsThisRecording = 0`・`:292-293` `setRing[32]`/`setCursor`・`:1502-1504` の slot 前進）、**throw した recording が確保した slot は返らない** ✗（`setCursor` は進んだまま・`setsThisRecording` は予算を数えるだけ）。32 slot で **resize 直後に B10 の拒否がまとめて起きる**組み合わせは現実的 → **枯渇し得る** ✓。
