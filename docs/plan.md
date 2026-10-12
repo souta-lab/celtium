@@ -307,6 +307,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.322 **round 128: `renderString` bracket の split が出た — caller 側は約 2.5 %、残りは vanilla の glyph 本体**
+
+- **測定（glyph-fix の `rsplit-on`/`rsplit-off`・F3 on leg の集計行）**:
+  ```
+  rsplit-on : stringMillis=4665 stringCalls=2734 renderStringMillis=4663 renderStringCalls=3106
+  rsplit-off: stringMillis=337  stringCalls=581  renderStringMillis=336  renderStringCalls=1076
+  ```
+  ＝**`renderStringMillis`(4663) ≈ `stringMillis`(4665)**＝bracket が caller を捕捉している。
+  **`renderStringCalls=3106` 対 `stringCalls=2734`**＝**372 回が `drawString` を経由せず `renderString` に直接到達**（`renderStringAligned` 等）。
+- **split（着地済み short-circuit leg の `glyphMillis=4546` と突き合わせ）**:
+  **caller 自身の per-character 仕事 = 4663 − 4546 = 117 ms ≈ 2.5 %**、**残り 4,546 ms は vanilla の glyph 本体**。
+  ＝**`renderStringAtPos` fast path の測定された標的は小さい**（caller 側を置き換えても 2.5 % しか動かない）。
+- **帰結（判断の材料が揃った）**: F3 の text コストの実体は **vanilla の glyph 本体**（`charmap.indexOf`・`renderDefaultChar` 等）で、
+  **Celtium 側で置き換えるには大きな互換リスク**を伴う。caller 側の 2.5 % は fast path の対象として**見合わない**。
+  ＝**goal の「根拠のない倍率や達成率を使わない」に従い、F3 の残ラグは「vanilla のフォント本体が支配的」と結論**し、
+  **fast path は取らない**（取るなら互換リスクの明示と別 unit として判断）。
+- **この session の F3 の成果**: bind short-circuit（1.63M skip・0.07 µs/glyph 除去）＋**split の数値化**＋
+  **reporting line（`bindTextureCalls`/`bindShortCircuits`/`immediateStateCalls`）**＝**未説明のまま残さない**。
+
 ## 0.321 **round 127: `renderString` bracket を glyph-fix が実装中（leg 実行中・スロット使用中）**
 
 - **状態**: `CeltiumFontGlyphCapture.java` と `FontRendererMixin.java` が更新中（`renderString` = `func_180455_b` の bracket 追加）。
