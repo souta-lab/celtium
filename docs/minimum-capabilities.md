@@ -16,11 +16,13 @@ optional instrumentation, and the renderer runs without it.
 
 ## Device features
 
-| Feature | Why |
-|---|---|
-| `samplerAnisotropy` | used only when a texture asks for anisotropic filtering; the sampler falls back to trilinear |
-| `independentBlend` | separate blend state per colour attachment in the composite passes |
-| `depthClamp` | the vanilla depth-clamp state (`GL_DEPTH_CLAMP`) has a direct Vulkan equivalent |
+| Feature | Why | Verified by |
+|---|---|---|
+| `depthClamp` | the vanilla depth-clamp state (`GL_DEPTH_CLAMP`) has a direct Vulkan equivalent | one file names it |
+
+This table is short on purpose. `samplerAnisotropy` and `independentBlend` were written here first and then
+**removed after a grep found no consumer in the tree** - a capability list that names features the renderer
+never asks for is the same unsupported claim as a performance number with no measurement behind it.
 
 ## Formats
 
@@ -28,7 +30,7 @@ optional instrumentation, and the renderer runs without it.
 |---|---|
 | `VK_FORMAT_B8G8R8A8_UNORM` / `VK_FORMAT_R8G8B8A8_UNORM` | swapchain colour, framebuffer colour, texture uploads; both are queried and the first supported is chosen |
 | `VK_FORMAT_D32_SFLOAT` (fallback `D24_UNORM_S8_UINT`) | depth attachment |
-| `VK_FORMAT_R8G8B8A8_UNORM` + `VK_FORMAT_R8G8B8A8_SRGB` | vanilla textures and their sRGB variants |
+| `VK_FORMAT_R8G8B8A8_UNORM` | vanilla texture uploads |
 
 ## Limits the renderer relies on
 
@@ -40,7 +42,7 @@ table exists so a support request can be answered without reading the spec.
 | `maxImageDimension2D` | 4096 | the framebuffer and the largest vanilla texture atlas |
 | `maxColorAttachments` | 4 | the multi-attachment post-process targets |
 | `maxUniformBufferRange` | 16384 | the per-frame uniform block |
-| `maxPushConstantsSize` | 128 | the per-draw push constant block |
+| `maxPushConstantsSize` (queried as the push-constant limit) | 128 | the per-draw push constant block |
 | `maxPerStageDescriptorSamplers` | 16 | texture units |
 | `bufferImageGranularity` | at most 131072 | suballocation alignment for buffer/image aliasing |
 
