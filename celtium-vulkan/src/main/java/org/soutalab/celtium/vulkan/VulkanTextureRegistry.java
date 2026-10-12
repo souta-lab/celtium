@@ -1330,6 +1330,22 @@ public final class VulkanTextureRegistry {
         return "opaque=" + opaque + "/" + declared + (seen ? " firstOpaque=0x" + Integer.toHexString(first) : "");
     }
 
+    /**
+     * {@return which path filled the mirror for one GL texture id, and at what size}.
+     * <p>
+     * Read-only, for the panorama's per-draw line. The pixels themselves are not kept in the entry (they are
+     * summarised at fill time), so the source string and the size are the facts available at draw time - and they are
+     * the ones that answer "which texture is the descriptor sampling, and what filled it".
+     */
+    public String celtium$mirrorSourceFor(int glTextureId) {
+        Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+        String source = this.mirrorSourceById.get(Integer.valueOf(glTextureId));
+        if (entry == null) {
+            return source == null ? "no-entry" : source + "@no-entry";
+        }
+        return (source == null ? "unfilled" : source) + "@" + entry.width + "x" + entry.height;
+    }
+
     /** {@return the fills by source and the announcement drops, for the texture summary line}. */
     public String mirrorSourceSummary() {
         StringBuilder sources = new StringBuilder();
