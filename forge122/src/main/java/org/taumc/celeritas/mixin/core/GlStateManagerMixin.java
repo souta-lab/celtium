@@ -67,8 +67,14 @@ public abstract class GlStateManagerMixin {
                     int boundTexture = 0;
                     int activeUnit = -1;
                     try {
-                        activeUnit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-                        boundTexture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                        activeUnit = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x84E0);
+                        boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
+                        if (activeUnit == Integer.MIN_VALUE) {
+                            activeUnit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+                        }
+                        if (boundTexture == Integer.MIN_VALUE) {
+                            boundTexture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                        }
                         if (!org.soutalab.celtium.vulkan.VulkanDisplayListCensus.textureLogged(list)) {
                             System.out.println("[Celtium] CELTIUM_MODEL_TEXTURE list=" + list + " unit=" + activeUnit
                                     + " texture=" + boundTexture);

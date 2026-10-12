@@ -5592,7 +5592,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // group key cannot see, so it is answered before the fast-merge decision - the fast path must not skip a
             // check that would have refused.
             long programQueryStart = System.nanoTime();
-            int boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
+            int boundProgram = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8B8D);
+            if (boundProgram == Integer.MIN_VALUE) {
+                boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
+            }
             this.programQueryNanos += System.nanoTime() - programQueryStart;
             this.programQueryCount++;
             if (boundProgram != 0) {
