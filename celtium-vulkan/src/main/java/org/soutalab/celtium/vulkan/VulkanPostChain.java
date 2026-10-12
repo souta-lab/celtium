@@ -169,7 +169,15 @@ public final class VulkanPostChain {
     }
 
     private final VulkanContext context;
-    private final FrameImageTarget frameTarget;
+    /**
+     * The frame image target this executor resolves every {@code main} pass input/output against. Not final since B10:
+     * the backend replaces the target on a resize, and the executor has to move with it (see {@link #adoptFrameTarget}).
+     */
+    private FrameImageTarget frameTarget;
+    /** The generation of {@link #frameTarget}; a recording refuses when it changes underneath it (B10). */
+    private long frameTargetGeneration;
+    /** Recordings refused because the frame target moved while they were being made. */
+    private int targetMovesRefused;
     private final long renderPass;
     private final long setLayout;
     private final long descriptorPool;
@@ -824,6 +832,7 @@ public final class VulkanPostChain {
      *     that carried it has been accepted by the queue
      */
     public int recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
+        long recordedUnder = this.frameTargetGeneration;
         String unsupplied = unsuppliedInput(passes);
         if (unsupplied != null) {
             // Nothing has been recorded yet, so there is nothing to roll back: the caller still owns a frame it can
@@ -1009,8 +1018,62 @@ public final class VulkanPostChain {
         }
         // Counted only now: a recording that was refused (unsupplied input) or thrown away (injected failure) never
         // reached the queue, and postChains is read as "chains this executor ran", not "chains it was asked to run".
+        requireTargetGeneration(recordedUnder);
         this.chainsRun++;
         return this.pendingRecording;
+    }
+
+    /**
+     * The frame image target every {@code main} input/output of a pass resolves against, as it is <em>now</em>.
+     * <p>
+     * B10 of the maximum audit: this class used to hold the target it was created with in a final field, while the
+     * backend's {@code ensureFrameTarget(width, height)} settles the device, deletes that target and makes a new one.
+     * The executor then kept naming the destroyed image - {@code inIsMain}/{@code outIsMain} resolve through
+     * {@code colorImage()}/{@code colorView()} at record time, and the chain's own {@code shaderReadBarrier} names it
+     * too - so a chain recorded after a resize could read or write freed memory. The target is now a reference the
+     * backend can move, and a recording refuses rather than submitting when it moves underneath it.
+     */
+    public FrameImageTarget currentTarget() {
+        return this.frameTarget;
+    }
+
+    /** {@return the frame-target generation the executor is currently recording against}. */
+    public long targetGeneration() {
+        return this.frameTargetGeneration;
+    }
+
+    /**
+     * Moves the executor to a new frame image target, together with the generation that names it.
+     * <p>
+     * The caller is the backend, at the point it creates the replacement target - before any chain is recorded against
+     * it. Passing the same target again with a new generation is legal and is what a resize of the same object means.
+     * A recording that started under the previous generation is refused by {@link #recordPasses}, so nothing is ever
+     * submitted that names an image this executor no longer owns.
+     */
+    public void adoptFrameTarget(FrameImageTarget target, long generation) {
+        if (target == null) {
+            throw new IllegalArgumentException("post chain frame target must not be null");
+        }
+        this.frameTarget = target;
+        this.frameTargetGeneration = generation;
+    }
+
+    /**
+     * Refuses a recording whose frame target moved while it was being recorded.
+     * <p>
+     * A recording is only a sequence of commands in the caller's buffer until the caller submits it, and every
+     * {@code main} reference in it was resolved against the target current at the start. If the backend replaced that
+     * target in between, the recorded barriers and descriptors name a destroyed image; the honest answer is a refusal
+     * the caller's existing failure path already handles (frame abandoned, GL chain kept), not a submission that reads
+     * freed memory.
+     */
+    private void requireTargetGeneration(long recordedUnder) {
+        if (recordedUnder != this.frameTargetGeneration) {
+            this.targetMovesRefused++;
+            throw new IllegalStateException("the post chain's frame target moved while this recording was being made"
+                    + " (recorded under generation " + recordedUnder + ", now " + this.frameTargetGeneration
+                    + "); refusing to submit commands that name the replaced image");
+        }
     }
 
     /**

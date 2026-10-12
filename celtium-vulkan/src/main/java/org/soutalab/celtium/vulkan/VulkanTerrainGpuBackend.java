@@ -12520,6 +12520,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.targetWidth = width;
             this.targetHeight = height;
+            // B10 of the maximum audit: the post chain's executor holds the frame target every `main` pass input/output
+            // resolves against, and it used to keep the one it was created with. The old target's images are destroyed
+            // just above, so the executor has to move with the replacement before any chain is recorded against it;
+            // otherwise a chain recorded after this point would name freed memory. The generation is the target
+            // replacement count, and the executor refuses a recording whose generation moved underneath it.
+            if (this.postChain != null) {
+                this.postChain.adoptFrameTarget(this.frameTarget, this.targetGeneration);
+            }
             return true;
         } catch (RuntimeException | LinkageError error) {
             record("frame target " + width + "x" + height + " failed: " + describe(error));
