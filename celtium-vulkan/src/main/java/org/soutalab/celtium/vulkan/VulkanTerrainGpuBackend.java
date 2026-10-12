@@ -79,7 +79,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int commonVertexStride;
     private final int uniformAlignment;
 
-    private final Reference2ReferenceMap<RenderRegion, RegionResources> regionResources = new Reference2ReferenceOpenHashMap<>();
+    /** The terrain pass's region arenas and failed-upload ledger (refactoring plan R4, first half). */
+    private final TerrainRenderer terrain = new TerrainRenderer();
     private final Reference2ReferenceMap<TerrainRenderPass, VulkanTerrainPipeline> pipelines = new Reference2ReferenceOpenHashMap<>();
     private final List<String> diagnostics = new ArrayList<>();
 
@@ -253,13 +254,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int READBACK_SLOTS = 32;
     private final long[] readbackOffsets = new long[READBACK_SLOTS];
     /** The region the remembered reads come from; a frame's first draws all belong to the same one in practice. */
-    private RegionResources readbackFrom;
+    private TerrainRenderer.RegionResources readbackFrom;
     /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
     /** The diagnostic copy's size: one whole block per remembered draw, and the range the guard must cover. */
     private static final int READBACK_COPY_BYTES = 64;
     /** Whether the copy for each slot was actually issued; a refused slot's block is stale, not sampled data. */
     private final boolean[] readbackValid = new boolean[READBACK_SLOTS];
-    private final RegionResources[] readbackRegions = new RegionResources[READBACK_SLOTS];
+    private final TerrainRenderer.RegionResources[] readbackRegions = new TerrainRenderer.RegionResources[READBACK_SLOTS];
     private int readbackRefusals;
     private int readbackRegionsUsed;
 
@@ -401,7 +402,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackOffset;
     private int timestampSlots;
     private final Reference2ReferenceMap<Integer, TerrainRenderPass> timestampPasses = new Reference2ReferenceOpenHashMap<>();
-    private RegionResources readbackRegion;
+    private TerrainRenderer.RegionResources readbackRegion;
     private boolean readbackPending;
     private boolean readbackDone;
     private long lastSectionsDrawn;
@@ -535,7 +536,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public String describe() {
         StringBuilder builder = new StringBuilder("vulkan");
         builder.append(" [").append(this.context.deviceName()).append(']');
-        builder.append(" regions=").append(this.regionResources.size());
+        builder.append(" regions=").append(this.terrain.regionCount());
         builder.append(" draws=").append(this.lastDrawCommands);
         builder.append(" sections=").append(this.lastSectionsDrawn);
         builder.append(" uploaded=").append(this.lastUploadedBytes).append("B");
@@ -760,7 +761,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // reason recorded, which is the same shape as the missing-atlas skip just below. An injected allocation failure
         // here used to escape into Minecraft's render loop and end the run with "Game crashed!" and no report.
         try {
-            ensureUniformCapacity((this.regionResources.size() * MAX_UNIFORM_PASSES) + 1);
+            ensureUniformCapacity((this.terrain.regionCount() * MAX_UNIFORM_PASSES) + 1);
         } catch (RuntimeException error) {
             this.uniformPreparationFailures++;
             this.lastUniformPreparationFailure = String.valueOf(error);
@@ -2962,7 +2963,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * could not be created. The caller then draws the batch directly, so the fallback is a different way to submit the
      * same geometry rather than a drop.
      */
-    private boolean celtium$tryIndirectBatch(MemoryStack stack, RegionResources resources,
+    private boolean celtium$tryIndirectBatch(MemoryStack stack, TerrainRenderer.RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
             ChunkPrimitiveType primitiveType) {
         this.terrainIndirectOffers++;
@@ -6869,7 +6870,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private long celtium$arenaUploadCount() {
         long total = 0;
-        for (RegionResources resources : this.regionResources.values()) {
+        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             total += resources.vertexArena.uploadCount();
             if (resources.indexArena != null) {
                 total += resources.indexArena.uploadCount();
@@ -6881,7 +6882,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** {@return the bytes those uploads carried}, the other half of the same cost pair (task-51). */
     private long celtium$arenaUploadedBytes() {
         long total = 0;
-        for (RegionResources resources : this.regionResources.values()) {
+        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             total += resources.vertexArena.uploadedBytes();
             if (resources.indexArena != null) {
                 total += resources.indexArena.uploadedBytes();
@@ -8345,7 +8346,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " uniformPreparationFailures=" + this.uniformPreparationFailures
                 + " lastUniformPreparationFailure=" + this.lastUniformPreparationFailure
                 + " regionUploadFailures=" + this.regionUploadFailures
-                + " sectionsLeftUnbuilt=" + this.sectionsLeftUnbuilt
+                + " sectionsLeftUnbuilt=" + this.terrain.sectionsLeftUnbuilt()
                 + " terrainIndirect=[offers=" + this.terrainIndirectOffers
                 + " calls=" + this.terrainIndirectCalls
                 + " draws=" + this.terrainIndirectDraws
@@ -8738,8 +8739,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // lastBuiltFrame advanced with no geometry on the GPU, and nothing rebuilds a section that reads as
                 // built - the missing chunks were permanent.
                 for (ChunkTaskOutput output : entry.getValue()) {
-                    if (output.render != null && this.failedUploads.add(output.render)) {
-                        this.sectionsLeftUnbuilt++;
+                    if (output.render != null && this.terrain.noteFailedUpload(output.render)) {
+                        this.terrain.noteSectionsLeftUnbuilt(1);
                     }
                 }
                 record("region upload failed and was skipped: " + error + " (sections left un-built: "
@@ -8756,13 +8757,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     @Override
     public java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> consumeFailedUploads() {
-        if (this.failedUploads.isEmpty()) {
+        if (this.terrain.isEmpty()) {
             return java.util.Collections.emptySet();
         }
         java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> drained =
                 java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-        drained.addAll(this.failedUploads);
-        this.failedUploads.clear();
+        drained.addAll(this.terrain.failedUploads());
+        this.terrain.failedUploads().clear();
         return drained;
     }
 
@@ -8771,15 +8772,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // The region manager owns region lifetime (creating regions for loaded chunks and dropping empty ones).
         // It is reused unchanged; the Vulkan arenas are released for the regions it has dropped.
         this.regionManager.update();
-        if (this.regionResources.isEmpty()) {
+        if (this.terrain.isEmpty()) {
             return;
         }
         Set<RenderRegion> live = Collections.newSetFromMap(new IdentityHashMap<RenderRegion, Boolean>());
         live.addAll(this.regionManager.getLoadedRegions());
-        Iterator<Reference2ReferenceMap.Entry<RenderRegion, RegionResources>> iterator =
-                this.regionResources.reference2ReferenceEntrySet().iterator();
+        Iterator<java.util.Map.Entry<RenderRegion, TerrainRenderer.RegionResources>> iterator =
+                this.terrain.regionEntries().iterator();
         while (iterator.hasNext()) {
-            Reference2ReferenceMap.Entry<RenderRegion, RegionResources> entry = iterator.next();
+            java.util.Map.Entry<RenderRegion, TerrainRenderer.RegionResources> entry = iterator.next();
             if (!live.contains(entry.getKey())) {
                 // Same rule as delete(): a region's buffers and pipeline are released only once the GPU has finished
                 // with them, because eviction happens while frames are being submitted.
@@ -8857,7 +8858,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void collectMemoryStats(RenderSectionManager.DeviceMemoryStats destination) {
-        for (RegionResources resources : this.regionResources.values()) {
+        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             destination.deviceUsed += resources.vertexArena.deviceUsedMemoryL();
             destination.deviceAllocated += resources.vertexArena.deviceAllocatedMemoryL();
             if (resources.indexArena != null) {
@@ -9003,10 +9004,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("world teardown destroyed " + drained + " retired resources; the window device stays");
         }
         releaseRetiredImmediateGroups();
-        for (RegionResources resources : this.regionResources.values()) {
+        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             resources.delete();
         }
-        this.regionResources.clear();
+        this.terrain.releaseAll();
         for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
             pipeline.delete();
         }
@@ -9079,10 +9080,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         releaseRetiredImmediateGroups();
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
         uninstall();
-        for (RegionResources resources : this.regionResources.values()) {
+        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             resources.delete();
         }
-        this.regionResources.clear();
+        this.terrain.releaseAll();
         for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
             pipeline.delete();
         }
@@ -9168,7 +9169,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     // ------------------------------------------------------------------ upload path
 
     private void uploadRegion(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable graphUpdateTrigger) {
-        List<PendingMesh> pending = new ArrayList<>();
+        List<TerrainRenderer.PendingMesh> pending = new ArrayList<>();
         boolean needIndexBuffer = false;
 
         for (ChunkTaskOutput output : outputs) {
@@ -9182,7 +9183,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         continue;
                     }
                     needIndexBuffer |= mesh.indexBuffer() != null;
-                    pending.add(new PendingMesh(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
+                    pending.add(new TerrainRenderer.PendingMesh(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
                     resourcesFor(region).sectionFirstColor));
                 }
             } else if (output instanceof ChunkSortOutput) {
@@ -9194,7 +9195,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (storage != null) {
                         storage.removeIndexBuffer(sort.render.getSectionIndex());
                     }
-                    pending.add(new PendingMesh(sort.render.getSectionIndex(), meshEntry.getKey(), null,
+                    pending.add(new TerrainRenderer.PendingMesh(sort.render.getSectionIndex(), meshEntry.getKey(), null,
                             meshEntry.getValue(), null));
                 }
             } else {
@@ -9206,16 +9207,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
 
-        RegionResources resources = resourcesFor(region);
+        TerrainRenderer.RegionResources resources = resourcesFor(region);
         long uploaded = 0;
 
-        for (PendingMesh mesh : pending) {
+        for (TerrainRenderer.PendingMesh mesh : pending) {
             if (mesh.parts != null) {
                 ByteBuffer vertices = mesh.parts.vertexBuffer().getDirectBuffer();
                 int vertexBytes = mesh.parts.vertexBuffer().getLength();
                 if (mesh.sectionFirstColor != null) {
                     mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
-                    RegionResources owner = resourcesFor(region);
+                    TerrainRenderer.RegionResources owner = resourcesFor(region);
                     byte[] head = new byte[32];
                     java.nio.ByteOrder headOrder = vertices.order();
                     try {
@@ -9372,8 +9373,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * a count because the caller needs the identity, and identity is the whole point: the section must not be marked
      * built.
      */
-    private final java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> failedUploads =
-            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     /**
      * Sections a failed region upload left un-built, counted for the acceptance (BH-25). Before the fix the same
      * failure left them marked built, so this number was invisible: it was zero because nothing distinguished the two.
@@ -9382,8 +9381,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.HashMap<Integer, Integer> colourCounts = new java.util.HashMap<>();
     private int colourBatches;
 
-    private void logFirstVertex(java.util.List<PendingMesh> pending) {
-        for (PendingMesh mesh : pending) {
+    private void logFirstVertex(java.util.List<TerrainRenderer.PendingMesh> pending) {
+        for (TerrainRenderer.PendingMesh mesh : pending) {
             if (mesh.parts != null && mesh.sectionFirstColor != null) {
                 int colour = mesh.sectionFirstColor[mesh.sectionIndex];
                 Integer previous = colourCounts.get(colour);
@@ -9405,7 +9404,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (verticesLogged >= 8) {
             return;
         }
-        for (PendingMesh mesh : pending) {
+        for (TerrainRenderer.PendingMesh mesh : pending) {
             if (mesh.parts != null && mesh.sectionFirstColor != null) {
                 // Counted for every mesh, not just the first few, so a colour that only some sections carry shows up.
             }
@@ -9413,7 +9412,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (verticesLogged >= 8) {
             return;
         }
-        for (PendingMesh mesh : pending) {
+        for (TerrainRenderer.PendingMesh mesh : pending) {
             if (mesh.parts == null) {
                 continue;
             }
@@ -9479,11 +9478,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the one comparison that the draw-time readback cannot make - whether the arena holds what the upload path was
      * given.
      */
-    private void verifyUpload(RegionResources resources, java.util.List<PendingMesh> pending) {
+    private void verifyUpload(TerrainRenderer.RegionResources resources, java.util.List<TerrainRenderer.PendingMesh> pending) {
         if (uploadVerified || resources.vertexArena.isEmpty()) {
             return;
         }
-        for (PendingMesh mesh : pending) {
+        for (TerrainRenderer.PendingMesh mesh : pending) {
             if (mesh.parts == null) {
                 continue;
             }
@@ -9514,20 +9513,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    private RegionResources resourcesFor(RenderRegion region) {
-        RegionResources resources = this.regionResources.get(region);
-        if (resources == null) {
-            resources = new RegionResources(this.context, this.commonVertexStride);
-            this.regionResources.put(region, resources);
-        }
-        return resources;
+    private TerrainRenderer.RegionResources resourcesFor(RenderRegion region) {
+        return this.terrain.resourcesFor(this.context, region, this.commonVertexStride);
     }
 
-    private VulkanArena indexArena(RegionResources resources) {
-        if (resources.indexArena == null) {
-            resources.indexArena = new VulkanArena(this.context, 64 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 4);
-        }
-        return resources.indexArena;
+    private VulkanArena indexArena(TerrainRenderer.RegionResources resources) {
+        return this.terrain.indexArena(this.context, resources);
     }
 
     // ------------------------------------------------------------------ draw path
@@ -9551,7 +9542,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         try {
-            ensureUniformCapacity(this.regionResources.size());
+            ensureUniformCapacity(this.terrain.regionCount());
         } catch (RuntimeException error) {
             this.uniformPreparationFailures++;
             this.lastUniformPreparationFailure = String.valueOf(error);
@@ -9615,7 +9606,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         while (iterator.hasNext()) {
             ChunkRenderList renderList = iterator.next();
             RenderRegion region = renderList.getRegion();
-            RegionResources resources = this.regionResources.get(region);
+            TerrainRenderer.RegionResources resources = this.terrain.resourcesIfPresent(region);
             SectionRenderDataStorage storage = region.getStorage(pass);
 
             if (resources == null || storage == null) {
@@ -9798,7 +9789,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // A buffer copy is only legal outside a render pass instance, so every remembered draw is copied here.
         if (VERTEX_DIAGNOSTICS && !this.readbackDone) {
             for (int slot = 0; slot < this.readbackSlots; slot++) {
-                RegionResources region = this.readbackRegions[slot];
+                TerrainRenderer.RegionResources region = this.readbackRegions[slot];
                 if (region == null) {
                     continue;
                 }
@@ -10078,7 +10069,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    private void bindVertexBuffer(MemoryStack stack, RegionResources resources) {
+    private void bindVertexBuffer(MemoryStack stack, TerrainRenderer.RegionResources resources) {
         LongBuffer buffers = stack.mallocLong(1);
         buffers.put(0, resources.vertexArena.buffer().buffer());
         LongBuffer offsets = stack.mallocLong(1);
@@ -13934,7 +13925,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private void ensureSharedIndexBuffer(ChunkPrimitiveType primitiveType) {
         int maxVertices = 0;
-        for (RegionResources resources : this.regionResources.values()) {
+        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             long bytes = resources.vertexArena.deviceAllocatedMemoryL();
             maxVertices = Math.max(maxVertices, (int) (bytes / this.commonVertexStride));
         }
@@ -14036,7 +14027,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    private void recordReadback(RegionResources resources, long sourceOffset, int slot) {
+    private void recordReadback(TerrainRenderer.RegionResources resources, long sourceOffset, int slot) {
         ensureReadback();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkBufferCopy.Buffer region = org.lwjgl.vulkan.VkBufferCopy.calloc(1, stack);
@@ -14143,44 +14134,5 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Per-region device memory. */
-    private static final class RegionResources {
-        final VulkanArena vertexArena;
-        final int[] sectionFirstColor = new int[RenderRegion.REGION_SIZE];
-        /** The first 32 bytes of the first vertex of each section, as the upload saw them. */
-        final byte[][] sectionFirstVertex = new byte[RenderRegion.REGION_SIZE][];
-        VulkanArena indexArena;
 
-        RegionResources(VulkanContext context, int vertexStride) {
-            this.vertexArena = new VulkanArena(context, 512 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride);
-        }
-
-        int bufferCount() {
-            return 1 + (this.indexArena != null ? 1 : 0);
-        }
-
-        void delete() {
-            this.vertexArena.delete();
-            if (this.indexArena != null) {
-                this.indexArena.delete();
-                this.indexArena = null;
-            }
-        }
-    }
-
-    private static final class PendingMesh {
-        final int sectionIndex;
-        final TerrainRenderPass pass;
-        final BuiltSectionMeshParts parts;
-        final ChunkSortOutput.SortedMesh sorted;
-        final int[] sectionFirstColor;
-
-        PendingMesh(int sectionIndex, TerrainRenderPass pass, BuiltSectionMeshParts parts,
-                    ChunkSortOutput.SortedMesh sorted, int[] sectionFirstColor) {
-            this.sectionIndex = sectionIndex;
-            this.pass = pass;
-            this.parts = parts;
-            this.sorted = sorted;
-            this.sectionFirstColor = sectionFirstColor;
-        }
-    }
 }
