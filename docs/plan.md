@@ -393,6 +393,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.416 **round 216: R7 の window/world 生涯分離を実測で確認（境界は保たれている）**
+
+- **確認方法**: 各入口の本体を機械的に走査し、**world 側の状態**（`regionManager`・`configuration`・`terrain.`・`modelGeometry` ✓）と**window 側の状態**（`swapchain`・`frameTarget`・`targetRegistry`・`commandBuffer`・`scheduler` ✓）への参照を列挙 ✓。
+- **結果**:
+  | 入口 | world 参照 | window 参照 |
+  |---|---|---|
+  | `celtium$adoptTerrainState`（world→window の扉 ✓） | `regionManager`・`configuration` ✓ | **なし** ✓ |
+  | `celtium$releaseWorldResources`（world 解放の扉 ✓） | `terrain.`・`modelGeometry` ✓ | **メッセージ内の語のみ** ✓（「the window device and swapchain are kept」✓） |
+  | `install()`（window 公開 ✓） | **なし** ✓ | **なし** ✓ |
+  → **2つの扉だけが lifetime を跨ぐ** ✓ という契約がコード上で成り立っている ✓（`VulkanRenderer` の javadoc に書いた内容と一致 ✓）。
+- **残り（R7 後半）**: `render`／`recordRenderPass`（依存40＝"Common class" ✓）を移す ✓ — これは window/world ではなく **frame 生涯**の面で、R7 の最後の単位 ✓。
+
 ## 0.414 **round 215: 初期化子喪失の静的検査を新設 → さらに6件検出・修正。leg で crash クラス完全閉止を確認**
 
 - **新設（`scripts/cpu-contract/field_initializer_check.py`）**: パッケージ内の全 field 宣言を **R0 基準（`5a22acb5b`）** と比較し、**基準で初期化子を持っていたのに今は持たない field** を FAIL として列挙する ✓。限界も明記 ✓（初期化子が必要だったことまでは証明できない ✓ — それは leg だけが示せる ✓）が、**喪失を見落とすことは不可能にする** ✓。
