@@ -8549,6 +8549,27 @@ public final class ValidationClient {
         // the user's lag unmeasured. They are written here instead, so every run that produces a report carries both
         // windows, with their sample counts and the window names beside them.
         celtium$reportFrameIntervals();
+        // The client loop's own tick timing, which no renderer bracket covers. The (g) comparison left ~17.4 ms per
+        // frame outside every instrument and this scene runs more than one world tick per frame (241 ticks over 217
+        // frames), so the tick is the first candidate and had no instrument at all. Read reflectively, by name, so
+        // this fixture stays loadable in a configuration without the Celtium jar (the reference arm's leg).
+        try {
+            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
+            long ticks = ((Number) timing.getMethod("ticks").invoke(null)).longValue();
+            long totalMillis = ((Number) timing.getMethod("totalMillis").invoke(null)).longValue();
+            report.addProperty("gameTickSummary", String.valueOf(timing.getMethod("summary").invoke(null)));
+            report.addProperty("gameTickCount", Long.valueOf(ticks));
+            report.addProperty("gameTickMillisTotal", Long.valueOf(totalMillis));
+            report.addProperty("gameTickMillisWorst",
+                    Long.valueOf(((Number) timing.getMethod("worstMillis").invoke(null)).longValue()));
+            if (worldFrames > 0) {
+                report.addProperty("gameTickMillisPerFrame", Long.valueOf(totalMillis / worldFrames));
+            } else {
+                report.addProperty("gameTickMillisPerFrame", "no frames");
+            }
+        } catch (Throwable absent) {
+            report.addProperty("gameTickSummary", "not installed: " + absent);
+        }
         // The counter summary has to be readable at the end of EVERY leg. The three bounded triggers are not enough:
         // `frame 120` and `present 120` are snapshots a slow leg never reaches (the r166-bh09-forced3 leg reached 86
         // presents and printed no CELTIUM_VERIFY line at all), world teardown is skipped by a fixture that exits with
