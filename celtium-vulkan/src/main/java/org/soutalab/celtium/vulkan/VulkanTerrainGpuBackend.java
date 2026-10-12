@@ -1169,6 +1169,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private final FontBatch fontBatch = new FontBatch();
 
+    /** The font domain's fragment of the verification line (refactoring plan R2, stage 1). */
+    private final FontStatistics fontStats = new FontStatistics(this.fontBatch);
+
     {
         this.fontBatch.celtium$setFontRunState(new FontBatch.FontRunState() {
             @Override public boolean stalled() { return VulkanTerrainGpuBackend.this.gpuStalled; }
@@ -8511,9 +8514,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // shutdown hook, and a leg whose fixture exits early loses it - measured: the font-strip2 leg has no
                 // CELTIUM_FONT_GLYPH_SUMMARY line at all, so the counter that says the degenerate vertices were
                 // inserted was unreadable exactly in the leg that needed it. This line is written during the run.
-                + " fontStripSeparators=" + this.fontBatch.fontStripSeparators()
-                + " fontRunsStarted=" + this.fontBatch.fontRunsStarted()
-                + " fontQuadsAppended=" + this.fontBatch.fontQuadsAppended()
+                + this.fontStats.run0()
                 // The bind chain, in the summary rather than only in the bounded CELTIUM_UNIT_BIND lines: the arrivals
                 // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
                 // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
