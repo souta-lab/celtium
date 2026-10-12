@@ -307,6 +307,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.324 **round 130: goal (e) の leg レシピを記録（gui-stage が budget 切れで辞退・4 phase の flags と読み方）**
+
+- **base flags（全 phase で同一 scene/camera・両 half に `pinSections`）**:
+  `--validate`＋`pinSections=<n>`＋`scene=videoSettings`＋`glless=true`＋`presentReadback=true`＋`dumpPresentedImage=true`＋`videoSettingsOption=RENDER_CLOUDS`。
+  **`resizeViaCompositor` は (e) では不要**（有効にすると変数が増える）。
+- **Phase 1（変更）**: `RENDER_CLOUDS` を Fancy → OFF（画面自身の dispatch 経由）＋`saveOptions()`。既存 chain が `videoSettingsChain` を記録する。
+- **Phase 2（native frame が変わる）**: **counter が正直な読み**（picture floor が boot-to-boot 23.5 % のため）:
+  **`partialColorMaskGroups` 506（Fancy）対 368（非 Fancy）**＝BH-10 が着地させた colour-mask 経路で**picture floor の影響を受けない**。
+  加えて**雲の見える sky region の crop**（座標つき）。
+- **Phase 3（復元）**: chain が**元の値に一致するまで押す**（8 回上限）＋`videoSettingsRestored` の **`(restored)`/`(NOT restored)` の接尾辞を読む**
+  （**field 名ではなく**・修正前は値が循環しているのに "restored" と出ていた）。frame は phase 1 と比較し、**pixel hash より counter が 506 に戻ることを優先**。
+- **Phase 4（`REQUIRES_RENDERER_RELOAD`）**: **GUI scale** が適切な行（この session が測った scissor/viewport 経路も動く）。
+  **名指しすべき gap**: **panel gate は `optionsRowList` を読む**＝**vanilla の `GuiVideoSettings` にしか無い**ため、
+  `:6198`/`:6699` が `GuiVideoSettings` に固定されたまま。＝**reload 行は Celeritas 画面で「押せる」が、その panel 統計は既存コードでは gate できない**。
+  **Celeritas 画面自身の layout 読みが要る**＝**fixture の gap であり renderer の gap ではない**（gate を下げて通さない）。
+- **記録に持ち込む2点（gui-stage の指示）**:
+  1. **`guiScreenOpenedVia` は Celeritas 画面を決して名指ししない**（fallback text を運ぶ）。**`guiClickDivertedTo`（divert）と `guiScreenClassAtCapture`（picture）**を読む。
+     ＝`guiScreenOpenedVia` に書かれた受入は**永久に失敗として読まれる**。
+  2. **139 色の panel 数値は vanilla 画面のもの**（Celeritas は 587 色）。**2画面の panel 統計を比較しない**（「異なる画面の比較」は未検証の row より価値が低い）。
+- **担当**: gui-stage は budget 切れで**どちらの leg も取らない**（重複リスク無し）。chain・restore 修正・capture 受入は既に着地済み（`450265208` ほか）なので、**leg は flags と読みの問題**。
+
 ## 0.323 **round 129: F3 の split 確定（glyph-fix `7434a950b`）— caller は 0.13 %、vanilla glyph 本体が 3.15 µs/glyph**
 
 - **測定（`rsplit-on`・F3 on・1,280,000 glyph・`renderString` 3,106 回・同一 leg に両 bracket）**:
