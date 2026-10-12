@@ -303,6 +303,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long currentGroupLightGeneration;
     /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
     private long scissorCapturedGroups;
+    /**
+     * Groups whose clip came from the live record because the group opened with the scissor disabled.
+     * <p>
+     * Counted separately from {@link #scissorCapturedGroups} so the two capture moments stay distinguishable: a
+     * nonzero value here is the case BH-09 was about (the game enables the scissor after offering the batch), while
+     * the other counter is the ordinary open-time capture.
+     */
+    private long scissorLateCapturedGroups;
     private PreparedImmediate currentPreparedImmediate;
 
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
@@ -1344,6 +1352,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long alphaTestDisabledGroups;
     /** The last comparison function captured, as the raw GL enum; 0 means the test was disabled for that batch. */
     private int lastAlphaFunc;
+    /**
+     * BH-03's acceptance instrument: which selector and which reference the push block actually carried.
+     * <p>
+     * The finding's question is whether the game's comparison and reference reach the shader at all, and a captured
+     * value is not that answer - the slot at offset 100 is what the fragment reads, and it is written from
+     * {@code celtium$alphaFuncSelector}, which can substitute the measurement override. Counting the written value
+     * (and the reference written beside it at 112) is what lets one leg say "the property restored the function"
+     * rather than "the mirror holds the function".
+     */
+    private final java.util.Map<Integer, Long> alphaSelectorCounts = new java.util.LinkedHashMap<Integer, Long>();
+    private int lastAlphaSelector = -1;
+    private float lastAlphaPushReference = Float.NaN;
+    /** Distinct references written to the push block, bounded: the game uses a handful (0.1, 0.5, 1/255, 0). */
+    private final java.util.Set<Integer> alphaReferenceValues = new java.util.LinkedHashSet<Integer>();
     /**
      * Batches a failed window flush puts back on the queue instead of throwing away.
      * <p>
@@ -7448,8 +7470,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.lightmapCoords = this.currentGroupLightmapCoords;
             // The state captured when the group was opened, not the live state: see currentGroupFog.
             group.fog = this.currentGroupFog;
-            group.scissorBox = this.currentGroupScissor;
-            group.scissorEnabled = this.currentGroupScissorEnabled;
+            // BH-09's remaining half. The clip is captured where the group opens, but Celeritas's own UI enables the
+            // scissor *after* offering the batch, so a group opened under a disabled scissor closed as disabled and
+            // scissorCapturedGroups stayed at zero even though the live read in the same file narrows 215 line
+            // batches. The late record is therefore taken here, but only when the open-time capture had nothing, so
+            // the open-time rule keeps its precedence and the late case is counted rather than silently applied.
+            int[] clipBox = this.currentGroupScissor;
+            boolean clipEnabled = this.currentGroupScissorEnabled;
+            if (!clipEnabled && GROUP_SCISSOR
+                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
+                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled()) {
+                int[] lateClip = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox();
+                if (lateClip != null) {
+                    clipBox = lateClip.clone();
+                    clipEnabled = true;
+                    this.scissorLateCapturedGroups++;
+                }
+            }
+            group.scissorBox = clipBox;
+            group.scissorEnabled = clipEnabled;
             group.polygonOffsetEnabled = this.currentGroupPolygonOffsetEnabled;
             group.polygonOffsetFactor = this.currentGroupPolygonOffsetFactor;
             group.polygonOffsetUnits = this.currentGroupPolygonOffsetUnits;
@@ -7519,6 +7559,41 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             text.append("0x").append(Integer.toHexString(mask)).append(':').append(this.colorMaskHistogram[mask]);
             any = true;
+        }
+        return text.append(']').toString();
+    }
+
+    /** {@return the selectors the push block carried, with their counts} - BH-03's written-value census. */
+    private String alphaSelectorSummary() {
+        if (this.alphaSelectorCounts.isEmpty()) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder("[");
+        boolean first = true;
+        for (java.util.Map.Entry<Integer, Long> entry : this.alphaSelectorCounts.entrySet()) {
+            if (!first) {
+                text.append(' ');
+            }
+            text.append("0x").append(Integer.toHexString(entry.getKey().intValue())).append(':')
+                    .append(entry.getValue());
+            first = false;
+        }
+        return text.append(']').toString();
+    }
+
+    /** {@return the distinct references the push block carried}, decoded, so a leg reads thresholds not bit patterns. */
+    private String alphaReferenceValueSummary() {
+        if (this.alphaReferenceValues.isEmpty()) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder("[");
+        boolean first = true;
+        for (Integer bits : this.alphaReferenceValues) {
+            if (!first) {
+                text.append(' ');
+            }
+            text.append(round3(Float.intBitsToFloat(bits.intValue())));
+            first = false;
         }
         return text.append(']').toString();
     }
@@ -7614,10 +7689,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " scissorBoundarySplits=" + this.scissorBoundarySplits
                 + " lightParamBoundarySplits=" + this.lightParamBoundarySplits
                 + " scissorCapturedGroups=" + this.scissorCapturedGroups
+                + " scissorLateCapturedGroups=" + this.scissorLateCapturedGroups
                 + " alphaFuncGroups=" + this.alphaFuncGroups
                 + " nonGreaterAlphaFuncGroups=" + this.nonGreaterAlphaFuncGroups
                 + " alphaTestDisabledGroups=" + this.alphaTestDisabledGroups
                 + " lastAlphaFunc=" + this.lastAlphaFunc
+                + " alphaSelectorCounts=" + alphaSelectorSummary()
+                + " lastAlphaPushRef=" + round3(this.lastAlphaPushReference)
+                + " alphaReferenceValues=" + alphaReferenceValueSummary()
                 + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
                 + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
                         : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
@@ -12432,7 +12511,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Written outside the combine branch as well, because the buffer is shared: a group that follows a
                 // combine group must not inherit the combine's compare value even though the combine's own branch
                 // never reads it (a negative alpha reference selects the mix path before the comparison).
-                push.putFloat(100, celtium$alphaFuncSelector(state));
+                int alphaSelector = celtium$alphaFuncSelector(state);
+                push.putFloat(100, alphaSelector);
+                this.alphaSelectorCounts.merge(Integer.valueOf(alphaSelector), Long.valueOf(1L), (a, b) ->
+                        Long.valueOf(a.longValue() + b.longValue()));
+                this.lastAlphaSelector = alphaSelector;
+                this.lastAlphaPushReference = state.length > 6 ? Float.intBitsToFloat(state[6]) : Float.NaN;
+                if (this.alphaReferenceValues.size() < 12) {
+                    this.alphaReferenceValues.add(Integer.valueOf(state.length > 6 ? state[6] : 0));
+                }
                 // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every
                 // group that carries them rather than guarded per pipeline - only the lit layout reads past 128, and
                 // a lit group always arrives with its params attached.
