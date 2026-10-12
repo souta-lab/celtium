@@ -4269,6 +4269,48 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** The colour texture recorded for a framebuffer identity as {texture, width, height}, or null. */
+    /**
+     * Prints, once per distinct render-target identity, which image the routing rule gives it.
+     * <p>
+     * The missing HUD needed exactly this and nothing else could answer it: the HUD's batches are accepted and drawn,
+     * but which of the renderer's images they land in is decided by the identity the game had bound when they were
+     * offered, and no existing line names that mapping for a frame after frame 0 (`CELTIUM_WINDOW_DRAW` is bounded, and
+     * `pairLabelForIdentity` reports a label the attach does not follow). Bounded to
+     * {@link #TARGET_IMAGE_LOG_LIMIT} distinct identities, printed at the first offer of each, with the three images the
+     * renderer owns beside it so the route can be read against them.
+     */
+    private void celtium$traceTargetImage(long identity) {
+        if (this.targetImageLogs >= TARGET_IMAGE_LOG_LIMIT || this.tracedTargetIdentities.contains(Long.valueOf(identity))) {
+            return;
+        }
+        this.tracedTargetIdentities.add(Long.valueOf(identity));
+        this.targetImageLogs++;
+        boolean isMain = this.targetRegistry.currentIsMain();
+        long[] colourTexture = framebufferColorTexture(identity);
+        GllessFrameTarget target = offTargetTarget();
+        String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
+        long frameImage = this.frameTarget == null ? 0L : this.frameTarget.colorImage();
+        long chainPair = target == null ? 0L : target.chainPairColorImage();
+        long defaultPair = target == null ? 0L : target.offTargetColorImage();
+        long routed = "frame-image".equals(route) ? frameImage
+                : "chain-pair".equals(route) ? chainPair
+                : "default-pair".equals(route) ? defaultPair : 0L;
+        System.out.println("[Celtium] CELTIUM_TARGET_IMAGE identity=0x" + Long.toHexString(identity)
+                + " isMain=" + isMain + " route=" + route
+                + " colourTexture=" + (colourTexture == null || colourTexture.length == 0 ? "none"
+                        : Integer.toString((int) colourTexture[0]))
+                + " routedImage=0x" + Long.toHexString(routed)
+                + " frameImage=0x" + Long.toHexString(frameImage)
+                + " chainPair=0x" + Long.toHexString(chainPair)
+                + " defaultPair=0x" + Long.toHexString(defaultPair));
+    }
+
+    /** Distinct identities {@code CELTIUM_TARGET_IMAGE} has reported; see {@link #celtium$traceTargetImage}. */
+    private static final int TARGET_IMAGE_LOG_LIMIT =
+            Integer.getInteger("celtium.vulkan.targetImageLines", 12).intValue();
+    private final java.util.Set<Long> tracedTargetIdentities = new java.util.HashSet<Long>();
+    private int targetImageLogs;
+
     private long[] framebufferColorTexture(long identity) {
         return this.publishedTextures.colorTexture(identity);
     }
@@ -5575,6 +5617,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // second framebuffer was bound were enqueued as main-target work. That is why the off-target pass found an
                 // empty queue every run (audit A10/A32). Resetting the flag keeps the older path consistent as well.
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
+                celtium$traceTargetImage(this.currentGroupTarget);
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
                 this.currentGroupFog = null;
@@ -5713,6 +5756,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 Integer seen = this.blendPairs.get(pair);
                 this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
+                celtium$traceTargetImage(this.currentGroupTarget);
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupTexMatrix = celtium$textureAffine();
                 // The registry records this group was built against: the fast path asks "is the offer's image
