@@ -1,0 +1,50 @@
+{
+  "scope": "isolated CPU source witnesses; dependency stubs; no Vulkan device/game/image acceptance",
+  "sourceManifestSha256": "e065b6600272f0ef029020ef884f00fc6765269d79cc87a21dfb6edb91b7d608",
+  "sources": {
+    "source/forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherer.java": "5b553d82c78266bb6054357d9c53f4f39956ccf2d360445ae1519aa9899e88ed",
+    "source/celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java": "1f8ff52d25cf6df6ff41087a126c4727b51fd982e5cb422f61fcff6de4528ed9",
+    "source/forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java": "9f93ee004445fece0bfa8510b936c9b23053bbacc2c8e70af36c401538f918ab",
+    "source/celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanFrameArena.java": "f7094b04626bddaeda0e298667bc4617d51f91dcf6ea0ab3c0c055a6ca507b46",
+    "source/celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramePassTimings.java": "38a4a5780bfffcde6b086937de7b970f71bea1832da6904d754dfa9aa1b4c608",
+    "delta/RenderItemMixin.java": "b8bb8a9cd250a3af4828650b4fc4ed5375f3470cc9772854a888cacbc1239511",
+    ".celtium-work/mc-sources/net/minecraft/client/renderer/BufferBuilder.java": "16d54c6a4ca01da530e0fb5d28bca73b341b5ce23904df02594072e7a8254ddd"
+  },
+  "runs": [
+    {
+      "name": "EntityProbe",
+      "exit": 0,
+      "stdout": "entity: initial=1 added-same-tick=1 next-tick=2 changed-pass-same-tick=2 next-tick=1\n"
+    },
+    {
+      "name": "CopyKeyProbe",
+      "exit": 0,
+      "stdout": "copy: rectA-key=30064771392 rectB-key=30064771392 different-size-key=30064771392 collide=true\n"
+    },
+    {
+      "name": "FontProbe",
+      "exit": 0,
+      "stdout": "font: offered=2 real-taken=1 accepted-counter=2\n"
+    },
+    {
+      "name": "ArenaProbe",
+      "exit": 0,
+      "stdout": "arena: sealed-region abandon then completion; third frame blocked=true blocked-openings=1\n"
+    },
+    {
+      "name": "TimingProbe",
+      "exit": 0,
+      "stdout": "timing: frame=1855371 world=1845766 nested-clouds=1839913 true-outside-world=9605 reported-residual=0 ns\n"
+    },
+    {
+      "name": "ItemBytesProbe",
+      "exit": 0,
+      "stdout": "item: cube-used-ints=168 cached-ints=32768 replay-vertices=4681 (expected 24)\n"
+    },
+    {
+      "name": "ItemReplayProbe",
+      "exit": 0,
+      "stdout": "item replay: entered with lighting=true; returned lighting=false (Forge cleanup expects true)\n"
+    }
+  ]
+}
