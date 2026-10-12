@@ -183,6 +183,16 @@ public final class TextureCopyService {
     /** Readback submissions the copy path actually made, and the wall time they took. */
     private int textureCopyReadbacks;
     private long textureCopyReadbackNanos;
+    /**
+     * How many pixels of the copies that read the window got their alpha forced to opaque, and how many such copies
+     * there were. The GL rule and the measurement that names it are at the forcing site in {@code copyTexture}: the
+     * default framebuffer has no alpha bits, so the emulation owes the game an alpha read of 1. Counted rather than
+     * assumed - a leg whose menu picture is still flat and whose count is 0 has a different fault.
+     */
+    private long textureCopyWindowAlphaForced;
+    private int textureCopyWindowAlphaCopies;
+    /** How many native blits were declined because the window's alpha rule cannot be expressed by a blit. */
+    private int textureCopyWindowAlphaBlitsDeclined;
     private String lastTextureCopyRefusal = "none";
     private int readResolveLogs;
     /** Copies that took the native GPU blit route, and those the blit refused, with the last reason. */
@@ -378,6 +388,14 @@ public final class TextureCopyService {
         if (NATIVE_TEXTURE_COPY) {
             String blitRefusal = this.host.registry().blitRefusal(destName, image, this.host.targetWidth(),
                     this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
+            if (blitRefusal == null && windowAlphaSource(readFbo, image)) {
+                // A blit cannot force the alpha the window's GL read owes the game (see windowAlphaSource), and
+                // `blitInto` has no channel mask. Declining is the honest choice: the host route below applies the
+                // rule and is the arm this project verifies. Counted, so "the blit was used and the picture is still
+                // washed out" and "the blit declined and the host read fixed it" are different logs.
+                this.textureCopyWindowAlphaBlitsDeclined++;
+                blitRefusal = "the source is the window, whose GL alpha reads 1 but whose image carries the draws' alpha";
+            }
             if (blitRefusal == null) {
                 // The faces' window first, and no wait: the queue runs the blit after the draws that filled the
                 // source and before the draws that sample the mirror, which is the ordering the host path got from
@@ -427,6 +445,33 @@ public final class TextureCopyService {
         this.textureCopyReadbacks++;
         if (pixels == null) {
             return refuseTextureCopy("the rectangle read of the owned image failed");
+        }
+        // The GL rule this path owes the game, and the reason the main menu was flat grey (round 223).
+        // `glCopyTexSubImage2D` reads the *bound read framebuffer*. When that is the default framebuffer - GL name 0,
+        // the window - there are no alpha bits, so every pixel it yields is opaque whatever the colour attachment
+        // held; the hardware emulation of that is an alpha read of 1 (the same value ANGLE's Vulkan backend pins for
+        // its window image, `kEmulatedAlphaValue`). A Vulkan image always has the channel, and this renderer's frame
+        // image carries the alpha the game's own draws wrote: `GuiMainMenu.drawPanorama` blends with
+        // `tryBlendFuncSeparate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ZERO)`, whose *alpha* equation is dst = src, so
+        // the panorama's quads left 0x80 and 0x00 in the very 256x256 the menu's blur reads back. Measured
+        // (`r212-panhost-diagb`, present=2): the copy's first four pixels were 0x80313b58 0x80313a5a 0x8031395c
+        // 0x8030395e and only 24899 of 65536 pixels were opaque, so the *opaque* background texture vanilla relies on
+        // was 38% transparent. `rotateAndBlurSkybox` then draws its full-screen quads with `SRC_ALPHA` blending, and
+        // `renderSkybox`'s final composite quad likewise: at 38% coverage the blurred panorama cannot cover the frame
+        // image, so the presented menu kept its white background under `drawGradientRect`'s wash and only the sharp
+        // bottom-left 256x256 (drawn directly, unblended by the copy) showed the panorama. The rule is applied only
+        // where the GL source really is the default framebuffer: a copy out of an offscreen FBO keeps its alpha,
+        // because that framebuffer has the channel the game asked for.
+        if (windowAlphaSource(readFbo, image)) {
+            int forced = 0;
+            for (int index = 0; index < pixels.length; index++) {
+                if ((pixels[index] >>> 24) != 0xFF) {
+                    pixels[index] |= 0xFF000000;
+                    forced++;
+                }
+            }
+            this.textureCopyWindowAlphaForced += forced;
+            this.textureCopyWindowAlphaCopies++;
         }
         VulkanTextureRegistry registry = this.host.registry();
         int[][] levels = new int[1][];
@@ -507,12 +552,54 @@ public final class TextureCopyService {
                     // readback is reading a different target".
                     + " firstPixels=[" + Integer.toHexString(pixels[0]) + "," + Integer.toHexString(pixels[1])
                     + "," + Integer.toHexString(pixels[2]) + "," + Integer.toHexString(pixels[3]) + "]"
-                    + " nonWhite=" + countNonWhite(pixels));
+                    + " nonWhite=" + countNonWhite(pixels)
+                    // Why the rectangle is a frame old: whether anything was pending when the copy ran, how many
+                    // groups and how many batches were in the open one, and whether a window was mid-flight (the
+                    // flush returns immediately in that case, line 6730 of the backend, so a copy inside an open
+                    // window would read the image as it stands and never see the draws it is a copy of).
+                    + " pendingWork=" + this.host.hasPendingImmediateWork()
+                    + " groups=" + this.host.immediateGroupCount()
+                    + " openBatches=" + this.host.currentGroupBatches()
+                    + " windowBusy=" + this.host.immediateWindowBusy()
+                    + " windowsThisFrame=" + this.host.immediateWindowsThisFrame()
+                    + " windowAlphaForced=" + this.textureCopyWindowAlphaForced
+                    + " windowAlphaCopies=" + this.textureCopyWindowAlphaCopies
+                    + " windowAlphaBlitsDeclined=" + this.textureCopyWindowAlphaBlitsDeclined);
         }
         boolean applied = registry.announceFullPixels(destName, levels, width, height, xoffset, yoffset);
         if (!applied) {
             return refuseTextureCopy("the destination mirror refused the pixels: "
                     + registry.lastFailure());
+        }
+        // The frame image itself, once per run, when the mirror dump is on: the copy's pixels say what the rectangle
+        // held, and this says what the *whole* image the present reads held at the same instant. The question it exists
+        // for is "is the picture that reaches the window the game's own frame": the menu's background is the game's
+        // framebuffer composited by `GuiMainMenu.renderSkybox`, and a frame image that already carries the panorama in
+        // its bottom-left 256x256 while the rest is the cleared white is a different fault from one that carries the
+        // composite everywhere. Bounded to one dump (the third readback, the first menu frame) because it is a
+        // full-screen readback plus a PNG.
+        if (VulkanGlTexture.mirrorDumpConfigured() && this.textureCopyReadbacks == 3 && this.host.frameTarget() != null) {
+            int stageWidth = this.host.targetWidth();
+            int stageHeight = this.host.targetHeight();
+            int[] stage = readImageRectangle(this.host.frameTarget().colorImage(), 0, 0, stageWidth, stageHeight);
+            if (stage != null) {
+                java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(stageWidth * stageHeight * 4);
+                try {
+                    for (int index = 0; index < stage.length; index++) {
+                        int value = stage[index];
+                        rgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                        rgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                        rgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                        rgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                    }
+                    VulkanGlTexture.dumpStageImage("frame-image", rgba, stageWidth, stageHeight);
+                    System.out.println("[Celtium] CELTIUM_STAGE_DUMP stage=frame-image size=" + stageWidth + "x"
+                            + stageHeight + " frame=" + this.host.frameId() + " present=" + this.host.presentSerial()
+                            + " nonWhite=" + countNonWhite(stage));
+                } finally {
+                    org.lwjgl.system.MemoryUtil.memFree(rgba);
+                }
+            }
         }
         // What the copy just put into the mirror, as an image, when the bounded mirror dump is enabled: the mirror's own
         // dump sites sit on the announce/upload paths and never see a copy-filled mirror (measured: 411 PNGs in one
@@ -652,6 +739,18 @@ public final class TextureCopyService {
             }
         }
         return count;
+    }
+
+    /**
+     * {@return whether this copy's GL source is the window} - the default framebuffer, whose alpha GL reports as 1
+     * whatever the colour attachment holds (GL name 0, no alpha bits; the emulation pins 1, the value ANGLE's Vulkan
+     * backend uses for its window surface). The rule lives here, once, because the two routes owe it differently: the
+     * host route applies it to the pixels it read, and the native route must decline the copy entirely, since
+     * {@code vkCmdBlitImage} carries the alpha channel verbatim and has no channel mask to express it.
+     */
+    private boolean windowAlphaSource(int readFbo, long image) {
+        return readFbo == 0 && this.host.currentRenderTarget() == 0L && this.host.frameTarget() != null
+                && image == this.host.frameTarget().colorImage();
     }
 
     public int[] readImageRectangle(long image, int x, int y, int width, int height) {

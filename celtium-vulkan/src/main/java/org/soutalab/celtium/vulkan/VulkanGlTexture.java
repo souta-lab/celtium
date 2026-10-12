@@ -2564,6 +2564,22 @@ public final class VulkanGlTexture {
                 "mirror-gl" + glTextureId + "-" + width + "x" + height + "-n" + (mirrorDumpsWritten++) + ".png"));
     }
 
+    /**
+     * Dumps a whole image at any size under the same {@code -Dceltium.vulkan.mirrorDump} gate as the mirror dump, but
+     * without its pixel cap: the image that has to be looked at to answer "is the frame the game built the frame that
+     * is presented" is the frame image's own 1920x1080, which {@code MIRROR_DUMP_MAX_PIXELS} (300000) refuses. Named
+     * {@code stage-<label>-<W>x<H>.png}, the label being the caller's, so the file says which image it is rather than
+     * which GL name happened to be bound to it. Unit: RGBA8 pixels; limit: none beyond the gate, so callers bound
+     * their own calls (one dump per run at the copy site).
+     */
+    public static void dumpStageImage(String label, java.nio.ByteBuffer rgba, int width, int height) {
+        if (!mirrorDumpConfigured() || rgba == null || width <= 0 || height <= 0) {
+            return;
+        }
+        writePng(rgba, width, height, new java.io.File(MIRROR_DUMP_DIR,
+                "stage-" + label + "-" + width + "x" + height + ".png"));
+    }
+
     /** {@return whether the bounded mirror dump was asked for at all}, so a caller can skip building the pixels. */
     public static boolean mirrorDumpConfigured() {
         return MIRROR_DUMP_DIR != null && !MIRROR_DUMP_DIR.isEmpty();
