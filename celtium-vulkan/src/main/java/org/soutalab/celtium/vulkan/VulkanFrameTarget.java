@@ -1258,7 +1258,8 @@ public final class VulkanFrameTarget implements FrameImageTarget {
                     .sType$Default()
                     .pCommandBuffers(stack.pointers(command))
                     .pSignalSemaphores(stack.longs(doneSemaphore.vk));
-            check(vkQueueSubmit(queue, submit, fence), "vkQueueSubmit(initial handoff)");
+            VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(queue, submit, fence), "vkQueueSubmit(initial handoff)");
             check(vkWaitForFences(device, fence, true, RETIREMENT_TIMEOUT_NANOS), "vkWaitForFences(initial handoff)");
             waitGlOn(doneSemaphore.gl, "initial Vulkan to GL ownership handoff");
             glFlush();

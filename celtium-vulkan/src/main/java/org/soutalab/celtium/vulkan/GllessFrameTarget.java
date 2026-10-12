@@ -327,7 +327,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             LongBuffer signal = stack.mallocLong(1);
             signal.put(0, this.waitSemaphore);
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default().pSignalSemaphores(signal);
-            check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
+            VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
                     "vkQueueSubmit (glless beginFrame signal)");
         }
     }
@@ -369,7 +370,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                     .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
                     .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
-            check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
+            VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
                     "vkQueueSubmit (glless endFrame wait)");
         }
     }
@@ -385,9 +387,32 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // be the second on the same binary semaphore.
             consumeOutstandingWait("beginFrame found the previous frame open");
         }
-        signalWait();
-        this.waitSignalled = true;
+        if (FRAME_SEMAPHORES) {
+            signalWait();
+            this.waitSignalled = true;
+        }
+        // Without the pair there is no signal to leave outstanding: the wait-signalled flag staying false is what
+        // keeps consumeOutstandingWait a no-op on abandoned frames, which is the state this path needs.
         this.frameOpen = true;
+    }
+
+    /**
+     * Whether the wait/done semaphore pair runs at all here.
+     * <p>
+     * Under the shared target the pair carries content between two producers on different queues; under this
+     * target the same queue sees every submission in order, so the pair is ceremony: three queue packets per stage
+     * (beginFrame's signal-only submission, the work submission's own semaphore pair, endFrame's wait-only
+     * submission) for ordering the queue already guarantees. Measured on a held leg: the frame pass's own submit
+     * work is the renderer's largest steady-state line item ({@code terrain+flush} p50 ~7.5 ms of a ~10 ms world
+     * pass, with per-stage submit cycles of three). The pair is skipped by default and
+     * {@code -Dceltium.vulkan.gllessFrameSemaphores=true} keeps it.
+     */
+    private static final boolean FRAME_SEMAPHORES =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.gllessFrameSemaphores", "false"));
+
+    @Override
+    public boolean needsFrameSemaphores() {
+        return FRAME_SEMAPHORES;
     }
 
     /**
@@ -427,7 +452,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                     .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
                     .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
-            check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
+            VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
                     "vkQueueSubmit (glless abandoned frame wait)");
             this.abandonedWaitsConsumed++;
             if (this.abandonedWaitsConsumed <= 4) {
@@ -459,7 +485,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (!this.frameOpen) {
             return;
         }
-        consumeDone();
+        if (FRAME_SEMAPHORES) {
+            consumeDone();
+        }
+        // With the pair skipped nothing was ever signalled, so there is nothing to consume: the wait-only
+        // submission is the third queue packet per stage this mode exists to remove.
         this.frameOpen = false;
         this.waitSignalled = false;
     }
@@ -528,13 +558,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
     @Override
     public long waitSemaphore() {
         checkAlive();
-        return this.waitSemaphore;
+        // With the pair skipped there is nothing to wait on: callers pass the null handle through, and the submit
+        // paths that compact nulls drop it from the wait list entirely.
+        return FRAME_SEMAPHORES ? this.waitSemaphore : VK_NULL_HANDLE;
     }
 
     @Override
     public long doneSemaphore() {
         checkAlive();
-        return this.doneSemaphore;
+        return FRAME_SEMAPHORES ? this.doneSemaphore : VK_NULL_HANDLE;
     }
 
     /**
@@ -545,6 +577,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     public long presentDoneSemaphore(int imageIndex) {
         checkAlive();
+        // A signalled-but-never-waited binary semaphore is a VUID-00067 the second time it is signalled: with the
+        // pair skipped nothing consumes these, so they are not produced either.
+        if (!FRAME_SEMAPHORES) {
+            return VK_NULL_HANDLE;
+        }
         if (imageIndex < 0) {
             return this.doneSemaphore;
         }
