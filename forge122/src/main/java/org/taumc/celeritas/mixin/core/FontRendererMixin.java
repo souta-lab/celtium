@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -33,6 +34,10 @@ public abstract class FontRendererMixin {
     @Shadow
     @Final
     private int[] charWidth;
+    /** The unicode sheet's per-character left/right edge table {@code renderUnicodeChar} indexes. */
+    @Shadow
+    @Final
+    private byte[] glyphWidth;
     @Shadow
     private float posX;
     @Shadow
@@ -43,12 +48,24 @@ public abstract class FontRendererMixin {
     @Shadow
     protected abstract void bindTexture(ResourceLocation location);
 
+    @Shadow
+    private ResourceLocation getUnicodePageLocation(int page) {
+        // Shadowed private method: the body never runs, Mixin generates an invoker.
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * The GL name the sheet is bound under, cached after the first bind: vanilla re-binds it for every glyph, and the
      * fast path only needs to when the unit no longer holds it (a unicode page between two ASCII glyphs of one string,
      * a mod's own texture, the light map's unit dance). Zero means "not resolved yet".
      */
     private int celtium$fontTextureName;
+
+    /**
+     * The same binding cache for {@code unicode_page_00.png}, whose glyphs the unicode path draws every ASCII
+     * character with when {@code unicodeFlag} routes the whole string through {@code renderUnicodeChar}.
+     */
+    private int celtium$unicodeTextureName;
 
     /**
      * The default-page glyph: vanilla's body, or the Celtium path that writes the same quad straight into the capture.
@@ -87,9 +104,26 @@ public abstract class FontRendererMixin {
         CeltiumFontGlyphCapture.endGlyph();
     }
 
-    @Inject(method = "func_78277_a", at = @At("HEAD"), require = 0)
+    @Inject(method = "func_78277_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$openUnicodeGlyph(char ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.beginGlyph();
+        if (CeltiumFontGlyphCapture.fastPathAvailable() && ch < 256) {
+            // unicodeFlag sends every ASCII char through here too; page 0 is the sheet the fast path needs.
+            if (celtium$unicodeTextureName == 0
+                    || org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D)
+                            != celtium$unicodeTextureName) {
+                bindTexture(getUnicodePageLocation(0));
+                celtium$unicodeTextureName = org.lwjgl.opengl.GL11
+                        .glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                CeltiumFontGlyphCapture.noteFontTextureRebind();
+            }
+            float advance = CeltiumFontGlyphCapture
+                    .fastUnicodeGlyph(this.glyphWidth, this.posX, this.posY, ch, italic);
+            if (advance >= 0.0F) {
+                info.setReturnValue(Float.valueOf(advance));
+                return;
+            }
+        }
         CeltiumFontGlyphCapture.openWindow(true);
     }
 
@@ -135,5 +169,30 @@ public abstract class FontRendererMixin {
     private void celtium$endRenderString(String text, float x, float y, int color, boolean dropShadow,
             CallbackInfoReturnable<Integer> info) {
         CeltiumFontGlyphCapture.endRenderString();
+    }
+
+    /**
+     * The per-character {@code String.indexOf} against the font-page table: every glyph pays a linear scan of a
+     * ~256-char constant in {@code renderChar} ({@code func_181559_a}), {@code renderStringAtPos}
+     * ({@code func_78255_a}) and {@code getCharWidth} ({@code func_78263_a}), measured at ~7% of the F3 leg's warm
+     * samples between {@code String.indexOf} and {@code StringUTF16.indexOf}. The redirect answers the same lookup
+     * from a direct-index map built once per constant. {@code require = 0} keeps a build whose methods differ alive.
+     */
+    @Redirect(method = "func_181559_a", at = @At(value = "INVOKE", target = "Ljava/lang/String;indexOf(I)I"),
+            require = 0)
+    private int celtium$tableCharIndexRenderChar(String table, int ch) {
+        return CeltiumFontGlyphCapture.tableCharIndex(table, ch);
+    }
+
+    @Redirect(method = "func_78255_a", at = @At(value = "INVOKE", target = "Ljava/lang/String;indexOf(I)I"),
+            require = 0)
+    private int celtium$tableCharIndexRenderStringAtPos(String table, int ch) {
+        return CeltiumFontGlyphCapture.tableCharIndex(table, ch);
+    }
+
+    @Redirect(method = "func_78263_a", at = @At(value = "INVOKE", target = "Ljava/lang/String;indexOf(I)I"),
+            require = 0)
+    private int celtium$tableCharIndexGetCharWidth(String table, int ch) {
+        return CeltiumFontGlyphCapture.tableCharIndex(table, ch);
     }
 }
