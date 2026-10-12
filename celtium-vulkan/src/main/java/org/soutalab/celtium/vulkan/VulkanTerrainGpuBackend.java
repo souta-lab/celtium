@@ -81,6 +81,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** The terrain pass's region arenas and failed-upload ledger (refactoring plan R4, first half). */
     private final TerrainRenderer terrain = new TerrainRenderer();
+    // ---------------------------------------------------------------- R7: the frame coordinator
+
+    /** The submit sequence's view of this renderer. One owner per fact: the frame state stays here. */
+    private final FrameCoordinator frameCoordinator = new FrameCoordinator(new FrameCoordinator.Host() {
+        @Override public VkCommandBuffer commandBuffer() { return VulkanTerrainGpuBackend.this.commandBuffer; }
+        @Override public VulkanCommandBufferState commandState() { return VulkanTerrainGpuBackend.this.commandState; }
+        @Override public VulkanContext context() { return VulkanTerrainGpuBackend.this.context; }
+        @Override public long fence() { return VulkanTerrainGpuBackend.this.fence; }
+        @Override public VulkanFrameArena frameArena() { return VulkanTerrainGpuBackend.this.frameArena; }
+        @Override public long frameId() { return VulkanTerrainGpuBackend.this.frameId; }
+        @Override public int frameSlot() { return VulkanTerrainGpuBackend.this.frameSlot; }
+        @Override public boolean frameSubmitReachedQueue() { return VulkanTerrainGpuBackend.this.frameSubmitReachedQueue; }
+        @Override public FrameImageTarget frameTarget() { return VulkanTerrainGpuBackend.this.frameTarget; }
+        @Override public boolean gpuStalled() { return VulkanTerrainGpuBackend.this.gpuStalled; }
+        @Override public ImmediateStatistics immediateStatistics() { return VulkanTerrainGpuBackend.this.immediateStatistics; }
+        @Override public boolean immediateWindowBusy() { return VulkanTerrainGpuBackend.this.immediateWindowBusy; }
+        @Override public boolean lastFrameReachedQueue() { return VulkanTerrainGpuBackend.this.lastFrameReachedQueue; }
+        @Override public java.util.List<ImmediateGroup> recordedImmediateGroups() { return VulkanTerrainGpuBackend.this.recordedImmediateGroups; }
+        @Override public java.util.List<ImmediateGroup> retiredImmediateGroups() { return VulkanTerrainGpuBackend.this.retiredImmediateGroups; }
+        @Override public FrameSubmissionScheduler scheduler() { return VulkanTerrainGpuBackend.this.scheduler; }
+        @Override public boolean submissionPending() { return VulkanTerrainGpuBackend.this.submissionPending; }
+        @Override public SubmissionStatistics submissionStatistics() { return VulkanTerrainGpuBackend.this.submissionStatistics; }
+        @Override public int failImmediateSubmits() { return VulkanTerrainGpuBackend.this.failImmediateSubmits; }
+        @Override public void noteImmediateSubmitFailure() { VulkanTerrainGpuBackend.this.failImmediateSubmits--; }
+        @Override public void check(int result, String operation) { VulkanTerrainGpuBackend.check(result, operation); }
+        @Override public void record(String message) { VulkanTerrainGpuBackend.this.record(message); }
+        @Override public void setSubmissionPending(boolean pending) { VulkanTerrainGpuBackend.this.submissionPending = pending; }
+        @Override public void setFrameSubmitReachedQueue(boolean reached) { VulkanTerrainGpuBackend.this.frameSubmitReachedQueue = reached; }
+        @Override public void setLastFrameReachedQueue(boolean reached) { VulkanTerrainGpuBackend.this.lastFrameReachedQueue = reached; }
+    });
+
 
     private final List<String> diagnostics = new ArrayList<>();
 
@@ -787,7 +818,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 recordRenderPass(stack, pipeline, matrices, renderLists, pass, occlusionCamera, camera,
                         useBlockFaceCulling, primitiveType);
             }
-            submitCommands();
+            this.frameCoordinator.submitCommands();
             submitted = true;
             this.terrainStatistics.notePassSubmissions();
             if (this.readbackPending) {
@@ -815,7 +846,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 beginCommands();
                 this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-                submitCommands();
+                this.frameCoordinator.submitCommands();
             } catch (RuntimeException | LinkageError error) {
                 record("frame recovery failed: " + describe(error));
             }
@@ -5016,7 +5047,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         // endFrame() makes GL wait on the Vulkan-to-GL semaphore, so without a submission that signals it
                         // the render thread deadlocks - which is exactly what a forced out-of-date acquire produced when
                         // the failure path was first made reachable (audit S18).
-                        submitSignalOnly();
+                        this.frameCoordinator.submitSignalOnly();
                         this.frameTarget.endFrame();
                         this.emptyFrameReleases++;
                     }
@@ -6826,7 +6857,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             throw recordError;
                         }
                     }
-                    submitCommands();
+                    this.frameCoordinator.submitCommands();
                     // No drain here: the submission is queued and its semaphore contract is complete, so endFrame
                     // does not need the GPU to have finished - the wait used to be bookkeeping, and the poll keeps
                     // that bookkeeping without paying a queue-wide wait for it. Whatever is confirmed frees what its
@@ -6889,7 +6920,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         beginCommands();
                         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-                        submitCommands();
+                        this.frameCoordinator.submitCommands();
                         // The recovery submission is waited on its own slot - bounded, and the only completion the
                         // endFrame below needs confirmed before the frame may close.
                         if (!waitForSlot(this.frameSlot)) {
@@ -10076,7 +10107,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
             }
             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-            submitCommands();
+            this.frameCoordinator.submitCommands();
             submitted = true;
             // The chain's effect on the picture, asked where it can still be attributed: one readback of the frame image
             // immediately after this submission, before anything later in the frame can overwrite it, and one of the
@@ -10109,7 +10140,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // second recording on the same command buffer ("nested begin on backend command buffer"), so
                     // leaving the state at "recording" wedges every later terrain/immediate/chain recording
                     // (measured: frame count 205 -> 55, six nested-begin failures after one injected first-use
-                    // failure). submitCommands() throws before vkQueueSubmit, so the buffer is not in flight and this
+                    // failure). this.frameCoordinator.submitCommands() throws before vkQueueSubmit, so the buffer is not in flight and this
                     // reset touches nothing the queue owns - the same guard the terrain recovery path uses.
                     check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                             "vkResetCommandBuffer(post chain refusal)");
@@ -12623,165 +12654,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    /**
-     * Submits nothing but the semaphore pairing: it waits on the frame's GL-to-Vulkan semaphore and signals the
-     * Vulkan-to-GL one, so a frame that was begun can be ended even when the present never happened. Without this the
-     * GL wait inside {@code endFrame} has nothing to wait for and blocks the render thread for good (audit S18).
-     */
-    private void submitSignalOnly() {
-        // With the pair skipped there is no frame synchronization to release: the frame-close flags this path set
-        // are still set, because they gate the present's own "a frame reached the queue" question, but no packet
-        // goes to the queue for a contract nothing honours.
-        if (!this.frameTarget.needsFrameSemaphores()) {
-            this.frameSubmitReachedQueue = true;
-            this.lastFrameReachedQueue = true;
-            return;
-        }
-        // Counted, so a leg can say whether the frame-close path fired rather than whether the leg was green: the
-        // per-image change made consumeDone wait on whichever done semaphore was recorded, and this is the producer
-        // whose pairing that could break. Two legs were green without this path firing at all, which is a leg about
-        // the other path - the counter is what turns that into evidence either way.
-        this.submissionStatistics.noteSignalOnlySubmissions();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
-            LongBuffer waitSemaphores = stack.mallocLong(1);
-            waitSemaphores.put(0, this.frameTarget.waitSemaphore());
-            IntBuffer waitStages = stack.mallocInt(1);
-            waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-            LongBuffer signalSemaphores = stack.mallocLong(1);
-            signalSemaphores.put(0, this.frameTarget.doneSemaphore());
-            submit.waitSemaphoreCount(waitSemaphores.remaining());
-            submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages).pSignalSemaphores(signalSemaphores);
-            // No command buffers: the submission exists only to release the frame's synchronization.
-            if (VulkanSubmitFault.shouldFail("signal-only")) {
-                // The failure is raised exactly where a driver refusal would be, before the queue has seen anything, so
-                // the code's own pre-submit rules apply: what is already recorded stays recorded and nothing in flight is
-                // touched. That is the property this switch exists to check.
-                check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
-            }
-                        VulkanContext.queueSubmitCalls++;
-                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
-            this.frameSubmitReachedQueue = true;
-            this.lastFrameReachedQueue = true;
-            if (this.frameTarget instanceof GllessFrameTarget gllessTarget) {
-                // The signal-only submission waited on the wait semaphore and signalled the done semaphore: the pairing is
-                // complete for this frame, so nothing is outstanding to consume.
-                gllessTarget.noteWaitConsumed();
-            }
-        }
-    }
 
-    private void submitCommands() {
-        submitCommands(true);
-    }
 
-    /**
-     * {@code withFrameSemaphores} false submits the same command buffer without the GL↔Vulkan semaphore pair: the
-     * seeded post-chain path synchronizes with the fence instead, and the frame's semaphores belong to whoever
-     * opened the frame.
-     */
-    private void submitCommands(boolean withFrameSemaphores) {
-        if (this.gpuStalled) {
-            // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
-            // reported, after the pass-level ones.
-            return;
-        }
-        // The owned target's semaphore pair synchronizes the renderer with itself on one queue, which is ordering
-        // the queue already has: when the target says the contract does not apply the submission takes no semaphore
-        // at all, and every per-stage packet that exists only to carry the pair is skipped with it.
-        boolean frameSemaphores = withFrameSemaphores && this.frameTarget.needsFrameSemaphores();
-        // OPT-07: every copy the frame recorded goes out as one submission before this one, so the vertices, indices
-        // and uniform bytes this command buffer reads are in place. It is a no-op when nothing is pending, and it is
-        // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
-        this.context.flushUploads();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            check(vkEndCommandBuffer(this.commandBuffer), "vkEndCommandBuffer");
-            this.commandState.end();
-            check(vkResetFences(this.context.device(), this.fence), "vkResetFences");
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
-            LongBuffer waitSemaphores = null;
-            IntBuffer waitStages = null;
-            LongBuffer signalSemaphores = null;
-            if (frameSemaphores) {
-                waitSemaphores = stack.mallocLong(1);
-                waitSemaphores.put(0, this.frameTarget.waitSemaphore());
-                waitStages = stack.mallocInt(1);
-                waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-            }
-            if (frameSemaphores) {
-                signalSemaphores = stack.mallocLong(1);
-                signalSemaphores.put(0, this.frameTarget.doneSemaphore());
-            }
-            org.lwjgl.PointerBuffer commandBuffers = stack.mallocPointer(1);
-            commandBuffers.put(0, this.commandBuffer.address());
-            // LWJGL derives the semaphore counts from the buffers, so only the pointers are set here.
-            // waitSemaphoreCount must be set explicitly: LWJGL's pWaitSemaphores(LongBuffer) writes only the
-            // pointer, unlike pSignalSemaphores which also sets its count. Leaving it to calloc's zero meant this
-            // submission waited on nothing at all - which is what the validation layer was reporting all along.
-            if (frameSemaphores) {
-                submit.waitSemaphoreCount(waitSemaphores.remaining());
-                submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
-                        .pSignalSemaphores(signalSemaphores);
-            }
-            submit.pCommandBuffers(commandBuffers);
-            if (this.immediateWindowBusy && !this.recordedImmediateGroups.isEmpty() && failImmediateSubmits > 0) {
-                failImmediateSubmits--;
-                throw new IllegalStateException("injected immediate submit failure before queue ownership");
-            }
-            if (FAIL_SUBMITS_REMAINING > 0) {
-                // Test-only injection, so the fail-closed paths can be exercised instead of merely compiled: the
-                // submission is treated as refused by the driver, which is the case the audit's E asks to be shown to
-                // end in bounded time rather than in a wait for a signal that never comes.
-                FAIL_SUBMITS_REMAINING--;
-                record("injected submit failure (" + FAIL_SUBMITS_REMAINING + " left): this submission is not sent");
-                throw new IllegalStateException("injected submit failure before queue ownership");
-            }
-            if (VulkanSubmitFault.shouldFail("fenced")) {
-                // The failure is raised exactly where a driver refusal would be, before the queue has seen anything, so
-                // the code's own pre-submit rules apply: what is already recorded stays recorded and nothing in flight is
-                // touched. That is the property this switch exists to check.
-                check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
-            }
-                        VulkanContext.queueSubmitCalls++;
-                        check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
-
-            // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
-            // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
-            // that never reaches the queue must not hold a slot, and an abandon after a successful submit must.
-            if (this.frameArena != null) {
-                // The sequence increments a few lines below, where the slot's own record is armed; the value this
-                // submission will take is the current one plus one.
-                this.frameArena.submitted(this.frameId, this.scheduler.submitSequence() + 1);
-            }
-            // The queue accepted this submission, so the layouts the recording declared into it are now the truth
-            // every wrapper of those images shares. A refused submit throws before this line, leaving the recording
-            // pending for the next beginCommands() to abandon - and the next ensureGeneralLayout/ensureSampledLayout
-            // to re-record.
-            VulkanGlTexture.commitLayoutRecording(this.commandBuffer);
-            this.submissionPending = true;
-            // OPT-08: the submission belongs to a slot and carries a sequence. The slot's fence is what makes its
-            // buffer reusable, and the sequence watermark is what releases the resources this submission still names -
-            // not "some wait succeeded", which is what a single-frame renderer could get away with.
-            this.scheduler.noteSubmitted(this.frameSlot);
-            this.commandState.submitted();
-            for (ImmediateGroup group : this.recordedImmediateGroups) {
-                this.immediateStatistics.addImmediateSubmittedBatches(group.batches);
-                // This submission is the newest one that can still name the group's arena bytes: its mesh may be
-                // freed exactly when the watermark covers this sequence and not before.
-                group.retireSequence = this.scheduler.submitSequence();
-                this.retiredImmediateGroups.add(group);
-            }
-            this.recordedImmediateGroups.clear();
-            this.frameSubmitReachedQueue = true;
-            this.lastFrameReachedQueue = true;
-            if (frameSemaphores && this.frameTarget instanceof GllessFrameTarget gllessTarget) {
-                // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
-                // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
-                // outstanding and the next beginFrame signalled the same binary semaphore twice).
-                gllessTarget.noteWaitConsumed();
-            }
-        }
-    }
 
     /**
      * Waits for the last submission of this backend to finish, and refuses to wait forever.
