@@ -61,3 +61,16 @@ ruled out.
 - `docs/handoff-2026-10-10-next-model.md` — environment, run procedure, instruments,
   rejected hypotheses and the traps that have already been stepped in.
 - `AGENTS.md` (this file) — the rules that are cheaper to read than to rediscover.
+
+## An Intel leg is confirmed by the device line, not by the flag
+
+A run given `--render-node /dev/dri/by-path/pci-0000:00:02.0-render --require-gpu Intel` is **not** an Intel run
+until its log says so. Measured on 2026-10-12: two such legs reported
+`CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400 (RADV NAVI24)"`, and a claim of "accepted on both GPUs" was written
+from them before anyone read that line. The harness does catch it (`gpuRequirementMet=false`, non-zero
+`validationExitCode`) when its summary is inspected, but a leg run through a wrapper (`compositor_capture.py`) does
+not surface that summary.
+
+So: before calling anything Intel, read `CELTIUM_NATIVE_DEVICE name="…"` in the leg's log **and** the harness's
+`gpuRequirementMet`. The known-good recipe uses the renderer substring the driver actually reports, e.g.
+`--require-gpu 'UHD Graphics 630'`, not the vendor word. AMD success is never Intel success.
