@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.410 **round 211: R4 の terrain 所有分を完了（backend 14,493 → 13,300行・`TerrainRenderer` 1,011行・build 緑）**
+
+- **移動済み（`TerrainRenderer` が所有 ✓）**: region arena 群・failed-upload ledger・BH-25 counter・`resourcesFor`/`indexArena`/`resourcesIfPresent`/`releaseAll` ✓／`bindVertexBuffer`/`bindIndexBuffer`（command buffer は引数 ✓）／**terrain pipeline cache ＋ `pipelineFor` ＋ release** ✓／**indirect batch 一式**（`tryIndirectBatch`・`ensureIndirectBuffer`・indirect buffer＋growth・9 counter・`commandHash` ✓）／**uniform ring ＋ `writeUniforms`** ✓／**`uploadRegion` ＋ 頂点色サンプラ・first-vertex 診断・colour histogram・upload byte counter** ✓。
+- **受け渡しの形（backend へ呼び戻さない ✓）**: `setContext`／`setDiagnostics`（`this::record` ✓）／`setStatistics`／`setFogService`／`setConfiguration`／`setVertexStride` ✓ — すべて constructor で1回 ✓。
+- **残る2つは R7 の範囲（根拠つき）**: `render`（12行 ✓）と `recordRenderPass`（288行 ✓）は **frame の command buffer・immediate group 列・readback 計器・timestamp・frame target を読む** ✓ — 実測で **依存40個** ✓。これは god-class 分解の文献が言う **"Common class"**（どの責任にも割り当てられない中核 ✓）で、**R7 の `VulkanRenderer` root／`FrameCoordinator` が受け取るもの** ✓。先に動かすと40メンバの host を作り、R7 がそれを解体することになる ✓。
+- **build 緑 ✓・CPU 契約 PASS ✓**。backend **13,300行**（−1,193 ✓）／`TerrainRenderer` **1,011行** ✓。
+
 ## 0.409 **round 210: backend の構成を実測（「まだ13,813行」への回答）— R4 だけでは1,000行にならない**
 
 - **実測（メソッド本体の行数・ドメイン別）**: backend **13,813行** のうち、メソッド本体として数えられる **7,179行** の内訳は **immediate 2,580／other 2,181／terrain 930／texture 550／target 462／frame 453／model 23** ✓（残り約6,600行は **field・コメント・nested/anonymous class** ✓）。
