@@ -507,10 +507,16 @@ public final class CeltiumGlStub implements FunctionProvider {
      * plus the hash probe on every bind and every texture-parameter lookup, ~4.6% of the unbounded leg's warm
      * samples between {@code ConcurrentHashMap.get}/{@code putVal} and {@code Integer.valueOf}.
      */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectMap<Boolean> enables =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
-    private final it.unimi.dsi.fastutil.ints.Int2IntMap bufferBindings =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    // The two hottest maps the GL call path owned were hash lookups: every glEnable/glDisable/glIsEnabled took an
+    // Int2Object get/put through a Boolean box, and every buffer bind did the same through Int2Int. Both key spaces
+    // are capability/target constants - dense, small, and bounded well under 0x10000 - so they are flat arrays now:
+    // one indexed load or store per call, no hashing, no boxing, no tree-node buckets (the steady-state JFR showed
+    // HashMap$TreeNode.getTreeNode and Long2ObjectOpenHashMap.get among the top frames). An index of 0 is "never
+    // set", which is the same answer the maps gave for absent keys: GL treats an unqueried capability as disabled
+    // and an unbound target as name 0.
+    private static final int FLAT_MAP_SIZE = 0x10000;
+    private final byte[] enables = new byte[FLAT_MAP_SIZE];
+    private final int[] bufferBindings = new int[FLAT_MAP_SIZE];
     /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
      * of an unbound (unit,target) returns -1 - never a valid GL name. */
     private final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
@@ -702,7 +708,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static boolean polygonOffsetFillEnabled() {
         CeltiumGlStub stub = installed;
         return stub != null
-                && Boolean.TRUE.equals(stub.enables.get(GL_POLYGON_OFFSET_FILL));
+                && stub.enables[GL_POLYGON_OFFSET_FILL] != 0;
     }
     // BH-08: the cull capability and the two face constants, spelled here the way this class spells GL_SCISSOR_TEST -
     // it deliberately carries no org.lwjgl.opengl import, so the numbers are named where they are used.
@@ -740,7 +746,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static boolean cullEnabled() {
         CeltiumGlStub stub = installed;
         return stub != null
-                && Boolean.TRUE.equals(stub.enables.get(GL_CULL_FACE));
+                && stub.enables[GL_CULL_FACE] != 0;
     }
 
     /** {@return the last {@code glCullFace} argument}, or {@code GL_BACK} when it has not been called. */
@@ -789,7 +795,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return whether GL_BLEND is enabled}, read from the same {@code enables} map glEnable/glDisable write. */
     public static boolean blendEnabled() {
         CeltiumGlStub stub = installed;
-        return stub != null && Boolean.TRUE.equals(stub.enables.get(GL_BLEND));
+        return stub != null && stub.enables[GL_BLEND] != 0;
     }
 
     /** {@return the RGB source factor GL was last given}, or GL's initial {@code ONE} when it was never told. */
@@ -899,7 +905,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     public static boolean scissorTest() {
         CeltiumGlStub stub = installed;
-        return stub != null && Boolean.TRUE.equals(stub.enables.get(GL_SCISSOR_TEST));
+        return stub != null && stub.enables[GL_SCISSOR_TEST] != 0;
     }
 
     /**
@@ -1608,18 +1614,22 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_GET_STRINGI:
                 return stringIndexed((int) a0, (int) a1);
             case SEM_IS_ENABLED:
-                return Boolean.TRUE.equals(this.enables.get((int) a0)) ? 1L : 0L;
+                return ((int) a0 >= 0 && (int) a0 < this.enables.length && this.enables[(int) a0] != 0) ? 1L : 0L;
             case SEM_ENABLE:
                 if ((int) a0 == GL_SCISSOR_TEST) {
                     this.scissorToggleCount++;
                 }
-                this.enables.put((int) a0, Boolean.TRUE);
+                if ((int) a0 >= 0 && (int) a0 < this.enables.length) {
+                    this.enables[(int) a0] = 1;
+                }
                 return 0L;
             case SEM_DISABLE:
                 if ((int) a0 == GL_SCISSOR_TEST) {
                     this.scissorToggleCount++;
                 }
-                this.enables.put((int) a0, Boolean.FALSE);
+                if ((int) a0 >= 0 && (int) a0 < this.enables.length) {
+                    this.enables[(int) a0] = 0;
+                }
                 return 0L;
             case SEM_CULL_FACE:
                 this.cullFaceValue = (int) a0;
@@ -1723,7 +1733,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 delete(fn, c);
                 return 0L;
             case SEM_BIND_BUFFER:
-                this.bufferBindings.put((int) a0, (int) a1);
+                if ((int) a0 >= 0 && (int) a0 < this.bufferBindings.length) {
+                    this.bufferBindings[(int) a0] = (int) a1;
+                }
                 return 0L;
             case SEM_BIND_TEXTURE:
                 this.textureBindings.put(texBindKey((int) a0), (int) a1);
@@ -2787,7 +2799,8 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Writes into the storage {@code glBufferData} allocated, which is what the mirrored meshes are read from. */
     private void bufferSubData(Fn fn, long[] c) {
-        int name = this.bufferBindings.get((int) c[0]);
+        int name = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
+                ? this.bufferBindings[(int) c[0]] : 0;
         long offset = c[1];
         long size = c[2];
         long data = c[3];
@@ -3184,7 +3197,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if ("glNamedBufferData".equals(fn.name) || "glNamedBufferStorage".equals(fn.name)) {
             return (int) c[0];
         }
-        int bound = this.bufferBindings.get((int) c[0]);
+        int bound = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
+                ? this.bufferBindings[(int) c[0]] : 0;
         return bound < 0 ? 0 : bound;
     }
 
@@ -3222,7 +3236,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (fn.name.startsWith("glMapNamedBuffer")) {
             name = (int) c[0];
         } else {
-            int bound = this.bufferBindings.get((int) c[0]);
+            int bound = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
+                ? this.bufferBindings[(int) c[0]] : 0;
             name = bound;
         }
         ByteBuffer storage = this.bufferStore.get(name);
@@ -3798,7 +3813,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             celtium$reportDrawArrays();
             return;
         }
-        int boundName = this.bufferBindings.get(GL_ARRAY_BUFFER);
+        int boundName = this.bufferBindings[GL_ARRAY_BUFFER];
         int buffer = boundName;
         ByteBuffer storage = buffer == 0 ? null : this.bufferStore.get(buffer);
         // No array buffer bound means the pointer glVertexPointer was handed is a **client address**, not an offset
@@ -3816,7 +3831,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         String reason = null;
         if (storage == null && !clientMemory) {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
-        } else if (!Boolean.TRUE.equals(this.enables.get(GL_VERTEX_ARRAY))) {
+        } else if (!(this.enables[GL_VERTEX_ARRAY] != 0)) {
             reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
         } else if (mode != GL_QUADS) {
             reason = "draw mode " + mode + " is not handled (only 7 = GL_QUADS)";
@@ -3954,7 +3969,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                                 + this.vertexPointerStride + " otherArrays=" + celtium$otherArrayNames()
                                 + " v0..v3=[" + vertices + "] "
                                 + celtium$mirroredMatrices(backend)
-                                + " texture2dEnabled=" + Boolean.TRUE.equals(this.enables.get(GL_TEXTURE_2D))
+                                + " texture2dEnabled=" + (this.enables[GL_TEXTURE_2D] != 0)
                                 + " site=[" + celtium$callSite(10) + "]");
                         drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
                                 + this.vertexPointerStride + " format=" + formatId + " buffer=" + buffer
@@ -4018,7 +4033,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int[] caps = { GL_NORMAL_ARRAY, GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY };
         String[] names = { "GL_NORMAL_ARRAY", "GL_COLOR_ARRAY", "GL_TEXTURE_COORD_ARRAY" };
         for (int i = 0; i < caps.length; i++) {
-            if (Boolean.TRUE.equals(this.enables.get(caps[i]))) {
+            if ((this.enables[caps[i]] != 0)) {
                 if (enabled.length() > 0) {
                     enabled.append(", ");
                 }
@@ -4036,13 +4051,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private int celtium$otherArrayMask() {
         int mask = 0;
-        if (Boolean.TRUE.equals(this.enables.get(GL_NORMAL_ARRAY))) {
+        if ((this.enables[GL_NORMAL_ARRAY] != 0)) {
             mask |= 1;
         }
-        if (Boolean.TRUE.equals(this.enables.get(GL_COLOR_ARRAY))) {
+        if ((this.enables[GL_COLOR_ARRAY] != 0)) {
             mask |= 2;
         }
-        if (Boolean.TRUE.equals(this.enables.get(GL_TEXTURE_COORD_ARRAY))) {
+        if ((this.enables[GL_TEXTURE_COORD_ARRAY] != 0)) {
             mask |= 4;
         }
         return mask;
@@ -4521,7 +4536,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * a fogged sky are two different findings, and the frame alone cannot tell them apart.
      */
     private void celtium$noteFogDegradation(TerrainGpuBackend backend, int buffer, int count) {
-        if (!Boolean.TRUE.equals(this.enables.get(GL_FOG))
+        if (this.enables[GL_FOG] == 0
                 || backend.immediateFogAvailable() || SKY_DEGRADED_LINES.getAndDecrement() <= 0) {
             return;
         }
@@ -4691,7 +4706,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (fn.name.startsWith("glGetBufferParameter")) {
             if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
-                int bound = this.bufferBindings.get((int) c[0]);
+                int bound = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
+                ? this.bufferBindings[(int) c[0]] : 0;
                 ByteBuffer storage = bound == 0 ? null : this.bufferStore.get(bound);
                 if ("glGetBufferParameteri64v".equals(fn.name)) {
                     memPutLong(out, storage == null ? 0L : storage.capacity());
