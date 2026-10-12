@@ -339,6 +339,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.350 **round 157: ユーザ profiler の解読完了（perf-ring `d2211795c`）— 「ラグい」の実体はスパイクで、優先順が変わる**
+
+- **解読（`.celtium-work/evidence/user-reports/analyse_lagspike.py`・全表 `lagspike_analysis.txt`・`docs/plan.md` §0.227・`docs/performance_plan.md`）**:
+  形式 `1.1.0`・77 section・**1,364,259 レコード**（childCount, sectionId, durationNanos）・**358 frame / 20.00 s**・単位 ns。
+  **未確定として明記**: 末尾 varint 1個（値0）・frame の childCount が実 children より大きい場合（block 0: 102 対 100）。
+- **frame 分布**: mean **55.9** / p50 **34.1** / p95 **331.8** / p99 **358.9** / worst **384.6 ms**。
+  **≥50 ms の 64 frame（17.9 %）が wall time の 10.1 s / 20.0 s = 50 %** ＝**ユーザの「ラグい」はスパイクが本体**。
+- **スパイクの行き先（最悪5 % = 18 frame・中央値 frame 27.0 ms との比）**: **`gameRenderer` 318.6 対 25.0 ms（12.7×）**・
+  `level` 31.9 対 11.3・`tick` +23.5、**chunk 構築系はスパイクにだけ出現**（`blocks` +8.9・`getChunk` +7.8・`regular` +4.1・
+  `getBrightness` +3.7・`chunkCache` +1.9。中央値 frame ではすべて 0）。
+- **最重要の未帰属**: スパイクの `gameRenderer` 318.6 ms のうち**名前のある子で説明できるのは約 72 ms・残り約 246 ms/frame はどの section にも現れない**。
+  `frameFenceWaitMillis`（0.14 ms/wait）は**桁が違いすぎて説明にならない**＝**機構は断定しない**。**「残差を pass 単位で割る計器」が先**。
+  ＝**`acceptance` へ移譲済み**。
+- **我々の仮説との不一致（記録）**: `forgeHudText` 合計 **2.7 ms**・`chat` 201.8 ms/20 s ＝**この捕獲では文字は支配要因ではない**（F3 非表示だった可能性）。
+  一方 **`gui` は毎 frame 約 13.7 ms の定数**（中央値 frame の約半分・スパイクで増えない）＝**スパイク源ではなく定数税**。`getBrightness` は **448,707 呼び出し**。
+- **限界（そのまま）**: 自己時間の単純合計は frame 時間の **4.01 倍**（`frame`/`root`/`gameRenderer` が各々全時間を持つ）＝**重複しない分解ではない**・
+  **profile に jar hash は無い**（ユーザのビルド）・形式の2点は未確定。**我々の受入値として引用しない**。
+- **優先順の更新**: **(1) 未帰属 246 ms/frame の pass 単位分解**（`acceptance`）→ **(2) chunk 構築系（`getBrightness` 448,707 呼び出しを含む）**→
+  **(3) `gui` の定数 13.7 ms/frame**（`gui-stage`）→ **(4) F3 テキスト（font 刷新で −94 %/glyph 済み）**。
+- **OPT-08 step 1 も着地**（perf-ring・jar `5ddd93b4`→`98fa051e` 同 scene 比較）: **warm p50 36.8→34.8・p95 50.3→52.3・p99 57.0→56.4 ms（非回帰・wait は未除去）**・`hostBuffersCreated=6` 不変。
+
 ## 0.349 **round 156: 停止点と「名前の無い契約」を記録（frame-composite・proj-channel）— BH-20 と BH-21 census を再移譲**
 
 - **記録に値する成果（実装ではなく契約の同定）**: 2担当が**未着手のまま最後の緑コミットで停止**し、その理由と**欠けている契約の名前**を残した。
