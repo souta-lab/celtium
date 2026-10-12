@@ -73,6 +73,37 @@ The 238 in the newest frame are not text: that rectangle is the F3 overlay's fra
 `(0,255,0)`/`(255,255,0)`/`(0,0,255)` over dark panel pixels - the chart's own `(63,63,63)` pixels have no glyph
 above-left of them. Every one of the 35,208 chat glyph-shadow pixels in the 10:49 frame has its main pixel.
 
+**A colour-matched control exists, and it is a tooltip.** The damaged line's colours are §7, and exactly one frame in
+the workspace has §7-shadowed text: `runtime/r135-e/screenshots/celtium-presented-gui-run-190294aef3f02-66d3c617.png`
+(2026-10-12 09:51), the Celeritas video-options screen, whose description panel is a tooltip with
+"§7Performance Impact:" and "§7Added by mod: minecr…" beside the white body text. Measured with the same instrument
+and the same pair the user's line uses:
+
+| frame | text | shadow px = `(42,42,42)` | shadow without `(170,170,170)` at (-3,-3) |
+|---|---|---|---|
+| user's crop, enchant line | §7, in a tooltip | 1467 | **207 (14.1 %)** |
+| `r135-e` video-options tooltip | §7, in a tooltip | **2718** | **0 (0.0 %)** |
+
+**The one-flag font-path pair closes the glyph path as the cause.** The user's jar (md5 `2747418b…`) predates the
+Celtium-side default-glyph path (OPT-18), so "the old capture path drops strokes and the new fast path does not" was
+the natural explanation - and the tree carries the control for it (`-Dceltium.font.fastPath=false`, the same jar).
+Measured on the same jar, the same fixture and the same flags (`md5 c068dd6c6279fbb8f88f56194263a576`):
+
+| leg | font counters | shadow px | shadow without main |
+|---|---|---|---|
+| `fast-f3off` (10:49, fast path **on**, default) | `windows=60000 fastGlyphs=60000 fontTextureRebinds=157` | 35208 | **0** |
+| `gt-fastpath-off` (11:21, fast path **off**: `-Dceltium.font.fastPath=false`) | `windows=60000 defaultWindows=60000 fastGlyphs=0 hookMillis=8 glyphMillis=805` | **36018** | **0** |
+
+Both leases of the flag render shadowed text with **zero** missing main strokes, and the counters prove the two legs
+took different paths (`fastGlyphs=60000` against `fastGlyphs=0`). The old path is therefore not the mechanism, and
+neither is the new one.
+
+The two jars differ in exactly 19 class entries (the font capture and its mixin, `CeltiumGlStub` and its inner
+classes, `VulkanTerrainGpuBackend`, `VulkanTextureRegistry`, `RenderGlobalMixin`); the font half of that difference
+is now measured and excluded, which leaves the stub/backend/registry half as the only unmeasured difference between
+the user's build and every control here - none of which touches the glyph colour, UV or alpha contract this unit is
+about.
+
 Two more facts from the user's own logs (their instance jar md5 `2747418bc071642e2ed2fd0352b15bd2`, which
 *contains* the strip separators, the coalesced run and the light-map rule):
 
@@ -97,8 +128,10 @@ Two more facts from the user's own logs (their instance jar md5 `2747418bc071642
   calls**: the shadow pass drew the pixel, the main pass did not, in the same group flush, with the same texture,
   the same UVs and the same alpha reference.
 * **Not landed**: a fix. The evidence does not name a contract in the current tree - the current tree and the
-  upstream reference both draw shadowed text with zero missing strokes - and the project's own rule is that a
-  guess is not a fix. Landing one here would be an unexplained change to the text path.
+  upstream reference both draw shadowed text with zero missing strokes, the §7 pair itself is clean in a tooltip on a
+  current-era frame, and the one-flag font-path pair shows the old capture path and the fast path are equally clean -
+  and the project's own rule is that a guess is not a fix. Landing one here would be an unexplained change to the
+  text path.
 * **The next measurement, named**: take one presented frame from the user's jar (or a fresh crop) and run
   `font-shadow-main-check.py` on it; if it shows violations again, dump the two passes' groups with
   `CELTIUM_GROUP_BOUNDS` (`groupBoundsFormat=2`) and compare `texMat`, `state`, `colour0` and `vertexColour0`
