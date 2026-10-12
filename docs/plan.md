@@ -173,6 +173,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.229 **BH-35: strict-symbols leg を取得。広告は 4.6.0/4.60、backing は 183 名、到達した未モデル名は 647（ほぼ legacy の 1〜2 回プローブ）。広告を変えるには互換目標の名前が要る**
+
+- **計器の確認（lead の指示どおり名前の意味を検証）**: `-Dceltium.vulkan.strictSymbols=true` は**table 外の名前が到着するたび**に
+  `CELTIUM_UNKNOWN_SYMBOL <name>` を出し、`strictSymbolLines`（既定 200）で bounded。**実測でちょうど 200 行**＝名前どおり。
+  終了時に `CELTIUM_UNKNOWN_SYMBOLS`（頻度順・先頭 24 名＋`…(N more)`）を出す。**今回その2つを混同しない**: 前者は「到着順の先頭 200 件」、
+  後者は「全 distinct の頻度順」で、前者を総数と読むと誤る。
+- **leg**（jar は BH-18 と同じ `485bc6d5b55079f2`・fixture `a15857b0b594314b`・glless・layers ON・AMD・150 s）:
+  - **広告**: `glVersion=4.6.0 Celtium`（report）・`GL_SHADING_LANGUAGE_VERSION=4.60`・`GL_VENDOR=Celtium`・`GL_EXTENSIONS=""`（indexed は NULL）。
+  - **backing**: stub の table は **183 名**。そのうち **35 entry point が no-op として実際に呼ばれた**（`CELTIUM_NOOP_CENSUS noopEntryPoints=35 noopCalls=31,435`、
+    top は `glLightfv`・`glTranslatef`・`glLoadIdentity`・`glRotatef`・`glColor4f`・`glPushMatrix`…）。
+  - **到達した未モデル名**: `CELTIUM_UNKNOWN_SYMBOLS` の先頭 24 名の count は **1〜2**、`…(623 more)` で **distinct 647 名**。
+    strict の 200 行も全て count 1。名は **`glAccum`・`glAreTexturesResident`・`glClearAccum`・`glClearIndex`・`glColor3b`・`glVertex3*s`・
+    `glGetMap*`・`glGetPixelMap*`・`glRasterPos*`・`glNormal3d`・`glSecondaryColor*`・`glFogCoord*`** など **GL 1.x/2.x compat の一回プローブ**が支配的で、
+    4.x 系は `glNamedFramebufferParameteri`・`glGetnUniformfv`・`glPushDebugGroup`・`glGetTextureSubImage`・`glGetSamplerParameterfv` が各 1〜2 回。
+  - `validationMessageCount=0`・`validationClean=true`（fixtureStatus は既知の画像ゲート `FAILED_PRESENTED_IMAGE`）。
+- **この leg が言えること**: 走っている mod 集合は **未 backing の 4.6 専用機能に導かれていない**（到達は全て 1〜2 回の capability probe、
+  大半は legacy）。「静かに嘘をつく」危険が実証されたのは legacy 側で、値を返す関数は 0/NULL を返すため mod には「無い」と見える。
+- **どちらを変えるかは契約が要る（ここで停止）**: (a) **backing を増やす**＝到達 647 名は手書き table の規模を超え、意味のある部分集合を選ぶ基準
+  （どれが「compat no-op として正しい」か）が未定義。既知の罠として、到達した legacy 名を **SEM_NOOP として table に入れると UNKNOWN の数が減る**＝
+  「吸収して見えなくする」ので**やってはいけない**（この repo が `mirrorMisses`→`stubTransformCalls` で学んだ形）。(b) **広告を下げる**＝
+  `GL_VERSION`/`GLSL` を backed な集合に合わせる（例 3.3/2.1）が、**互換目標がどの GL 版かという contract が文書に無い**ため、
+  mod 集合が 4.x 必須のときの退行動作を決められない。**決定に必要な名前**: 「ユーザーの mod 集合に見せなければならない GL 版と、
+  その版で backed を要求する entry point の範囲」。これが決まるまで advertisement は変えない（変えると黙って別の defect を作る）。
+
 ## 0.228 **BH-18 受入: surface が提示した値と要求値を1行で突き合わせ、AMD/Intel で一致（clamp 分岐は未行使と明記）**
 
 - **変更**: `VulkanSwapchain` が **surface の提示値**（`minImageCount`・`maxImageCount`（0 は `unlimited(0)`）・`supportedUsageFlags`・
