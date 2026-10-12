@@ -204,6 +204,13 @@ public final class VulkanContext {
     private volatile boolean usable = true;
     public static int submitWithSemaphoresCalls;
     public static int submitWithSemaphoresWaits;
+    /**
+     * Every {@code vkQueueSubmit} the process issues, from every path: the per-stage semaphore packets (the owned
+     * target's beginFrame signal and endFrame consume), the work submissions, the deferred submissions and the
+     * uploads all land here, so "submissions per frame" is one counter instead of a sum over call sites. The
+     * semaphore-skip change is judged on this number dropping by the two packets it removes per stage.
+     */
+    public static int queueSubmitCalls;
     private VkPhysicalDeviceMemoryProperties memoryProperties;
     private long debugMessenger = VK_NULL_HANDLE;
     private VkDebugUtilsMessengerCallbackEXT validationCallback;
@@ -588,7 +595,8 @@ public final class VulkanContext {
                     }
                     submit.pSignalSemaphores(stack.longs(signalHandles));
                 }
-                check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit(submitWithSemaphores)");
+                VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit(submitWithSemaphores)");
                 // From here the queue owns the command buffer and the fence. The three outcomes are kept apart,
                 // because the cleanup that is right for one is a validation error for another (audit A02):
                 //
@@ -732,7 +740,8 @@ public final class VulkanContext {
                         "vkCreateFence(bootstrap submit)");
                 long fence = fenceHandle.get(0);
                 try {
-                    check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit");
+                    VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit");
                     long waitStarted = System.nanoTime();
                     int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
                     celtium$recordBootstrapFenceWait(waitStarted);
@@ -818,7 +827,8 @@ public final class VulkanContext {
                     .pCommandBuffers(stack.pointers(commandBuffer));
             long fence = celtium$borrowDeferredFence();
             try {
-                check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit (deferred)");
+                VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit (deferred)");
             } catch (RuntimeException | LinkageError submitError) {
                 // The queue never saw the submission, so freeing here is the cleanup endCommands already proves.
                 vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
@@ -895,7 +905,8 @@ public final class VulkanContext {
             }
             long fence = celtium$borrowDeferredFence();
             try {
-                check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit (deferred+semaphores)");
+                VulkanContext.queueSubmitCalls++;
+                        check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit (deferred+semaphores)");
             } catch (RuntimeException | LinkageError submitError) {
                 vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
                 vkDestroyFence(this.device, fence, null);
