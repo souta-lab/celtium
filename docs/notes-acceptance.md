@@ -74,3 +74,40 @@ missing evidence, not a missing draw.
 Conventions honoured: leg suffix, jar/fixture hash, device line and flags accompany every claim; no past acceptance is
 reused as a current fact; a missing counter (screen class at capture) is recorded as missing rather than read as a
 missing draw.
+
+## Round 248 — GL-less world HUD, legs `r212-world-hud27` / `hud26` / `hud24` / `hud23`
+
+Jars: `hud27` celtium `585ba082e6afa133` fixture `709301b15dd532a3` (default flags; `.out` shows `head 5f71d7f06`
+with a **dirty** tree: `ImmediateStatistics.java` etc. modified), `hud26` celtium `3cc28cb1a40e0c32`,
+`hud24` celtium `be90e52ccd1a2203`, `hud23` celtium (ortho repair only). Device, hud27:
+`CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400 (RADV NAVI24)"`, `gpuRequirementMet=true`.
+
+**1. The presented PNG.** `screenshots/celtium-presented-world-run-1d19d61b57d9d-66d3c617-kept.png`,
+sha256 `a3fa3d789c17573ccaf58682424c0727210f146f84593b924476258c0da32494`. **12,537 distinct colours** (not one
+colour); top band (0-80) `(152.1,170.9,209.9)` = sky; bottom-centre hotbar band (690-715, x400-880)
+`(73.1,59.7,44.7)` = the HUD's dark colour, against hud24's `(103.1,24.6,23.5)` = red terrain. Visually: hotbar
+(9 slots, selected outline), chat text, tutorial toast, world, the player's arm. **The crosshair is not visible in
+this frame** (the chat block covers the centre), so the crosshair part of the claim is not shown here.
+hud26 (explicit flags) is the same picture: 11,932 colours, hotbar `(73.2,59.8,44.7)`; hud23 is uniform black.
+
+**2. The HUD is drawn, not a pair copy.** `CELTIUM_FRAME_AT_WINDOW frame=140`: `afterWindows=0` hotbarRgb
+`(66,54,41)`; `1..4` `(109,23,22)` (the world window overwrites the band with terrain); **`5` `(66,54,41)` again**
+and `6` stays; `centreRgb` stays a picture throughout (`(107,96,103)`). So the window that restores the hotbar band
+is **window 5**, after the world windows, and the image stays a picture.
+
+**3. Accounting.** `selfCompositeSkips=166` against `frameId=162` (~1.02/frame). No other drop rose:
+`postAcceptDroppedGroups=0`, `windowFlushDroppedBatches=0`, `unflushedTargetGroupsDropped=0`,
+`staleGroupRefusals=0`. `immediateGroupsDropped` is **not a field on the line** (missing counter, not a zero).
+One coincidence worth naming: `acceptedByFormat[2]=3083` against `drawnByFormat[2]=2917` is **166** — exactly
+`selfCompositeSkips`, so the skipped composites are the format-2 batches not drawn. (`drawnByFormat[4]=1909`
+against accepted 1 is the known id4 anomaly; `drawnByFormat[9]=12` has no accepted counterpart.)
+
+**4. Nothing lost in the world.** hud27 whole frame `(115.0,105.1,114.1)` against hud24 `(126.1,107.6,119.8)`; the
+terrain band and the arm are recognisably the same scene. The sky differs (`(152.1,170.9,209.9)` against
+`(153.2,189.6,255.0)`) — recorded, not attributed.
+
+**5. The harness verdict is not a clean pass.** `fixtureStatus=PASSED`, **`fixturePassed=true`**, run report
+`presentedImageVerdict=PASSED`, `presentedDistinctColours=12537`, `presentedNonBackgroundFraction=0.949743` — but
+**`validationMessageCount=4`, `validationClean=false`, `validationExitCode=1`**, and the four messages are the same
+`VUID-vkCmdDraw-None-09600` / image `0x370000000037` family as round 237's HEI legs (2 there). So: the picture and
+the fixture passed; the leg is failed by validation, on the open layout finding.
