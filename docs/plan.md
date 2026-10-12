@@ -339,6 +339,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.349 **round 156: 停止点と「名前の無い契約」を記録（frame-composite・proj-channel）— BH-20 と BH-21 census を再移譲**
+
+- **記録に値する成果（実装ではなく契約の同定）**: 2担当が**未着手のまま最後の緑コミットで停止**し、その理由と**欠けている契約の名前**を残した。
+  | BH | 欠けている契約（名指し） | 実装の入口 |
+  |---|---|---|
+  | **BH-14** | **target の同一性キー（identity + generation + size）** | `GllessFrameTarget` は `defaultPair`/`chainPair` の2組のみで、非0・非main はすべて `chainPair` へ落ちる。`adoptChainFramebuffer` が「chain の最初の入力 identity」だけを採用する規則を per-identity へ広げる設計名が要る |
+  | **BH-17** | **GUI が1 draw あたり実際に必要とする payload**（測ってから分割） | `VulkanImmediateTexturePipeline`/`VulkanImmediatePipeline` が 208 byte を無条件登録・lit は 216。測らずに分割すると ABI を壊す |
+  | **BH-26** | **recording token の pending/confirmed 契約** | `GllessFrameTarget.recordAcquire` が記録時に layout/`firstAcquire` を変更・`applyGameClears` が latched mask と `neverCleared` を消費。**submit 前に reset すると実行されなかった transition/clear の前提だけが残る**。この契約が決まるまで layout 順序は論じられない |
+  | **BH-21** | **per-world と per-frame の資源分類** | この分類がコードにも plan にも無い。per-frame のものを world destroy で消すと次 frame が宙に浮く。**最初の作業は delete ではなく「world switch を挟んだ created/released の census 1本」**（材料: `hostBuffersCreated`・`frameArena`・`descriptorSetCensus()`・`identityPairCensus()`・`CELTIUM_LIFECYCLE announceImage`） |
+  | **BH-24** | **置換の transaction 型**（BH-20 と同じ） | 不変条件は「旧 buffer は新が設置され全 writer が新を指すまで有効かつ所有されたまま」 |
+- **BH-20 は contract が既に名前を持つ唯一の1件**（**作成数／解放数の census**）＝受入は「各段階を1つずつ失敗させ、作成数と destroy 数を突き合わせ、次の正常 create が成功する」。
+  対象は `VulkanImmediateTexture/Item/Pipeline`・`VulkanPostChain.create`・swapchain の semaphore pool（現状 shader module の finally しか戻らない）。
+- **再移譲**: **BH-20（着手可能）** と **BH-21 の census（delete の前提）** を `acceptance` へ。**BH-24 は BH-20 の transaction の型ができてから**・**BH-14/17/26 は契約の名指しが先**という順序を守る。
+- **ツリー**: HEAD 緑・未コミットなし（frame-composite の OPT-04 契約コメントは既にコミット済みであることを確認）。**font の証拠 crop 2枚をコミット**（`8e79fe65b`）。
+
 ## 0.348 **round 155: 未解決 BH 13件を担当へ移譲（`docs/history/2026-10-11-code-bughunt.md` 冒頭に解決状況を明記）**
 
 - **`docs/history/2026-10-11-code-bughunt.md` の冒頭に解決状況を書いた**（`d4da099db`）:
