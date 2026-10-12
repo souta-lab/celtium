@@ -39,8 +39,23 @@ jobs:
             21
             25
       - uses: gradle/actions/setup-gradle@v4.4.4
+      # :celtium-vulkan:compileTerrainShaders compiles the shaders into the packaged resources, and its compiler path
+      # defaults to the workspace-relative, gitignored `.celtium-work/gpu-tools/extracted/usr/bin/glslangValidator`
+      # (`celtium-vulkan/build.gradle:124-133`, wired into `processResources`). A checkout has neither that directory
+      # nor the tool, so every PR failed with `Cannot run program ".../.celtium-work/...": Exec failed, error: 2`.
+      # The compiler is a build dependency, not an optional tool - the SPIR-V it emits is what the loader reads - so it
+      # is installed here and handed to the task through the property the task already reads
+      # (`providers.gradleProperty('glslang_validator')`). Compiling and validating the shaders stays in the build;
+      # nothing is skipped and no check is removed.
+      - name: Install the shader compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends glslang-tools
+          glslangValidator --version | head -1
       - name: Build Minecraft 1.12.2 mod
-        run: ./gradlew -p build-1122 :forge122:packageJar --console=plain --stacktrace
+        run: >-
+          ./gradlew -p build-1122 :forge122:packageJar --console=plain --stacktrace
+          "-Pglslang_validator=$(command -v glslangValidator)"
       - name: Verify packaged mod contents
         run: python3 scripts/verify_forge_jar.py build-1122/build/libs/*/*.jar
       - uses: actions/upload-artifact@v4
