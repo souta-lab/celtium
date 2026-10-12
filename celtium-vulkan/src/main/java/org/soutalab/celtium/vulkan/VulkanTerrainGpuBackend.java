@@ -6961,6 +6961,36 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 // whose identity routes to the chain pair, and the composite only carries that image
                                 // into the frame image. Two images, two dumps, so "the logo never landed in the pair"
                                 // and "it landed and the composite lost it" are told apart by looking.
+                                // The default pair too: identity 0's pass may attach either the frame image (what the
+                                // present blits) or this pair, and the two rules that name it disagree (routeLabelForBinding
+                                // says frame-image, pairLabelForIdentity says default-pair). Task-76 rules the ordering
+                                // and the replacement-drop explanations out and leaves exactly this question, so the
+                                // probe reads all three images and lets the pictures answer it.
+                                GllessFrameTarget defaultPairTarget = offTargetTarget();
+                                long defaultPairImage = defaultPairTarget == null ? 0L
+                                        : defaultPairTarget.offTargetColorImage();
+                                if (defaultPairImage != 0L) {
+                                    int[] defaultPair = celtium$readImageRectangle(defaultPairImage, 0, 0,
+                                            this.targetWidth, this.targetHeight);
+                                    if (defaultPair != null) {
+                                        java.nio.ByteBuffer defaultRgba = org.lwjgl.system.MemoryUtil.memAlloc(
+                                                this.targetWidth * this.targetHeight * 4);
+                                        try {
+                                            for (int index = 0; index < defaultPair.length; index++) {
+                                                int value = defaultPair[index];
+                                                defaultRgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                                                defaultRgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                                                defaultRgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                                                defaultRgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                                            }
+                                            VulkanGlTexture.dumpStageImage(
+                                                    "splash-default-p" + this.celtium$presentCount, defaultRgba,
+                                                    this.targetWidth, this.targetHeight);
+                                        } finally {
+                                            org.lwjgl.system.MemoryUtil.memFree(defaultRgba);
+                                        }
+                                    }
+                                }
                                 GllessFrameTarget gllessSplash = offTargetTarget();
                                 if (gllessSplash != null && gllessSplash.chainPairColorImage() != 0L) {
                                     int[] pair = celtium$readImageRectangle(gllessSplash.chainPairColorImage(), 0, 0,
