@@ -393,6 +393,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.391 **round 192: `framebufferReplacing` の2 clearer 等価性が証明され、配線が完全に確定**
+
+- **証明（frame-composite・commit にそのまま載せられる形）**: 2つの clearer は**「clearer としては等価」だが「メソッドとしては等価でない」**。
+  | site | メソッド | 条件 | 効果 |
+  |---|---|---|---|
+  | `:12396` | `celtium$ensureTargetForBoundFramebuffer()` | `ready = ensureFrameTarget()` が true | `framebufferReplacing = false` |
+  | `:12417` | `celtium$ensureTargetForBoundFramebuffer(int widthHint, int heightHint)` | 同＋false かつ hint>0 なら `ensureFrameTarget(w,h)` で再試行 | 同 |
+  **同じ述語**（呼び出し後に target が ready）・**同じ効果**（フラグを落とすだけ・両方とも `return ready;` 直前で分岐もループも無い）。違いは2つ目だけが **size hint の再試行**を持つ点 → **メソッド統合は不可**だが **「1つの clearer を2箇所から呼ぶ」統合は安全** ✓。
+- **確定した配線**: `noteReplacementSettled()` を1つ用意し、**各メソッドの `if (ready)` 出口から呼ぶ**（2メソッドは残す）→ writer は「announce 1箇所（`:4379`）＋ settle 1メソッド」＝**ambiguity を移すのではなく解消** ✓。
+- **同じ unit にまとめるべき残件（今回は触らない）**: どちらの clearer も**「どの世代の target が ready になったか」を見ていない** ✗ → resize 中に別経路で target が作られてもフラグが落ちる＝**BH-26/B10 と同じ「古い時点の事実を新しい target の事実として読む」形** ✓。`frameTargetKnown` の clear-on-replace と同じ独立 unit（挙動変更・独自の証拠）にまとめる ✓（plan §9.2 の保守的判断どおり）。
+- **配線パスはこれで完全に確定**（R5: 上記＋§0.389 の表／R6: §0.390 の表／R4: interface 3点）。build は全配線後1回。
+
 ## 0.390 **round 191: B05 修正完了（GPU 証拠つき）／R6 `FrameSubmissionScheduler` 納品／R5・R4 の配線準備完了**
 
 - **B05 修正完了（perf-ring `b02a592a5`）**: **「旧 allocation を slot に retire し、slot reset で解放」**。再現 leg（`frameArenaInitialVertexBytes=262144`・`…IndexBytes=65536`・layers ON・`hostBuffersCreated=16`）で **`validationMessageCount=0` / `validationClean=true` / VUID なし** ✓（before・fence 版・epoch 版はいずれも msgs=4）。＝**監査 B05 は GPU 証拠つきで閉じた** ✓。drain・budget 拡大・counter 抑制は不使用 ✓。
