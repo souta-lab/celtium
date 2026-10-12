@@ -33,10 +33,16 @@ mezz and Rongmario), fetched from `maven.cleanroommc.com/mezz/jei/4.31.2/jei-4.3
 project's own README gives for developers. The JEI jar fetched earlier was removed rather than kept beside it,
 because two mods with modid `jei` in one instance is a conflict, not a comparison.
 
-The first acceptance leg with HEI in the cohort is running (`r142-hei`); what it has to show before this row
-can be called verified is that the game reaches the world with HEI loaded, that the item list, search bar and
-tooltips draw natively, and that the run is `validationMessageCount=0` with the picture gate's own verdict
-quoted. A leg that merely starts is not acceptance - the objective says so in as many words.
+**The first leg did not run** (`r142-hei`): it reported `Waiting for the game slot (held by pid 2997923)`,
+`endedBy=process-exit`, `elapsedSeconds=31.4` - a slot timeout, not a result, which is the same shape of
+non-answer this project has already recorded once. What it does show is that the cohort was assembled with
+HEI in it: the run's own debug log names `HadEnoughItems_1.12.2-4.31.2.jar` and the `jei` modid, so the
+harness picked the jar up rather than ignoring it.
+
+What the leg has to show before this row can be called verified is unchanged: the game reaches the world with
+HEI loaded, the item list, search bar and tooltips draw natively, and the run is `validationMessageCount=0`
+with the picture gate's own verdict quoted. A leg that merely starts is not acceptance - and neither is one
+that never got the slot.
 
 ## What is actually verified today
 
