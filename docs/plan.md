@@ -307,6 +307,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.340 **round 147: ユーザ報告（2026-10-12 最新）— 残るのは F3 のラグ・ロード画面・パノラマ・GUI 文字の一部が暗くなる**
+
+- **ユーザの言葉（そのまま）**: 「俺が報告した問題のほとんどは治りました。**F3がとてもラグいのはまだ残っています。ロード画面もないです。パノラマもないです。GUI上の文字の一部が暗くなる問題と**」
+  （画像は **tooltip の crop**（"Enchanted Book" / "Blast Protection IV"）＝**GUI 文字の暗転の実例**として提示）。
+- **整理（4件・状態を区別）**:
+  | # | 報告 | 現在の状態 |
+  |---|---|---|
+  | 1 | **F3 がとてもラグい** | **機序確定・Celtium 側で触れない部分が主**（caller 0.13 %・vanilla glyph 本体 3.15 µs/glyph・bind 連鎖は除去済み）。**未解決のまま残す**（fast path は互換リスクの決定待ち） |
+  | 2 | **ロード画面が無い** | **新規**（splash/loading の native 描画が成立していない）→ **未着手** |
+  | 3 | **パノラマが無い** | **機序確定**（copy が読む pair は `readImage==passImage` で正しいが **mirror が白**・7仮説棄却）→ **未修正** |
+  | 4 | **GUI 上の文字の一部が暗くなる** | **新規**（tooltip の crop が実例）→ **未着手**・**hotbar item の暗転と同じ族**（light-map unit の enable 状態で色が変わる経路）の可能性 |
+- **優先順（Lead の判断）**: **4 → 2 → 3 → 1**。(4) は**描画状態の契約**（色・light・alpha）で**根因を1つに絞れる**可能性が高く、
+  hotbar の修正（light-map unit の enable 状態を見る）と**同じ計器**（`itemLitGuiGroups`・`CELTIUM_GROUP_BOUNDS` の colour0）で追える。
+  (2) は**画面が無い**＝経路自体の欠落で、`SplashProgress`/loading の native pass を確認する。(3) は mirror の内容が残る1点。(1) は決定待ち。
+
 ## 0.339 **round 146: 2件の前進 — (1) `videoSettingsRowNames` が実名を返した（`options.renderClouds` を含む）(2) F3 に Vulkan device/driver 行を追加**
 
 - **(1) row-name 経路が動いた（測定 `r139-e`）**:
