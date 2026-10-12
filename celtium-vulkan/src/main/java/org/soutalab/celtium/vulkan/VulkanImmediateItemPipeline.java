@@ -429,6 +429,14 @@ public final class VulkanImmediateItemPipeline {
             check(vkCreateDescriptorSetLayout(this.context.device(), layoutInfo, null, layoutHandle),
                     "vkCreateDescriptorSetLayout(immediate textured)");
             this.descriptorSetLayout = layoutHandle.get(0);
+            // BH-20's acceptance hook: a failure *inside* the transaction, after the first handle exists, so the
+            // rollback is exercised rather than assumed. The fault is one-shot (VulkanAllocationFault), so the first
+            // build fails and the rollback runs; the next build - the one the acceptance requires to succeed - is
+            // untouched.
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail(
+                    "VulkanImmediateItemPipeline:afterLayout")) {
+                throw new IllegalStateException("injected pipeline-build failure (afterLayout)");
+            }
             // The first of the pipeline's pools. maxSets was 8192 here while descriptorCount was 64, and the descriptor
             // count is the binding limit: the pool could never hold more than 64 sets. Both numbers are now
             // DESCRIPTOR_SETS_PER_POOL and allocateDescriptorSet grows a new pool when one is full (audit B03).

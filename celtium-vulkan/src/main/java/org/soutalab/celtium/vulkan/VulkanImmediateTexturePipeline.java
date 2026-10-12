@@ -258,8 +258,18 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Builds the layout and the pipeline from the fields as they stand; call only once they are final. */
     private VulkanImmediateTexturePipeline build() {
-        this.createPipelineLayout();
-        this.createPipeline();
+        // BH-20: this is the path the common variants actually take (the factories call allocate(...).build()), and the
+        // injected-failure leg proved it was the one stage sequence still outside the transaction -
+        // pipelineBuildRollbacks stayed 0 while the fault fired. A failure in the pipeline stage therefore left the
+        // descriptor set layout and the pipeline layout behind, exactly as the finding says.
+        try {
+            this.createPipelineLayout();
+            this.createPipeline();
+        } catch (RuntimeException | LinkageError error) {
+            BUILD_ROLLBACKS.incrementAndGet();
+            this.delete();
+            throw error;
+        }
         return this;
     }
 
@@ -638,6 +648,14 @@ public final class VulkanImmediateTexturePipeline {
             check(vkCreateDescriptorSetLayout(this.context.device(), layoutInfo, null, layoutHandle),
                     "vkCreateDescriptorSetLayout(immediate textured)");
             this.descriptorSetLayout = layoutHandle.get(0);
+            // BH-20's acceptance hook: a failure *inside* the transaction, after the first handle exists, so the
+            // rollback is exercised rather than assumed. The fault is one-shot (VulkanAllocationFault), so the first
+            // build fails and the rollback runs; the next build - the one the acceptance requires to succeed - is
+            // untouched.
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail(
+                    "VulkanImmediateTexturePipeline:afterLayout")) {
+                throw new IllegalStateException("injected pipeline-build failure (afterLayout)");
+            }
             // The first of the pipeline's pools. It is created here rather than inline so the growth path
             // (allocateDescriptorSet -> createDescriptorPool) has exactly one shape to keep correct.
             if (createDescriptorPool() == VK_NULL_HANDLE) {
