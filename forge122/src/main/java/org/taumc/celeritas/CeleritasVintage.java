@@ -60,6 +60,36 @@ public class CeleritasVintage {
     private static final long[] f3Recent = new long[120];
     private static int f3RecentAt;
 
+    /**
+     * Whether the panel shows the full counter set.
+     * <p>
+     * Off by default since 2026-10-12 by measurement: the full set is one line of ~31,000 characters (measured
+     * CELTIUM_F3_SECTION charsPerCall=31,378), the font renderer wraps it into ~780 rows, and the gui bracket goes
+     * from 2.6 ms (overlay off) to 31.5 ms (overlay on) at 854x480 - about 28 ms of glyph drawing per frame. An
+     * overlay that costs 28 ms is not a debug overlay. The panel is therefore no longer a counter source by default;
+     * the authoritative surface is the log's CELTIUM_VERIFY line, which every fixture run now ends with
+     * (via=fixture end). {@code -Dceltium.f3.fullSummary=true} restores the old panel exactly, so the old cost stays
+     * measurable and a leg that wants counters off the panel can still have them.
+     */
+    private static final boolean FULL_SUMMARY = Boolean.getBoolean("celtium.f3.fullSummary");
+
+    /**
+     * Adds the default panel's bounded subset: the device/driver line, the terrain backend, the frame split and the
+     * censuses that are cheap to build and short to draw, plus a line naming where the rest went.
+     */
+    private static void celtium$addCuratedLines(java.util.List<String> strings) {
+        strings.add("Terrain backend: " + org.soutalab.celtium.forge.TerrainBackendStatus.describe());
+        strings.add("Frame: " + org.soutalab.celtium.vulkan.FramePassTimings.summary());
+        // The upload-batch census is an instance method on VulkanContext and no static accessor exists, so it is not
+        // reachable from here without creating a context or reaching into the backend - both of which this line must
+        // not do. What is reachable and bounded is the allocation census; the batch/refusal counters stay in the log's
+        // full summary.
+        strings.add("Buffers: " + org.soutalab.celtium.vulkan.VulkanHostBuffer.allocationSummary());
+        strings.add("Unmodelled GL entry points: "
+                + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.unknownSymbolSummary());
+        strings.add("full counters: CELTIUM_VERIFY in the log (-Dceltium.f3.fullSummary=true for the panel)");
+    }
+
     /** How many F3 frames a built section is shown for; {@code -Dceltium.f3.sectionRefreshFrames} overrides it. */
     private static final int SECTION_REFRESH_FRAMES =
             Math.max(1, Integer.getInteger("celtium.f3.sectionRefreshFrames", 20).intValue());
@@ -207,7 +237,11 @@ public class CeleritasVintage {
             // waste to rebuild 602 fields for a panel refreshed on a cadence, so the text is built once and refreshed
             // every SECTION_REFRESH_FRAMES. Every field stays in it; what the user sees can be up to that many F3
             // frames stale (about 0.5-1.1 s at this scene's frame times).
-            strings.addAll(celtium$cachedSection(renderer));
+            if (FULL_SUMMARY) {
+                strings.addAll(celtium$cachedSection(renderer));
+            } else {
+                celtium$addCuratedLines(strings);
+            }
         }
         celtium$noteSectionBuild(System.nanoTime() - sectionStart, strings.size() - stringsBefore, strings);
 
