@@ -451,9 +451,7 @@ public final class VulkanFrameArena {
                 this.vertices = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
             } else {
-                // The old allocation may be read by the frame this slot is already submitted for; its completion
-                // epoch is the ticket (audit B05 - the deferred queue's fence was measured too early).
-                this.vertices.ensureCapacity(align(target), this.epoch);
+                this.vertices.ensureCapacity(align(target));
             }
             return true;
         }
@@ -472,7 +470,7 @@ public final class VulkanFrameArena {
                 this.indices = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true);
             } else {
-                this.indices.ensureCapacity(align(target), this.epoch);
+                this.indices.ensureCapacity(align(target));
             }
             return true;
         }
