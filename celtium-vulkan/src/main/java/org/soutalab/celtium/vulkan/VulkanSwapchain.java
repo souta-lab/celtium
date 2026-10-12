@@ -933,6 +933,34 @@ public final class VulkanSwapchain {
             // fixture recorded at its capture was from the run's third frame - the same "value from another moment" mistake
             // the recording was added to fix, one level down. The flag is a diagnostic, so its cost is acceptable; the
             // count stays for reporting and as a bound.
+            // The dump the fixture asked for is not a diagnostic of the readback flag: it is the only picture a
+            // GL-bridge run has, and it used to live inside the PRESENT_READBACK block below. Every bridge leg
+            // therefore wrote no world dump at all while its report recorded pictureRequested_world and a
+            // presented-image mean - the request was made, the image was there, and the write was skipped because a
+            // diagnostic switch was off (legs hei005br and glref3: no dump file anywhere, presentedDumpFailure=none
+            // because writePresentedImage was never called). It runs here unconditionally, and clears the list so the
+            // block below cannot write the same path twice.
+            if (!this.pendingDumpPaths.isEmpty()) {
+                java.util.List<java.nio.file.Path> pendingPaths =
+                        new java.util.ArrayList<>(this.pendingDumpPaths);
+                this.pendingDumpPaths.clear();
+                boolean anyWritten = false;
+                java.util.List<java.nio.file.Path> failedPaths = new java.util.ArrayList<>();
+                for (java.nio.file.Path path : pendingPaths) {
+                    if (writePresentedImage(path, image)) {
+                        anyWritten = true;
+                    } else {
+                        failedPaths.add(path);
+                    }
+                }
+                this.lastDumpWritten = anyWritten;
+                if (!failedPaths.isEmpty() && this.pendingDumpPaths.size() + failedPaths.size() <= DUMP_RETRY_CAP) {
+                    this.pendingDumpPaths.addAll(failedPaths);
+                    this.lastDumpFailure = "a presented-image dump did not write this present (image=0x"
+                            + Long.toHexString(image) + ", size=" + this.width + "x" + this.height
+                            + "); the request is kept for the next present";
+                }
+            }
             if (PRESENT_READBACK && this.presentReadbacks < 100000) {
                 this.presentReadbacks++;
                 this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
