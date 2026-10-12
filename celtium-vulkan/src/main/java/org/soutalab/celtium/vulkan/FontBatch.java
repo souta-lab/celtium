@@ -433,6 +433,10 @@ public final class FontBatch {
         } else {
             this.flushedStateChange++;
         }
+        // The retained runs are older than the open one, so they are offered first: glyphs that were written before
+        // this run must not be drawn after it. A run that is refused in this call is retained and left for the next
+        // flush rather than offered again immediately - offering it twice in one flush asks the same question twice.
+        offerRetained(view, target);
         Run run = new Run(this.pendingFormat, this.pendingStride, this.pendingFormatId,
                 org.lwjgl.system.MemoryUtil.memAddress(this.pendingVertices, 0), this.pendingVertexCount,
                 this.pendingDrawMode, this.pendingTexture, this.pendingAlphaTest, this.pendingAlphaRef,
@@ -444,7 +448,6 @@ public final class FontBatch {
         if (!offer(run, target)) {
             retain(run);
         }
-        offerRetained(view, target);
     }
 
     /**
