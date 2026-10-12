@@ -9967,11 +9967,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.terrain.setLastTerrainIndirectFallback("the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
             }
             if (!indirect) {
-            for (int command = 0; command < batch.size(); command++) {
+            // Draw-command combining (the upstream #2421 result): two consecutive commands that read the same index
+            // source and the *adjacent* vertex range draw the same geometry as one command with their counts added -
+            // the shared quad-index pattern repeats, so an unsorted command's firstIndex is always 0 and a merged draw
+            // covering baseVertex..baseVertex+n reads the same quads. On the region index buffer the equivalent test
+            // is index-contiguity (next.byteOffset == this.byteOffset + this.elementCount*4). Fewer, larger
+            // vkCmdDrawIndexed calls = fewer driver submissions and better GPU occupancy; ~30% fewer draws upstream.
+            int runStart = -1;       // index of the first command in the open merge run
+            int runElementCount = 0; // summed index count of the run
+            int runBaseVertex = 0;   // the run's baseVertex (first command's)
+            long runFirstIndex = 0;  // the resolved firstIndex of the run's first command
+            int command = 0;
+            while (command < batch.size()) {
                 long byteOffset = batch.indexByteOffset(command);
                 int firstIndex;
                 if (sortedPass) {
                     if (resources.indexArena == null) {
+                        command++;
                         continue;
                     }
                     this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
@@ -9982,20 +9994,36 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
                     firstIndex = (int) (byteOffset / 4);
                 } else {
+                    command++;
                     continue;
                 }
-                vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(command), 1, firstIndex,
-                        batch.baseVertex(command), 0);
-                if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < READBACK_SLOTS) {
-                    // Only the address is remembered here: a buffer copy is illegal inside a render pass, so the copies
-                    // are issued after vkCmdEndRenderPass for every remembered draw. The region travels with the offset
-                    // because a single field was overwritten by every draw, so every slot was read back from whichever
-                    // region happened to be drawn last - which is why the decoded vertices could never be trusted.
-                    this.readbackOffsets[this.readbackSlots] = (long) batch.baseVertex(command) * this.commonVertexStride;
-                    this.readbackRegions[this.readbackSlots] = resources;
-                    this.readbackSlots++;
+                int elementCount = batch.elementCount(command);
+                int baseVertex = batch.baseVertex(command);
+                if (runStart < 0) {
+                    runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
+                } else {
+                    // Mergeable only on the shared index (firstIndex 0, the unsorted quad pattern): there an
+                    // elementCount of N indexes N/6 quads = N*4/6 vertices, so "the next command's baseVertex is the
+                    // run's baseVertex plus the run's vertices" is exact. On a region index buffer the index-to-vertex
+                    // ratio is the section's own and /6*4 can coincidence-match two non-adjacent sections, so those
+                    // commands are never merged - order and content both stay the drawer's.
+                    int runVertices = (runElementCount / 6) * 4;
+                    boolean vertexAdjacent = baseVertex == runBaseVertex + runVertices;
+                    boolean indexAdjacent = runFirstIndex == 0 && firstIndex == 0;
+                    if (vertexAdjacent && indexAdjacent) {
+                        runElementCount += elementCount;
+                        this.terrainStatistics.noteLastDrawCommandsMerged();
+                        command++;
+                        continue;
+                    }
+                    // The run ends: draw it, then open a new one at this command.
+                    celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources);
+                    runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
                 }
-                this.terrainStatistics.noteLastDrawCommands();
+                command++;
+            }
+            if (runStart >= 0) {
+                celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources);
             }
             }
 
@@ -10054,6 +10082,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.readbackDone = true;
         }
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+    }
+
+    /**
+     * One {@code vkCmdDrawIndexed} for a merged run of source commands: the run's first index, its first command's
+     * baseVertex, and the summed element count. The command-count and readback diagnostics see it as one draw, which
+     * it is.
+     */
+    private void celtium$drawIndexedRun(long firstIndex, int baseVertex, int elementCount,
+            TerrainRenderer.RegionResources resources) {
+        vkCmdDrawIndexed(this.commandBuffer, elementCount, 1, (int) firstIndex, baseVertex, 0);
+        if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < READBACK_SLOTS) {
+            this.readbackOffsets[this.readbackSlots] = (long) baseVertex * this.commonVertexStride;
+            this.readbackRegions[this.readbackSlots] = resources;
+            this.readbackSlots++;
+        }
+        this.terrainStatistics.noteLastDrawCommands();
     }
 
     /**
