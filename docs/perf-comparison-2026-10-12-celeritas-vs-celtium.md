@@ -120,3 +120,61 @@ The arms' only shared instrument is the fixture's frame interval, and that inter
 renderer-side statement is therefore: **candidate renderer bracket p50 19.6 ms against the reference's whole-loop
 interval p50 9.07 ms** - the reference's own loop is faster in absolute terms as well, and the two are still not the
 same quantity, which is why no multiplier appears here.
+
+---
+
+# Addendum 2026-10-12 (2): taking the renderer bracket apart
+
+Same leg shape as above (fixture-driven, GL-less, MAILBOX, F3 closed, no readback, 854x480), AMD RX 6400 unless
+stated. Two legs of the same shape agreed within noise, so the bracket numbers below are quoted once:
+`frame[p50=19.2..19.6] world[p50=15.4..16.3] hand[p50=0.3..0.4] clouds[p50=0.8] gui[p50=0.7] residual[p50=0.0]`.
+
+Inside `world` (sub-brackets, not additive with each other): **terrain p50 5.5**, **chunkUpload 3.8**, **flush 2.1**,
+particles 1.6, present 0.0, entities 0.0 - about 13.0 ms named, leaving ~3 ms of `world` in no sub-bracket (the game's
+own `renderWorldPass` work). The lead's `GameLoopTiming` closes the interval from the other side
+(bracket 18.7 + tick 17 ≈ interval 34.7 on that jar), so the bracket itself is what remains to move.
+
+## The upload path, phase by phase (new instrument, jar `3c9aabdad2670c90…`)
+
+The largest thing inside the bracket that this unit owns is the staging path, so its phases are now timed and reported
+inside the existing summary (`uploadPhaseMicros`, `uploadPhaseMillisTotal`, `uploadCopyBytesTotal`). 318 frames,
+`uploadCopiesBatched=11116` (35 copies per frame), `uploadCopyBytesTotal=2116239008` (2.1 GB, **6.65 MB per frame**):
+
+| phase | total | per frame |
+|---|---|---|
+| **reserve slot** (search + ring-pressure wait) | **605,028 us** | **1.90 ms** |
+| copy into the ring (`memcpy`) | 311,460 us | 0.98 ms |
+| submit the batch | 52,007 us | 0.16 ms |
+| record the command buffer | 16,040 us | 0.05 ms |
+| poll the deferred queue | 11,897 us | 0.04 ms |
+| total | 996 ms | **3.13 ms** |
+
+With 8 MiB of ring and 6.65 MB staged per frame, the ring wrapped every 1.2 frames and the reservation path waited on
+the oldest deferred submission **211 times** (0.66 per frame, ~1.9 ms per wait): nearly the whole 1.90 ms was those
+waits.
+
+## The fix, and both GPUs
+
+`UPLOAD_SLOT_COUNT` 8 -> 16 (8 -> 16 MiB of host-visible staging, reported as `uploadRingBytes`/`uploadRingSlots`). The
+reuse rule is untouched: a slot is free only when the fence of the submission that read it has signalled. Same leg
+shape on both GPUs:
+
+| | before (8 slots, AMD) | after (16 slots, AMD) | after (16 slots, Intel UHD 630) |
+|---|---|---|---|
+| copies / copy bytes | 11,116 / 2.12 GB | 9,614 / 1.82 GB | 10,302 / 1.96 GB |
+| **ring-pressure waits** | **211** | **0** | **0** |
+| **reserve, per frame** | **1.90 ms** | **0.03 ms** | **0.007 ms** |
+| copy, per frame | 0.98 ms | 0.91 ms | 1.32 ms |
+| phase total, per frame | 3.13 ms | 1.23 ms | 1.61 ms |
+| validation | msgs 0 / clean | msgs 0 / clean | msgs 0 / clean |
+
+Attributable claim: the ring-pressure wait is **gone on both GPUs** (211 -> 0) and the reservation phase falls from
+1.90 ms to 0.03 (AMD) / 0.007 (Intel) per frame, for +8 MiB of staging. **Not claimed**: the frame-level difference.
+The legs did not do the same amount of work (copies 11,116 against 9,614/10,302) and the intervals moved the other way
+(34.4 against 37.5/39.0 ms), which is the run-to-run variance this scene has shown all along.
+
+## What is left inside the bracket for this unit
+
+The copy phase (0.91-1.32 ms per frame for 6-6.8 MB) is real data movement and only shrinks if the game stages less.
+Everything else this unit owns inside the bracket is now below 0.2 ms per frame; the largest remaining named items -
+terrain 5.5 and chunkUpload 3.8 - are in the backend, which another unit holds.

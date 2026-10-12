@@ -233,17 +233,18 @@ public final class VulkanContext {
     /**
      * Ring slots and their size.
      * <p>
-     * Eight slots rather than four, from a measurement: with four, a frame's own copies (measured at ~22 copies and
-     * ~2-3 MB per frame on the AMD leg) filled the ring and the reservation path waited on the oldest deferred
-     * submission 84 times in 98 frames ({@code uploadRingPressureWaits}), about a millisecond of CPU per frame that
-     * the GPU would have spent anyway. Eight slots give the ring a two-frame wrap, so a batch's fence has almost
-     * always signalled by the time its slot is wanted again. The memory cost is bounded and reported:
-     * {@code uploadRingBytes} goes from 4 MiB to 8 MiB of host-visible staging.
+     * Sixteen slots rather than eight, from a measurement of the phases themselves: on the (g) leg shape a frame
+     * stages 35 copies and 6.65 MB ({@code uploadCopiesBatched=11116}, {@code uploadCopyBytesTotal=2116239008} over
+     * 318 frames), so an 8 MiB ring wrapped every 1.2 frames and the reservation path still waited on the oldest
+     * deferred submission 211 times - {@code uploadPhaseMicros=[reserve=605028 copy=311460 ...]} puts 1.90 ms of every
+     * frame in the reservation path, nearly all of it those waits. Sixteen slots give the ring a ~2.4-frame wrap, so a
+     * batch's fence has signalled by the time its slot is wanted again. The memory cost is bounded and reported:
+     * {@code uploadRingBytes} goes from 8 MiB to 16 MiB of host-visible staging.
      * <p>
      * The reuse rule is unchanged and is the point of the ring: a slot is free only after the fence of the submission
      * that read it has signalled ({@link #celtium$pollDeferredSubmits()}), never because a frame number moved.
      */
-    private static final int UPLOAD_SLOT_COUNT = 8;
+    private static final int UPLOAD_SLOT_COUNT = 16;
     private static final long UPLOAD_SLOT_BYTES = 1L << 20;
     private long uploadRingBuffer = VK_NULL_HANDLE;
     private long uploadRingMemory = VK_NULL_HANDLE;
@@ -342,6 +343,14 @@ public final class VulkanContext {
     private long uploadRingPressureWaits;
     /** Ring slots freed by a non-blocking poll of the deferred queue rather than by a wait. */
     private long uploadRingPressurePollsReclaimed;
+    // The upload path's own phases, so the bracket it lands in can be taken apart per frame rather than guessed at.
+    // Counting and timing only: no ordering, no ownership, nothing about when a copy runs changes.
+    private long uploadReserveNanos;
+    private long uploadCopyNanos;
+    private long uploadCopyBytes;
+    private long uploadPollNanos;
+    private long uploadRecordNanos;
+    private long uploadSubmitNanos;
     /** One-line-per-flush trace, for reading what a flush cost without a profiler. */
     private static final boolean UPLOAD_TRACE = Boolean.getBoolean("celtium.vulkan.uploadTrace");
     /** Copies whose destination was destroyed before the flush: nothing reads it, so the copy is skipped. */
@@ -1181,8 +1190,11 @@ public final class VulkanContext {
             celtium$immediateStagingCopy(target.buffer(), destinationOffset, sourceAddress, length, paddedLength);
             return;
         }
+        long copyStarted = System.nanoTime();
         MemoryUtil.memCopy(sourceAddress, this.uploadRingMapped + stagingOffset, length);
         celtium$zeroUploadTail(stagingOffset, length, paddedLength);
+        this.uploadCopyNanos += System.nanoTime() - copyStarted;
+        this.uploadCopyBytes += length;
         this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
         this.uploadCopiesBatched++;
     }
@@ -1208,8 +1220,11 @@ public final class VulkanContext {
             return;
         }
         ByteBuffer staging = MemoryUtil.memByteBuffer(this.uploadRingMapped + stagingOffset, (int) paddedLength);
+        long copyStarted = System.nanoTime();
         MemoryUtil.memCopy(source.duplicate(), staging);
         celtium$zeroUploadTail(stagingOffset, length, paddedLength);
+        this.uploadCopyNanos += System.nanoTime() - copyStarted;
+        this.uploadCopyBytes += source.remaining();
         this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
         this.uploadCopiesBatched++;
     }
@@ -2194,6 +2209,15 @@ public final class VulkanContext {
      *         (the caller then uses the one-copy path)
      */
     private long celtium$reserveUploadSlot(long bytes) {
+        long reserveStarted = System.nanoTime();
+        try {
+            return celtium$reserveUploadSlotTimed(bytes);
+        } finally {
+            this.uploadReserveNanos += System.nanoTime() - reserveStarted;
+        }
+    }
+
+    private long celtium$reserveUploadSlotTimed(long bytes) {
         if (bytes > UPLOAD_SLOT_BYTES) {
             return -1L;
         }
@@ -2341,7 +2365,9 @@ public final class VulkanContext {
         // Reclaim confirmed batches first: their ring slots are what the copies below may need, and a poll is the
         // only CPU cost confirmation asks for - the waits the ring-pressure path still pays stay bounded by the
         // oldest outstanding batch rather than by whatever else the queue holds.
+        long pollStarted = System.nanoTime();
         celtium$pollDeferredSubmits();
+        this.uploadPollNanos += System.nanoTime() - pollStarted;
         if (this.pendingUploads.isEmpty()) {
             return;
         }
@@ -2382,6 +2408,7 @@ public final class VulkanContext {
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, barrier, null, null);
             }
         } finally {
+            this.uploadRecordNanos += System.nanoTime() - started;
             // The batch joins the deferred queue rather than being waited on the spot: the fence is what frees this
             // command buffer and re-opens the ring slots it read, and both happen at the next poll or at the bounded
             // wait the ring-pressure path pays when every slot is still owned. This is the change that removes the
@@ -2391,7 +2418,9 @@ public final class VulkanContext {
             // overwritten by newer copies - a wrong picture rather than a failed one.
             boolean enqueued = false;
             try {
+                long submitStarted = System.nanoTime();
                 celtium$submitDeferred(commandBuffer, uploadSlotMask);
+                this.uploadSubmitNanos += System.nanoTime() - submitStarted;
                 enqueued = true;
             } finally {
                 this.uploadCopiesFlushed += this.pendingUploads.size();
@@ -2439,6 +2468,14 @@ public final class VulkanContext {
         return "uploadCopiesBatched=" + this.uploadCopiesBatched + " uploadCopiesFlushed=" + this.uploadCopiesFlushed
                 + " uploadFlushes=" + this.uploadFlushes + " uploadFlushMillis=" + this.uploadFlushMillis
                 + " uploadFlushWorstMillis=" + this.uploadFlushWorstMillis
+                + " uploadPhaseMicros=[reserve=" + (this.uploadReserveNanos / 1000L)
+                + " copy=" + (this.uploadCopyNanos / 1000L)
+                + " poll=" + (this.uploadPollNanos / 1000L)
+                + " record=" + (this.uploadRecordNanos / 1000L)
+                + " submit=" + (this.uploadSubmitNanos / 1000L) + "]"
+                + " uploadPhaseMillisTotal=" + ((this.uploadReserveNanos + this.uploadCopyNanos + this.uploadPollNanos
+                        + this.uploadRecordNanos + this.uploadSubmitNanos) / 1000000L)
+                + " uploadCopyBytesTotal=" + this.uploadCopyBytes
                 + " uploadPendingCopies=" + this.pendingUploads.size()
                 + " uploadRingBytes=" + this.uploadRingCapacity
                 + " uploadRingSlots=" + UPLOAD_SLOT_COUNT
