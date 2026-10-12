@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.406 **round 207: R2 最終 stage（Immediate・113 counter）は一括では通らない — 形状別パスが必要と判明（試行は revert 済み・build 緑）**
+
+- **試行**: 駐機中の `ImmediateStatistics` の候補121から **backend が宣言している116**を抽出 ✓ → **state 3つ（`frameId`・`worldEpoch`・`pendingImmediateIndices`）は除外** ✓（count ではなく frame/world/queue の state ✓）→ 残り **113 を mover で移動** → **エラー126** ✗ → **revert** ✓（`git checkout` ＋ クラス削除 ✓・**build 緑に復帰** ✓）。
+- **理由（acceptance の警告どおり「最後・最も interlocked」✓）**: 113 counter の書き込みが**一様でない** ✗ — ①複合代入（`+=` 等 ✓）②前置/後置 increment を値として読む ✓ ③**メソッド呼び出しの引数**として渡される ✓ ④`last*`/`reason` 系の **値（String/boolean/float）** が混在 ✓ ⑤**他 domain と共有**される counter（`flushCount`・`orderPreservingFlushes`・`frameAccepted` 等は line の Immediate run0/run13 に出るが writer が複数 ✓）。
+- **次に必要な進め方（記録）**: ①**形状別に分ける**（count 系 / value 系 / flag 系 ✓）②各形状ごとに mover を拡張するか**手作業**で置換 ✓ ③**クラスは手書き**（mover の生成物は不正 ✓ — Terrain/Target/Submission で実績のある手書きパターン ✓）④**小グループごとに build** ✓（この stage は 1 回で 113 を動かすと 126 の誤りが一度に出る ✗）。
+- **現状**: R2 は **7 stage 中 6 完了** ✓（Font・Model・Texture・Terrain・Target・Submission ✓）、**Immediate のみ未着手のまま** ✓（line の field 名・順序は全 stage 不変 ✓・baseline byte-exact ✓）。
+
 ## 0.405 **round 206: R2 stage 3〜6（Texture・Terrain・Target・Submission）＋ R8 第3バッチ（すべて build 緑）**
 
 - **R2 stage 3（Texture・11 counter）**（`b77ba1b78`）: bind chain・announcement・mirror の counter が `TextureStatistics` へ ✓。**所有者が既にある counter は読むだけ**（`TextureCopyService`・`PublishedFrameTextures`・`VulkanTextureRegistry`・`VulkanImmediateTexturePipeline` ✓）とクラスの javadoc に明記 ✓。
