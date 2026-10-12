@@ -339,6 +339,17 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.353 **round 160: BH-09 の計器は動いた（`CELTIUM_VERIFY via=frame 120`）— ただし terrain scene は scissor を使わないので受入は GUI scene で取る**
+
+- **計器の修正が効いた**: `638529520`・`d3d4f0a81` の3 trigger により、**leg `r152-bh09` で `CELTIUM_VERIFY via=frame 120` が印字**された
+  ＝**「カウンタが 0 ではなく不在」という3 leg 続きの混乱は解消**（summary は F3 の Celeritas 節が描かれた時しか届かなかった）。
+- **測定（`r152-bh09`・terrain scene）**: **`scissorCapturedGroups=0`・`scissorLateCapturedGroups=0`・`lineBatchesNarrowed=0`**。
+  ＝**この scene は scissor を一切使っていない**（以前 `lineBatchesNarrowed=215` を出したのは **GUI scene**）。
+  ＝**受入は GUI scene で取る必要がある**（「経路を exercise していない緑の leg は受入ではない」というこのプロジェクトの規則そのもの）。
+- **次の leg**: `scene=videoSettings` ＋ `keepGui=true`（Celeritas 画面のスクロール UI が scissor を使う）で
+  **`scissorCapturedGroups > 0` または `scissorLateCapturedGroups > 0`** を確認し、`-Dceltium.vulkan.groupScissor=false` の一旗対照と並べる。
+- **BH-09 の状態（正確に）**: **機構特定・修正着地（`218ea2120`）・計器修正着地・受入は GUI scene の leg 待ち**。
+
 ## 0.352 **round 159: blend-state が BH-03・04・23・34 を着地・受入（4件）— 解決済み 27 件へ**
 
 - **BH-03（`7117bbdf3`）受入済み**: shader が実際に読む位置（push offset 100/112）で数える計器を追加（`alphaSelectorCounts`/`lastAlphaPushRef`/`alphaReferenceValues`）。
