@@ -1,7 +1,8 @@
 # perf/render-thread-drains — レンダースレッド直列化の排除 引き継ぎ
 
-ブランチ: `perf/render-thread-drains` (base `bc5413bb0`, commit `081491bb7`)
+ブランチ: `perf/render-thread-drains` (rebased onto `b4d3f5279`、commit `8b2bcd412`+`53871c9b1`)
 worktree: `/home/s0u7a/projects/celtium-drains` — 主担当のcheckout `/home/s0u7a/projects/celtium` とは別。
+**証拠範囲の訂正（2026-10-12 追記）**: この文書が証明するのは「記録した fixture 区間で、記録対象の待ちカウンタが 0 になった」ことまで。baseline の `frameFenceWaitMillis` は全 run 合計 40ms で、この drain だけではユーザープロファイルの `gameRenderer` 無名残差 ~246ms/frame・p99≈326ms の主因を説明しない。残差 spike の原因は**未帰属**（GC/atlas/section rebuild/pipeline compile/計器未覆域は候補であり、外部知見だけで断定しない）。帰属は性能 goal の次の作業。
 
 ## 根因（測定 + コードから確定）
 
@@ -16,7 +17,7 @@ worktree: `/home/s0u7a/projects/celtium-drains` — 主担当のcheckout `/home/
 4. **texture 操作の逐次 submit+wait**: `uploadPatchedLevels`/`copyToImage`/`transitionToShaderRead` がそれぞれ submit+fence待ち（layout transition のような「次以降に先行すればよい」ものまで毎回待っていた）。
 5. **present submit の逐次 wait**: `submitWithSemaphores` が submit+full fence待ち。
 
-合計で1フレーム数十回の `vkWaitForFences` 系ラウンドトリップ — 軽いGPU負荷では 20–40ms/leg、負荷があると queue に溜まった分だけ待ちが膨らむ。ユーザーの p95~331ms スパイクの主因候補（残差は GC/atlas/section rebuild 側もある — 本変更はそのうち「render スレッド側の確定的待ち」を消すもの）。
+合計で1フレーム数十回の `vkWaitForFences` 系ラウンドトリップ — 軽いGPU負荷では 20–40ms/leg、負荷があると queue に溜まった分だけ待ちが膨らむ。ユーザーのスパイク構造の一因としては**確定的待ちの除去**が有効だが、40ms という baseline の待ち合計では ~246ms/frame の無名残差を説明しない（残差は未帰属、GC/atlas/rebuild/compile/計器未覆域いずれも候補）。
 
 ## 修正（全部まとめて、commit `081491bb7`）
 
@@ -45,7 +46,7 @@ worktree: `/home/s0u7a/projects/celtium-drains` — 主担当のcheckout `/home/
 | slotWaitConfirms / frameSlotReuseWaits | — | 0 / 0 |
 | deferredSubmits | — | peak=7 reclaims=251 waits=48 waitMillis=5 heldAtTeardown=0 |
 | frameIntervalP50 / P95 / P99 ms | 18.6 / 28.0 / 333 | **15.7 / 22.5 / 326** |
-| slowFrameCount | 12 | 12 (起動時 GC/atlas 系、別根因) |
+| slowFrameCount | 12 | 12 (spike 帰属は未確定 — 起動系の可能性、証拠なしに断定しない) |
 | gpuStalled / errors / VUID | false / 0 / 0 | false / 0 / 0 |
 | immediateWindows / submitSequence | 730 / 994 | 784 / 1027 |
 | `celtium-validation.png` | — | **baseline と完全一致** |
@@ -59,7 +60,9 @@ run 証拠: `.celtium-work/runtime/p-drain-g2|g3`（baseline）、`.celtium-work
 
 ## 残り余地 / 次に見るなら
 
-- hot path の render スレッド待ちは実測でほぼ 0（frameFenceWait=0、deferred waits 計 5ms）。p99~326ms の残 spike は startup 系（GC、texture atlas、section rebuild 初回）— 別根因の調査対象。
+- **この測定場面で記録対象の待ちは 0**（frameFenceWait=0、deferred waits 計 5ms、ring pressure 0、slot reuse 0）。「記録した場面・対象の待ちが 0」の証明であり、全場面・全 GPU 待ち・全最適化余地が尽きた証明ではない。計器未覆域（acquire/present pacing、mod callback、worker 待ち、warm 定常）は未測定のまま。
+- p99~326ms の残 spike は**未帰属**。`gameRenderer` 直下の無名残差 ~246ms/frame（ユーザープロファイル、plan.md §0.227）は pass 単位の計器なしには名指しできない。次の必要作業: JFR/GC ログ + FramePassTimings の実時間軸突合、warm window 到達可能な fixture。
+- ユーザープロファイル上の最大の単一項目は `gui` self 5,359ms/20s（frame の 26.8%、**スパイクではなく全 frame の定数税**）= OPT-18/18b が実測上の次優先候補。
 - `presentReadback=true`（診断）は present ごとに readback `endCommands` を残す — 既定 off でユーザー影響なし。
 - `bootstrapSubmitWaits` 残 145 は大半が readback 系 diagnostic。
 - `celtium$pollDeferredSubmits` は flushUploads/ring 圧力時のみ発火 — 長期 deferred 滞留なし（peak=7 実測）。
