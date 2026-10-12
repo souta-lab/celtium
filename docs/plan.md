@@ -393,6 +393,17 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.405 **round 206: R2 stage 3〜6（Texture・Terrain・Target・Submission）＋ R8 第3バッチ（すべて build 緑）**
+
+- **R2 stage 3（Texture・11 counter）**（`b77ba1b78`）: bind chain・announcement・mirror の counter が `TextureStatistics` へ ✓。**所有者が既にある counter は読むだけ**（`TextureCopyService`・`PublishedFrameTextures`・`VulkanTextureRegistry`・`VulkanImmediateTexturePipeline` ✓）とクラスの javadoc に明記 ✓。
+- **R2 stage 4（Terrain・10 counter）**（`67141d161`）: pass 入口・last-draw census・boundary flush・last terrain pass frame ✓。region arena/failed-upload は `TerrainRenderer` ✓、arena upload は upload 経路 ✓、indirect fallback 理由は draw 経路 ✓ から読む ✓。
+- **R2 stage 5（Target・25 counter）**（`e6865fd09`）: off-target pair census・window/boundary flush 結果・splash・game-clear attribution ✓。pair framebuffer/clear 決定/identity census は `RenderTargetRegistry` ✓、publication counter は `PublishedFrameTextures` ✓ から読む ✓。
+- **R2 stage 6（Submission・17 counter）**（`705b2eade`）: stall/idle 経路・fence wait census・signal-only submission・present-mode rebuild ✓。**`gpuStalled` は state なので backend に残す** ✓、slot/sequence は **R6 の scheduler** ✓ から読む ✓。
+- **再利用ツール** `scripts/refactor/move-counters.py` ✓（1 counter につき**順序付き1パス**：increment → 代入 → 読み ✓ — 「先の置換が挿入したテキストを後の置換が拾う」罠を回避 ✓）。build が名指しした追加形は3つ: **複合代入（add メソッド）**・**前置 increment を値として読む**・**複数形の命名** ✓。
+- **R8 第3バッチ**（`090ece4c3`）: `VulkanContext.quarantinedQueueWaitBuffers`・`VulkanSwapchain.SURFACE_EXTENT_UNSPECIFIED`・backend の `uploadVerified` を削除 ✓（各 宣言のみ＝build が証明 ✓）。
+- **残る R2 stage**: **Immediate（99 counter・最後・最も interlocked ✓）**。line の field 名・順序は各 stage で不変 ✓、受入は `verify_line_check.py` と leg の `CELTIUM_VERIFY` ✓（baseline byte-exact ✓）。
+- **R4 後半／R7／R8 残り**は §0.404 のとおり ✓。
+
 ## 0.404 **round 205: R3b の回帰修正・R8 第1〜2バッチ・R2 stage 1〜2（build 緑）**
 
 - **R3b の回帰を修正**（`9fe0e84d4`）: R3b 配線後、**検証行が backend の死んだ font field を読み 0 を印字する**状態だった ✗（`fontStripSeparators`/`fontRunsStarted`/`fontQuadsAppended` ✓）→ `FontBatch` の accessor を読む形に修正 ✓（**field 名・順序は不変** ✓）。**これは leg まで気づかれなかった種類の欠陥**で、抽出後に「値を誰が持つか」を必ず確認する必要がある ✓。
