@@ -72,5 +72,19 @@ from them before anyone read that line. The harness does catch it (`gpuRequireme
 not surface that summary.
 
 So: before calling anything Intel, read `CELTIUM_NATIVE_DEVICE name="…"` in the leg's log **and** the harness's
-`gpuRequirementMet`. The known-good recipe uses the renderer substring the driver actually reports, e.g.
+`gpuRequirementMet`. The requirement string must be the renderer the driver actually reports, e.g.
 `--require-gpu 'UHD Graphics 630'`, not the vendor word. AMD success is never Intel success.
+
+**And the render node alone does not select the device** - it selects the compositor's GPU. Measured on
+2026-10-12: with the Intel render node and the right requirement string, the game still enumerated AMD
+(`nativeDeviceName="AMD Radeon RX 6400 (RADV NAVI24)"`, `gpuRequirementMet=false`), while Sway itself was on
+Intel. The working recipe is Mesa's device selection, which the harness passes through because the headless
+environment is `os.environ.copy()`:
+
+```sh
+export DRI_PRIME=pci-0000_00_02_0!        # Intel UHD 630 (8086:3e92); the '!' exposes only that GPU
+# or: export MESA_VK_DEVICE_SELECT=8086:3e92!
+```
+
+With that, the same leg reports `nativeDeviceName="Intel(R) UHD Graphics 630 (CFL GT2)"` and
+`gpuRequirementMet=true`. `DRI_PRIME` also steers the compositor, which is why both ends then agree.
