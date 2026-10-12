@@ -63,3 +63,60 @@ On this flat validation scene, at 854x480, guiScale 2, with the same camera and 
 reference's frame interval p50 is **9.07 ms** and the candidate's is **40.69 ms** — the candidate is ~4.5x slower per
 frame at p50, and its p95/p99 are 85/130 ms against 45/70 ms. This is the honest shape of the "3x faster" question
 until the candidate's warm window and a matched renderer-side instrument on both arms exist.
+
+---
+
+# Addendum 2026-10-12: where the outside-the-bracket time goes (per frame)
+
+Same arm, same flags, jar `908c571ef3130815…` (this build plus a timer on the present path), AMD RX 6400, GL-less,
+MAILBOX (the fixture's vsync-off reaches the swapchain), F3 closed, fixture driving, 293 frames,
+`frameIntervalP50Ms=38.713554` over 97 cold samples, renderer bracket `frame[p50=19.6 p95=42.9 worst=237.7]`.
+
+| bucket | per frame | source |
+|---|---|---|
+| renderer bracket (`framePassSplit` frame p50) | **19.6 ms** | `framePassSplit` |
+| present path: acquire + submit + `vkQueuePresentKHR` | **0.21 ms** | `CELTIUM_PRESENT_TIMING presentCalls=300 presentMillis=63 presentWorstMillis=2` |
+| deferred submission waits | **1.50 ms** | `deferredSubmits[waits=229 waitMillis=447 worst=7]` / 293 |
+| bootstrap submit waits | **0.02 ms** | `bootstrapSubmitWaitMillis=7` / 293 |
+| frame fence wait, slot waits | **0** | `frameFenceWaitMillis=0`, `slotWaitConfirms=0` |
+| swapchain / acquire out-of-date | **0** | `swapchainOutOfDate=0`, `acquireOutOfDate=0` |
+| everything this project instruments, summed | **≈21.3 ms** | |
+| fixture frame interval p50 | **38.7 ms** | the number the comparison uses |
+| **unattributed** | **≈17.4 ms** | arithmetic; no instrument of ours covers it |
+
+Inside the bracket (already counted in the 19.6 ms, listed so they are not double-counted): `batchCallMillis` 5.04 ms,
+`actualFlushMillis` 1.79 ms, `batchCallOpeningMillis` 0.71 ms, `slotPollConfirms` 7.55 fence polls per frame with no
+waits, `uploadRingPressureWaits` 0.66 per frame.
+
+## What the unattributed 17.4 ms is, and what it is not
+
+It is **the client loop outside every pass we bracket**: at this frame time the game ran **1.11 world ticks per frame**
+(241 ticks / 217 frames), so the integrated-server and client tick work sits inside the interval and outside the
+renderer's brackets, and no counter of ours times it. That is a named gap, not an explanation: measuring it needs a
+timer on the game's own tick/loop (a mixin, not a file this unit owns).
+
+It is not the presentation engine. The FIFO/acquire hypothesis for this gap is **measured false** on this arm: with
+MAILBOX and an uncapped loop, the entire present path costs 0.21 ms per frame (worst 2 ms), `swapchainOutOfDate` and
+`acquireOutOfDate` are 0, and `frameFenceWaitMillis`/`slotWaitConfirms` are 0. Recorded anyway, for a future arm that
+does run FIFO: `VulkanSwapchain` acquires with a `Long.MAX_VALUE` timeout and the swapchain asks for
+`max(minImageCount, 3)` images, which is the classic blocking-acquire shape when the present queue is full. It is
+**not** the cause here, and the fix (requesting `minImageCount + 1`, or bounding the acquire) was not taken because the
+measured cost of this path is already 0.21 ms.
+
+## The cheapest safe item, and why nothing was changed
+
+Of the buckets above, the ones this unit owns are the ring pressure (0.66 waits per frame), the deferred waits
+(1.50 ms) and the present path (0.21 ms). The deferred waits are ordering-critical - present semaphores and texture
+staging reuse depend on them - so removing or shortening them is exactly the synchronisation change the goal says must
+not be made for speed alone. The largest measured item inside the bracket, `batchCallMillis` at 5.04 ms per frame, is
+in `VulkanTerrainGpuBackend`, which another unit holds. **No change was therefore made in this addendum**, on purpose:
+the honest result is the split, and the next lever it points at (the 17.4 ms of unbracketed loop time) needs an
+instrument this unit cannot add.
+
+## The comparison's honest numbers, restated
+
+The arms' only shared instrument is the fixture's frame interval, and that interval is loop-bound on the candidate
+(38.7 ms of which 19.6 ms is renderer bracketed and ~17.4 ms is loop/tick work with no instrument). The comparable
+renderer-side statement is therefore: **candidate renderer bracket p50 19.6 ms against the reference's whole-loop
+interval p50 9.07 ms** - the reference's own loop is faster in absolute terms as well, and the two are still not the
+same quantity, which is why no multiplier appears here.

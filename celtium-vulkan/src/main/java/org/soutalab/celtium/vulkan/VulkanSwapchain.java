@@ -722,6 +722,45 @@ public final class VulkanSwapchain {
      */
     public String presentImage(long sourceImage, int sourceLayout, int width, int height, long bridgeWaitSemaphore,
             long bridgeDoneSemaphore, int sourceLayoutAfter) {
+        // The present path is the largest bucket of the frame that our brackets do not cover (the interval p50 is
+        // 40.69 ms against a 19.2 ms renderer bracket on the candidate leg), so it is timed here, per present, and
+        // folded into the CELTIUM_PRESENT line the backend already prints. Bounded: four counters.
+        long presentStarted = System.nanoTime();
+        String presentResult = celtium$presentImage(sourceImage, sourceLayout, width, height, bridgeWaitSemaphore,
+                bridgeDoneSemaphore, sourceLayoutAfter);
+        celtium$notePresentTime(System.nanoTime() - presentStarted);
+        return presentResult;
+    }
+
+    private long presentCalls;
+    private long presentNanos;
+    private long presentWorstNanos;
+    private long presentFrames;
+
+    /** {@return the present path's own cost}, so the outside-the-bracket time has a number rather than a guess. */
+    public String presentTimingSummary() {
+        return "presentCalls=" + this.presentCalls + " presentMillis=" + (this.presentNanos / 1000000L)
+                + " presentWorstMillis=" + (this.presentWorstNanos / 1000000L)
+                + " presentPerCallMicros=" + (this.presentCalls == 0 ? 0 : this.presentNanos / this.presentCalls / 1000L);
+    }
+
+    private void celtium$notePresentTime(long nanos) {
+        this.presentCalls++;
+        this.presentNanos += nanos;
+        if (nanos > this.presentWorstNanos) {
+            this.presentWorstNanos = nanos;
+        }
+        // Bounded: one line every 300 presents (about once a minute at this scene's rate), so the outside-the-bracket
+        // split has an artifact even when F3 is closed and no diagnostics dump happens. It is the only reader of this
+        // census; the backend's CELTIUM_PRESENT line belongs to a file this unit must not touch.
+        if (this.presentCalls % 300 == 0) {
+            System.out.println("[Celtium] CELTIUM_PRESENT_TIMING " + presentTimingSummary());
+            this.presentFrames++;
+        }
+    }
+
+    private String celtium$presentImage(long sourceImage, int sourceLayout, int width, int height,
+            long bridgeWaitSemaphore, long bridgeDoneSemaphore, int sourceLayoutAfter) {
         // Reset per present, so a caller reading them after a failure cannot see the previous present's verdict.
         this.lastPresentSubmitDone = false;
         this.lastPresentSucceeded = false;
