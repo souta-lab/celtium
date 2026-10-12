@@ -1841,9 +1841,34 @@ public final class CeltiumGlStub implements FunctionProvider {
         counter.incrementAndGet();
         if (Boolean.getBoolean("celtium.vulkan.strictSymbols")
                 && STRICT_SYMBOL_PRINTED.incrementAndGet() <= STRICT_SYMBOL_LINES) {
+            // BH-35's acceptance asks which name was reached *and where from*: "a one-off probe by the game or a mod"
+            // is a call-site claim, and a name without one cannot be told apart from a drawing path the renderer is
+            // silently swallowing. Bounded with the names, so a hot unknown symbol cannot flood the log.
             System.out.println("[Celtium] CELTIUM_UNKNOWN_SYMBOL " + name
-                    + " (no semantics in the table; the generic no-op trampoline answers it)");
+                    + " (no semantics in the table; the generic no-op trampoline answers it) at "
+                    + celtium$callSite());
         }
+    }
+
+    /** {@return the first few frames above the caller}, so an unmodelled arrival carries its origin. */
+    private static String celtium$callSite() {
+        StackTraceElement[] stack = new Throwable().getStackTrace();
+        StringBuilder frames = new StringBuilder();
+        int shown = 0;
+        for (int i = 3; i < stack.length && shown < 4; i++) {
+            String className = stack[i].getClassName();
+            // The stub's own trampoline frames say nothing about the caller; the first game/mod frame is what names
+            // the probe.
+            if (className.startsWith("org.soutalab.celtium.vulkan.gl.")) {
+                continue;
+            }
+            if (shown++ > 0) {
+                frames.append(" <- ");
+            }
+            frames.append(className).append('.').append(stack[i].getMethodName())
+                    .append(':').append(stack[i].getLineNumber());
+        }
+        return frames.length() == 0 ? "(no frame above the stub)" : frames.toString();
     }
 
     /** {@return the unmodelled entry points that were called, most frequent first}. */
@@ -2276,13 +2301,31 @@ public final class CeltiumGlStub implements FunctionProvider {
                 value = celtium$nativeRendererName();
                 break;
             case 0x1F02: // GL_VERSION
-                value = "4.6.0 Celtium";
+                // BH-35: what is advertised is the version whose gates are all backed, enumerated rather than guessed
+                // (docs/scope-and-limits.md, the compatibility-boundary table). The floor is 3.0, and it is a floor
+                // because vanilla reads it through LWJGL's capability flags:
+                //   OpenGlHelper.initializeShaders needs framebufferSupported =
+                //     openGL14 && (ARB_framebuffer_object || EXT_framebuffer_object || OpenGL30); this stub advertises
+                //     no extensions at all, so OpenGL30 is the only term that can make it true; and
+                //     shadersAvailable = openGL21 || (ARB shaders), so OpenGL21 is needed too. OpenGL15 (VBOs) and
+                //     OpenGL20 (GuiMainMenu) follow from 3.0. Advertising less than 3.0 turns shadersSupported off and
+                //     with it the outline/spectator and post-process paths (EntityRenderer:195/219/290,
+                //     RenderGlobal:216/565). Advertising more than 3.0 claims entry points this stub answers with
+                //     recorded no-ops, which is the lie BH-35 names.
+                value = "3.0.0 Celtium";
                 break;
             case 0x1F03: // GL_EXTENSIONS
+                // Empty on purpose, and indexed extensions answer NULL: this renderer interprets no extension, so it
+                // names none. Claiming an extension whose entry points are no-ops is the same defect as claiming 4.6.
                 value = "";
                 break;
             case 0x8B8C: // GL_SHADING_LANGUAGE_VERSION
-                value = "4.60";
+                // Decided separately from GL_VERSION and by the same rule: the shaders this renderer actually takes are
+                // vanilla's, which are #version 120 (ShaderGroup, the outline and the post chains). Nothing in the
+                // vanilla sources or the mod cohort gates on this string (Fugue's only glGetString is GL_RENDERER,
+                // HEI inherits vanilla's OpenGlHelper gate, flare/scalar/LagSpikeProfiler never query a GL string), so
+                // 1.20 is the highest version whose shaders are backed rather than the highest number available.
+                value = "1.20";
                 break;
             default:
                 value = "";

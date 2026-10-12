@@ -130,6 +130,55 @@ build, of different configurations:
   not seen. (One exception is named rather than hidden: `id0=57/0` in a 2026-10-11 GL-less run - 57 offers mapped to no id
   at all and refused. Not GUI content, and not yet attributed to a format.)
 
+### 2.1 The advertised GL version, decided by enumeration (BH-35, 2026-10-12)
+
+The stub answers `glGetString` for every GL-less run. What it answers is now the **minimum that passes every gate found
+by enumeration**, not the highest version the renderer could name. Each row is tied to the implemented path that makes
+it true, or to a named refusal; the criterion for answering a call with a no-op is stated after the table.
+
+| gate (source, line) | what it compares | minimum that passes | how it is backed / why it is honest |
+|---|---|---|---|
+| `OpenGlHelper.initializeShaders` `OpenGlHelper.java:182,242,274` | `framebufferSupported = openGL14 && (GL_ARB_framebuffer_object \|\| GL_EXT_framebuffer_object \|\| OpenGL30)`; `shadersAvailable = openGL21 \|\| (ARB shader objects/vertex/fragment)`; `shadersSupported = framebufferSupported && shadersAvailable` | **OpenGL 3.0** (`OpenGL30` is the only term that can hold, because no extension is advertised) | the modelled FBO and shader entry points; advertising less turns `shadersSupported` off and with it the outline/spectator/post-process paths |
+| `OpenGlHelper.java:276` | `vboSupported = OpenGL15 \|\| GL_ARB_vertex_buffer_object` | 1.5 | follows from 3.0 |
+| `OpenGlHelper.java:115-116` | `arbMultitexture = GL_ARB_multitexture && !OpenGL13`; `arbTextureEnvCombine = ... && !OpenGL13` | correctly **false** at 3.0 | the code uses them only below 1.3, so "not advertised" is the honest answer |
+| `GuiMainMenu` (`OpenGL20`) | menu path availability | 2.0 | follows from 3.0 |
+| `EntityRenderer.java:195,219,290`, `RenderGlobal.java:216,565` | consume `shadersSupported` | inherits the 3.0 floor | outline, spectator highlight and the post-process chain |
+| `EntityRenderer`, `GlStateManager` (`GL_NV_fog_distance`) | selects a fog-distance enum for `glFogi` | not advertised | vanilla's default fog mode is used; this renderer's fog is its own and does not depend on the enum |
+| `Minecraft` (extension-name list) | prints supported/unsupported per name | no gate | every extension prints as unsupported, which is true: none is advertised |
+| cohort `+Fugue-0.24.4.jar` `com/cleanroommc/fugue/helper/HookHelper` | `glGetString(0x1F01 = GL_RENDERER)` into its own diagnostics map | no comparison | `GL_RENDERER` answers the live Vulkan driver name |
+| cohort `HadEnoughItems_1.12.2-4.31.2.jar` | references `OpenGlHelper` | inherits the vanilla gate | no version check of its own |
+| cohort `flare-0.8.0.jar`, `scalar-3.9.0.jar`, `LagSpikeProfiler-1.12.2-1.1.4.jar` | no GL string or version reference in the class pool | no gate | - |
+
+**Advertised values** (implemented in `CeltiumGlStub.string()`):
+
+- `GL_VERSION = "3.0.0 Celtium"` - the floor above. Below 3.0, `OpenGL30` is false and, with no FBO extension
+  advertised, `framebufferSupported` becomes false and vanilla's shader paths are lost; above 3.0 the string would claim
+  entry points this stub answers with recorded no-ops, which is the defect BH-35 names.
+- `GL_SHADING_LANGUAGE_VERSION = "1.20"` - decided separately, by the same rule: the shaders this renderer takes are
+  vanilla's, which are `#version 120` (`ShaderGroup`, the outline and the post chains). Nothing in the vanilla sources
+  or in the cohort gates on this string, so the honest value is the highest version whose shaders are backed, not the
+  highest number available.
+- `GL_EXTENSIONS = ""` and indexed extension queries answer NULL: this renderer interprets no extension, so it names
+  none. Claiming one whose entry points are no-ops is the same defect as claiming 4.6.
+- `GL_VENDOR = "Celtium"` (so a GL-less leg stays identifiable, and `OpenGlHelper`'s `nvidia` test is false);
+  `GL_RENDERER` = the live Vulkan driver, or `unavailable` before a device exists.
+
+**The no-op criterion** (what may be answered without semantics):
+
+- *Allowed*: a call that neither owns state this renderer reads nor changes pixels, where the semantics live in the
+  renderer's own capture - the legacy `glLight*`, `glTranslate*`, `glLoadIdentity`, `glRotate*`, `glColor*`,
+  `glPushMatrix`/`glPopMatrix`, `glScal*`, `glShadeModel`, `glNormal*`, `glOrtho` family. Each is counted in
+  `CELTIUM_NOOP_CENSUS`, so the amount is measured per run rather than assumed.
+- *Not allowed*: a name on a drawing path. The legacy immediate-mode trio (`glBegin`/`glVertex*`/`glEnd`) is the one
+  case that reaches a no-op where GL would have drawn: the geometry that matters arrives through the batch/uploader
+  capture, and the no-op census is exactly the counter that measures how much bypasses it. It is recorded as a
+  **boundary**, not claimed as support.
+- Anything else reached and unmodelled is recorded - `CELTIUM_UNKNOWN_SYMBOLS` per run, and with
+  `-Dceltium.vulkan.strictSymbols=true` per arrival with the call site - and is neither backed nor advertised.
+- Names reached but unbacked are therefore a *measured* set, not a hidden one: the acceptance for this boundary is that
+  the set contains no name on the real drawing path, and that each remaining name is a one-off probe by the game or a
+  mod, shown with its call site.
+
 ## 3. Environment limits on verification
 
 **Corrected 2026-10-11.** The first bullet below was **retracted by measurement**, not softened:
