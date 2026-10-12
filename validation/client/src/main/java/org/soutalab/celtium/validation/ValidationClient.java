@@ -1612,7 +1612,29 @@ public final class ValidationClient {
         }
     }
 
+    /**
+     * {@return the mod's own account of its item list}, read through the fixture's JEI plugin - the only part of the
+     * fixture compiled against the mod's API - or the reason it could not be read.
+     * <p>
+     * Reflective at this end on purpose: {@code ValidationClient} is in the main source set, which does not carry the
+     * mod's API, and the plugin is compiled only when the mod's jar is present. The same shape as
+     * {@code openFirstRecipeCategory} is reached with, and it degrades to a named reason rather than to a crash when
+     * the mod is absent - the fixture runs with and without it.
+     */
+    private static String celtium$jeiListState() {
+        try {
+            Class<?> plugin = Class.forName("org.soutalab.celtium.validation.CeltiumJeiPlugin");
+            return String.valueOf(plugin.getMethod("listState").invoke(null));
+        } catch (ReflectiveOperationException | LinkageError error) {
+            return "unavailable: " + error;
+        }
+    }
+
     private boolean celtium$jeiScreen;
+    /** The three once-flags of the {@code jeiSearch} knob: the list's state before, the keystrokes, and the state after. */
+    private boolean celtium$jeiSearchBefore;
+    private boolean celtium$jeiSearchTyped;
+    private boolean celtium$jeiSearchAfter;
     /** Set once the property-driven screenshot at a specific tick has been taken. */
     private boolean celtium$tickScreenshotTaken;
     /**
@@ -4341,6 +4363,57 @@ public final class ValidationClient {
             celtium$jeiScreen = true;
             mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.player));
             report.addProperty("jeiScreenOpenedAtTick", worldTicks);
+        }
+        // The mod's search box, driven through the screen's own keyboard path: `GuiScreen.keyTyped` is the method
+        // Minecraft's keyboard loop calls, so the mod's own event handler sees exactly what it sees in play. The
+        // keystrokes alone prove nothing - they can land on a field that is not focused, and the mod's handler is what
+        // decides - so the filter is read back through the mod's public API before and after
+        // (`CeltiumJeiPlugin.listState`), and the picture is a third, independent statement about the list.
+        //
+        // The ticks are "at or after" flags for the reason the block above records: `worldTicks` advances in the tick
+        // handler while these hooks run in the render handler, so an exact equality can be stepped over and the step
+        // then never happens. 31/33/38 are the earliest points at which the inventory screen is up (opened at 30), the
+        // overlay has had two frames to lay its list out, and the filter's own frame has been drawn.
+        String jeiSearch = System.getProperty("celtium.validation.jeiSearch", "");
+        if (!jeiSearch.isEmpty()) {
+            if (worldTicks >= 31 && !celtium$jeiSearchBefore && mc.currentScreen != null) {
+                celtium$jeiSearchBefore = true;
+                report.addProperty("jeiSearchScreen", mc.currentScreen.getClass().getName());
+                report.addProperty("jeiSearchStateBefore", celtium$jeiListState());
+            }
+            if (worldTicks >= 33 && !celtium$jeiSearchTyped && mc.currentScreen != null) {
+                celtium$jeiSearchTyped = true;
+                StringBuilder keyCodes = new StringBuilder();
+                try {
+                    // The screen's own keyTyped, which is the method Minecraft's keyboard loop calls - the same
+                    // reflective route the fixtures use for mouseClicked, and for the same reason: it is protected on
+                    // GuiScreen, and calling it is exactly what a real keystroke does to the screen. The mod's own
+                    // handler is what decides whether the character reaches the search field.
+                    java.lang.reflect.Method keyTyped = celtium$requireMethod(mc.currentScreen.getClass(),
+                            new String[] {"keyTyped", "func_73869_a"}, char.class, int.class);
+                    keyTyped.setAccessible(true);
+                    for (int i = 0; i < jeiSearch.length(); i++) {
+                        char typed = jeiSearch.charAt(i);
+                        int keyCode = typed == ' ' ? org.lwjgl.input.Keyboard.KEY_SPACE
+                                : org.lwjgl.input.Keyboard.getKeyIndex(
+                                        String.valueOf(Character.toUpperCase(typed)));
+                        keyTyped.invoke(mc.currentScreen, Character.valueOf(typed), Integer.valueOf(keyCode));
+                        keyCodes.append(keyCode).append(' ');
+                    }
+                    report.addProperty("jeiSearchTyped", jeiSearch);
+                    report.addProperty("jeiSearchKeyCodes", keyCodes.toString().trim());
+                    report.addProperty("jeiSearchTypedAtTick", Integer.valueOf(worldTicks));
+                } catch (Throwable error) {
+                    Throwable cause = error instanceof java.lang.reflect.InvocationTargetException
+                            && error.getCause() != null ? error.getCause() : error;
+                    report.addProperty("jeiSearchTyped", false);
+                    report.addProperty("jeiSearchError", String.valueOf(cause));
+                }
+            }
+            if (worldTicks >= 38 && !celtium$jeiSearchAfter && celtium$jeiSearchTyped) {
+                celtium$jeiSearchAfter = true;
+                report.addProperty("jeiSearchStateAfter", celtium$jeiListState());
+            }
         }
         if (worldTicks >= 34 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
             // The mod's own heavier screen, opened through its public plugin API rather than by simulating input. Guarded

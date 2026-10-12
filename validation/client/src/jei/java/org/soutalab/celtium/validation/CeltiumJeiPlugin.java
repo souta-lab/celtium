@@ -3,6 +3,8 @@ package org.soutalab.celtium.validation;
 import mezz.jei.api.IModPlugin;
 import mezz.jei.api.JEIPlugin;
 import mezz.jei.api.IJeiRuntime;
+import mezz.jei.api.IIngredientFilter;
+import mezz.jei.api.IIngredientListOverlay;
 
 /**
  * Gives the fixture a way to open JEI's own recipe screen.
@@ -47,5 +49,38 @@ public class CeltiumJeiPlugin implements IModPlugin {
         }
         jei.getRecipesGui().showCategories(java.util.Collections.singletonList(uid));
         return true;
+    }
+
+    /**
+     * {@return the mod's own account of its item list, so the fixture's report says what the search did}, or the reason
+     * it could not be read.
+     * <p>
+     * The search box is driven through the screen's keyboard path (see the {@code jeiSearch} knob in
+     * {@code ValidationClient}), so "the keystrokes were sent" is not the same claim as "the filter ran": they can land
+     * on a field that is not focused, and JEI's own handler decides that. This reads what the mod itself holds
+     * afterwards - how many ingredients the overlay lists, how many the filter matches, whether the list has the
+     * keyboard and what the filter text is - so the filter's effect is a number rather than an impression from the
+     * picture.
+     * <p>
+     * Every call here is the mod's public API ({@code mezz.jei.api}); the method set was read from the HEI 4.31.2 jar
+     * with {@code javap} rather than assumed, and no HEI internal is reflected into.
+     */
+    public static String listState() {
+        IJeiRuntime jei = runtime;
+        if (jei == null) {
+            return "unavailable: no JEI runtime was handed over";
+        }
+        try {
+            IIngredientListOverlay overlay = jei.getIngredientListOverlay();
+            IIngredientFilter filter = jei.getIngredientFilter();
+            int visible = overlay == null ? -1 : overlay.getVisibleIngredients().size();
+            boolean focus = overlay != null && overlay.hasKeyboardFocus();
+            String text = filter == null ? null : filter.getFilterText();
+            int filtered = filter == null ? -1 : filter.getFilteredIngredients().size();
+            return "visible=" + visible + " filtered=" + filtered + " keyboardFocus=" + focus
+                    + " filterText=\"" + text + "\"";
+        } catch (RuntimeException | LinkageError error) {
+            return "unavailable: " + error;
+        }
     }
 }
