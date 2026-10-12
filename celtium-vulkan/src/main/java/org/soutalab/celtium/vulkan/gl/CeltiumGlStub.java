@@ -686,6 +686,12 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The game's clip rectangle as glScissor last set it, in GL's bottom-left coordinates. */
     private final int[] scissorBox = new int[4];
 
+    /** glScissor calls seen, so a leg can say whether the scene clipped at all rather than only whether a group did. */
+    private long scissorCallCount;
+
+    /** GL_SCISSOR_TEST enable/disable calls seen, the other half of "did this scene clip". */
+    private long scissorToggleCount;
+
     /** Whether glScissor has been called at all: a box of zeros is a legal clip, so the call is what is recorded. */
     private volatile boolean scissorCalled;
 
@@ -850,6 +856,18 @@ public final class CeltiumGlStub implements FunctionProvider {
      * {@return whether GL_SCISSOR_TEST is enabled}. Read from the same {@code enables} map glEnable/glDisable write,
      * so there is one state rather than a mirror that can drift from it.
      */
+    /** {@return how many times glScissor has been called in this process}, the scene-level clip census. */
+    public static long scissorCallCount() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0L : stub.scissorCallCount;
+    }
+
+    /** {@return how many times GL_SCISSOR_TEST was enabled or disabled in this process}. */
+    public static long scissorToggleCount() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0L : stub.scissorToggleCount;
+    }
+
     public static boolean scissorTest() {
         CeltiumGlStub stub = installed;
         return stub != null && stub.enables.getOrDefault(Integer.valueOf(GL_SCISSOR_TEST), Boolean.FALSE).booleanValue();
@@ -1471,9 +1489,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return this.enables.getOrDefault(Integer.valueOf((int) a0), Boolean.FALSE)
                         .booleanValue() ? 1L : 0L;
             case SEM_ENABLE:
+                if ((int) a0 == GL_SCISSOR_TEST) {
+                    this.scissorToggleCount++;
+                }
                 this.enables.put(Integer.valueOf((int) a0), Boolean.TRUE);
                 return 0L;
             case SEM_DISABLE:
+                if ((int) a0 == GL_SCISSOR_TEST) {
+                    this.scissorToggleCount++;
+                }
                 this.enables.put(Integer.valueOf((int) a0), Boolean.FALSE);
                 return 0L;
             case SEM_CULL_FACE:
@@ -1548,6 +1572,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.scissorBox[2] = (int) c[2];
                 this.scissorBox[3] = (int) c[3];
                 this.scissorCalled = true;
+                // BH-09's deciding number: whether the scene clips at all. A zero here means the leg never touched the
+                // path - a scene gap to name - while a nonzero one means the clip exists and the capture is what is
+                // wrong. lineBatchesNarrowed cannot tell those apart, which is why two legs were read as failures.
+                this.scissorCallCount++;
                 return 0L;
             case SEM_GET_INTEGERV:
                 getInts((int) a0, a1, fn);

@@ -7709,6 +7709,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " nonAddBlendEquationGroups=" + this.nonAddBlendEquationGroups
                 + " scissorBoundarySplits=" + this.scissorBoundarySplits
                 + " lightParamBoundarySplits=" + this.lightParamBoundarySplits
+                + " scissorCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCallCount()
+                + " scissorToggles=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorToggleCount()
                 + " scissorCapturedGroups=" + this.scissorCapturedGroups
                 + " scissorLateCapturedGroups=" + this.scissorLateCapturedGroups
                 + " alphaFuncGroups=" + this.alphaFuncGroups
