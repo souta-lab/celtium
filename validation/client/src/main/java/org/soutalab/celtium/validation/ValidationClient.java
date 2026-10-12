@@ -649,6 +649,13 @@ public final class ValidationClient {
     private int celtium$presentedVerdictPendingAtTick = -1;
     /** The world-frame count when the verdict was deferred, so the watchdog can tell a stuck loop from a slow picture. */
     private int celtium$presentedVerdictPendingFrames = -1;
+    /**
+     * When {@code -Dceltium.validation.holdUntilTick} sits past the tick the run would end at, the normal-path
+     * finishes defer until the world reaches it. The warm frame window defaults to 400..600 and the capture ends the
+     * run at ~206 without it, so a held run is how steady-state intervals are sampled at all. Failure and watchdog
+     * exits call {@link #finish} directly - a broken leg never idles to the hold tick.
+     */
+    private final int celtium$holdUntilTick = Integer.getInteger("celtium.validation.holdUntilTick", 0).intValue();
     /** The world-frame count at the capture, so the presented-frame comparison names the window it is about. */
     private int celtium$captureWorldFrames = -1;
     /** The first world frame at which the renderer's presented-frame counter was above zero, or -1. */
@@ -3046,14 +3053,26 @@ public final class ValidationClient {
                 celtium$requestResize(mc, "world");
             }
             worldTicks++;
+            // The hold tick itself is a held run's exit, whatever asked to finish: a deferred finish lands here, and
+            // a run whose picture never arrived cannot outlive the hold either.
+            if (this.celtium$holdUntilTick > 0 && worldTicks >= this.celtium$holdUntilTick) {
+                finish(mc);
+                return;
+            }
             // The value at the end of the run, so "the hook never fired" can be told apart from "the run never got there". Four
             // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
             // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
             report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
+            // The five-tick "no frame after the capture" clause fires mid-burst on a held run: runTick catches up
+            // several ticks inside one render iteration, so a capture at the burst's start sees frames not advance
+            // for a handful of ticks while the picture is still on the way - the very shape the hold exists to
+            // measure past. Under a hold it only fires at the hold tick itself; the 40-tick clause is a real missing
+            // picture and keeps its early exit.
+            boolean celtium$watchdogStalled = worldFrames <= celtium$presentedVerdictPendingFrames
+                    && worldTicks > celtium$presentedVerdictPendingAtTick + 5
+                    && (this.celtium$holdUntilTick <= 0 || worldTicks >= this.celtium$holdUntilTick);
             if (celtium$presentedVerdictPendingAtTick >= 0
-                    && ((worldTicks > celtium$presentedVerdictPendingAtTick + 5
-                            && worldFrames <= celtium$presentedVerdictPendingFrames)
-                        || worldTicks > celtium$presentedVerdictPendingAtTick + 40)) {
+                    && (celtium$watchdogStalled || worldTicks > celtium$presentedVerdictPendingAtTick + 40)) {
                 // The capture happened and its verdict was left to the first frame whose requested dump is on disk. Two
                 // ways out, both recorded: the render loop stopped producing frames at all, or the picture never
                 // arrived within 40 ticks. The first shape of this waited five ticks, which the capture itself spends
@@ -4050,7 +4069,7 @@ public final class ValidationClient {
             report.addProperty("presentedImageVerificationPresentedFrames", Integer.valueOf(celtium$presentedFrameCount()));
             celtium$judgePictures(mc, "on the frame after the capture");
             celtium$setStatusFromPictures();
-            finish(mc);
+            celtium$requestFinish(mc);
             return;
         }
         // The GUI stage: the video settings screen has been opened and is being laid out; once it has had its ticks
@@ -4835,7 +4854,7 @@ public final class ValidationClient {
             }
             celtium$judgePictures(mc, "at the capture");
             celtium$setStatusFromPictures();
-            finish(mc);
+            celtium$requestFinish(mc);
         } catch (Throwable error) {
             fail(mc, error);
         }
@@ -7895,6 +7914,19 @@ public final class ValidationClient {
                 }
             }
         }, "celtium-partial-report"));
+    }
+
+    /**
+     * {@link #finish} for the success paths: a held run defers the exit until the world reaches
+     * {@code celtium.validation.holdUntilTick}, so the warm frame window can fill. {@link #fail} and the
+     * presented-verdict watchdog still end the run immediately - a broken leg does not idle to 600.
+     */
+    private void celtium$requestFinish(Minecraft mc) {
+        if (this.worldTicks < this.celtium$holdUntilTick) {
+            // The hold tick's own exit check, at the head of the tick handler, ends the run there.
+            return;
+        }
+        finish(mc);
     }
 
     private void finish(Minecraft mc) {
