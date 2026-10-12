@@ -2878,17 +2878,21 @@ public final class ValidationClient {
             report.addProperty("menuDumpRenderPartialTicks", Float.toString(mc.getRenderPartialTicks()));
             celtium$requestPresentedDump(mc, "menu");
         }
-        // The world-load window (docs/plan.md §0.380): the progress bar LoadingScreenRenderer draws while a world
-        // loads. `launched` is the fixture's own "the world launch was requested" flag, so the request lands after the
-        // game started loading and before the first world frame; worldTicks == 0 keeps it out of the world stage.
+        // The world-load window: the progress bar LoadingScreenRenderer draws while a world loads. `launched` is the
+        // fixture's own "the world launch was requested" flag, which is exactly the start of that window; the first
+        // attempt also required worldTicks == 0 and never fired, because the world object exists and ticks during the
+        // terrain download (measured: no worldLoadDump* field in the report, fixtureStatus PASSED).
         if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$worldLoadDumpRequested
-                && celtium$worldLoadDumpTick > 0 && worldTicks == 0 && launched
+                && celtium$worldLoadDumpTick > 0 && launched
                 && celtium$clientTicks >= celtium$worldLoadDumpTick) {
             celtium$worldLoadDumpRequested = true;
             report.addProperty("worldLoadDumpClientTick", Integer.valueOf(celtium$clientTicks));
             report.addProperty("worldLoadDumpWindowSize", mc.displayWidth + "x" + mc.displayHeight);
-            // Whether the game's own loading screen object exists, so a leg can say the window was the load's rather
-            // than an early menu frame: it is created at startup and used by displayString during a load.
+            // Which phase the window caught, so a leg can say the dump is the load's rather than an early menu frame:
+            // the screen class, whether a world exists, and whether the loading screen object is in use.
+            report.addProperty("worldLoadDumpScreen",
+                    mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName());
+            report.addProperty("worldLoadDumpWorld", Boolean.valueOf(mc.world != null));
             report.addProperty("worldLoadDumpLoadingScreen", Boolean.valueOf(mc.loadingScreen != null));
             celtium$requestPresentedDump(mc, "world-load");
         }
