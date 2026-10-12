@@ -307,6 +307,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.336 **round 143: セッション引き継ぎ — goal (e) の fixture traversal は「挿入点確定・未実装」、他は受入済み**
+
+- **このセッションで受入まで到達したもの（ユーザー報告 7 件 + 構造/性能）**:
+  entity/item の不可視・明るい entity/雲・**文字間アーティファクト（26/36→0・0.23 µs/glyph）**・
+  **block entity の z-fighting（groups 48 対 0・mean|d| 18.75）**・**ホットバー暗転（上流参照一致）**・選択枠・clip/BH-10（probe）・
+  **動画設定（Celeritas 画面が開き捕捉される）**・**較正済み picture gate PASSED**・
+  OPT-05・OPT-07(b)・**OPT-09（緑 leg・`match=true`）**・BH-22・BH-32・light-params（416→17/425→2）・ring-pressure（1546/2419→3/6306）・
+  **bind short-circuit（1,627,482 skip）**・**semaphore VUID 10件→0件**・**per-image present-wait semaphore（実 resize 跨ぎ・VUID 0）**・
+  層あり回帰 leg VUID 0。
+- **未実装（挿入点まで確定・これだけ）**: goal (e) の fixture traversal —
+  `celtium$fieldValue(screen, {"controller", …})` → `pages` → `getGroups()` → `getOptions()` で `Option` リストを作り、
+  既存の `celtium$vsFindOptionButton`/`vsRowNames`/`vsOptionName` に渡す。clouds の control action を呼び `saveOptions()`。
+  **`videoSettingsRowNames` が実名を返すこと**が進捗の証拠。その後に **4 phase**（506→368→復元→reload 行）。
+- **その他の未完（正確に）**: frame-close pairing（`submitSignalOnly` は fixture で到達不能・`signalOnlySubmissions` 可視化済み）・
+  BH-14 per-identity pair（site 地図あり）・`scissorCapturedGroups=0`（plan の `>0` が失敗）・主要mod対応（goal C）・
+  Intel UHD630 受入・パノラマの白（mirror が白・7仮説棄却・`readImage==passImage`）・F3 fast path（決定・不採用）。
+- **fixture の規律（この session で確定・4回の同型失敗から）**: leg を打つ前に **(a) scene の定義と較正条件 (b) capture の発火条件
+  (c) その scene が読む widget 構造** を原典で確認する。**各段の失敗メッセージがどの gate かを名指しする**ので次の実装対象は artifact から決まる。
+
 ## 0.335 **round 142: traversal の統合点を確定（既存 helper の位置）— 次 unit は「ここに controller 経路を足す」だけ**
 
 - **コード確認（Lead）**: chain の既存 helper と統合点は
