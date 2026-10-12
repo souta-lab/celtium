@@ -230,7 +230,20 @@ public final class VulkanContext {
      * command buffer, one submission and one fence wait. The slot is freed by that submission's fence and by nothing
      * else: the ring's cursor is only moved on after the wait that confirmed the copies completed (OPT-04).
      */
-    private static final int UPLOAD_SLOT_COUNT = 4;
+    /**
+     * Ring slots and their size.
+     * <p>
+     * Eight slots rather than four, from a measurement: with four, a frame's own copies (measured at ~22 copies and
+     * ~2-3 MB per frame on the AMD leg) filled the ring and the reservation path waited on the oldest deferred
+     * submission 84 times in 98 frames ({@code uploadRingPressureWaits}), about a millisecond of CPU per frame that
+     * the GPU would have spent anyway. Eight slots give the ring a two-frame wrap, so a batch's fence has almost
+     * always signalled by the time its slot is wanted again. The memory cost is bounded and reported:
+     * {@code uploadRingBytes} goes from 4 MiB to 8 MiB of host-visible staging.
+     * <p>
+     * The reuse rule is unchanged and is the point of the ring: a slot is free only after the fence of the submission
+     * that read it has signalled ({@link #celtium$pollDeferredSubmits()}), never because a frame number moved.
+     */
+    private static final int UPLOAD_SLOT_COUNT = 8;
     private static final long UPLOAD_SLOT_BYTES = 1L << 20;
     private long uploadRingBuffer = VK_NULL_HANDLE;
     private long uploadRingMemory = VK_NULL_HANDLE;
@@ -327,6 +340,8 @@ public final class VulkanContext {
      * whose fences have not yet been confirmed.
      */
     private long uploadRingPressureWaits;
+    /** Ring slots freed by a non-blocking poll of the deferred queue rather than by a wait. */
+    private long uploadRingPressurePollsReclaimed;
     /** One-line-per-flush trace, for reading what a flush cost without a profiler. */
     private static final boolean UPLOAD_TRACE = Boolean.getBoolean("celtium.vulkan.uploadTrace");
     /** Copies whose destination was destroyed before the flush: nothing reads it, so the copy is skipped. */
@@ -2111,9 +2126,20 @@ public final class VulkanContext {
             flushUploads();
             slot = celtium$writableSlot(bytes);
         }
+        if (slot < 0) {
+            // Every slot is owned by a batch that has been submitted. A batch whose fence has already signalled frees
+            // its slots for the cost of one fence query, so the queue is polled before anything is waited for - the
+            // wait below is then only for a batch the GPU is genuinely still reading.
+            int reclaimed = celtium$pollDeferredSubmits();
+            if (reclaimed > 0) {
+                this.uploadRingPressurePollsReclaimed += reclaimed;
+                slot = celtium$writableSlot(bytes);
+            }
+        }
         while (slot < 0 && !this.deferredSubmits.isEmpty()) {
-            // Every slot is owned by a batch still in flight. Waiting on the OLDEST one - the head of the deferred
-            // queue - is the cheapest wait that can open a slot, because the queue completes in submission order.
+            // Still no slot: waiting on the OLDEST outstanding submission - the head of the deferred queue - is the
+            // cheapest wait that can open one, because the queue completes in submission order. Counted separately
+            // from the polls above, so a leg can say which of the two the ring needed.
             this.uploadRingPressureWaits++;
             celtium$awaitOldestDeferredSubmit("upload ring pressure");
             slot = celtium$writableSlot(bytes);
@@ -2332,6 +2358,8 @@ public final class VulkanContext {
                 + " uploadFlushWorstMillis=" + this.uploadFlushWorstMillis
                 + " uploadPendingCopies=" + this.pendingUploads.size()
                 + " uploadRingBytes=" + this.uploadRingCapacity
+                + " uploadRingSlots=" + UPLOAD_SLOT_COUNT
+                + " uploadRingPressurePollsReclaimed=" + this.uploadRingPressurePollsReclaimed
                 + " uploadFallbackCopies=" + this.uploadFallbackCopies
                 + " uploadDroppedCopies=" + this.uploadDroppedCopies
                 + " uploadSkippedDeletedDestinations=" + this.uploadSkippedDeletedDestinations
