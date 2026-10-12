@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.407 **round 208: R2 stage 7 第1グループ（immediate 70 counter）着地。残りは「クラスを毎回全体生成」で進める**
+
+- **形状分類（実測）**: immediate の 113 counter は ①**increment＋read のみ = 68** ✓ ②**複合代入 = 22** ③**単純代入（値） = 8** ④**その他 = 15**（引数で渡す・`.field` 参照・書き込みが別形 ✓）に分かれる ✓。前 stage が通ったのは 1 stage あたりの形状が少数だったため ✓。
+- **第1グループ着地**（`bc97b2a63`）: **increment＋read の 68** を `ImmediateStatistics` へ ✓（＋**共有宣言行で漏れた 2**（`stateSkipsViewport`・`stateSkipsScissor` ✓）を build が名指しして追加 ✓）。line の field 名・順序は不変 ✓。
+- **第2グループ（複合代入 22）は revert** ✗（クラスへの追記を後から行う方式が壊れた ✗ → **202 エラー** ✗ → `git checkout` で復帰 ✓・build 緑 ✓）。
+- **確定した進め方（次に守ること）**: **クラスは毎回「全カウンタの仕様から全体生成」**する ✓（後から継ぎ足さない ✗ — 追記は閉じ括弧の位置を誤る ✗）。backend 側は **1 counter につき順序付き1パス**（`+=` → add ✓／`++` → note ✓／`=` → set ✓／読み → getter ✓）✓、**グループごとに build** ✓。
+- **現状**: R2 は 6/7 stage 完了 ＋ **stage 7 の 70/113 counter** ✓。残り **43**（複合代入 22・値 8・その他 15 ✓）。
+
 ## 0.406 **round 207: R2 最終 stage（Immediate・113 counter）は一括では通らない — 形状別パスが必要と判明（試行は revert 済み・build 緑）**
 
 - **試行**: 駐機中の `ImmediateStatistics` の候補121から **backend が宣言している116**を抽出 ✓ → **state 3つ（`frameId`・`worldEpoch`・`pendingImmediateIndices`）は除外** ✓（count ではなく frame/world/queue の state ✓）→ 残り **113 を mover で移動** → **エラー126** ✗ → **revert** ✓（`git checkout` ＋ クラス削除 ✓・**build 緑に復帰** ✓）。
