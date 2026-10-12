@@ -138,6 +138,24 @@ final class PublishedFrameTextures {
         return this.published.entrySet();
     }
 
+    /**
+     * {@return every published name's recorded layout, as {@code name=LAYOUT} pairs}.
+     * <p>
+     * The layout a descriptor written from a wrapper carries is the wrapper's recorded value, so this is the third
+     * value {@code VUID-vkCmdDraw-None-09600} compares - beside the layout the pass declares and the layout the image
+     * is actually in. Printed on the pair-layout line so the three can be read together.
+     */
+    String publishedLayoutsSummary() {
+        StringBuilder text = new StringBuilder();
+        for (Map.Entry<Integer, VulkanGlTexture> entry : this.published.entrySet()) {
+            if (text.length() > 0) {
+                text.append(',');
+            }
+            text.append(entry.getKey()).append('=').append(entry.getValue().currentLayoutName());
+        }
+        return text.length() == 0 ? "none" : text.toString();
+    }
+
     int created() {
         return this.created;
     }

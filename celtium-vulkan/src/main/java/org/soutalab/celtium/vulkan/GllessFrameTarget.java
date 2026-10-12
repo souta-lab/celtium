@@ -1006,6 +1006,41 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.chainPair.colorImage;
     }
 
+    /**
+     * {@return the layout the chain pair's colour image is actually in}.
+     * <p>
+     * The fact the two sides of {@code VUID-vkCmdDraw-None-09600} are compared against: the pair's pass declares the
+     * constant {@code GENERAL}, and a published wrapper that samples the same image records
+     * {@code SHADER_READ_ONLY_OPTIMAL}. This is what the image itself was last moved to.
+     */
+    public int chainPairColorLayout() {
+        checkAlive();
+        return this.chainPair.colorLayout();
+    }
+
+    /**
+     * {@return the layout the chain pair's render pass declares for its colour attachment}.
+     * <p>
+     * A constant ({@code COLOR_RENDER_LAYOUT}) rather than a per-frame value: the pass is built with it, so this is the
+     * declaration side of the comparison the pair's actual layout is measured against.
+     */
+    public int chainPairDeclaredLayout() {
+        return COLOR_RENDER_LAYOUT;
+    }
+
+    /**
+     * Records a layout the chain pair's colour image has been moved to by someone outside this class.
+     * <p>
+     * The sampling side moves it through the published wrapper's own barrier
+     * ({@code VulkanGlTexture.ensureSampledLayout}/{@code ensureGeneralLayout}), which this class cannot see, so the
+     * caller that records those barriers reports them here. Without it the pair's record would claim GENERAL while the
+     * image was left read-only, which is the message this field exists to make readable.
+     */
+    public void noteChainPairColorLayout(int layout) {
+        checkAlive();
+        this.chainPair.noteColorLayout(layout);
+    }
+
     public long chainPairColorView() {
         checkAlive();
         return this.chainPair.colorView;
@@ -1152,12 +1187,35 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private int height;
         /** False until the first clear has moved the pair out of the layout it was created in (UNDEFINED). */
         private boolean acquired;
+        /**
+         * The layout this pair's colour image is actually in, moved by the same calls that move it.
+         * <p>
+         * The frame image has carried this since the present path needed it ({@code colorImageLayout} above); the pair
+         * did not, and that asymmetry is what the chain pair's validation messages measure. The pair is attached by a
+         * pass that declares the constant {@code GENERAL} ({@code COLOR_RENDER_LAYOUT}) while the published wrapper that
+         * stands for the same image records {@code SHADER_READ_ONLY_OPTIMAL} whenever it is sampled
+         * ({@code VulkanGlTexture.ensureSampledLayout}), and nothing recorded the image's own state between the two.
+         * {@code VUID-vkCmdDraw-None-09600} on image 0x370000000037 then appears in both directions (legs
+         * r212-world-hud18/hud24/hud26/hud27/hud28/hud29, 2 per leg): "expects GENERAL -- instead SHADER_READ_ONLY" and
+         * the reverse. This field is the fact the two sides are compared against.
+         */
+        private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         private int creations;
         private int clears;
         private int selfTests;
 
         private Pair(String label) {
             this.label = label;
+        }
+
+        /** {@return the layout this pair's colour image is actually in}. */
+        private int colorLayout() {
+            return this.colorImageLayout;
+        }
+
+        /** Records a layout this pair's colour image has been moved to, by whoever moved it. */
+        private void noteColorLayout(int layout) {
+            this.colorImageLayout = layout;
         }
 
         private boolean exists() {
@@ -1205,6 +1263,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.width = requestedWidth;
                 this.height = requestedHeight;
                 this.acquired = false;
+                // A pair that was just created holds images nothing has transitioned yet.
+                this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 this.creations++;
             } catch (RuntimeException | LinkageError error) {
                 // No half pair is left behind: a retry starts from nothing and delete() still frees whatever exists.
@@ -1394,6 +1454,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         0, null, null, barriers);
+                // The barrier above is the move, so this is where the pair's own record of it belongs.
+                this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
             }
         }
 
@@ -1439,6 +1501,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          */
         private void release() {
             VkDevice device = context.device();
+            this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             if (this.colorView != VK_NULL_HANDLE) {
                 vkDestroyImageView(device, this.colorView, null);
                 this.colorView = VK_NULL_HANDLE;

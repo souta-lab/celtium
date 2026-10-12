@@ -1891,6 +1891,25 @@ public final class VulkanGlTexture {
         return (this.view * 31L) ^ this.generation;
     }
 
+    /**
+     * {@return the layout this wrapper last recorded for its image, as a name}.
+     * <p>
+     * A descriptor written from this wrapper carries {@code currentLayout} as {@code VkDescriptorImageInfo.imageLayout},
+     * so this is the value {@code VUID-vkCmdDraw-None-09600} compares against the image's actual layout. Named rather
+     * than numeric so a line that prints it can be read without a table.
+     */
+    public String currentLayoutName() {
+        switch (this.currentLayout) {
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED: return "UNDEFINED";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL: return "GENERAL";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return "SHADER_READ_ONLY";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: return "TRANSFER_SRC";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: return "TRANSFER_DST";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: return "COLOR_ATTACHMENT";
+            default: return "layout" + this.currentLayout;
+        }
+    }
+
     public long sampler() {
         logZeroHandle("sampler");
         return sampler;

@@ -8717,6 +8717,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preTransformedBatches=" + this.immediateStatistics.preTransformedBatches()
                 + " preTransformedVertices=" + this.immediateStatistics.preTransformedVertices()
                 + " selfCompositeSkips=" + this.immediateStatistics.selfCompositeSkips()
+                + " " + celtium$pairLayoutSummary()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " fastMergedBatches=" + this.immediateStatistics.fastMergedBatches()
                 + " prepLookupMillis=" + (this.immediateStatistics.prepLookupNanos() / 1000000L)
@@ -9273,6 +9274,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * {@code selfCompositeSkips} is what makes the drop visible; only a group that samples the frame image's own
      * published colour name under identity 0 matches.
      */
+    /**
+     * How many {@code CELTIUM_PAIR_LAYOUT} lines the run may print; {@code -Dceltium.vulkan.pairLayoutLines}.
+     * <p>
+     * Printed only when the three values change, because the question is their order within a frame, not their value
+     * in every frame.
+     */
+    private static final int PAIR_LAYOUT_LINES =
+            Integer.getInteger("celtium.vulkan.pairLayoutLines", 12).intValue();
+    /** Lines {@link #PAIR_LAYOUT_LINES} has already printed, and the last line printed, so repeats are silent. */
+    private int pairLayoutLogs;
+    private String lastPairLayoutLine = "";
     private static final boolean SELF_COMPOSITE_SKIP =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.skipSelfComposite", "true"));
     /**
@@ -11440,6 +11452,75 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             } else {
                 entry.getValue().ensureSampledLayout(this.commandBuffer);
             }
+            // The pair's own record of the image's layout follows the wrapper's barrier, but only for the names that
+            // stand for the pair image: a name published over the frame image is not the pair's business. This is what
+            // makes the pair's actual layout readable next to the GENERAL its pass declares and the layout the
+            // descriptor was written with - the three values VUID-vkCmdDraw-None-09600 compares.
+            GllessFrameTarget pairTarget = offTargetTarget();
+            if (pairTarget != null) {
+                Long publishedImage = this.publishedFrameImages.get(entry.getKey());
+                if (publishedImage != null && publishedImage.longValue() == pairTarget.chainPairColorImage()
+                        && pairTarget.chainPairColorImage() != 0L) {
+                    pairTarget.noteChainPairColorLayout(general
+                            ? org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
+                            : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    celtium$reportPairLayout(general ? "hand-back" : "sampling");
+                }
+            }
+        }
+    }
+
+    /**
+     * Prints the chain pair's three layouts when they change: what the pass declares, what the image is in, and what
+     * the last sampling barrier left the published wrapper recording.
+     * <p>
+     * Bounded to {@code -Dceltium.vulkan.pairLayoutLines} (default 12) and printed only on a change, the same shape as
+     * the splash flip trace: the question is which of the three moves first in a frame, and a per-frame repetition
+     * would hide that. The declared value is the constant the pair's pass is built with
+     * ({@code GllessFrameTarget.COLOR_RENDER_LAYOUT}); the actual value is the pair's own record; the wrapper column is
+     * the published wrapper's recorded layout, which is what a descriptor written from it carries.
+     */
+    private void celtium$reportPairLayout(String site) {
+        GllessFrameTarget pairTarget = offTargetTarget();
+        if (pairTarget == null || pairTarget.chainPairColorImage() == 0L) {
+            return;
+        }
+        String line = celtium$pairLayoutSummary();
+        if (line.equals(this.lastPairLayoutLine) || this.pairLayoutLogs >= PAIR_LAYOUT_LINES) {
+            return;
+        }
+        this.lastPairLayoutLine = line;
+        this.pairLayoutLogs++;
+        System.out.println("[Celtium] CELTIUM_PAIR_LAYOUT frame=" + this.frameId + " site=" + site + " " + line
+                + " attached=0x" + Long.toHexString(this.passAttachedColorImage));
+    }
+
+    /**
+     * {@return the chain pair's three layouts as one string}: what the pass declares, what the image is actually in,
+     * and what each published wrapper records - the three values {@code VUID-vkCmdDraw-None-09600} compares. Used by
+     * the change-triggered line and by {@code CELTIUM_VERIFY}, so the state at the end of a run is recorded even when
+     * nothing changed late enough to print.
+     */
+    private String celtium$pairLayoutSummary() {
+        GllessFrameTarget pairTarget = offTargetTarget();
+        if (pairTarget == null || pairTarget.chainPairColorImage() == 0L) {
+            return "pair=absent";
+        }
+        return "pair=[declared=" + celtium$layoutName(pairTarget.chainPairDeclaredLayout())
+                + " actual=" + celtium$layoutName(pairTarget.chainPairColorLayout())
+                + " wrappers=" + this.publishedTextures.publishedLayoutsSummary() + "]";
+    }
+
+    /** {@return a Vulkan layout's name, so a line can be read without a table}. */
+    private static String celtium$layoutName(int layout) {
+        switch (layout) {
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED: return "UNDEFINED";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL: return "GENERAL";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return "SHADER_READ_ONLY";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: return "TRANSFER_SRC";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: return "TRANSFER_DST";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: return "COLOR_ATTACHMENT";
+            default: return "layout" + layout;
         }
     }
 
