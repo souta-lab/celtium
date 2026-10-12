@@ -585,10 +585,23 @@ public abstract class WorldVertexBufferUploaderMixin {
      */
     private static int celtium$listIndex() {
         try {
-            return org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+            int stub = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x0B33);
+            return stub != Integer.MIN_VALUE ? stub
+                    : org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
         } catch (RuntimeException | LinkageError error) {
             return Integer.MIN_VALUE;
         }
+    }
+
+    /**
+     * {@return the value the stub tracks for {@code pname}}, falling back to the real GL query - the instrument reads
+     * below used to pay a trampoline round trip for a field the stub holds; with the stub installed the answer is the
+     * same map the query would have served.
+     */
+    private static int celtium$getInteger(int pname) {
+        int stub = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(pname);
+        return stub != Integer.MIN_VALUE ? stub
+                : org.lwjgl.opengl.GL11.glGetInteger(pname);
     }
 
     /**
@@ -604,8 +617,8 @@ public abstract class WorldVertexBufferUploaderMixin {
             if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTextureKnown(listIndex)) {
                 return;
             }
-            int unit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-            int texture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            int unit = celtium$getInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+            int texture = celtium$getInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTexture(listIndex, texture, unit);
         } catch (RuntimeException | LinkageError error) {
             // Record the failure rather than leaving the list to be retried on every batch, and rather than reporting a

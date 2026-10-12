@@ -151,6 +151,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         final byte ret;
         final byte[] args;
         final int semantics;
+        /** Per-function arrival count, under {@link #FN_CENSUS}: the distribution of the trampoline's producers. */
+        long calls;
 
         Fn(String name, byte ret, byte[] args, int semantics) {
             this.name = name;
@@ -620,6 +622,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // from. Printed only when something was recorded or asked, so a run that never touches it stays
                     // silent rather than claiming a measurement it did not take.
                     celtium$printAtExit("CELTIUM_TEX_PARAM_CENSUS " + texParamSummary());
+                }
+                if (FN_CENSUS) {
+                    celtium$printAtExit("CELTIUM_FN_CENSUS " + fnCensusSummary());
                 }
             }, "celtium-noop-census"));
         }
@@ -1518,6 +1523,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final long[] dispatchScratch = new long[SLOTS];
     private Thread dispatchScratchOwner;
 
+    /**
+     * {@code -Dceltium.debug.fnCensus=true}: count arrivals per table entry and print the top producers at exit.
+     * The per-call cost is one field increment on the Fn the dispatch already resolved - the question "which
+     * functions make up the tens of thousands of trampoline calls per frame" has never had a counted answer.
+     */
+    private static final boolean FN_CENSUS = Boolean.getBoolean("celtium.debug.fnCensus");
+    /** Per-pname arrival counts for {@code glGetIntegerv}, under {@link #FN_CENSUS}; see its call site. */
+    private final java.util.Map<Integer, Long> getIntegervPnames = new java.util.HashMap<>();
+
     private long[] dispatchArgsScratch() {
         Thread calling = Thread.currentThread();
         if (calling == this.dispatchScratchOwner) {
@@ -1552,6 +1566,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             System.out.println("[GLSTUB] #" + this.dispatchCount.get() + " " + fn.name
                     + " (" + Long.toHexString(c[0]) + "," + Long.toHexString(c[1]) + "," + Long.toHexString(c[2])
                     + "," + Long.toHexString(c[3]) + ")");
+        }
+        if (FN_CENSUS) {
+            fn.calls++;
         }
         long a0 = fn.args.length > 0 ? c[0] : 0L;
         long a1 = fn.args.length > 1 ? c[1] : 0L;
@@ -1673,6 +1690,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.scissorCallCount++;
                 return 0L;
             case SEM_GET_INTEGERV:
+                if (FN_CENSUS) {
+                    // pname, not the function: "glGetIntegerv" is the top arrival on every leg, and which parameter
+                    // it asks for names the producer (GL_CURRENT_PROGRAM is this project's own batch preflight,
+                    // GL_VIEWPORT the game's ActiveRenderInfo, a texture binding a mod's save/restore habit).
+                    this.getIntegervPnames.merge((int) a0, 1L, Long::sum);
+                }
                 getInts((int) a0, a1, fn);
                 return 0L;
             case SEM_GET_INTEGER64V:
@@ -2495,6 +2518,67 @@ public final class CeltiumGlStub implements FunctionProvider {
         return this.getStringAddress;
     }
 
+    /**
+     * {@return the stub's answer to {@code glGetInteger(pname)} for the tracked scalar parameters}, or
+     * {@link Integer#MIN_VALUE} when the pname is array-valued or untracked - the same values {@link #getInts} writes,
+     * exposed so a caller inside the JVM can ask the stub directly instead of paying a trampoline round trip for a
+     * field it already holds. The fn-census measurement that motivated it: 72% of all glGetIntegerv arrivals were
+     * GL_TEXTURE_BINDING_2D, most of them this project's own capture and mirror code re-reading state the stub tracks.
+     */
+    public static int celtium$getInteger(int pname) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return Integer.MIN_VALUE;
+        }
+        return stub.getIntegerValue(pname);
+    }
+
+    /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
+    private int getIntegerValue(int pname) {
+        switch (pname) {
+            case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
+                int bound = this.textureBindings.get(texBindKey(0x0DE1));
+                return bound < 0 ? 0 : bound;
+            }
+            case 0x84E0: // GL_ACTIVE_TEXTURE
+                return 0x84C0 + this.activeTexture;
+            case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
+                return this.drawFbo;
+            case 0x8CA5: // GL_READ_FRAMEBUFFER_BINDING
+                return this.readFbo;
+            case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
+                return this.compilingList;
+            case 0x8B8D: // GL_CURRENT_PROGRAM
+                return this.currentProgram;
+            case 0x0B74: // GL_DEPTH_FUNC
+                return 0x0201; // GL_LESS
+            case 0x0D05: // GL_PACK_ALIGNMENT
+                return 4;
+            case 0x0B65: // GL_FOG_MODE
+                return 0x2601; // GL_LINEAR
+            case 0x85B5: // GL_VERTEX_ARRAY_BINDING
+                return this.boundVertexArray;
+            case 0x0D33: // GL_MAX_TEXTURE_SIZE
+                return 16384;
+            case 0x8869: // GL_MAX_VERTEX_ATTRIBS
+                return 16;
+            case 0x821B: // GL_MAJOR_VERSION
+                return 4;
+            case 0x821C: // GL_MINOR_VERSION
+                return 6;
+            case 0x821D: // GL_NUM_EXTENSIONS
+                return 0;
+            case 0x8513: // GL_TEXTURE_MAX_ANISOTROPY samples? actually MAX_TEXTURE_MAX_ANISOTROPY is 0x84FF
+                return 16;
+            case 0x84FF:
+                return 16;
+            case 0x8B4D: // GL_MAX_TEXTURE_IMAGE_UNITS
+                return 16;
+            default:
+                return Integer.MIN_VALUE;
+        }
+    }
+
     private void getInts(int pname, long out, Fn fn) {
         if (out == 0L) {
             return;
@@ -2507,73 +2591,20 @@ public final class CeltiumGlStub implements FunctionProvider {
                 memPutInt(out + 8, this.viewportW);
                 memPutInt(out + 12, this.viewportH);
                 return;
-            case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
-                int bound = this.textureBindings.get(texBindKey(0x0DE1));
-                value = bound < 0 ? 0 : bound;
-                break;
-            }
-            case 0x84E0: // GL_ACTIVE_TEXTURE
-                value = 0x84C0 + this.activeTexture;
-                break;
-            case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
-                value = this.drawFbo;
-                break;
-            case 0x8CA5: // GL_READ_FRAMEBUFFER_BINDING
-                value = this.readFbo;
-                break;
             case 0x0C10: // GL_SCISSOR_BOX - four ints, and the default is the whole drawable
                 memPutInt(out, 0);
                 memPutInt(out + 4, 0);
                 memPutInt(out + 8, this.viewportW);
                 memPutInt(out + 12, this.viewportH);
                 return;
-            case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
-                value = this.compilingList;
-                break;
-            case 0x8B8D: // GL_CURRENT_PROGRAM
-                value = this.currentProgram;
-                break;
-            case 0x0B74: // GL_DEPTH_FUNC
-                value = 0x0201; // GL_LESS
-                break;
-            case 0x0D05: // GL_PACK_ALIGNMENT
-                value = 4;
-                break;
-            case 0x0B65: // GL_FOG_MODE
-                value = 0x2601; // GL_LINEAR
-                break;
-            case 0x85B5: // GL_VERTEX_ARRAY_BINDING
-                value = this.boundVertexArray;
-                break;
-            case 0x0D33: // GL_MAX_TEXTURE_SIZE
-                value = 16384;
-                break;
-            case 0x8869: // GL_MAX_VERTEX_ATTRIBS
-                value = 16;
-                break;
-            case 0x821B: // GL_MAJOR_VERSION
-                value = 4;
-                break;
-            case 0x821C: // GL_MINOR_VERSION
-                value = 6;
-                break;
-            case 0x821D: // GL_NUM_EXTENSIONS
-                value = 0;
-                break;
-            case 0x8513: // GL_TEXTURE_MAX_ANISOTROPY samples? actually MAX_TEXTURE_MAX_ANISOTROPY is 0x84FF
-                value = 16;
-                break;
-            case 0x84FF:
-                value = 16;
-                break;
-            case 0x8B4D: // GL_MAX_TEXTURE_IMAGE_UNITS
-                value = 16;
-                break;
             case 0x8872: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
                 value = 32;
                 break;
             default:
-                value = 0;
+                value = getIntegerValue(pname);
+                if (value == Integer.MIN_VALUE) {
+                    value = 0;
+                }
         }
         memPutInt(out, value);
     }
@@ -3543,6 +3574,47 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " calls=" + stub.texParamCalls.get() + " unbound=" + stub.texParamUnbound.get()
                 + " overflow=" + stub.texParamOverflow.get() + " queries=" + stub.texParamQueries.get()
                 + " wrapClampControl=" + TEX_WRAP_CLAMP_CONTROL;
+    }
+
+    /**
+     * {@return the busiest table entries under {@link #FN_CENSUS}}, name=count pairs in descending order, bounded to
+     * the top twenty so a leg's log names the trampoline's producers without a page of output.
+     */
+    private static String fnCensusSummary() {
+        List<Fn> sorted = new ArrayList<>(TABLE);
+        sorted.sort((a, b) -> Long.compare(b.calls, a.calls));
+        StringBuilder text = new StringBuilder(512);
+        long total = 0L;
+        for (Fn fn : TABLE) {
+            total += fn.calls;
+        }
+        text.append("total=").append(total).append(' ');
+        int shown = 0;
+        for (Fn fn : sorted) {
+            if (fn.calls == 0L || shown >= 20) {
+                break;
+            }
+            if (shown > 0) {
+                text.append(',');
+            }
+            text.append(fn.name).append(':').append(fn.calls);
+            shown++;
+        }
+        CeltiumGlStub stub = installed;
+        if (stub != null && !stub.getIntegervPnames.isEmpty()) {
+            List<Map.Entry<Integer, Long>> pnames = new ArrayList<>(stub.getIntegervPnames.entrySet());
+            pnames.sort((a, b) -> Long.compare(b.getValue().longValue(), a.getValue().longValue()));
+            text.append(" | getIntegervByPname:");
+            int pnameShown = 0;
+            for (Map.Entry<Integer, Long> entry : pnames) {
+                if (pnameShown++ >= 12) {
+                    break;
+                }
+                text.append(' ').append(Integer.toHexString(entry.getKey().intValue()))
+                        .append('=').append(entry.getValue().longValue());
+            }
+        }
+        return text.toString();
     }
 
     /** One query answer, named once per distinct shape so a run's log says what the mirror actually asked for. */

@@ -77,16 +77,25 @@ public abstract class FontRendererMixin {
      * disappears is the per-glyph {@code TextureManager.bindTexture} chain and the nine {@code GlStateManager} wrapper
      * calls, which are the measured 3.15 µs/glyph of vanilla glyph body.
      */
+    /**
+     * {@return the texture bound to TEXTURE_2D on the active unit}, asking the installed GL stub directly rather than
+     * paying a trampoline round trip for a field it already holds - the per-string bind check below used to pay two
+     * FFI queries per drawString, which the fn census measured as the largest share of all glGetIntegerv arrivals.
+     * A real-GL build still gets the answer from GL, so the fallback is the call itself.
+     */
+    private static int celtium$boundTexture2D() {
+        int stub = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
+        return stub != Integer.MIN_VALUE ? stub
+                : org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+    }
+
     @Inject(method = "func_78266_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$openDefaultGlyph(int ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.beginGlyph();
         if (CeltiumFontGlyphCapture.fastPathAvailable()) {
-            if (celtium$fontTextureName == 0
-                    || org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D)
-                            != celtium$fontTextureName) {
+            if (celtium$fontTextureName == 0 || celtium$boundTexture2D() != celtium$fontTextureName) {
                 bindTexture(this.locationFontTexture);
-                celtium$fontTextureName = org.lwjgl.opengl.GL11
-                        .glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                celtium$fontTextureName = celtium$boundTexture2D();
                 CeltiumFontGlyphCapture.noteFontTextureRebind();
             }
             float advance = CeltiumFontGlyphCapture.fastDefaultGlyph(this.charWidth, this.posX, this.posY, ch, italic);
@@ -109,12 +118,9 @@ public abstract class FontRendererMixin {
         CeltiumFontGlyphCapture.beginGlyph();
         if (CeltiumFontGlyphCapture.fastPathAvailable() && ch < 256) {
             // unicodeFlag sends every ASCII char through here too; page 0 is the sheet the fast path needs.
-            if (celtium$unicodeTextureName == 0
-                    || org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D)
-                            != celtium$unicodeTextureName) {
+            if (celtium$unicodeTextureName == 0 || celtium$boundTexture2D() != celtium$unicodeTextureName) {
                 bindTexture(getUnicodePageLocation(0));
-                celtium$unicodeTextureName = org.lwjgl.opengl.GL11
-                        .glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                celtium$unicodeTextureName = celtium$boundTexture2D();
                 CeltiumFontGlyphCapture.noteFontTextureRebind();
             }
             float advance = CeltiumFontGlyphCapture
