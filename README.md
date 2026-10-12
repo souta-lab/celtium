@@ -62,6 +62,10 @@ The supported development direction is Vulkan-only. Old bridge/probe experiments
 
 The exact minimum feature/format contract is still being audited and reduced. **Vulkan 1.2 support alone is not a compatibility guarantee.** Features are selected by device capabilities, not GPU name. Java 21 bytecode targeting does not constitute verification that the whole game launches on Java 21.
 
+## Downloads
+
+[Celtium 0.0.1-alpha](https://github.com/souta-lab/celtium/releases/tag/v0.0.1-alpha) is the first experimental binary release. It has the same severe performance and rendering limitations described above.
+
 ## Building and trying a development build
 
 Run Gradle with JDK 25. The build also uses the JDK 21 compilation toolchain and the JDK 8 Minecraft preparation toolchain.

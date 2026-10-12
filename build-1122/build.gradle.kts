@@ -12,7 +12,9 @@ allprojects {
         if (!hasProperty(key.toString())) extensions.extraProperties[key.toString()] = value
     }
 }
-version = "2.5.12-celtium.0.1.0-dev.1"
+// Explicit release builds keep the development version unchanged for running validation sessions.
+version = providers.gradleProperty("celtium_release_version")
+    .orElse("2.5.12-celtium.0.1.0-dev.1").get()
 extra["celtium_repository_root"] = rootProject.file("..").canonicalFile
 
 // Evidence ties a validation run to an exact artifact. Without this, every rebuild embeds a new timestamp and
