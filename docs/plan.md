@@ -307,6 +307,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.321 **round 127: `renderString` bracket を glyph-fix が実装中（leg 実行中・スロット使用中）**
+
+- **状態**: `CeltiumFontGlyphCapture.java` と `FontRendererMixin.java` が更新中（`renderString` = `func_180455_b` の bracket 追加）。
+  **leg が1本実行中**（スロット使用中・pid 2942130）。HEAD `5ceda0f99`・**build は直前まで緑**。
+- **この bracket の目的（再掲・記録）**: `stringMillis − glyphMillis ≈ 0`（4,533 対 4,546）だったため、
+  **`renderStringAligned` 等が `renderString` を直接呼ぶ経路**の per-character 仕事が分離できていない。
+  bracket を足して **loop 側（caller）と body 側（vanilla glyph）の split を数値にする**。
+  ＝**その split が出るまで `renderStringAtPos` fast path の標的は測られていない**（fast path を主張しない）。
+- **受入条件（配布済み）**: 同一 jar・**両 leg に `pinSections`**・split を測定値として報告・
+  **fast path についての主張は split を見るまでしない**。split が小さいなら fast path は「大きな互換リスクを持つ決定」として扱い、
+  大きいなら測定された標的として次 unit で取る。
+- **現状の緑の基準（このセッションの到達点）**: ユーザー報告7件の受入・較正済み picture gate PASSED・
+  OPT-05/07(b)/09・BH-22/32・light-params・ring-pressure・**bind short-circuit（1.63M skip）**・**semaphore VUID 10→0**・
+  **per-image present-wait semaphore（resize 受入）**・層あり回帰 leg VUID 0。
+- **未了**: frame-close pairing（到達不能）・BH-14・goal (e) 3段階・`scissorCapturedGroups=0`・**renderString bracket（実装中）**・
+  主要mod対応（goal C）・Intel UHD630 受入。
+
 ## 0.320 **round 126: bind short-circuit 着地（`dfeee01cc`）— 連鎖の実測は ~0.07 µs/glyph で 3.17 µs の主因ではない**
 
 - **着地（glyph-fix・`dfeee01cc`・jar `d987b037`・build 緑）**: mixin の早期 return（`VulkanGlState.bindWouldChangeNothing`）＋
