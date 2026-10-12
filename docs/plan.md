@@ -307,6 +307,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.323 **round 129: F3 の split 確定（glyph-fix `7434a950b`）— caller は 0.13 %、vanilla glyph 本体が 3.15 µs/glyph**
+
+- **測定（`rsplit-on`・F3 on・1,280,000 glyph・`renderString` 3,106 回・同一 leg に両 bracket）**:
+  | bracket | millis | per unit |
+  |---|---|---|
+  | `renderStringMillis`（loop・全入口） | **4,663** | 1.50 ms/string |
+  | `glyphMillis`（vanilla glyph メソッド） | **4,657** | 3.64 µs/glyph |
+  | 我々の capture（submit 328 + window 69 + hook 223） | **620** | 0.48 µs/glyph |
+  | **caller 自身の仕事** | **6** | ~2 µs/string（**0.13 %**） |
+  | **vanilla glyph 本体** | **4,037** | **3.15 µs/glyph** |
+  - **pair**（同一 jar・両 leg `pinSections=64`・両 leg PASSED・`validationClean=true`・`validationMessageCount=0`）:
+    cold p50 **177.9 ms（on・21 標本）対 41.5 ms（off・74 標本）**＝**within-pair の overlay コスト 136.4 ms/frame**（前 pair の 128–139 と整合）。
+- **結論（決定であって task ではない）**: caller 側（`charmap.indexOf`・style 管理）は **6 ms / 4,663** ＝ **0.13 %**。
+  残りは **vanilla glyph 本体 3.15 µs/glyph ≈ 14.5 ms/frame** で、**glyph ごとに約10個の Java 呼び出し**（`TextureManager.bindTexture` ＋ 9 個の `GlStateManager` wrapper＝各 stub no-op ＋ 我々の hook）。
+  ＝**`renderStringAtPos` fast path の賞金は ~14.5 ms/frame（最も密な text scene で）**であり、
+  **game/Forge/mod が共有するコード経路を迂回する**ため**独自の互換ストーリーが必要**。
+  ＝**この session では開始しない**（互換リスクを明示した決定として記録）。
+- **次の読者のための記録（glyph-fix が commit に同梱）**: 外側の `drawString` bracket（`func_175065_a`）は**この split には誤った scope**
+  （`renderStringAligned` が迂回するため `stringMillis − glyphMillis` が ~0 になった）。残る per-glyph 本体は **vanilla ＋ 我々の stub dispatch** であり、
+  **Celtium 所有の連鎖ではない**（bind 連鎖は ~0.07 µs/glyph として既に除去済み）。
+- **未確立（正直に）**: **fast path の実際の節約量は未測定**。3.15 µs/glyph は**現行経路のコスト**であり、
+  **batched path のコストは測られていない**（glyph-fix も開始していない）。
+
 ## 0.322 **round 128: `renderString` bracket の split が出た — caller 側は約 2.5 %、残りは vanilla の glyph 本体**
 
 - **測定（glyph-fix の `rsplit-on`/`rsplit-off`・F3 on leg の集計行）**:
