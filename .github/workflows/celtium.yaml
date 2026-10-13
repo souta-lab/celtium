@@ -23,6 +23,7 @@ jobs:
           python3 scripts/cpu-contract/post_create_rollback_check.py
           python3 scripts/cpu-contract/immediate_group_pool_check.py
           python3 scripts/cpu-contract/gl_rectangle_queries_check.py
+          python3 scripts/cpu-contract/gl_version_consistency_check.py
           python3 scripts/cpu-contract/shader_push_constant_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
