@@ -2517,11 +2517,11 @@ public final class VulkanGlTexture {
         if (width <= 0 || height <= 0) {
             return "the rectangle has no area";
         }
-        if (sx < 0 || sy < 0 || sx + width > sourceWidth || sy + height > sourceHeight) {
+        if (!TextureCopyService.rectangleFits(sx, sy, width, height, sourceWidth, sourceHeight)) {
             return "the source rectangle " + sx + "," + sy + " " + width + "x" + height + " is not inside the "
                     + sourceWidth + "x" + sourceHeight + " source image";
         }
-        if (xoffset < 0 || yoffset < 0 || xoffset + width > this.width() || yoffset + height > this.height()) {
+        if (!TextureCopyService.rectangleFits(xoffset, yoffset, width, height, this.width(), this.height())) {
             return "the destination rectangle " + xoffset + "," + yoffset + " " + width + "x" + height
                     + " is not inside the " + this.width() + "x" + this.height() + " mirror";
         }
