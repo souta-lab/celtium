@@ -4406,9 +4406,12 @@ public final class ValidationClient {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
             int listed = celtium$listedSections(sectionLines);
             int pendingP1 = celtium$pendingP1(sectionLines);
-            if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS
-                    && (pendingP1 < 0 || pendingP1 <= CAPTURE_MAX_P1)) {
-                celtium$captureConditionFired = "sections-target (pendingP1=" + pendingP1 + ")";
+            // The same two conditions the pinned path honours, so both paths promise the same settled world.
+            int heldBuilds = celtium$heldBuildResults(sectionLines);
+            boolean heldOk = CAPTURE_MAX_HELD_BUILDS < 0 || heldBuilds < 0 || heldBuilds <= CAPTURE_MAX_HELD_BUILDS;
+            if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS && heldOk
+                    && (pendingP1 < 0 || pendingP1 <= CAPTURE_MAX_P1) && celtium$worldClockReached()) {
+                celtium$captureConditionFired = "sections-target (pendingP1=" + pendingP1 + ", held=" + heldBuilds + ")";
                 return true;
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
