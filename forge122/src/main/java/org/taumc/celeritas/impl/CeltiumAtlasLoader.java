@@ -16,7 +16,6 @@ import org.apache.logging.log4j.Logger;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -64,12 +63,6 @@ public final class CeltiumAtlasLoader {
      * window between those two calls on a single stitch.
      */
     private static final Map<TextureAtlasSprite, Future<Boolean>> PENDING = new ConcurrentHashMap<>();
-    /**
-     * Sprites whose load ran synchronously and failed, carried to the drain point so the stitch is refused.
-     * Without this the synchronous branch's answer was dropped: {@code await} saw no future, answered "may be
-     * stitched", and a sprite whose frame read had failed was stitched with no frames at all.
-     */
-    private static final Set<TextureAtlasSprite> REFUSED = ConcurrentHashMap.newKeySet();
     private static long submittedSprites;
     private static long awaitedSprites;
     private static long awaitedMillis;
@@ -89,14 +82,11 @@ public final class CeltiumAtlasLoader {
     public static boolean submit(final TextureMap map, final String basePath, final int mipmapLevels,
             final IResourceManager resourceManager, final TextureAtlasSprite sprite) {
         if (sprite.hasCustomLoader(resourceManager, resourceLocationOf(basePath, sprite))) {
-            // A custom loader is the sprite's own code - thread assumptions belong to the mod that wrote it, so
-            // the whole call stays synchronous through the replicated body. Its answer is kept for the drain
-            // point: a refused sprite must not be stitched, exactly as the sequential path would not add it.
-            boolean loaded = generateMipmapsSequential(basePath, mipmapLevels, resourceManager, sprite);
-            if (!loaded) {
-                REFUSED.add(sprite);
-            }
-            return loaded;
+            // A custom loader is the sprite's own code; keep the whole call synchronous. Forge's
+            // TextureMap.loadTexture only calls stitcher.addSprite when this return value is true.
+            // A false return therefore never reaches await(): retaining a REFUSED marker here
+            // used to leak the sprite and could reject it on a subsequent successful reload.
+            return generateMipmapsSequential(basePath, mipmapLevels, resourceManager, sprite);
         }
         final ResourceLocation resourceLocation = resourceLocationOf(basePath, sprite);
         PENDING.put(sprite, POOL.submit(() -> {
@@ -120,9 +110,6 @@ public final class CeltiumAtlasLoader {
      * path (custom loader ran synchronously): the caller stitches it directly.
      */
     public static boolean await(TextureAtlasSprite sprite) throws Throwable {
-        if (REFUSED.remove(sprite)) {
-            return false;
-        }
         // Never examine async frame data before the worker has finished populating it: a normal sprite
         // starts with zero frames, and an early check would falsely refuse it, leaving its Future in PENDING.
         Future<Boolean> future = PENDING.remove(sprite);
