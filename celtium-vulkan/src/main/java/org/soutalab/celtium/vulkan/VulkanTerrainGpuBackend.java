@@ -12107,6 +12107,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             boolean reached = this.swapchain.lastPresentSucceeded();
             if (reached) {
                 this.framePresentedFromVulkan++;
+                // Attribute the dumps this present wrote to this presented frame. The fixture can only observe
+                // the file once per render tick and several presents can pass in that window (measured: the
+                // startup request's file first existed while the counter read 16), which is why the frame is
+                // named from the write rather than from the observation. Several requests can be pending at
+                // once, so the attribution is kept per file name rather than as one "last write".
+                java.util.Map<String, Long> writes = this.swapchain.dumpWriteSerialByPath();
+                if (!writes.isEmpty()) {
+                    for (java.util.Map.Entry<String, Long> write : writes.entrySet()) {
+                        Long seen = this.seenDumpWriteSerialByName.get(write.getKey());
+                        if (seen == null || seen.longValue() != write.getValue().longValue()) {
+                            this.seenDumpWriteSerialByName.put(write.getKey(), write.getValue());
+                            this.presentedDumpWrittenFrames.put(write.getKey(),
+                                    Integer.valueOf(this.framePresentedFromVulkan));
+                        }
+                    }
+                }
                 dumpFrameIfRequested(this.framePresentedFromVulkan);
                 // The caller skips the game's own Display.update when this returns true, and that call is also what polls
                 // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
@@ -12605,6 +12621,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@return how many frames have been presented from Vulkan so far}. */
     public int celtium$presentedFrameCount() {
         return this.framePresentedFromVulkan;
+    }
+
+    /**
+     * {@return the presented-frame count of the present that wrote the named presented-image dump}, or -1 when no
+     * write of that name has been recorded.
+     * <p>
+     * The fixture's file observation cannot name the frame on its own: it runs once per render tick, and several
+     * presents fit inside that window at startup, so "the file appeared while the counter read N" is N frames
+     * late. The write happens inside the present, which is what makes this the authoritative binding; the file
+     * name is the key because several requests can be pending at once.
+     */
+    public int celtium$presentedDumpWrittenFrameFor(String fileName) {
+        if (fileName == null) {
+            return -1;
+        }
+        Integer frame = this.presentedDumpWrittenFrames.get(fileName);
+        return frame == null ? -1 : frame.intValue();
     }
 
     /**
