@@ -234,6 +234,19 @@ public final class ValidationClient {
      * {@code -Dceltium.validation.pinSections=<n>}: hold the capture until the listed-section count has been the same
      * for {@link #PIN_SECTIONS_STABLE_FRAMES} consecutive frames and is at or below {@code n}. 0 disables it.
      */
+    /**
+     * The absolute world clock the capture waits for, in total world ticks, or 0 to disable.
+     * <p>
+     * A floor on the frame count is not a fixed point: measured 2026-10-13, two legs with identical flags and
+     * {@code minWorldFrames=300} still captured at {@code captureTotalWorldTime} 901 and 1097, and their
+     * {@code captureBuildState} differed (U=05 deviceAllocated=38 indexAllocated=1 against U=10
+     * deviceAllocated=69 indexAllocated=2). Their black fraction matched to the digit across five runs
+     * (0.037254) while the world behind it did not. A relative floor accumulates the drift of everything before
+     * it; an absolute target does not. Default 0 keeps every existing leg and calibration key where it is.
+     */
+    private static final long CAPTURE_AT_TOTAL_WORLD_TIME =
+            Long.getLong("celtium.validation.captureAtTotalWorldTime", 0L).longValue();
+
     private static final int PIN_SECTIONS =
             Integer.getInteger("celtium.validation.pinSections", 0).intValue();
     /** How many consecutive frames the section count must hold before a pinned capture fires. */
@@ -4201,6 +4214,23 @@ public final class ValidationClient {
      * pinned path, and a clause added to the count path alone measured no effect at all (heiref3 fired
      * 'tick-sections-deadline (listed 45 of 0)' with the clause already in the tree).
      */
+    /**
+     * {@return whether the world clock has reached the absolute capture target}.
+     * <p>
+     * Reads the game's own total world time, which counts every tick since the world was created, so it does not
+     * depend on when this leg started counting frames. With the knob unset it is always true and no leg moves.
+     */
+    private boolean celtium$worldClockReached() {
+        if (CAPTURE_AT_TOTAL_WORLD_TIME <= 0L) {
+            return true;
+        }
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
+        if (client == null || client.world == null) {
+            return false;
+        }
+        return client.world.getTotalWorldTime() >= CAPTURE_AT_TOTAL_WORLD_TIME;
+    }
+
     private boolean celtium$jeiSettled() {
         return !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
     }
@@ -4316,6 +4346,9 @@ public final class ValidationClient {
             // outstanding - so the picture it photographed was still moving. The count path already refuses
             // that state; this path promises the settled world in its own name, so it refuses it too.
             if (pinPendingP1 >= 0 && pinPendingP1 > CAPTURE_MAX_P1) {
+                return false;
+            }
+            if (!celtium$worldClockReached()) {
                 return false;
             }
             if (!this.celtium$jeiSettled()) {
