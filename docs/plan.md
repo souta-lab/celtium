@@ -9877,3 +9877,5 @@ round ごとの経緯・旧測定・失敗証拠は **`docs/history/plan-round-l
 | **round 491: `cmp1` は実行中 ✓** | **`captureComparable` を次 round で読む ✓** | process **RUNNING** ✓・report **未生成** ✗ ⇒ 次に **`captureComparable`** ✓・**`captureConditionFiredAtEnd`** ✓・**`presentedBlackFraction`／`presentedDistinctColours`** ✓ を読む ✓。**規律（✓）**: **in-flight を合格と読まない** ✓・**`captureComparable=false` の run は比較に使わない** ✓・**上限は動かさない** ✓。|
 
 | **round 492: `cmp1` は依然実行中 ✓（report 未生成 ✗）** | **完了後に `captureComparable` を読む ✓** | process **RUNNING** ✓・report **未生成** ✗（**deadline 560 まで待つ設定のため長い** ✓）。**規律（✓）**: **待ち時間の長さを成果としない** ✓・**in-flight を合格と読まない** ✓・**report が無い状態で推測しない** ✓ ⇒ 完了後に **`captureComparable`** ✓・**`captureConditionFiredAtEnd`** ✓・**黒率／色数** ✓ を読む ✓。|
+
+| **round 493: `captureComparable=true` を確認 ✓✓・`cmp2` を起動 ✓** | **2 run の黒率を比較する ✓** | `cmp1`（deadline 560 ✓）: **`captureComparable=true`** ✓✓・**`tick-sections-target (listed 64)`** ✓✓・`status=PASSED` ✓・`error=None` ✓・**`captureListedSections=64`** ✓・**黒率 4.961%** ✓（**上限 5.0% の直下** ✓）・**色数 14,514** ✓。⇒ **比較可能性の明示が機能** ✓✓・**deadline を伸ばすと目標に到達** ✓ ⇒ **`cmp2`（同条件 ✓）を起動** ✓ ⇒ **黒率が上限のどちら側に来るか**を測る ✓（**上限は動かさない** ✓・**1 run で結論しない** ✓）。|
