@@ -29,6 +29,7 @@ jobs:
           python3 scripts/cpu-contract/shader_push_constant_check.py
           python3 scripts/cpu-contract/present_drain_check.py
           python3 scripts/cpu-contract/font-state-boundary-check.py
+          python3 scripts/cpu-contract/parallel_atlas_await_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
       - uses: actions/upload-artifact@v4
