@@ -40,6 +40,8 @@ public class CeltiumGlStub {
  static final int SEM_VIEWPORT=27, SEM_SCISSOR=45;
  static ByteBuffer memory=ByteBuffer.allocate(24).order(ByteOrder.nativeOrder());
  static class Fn {}
+ int drawStateBoundaries;
+ void noteDrawStateBoundary() {drawStateBoundaries++;}
  static void memPutInt(long p,int v) {memory.putInt((int)p,v);}
  int getIntegerValue(int pname) {return Integer.MIN_VALUE;}
 """ + init + "\n" + query + """
@@ -70,6 +72,8 @@ public class CeltiumGlStub {
   expect(installed.query(0x0C10),0,0,0,0);
   if(!installed.scissorCalled || installed.scissorCallCount!=2)
     throw new AssertionError("query altered the call census");
+  if(installed.drawStateBoundaries!=2)
+    throw new AssertionError("scissor state did not create two draw-state boundaries");
   System.out.println("rectangle queries: drawable defaults, origin, independent scissor, zero box, bounds PASS");
  }
 }
