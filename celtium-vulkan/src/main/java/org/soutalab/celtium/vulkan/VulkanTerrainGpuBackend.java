@@ -9404,7 +9404,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the inconsistency, not the validation layer. The picture is unchanged in every one of them
      * (presentedMean=71.302086, fixture PASSED/PASSED).
      */
-    private static final boolean PAIR_STAY_GENERAL = Boolean.getBoolean("celtium.vulkan.pairStayGeneral");
+    private static final boolean PAIR_STAY_GENERAL = Boolean.parseBoolean(System.getProperty("celtium.vulkan.pairStayGeneral", "true"));
     private static final boolean SELF_COMPOSITE_SKIP =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.skipSelfComposite", "true"));
     /**

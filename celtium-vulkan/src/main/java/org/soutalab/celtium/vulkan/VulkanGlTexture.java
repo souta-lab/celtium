@@ -1917,7 +1917,7 @@ public final class VulkanGlTexture {
      * messages instead of the one the consistent pair had measured (legs r212-world-hud39 versus hud38). One property,
      * one default.
      */
-    private static final boolean PAIR_STAY_GENERAL = Boolean.getBoolean("celtium.vulkan.pairStayGeneral");
+    private static final boolean PAIR_STAY_GENERAL = Boolean.parseBoolean(System.getProperty("celtium.vulkan.pairStayGeneral", "true"));
 
     /** Marks this wrapper as standing for one of the renderer's pair images; see {@link #samplingLayout()}. */
     public void notePairImage(boolean pairImage) {
