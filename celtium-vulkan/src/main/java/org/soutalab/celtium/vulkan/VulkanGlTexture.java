@@ -265,6 +265,8 @@ public final class VulkanGlTexture {
 
     /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
     private long lastPixelHash;
+    /** A hash describes content only after a full transfer has been accepted. Zero is a valid hash. */
+    private boolean lastPixelHashValid;
     /**
      * The stub write serial the last upload under GL-less mirrored; see {@link #uploadFromGlTexture}. Real serials
      * start at 1 and the missing-record answer is {@link Long#MIN_VALUE}, so the -1 initial value keeps the first
@@ -1278,7 +1280,7 @@ public final class VulkanGlTexture {
         final long uploadSerial = fromCapture
                 ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(glTextureId, 0)
                 : Long.MIN_VALUE;
-        if (uploadSerial == this.lastUploadSerial) {
+        if (fromCapture && uploadSerial != Long.MIN_VALUE && uploadSerial == this.lastUploadSerial) {
             return;
         }
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
@@ -1287,14 +1289,15 @@ public final class VulkanGlTexture {
             for (int i = 0; i < level.width * level.height * BYTES_PER_PIXEL; i++) {
                 hash = (hash ^ (level.pixels.get(i) & 0xFF)) * 1099511628211L;
             }
-            if (hash == lastPixelHash && level.width == width && level.height == height) {
+            if (this.lastPixelHashValid && hash == lastPixelHash && level.width == width && level.height == height) {
                 // The content is identical to what is already on the device: skip the copy, the command buffer and
                 // the queue drain it would otherwise cost. The light map in particular is re-read every frame but
                 // only changes when the sun moves or a torch flickers.
+                // The bytes are already present; remember a newer capture serial as well, so unchanged
+                // captures do not pay for the same full-image hash on every lookup.
+                if (fromCapture) this.lastUploadSerial = uploadSerial;
                 return;
             }
-            lastPixelHash = hash;
-            this.lastUploadSerial = uploadSerial;
             dumpForDebugging(glTextureId, level);
             dumpSourcePixels(glTextureId, level);
             // The chain is generated here rather than copied from OpenGL. Copying GL's own levels needs the readback path
@@ -1310,7 +1313,10 @@ public final class VulkanGlTexture {
                     + " imageLevels=" + this.mipLevels
                     + " view=" + Long.toHexString(this.view) + " image=" + Long.toHexString(this.image)
                     + " recreated=" + recreated);
+            // A failed or partially recorded replacement must not keep a digest claiming old GPU contents.
+            invalidateUploadCache();
             copyToImage(level.pixels, level.width, level.height, 0);
+            commitFullUpload(hash, uploadSerial);
             dumpMirrorPixels(glTextureId);
             if (!level.owned) {
                 // A captured upload is the one source whose arrival is worth counting separately: it says the mirror
@@ -1568,8 +1574,7 @@ public final class VulkanGlTexture {
         // The image no longer holds what the last full upload put there, so the hash identifying that content is stale. Without
         // this a later full upload of the same pixels is skipped as a duplicate and the patch survives in a texture that should
         // have been replaced wholesale (audit A06).
-        this.lastPixelHash = 0L;
-            this.lastUploadSerial = -1L;
+        invalidateUploadCache();
         return true;
     }
 
@@ -1815,6 +1820,19 @@ public final class VulkanGlTexture {
         return uploadFromImage(pixelWidth, pixelHeight, rgba);
     }
 
+    private void invalidateUploadCache() {
+        this.lastPixelHashValid = false;
+        this.lastUploadSerial = -1L;
+    }
+
+    /** Cache the accepted transfer, not the intent to perform one. GPU completion is the context's separate contract. */
+    private void commitFullUpload(long hash, long uploadSerial) {
+        this.lastPixelHash = hash;
+        this.lastPixelHashValid = true;
+        this.lastUploadSerial = uploadSerial;
+        this.fullContentArrived = true;
+    }
+
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
         requireOwned("a whole-image upload");
         requireAlive();
@@ -1824,18 +1842,17 @@ public final class VulkanGlTexture {
         long required = requiredUploadBytes("a whole-image upload of " + pixelWidth + "x" + pixelHeight, pixelWidth,
                 pixelHeight, rgba);
         long hash = hashUploadSlice(rgba, (int) required);
-        if (hash == lastPixelHash && pixelWidth == width && pixelHeight == height) {
+        if (this.lastPixelHashValid && hash == lastPixelHash && pixelWidth == width && pixelHeight == height) {
             this.imageUploadsSkipped++;
             return false;
         }
         if (pixelWidth != width || pixelHeight != height) {
             recreateImageResources(pixelWidth, pixelHeight);
         }
+        invalidateUploadCache();
         copyToImage(rgba, pixelWidth, pixelHeight, 0);
-        this.fullContentArrived = true;
-        // Recorded only once the pixels are actually in the image: a hash written before the transfer would claim content that
-        // a failed transfer never delivered, and the next retry would then be skipped as a duplicate (audit A07).
-        lastPixelHash = hash;
+        // A direct producer has no captured-write serial. Its success cannot retain the serial of a different source.
+        commitFullUpload(hash, -1L);
         // The announcement path: this is where the light map and the direct-held textures arrive whole, so a dump here
         // says whether the image the descriptors sample got those pixels. The name is the one the caller announced the
         // image under, not a constant: every file used to be written as `mirror-gl-1-...`, so the sixty-four 256x256
@@ -2300,8 +2317,7 @@ public final class VulkanGlTexture {
             this.width = 0;
             this.height = 0;
             this.fullContentArrived = false;
-            this.lastPixelHash = 0L;
-            this.lastUploadSerial = -1L;
+            invalidateUploadCache();
             this.levelWrites = new long[0];
             this.levelLastWrite = new long[0];
             synchronized (VulkanGlTexture.class) {
@@ -2431,8 +2447,7 @@ public final class VulkanGlTexture {
             return;
         }
         this.fullContentArrived = false;
-        this.lastPixelHash = 0L;
-            this.lastUploadSerial = -1L;
+        invalidateUploadCache();
         this.levelWrites = new long[0];
         this.levelLastWrite = new long[0];
         this.levelLayouts = new int[0];
