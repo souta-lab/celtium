@@ -6194,7 +6194,12 @@ public final class ValidationClient {
             }
             iterator.remove();
             int observed = celtium$presentedFrameCount();
-            int expected = evidence.presentedFramesAtRequest + 1;
+            // Two paths answer a request: the queued one is written at the next present, and the immediate one (used
+            // when no further present is coming) is written from the last presented image at the request frame. Both
+            // are the frame the request named, so both counters are accepted; anything else is a different frame.
+            int expectedQueued = evidence.presentedFramesAtRequest + 1;
+            int expectedImmediate = evidence.presentedFramesAtRequest;
+            int expected = observed == expectedImmediate ? expectedImmediate : expectedQueued;
             evidence.completedAtTick = worldTicks;
             if (observed != expected) {
                 evidence.completionError = "the image appeared while the renderer's presented-frame counter read "
