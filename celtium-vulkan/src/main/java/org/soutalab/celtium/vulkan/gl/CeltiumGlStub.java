@@ -563,6 +563,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.List<Callback> ownedTrampolines = new ArrayList<>();
     private long getStringAddress;
     private ByteBuffer getStringBuffer;
+    private volatile int viewportX, viewportY;
     private volatile int viewportW = 1280, viewportH = 720;
     /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
     private volatile int drawFbo, readFbo;
@@ -720,7 +721,24 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_CW = 0x0900;
 
     /** The game's clip rectangle as glScissor last set it, in GL's bottom-left coordinates. */
-    private final int[] scissorBox = new int[4];
+    private final int[] scissorBox = {0, 0, 1280, 720};
+
+    /**
+     * Initialize the two context rectangles from the actual drawable, once at window creation.
+     * Later viewport changes must not alter the independent scissor box.
+     */
+    public static void initializeWindowRectangles(int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || width <= 0 || height <= 0) return;
+        stub.viewportX = 0;
+        stub.viewportY = 0;
+        stub.viewportW = width;
+        stub.viewportH = height;
+        stub.scissorBox[0] = 0;
+        stub.scissorBox[1] = 0;
+        stub.scissorBox[2] = width;
+        stub.scissorBox[3] = height;
+    }
 
     /** glScissor calls seen, so a leg can say whether the scene clipped at all rather than only whether a group did. */
     private long scissorCallCount;
@@ -1907,6 +1925,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 pixelStore((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_VIEWPORT:
+                this.viewportX = (int) c[0];
+                this.viewportY = (int) c[1];
                 this.viewportW = (int) c[2];
                 this.viewportH = (int) c[3];
                 return 0L;
@@ -2819,16 +2839,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         int value;
         switch (pname) {
             case 0x0BA2: // GL_VIEWPORT
-                memPutInt(out, 0);
-                memPutInt(out + 4, 0);
+                memPutInt(out, this.viewportX);
+                memPutInt(out + 4, this.viewportY);
                 memPutInt(out + 8, this.viewportW);
                 memPutInt(out + 12, this.viewportH);
                 return;
-            case 0x0C10: // GL_SCISSOR_BOX - four ints, and the default is the whole drawable
-                memPutInt(out, 0);
-                memPutInt(out + 4, 0);
-                memPutInt(out + 8, this.viewportW);
-                memPutInt(out + 12, this.viewportH);
+            case 0x0C10: // GL_SCISSOR_BOX - independent of the viewport, even when scissor is disabled
+                memPutInt(out, this.scissorBox[0]);
+                memPutInt(out + 4, this.scissorBox[1]);
+                memPutInt(out + 8, this.scissorBox[2]);
+                memPutInt(out + 12, this.scissorBox[3]);
                 return;
             case 0x8872: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
                 value = 32;
