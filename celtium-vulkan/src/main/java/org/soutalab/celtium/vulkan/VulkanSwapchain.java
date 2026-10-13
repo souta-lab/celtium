@@ -235,9 +235,9 @@ public final class VulkanSwapchain {
         return this.lastPresentSucceeded;
     }
 
-    /** The image handle the last present used, so the frame that reached the swapchain can be written out. */
-    private long lastPresentedImage = VK_NULL_HANDLE;
-    /** Set by the fixture, consumed by the present path so the read happens while the image is still ours. */
+    // Do not retain a swapchain VkImage for later readback: after vkQueuePresentKHR the image is no
+    // longer acquired, even when its handle stays the same. Any later copy/barrier would violate
+    // UNASSIGNED-non-acquired-swapchain-image-used. Dump requests must be served by the next acquire.
     /**
      * The dumps waiting for the next present. A queue rather than one slot: the fixture's proof image and a
      * diagnostic run's periodic frames are both requested at moments only the present can serve, and a single slot
@@ -281,24 +281,11 @@ public final class VulkanSwapchain {
         if (path == null) {
             return;
         }
-        // A request that arrives when no further present is coming is answered from the image the last present
-        // handed over, rather than queued for a frame that will never arrive. Measured need (leg hei006br): the
-        // fixture's capture-time request lands at tick 223, near the end of the run, and the queued path was never
-        // consumed - the run directory held the early dump (requested mid-run, written) and no world dump at all,
-        // while the report recorded pictureRequested_world. The image is still the presenter's at that moment only
-        // if a present is in flight; otherwise lastPresentedImage is the frame that was shown, which is what a
-        // capture-time request means. The queued path is still used when there is nothing to answer from, and the
-        // immediate write is reported through lastDumpWritten and lastDumpFailure like the queued one.
-        if (this.lastPresentedImage != VK_NULL_HANDLE) {
-            boolean written = writePresentedImage(path, this.lastPresentedImage);
-            this.lastDumpWritten = written;
-            if (!written) {
-                this.lastDumpFailure = "an immediate presented-image dump did not write (image=0x"
-                        + Long.toHexString(this.lastPresentedImage) + ", size=" + this.width + "x" + this.height + ")";
-                this.pendingDumpPaths.add(path);
-            }
-            return;
-        }
+        // A previously presented image belongs to the presentation engine until it is acquired again.
+        // Writing it immediately from this request (after vkQueuePresentKHR) produced a validation error
+        // on every diagnostic frame. Only the present path, after a successful acquire and before its
+        // vkQueuePresentKHR, is permitted to read it. Requests near shutdown may remain unfulfilled;
+        // that is preferable to silently reading an image which Vulkan no longer owns.
         this.pendingDumpPaths.add(path);
     }
 
@@ -409,7 +396,8 @@ public final class VulkanSwapchain {
                     .layerCount(1);
             copy.get(0).imageOffset().set(x, y, 0);
             copy.get(0).imageExtent().set(blockWidth, blockHeight, 1);
-            // The image has just been presented, so it is in VK_IMAGE_LAYOUT_PRESENT_SRC_KHR. A transfer cannot read
+            // The pre-recorded blit has transitioned the acquired image to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            // but vkQueuePresentKHR has NOT been called yet: the application still owns the image. A transfer cannot read
             // it from there and the layout a descriptor was written with is checked at draw time: the validation layer
             // reported VUID-vkCmdDraw-None-09600 ("expects ... TRANSFER_SRC_OPTIMAL--instead, current layout is
             // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR") for every readback this instrumentation made. The two barriers below are
@@ -877,10 +865,15 @@ public final class VulkanSwapchain {
                     return "present image: could not create the acquire semaphore";
                 }
                 acquire = one.get(0);
+                // The diagnostic uses brand-new semaphore pairs instead of the normal fixed pool.
+                // Both handles must be retained for delete(), including a partial first-only pair.
+                // Otherwise every present (and a failure on the second allocation) leaks Vulkan handles.
+                this.freshSemaphorePool.add(Long.valueOf(acquire));
                 if (vkCreateSemaphore(this.context.device(), semaphoreInfo, null, one) != VK_SUCCESS) {
                     return "present image: could not create the render-finished semaphore";
                 }
                 renderFinished = one.get(0);
+                this.freshSemaphorePool.add(Long.valueOf(renderFinished));
             } else {
                 acquire = acquireSemaphore(stack);
                 if (acquire == VK_NULL_HANDLE) {
@@ -1019,7 +1012,6 @@ public final class VulkanSwapchain {
             if (PRESENT_READBACK && this.presentReadbacks < 100000) {
                 this.presentReadbacks++;
                 this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
-                this.lastPresentedImage = image;
                 if (!this.pendingDumpPaths.isEmpty()) {
                     java.util.List<java.nio.file.Path> paths =
                             new java.util.ArrayList<>(this.pendingDumpPaths);

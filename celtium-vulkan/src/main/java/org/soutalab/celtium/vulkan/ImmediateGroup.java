@@ -168,6 +168,18 @@ public final class ImmediateGroup {
             return;
         }
         group.clearForReuse();
+        // A group on the freelist can survive for the entire game session. These are not
+        // constructor-time-only references: keeping them pins old-world mesh buffers, matrix
+        // snapshots and GL state after their owners are gone, even though reset() will replace
+        // every field at the next obtain(). Do not retain an old world via a pooled group.
+        group.mesh = null;
+        group.projection = null;
+        group.modelView = null;
+        group.state = null;
+        group.formatId = 0;
+        group.texture = 0;
+        group.stateKey = 0L;
+        group.target = 0L;
         poolRecycled++;
         FREELIST.add(group);
     }

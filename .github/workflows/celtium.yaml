@@ -18,6 +18,10 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4.4.4
+      - name: Test GPU-independent renderer failure paths and group recycling
+        run: |
+          python3 scripts/cpu-contract/post_create_rollback_check.py
+          python3 scripts/cpu-contract/immediate_group_pool_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
       - uses: actions/upload-artifact@v4
