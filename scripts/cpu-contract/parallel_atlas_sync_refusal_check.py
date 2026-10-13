@@ -37,6 +37,7 @@ def main():
     src=opts.source.read_text()
     submit=method(src,'public static boolean submit(final TextureMap map, final String basePath, final int mipmapLevels,')
     await_body=method(src,'public static boolean await(TextureAtlasSprite sprite) throws Throwable')
+    helper=method(src,'private static boolean stitchable(TextureAtlasSprite sprite)') if 'private static boolean stitchable(TextureAtlasSprite sprite)' in src else ''
     java='''import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -65,7 +66,7 @@ public class CeltiumAtlasLoader {
     static boolean generateMipmapsSequential(String base,int mip,IResourceManager mgr,TextureAtlasSprite sprite){return sprite.loaded;}
     static boolean generateMipmapsWorker(IResourceManager mgr,ResourceLocation loc,int mip,TextureAtlasSprite s){return true;}
     static String summary(){return "atlas test";}
-'''+submit+'\n'+await_body+'''
+'''+submit+'\n'+await_body+'\n'+helper+'''
     static void require(boolean v,String msg){if(!v)throw new AssertionError(msg);}
     static boolean mimicForgeStitch(TextureAtlasSprite sprite) throws Throwable {
         // Forge TextureMap.loadTexture: if (generateMipmaps(...)) stitcher.addSprite(sprite);
