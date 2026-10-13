@@ -281,6 +281,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     private long readbackMemory;
     private long readbackMapped;
+    /** Test-only ({@code -Dceltium.vulkan.worldMatrixCensus=true}): print the world model-view once per run. */
+    private static final boolean WORLD_MATRIX_CENSUS =
+            Boolean.getBoolean("celtium.vulkan.worldMatrixCensus");
+    private boolean worldMatrixCensusDone;
+
     private boolean submissionPending;
     private VulkanCommandBufferState commandState;
     private long activeImmediateTarget;
@@ -2926,6 +2931,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         float[] mv = group.modelView;
+        if (WORLD_MATRIX_CENSUS && !worldMatrixCensusDone && mv != null && mv.length >= 16) {
+            // One line for the whole capture, not one per group: the frame's model-view is what a comparison between
+            // two runs has to hold equal, and two runs of one jar differ on a large share of their pixels with every
+            // other recorded input equal.
+            worldMatrixCensusDone = true;
+            long h = 1125899906842597L;
+            for (float v : mv) {
+                h = 31 * h + Float.floatToIntBits(v);
+            }
+            System.out.println("CELTIUM_WORLD_MATRIX modelViewHash=" + Long.toHexString(h)
+                    + " modelView0=" + mv[0] + "," + mv[5] + "," + mv[10] + "," + mv[12] + "," + mv[13] + "," + mv[14]);
+        }
         if (mv == null || mv.length < 16) {
             push.putFloat(144 + 12, 0.0f);
             return;
