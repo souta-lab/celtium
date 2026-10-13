@@ -61,6 +61,25 @@ The optional plugin is never included in the published Celtium renderer JAR. The
 `jei_*.jar` opt-in still works for older scripts. Verify the plugin class in the **actual fixture JAR**
 and the mod jar in the **actual game log** before making API-interaction claims.
 
+**After enabling the exact HEI 4.31.2 plugin, both physical GPUs passed the four API-interaction legs
+(2026-10-14 JST).** The renderer JAR stayed identical (`69496a109f1e3490...` SHA256); the
+opt-in fixture JAR had SHA256 `79a05c2284a0bced49956ec7dd0908b1d16175ef00143a3e2cc4af7b961d8382`.
+The same validation flags were exercised against AMD RX 6400 RADV and Intel UHD 630 ANV.
+
+| HEI interaction / native displayed scene | RX 6400 | UHD 630 | Result observed from HEI's API |
+|---|---|---|---|
+| `jeiFilterText=diamond` | [filtered list PNG](evidence/hei-filter-api-amd-2026-10-14.png) | [filtered list PNG](evidence/hei-filter-api-intel-2026-10-14.png) | Before `visible=60 filtered=908 filterText=""`; after `visible=13 filtered=13 filterText="diamond"` on **both** |
+| `jeiRecipe=true` | [Crafting GUI PNG](evidence/hei-recipe-api-amd-2026-10-14.png) | [Crafting GUI PNG](evidence/hei-recipe-api-intel-2026-10-14.png) | `jeiRecipeOpened=true`, displayed `mezz.jei.gui.recipes.RecipesGui` on **both** |
+
+All four legs have `exitCode=0`, `gpuRequirementMet=true`, and `validationMessageCount=0`. The
+HEI items, filtered-search results, Crafting GUI and category controls can be observed in the
+actual **native Vulkan presented** PNGs. The filter was set through `IIngredientFilter.setFilterText`
+(HEI's public API), **not by synthesising a keyboard event**. `jeiRecipe=true` opens the first
+available recipe category through `IRecipesGui.showCategories`; it does not prove clicking every recipe.
+All four screens are `UNCALIBRATED_PRESENTED_IMAGE` because the scene lacks a fixed GL comparison
+floor: native visibility and functional HEI API state are verified, but full GL pixel parity remains
+open. These opt-in results supersede the old `ClassNotFoundException` / recipe `false` fixture runs.
+
 ## Planned cohort (2026-10-12): the item/recipe mod is HEI, not JEI
 
 Cleanroom's own modpack guide names **HadEnoughItems (HEI)** as the current choice for 1.12.2 and marks JEI
