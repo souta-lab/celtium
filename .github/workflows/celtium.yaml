@@ -22,6 +22,7 @@ jobs:
         run: |
           python3 scripts/cpu-contract/post_create_rollback_check.py
           python3 scripts/cpu-contract/immediate_group_pool_check.py
+          python3 scripts/cpu-contract/present_drain_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
       - uses: actions/upload-artifact@v4
