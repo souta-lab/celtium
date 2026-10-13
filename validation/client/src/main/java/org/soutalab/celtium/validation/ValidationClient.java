@@ -74,6 +74,10 @@ public final class ValidationClient {
     private static final int FORCED_GUI_SCALE = Integer.getInteger("celtium.validation.guiScale", 0).intValue();
     /** Reported once, so a leg names the scale it actually ran at. */
     private boolean celtium$guiScaleForcedReported;
+    private boolean celtium$guiScaleRestoredReported;
+    /** The tick at which the forced GUI scale is set back to the vanilla default, 0 disables the restore. */
+    private static final int GUI_SCALE_RESTORE_AT_TICK =
+            Integer.getInteger("celtium.validation.guiScaleRestoreAtTick", 0).intValue();
 
     private static final long PINNED_WORLD_TIME =
             Long.getLong("celtium.validation.worldTime", 6000L).longValue();
@@ -3559,7 +3563,20 @@ public final class ValidationClient {
                 // BH-09: force the GUI scale while a world exists, so it is already in effect when the GUI stage
                 // opens the options screen later in this run. Set here rather than at the screen because the screen
                 // is opened by a path that may be the mod's own, and the scale has to be right before it lays out.
-                if (FORCED_GUI_SCALE > 0 && mc.gameSettings.guiScale != FORCED_GUI_SCALE) {
+                // Restore: the condition asks for change, restore and reload, and only the change was ever
+                // exercised. Setting the scale back to the vanilla default of 0 (auto) at a chosen tick is the
+                // restore half, and it is recorded so a leg can say it happened.
+                if (GUI_SCALE_RESTORE_AT_TICK > 0 && worldTicks >= GUI_SCALE_RESTORE_AT_TICK
+                        && mc.gameSettings.guiScale != 0) {
+                    mc.gameSettings.guiScale = 0;
+                    if (!celtium$guiScaleRestoredReported) {
+                        celtium$guiScaleRestoredReported = true;
+                        report.addProperty("guiScaleRestoredAtTick", Integer.valueOf(worldTicks));
+                        report.addProperty("guiScaleRestoredTo", Integer.valueOf(0));
+                    }
+                }
+                if (FORCED_GUI_SCALE > 0 && mc.gameSettings.guiScale != FORCED_GUI_SCALE
+                        && !(GUI_SCALE_RESTORE_AT_TICK > 0 && worldTicks >= GUI_SCALE_RESTORE_AT_TICK)) {
                     mc.gameSettings.guiScale = FORCED_GUI_SCALE;
                     if (!celtium$guiScaleForcedReported) {
                         celtium$guiScaleForcedReported = true;
