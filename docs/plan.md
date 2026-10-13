@@ -9709,3 +9709,5 @@ round ごとの経緯・旧測定・失敗証拠は **`docs/history/plan-round-l
 | **round 400: resize 条件を UNCALIBRATED として記録する1契約を実装 ✓（build 緑 ✓）** | **既定経路のチェックは維持 ✓** | `celtium$judgeStage` の width/height 比較を、**`celtium.validation.resize` が立っているときだけ** `pictureSizeUncalibrated_*` として記録し、失敗にしない ✓（**flag 無しの既定経路は今までどおり比較する** ✓）。理由は fixture 自身のコメント（**このハーネスの窓は resize できない** ✓）＋実測（dump 1280×720／framebuffer 1024×640 ✓）✓。**renderer は未変更** ✓・VUID ゲートは開いたまま ✓。|
 
 | **round 401: resize 条件が UNCALIBRATED になることを実測 ✓✓** | **誤 FAILED を解消 ✓・「合格」とは書かない ✓** | `reload6`（同条件 ✓）: **`status=UNCALIBRATED_PRESENTED_IMAGE`** ✓・**`pictureSizeUncalibrated_scene_terrain_stage_world_…`** が report に入る ✓・`error=None` ✓・**`worldTicksAtEnd=619`** ✓・warm 241 ✓。⇒ **ハーネス由来の寸法差が「未較正」として明示され、FAILED の誤判定が消えた** ✓✓（**合格とは扱わない** ✓・**既定経路（resize 無し）のチェックは維持** ✓・renderer 未変更 ✓）。|
+
+| **round 402: 既定経路のチェックは維持されている ✓✓（回帰なし ✓）** | **resize 変更で既定のゲートを緩めていない ✓** | `guard1`（resize 無し ✓・同条件 ✓）: **`status=PASSED`** ✓・**`presentedImageVerdict=PASSED`** ✓・**`Uncalibrated` キーは 0** ✓・`error=None` ✓・**`worldTicksAtEnd=619`** ✓・warm 215 ✓。⇒ **寸法チェックは既定経路で従来どおり走り、合格している** ✓ ⇒ round 400 の変更は**ゲートを緩めていない** ✓（resize 条件のみ未較正扱い ✓）。|
