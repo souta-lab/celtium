@@ -797,7 +797,7 @@ public final class VulkanContext {
     public void endCommands(VkCommandBuffer commandBuffer, String reason) {
         Integer seen = this.submitReasons.get(reason);
         this.submitReasons.put(reason, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
-        endCommands(commandBuffer, "context-internal");
+        endCommands(commandBuffer);
     }
 
     /** {@return the per-caller counts of the one-copy submit path} */
