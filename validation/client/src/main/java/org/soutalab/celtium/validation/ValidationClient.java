@@ -6215,6 +6215,11 @@ public final class ValidationClient {
             int expectedImmediate = evidence.presentedFramesAtRequest;
             int expected = observed == expectedImmediate ? expectedImmediate : expectedQueued;
             evidence.completedAtTick = worldTicks;
+            // The request remembers the window it was made in, but a window can be resized and then put back (measured:
+            // 1280x720 -> 1024x640 at tick 102, back to 1280x720 by the end), and the dump then carries the size the
+            // window has now. Compare against that, not against the size the request happened to see.
+            evidence.requestedWidth = mc.displayWidth;
+            evidence.requestedHeight = mc.displayHeight;
             if (observed != expected) {
                 evidence.completionError = "the image appeared while the renderer's presented-frame counter read "
                         + observed + ", not the " + expected + " this request expected, so the frame it holds cannot be"
