@@ -13,9 +13,9 @@ import java.util.Arrays;
  * The profiler cannot say which pass holds it; this can, because it brackets the passes with wall-clock time of our
  * own rather than reading the profiler's tree.
  * <p>
- * The numbers are a decomposition of the <b>frame</b> bracket: {@code residual = frame - (world + hand + clouds +
- * weather + gui)}. {@code entities} and {@code particles} are measured <b>inside</b> {@code world} and are reported
- * for information - they must not be subtracted as well, or the residual double-counts them. This is deliberately
+ * Pass times are inclusive. Minecraft calls hand/clouds/weather inside renderWorld, so summing those times
+ * double-counts their overlap. The residual subtracts the <b>union</b> of world/hand/clouds/weather/gui brackets,
+ * not their sum. Auxiliary brackets are reported for attribution and do not change that coverage. This is deliberately
  * not comparable with the profiler's self-time sum, which is 4.01x the frame time because {@code frame}, {@code root}
  * and {@code gameRenderer} each hold all of it; the two must never be added together.
  * <p>
@@ -24,7 +24,7 @@ import java.util.Arrays;
  */
 public final class FramePassTimings {
 
-    /** Top-level passes: their sum is what the frame's residual is measured against. */
+    /** Named inclusive passes whose union is subtracted from the frame. */
     private static final String[] TOP_LEVEL = {"world", "hand", "clouds", "weather", "gui"};
     /**
      * Measured inside {@code world}; reported, never subtracted.
@@ -46,6 +46,8 @@ public final class FramePassTimings {
 
     private static final long[] starts = new long[TOP_LEVEL.length + INSIDE.length];
     private static long frameStart;
+    private static final PassTimingCoverage coverage = new PassTimingCoverage(TOP_LEVEL.length);
+    private static final int[] insideDepth = new int[INSIDE.length];
     private static long currentFrameTotal;
     private static final long[] currentTopLevel = new long[TOP_LEVEL.length];
     private static final long[] currentInside = new long[INSIDE.length];
@@ -62,17 +64,21 @@ public final class FramePassTimings {
     /** Brackets the frame itself. */
     public static void beginFrame() {
         if (!enabled()) return;
+        coverage.reset();
+        Arrays.fill(starts, 0L);
+        Arrays.fill(insideDepth, 0);
+        Arrays.fill(currentTopLevel, 0L);
+        Arrays.fill(currentInside, 0L);
         frameStart = System.nanoTime();
     }
 
     /** Closes the frame bracket and files the frame's record. */
     public static void endFrame() {
         if (!enabled() || frameStart == 0L) return;
-        currentFrameTotal = System.nanoTime() - frameStart;
+        long frameEnd = System.nanoTime();
+        currentFrameTotal = frameEnd - frameStart;
         frameStart = 0L;
-        long named = 0L;
-        for (int i = 0; i < currentTopLevel.length; i++) named += currentTopLevel[i];
-        long residual = currentFrameTotal - named;
+        long residual = currentFrameTotal - coverage.coveredNanos(frameEnd);
         if (residual < 0L) residual = 0L;
         int slot = written % CAPACITY;
         frameTotals[slot] = currentFrameTotal;
@@ -82,6 +88,9 @@ public final class FramePassTimings {
         written++;
         Arrays.fill(currentTopLevel, 0L);
         Arrays.fill(currentInside, 0L);
+        Arrays.fill(starts, 0L);
+        Arrays.fill(insideDepth, 0);
+        coverage.reset();
         maybeReport();
     }
 
@@ -134,18 +143,30 @@ public final class FramePassTimings {
         int counted = indexOf(pass);
         if (counted >= 0) BEGIN_CALLS[counted]++;
         if (counted == GUI_INDEX) guiActive = true;
-        if (!enabled()) return;
+        if (!enabled() || frameStart == 0L || counted < 0) return;
         int i = counted;
-        if (i >= 0) starts[i] = System.nanoTime();
+        long now = System.nanoTime();
+        boolean outermost = i < TOP_LEVEL.length ? coverage.begin(i, now)
+                : insideDepth[i - TOP_LEVEL.length]++ == 0;
+        if (outermost) starts[i] = now;
     }
 
     /** Closes a pass bracket and adds its time to the current frame. */
     public static void end(String pass) {
         if (indexOf(pass) == GUI_INDEX) guiActive = false;
-        if (!enabled()) return;
+        if (!enabled() || frameStart == 0L) return;
         int i = indexOf(pass);
         if (i < 0 || starts[i] == 0L) return;
-        long elapsed = System.nanoTime() - starts[i];
+        long now = System.nanoTime();
+        boolean outermost;
+        if (i < TOP_LEVEL.length) {
+            outermost = coverage.end(i, now);
+        } else {
+            int insideIndex = i - TOP_LEVEL.length;
+            outermost = insideDepth[insideIndex] > 0 && --insideDepth[insideIndex] == 0;
+        }
+        if (!outermost) return;
+        long elapsed = now - starts[i];
         starts[i] = 0L;
         if (i < TOP_LEVEL.length) currentTopLevel[i] += elapsed;
         else currentInside[i - TOP_LEVEL.length] += elapsed;
@@ -184,7 +205,7 @@ public final class FramePassTimings {
     /**
      * {@return the per-pass split of the frames measured so far}, as p50/p95/worst milliseconds plus the residual.
      * <p>
-     * The residual is per frame ({@code frame - sum(top-level)}) and then summarised, not a difference of
+     * The residual is per frame ({@code frame - union(named brackets)}) and then summarised, not a difference of
      * percentiles - a p50 of the frame minus a p50 of the passes would describe a frame that never happened.
      */
     public static String summary() {
