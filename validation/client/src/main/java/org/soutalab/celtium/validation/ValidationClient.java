@@ -5237,6 +5237,20 @@ public final class ValidationClient {
                 report.addProperty("presentedVerdictDeferredAtTick", Integer.valueOf(worldTicks));
                 return;
             }
+            // The dump is observed on a later frame than the request: the renderer writes it at the present that
+            // follows (or answers it immediately from the last presented image), and this fixture fills in the hash
+            // and the completion flag when it sees the file. Judging here would read an evidence record that is still
+            // incomplete and call a written dump unrequested, which is what the world stage did for several rounds.
+            // So the judgement waits, bounded, for the observation; the watchdog and the hold are untouched.
+            PictureEvidence worldNow = celtium$evidence.get("world");
+            if (worldNow != null && !worldNow.completed && celtium$presentedVerdictPendingAtTick > 0
+                    && worldTicks - celtium$presentedVerdictPendingAtTick < 40) {
+                return;
+            }
+            if (celtium$presentedVerdictPendingAtTick <= 0) {
+                celtium$presentedVerdictPendingAtTick = worldTicks;
+                return;
+            }
             celtium$judgePictures(mc, "at the capture");
             celtium$setStatusFromPictures();
             celtium$requestFinish(mc);
