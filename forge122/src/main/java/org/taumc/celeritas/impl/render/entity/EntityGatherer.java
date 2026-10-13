@@ -15,7 +15,11 @@ public class EntityGatherer {
     public static final int NUM_PASSES = 2;
 
     private final List<Entity>[] entityLists;
-    private final Consumer<Entity> addEntity;
+    private final List<Entity> gatheredEntities = new ArrayList<>();
+    private final Consumer<Entity> gatherEntity = this.gatheredEntities::add;
+    private long gatheredAtTick = -1;
+    private long gatheredAtEpoch = -1;
+    private WorldClient gatheredFromWorld;
 
     @SuppressWarnings("unchecked")
     public EntityGatherer() {
@@ -23,63 +27,65 @@ public class EntityGatherer {
         for (int i = 0; i < NUM_PASSES; i++) {
             this.entityLists[i] = new ArrayList<>();
         }
-        var entityLists = this.entityLists;
-        this.addEntity = entity -> {
-            for (int i = 0; i < NUM_PASSES; i++) {
-                if (entity.shouldRenderInPass(i)) {
-                    entityLists[i].add(entity);
-                }
-            }
-        };
     }
 
-    /**
-     * The world tick the lists were gathered for. Entities join and leave the world on ticks, never between them, so
-     * the gather - a walk of every loaded chunk's entity maps - is identical on every frame inside one tick and only
-     * a tick boundary can change it. At uncapped framerates the same gather was paid once per frame: ~2% of the warm
-     * main thread at 145fps, for lists that cannot have changed.
-     */
-    private long gatheredAtTick = -1;
-    /** The world the tick belongs to: RenderGlobal survives a world reload, and a different world can carry the
-     * same total time - the tick alone is not identity. */
-    private WorldClient gatheredFromWorld;
-
     public void clear() {
-        for (int i = 0; i < NUM_PASSES; i++) {
-            entityLists[i].clear();
-        }
+        for (List<Entity> entities : this.entityLists) entities.clear();
+        this.gatheredEntities.clear();
         this.gatheredAtTick = -1;
+        this.gatheredAtEpoch = -1;
         this.gatheredFromWorld = null;
     }
 
+    /** Preserve the existing all-pass entry point for callers outside the render loop. */
     public List<Entity>[] getLoadedEntityList(WorldClient world) {
+        gatherMembership(world);
+        for (int pass = 0; pass < NUM_PASSES; pass++) collectPass(pass);
+        return this.entityLists;
+    }
+
+    /** Evaluate eligibility at the actual Forge pass, even when membership was already gathered this tick. */
+    public List<Entity>[] getLoadedEntityList(WorldClient world, int pass) {
+        if (pass < 0 || pass >= NUM_PASSES) {
+            throw new IllegalArgumentException("Unsupported entity render pass " + pass);
+        }
+        gatherMembership(world);
+        collectPass(pass);
+        return this.entityLists;
+    }
+
+    private void collectPass(int pass) {
+        List<Entity> entities = this.entityLists[pass];
+        entities.clear();
+        for (Entity entity : this.gatheredEntities) {
+            if (entity.shouldRenderInPass(pass)) entities.add(entity);
+        }
+    }
+
+    private void gatherMembership(WorldClient world) {
         long tick = world.getTotalWorldTime();
-        if (tick == this.gatheredAtTick && world == this.gatheredFromWorld) {
-            return this.entityLists;
+        long epoch = EntityMembershipEpoch.current(world);
+        Object provider = world.getChunkProvider();
+        boolean chunkBacked = provider instanceof ChunkProviderClientAccessor;
+        if (chunkBacked && tick == this.gatheredAtTick && epoch == this.gatheredAtEpoch
+                && world == this.gatheredFromWorld) {
+            return;
         }
-        this.gatheredFromWorld = world;
-        this.gatheredAtTick = tick;
-        for (int i = 0; i < NUM_PASSES; i++) {
-            entityLists[i].clear();
-        }
-        Consumer<Entity> addEntity = this.addEntity;
-        // Iterate directly over chunk entity lists where possible - mods may create multipart entities that are not
-        // added to the main loadedEntityList.
-        if (world.getChunkProvider() instanceof ChunkProviderClientAccessor provider) {
-            var loadedChunks = provider.celeritas$getLoadedChunks();
-            for (Chunk chunk : loadedChunks.values()) {
-                if (!((ChunkAccessor)chunk).celeritas$getHasEntities()) {
-                    continue;
-                }
-                ClassInheritanceMultiMap<Entity>[] entityMaps = chunk.getEntityLists();
-                for (ClassInheritanceMultiMap<Entity> map : entityMaps) {
-                    map.forEach(addEntity);
-                }
+        this.gatheredEntities.clear();
+        if (provider instanceof ChunkProviderClientAccessor chunks) {
+            // Chunk collections retain multipart entities that are absent from loadedEntityList.
+            for (Chunk chunk : chunks.celeritas$getLoadedChunks().values()) {
+                if (!((ChunkAccessor) chunk).celeritas$getHasEntities()) continue;
+                for (ClassInheritanceMultiMap<Entity> map : chunk.getEntityLists()) map.forEach(this.gatherEntity);
             }
         } else {
-            // Best we can do is the loaded entity list - this will miss some multipart entities
-            world.loadedEntityList.forEach(addEntity);
+            // A custom provider's loadedEntityList may change without any Chunk mutation hook.
+            // Re-read this fallback on every ask rather than claim a membership epoch we cannot observe.
+            world.loadedEntityList.forEach(this.gatherEntity);
         }
-        return this.entityLists;
+        // Publish only after the complete gather, so a failed producer is retried on the next ask.
+        this.gatheredFromWorld = world;
+        this.gatheredAtTick = tick;
+        this.gatheredAtEpoch = epoch;
     }
 }
