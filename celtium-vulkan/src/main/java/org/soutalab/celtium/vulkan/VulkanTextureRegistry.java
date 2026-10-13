@@ -1533,12 +1533,12 @@ public final class VulkanTextureRegistry {
         if (width <= 0 || height <= 0) {
             return "the rectangle has no area";
         }
-        if (sx < 0 || sy < 0 || sx + width > sourceWidth || sy + height > sourceHeight) {
+        if (!TextureCopyService.rectangleFits(sx, sy, width, height, sourceWidth, sourceHeight)) {
             return "the source rectangle " + sx + "," + sy + " " + width + "x" + height + " is not inside the "
                     + sourceWidth + "x" + sourceHeight + " source image";
         }
-        if (xoffset < 0 || yoffset < 0 || xoffset + width > entry.texture.width()
-                || yoffset + height > entry.texture.height()) {
+        if (!TextureCopyService.rectangleFits(xoffset, yoffset, width, height,
+                entry.texture.width(), entry.texture.height())) {
             return "the destination rectangle " + xoffset + "," + yoffset + " " + width + "x" + height
                     + " is not inside the " + entry.texture.width() + "x" + entry.texture.height() + " mirror";
         }

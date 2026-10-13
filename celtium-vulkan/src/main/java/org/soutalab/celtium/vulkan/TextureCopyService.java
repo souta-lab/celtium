@@ -354,7 +354,7 @@ public final class TextureCopyService {
         // silently different picture. Every image `celtium$ownedReadImage` returns - the frame image, the chain pair
         // and the default pair - is the target's size, which is what `targetWidth`/`targetHeight` carry.
         int sourceImageHeight = this.host.targetHeight();
-        if (x < 0 || y < 0 || x + width > this.host.targetWidth() || y + height > sourceImageHeight) {
+        if (!rectangleFits(x, y, width, height, this.host.targetWidth(), sourceImageHeight)) {
             return refuseTextureCopy("the source rectangle " + x + "," + y + " " + width + "x" + height
                     + " is not inside the " + this.host.targetWidth() + "x" + sourceImageHeight + " image");
         }
@@ -627,8 +627,7 @@ public final class TextureCopyService {
                     // A mean cannot tell "all white" from "a few white pixels": the first four pixels and the count of
                     // non-white ones say which, and that separates "the pass never reached this image" from "the
                     // readback is reading a different target".
-                    + " firstPixels=[" + Integer.toHexString(pixels[0]) + "," + Integer.toHexString(pixels[1])
-                    + "," + Integer.toHexString(pixels[2]) + "," + Integer.toHexString(pixels[3]) + "]"
+                    + " firstPixels=" + firstPixels(pixels)
                     + " nonWhite=" + countNonWhite(pixels)
                     // Why the rectangle is a frame old: whether anything was pending when the copy ran, how many
                     // groups and how many batches were in the open one, and whether a window was mid-flight (the
@@ -872,6 +871,23 @@ public final class TextureCopyService {
         this.textureCopiesRefused++;
         this.lastTextureCopyRefusal = reason;
         return "refused-" + reason;
+    }
+
+    /** Copy bounds without overflowing an int sum; all callers check this before readback or Vulkan recording. */
+    static boolean rectangleFits(int x, int y, int width, int height, int imageWidth, int imageHeight) {
+        return x >= 0 && y >= 0 && width > 0 && height > 0
+                && imageWidth > 0 && imageHeight > 0
+                && (long) x + width <= imageWidth && (long) y + height <= imageHeight;
+    }
+
+    /** A valid 1x1 copy must not fail because a diagnostic assumes it has four pixels. */
+    static String firstPixels(int[] pixels) {
+        StringBuilder preview = new StringBuilder("[");
+        for (int i = 0; i < Math.min(4, pixels.length); i++) {
+            if (i > 0) preview.append(',');
+            preview.append(Integer.toHexString(pixels[i]));
+        }
+        return preview.append(']').toString();
     }
 
     private static int countNonWhite(int[] pixels) {
