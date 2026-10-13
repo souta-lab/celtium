@@ -12,6 +12,20 @@ Minecraft public APIs are kept as the **compatibility entry point**, not as an a
 them is replaced by Vulkan rendering that understands what the call means in Minecraft. There is no plan to translate all of
 GL so that all mods work, and no general GL-emulation layer is being built. See [the plan](plan.md), section 0.
 
+## Measured limit that touches HEI's own GUI (2026-10-13)
+
+HEI draws an **in-world screen** (the item list and its search bar sit on top of the world, not on the main
+menu). Measured on the same day, in-world screens were **not reaching the presented frame at the ticks we
+dumped**: with `screen=resourcepacks` open from tick 30 the presented dumps at tick 200, tick 400 and at the
+capture (tick 409) were **byte-identical to the plain world frame** (sha `30f16eb74c54`), and with
+`screen=language` the tick-400 dump was byte-identical to `early` and `world` (sha `4963e5801b48`) across two
+runs. The main menu, by contrast, does present its GUI (92,583-99,919 distinct colours).
+
+So: **HEI being loaded is verified; HEI's item list being rendered into the presented frame is NOT verified**,
+and the in-world screen gap above is the first thing to check before claiming it. The runs that carry HEI do
+produce rich presented images (11,745 colours in `hei-font-heiA`), but nothing in those runs attributes any of
+that to HEI rather than to the world.
+
 ## Planned cohort (2026-10-12): the item/recipe mod is HEI, not JEI
 
 Cleanroom's own modpack guide names **HadEnoughItems (HEI)** as the current choice for 1.12.2 and marks JEI
