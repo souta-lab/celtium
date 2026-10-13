@@ -3573,7 +3573,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
                     + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
         }
-        ImmediateGroup group = new ImmediateGroup(mesh, projection, modelView,
+        ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView,
                 VulkanImmediateFormats.ITEM, texture, key, state, target);
         group.prepared = prepared;
         group.combineColor = combineColor;
@@ -3592,7 +3592,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
         // must not free it - which is the whole reason the stamp exists.
-        group.stamp = new GroupStamp(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
+        group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
         // The model path creates its own group, so the per-identity texture census has to see it here as well: with the
         // census only at the immediate path's creation site the verification line listed a single identity (the loading
         // screen's) while the world and the GUI stage had both been drawn, which reads as "those stages never ran".
@@ -4778,7 +4778,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 record("frame boundary dropped " + dropped + " accepted immediate batches whose target never got a"
                         + " pass (targets=" + targets + ", total " + this.targetStatistics.unflushedTargetGroupsDropped() + ")");
             }
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
         }
         // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
@@ -6182,6 +6182,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * Discards every queued group and returns its instance to the pool.
+     * <p>
+     * Only the sites where the group leaves every list at once belong here: a clear that follows an
+     * {@code addAll(immediateGroups)} into the retired list is a reference move, not a death, and recycling there
+     * would hand a still-live group back to the freelist.
+     */
+    private void celtium$discardImmediateGroups() {
+        for (ImmediateGroup group : this.immediateGroups) {
+            ImmediateGroup.recycle(group);
+        }
+        this.immediateGroups.clear();
+    }
+
+    /**
      * Frees the meshes of retired groups whose submissions the sequence watermark has covered.
      * <p>
      * Groups are tagged at retire time with the newest submission that can still name their arena bytes - the
@@ -6208,16 +6222,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             this.immediateStatistics.addImmediateCompletedBatches(group.batches);
             if (group.target != this.targetRegistry.mainIdentity()) this.offTargetCompletedBatches += group.batches;
-            if (group.stamp == null
-                    || !(group.stamp).meshBorrowed) {
-                // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so a
-                // borrowed-mesh group retires without freeing it; an owned mesh goes with the group.
+            if (group.stamp == null || !group.stamp.meshBorrowed) {
+                // Borrowed meshes remain owned by their lender; owned meshes may retire on the watermark.
                 group.mesh.delete();
             }
             ImmediateGroup tail = retired.remove(retired.size() - 1);
             if (i < retired.size()) {
                 retired.set(i, tail);
             }
+            // Recycle only after the group has left the retired list, preserving swap-remove O(1) compaction.
+            ImmediateGroup.recycle(group);
         }
     }
 
@@ -7110,7 +7124,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 dropped += group.batches;
             }
             this.immediateStatistics.addPostAcceptDroppedGroups(dropped);
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.replaceBoundaryDrops++;
             if (this.replaceBoundaryDropBatches == 0) {
                 this.replaceBoundaryDropBatches = dropped;
@@ -7164,7 +7178,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 dropped += group.batches;
             }
             this.immediateStatistics.addOrderingFlushDroppedBatches(dropped);
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
             record("ordering flush failed at frame " + this.frameId + ", its " + dropped
                     + " accepted batches were dropped and the next frame retries (orderingFlushFailures="
@@ -7200,7 +7214,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 record("GPU stalled: dropping " + dropped + " accepted immediate batches (total "
                         + this.submissionStatistics.stalledGeometryDroppedBatches() + ")");
             }
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
             return;
         }
@@ -8540,7 +8554,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             }
             celtium$reportHudGroup(projection);
-            ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
+            ImmediateGroup group = ImmediateGroup.obtain(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
                     this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
             group.color = this.currentGroupColor;
@@ -8582,7 +8596,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             group.polygonOffsetFactor = this.currentGroupPolygonOffsetFactor;
             group.polygonOffsetUnits = this.currentGroupPolygonOffsetUnits;
             celtium$noteFogCaptureDrift(group);
-            group.stamp = new GroupStamp(this.frameId, (int) this.targetRegistry.generation(), false, this.worldEpoch);
+            group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), false, this.worldEpoch);
             this.immediateGroups.add(group);
             if (GROUP_BOUNDS_DIAGNOSTICS) {
                 // Off by default: with the switch off this method keeps the "no caller" property it had, and no line
@@ -9078,6 +9092,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
                 // reading them here is what makes a zero that cannot move (no increment site) visible as such.
                 + " immediateGroupsDrawn=" + this.immediateStatistics.immediateGroupsDrawn()
+                + " groupPool=[created=" + ImmediateGroup.poolCreated + " reused=" + ImmediateGroup.poolReused
+                + " recycled=" + ImmediateGroup.poolRecycled + "]"
                 // Every vkQueueSubmit the process issued, all paths together: the owned target's per-stage
                 // semaphore packets show up here as part of the same total the work submissions do, so "submissions
                 // per frame" is readable as queueSubmitCalls/worldFrames rather than assembled from call sites.
