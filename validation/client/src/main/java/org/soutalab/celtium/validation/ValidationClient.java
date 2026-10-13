@@ -4190,6 +4190,21 @@ public final class ValidationClient {
     }
 
     /** The largest per-pass section count in the renderer's debug strings, or -1 when no such line is present. */
+    /**
+     * {@return whether the capture-time screen state is complete}.
+     * <p>
+     * The JEI variant drives its search box over three once-flags (before / typed / after), so a capture that
+     * fires while they are still arriving photographs a different screen each run: measured 2026-10-13, two
+     * legs with identical flags reached the same section count with pendingP1=0 and still differed by
+     * 0.035368 against 0.037254 in black fraction and 10,681 against 11,435 in distinct colours. This is the
+     * condition every capture path must honour, not only the section-count one - the HEI leg fires through the
+     * pinned path, and a clause added to the count path alone measured no effect at all (heiref3 fired
+     * 'tick-sections-deadline (listed 45 of 0)' with the clause already in the tree).
+     */
+    private boolean celtium$jeiSettled() {
+        return !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
+    }
+
     /** {@return the debug line's pending rebuild count (P1), or -1 when no queue line is present} */
     private static int celtium$pendingP1(java.util.List<String> lines) {
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("P1=(\\d+)");
@@ -4294,6 +4309,9 @@ public final class ValidationClient {
                     || this.celtium$pinnedSectionsStableFrames < PIN_SECTIONS_STABLE_FRAMES) {
                 return false;
             }
+            if (!this.celtium$jeiSettled()) {
+                return false;
+            }
             celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
                     + this.celtium$pinnedSectionsStableFrames + " frames)";
         }
@@ -4307,7 +4325,8 @@ public final class ValidationClient {
                 return true;
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
-                celtium$captureConditionFired = "sections-deadline (listed " + listed + " of " + CAPTURE_SECTIONS + ")";
+                celtium$captureConditionFired = "sections-deadline (listed " + listed + " of "
+                        + CAPTURE_SECTIONS + ", jeiSettled=" + this.celtium$jeiSettled() + ")";
                 return true;
             }
             return false;
@@ -4326,7 +4345,7 @@ public final class ValidationClient {
             // section count and the same pendingP1=0, yet their black fraction was 0.035368 against 0.037254
             // and their distinct colours 10,681 against 11,435. The capture therefore waits for the JEI state
             // to be complete when the variant is in use.
-            boolean jeiSettled = !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
+            boolean jeiSettled = this.celtium$jeiSettled();
             if (CAPTURE_SECTIONS > 0 && tickListed >= CAPTURE_SECTIONS
                     && (tickP1 < 0 || tickP1 <= CAPTURE_MAX_P1) && jeiSettled) {
                 celtium$captureConditionFired = "tick-sections-target (listed " + tickListed
@@ -4335,7 +4354,7 @@ public final class ValidationClient {
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
                 celtium$captureConditionFired = "tick-sections-deadline (listed " + tickListed + " of "
-                        + CAPTURE_SECTIONS + ")";
+                        + CAPTURE_SECTIONS + ", jeiSettled=" + this.celtium$jeiSettled() + ")";
                 return true;
             }
             return false;
