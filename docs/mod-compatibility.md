@@ -12,19 +12,37 @@ Minecraft public APIs are kept as the **compatibility entry point**, not as an a
 them is replaced by Vulkan rendering that understands what the call means in Minecraft. There is no plan to translate all of
 GL so that all mods work, and no general GL-emulation layer is being built. See [the plan](plan.md), section 0.
 
-## Measured limit that touches HEI's own GUI (2026-10-13)
+## Current HEI presented-frame evidence (2026-10-13, after PRs #70 and #71)
 
-HEI draws an **in-world screen** (the item list and its search bar sit on top of the world, not on the main
-menu). Measured on the same day, in-world screens were **not reaching the presented frame at the ticks we
-dumped**: with `screen=resourcepacks` open from tick 30 the presented dumps at tick 200, tick 400 and at the
-capture (tick 409) were **byte-identical to the plain world frame** (sha `30f16eb74c54`), and with
-`screen=language` the tick-400 dump was byte-identical to `early` and `world` (sha `4963e5801b48`) across two
-runs. The main menu, by contrast, does present its GUI (92,583-99,919 distinct colours).
+**The old claim that in-world GUIs fail to reach the Vulkan presented image was false.**
+[Issue #69](https://github.com/souta-lab/celtium/issues/69) documents the correction: the allegedly
+"identical world and GUI" screenshots were both captured **while the GUI was open**. The original
+Resource Packs and Language frames visibly display their controls. Their equality says nothing
+about whether the GUI rendered; comparison against a pre-GUI frame instead changes over 99.99% of pixels.
 
-So: **HEI being loaded is verified; HEI's item list being rendered into the presented frame is NOT verified**,
-and the in-world screen gap above is the first thing to check before claiming it. The runs that carry HEI do
-produce rich presented images (11,745 colours in `hei-font-heiA`), but nothing in those runs attributes any of
-that to HEI rather than to the world.
+**New acceptance legs from the same rebuilt 0.0.4-alpha JAR**, sha256
+`69496a109f1e3490b04ea51c3c51b815a2a8efc4be614b444c6d0fe6a07a8a75`, on
+source commit `6f9663f1f` (the change merged as [PR #71](https://github.com/souta-lab/celtium/pull/71),
+rebased on [PR #70](https://github.com/souta-lab/celtium/pull/70)):
+
+| Physical GPU | Actual mod/screen | Exit / Vulkan validation | GUI screenshot | Picture gate |
+|---|---|---|---|---|
+| AMD Radeon RX 6400 (RADV) | HEI 4.31.2 loaded, `GuiContainerCreative` open since world tick 31 | 0 / **0 messages** | [Native Vulkan presented PNG](evidence/hei-current-amd-2026-10-13.png) | **UNCALIBRATED_PRESENTED_IMAGE** |
+| Intel UHD Graphics 630 (ANV) | HEI 4.31.2 loaded, `GuiContainerCreative` open since world tick 35 | 0 / **0 messages** | [Native Vulkan presented PNG](evidence/hei-current-intel-2026-10-13.png) | **UNCALIBRATED_PRESENTED_IMAGE** |
+
+Both screenshots visibly contain HEI's right-hand item grid, its search field, the creative inventory and
+"Gold Ore" tooltip. In the same tooltip crop `(675,318,809,351)`, both GPUs have **828 white main-pass pixels**
+and **693 gray shadow pixels**; the previously measured 73.4% missing-main-ink defect is addressed by PR #70,
+with a same-JAR AMD ON/OFF control documented on that PR. The per-device validation report records
+`gpuRequirementMet=true`, `jeiScreenOpenedAtTick`, `screenshotAtTickScreen=GuiContainerCreative`, and
+`validationMessageCount=0`. The actual HEI jar is named in each game's log.
+
+**Precise scope:** HEI loading, visible native presented item list/search box (not a typed search test),
+creative inventory and vanilla tooltip are now *directly observed on both GPUs*. The scene has **no
+calibrated GL-reference picture floor**, so the image verdict is **UNCALIBRATED**, not `PASSED` or `FAILED`.
+These runs do not newly verify filtered-search interactions, recipe cycling, per-frame parity against GL,
+or arbitrary third-party modpacks. The 2026-10-12 historical reference/candidate findings below remain as
+historical evidence and are superseded for the particular tooltip bug by PR #70's controlled test.
 
 ## Planned cohort (2026-10-12): the item/recipe mod is HEI, not JEI
 
@@ -127,7 +145,7 @@ the last `CELTIUM_VERIFY` line, `via=fixture end`). Measured against the referen
   fixed here (`docs/history/2026-10-12-hei-acceptance.md`, instrument
   `scripts/cpu-contract/font-shadow-main-check.py`).
 
-So the row is **"HEI loads; the reference is established; the candidate's item list, icons, filter and screen
+**At the historical 2026-10-12 build**, the row was **"HEI loads; the reference is established; the candidate's item list, icons, filter and screen
 transitions match it, and the tooltip text does not"** - the mod's own screens are accepted except for that
 defect, and the defect is in the shared font path, not in HEI's rendering. It is **not** an unqualified
 "HEI verified" and must not be read as one: the acceptance gate for this row is the tooltip crop, and the
@@ -145,7 +163,11 @@ tooltip crop is the thing that fails.
   (`--main 255,255,255 --shadow 63,63,63 --scale 3`), which are recorded here because the earlier entry did not
   name them and a reader cannot reproduce the row without them.
 
-## What is actually verified today
+## Historical baseline cohort (2026-10-11; not the latest HEI acceptance)
+
+This section records the older terrain-only cohort. The 2026-10-13 **current HEI
+GUI evidence is above**; "no content mods" below applies only to that older cohort, not the new AMD/Intel
+HEI acceptance legs.
 
 Measured on the runs cited in `docs/plan.md` and `docs/scope-and-limits.md`; the mod set is what the harness puts in the
 run's own game directory, read from that directory and from the run log, not from the Prism instance:
@@ -158,17 +180,18 @@ run's own game directory, read from that directory and from the run log, not fro
 | `celtium-validation-client` | 2.5.12-celtium.0.1.0-dev.1 | the fixture, **not shipped** | drives the scene, camera, screen and capture |
 | Celtium | 2.5.12-celtium.0.1.0-dev.1 | the renderer under test | same |
 
-**No third-party content mod is in the *current* cohort's set** - the table above is the whole of what the current
-Intel/AMD terrain runs load. That is a statement about this cohort, not a denial of the runs that came before it.
+**No third-party content mod was in this earlier terrain-only cohort's set** - the table above records
+what those older Intel/AMD terrain runs loaded. That historical cohort is separate from the current HEI legs.
 
 **Correction, 2026-10-11 (audit B12).** An earlier version of this file went further and said no JEI jar was ever loaded,
 reading the run names as a misnomer. That was wrong, and it turned real past runs into a fabrication. Both things are
 true and they are different claims:
 
-- The *current* cohort (the runs cited in `docs/plan.md` and `docs/scope-and-limits.md`, and the `jeiScreen` flag) loads
-  no JEI: that flag opens `net.minecraft.client.gui.inventory.GuiInventory`
-  (`validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java:3032`), and the runs' `mods/`
-  directories and logs contain no JEI entry. "JEI" in *those* run names is the screen variant, not a loaded mod.
+- The **earlier terrain-only cohort** in these historical runs had no JEI/HEI jar; `jeiScreen` is a validation
+  **screen-opening knob**, not proof that JEI/HEI loaded. In a CREATIVE world the knob opens
+  `net.minecraft.client.gui.inventory.GuiContainerCreative` (the Minecraft client chooses the inventory
+  screen), and the mods directory and log are required to prove the mod was actually present.
+  The 2026-10-13 acceptance above independently verified the installed **HEI** jar in both runs.
 - **Earlier runs on 2026-10-11 did load JEI and two other mods**, and their evidence is below. They are **past
   evidence**, not current acceptance: none of them passed the picture gate, and the current cohort has not re-run them.
 
