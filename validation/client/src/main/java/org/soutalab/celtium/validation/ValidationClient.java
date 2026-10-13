@@ -234,6 +234,8 @@ public final class ValidationClient {
      * {@code -Dceltium.validation.pinSections=<n>}: hold the capture until the listed-section count has been the same
      * for {@link #PIN_SECTIONS_STABLE_FRAMES} consecutive frames and is at or below {@code n}. 0 disables it.
      */
+    private static final int PIN_SECTIONS =
+            Integer.getInteger("celtium.validation.pinSections", 0).intValue();
     /**
      * The absolute world clock the capture waits for, in total world ticks, or 0 to disable.
      * <p>
@@ -246,9 +248,6 @@ public final class ValidationClient {
      */
     private static final long CAPTURE_AT_TOTAL_WORLD_TIME =
             Long.getLong("celtium.validation.captureAtTotalWorldTime", 0L).longValue();
-
-    private static final int PIN_SECTIONS =
-            Integer.getInteger("celtium.validation.pinSections", 0).intValue();
     /** How many consecutive frames the section count must hold before a pinned capture fires. */
     private static final int PIN_SECTIONS_STABLE_FRAMES =
             Integer.getInteger("celtium.validation.pinSectionsStableFrames", 20).intValue();
@@ -4214,6 +4213,10 @@ public final class ValidationClient {
      * pinned path, and a clause added to the count path alone measured no effect at all (heiref3 fired
      * 'tick-sections-deadline (listed 45 of 0)' with the clause already in the tree).
      */
+    private boolean celtium$jeiSettled() {
+        return !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
+    }
+
     /**
      * {@return whether the world clock has reached the absolute capture target}.
      * <p>
@@ -4229,10 +4232,6 @@ public final class ValidationClient {
             return false;
         }
         return client.world.getTotalWorldTime() >= CAPTURE_AT_TOTAL_WORLD_TIME;
-    }
-
-    private boolean celtium$jeiSettled() {
-        return !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
     }
 
     /** {@return the debug line's pending rebuild count (P1), or -1 when no queue line is present} */
