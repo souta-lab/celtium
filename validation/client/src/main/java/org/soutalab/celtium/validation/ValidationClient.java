@@ -4723,7 +4723,16 @@ public final class ValidationClient {
         int screenshotAtTick = Integer.getInteger("celtium.validation.screenshotAtTick", -1).intValue();
         if (screenshotAtTick > 0 && worldTicks >= screenshotAtTick && !celtium$tickScreenshotTaken) {
             celtium$tickScreenshotTaken = true;
-            celtium$captureGlScreenshot(mc, "celtium-at-tick-" + screenshotAtTick + ".png", "tick" + screenshotAtTick);
+            if (celtium$glLessInstalled()) {
+                // The GL screenshot helper cannot read pixels without a GL context, so under GL-less this file came
+                // out as a single black colour and was mistaken for a render defect. Measured 2026-10-13: the same
+                // file and celtium-validation.png were byte-identical all-black images (sha 805aa3bd21f8), while the
+                // presented dumps of that run carried content (early 13,315 colours, world 21,458). The same stage
+                // name is used so the file keeps one meaning in both modes.
+                celtium$requestPresentedDump(mc, "tick" + screenshotAtTick);
+            } else {
+                celtium$captureGlScreenshot(mc, "celtium-at-tick-" + screenshotAtTick + ".png", "tick" + screenshotAtTick);
+            }
             report.addProperty("screenshotAtTick", Integer.valueOf(screenshotAtTick));
             report.addProperty("screenshotAtTickScreen",
                     mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
@@ -5194,7 +5203,11 @@ public final class ValidationClient {
             }
             if (Boolean.getBoolean("celtium.validation.interop")) {
                 if (!interopRun) {
-                    ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                    if (celtium$glLessInstalled()) {
+                        celtium$requestPresentedDump(mc, "validation");
+                    } else {
+                        ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                    }
                     Framebuffer target = mc.getFramebuffer();
                     fboAtInterop = target.framebufferObject;
                     colorAtInterop = target.framebufferTexture;
