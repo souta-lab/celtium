@@ -4297,7 +4297,9 @@ public final class ValidationClient {
         // PIN_SECTIONS_STABLE_FRAMES consecutive frames, at or below PIN_SECTIONS - and reports the value it settled
         // at, so a comparison that quotes two legs can say what world each of them held.
         if (PIN_SECTIONS > 0) {
-            int listed = celtium$listedSections(celtium$rendererDebugLines());
+            java.util.List<String> pinLines = celtium$rendererDebugLines();
+            int listed = celtium$listedSections(pinLines);
+            int pinPendingP1 = celtium$pendingP1(pinLines);
             if (listed != this.celtium$pinnedSectionsSeen) {
                 this.celtium$pinnedSectionsSeen = listed;
                 this.celtium$pinnedSectionsStableFrames = 0;
@@ -4309,11 +4311,24 @@ public final class ValidationClient {
                     || this.celtium$pinnedSectionsStableFrames < PIN_SECTIONS_STABLE_FRAMES) {
                 return false;
             }
+            // A stable section count is not a settled world: measured 2026-10-13, heipin2 fired here at
+            // "pinned-sections (listed 39 stable for 20 frames)" with P1=058 - 58 chunk rebuilds still
+            // outstanding - so the picture it photographed was still moving. The count path already refuses
+            // that state; this path promises the settled world in its own name, so it refuses it too.
+            if (pinPendingP1 >= 0 && pinPendingP1 > CAPTURE_MAX_P1) {
+                return false;
+            }
             if (!this.celtium$jeiSettled()) {
                 return false;
             }
             celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
-                    + this.celtium$pinnedSectionsStableFrames + " frames)";
+                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ")";
+            // This block counted and named the settled state but never returned, so the value it wrote was
+            // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
+            // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
+            // and the verdict still came from "tick-sections-deadline (listed 36 of 0)". The pinned path was
+            // dead - it could never be the condition that fired. Returning here is what makes it live.
+            return true;
         }
         if ("sections".equals(CAPTURE_CONDITION)) {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
@@ -5108,6 +5123,16 @@ public final class ValidationClient {
             report.addProperty("captureMinWorldFrames", Integer.valueOf(CAPTURE_MIN_WORLD_FRAMES));
             report.addProperty("captureListedSections", Integer.valueOf(celtium$listedSections(captureLines)));
             report.addProperty("captureBuildState", celtium$buildState(captureLines));
+            // The pinned path needs PIN_SECTIONS_STABLE_FRAMES consecutive frames at or below PIN_SECTIONS,
+            // and until now the report did not say how far it got. Measured 2026-10-13: the JEI variant runs 406
+            // ticks with listed 43-45 against pinSections=64, so the condition looks satisfied for far longer
+            // than the required 64 frames, yet the capture still fires through tick-sections-deadline. Without
+            // this counter the report cannot separate "the pin never counted" from "the pin counted and the fire
+            // condition is elsewhere" - the existing instruments cannot answer the question, so this one is added
+            // and named here.
+            report.addProperty("capturePinnedStableFrames", Integer.valueOf(this.celtium$pinnedSectionsStableFrames));
+            report.addProperty("capturePinnedStableFramesRequired", Integer.valueOf(PIN_SECTIONS_STABLE_FRAMES));
+            report.addProperty("capturePinnedSectionsLimit", Integer.valueOf(PIN_SECTIONS));
             report.addProperty("captureWorldFrames", Integer.valueOf(worldFrames));
         } else if (celtium$worldStageTaken) {
             // The world stage of this scene is already captured. The capture body used to run again on the next frame -
