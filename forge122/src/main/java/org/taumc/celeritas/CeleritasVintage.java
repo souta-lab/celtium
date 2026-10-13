@@ -81,6 +81,11 @@ public class CeleritasVintage {
      * says so where the user can read it.
      */
     private static void celtium$addCuratedLines(java.util.List<String> strings) {
+        // The device/driver line this javadoc has been promising as "the fourth": the static summary exists for
+        // exactly this question and never initializes Vulkan to answer it.
+        String deviceLine = org.soutalab.celtium.vulkan.VulkanContext.deviceSummary();
+        strings.add("Device: " + (deviceLine == null || deviceLine.isEmpty()
+                ? "no native device selected yet" : deviceLine));
         strings.add("Backend: " + org.soutalab.celtium.forge.TerrainBackendStatus.name());
         strings.add("Frame: " + org.soutalab.celtium.vulkan.FramePassTimings.summaryShort());
         strings.add("Full counters: CELTIUM_VERIFY in the log (-Dceltium.f3.fullSummary=true for the panel)");
