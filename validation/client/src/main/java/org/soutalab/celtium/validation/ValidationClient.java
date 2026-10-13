@@ -5121,6 +5121,25 @@ public final class ValidationClient {
             checkVulkanBootstrap(mc, probe.getParent());
             report.addProperty("worldFrames", worldFrames);
             report.addProperty("worldTicks", worldTicks);
+            // What the frame was actually drawn with, not what the fixture asked for: two runs of one jar differ on a
+            // quarter of their pixels, and the reported seed and yaw-pitch are equal in both, so the difference has to
+            // be looked for in the pose, the dimension and the world contents rather than in the request.
+            if (mc.player != null) {
+                report.addProperty("capturePoseCurrent", mc.player.posX + "," + mc.player.posY + ","
+                        + mc.player.posZ + " " + mc.player.rotationYaw + "/" + mc.player.rotationPitch);
+                report.addProperty("capturePosePrevious", mc.player.prevPosX + "," + mc.player.prevPosY + ","
+                        + mc.player.prevPosZ + " " + mc.player.prevRotationYaw + "/" + mc.player.prevRotationPitch);
+            }
+            net.minecraft.entity.Entity viewEntity = mc.getRenderViewEntity();
+            if (viewEntity != null) {
+                report.addProperty("captureViewEntity", viewEntity.getClass().getSimpleName() + " "
+                        + viewEntity.posX + "," + viewEntity.posY + "," + viewEntity.posZ);
+            }
+            if (mc.world != null) {
+                report.addProperty("captureDimension", mc.world.provider.getDimension());
+                report.addProperty("captureLoadedEntities", mc.world.getLoadedEntityList().size());
+                report.addProperty("captureTotalWorldTime", mc.world.getTotalWorldTime());
+            }
             // The vanilla reference: the same fixture with no terrain mod installed still captures the same frame, which
             // is the ground truth the mod's own colours are judged against. Only the capture matters in that mode.
             if (Boolean.getBoolean("celtium.validation.vanillaReference")) {
