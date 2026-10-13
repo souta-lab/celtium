@@ -669,6 +669,51 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
     private static final int GL_SCISSOR_TEST = 0x0C11;
 
+    /**
+     * GL_DEPTH_TEST: one of the capabilities a deferred draw can outlive. See {@link #drawStateBoundaryHook}.
+     */
+    private static final int GL_DEPTH_TEST = 0x0B71;
+
+    /**
+     * A hook the backend registers so a draw it defers - the coalesced font run - is submitted <em>before</em> a state
+     * record it cannot see changes underneath it. The group's capture reads this stub live for blend, cull, colour
+     * mask and scissor (BH-07/08/09/10), and reads the mirror for the rest; a caller that bypasses the mirror - a raw
+     * {@code GL11} call - would otherwise let the pending run keep state it was appended under in the mirror while
+     * the record the capture actually consults moved on. Fired before each tracked write, and only when the value
+     * changes, so a no-op call does not split a run.
+     * <p>
+     * The measured defect this ordering produces when it is absent: the vanilla tooltip's font run survives Forge's
+     * disableDepth/enableDepth bracket and is submitted depth-tested, where the shadow pass's equal-depth draw kills
+     * the main pass's strokes - 585 of 797 shadow pixels lost their main ink in the HEI screen leg (instrument
+     * {@code scripts/cpu-contract/font-shadow-main-check.py}).
+     */
+    private static volatile Runnable drawStateBoundaryHook;
+
+    /** Registers the draw-state boundary hook; {@code null} clears it. One backend exists at a time. */
+    public static void celtium$setDrawStateBoundaryHook(Runnable hook) {
+        drawStateBoundaryHook = hook;
+    }
+
+    /**
+     * Fires the boundary hook before a tracked record changes. Swallowed errors: a flush failure inside a stub call
+     * must not break the game's own state change, matching every other caller-tolerant path here.
+     */
+    private void noteDrawStateBoundary() {
+        Runnable hook = drawStateBoundaryHook;
+        if (hook != null) {
+            try {
+                hook.run();
+            } catch (RuntimeException | LinkageError ignored) {
+            }
+        }
+    }
+
+    /** {@return whether {@code capability} is one whose record the group's capture can read or key a run by}. */
+    private static boolean isDrawStateCapability(int capability) {
+        return capability == GL_DEPTH_TEST || capability == GL_BLEND
+                || capability == GL_CULL_FACE || capability == GL_SCISSOR_TEST;
+    }
+
     /** GL_POLYGON_OFFSET_FILL: the enable bit that says whether the recorded offset applies to filled polygons. */
     private static final int GL_POLYGON_OFFSET_FILL = 0x8037;
 
@@ -1783,6 +1828,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.scissorToggleCount++;
                 }
                 if ((int) a0 >= 0 && (int) a0 < this.enables.length) {
+                    if (this.enables[(int) a0] == 0 && isDrawStateCapability((int) a0)) {
+                        noteDrawStateBoundary();
+                    }
                     this.enables[(int) a0] = 1;
                 }
                 return 0L;
@@ -1791,10 +1839,16 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.scissorToggleCount++;
                 }
                 if ((int) a0 >= 0 && (int) a0 < this.enables.length) {
+                    if (this.enables[(int) a0] != 0 && isDrawStateCapability((int) a0)) {
+                        noteDrawStateBoundary();
+                    }
                     this.enables[(int) a0] = 0;
                 }
                 return 0L;
             case SEM_CULL_FACE:
+                if (this.cullFaceValue != (int) a0) {
+                    noteDrawStateBoundary();
+                }
                 this.cullFaceValue = (int) a0;
                 this.cullFaceCalled = true;
                 return 0L;
@@ -1806,6 +1860,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // glBlendFunc sets the RGB *and* the alpha factors to the same pair (GL 1.0's rule, and what
                 // GlStateManager.blendFunc(int,int) relies on when it forwards the pair unchanged).
                 this.blendFuncCalls.incrementAndGet();
+                if (this.blendSrcRgb != (int) a0 || this.blendDstRgb != (int) a1
+                        || this.blendSrcAlpha != (int) a0 || this.blendDstAlpha != (int) a1) {
+                    noteDrawStateBoundary();
+                }
                 this.blendSrcRgb = (int) a0;
                 this.blendDstRgb = (int) a1;
                 this.blendSrcAlpha = (int) a0;
@@ -1819,6 +1877,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.blendSeparateCalls.incrementAndGet();
                 // Four arguments: the dispatch only names a0/a1 (the two slots most cases need), so the last two
                 // come from the raw slot array - the same trap that bit the scissor case.
+                if (this.blendSrcRgb != (int) c[0] || this.blendDstRgb != (int) c[1]
+                        || this.blendSrcAlpha != (int) c[2] || this.blendDstAlpha != (int) c[3]) {
+                    noteDrawStateBoundary();
+                }
                 this.blendSrcRgb = (int) c[0];
                 this.blendDstRgb = (int) c[1];
                 this.blendSrcAlpha = (int) c[2];
@@ -1828,12 +1890,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_BLEND_EQUATION:
                 // glBlendEquation sets both equations; glBlendEquationSeparate below splits them.
                 this.blendEquationCalls.incrementAndGet();
+                if (this.blendEquationRgb != (int) a0 || this.blendEquationAlpha != (int) a0) {
+                    noteDrawStateBoundary();
+                }
                 this.blendEquationRgb = (int) a0;
                 this.blendEquationAlpha = (int) a0;
                 this.blendEquationCalled = true;
                 return 0L;
             case SEM_BLEND_EQUATION_SEPARATE:
                 this.blendEquationCalls.incrementAndGet();
+                if (this.blendEquationRgb != (int) a0 || this.blendEquationAlpha != (int) a1) {
+                    noteDrawStateBoundary();
+                }
                 this.blendEquationRgb = (int) a0;
                 this.blendEquationAlpha = (int) a1;
                 this.blendEquationCalled = true;
@@ -1843,8 +1911,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // that is the form the pipeline attachment takes, and the two bit assignments are the same (R=1,
                 // G=2, B=4, A=8) - spelled out here rather than assumed at the use site.
                 this.colorMaskCalls.incrementAndGet();
-                this.colorMaskBits = ((int) c[0] != 0 ? 0x1 : 0) | ((int) c[1] != 0 ? 0x2 : 0)
+                int newColorMask = ((int) c[0] != 0 ? 0x1 : 0) | ((int) c[1] != 0 ? 0x2 : 0)
                         | ((int) c[2] != 0 ? 0x4 : 0) | ((int) c[3] != 0 ? 0x8 : 0);
+                if (this.colorMaskBits != newColorMask) {
+                    noteDrawStateBoundary();
+                }
+                this.colorMaskBits = newColorMask;
                 this.colorMaskCalled = true;
                 return 0L;
             case SEM_POLYGON_OFFSET:
@@ -1861,6 +1933,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // GL's rectangle is in the window's own coordinates, bottom-left origin. The Vulkan scissor needs the
                 // top-left flip, which the backend applies where the group's rectangle becomes the scissor - the raw
                 // values are recorded here so the one place that knows the target's height does that arithmetic.
+                if (this.scissorBox[0] != (int) c[0] || this.scissorBox[1] != (int) c[1]
+                        || this.scissorBox[2] != (int) c[2] || this.scissorBox[3] != (int) c[3]) {
+                    noteDrawStateBoundary();
+                }
                 this.scissorBox[0] = (int) c[0];
                 this.scissorBox[1] = (int) c[1];
                 this.scissorBox[2] = (int) c[2];

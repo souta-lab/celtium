@@ -1227,6 +1227,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return VulkanTerrainGpuBackend.this.celtium$submitFontRun(run);
             }
         });
+        // The boundary for the callers that bypass the mirror: raw GL11 calls change the stub's records - which the
+        // group's capture reads live for blend, cull, colour mask and scissor - without touching the setters above, so
+        // the stub itself reports those writes. The mixin-bridged setters already flush before the mirror moves.
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$setDrawStateBoundaryHook(
+                () -> celtium$flushPendingFontBatch("state-change"));
     }
 
 
@@ -2595,14 +2600,36 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final float[] glProjection = new float[16];
     private final float[] glModelView = new float[16];
 
+    /**
+     * A draw-state change is a boundary for the coalesced font run, exactly like a matrix change is: the run's quads
+     * were appended under the old state and the group's capture reads the live one at submit, so a run that outlives
+     * the change is drawn under state it was never written for. The measured case is the vanilla tooltip: Forge
+     * brackets it with disableDepth()/enableDepth(), the run holding the shadow pass is still pending when the second
+     * call arrives, and a flush that happens after it submits the run depth-tested - 585 of 797 shadow pixels then
+     * lost their main stroke (73.4 %, instrument font-shadow-main-check.py). Flushing <em>before</em> the mutation -
+     * not at the next append, which is already too late - keeps the run with the state it was captured under.
+     *
+     * <p>The same rule is applied by the stub for the callers that bypass this mirror (raw {@code GL11} calls land in
+     * {@code CeltiumGlStub}'s records, which the group capture reads live for blend/cull/colour-mask/scissor), and it
+     * is why the flush is a no-op when the value does not change: {@code GlStateManager} calls its setters on its own
+     * cache misses too, and a no-op must not split a run.
+     */
+    private void celtium$fontDrawStateBoundary() {
+        celtium$flushPendingFontBatch("state-change");
+    }
+
     @Override
     public void setBlendEnabled(boolean enabled) {
+        if (this.immediateState.blendEnabled() != enabled) {
+            celtium$fontDrawStateBoundary();
+        }
         this.immediateState.blendEnabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
     @Override
     public void setBlendFunc(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha) {
+        celtium$fontDrawStateBoundary();
         this.immediateState.blendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha);
         this.immediateStatistics.noteImmediateStateCalls();
     }
@@ -2610,6 +2637,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** BH-07: the blend equation, on the mirror the capture reads when the stub is not installed (the bridge). */
     @Override
     public void blendEquation(int rgbEquation, int alphaEquation) {
+        celtium$fontDrawStateBoundary();
         this.immediateState.blendEquation(rgbEquation, alphaEquation);
         this.immediateStatistics.noteImmediateStateCalls();
     }
@@ -2617,18 +2645,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** BH-10: the colour write mask, on the same mirror and for the same reason as the equation above. */
     @Override
     public void colorMask(int mask) {
+        if (this.immediateState.colorMask() != mask) {
+            celtium$fontDrawStateBoundary();
+        }
         this.immediateState.colorMask(mask);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
     @Override
     public void setDepthMask(boolean mask) {
+        if (this.immediateState.depthMask() != mask) {
+            celtium$fontDrawStateBoundary();
+        }
         this.immediateState.depthMask(mask);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
     @Override
     public void setDepthTest(boolean enabled) {
+        if (this.immediateState.depthTestEnabled() != enabled) {
+            celtium$fontDrawStateBoundary();
+        }
         this.immediateState.depthTestEnabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
@@ -2644,6 +2681,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     @Override
     public void setAlphaFunc(int glFunc, float reference) {
+        if (this.immediateState.alphaFunc() != glFunc
+                || this.immediateState.alphaFuncReference() != reference) {
+            celtium$fontDrawStateBoundary();
+        }
         this.immediateState.alphaFunc(glFunc, reference);
         this.immediateStatistics.noteImmediateStateCalls();
     }
@@ -2656,6 +2697,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     @Override
     public void setLightingEnabled(boolean enabled) {
+        // In the group's captured state (state[8]) but never inside a run key change the append can see: a lighting
+        // flip between two appends of one run submits the earlier quads under the newer lamp.
+        if (this.immediateState.lightingEnabled() != enabled) {
+            celtium$fontDrawStateBoundary();
+        }
         this.immediateState.lightingEnabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
@@ -3930,6 +3976,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     @Override
     public void depthFunc(int func) {
+        if (this.immediateState.depthFunc() != func) {
+            celtium$fontDrawStateBoundary();
+        }
         this.immediateState.depthFunc(func);
     }
 
@@ -4250,6 +4299,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) - exactly the constants the family asserted - plus a single group capturing
         // (6, 7), which is not a blend factor pair at all and was enough to spoil the frame when the observed values were
         // used. A mirror that records a value the API does not define is worse than one that records nothing.
+        celtium$fontDrawStateBoundary();
         if (!isBlendFactor(sourceFactor) || !isBlendFactor(destinationFactor)) {
             this.immediateStatistics.noteBlendFuncIgnored();
             return;
