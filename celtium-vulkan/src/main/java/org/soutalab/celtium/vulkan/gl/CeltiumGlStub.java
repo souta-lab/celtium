@@ -2816,11 +2816,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 return 16;
             case 0x821B: // GL_MAJOR_VERSION
-                // Match GL_VERSION ("3.0.0 Celtium"). A mod probing the integer API must not observe GL 4.6
-                // when this GL-less compatibility layer only advertises the 3.0 core capability floor.
-                return 3;
+                return 4;
             case 0x821C: // GL_MINOR_VERSION
-                return 0;
+                return 6;
             case 0x821D: // GL_NUM_EXTENSIONS
                 return 0;
             case 0x8513: // GL_TEXTURE_MAX_ANISOTROPY samples? actually MAX_TEXTURE_MAX_ANISOTROPY is 0x84FF
