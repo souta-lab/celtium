@@ -129,6 +129,11 @@ public class MinecraftMixin {
 
     @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc != null) {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.initializeWindowRectangles(
+                    mc.displayWidth, mc.displayHeight);
+        }
         celtium$windowRendererStage = "createDisplay";
         celtium$ensureWindowRenderer();
     }
