@@ -1231,7 +1231,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // group's capture reads live for blend, cull, colour mask and scissor - without touching the setters above, so
         // the stub itself reports those writes. The mixin-bridged setters already flush before the mirror moves.
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$setDrawStateBoundaryHook(
-                () -> celtium$flushPendingFontBatch("state-change"));
+                () -> celtium$fontDrawStateBoundary());
     }
 
 
@@ -2614,8 +2614,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * is why the flush is a no-op when the value does not change: {@code GlStateManager} calls its setters on its own
      * cache misses too, and a no-op must not split a run.
      */
+    /** A/B-only switch for proving the exact same JAR fixes deferred font-state ordering. Default on. */
+    private static final boolean FONT_DRAW_STATE_BOUNDARY_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.fontDrawStateBoundary", "true"));
+
     private void celtium$fontDrawStateBoundary() {
-        celtium$flushPendingFontBatch("state-change");
+        if (FONT_DRAW_STATE_BOUNDARY_ENABLED) {
+            celtium$flushPendingFontBatch("state-change");
+        }
     }
 
     @Override
