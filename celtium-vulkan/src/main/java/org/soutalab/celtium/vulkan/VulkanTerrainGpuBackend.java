@@ -4678,6 +4678,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return entry == null ? 0 : (int) entry[0];
     }
 
+    /**
+     * {@return the GL texture name an off-target window just rendered into, or 0 when none is known}.
+     * <p>
+     * This is the name {@code invalidateRenderedTexture} must hear after the copy-back. Under the shared
+     * (real-GL) target the draw landed in the framebuffer's own colour attachment, and the named attachment
+     * query is the authoritative way to name it - that side is asked exactly as before. Under the GL-less
+     * window the same query is unanswerable by construction: the stub declares that no framebuffer objects
+     * exist and writes GL_NONE for every attachment pname, so the call returned 0, the texture the pass just
+     * rendered into was never invalidated and name 0 collected a stale mark instead. The name is already
+     * recorded: the framebuffer mixin reports the colour attachment with every bind precisely because GL
+     * cannot be asked here, and the census that keeps it is the one the composite's publish path reads.
+     *
+     * @param identity the render-target identity the window's draws were accepted under
+     * @param recorded the publication census that {@code bindFramebufferColorTexture} fills
+     */
+    static int offTargetRenderedTextureName(long identity, PublishedFrameTextures recorded) {
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            return recorded.colorTextureName(identity);
+        }
+        int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        return org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
+                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0,
+                org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+    }
+
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
         this.framebufferIdentityIsMain.put(Long.valueOf(targetIdentity), Boolean.valueOf(isMain));
         // The stub classifies a clear by this decision, not by the raw GL name: the game's main render target is not
@@ -7578,11 +7603,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         this.offTargetDrawnByTarget.merge(identity, 1, Integer::sum);
                         this.targetStatistics.noteOffTargetCopiedBack(); // completed bridge return, not an empty offscreen copy
                         if (this.textureRegistry != null) {
-                            int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
-                            int source = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
-                                    org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0,
-                                    org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-                            this.textureRegistry.invalidateRenderedTexture(source);
+                            this.textureRegistry.invalidateRenderedTexture(
+                                    offTargetRenderedTextureName(identity, this.publishedTextures));
                         }
                     }
                     return;
