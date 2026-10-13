@@ -4320,10 +4320,17 @@ public final class ValidationClient {
             java.util.List<String> tickLines = celtium$rendererDebugLines();
             int tickListed = celtium$listedSections(tickLines);
             int tickP1 = celtium$pendingP1(tickLines);
+            // The JEI variant is not a world-only picture: the search box is driven over several ticks
+            // (before / typed / after), so a capture that fires while those are still arriving photographs a
+            // different screen each run. Measured 2026-10-13: two legs with identical flags reached the same
+            // section count and the same pendingP1=0, yet their black fraction was 0.035368 against 0.037254
+            // and their distinct colours 10,681 against 11,435. The capture therefore waits for the JEI state
+            // to be complete when the variant is in use.
+            boolean jeiSettled = !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
             if (CAPTURE_SECTIONS > 0 && tickListed >= CAPTURE_SECTIONS
-                    && (tickP1 < 0 || tickP1 <= CAPTURE_MAX_P1)) {
+                    && (tickP1 < 0 || tickP1 <= CAPTURE_MAX_P1) && jeiSettled) {
                 celtium$captureConditionFired = "tick-sections-target (listed " + tickListed
-                        + ", pendingP1=" + tickP1 + ")";
+                        + ", pendingP1=" + tickP1 + ", jeiSettled=" + jeiSettled + ")";
                 return true;
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
