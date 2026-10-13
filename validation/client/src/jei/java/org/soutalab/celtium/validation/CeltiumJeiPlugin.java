@@ -13,8 +13,10 @@ import mezz.jei.api.IIngredientListOverlay;
  * under test. JEI's supported way to be reached is this plugin interface, so the fixture implements it and keeps the runtime
  * the mod hands over - no reflection, which is both this project's policy and what the mod's own API asks for.
  * <p>
- * Compiled only when the JEI jar is present ({@code src/jei/java} is added to the source set conditionally), so a normal
- * build and the ordinary runs are unaffected.
+ * Compiled only when the HEI/JEI API jar is explicitly provided with Gradle property
+ * {@code celtium_validation_jei_jar}, or when a legacy {@code jei_*.jar} is present in the fixture's
+ * work-directory fallback. The source set is conditional, so a normal build and the published
+ * renderer JAR are unaffected.
  */
 @JEIPlugin
 public class CeltiumJeiPlugin implements IModPlugin {
