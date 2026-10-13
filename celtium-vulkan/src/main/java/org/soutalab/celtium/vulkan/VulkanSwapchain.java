@@ -891,6 +891,23 @@ public final class VulkanSwapchain {
                 // image once its previous presentation is done, which is exactly the guarantee this needs.
                 renderFinished = VK_NULL_HANDLE;
             }
+            // A window resize that the driver never reports as OUT_OF_DATE leaves this swapchain stale, and the frame
+            // it presents then disagrees with the window (measured: a 1280x720 image out of a 1024x640 window). Ask
+            // the surface for its size now and mark the swapchain out of date; the caller's existing rebuild handles it.
+            try (org.lwjgl.system.MemoryStack capStack = org.lwjgl.system.MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR current =
+                        org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR.calloc(capStack);
+                if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(this.context.physicalDevice(), this.surface, current)
+                        == VK_SUCCESS) {
+                    int currentWidth = current.currentExtent().width();
+                    int currentHeight = current.currentExtent().height();
+                    if (currentWidth > 0 && currentHeight > 0
+                            && (currentWidth != this.width || currentHeight != this.height)) {
+                        this.outOfDate = true;
+                        this.acquireOutOfDate++;
+                    }
+                }
+            }
             int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                     VK_NULL_HANDLE, index);
             if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
