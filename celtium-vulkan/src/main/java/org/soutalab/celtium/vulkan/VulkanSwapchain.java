@@ -248,6 +248,17 @@ public final class VulkanSwapchain {
     private static final int DUMP_RETRY_CAP = 8;
     /** The last reason a requested presented-image dump did not write, for the report. */
     private String lastDumpFailure = "none";
+    /**
+     * Increments once per successful {@link #writePresentedImage}, never resets. The backend reads the per-path
+     * serials after each present so the presented-frame counter can name the frame each dump holds - the fixture
+     * that requested the dump can only observe the file once per render tick, and several presents can pass in
+     * that window (measured at startup: the request's file first existed while the counter read 16). A per-path
+     * map rather than a single "last write": several requests can be pending at once, and a record that can only
+     * name the most recent write misbinds an earlier file whose observation lands after it.
+     */
+    private long dumpWriteSerial;
+    /** Write serial by file name for every successful presented-image dump, on the present path's thread. */
+    private final java.util.Map<String, Long> dumpWriteSerialByPath = new java.util.LinkedHashMap<>();
 
     /**
      * {@return the last reason a requested presented-image dump did not write}.
@@ -322,7 +333,13 @@ public final class VulkanSwapchain {
                     new java.awt.image.BufferedImage(this.width, this.height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
             imageOut.setRGB(0, 0, this.width, this.height, pixels, 0, this.width);
             java.nio.file.Files.createDirectories(path.getParent());
-            return javax.imageio.ImageIO.write(imageOut, "png", path.toFile());
+            boolean written = javax.imageio.ImageIO.write(imageOut, "png", path.toFile());
+            if (written) {
+                this.dumpWriteSerial++;
+                this.dumpWriteSerialByPath.put(path.getFileName().toString(),
+                        Long.valueOf(this.dumpWriteSerial));
+            }
+            return written;
         } catch (java.io.IOException | RuntimeException | LinkageError error) {
             return false;
         }
@@ -331,6 +348,17 @@ public final class VulkanSwapchain {
     /** {@return whether the last dump request wrote its file}. */
     public boolean lastDumpWritten() {
         return this.lastDumpWritten;
+    }
+
+    /**
+     * {@return the write serial by file name for every successful presented-image dump}.
+     * <p>
+     * Read by the present path's owner on the same thread, after a present: entries whose serial advanced since
+     * last seen name the writes this present performed, which is how a dump file is bound to the presented-frame
+     * counter rather than to whichever frame the fixture's next tick happens to run on.
+     */
+    public java.util.Map<String, Long> dumpWriteSerialByPath() {
+        return this.dumpWriteSerialByPath;
     }
 
     public float lastPresentedMean() {
