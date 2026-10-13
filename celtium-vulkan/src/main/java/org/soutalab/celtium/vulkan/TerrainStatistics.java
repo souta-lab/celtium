@@ -19,6 +19,7 @@ public final class TerrainStatistics {
     private int passErrors;
     private String lastSkipReason = "none";
     private long lastDrawCommands;
+    private long lastDrawCommandsMerged;
     private long lastSectionsDrawn;
     private int terrainPasses;
     private int immediateOnlyPasses;
@@ -70,9 +71,15 @@ public final class TerrainStatistics {
         this.lastDrawCommands++;
     }
 
+    /** Records one source command folded into a neighbour's draw by the combine pass. */
+    void noteLastDrawCommandsMerged() {
+        this.lastDrawCommandsMerged++;
+    }
+
     /** Sets the draw count the pass resets before it counts its draws. */
     void setLastDrawCommands(long value) {
         this.lastDrawCommands = value;
+        this.lastDrawCommandsMerged = 0;
     }
 
     /** Adds to the draw count the pass accumulates per render list. */
@@ -83,6 +90,11 @@ public final class TerrainStatistics {
     /** {@return the last pass's draw count}. */
     long lastDrawCommands() {
         return this.lastDrawCommands;
+    }
+
+    /** {@return source commands the combine pass folded into a neighbour's draw in the last pass}. */
+    long lastDrawCommandsMerged() {
+        return this.lastDrawCommandsMerged;
     }
 
     /** Sets the section count the pass resets before it counts its draws. */
