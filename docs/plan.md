@@ -19,7 +19,7 @@
 | **HEI 較正** | **未較正（根因を一段深く特定 ✓✓）** — **絶対時計が効いた** ✓✓✓: `captureTotalWorldTime` が **1200 = 1200（目標どおり ✓）**（以前は 901 ↔ 1097 ✗）・黒率は **7 run 連続 0.037254** ✓✓✓ ⇔ **それでも `captureBuildState` が不一致** ✗（`U=12 deviceAllocated=45 indexAllocated=1` ↔ `U=09 deviceAllocated=77 indexAllocated=2`）⇒ **残る根因は「同じ総 world tick でも世界の構築状態が違う」** ✓✓ ⇒ **floor は登録しない** ✓ |
 | **BH-35** | **部分修正済み ✓（PR #67 ✓）／open ✓** — `VulkanTerrainGpuBackend` に `glGetTextureLevelParameteri` が残存 ✓・**GL_MAJOR/MINOR を 3/0 に下げない** ✓・Issue #65 が追跡 ✓ |
 | 性能（F3 以外） | **収束済み ✓**（warm A 1.196 ↔ B 1.182 ms ✓・cold A 3.599 ↔ B 3.595 ms ✓・p95 2.78/2.81・p99 140.8/141.1 ✓ ⇒ 退行なし・優位なし ✓） |
-| 設定画面の guiScale 復元 | **未復元を観測 ✓✗**（`guiScaleRestoredAtTick=None` ✓）— 別の未完として記録 ✓ |
+| video settings の反映・復元（目標 (e)） | **未測定** ✗ — `guiScale` の強制は測ってある ✓（`guiScaleForced=3` ✓）が、**復元は knob `celtium.validation.guiScaleRestoreAtTick`（`:80` ✓）を設定していない leg だったため `guiScaleRestoredAtTick=None`** ✓ ⇒ **「未復元」ではなく「未測定」** ✓✓（**表の誤読を訂正** ✓）⇒ **`guiScaleRestoreAtTick=400` の leg で反映・復元・reload を確認するのが次の1契約** ✓ |
 | CPU 契約19本 | **pass 相当 10 ✓・not-run 4 ✓・入力違い 1 ✓**（`verify_line_check` は候補ログが別構成 ✓）⇒ **実質的な FAIL なし** ✓ |
 
 **優先順（最新の証拠で更新 ✓）**
@@ -328,3 +328,5 @@
 | **round 649: 冒頭表と実物の整合を監査 ✓✓（jar hash・main HEAD・fixture jar が一致 ✓）** | **表と実装の乖離なし ✓・`heipin9/10` は待機 ✓** | **監査（✓✓）**: **冒頭表の jar sha256 先頭 `b4bc6c3f6ea64f2fbd0e2653`** ✓ ⇔ **実物 `celtium-forge-mc1.12.2-0.0.4-alpha.jar` が一致** ✓✓・**表の `main` = `7c0529082`** ✓ ⇔ **`origin/main` が一致** ✓✓・**私のブランチ tip `628b67259`** ✓ ⇒ **表と実物の乖離なし** ✓（**目標 (h)「docs・実装・配布物の一致」の一部を実測で確認** ✓）。**待機（✓）**: **`heipin9`／`heipin10` は他担当の `gui-leg.sh` が GPU を保持しているため待機** ✓（**`gpu.lock` で直列化** ✓）・**PR #64 は `probe` pass ✓／`minecraft-1122` pending** ✗。|
 
 | **round 651: round 650 の「fixture jar hash 不一致」は誤読と訂正 ✓✓（旧値は歴史的な round 行の中 ✓・表は一致していた ✓）** | **表に fixture jar hash を追記して監査を完了 ✓** | **訂正（✓✓・自分の誤り）**: **`cf867ab66f8060fd1549` は冒頭表ではなく round 576 の行（`:245` ✓）の中** ✓ ⇒ **歴史的な記録なので更新しないのが正しい** ✓ ⇒ **round 650 の「不一致」は誤読** ✗ ⇒ **表と実物は一致していた** ✓✓（**表は forge jar の hash のみを持ち、それが `b4bc6c3f6ea64f2fbd0e2653` で実物と一致** ✓）。**改善（✓）**: **fixture jar の hash（`706fbb981d0e3083c370a278` ✓）を表に追記** ✓ ⇒ **2つの jar を hash で区別できる** ✓（**以後の leg の帰属が明確** ✓）。**規律（✓✓）**: **監査で見つけた「不一致」も、まず所在を確認する** ✓（**歴史行の値を現在値と取り違えない** ✓・**誤りは誤りとして記録する** ✓）。|
+
+| **round 652: 目標 (e) の「未復元」は未測定と訂正 ✓✓（knob `guiScaleRestoreAtTick` ✓ が未設定だっただけ ✓）／復元 leg を投入 ✓** | **反映・復元・reload の実測が次 ✓** | **原典（✓✓）**: **`:80` に `celtium.validation.guiScaleRestoreAtTick`（既定 0＝無効 ✓）** があり、**`:3609` が `guiScaleRestoredAtTick`／`:3610` が `guiScaleRestoredTo=0` を記録** ✓ ⇒ **`vset1`／`vset2` は knob を設定していなかった** ✗ ⇒ **`None` は「復元されなかった」ではなく「復元を試みていない」** ✓✓。**訂正（✓✓・自分の誤読）**: 表の「**未復元を観測 ✓✗**」を「**未測定** ✗」へ直す ✓（**未測定を欠陥として書かない** ✓・**未測定を成功とも書かない** ✓）。**次の1契約（✓）**: **`guiScale=3` ＋ `guiScaleRestoreAtTick=400`** の leg を回し ✓ ⇒ **`guiScaleForced=3` ✓・`guiScaleRestoredAtTick=400` ✓・`guiScaleRestoredTo=0` ✓** を確認 ✓（**目標 (e) の反映・復元の受入** ✓）。|
