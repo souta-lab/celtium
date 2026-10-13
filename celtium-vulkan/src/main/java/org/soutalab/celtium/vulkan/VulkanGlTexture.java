@@ -978,7 +978,12 @@ public final class VulkanGlTexture {
      */
     public void ensureSampledLayout(VkCommandBuffer commandBuffer) {
         requireForeign("ensureSampledLayout");
-        transitionForeignLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        // The layout this wrapper's descriptors declare: a pair image under PAIR_STAY_GENERAL samples in GENERAL -
+        // the layout its pass attaches it in - so the transition that used to move every sampled image to
+        // SHADER_READ_ONLY must leave the pair where the pass put it. The three callers that transition the chain
+        // output unconditionally (and the published-textures loop, when the same name is not recognised as the pair)
+        // all get the pair-consistent answer through samplingLayout() instead of each needing the same gate.
+        transitionForeignLayout(commandBuffer, samplingLayout());
     }
 
     /**
