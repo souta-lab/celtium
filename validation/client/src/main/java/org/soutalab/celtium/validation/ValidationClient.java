@@ -6212,7 +6212,12 @@ public final class ValidationClient {
             }
             celtium$readAndHash(evidence);
             if (observed != expected) {
-                evidence.completed = false;
+                // A request that has already been answered keeps that answer. The renderer refreshes the last requested
+                // path every fortieth presented frame, so a later poll sees the same evidence again on a different
+                // frame counter; clearing it there would turn a completed observation back into "nothing was written".
+                if (!evidence.completed) {
+                    evidence.completed = false;
+                }
             } else {
                 // The file the renderer wrote is copied before the identity is written, because the renderer keeps
                 // rewriting the last path it was given (see PictureEvidence.requestedImage). The identity then names a
