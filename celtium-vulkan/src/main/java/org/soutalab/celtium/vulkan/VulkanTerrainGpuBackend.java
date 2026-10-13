@@ -1081,6 +1081,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
     private java.nio.file.Path presentedDumpPath;
     /**
+     * Write serials already attributed to a presented frame, by dump file name. Compared against the swapchain's
+     * per-path serials each present: a name whose serial advanced was written by the present that just ran, so the
+     * presented-frame counter names the frame that file holds even when several requests are pending at once.
+     */
+    private final java.util.Map<String, Long> seenDumpWriteSerialByName = new java.util.HashMap<>();
+    /** The presented-frame count that wrote each dump file, by file name. */
+    private final java.util.Map<String, Integer> presentedDumpWrittenFrames = new java.util.HashMap<>();
+    /** How many times the present-time drain of pending immediate work failed, bounded for reporting. */
+    private int presentFlushFailures;
+    /**
      * A presented-image dump asked for before the swapchain existed.
      * <p>
      * The loading phase is the caller: {@code Minecraft.startGame} reaches {@code drawSplashScreen}
@@ -9496,6 +9506,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * in any image. {@code -Dceltium.vulkan.presentPatchMinPresent} aims it at the world's own presents.
      */
     private static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
+    /**
+     * Whether the present drains the bound target's pending immediate work before it blits, matching GL's
+     * swap-point ordering. {@code -Dceltium.vulkan.presentFlushPending=false} keeps the old defer-to-the-next-
+     * boundary behaviour for comparison legs.
+     */
+    private static final boolean PRESENT_FLUSH_PENDING =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFlushPending", "true"));
     /** How many presents report the patch line; {@code -Dceltium.vulkan.presentPatchLines}. */
     private static final int PRESENT_PATCH_LINES =
             Integer.getInteger("celtium.vulkan.presentPatchLines", 8).intValue();
@@ -11958,6 +11975,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             System.out.println("[Celtium] CELTIUM_PRESENT hookCalls=" + this.presentHookCalls
                     + " attempts=" + this.presentAttempts + " presented=" + this.framePresentedFromVulkan
                     + " failures=" + this.presentFailures + " swapsSkipped=" + this.glSwapsSkipped
+                    + " drainFailures=" + this.presentFlushFailures
                     + " waiting=" + this.lastFrameReachedQueue + " lastSkip=[" + this.presentSkipReason
                     + "] lastResult=[" + this.lastPresentResult + "]");
         }
@@ -11970,6 +11988,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // this" is what that method's own contract says, and this is the second caller it was written for.
             this.presentSkipReason = "swapchain unavailable";
             return false;
+        }
+        // GL's updateDisplay presents everything drawn since the last swap, but this renderer defers immediate
+        // draws to the next bind or texture boundary - which can be arbitrarily later. Measured at startup: the
+        // splash's composite sat in the queue while its own updateDisplay presented a still-white frame image, and
+        // the presented loading frames stayed one update behind for the whole phase. Drawing the bound target's
+        // pending work here restores the swap-point ordering; groups for other targets stay queued for their own
+        // pass, exactly as at a bind boundary, and an empty queue costs one list check.
+        if (PRESENT_FLUSH_PENDING && !this.immediateWindowBusy) {
+            try {
+                FramePassTimings.begin("flush");
+                try {
+                    flushPendingBeforeGlDraw();
+                } finally {
+                    FramePassTimings.end("flush");
+                }
+            } catch (RuntimeException | LinkageError error) {
+                // A failed drain must not stop the present: the queued work keeps its owner, and whatever
+                // completed earlier is still worth showing.
+                this.presentFlushFailures++;
+                if (this.presentFlushFailures <= 3) {
+                    record("present-time immediate drain failed; the queue keeps its work: "
+                            + describeWithOrigin(error));
+                }
+            }
         }
         if (!this.lastFrameReachedQueue) {
             this.presentSkipReason = "no completed frame waiting";
