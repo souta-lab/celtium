@@ -4297,7 +4297,9 @@ public final class ValidationClient {
         // PIN_SECTIONS_STABLE_FRAMES consecutive frames, at or below PIN_SECTIONS - and reports the value it settled
         // at, so a comparison that quotes two legs can say what world each of them held.
         if (PIN_SECTIONS > 0) {
-            int listed = celtium$listedSections(celtium$rendererDebugLines());
+            java.util.List<String> pinLines = celtium$rendererDebugLines();
+            int listed = celtium$listedSections(pinLines);
+            int pinPendingP1 = celtium$pendingP1(pinLines);
             if (listed != this.celtium$pinnedSectionsSeen) {
                 this.celtium$pinnedSectionsSeen = listed;
                 this.celtium$pinnedSectionsStableFrames = 0;
@@ -4309,11 +4311,18 @@ public final class ValidationClient {
                     || this.celtium$pinnedSectionsStableFrames < PIN_SECTIONS_STABLE_FRAMES) {
                 return false;
             }
+            // A stable section count is not a settled world: measured 2026-10-13, heipin2 fired here at
+            // "pinned-sections (listed 39 stable for 20 frames)" with P1=058 - 58 chunk rebuilds still
+            // outstanding - so the picture it photographed was still moving. The count path already refuses
+            // that state; this path promises the settled world in its own name, so it refuses it too.
+            if (pinPendingP1 >= 0 && pinPendingP1 > CAPTURE_MAX_P1) {
+                return false;
+            }
             if (!this.celtium$jeiSettled()) {
                 return false;
             }
             celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
-                    + this.celtium$pinnedSectionsStableFrames + " frames)";
+                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ")";
             // This block counted and named the settled state but never returned, so the value it wrote was
             // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
             // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
