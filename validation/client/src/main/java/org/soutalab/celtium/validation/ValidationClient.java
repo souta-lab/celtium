@@ -6284,6 +6284,10 @@ public final class ValidationClient {
                         + " copied";
                 return;
             }
+            // The identity names the copy, so its dimensions must be the copy's. Reading them once from the requested
+            // file and never refreshing them left the identity saying 1280 after a resize had changed the picture.
+            evidence.width = copy.width;
+            evidence.height = copy.height;
             evidence.image = kept;
             evidence.identity = kept.resolveSibling(kept.getFileName().toString() + IDENTITY_SUFFIX);
             evidence.keptFrom = celtium$relative(evidence.requestedImage);
