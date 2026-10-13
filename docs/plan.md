@@ -1,5 +1,7 @@
 # Celtium 現状表（現在状態・優先順・受入）
 
+**0.0.4-alpha** — 次期リリースの開発ベース版。公開済み最新版は v0.0.3-alpha。
+
 ## 現在状態（2026-10-13 09:15 JST・ユーザー指示で収束）
 
 **凍結** — A = user branch `40cf799d6`（dirty 0 ✓）/ B = main `97613034c`（dirty 0 ✓）。jar は A `3f22bcc08617b12f` ✓・B `457ab7f1659eeefc` ✓、fixture `e478dbb86919a08c` ✓。
