@@ -588,9 +588,25 @@ public final class VulkanTextureRegistry {
         return out;
     }
 
+    /** Named texture size/format query: the GL-less recording owns it, so never call GL45C under the stub. */
+    private static int textureLevelParameter(int glTextureId, int level, int pname) {
+        if (CeltiumGlStub.isInstalled()) {
+            return CeltiumGlStub.textureLevelParameter(glTextureId, level, pname);
+        }
+        return org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, level, pname);
+    }
+
+    /** Named texture sampler query: prefer the recorded GL-less state, not the missing native GL context. */
+    private static int textureParameter(int glTextureId, int pname) {
+        if (CeltiumGlStub.isInstalled()) {
+            return CeltiumGlStub.textureParameter(glTextureId, pname);
+        }
+        return org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId, pname);
+    }
+
     /** {@return whether the texture's magnification filter is nearest}, asked of the texture itself, not of a binding. */
     private static boolean nearestFilterOf(int glTextureId) {
-        return org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)
+        return textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)
                 == org.lwjgl.opengl.GL11.GL_NEAREST;
     }
 
@@ -745,9 +761,9 @@ public final class VulkanTextureRegistry {
                 // that record is a sub-image that arrived before the surface was known. Taking it would build a mirror
                 // the size of one sprite and mark it whole, which is worse than having none. A dimension of 1 is not a
                 // record: it is what the backend's own size query coerces a 0 answer to.
-                int recordedWidth = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+                int recordedWidth = textureLevelParameter(glTextureId, 0,
                         org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-                int recordedHeight = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+                int recordedHeight = textureLevelParameter(glTextureId, 0,
                         org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
                 if (recordedWidth > 1 && recordedHeight > 1
                         && (recordedWidth != extent[0] || recordedHeight != extent[1])) {
@@ -939,9 +955,9 @@ public final class VulkanTextureRegistry {
             // patch carries neither - so both are asked of the texture itself, not of whatever happens to be bound. The
             // bound-read this used to do asked the wrong texture and produced a nearest-filtered image for textures that
             // need linear (the light map): the draw path then had to throw the image away to get the right filter.
-            int textureWidth = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+            int textureWidth = textureLevelParameter(glTextureId, 0,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-            int textureHeight = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+            int textureHeight = textureLevelParameter(glTextureId, 0,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
             if ((textureWidth <= 0 || textureHeight <= 0) && CeltiumGlStub.isInstalled()
                     && x == 0 && y == 0 && width > 0 && height > 0) {
@@ -1793,9 +1809,9 @@ public final class VulkanTextureRegistry {
             this.readbacksSkippedWithoutContent++;
             // Asked by name, not of whatever happens to be bound: the stub records an extent per texture, and the
             // binding the state manager believes in can be one bind ahead of the one the stub saw.
-            int width = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+            int width = textureLevelParameter(glTextureId, 0,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-            int height = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+            int height = textureLevelParameter(glTextureId, 0,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
             if (width <= 0 || height <= 0) {
                 this.failureCount++;
@@ -1930,7 +1946,7 @@ public final class VulkanTextureRegistry {
                 // Counted so a texture that relied on the default is distinguishable from one set to REPEAT.
                 wrapDefaultsUsed++;
             }
-            return org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId, pname)
+            return textureParameter(glTextureId, pname)
                     == org.lwjgl.opengl.GL11.GL_REPEAT;
         } catch (RuntimeException | LinkageError error) {
             return false;

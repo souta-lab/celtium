@@ -24,6 +24,7 @@ jobs:
           python3 scripts/cpu-contract/immediate_group_pool_check.py
           python3 scripts/cpu-contract/gl_rectangle_queries_check.py
           python3 scripts/cpu-contract/dynamic_texture_dimensions_check.py
+          python3 scripts/cpu-contract/texture_registry_stub_queries_check.py
           python3 scripts/cpu-contract/shader_push_constant_check.py
           python3 scripts/cpu-contract/present_drain_check.py
       - name: Test and package isolated capability probe

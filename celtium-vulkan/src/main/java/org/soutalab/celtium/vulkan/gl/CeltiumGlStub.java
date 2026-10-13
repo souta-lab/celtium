@@ -3373,6 +3373,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         return (bytes + alignment - 1) & ~(alignment - 1);
     }
 
+    /**
+     * A named texture-level query against the GL-less record, without crossing an LWJGL GL45C
+     * native entry point. The value is exactly what our DSA stub function would answer;
+     * a texture with no level record returns 0 instead of inventing dimensions.
+     * Call this only when {@link #isInstalled()} is true.
+     */
+    public static int textureLevelParameter(int name, int level, int pname) {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.texLevelParamForName(name, level, pname);
+    }
+
     /** The pname's recorded value for a named texture's level - the DSA form of {@link #texLevelParam}. */
     private int texLevelParamForName(int name, int level, int pname) {
         int[] dims = this.texLevels.get(texLevelKey(name, level));
