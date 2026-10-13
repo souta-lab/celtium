@@ -9960,3 +9960,5 @@ round ごとの経緯・旧測定・失敗証拠は **`docs/history/plan-round-l
 | **round 533: 既知問題の集約先を確認 ✓（`docs/plan.md` の未完欄が唯一の現状表 ✓）** | **credits と再現可能 build が次の (h) ✓** | **`docs/known-issues*` は存在しない** ✗ が、**`docs/plan.md` が「現在の到達点・未完・優先順・受入状況の唯一の現状表」** ✓（**goal 文の指示どおり** ✓）⇒ **既知問題はそこの未完欄に集約されている** ✓ ⇒ **新しい MD を増やさない** ✓（**指示: 別名の重複計画を増やさない** ✓）。**残る (h)（✓）**: **Celeritas 由来の credits 表示** ✓・**再現可能な build と配布 jar** ✓。|
 
 | **round 534: 配布の既存到達点を確認 ✓（0.0.3-alpha 公開済み ✓・既知問題の一致が未完 ✓）** | **credits と現行版の再公開が残る (h) ✓** | `docs/plan.md:9565` に **「0.0.3-alpha 公開（round 290）✓ GitHub Release 公開済み」** ✓✓・`:1808` に **「配布 jar の最終確認（version・`mcmod.info` の整合）・既知問題の実装との一致」** ✓ ⇒ **配布の枠組みは既存** ✓✓。**残る (h)（✓）**: **Celeritas 由来の credits 表示** ✓・**現行 HEAD の再公開と版・メタデータの整合** ✓。|
+
+| **round 535: (h) の既存到達点を確定 ✓✓（`scope-and-limits.md` が要求表と未検証一覧を持つ ✓）** | **残りは build 手順・版整合・credits ✓** | `docs/plan.md:1806` に **「`COPYING`/`COPYING.LESSER` があり、`docs/scope-and-limits.md` が要求表と未検証一覧を持つ」** ✓✓ と明記 ⇒ **(h) の「既知問題」「未検証範囲」は既存文書に集約済み** ✓✓。**残り（✓・`:1806` が名指し）**: **再現可能な build 手順の文書化** ✓・**配布 jar の版とメタデータの整合** ✓・**既知問題の実装との一致（`scope-and-limits.md` の更新）** ✓・**Celeritas 由来の credits** ✓。|
