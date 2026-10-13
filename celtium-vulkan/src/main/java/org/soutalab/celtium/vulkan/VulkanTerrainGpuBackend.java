@@ -3079,28 +3079,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /**
-     * As {@link #announceDynamicTexture(int, int[], int, int)}, with the size asked of the texture itself.
-     * The DynamicTexture mixin has the object and its id but not the size - so the size is read from the
-     * texture directly rather than from whatever is bound.
-     */
-    public void announceDynamicTexture(int glTextureId, int[] pixels) {
-        if (pixels == null || glTextureId == 0) {
-            return;
-        }
-        int width = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
-                org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-        int height = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
-                org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
-        if (width <= 0 || height <= 0) {
-            return;
-        }
-        announceDynamicTexture(glTextureId, pixels, width, height);
-        if (this.dynamicAnnounceDiagnostics < 3) {
-            this.dynamicAnnounceDiagnostics++;
-            System.out.println("[Celtium] CELTIUM_DYNAMIC_ANNOUNCE texture=" + glTextureId + " size=" + width + "x" + height);
-        }
-    }
 
     /**
      * {@return whether a queued group still has to draw a batch that samples this GL texture}.
