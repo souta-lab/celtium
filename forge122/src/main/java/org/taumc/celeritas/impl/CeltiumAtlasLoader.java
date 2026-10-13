@@ -16,6 +16,7 @@ import org.apache.logging.log4j.Logger;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -63,6 +64,12 @@ public final class CeltiumAtlasLoader {
      * window between those two calls on a single stitch.
      */
     private static final Map<TextureAtlasSprite, Future<Boolean>> PENDING = new ConcurrentHashMap<>();
+    /**
+     * Sprites whose load ran synchronously and failed, carried to the drain point so the stitch is refused.
+     * Without this the synchronous branch's answer was dropped: {@code await} saw no future, answered "may be
+     * stitched", and a sprite whose frame read had failed was stitched with no frames at all.
+     */
+    private static final Set<TextureAtlasSprite> REFUSED = ConcurrentHashMap.newKeySet();
     private static long submittedSprites;
     private static long awaitedSprites;
     private static long awaitedMillis;
@@ -83,8 +90,13 @@ public final class CeltiumAtlasLoader {
             final IResourceManager resourceManager, final TextureAtlasSprite sprite) {
         if (sprite.hasCustomLoader(resourceManager, resourceLocationOf(basePath, sprite))) {
             // A custom loader is the sprite's own code - thread assumptions belong to the mod that wrote it, so
-            // the whole call stays synchronous through the replicated body.
-            return generateMipmapsSequential(basePath, mipmapLevels, resourceManager, sprite);
+            // the whole call stays synchronous through the replicated body. Its answer is kept for the drain
+            // point: a refused sprite must not be stitched, exactly as the sequential path would not add it.
+            boolean loaded = generateMipmapsSequential(basePath, mipmapLevels, resourceManager, sprite);
+            if (!loaded) {
+                REFUSED.add(sprite);
+            }
+            return loaded;
         }
         final ResourceLocation resourceLocation = resourceLocationOf(basePath, sprite);
         PENDING.put(sprite, POOL.submit(() -> {
@@ -108,6 +120,16 @@ public final class CeltiumAtlasLoader {
      * path (custom loader ran synchronously): the caller stitches it directly.
      */
     public static boolean await(TextureAtlasSprite sprite) throws Throwable {
+        if (REFUSED.remove(sprite)) {
+            return false;
+        }
+        if (sprite.getFrameCount() == 0) {
+            // The stitcher uploads frame 0 for every sprite it holds, so a sprite that reaches it without
+            // frames takes the whole atlas down. Refusing it costs one missing sprite; stitching it cost the
+            // game. This is the backstop for any path that still produces a frame-less sprite.
+            LOGGER.error("Refusing to stitch {} with no frames; it would crash the atlas", sprite.getIconName());
+            return false;
+        }
         Future<Boolean> future = PENDING.remove(sprite);
         if (future == null) {
             return true;
@@ -153,7 +175,15 @@ public final class CeltiumAtlasLoader {
      */
     private static boolean generateMipmapsBody(IResourceManager resourceManager,
             final ResourceLocation resourceLocation, int mipmapLevels, final TextureAtlasSprite sprite) {
-        if (!sprite.hasCustomLoader(resourceManager, resourceLocation)) {
+        // Frames are read when the sprite does not already have them. Vanilla asks {@code hasCustomLoader}
+        // here instead, but this loader can only ask that question against the location it reconstructed from
+        // the sprite's icon name - not the one {@code TextureMap.loadTexture} was handed. When the two
+        // disagree the frame read was skipped for a sprite that had none, and the sprite reached
+        // {@code finishLoading} with an empty frame list: measured with Tinkers' Construct loaded, that
+        // crashed the atlas at {@code tconstruct:items/arrow/head_obsidian} on
+        // {@code getFrameTextureData(0)} (IndexOutOfBounds, "Stitching texture atlas"). A sprite whose own
+        // loader already produced its frames still skips the read, so the fast path is unchanged.
+        if (sprite.getFrameCount() == 0) {
             IResource resource = null;
             try {
                 resource = resourceManager.getResource(resourceLocation);
