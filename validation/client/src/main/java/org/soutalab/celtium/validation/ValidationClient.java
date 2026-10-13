@@ -236,6 +236,18 @@ public final class ValidationClient {
      */
     private static final int PIN_SECTIONS =
             Integer.getInteger("celtium.validation.pinSections", 0).intValue();
+    /**
+     * The absolute world clock the capture waits for, in total world ticks, or 0 to disable.
+     * <p>
+     * A floor on the frame count is not a fixed point: measured 2026-10-13, two legs with identical flags and
+     * {@code minWorldFrames=300} still captured at {@code captureTotalWorldTime} 901 and 1097, and their
+     * {@code captureBuildState} differed (U=05 deviceAllocated=38 indexAllocated=1 against U=10
+     * deviceAllocated=69 indexAllocated=2). Their black fraction matched to the digit across five runs
+     * (0.037254) while the world behind it did not. A relative floor accumulates the drift of everything before
+     * it; an absolute target does not. Default 0 keeps every existing leg and calibration key where it is.
+     */
+    private static final long CAPTURE_AT_TOTAL_WORLD_TIME =
+            Long.getLong("celtium.validation.captureAtTotalWorldTime", 0L).longValue();
     /** How many consecutive frames the section count must hold before a pinned capture fires. */
     private static final int PIN_SECTIONS_STABLE_FRAMES =
             Integer.getInteger("celtium.validation.pinSectionsStableFrames", 20).intValue();
@@ -260,6 +272,17 @@ public final class ValidationClient {
      * are still being rebuilt. The capture condition gains this clause so the two runs can be compared.
      */
     private static final int CAPTURE_MAX_P1 = Integer.getInteger("celtium.validation.captureMaxP1", 0);
+    /**
+     * How many finished chunk build results the capture tolerates, or -1 to ignore the field.
+     * <p>
+     * `Chunk Queues: U=` is `buildResults.size()` in Embeddium's RenderSectionManager, so it counts builds that
+     * finished and are still held. Measured 2026-10-13: with the absolute world clock pinned to the same tick
+     * (1200 in both legs) and pendingP1=0 in both, two legs still held 12 and 9 results and their vertex arena
+     * allocations were 45 MiB and 77 MiB - the same tick, a different amount of world built. Default -1 keeps
+     * every existing leg and calibration key where it is.
+     */
+    private static final int CAPTURE_MAX_HELD_BUILDS =
+            Integer.getInteger("celtium.validation.captureMaxHeldBuilds", -1).intValue();
     /** The tick at which {@code built} and {@code sections} give up waiting and capture anyway. */
     private static final int CAPTURE_DEADLINE_TICK =
             Integer.getInteger("celtium.validation.captureDeadlineTick", 400).intValue();
@@ -4205,7 +4228,49 @@ public final class ValidationClient {
         return !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
     }
 
+    /**
+     * {@return whether the world clock has reached the absolute capture target}.
+     * <p>
+     * Reads the game's own total world time, which counts every tick since the world was created, so it does not
+     * depend on when this leg started counting frames. With the knob unset it is always true and no leg moves.
+     */
+    private boolean celtium$worldClockReached() {
+        if (CAPTURE_AT_TOTAL_WORLD_TIME <= 0L) {
+            return true;
+        }
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
+        if (client == null || client.world == null) {
+            return false;
+        }
+        return client.world.getTotalWorldTime() >= CAPTURE_AT_TOTAL_WORLD_TIME;
+    }
+
     /** {@return the debug line's pending rebuild count (P1), or -1 when no queue line is present} */
+    /**
+     * {@return the held build-result count (U) from the chunk queue line, or -1 when no such line is present}.
+     */
+    private static int celtium$heldBuildResults(java.util.List<String> lines) {
+        if (lines == null) {
+            return -1;
+        }
+        java.util.regex.Matcher matcher =
+                java.util.regex.Pattern.compile("Chunk Queues: U=(\\d+)").matcher("");
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            matcher.reset(line);
+            if (matcher.find()) {
+                try {
+                    return Integer.parseInt(matcher.group(1));
+                } catch (NumberFormatException ignored) {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
     private static int celtium$pendingP1(java.util.List<String> lines) {
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("P1=(\\d+)");
         for (String line : lines) {
@@ -4318,11 +4383,18 @@ public final class ValidationClient {
             if (pinPendingP1 >= 0 && pinPendingP1 > CAPTURE_MAX_P1) {
                 return false;
             }
+            int pinHeld = celtium$heldBuildResults(pinLines);
+            if (CAPTURE_MAX_HELD_BUILDS >= 0 && pinHeld >= 0 && pinHeld > CAPTURE_MAX_HELD_BUILDS) {
+                return false;
+            }
+            if (!celtium$worldClockReached()) {
+                return false;
+            }
             if (!this.celtium$jeiSettled()) {
                 return false;
             }
             celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
-                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ")";
+                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ", held=" + pinHeld + ")";
             // This block counted and named the settled state but never returned, so the value it wrote was
             // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
             // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
@@ -4334,9 +4406,12 @@ public final class ValidationClient {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
             int listed = celtium$listedSections(sectionLines);
             int pendingP1 = celtium$pendingP1(sectionLines);
-            if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS
-                    && (pendingP1 < 0 || pendingP1 <= CAPTURE_MAX_P1)) {
-                celtium$captureConditionFired = "sections-target (pendingP1=" + pendingP1 + ")";
+            // The same two conditions the pinned path honours, so both paths promise the same settled world.
+            int heldBuilds = celtium$heldBuildResults(sectionLines);
+            boolean heldOk = CAPTURE_MAX_HELD_BUILDS < 0 || heldBuilds < 0 || heldBuilds <= CAPTURE_MAX_HELD_BUILDS;
+            if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS && heldOk
+                    && (pendingP1 < 0 || pendingP1 <= CAPTURE_MAX_P1) && celtium$worldClockReached()) {
+                celtium$captureConditionFired = "sections-target (pendingP1=" + pendingP1 + ", held=" + heldBuilds + ")";
                 return true;
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
@@ -4723,7 +4798,16 @@ public final class ValidationClient {
         int screenshotAtTick = Integer.getInteger("celtium.validation.screenshotAtTick", -1).intValue();
         if (screenshotAtTick > 0 && worldTicks >= screenshotAtTick && !celtium$tickScreenshotTaken) {
             celtium$tickScreenshotTaken = true;
-            celtium$captureGlScreenshot(mc, "celtium-at-tick-" + screenshotAtTick + ".png", "tick" + screenshotAtTick);
+            if (celtium$glLessInstalled()) {
+                // The GL screenshot helper cannot read pixels without a GL context, so under GL-less this file came
+                // out as a single black colour and was mistaken for a render defect. Measured 2026-10-13: the same
+                // file and celtium-validation.png were byte-identical all-black images (sha 805aa3bd21f8), while the
+                // presented dumps of that run carried content (early 13,315 colours, world 21,458). The same stage
+                // name is used so the file keeps one meaning in both modes.
+                celtium$requestPresentedDump(mc, "tick" + screenshotAtTick);
+            } else {
+                celtium$captureGlScreenshot(mc, "celtium-at-tick-" + screenshotAtTick + ".png", "tick" + screenshotAtTick);
+            }
             report.addProperty("screenshotAtTick", Integer.valueOf(screenshotAtTick));
             report.addProperty("screenshotAtTickScreen",
                     mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
@@ -5194,7 +5278,11 @@ public final class ValidationClient {
             }
             if (Boolean.getBoolean("celtium.validation.interop")) {
                 if (!interopRun) {
-                    ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                    if (celtium$glLessInstalled()) {
+                        celtium$requestPresentedDump(mc, "validation");
+                    } else {
+                        ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                    }
                     Framebuffer target = mc.getFramebuffer();
                     fboAtInterop = target.framebufferObject;
                     colorAtInterop = target.framebufferTexture;
