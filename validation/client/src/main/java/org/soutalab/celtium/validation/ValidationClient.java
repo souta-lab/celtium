@@ -3308,6 +3308,11 @@ public final class ValidationClient {
             // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
             // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
             report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
+            // Which capture path fired, on the main report as well as inside the capture block: four legs recorded
+            // listedSections 45/55/57/57 with captureStableFrames=0 and no way to tell from the report whether the
+            // capture was taken on a settled scene or fell through to the deadline.
+            report.addProperty("captureConditionFiredAtEnd", this.celtium$captureConditionFired);
+
             // The five-tick "no frame after the capture" clause fires mid-burst on a held run: runTick catches up
             // several ticks inside one render iteration, so a capture at the burst's start sees frames not advance
             // for a handful of ticks while the picture is still on the way - the very shape the hold exists to
