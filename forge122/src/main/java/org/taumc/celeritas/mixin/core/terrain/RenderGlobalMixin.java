@@ -298,12 +298,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
                                 @Local(ordinal = 1) double renderViewY,
                                 @Local(ordinal = 2) double renderViewZ) {
         int pass = net.minecraftforge.client.MinecraftForgeClient.getRenderPass();
-        if (pass == 0 || celeritas$collectedEntities == null) {
-            // No clear() ahead of the gather: the gatherer itself clears when the world tick has moved on, and an
-            // explicit clear would force a regather on the very call whose cached lists the gatherer could have
-            // answered with unchanged (entities only join and leave the world on ticks).
-            celeritas$collectedEntities = celeritas$entityGatherer.getLoadedEntityList(world);
-        }
+        // Cache the expensive chunk-membership walk, not a mod's pass predicate: it is evaluated
+        // with Forge's actual pass active, and chunk mutation can invalidate membership within the same tick.
+        celeritas$collectedEntities = celeritas$entityGatherer.getLoadedEntityList(world, pass);
         EntityPlayerSP player = this.mc.player;
         BlockPos.MutableBlockPos entityBlockPos = new BlockPos.MutableBlockPos();
         // Apply entity distance scaling
