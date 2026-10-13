@@ -9,6 +9,7 @@ import org.taumc.celeritas.CeleritasVintage;
 
 @Mixin(GuiIngameForge.class)
 public class MixinGuiIngameForge {
+    private boolean celtium$deviceLineLogged;
     @Redirect(method = "renderGameOverlay", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;isFancyGraphicsEnabled()Z"))
     private boolean celeritas$redirectVignette() {
         return CeleritasVintage.options().quality.enableVignette;
@@ -32,5 +33,12 @@ public class MixinGuiIngameForge {
             return;
         }
         mc.fontRenderer.drawStringWithShadow("Celtium: " + line, 2, 2, 0xFFFFFF);
+        // The overlay is for the user; the log is for the check. A leg with the overlay open passed while neither the
+        // report nor the pixels could say what the line contained, so it announces itself once.
+        if (!celtium$deviceLineLogged) {
+            celtium$deviceLineLogged = true;
+            org.apache.logging.log4j.LogManager.getLogger("Celtium")
+                    .info("CELTIUM_HUD_LINE {}", line);
+        }
     }
 }
