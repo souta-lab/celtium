@@ -5108,6 +5108,16 @@ public final class ValidationClient {
             report.addProperty("captureMinWorldFrames", Integer.valueOf(CAPTURE_MIN_WORLD_FRAMES));
             report.addProperty("captureListedSections", Integer.valueOf(celtium$listedSections(captureLines)));
             report.addProperty("captureBuildState", celtium$buildState(captureLines));
+            // The pinned path needs PIN_SECTIONS_STABLE_FRAMES consecutive frames at or below PIN_SECTIONS,
+            // and until now the report did not say how far it got. Measured 2026-10-13: the JEI variant runs 406
+            // ticks with listed 43-45 against pinSections=64, so the condition looks satisfied for far longer
+            // than the required 64 frames, yet the capture still fires through tick-sections-deadline. Without
+            // this counter the report cannot separate "the pin never counted" from "the pin counted and the fire
+            // condition is elsewhere" - the existing instruments cannot answer the question, so this one is added
+            // and named here.
+            report.addProperty("capturePinnedStableFrames", Integer.valueOf(this.celtium$pinnedSectionsStableFrames));
+            report.addProperty("capturePinnedStableFramesRequired", Integer.valueOf(PIN_SECTIONS_STABLE_FRAMES));
+            report.addProperty("capturePinnedSectionsLimit", Integer.valueOf(PIN_SECTIONS));
             report.addProperty("captureWorldFrames", Integer.valueOf(worldFrames));
         } else if (celtium$worldStageTaken) {
             // The world stage of this scene is already captured. The capture body used to run again on the next frame -
