@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import uuid
@@ -149,6 +150,41 @@ def inspect(instance, java):
     return report, java, classpath, main_class, tweakers, jvm_args, prism / "assets", assets["id"]
 
 
+def shared_game_slot(root):
+    """Git worktrees share one GPU slot; an unpacked standalone source tree retains its local slot."""
+    root = Path(root).resolve()
+    try:
+        done = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=root,
+                              capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        if (root / ".git").exists():
+            raise RuntimeError("cannot locate the shared repository game slot") from error
+        return root / ".celtium-work" / "game-slot"
+    if done.returncode != 0 or not done.stdout.strip():
+        if (root / ".git").exists():
+            raise RuntimeError("git did not identify the shared repository game slot")
+        return root / ".celtium-work" / "game-slot"
+    common = Path(done.stdout.strip())
+    if not common.is_absolute():
+        common = root / common
+    return common.resolve().parent / ".celtium-work" / "game-slot"
+
+
+def claim_pid_file(lock):
+    """Publish a complete PID atomically; another runner must never observe an empty live owner's file."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="ascii", dir=lock.parent,
+                                         prefix=".owner-", delete=False) as pending:
+            temporary = Path(pending.name)
+            pending.write(str(os.getpid()))
+        # link is an exclusive creation, like O_EXCL, but the inode already contains the complete PID.
+        os.link(temporary, lock)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("instance", type=Path, help="Prism instance directory (parent of minecraft/)")
@@ -274,18 +310,16 @@ def main():
         return 0
     # ---- one game instance at a time, arbitrated rather than hoped for -------------------------------
     # Every worker was told to check for a running client before launching, and four of them passed that check in the
-    # same second: the check-then-launch window is the problem, not anyone's discipline. The slot is a directory created
-    # atomically, holding the pid of the process that owns it; a stale slot (owner gone) is reclaimed, and a live one is
+    # same second: the check-then-launch window is the problem, not anyone's discipline. All Git worktrees use
+    # the same slot. Its PID is written before atomic publication; a stale owner is reclaimed, and a live one is
     # waited for. Two runs on one GPU are not evidence, and the runs they cost are the expensive part.
-    slot = Path(__file__).resolve().parent.parent / ".celtium-work" / "game-slot"
+    slot = shared_game_slot(Path(__file__).resolve().parent.parent)
     slot.mkdir(parents=True, exist_ok=True)
     lock = slot / "owner.pid"
     deadline = time.monotonic() + args.slot_wait
     while True:
         try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, str(os.getpid()).encode("ascii"))
-            os.close(fd)
+            claim_pid_file(lock)
             break
         except FileExistsError:
             try:
