@@ -4262,8 +4262,22 @@ public final class ValidationClient {
             return false;
         }
         if (!"built".equals(CAPTURE_CONDITION)) {
-            celtium$captureConditionFired = "tick";
-            return true;
+            // The default path used to return true on the first frame it saw, and measured that is what happened:
+            // cond1 recorded captureConditionFired="tick" with listedSections 56, while two legs of one jar with the
+            // same flags held 45 and 55 sections and differed by fivefold in black fraction. Waiting for the
+            // section count here is the same gate the sections condition uses, deadline included.
+            java.util.List<String> tickLines = celtium$rendererDebugLines();
+            int tickListed = celtium$listedSections(tickLines);
+            if (CAPTURE_SECTIONS > 0 && tickListed >= CAPTURE_SECTIONS) {
+                celtium$captureConditionFired = "tick-sections-target (listed " + tickListed + ")";
+                return true;
+            }
+            if (worldTicks >= CAPTURE_DEADLINE_TICK) {
+                celtium$captureConditionFired = "tick-sections-deadline (listed " + tickListed + " of "
+                        + CAPTURE_SECTIONS + ")";
+                return true;
+            }
+            return false;
         }
         java.util.List<String> lines = celtium$rendererDebugLines();
         int listed = celtium$listedSections(lines);
