@@ -305,6 +305,24 @@ public final class VulkanSwapchain {
 
     /** Writes the image the present just handed over, while it is still ours to read. */
     private boolean writePresentedImage(java.nio.file.Path path, long image) {
+        // The window can be resized between the last present and this read: the fields below are written when the
+        // swapchain is created, and a resize that the driver never reports as OUT_OF_DATE leaves them stale, which is
+        // how a 1280x720 dump came out of a window that had already become 1024x640. Ask the surface what the size is
+        // now and read back the image at that size instead of the remembered one.
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR current =
+                    org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR.calloc(stack);
+            if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(this.context.physicalDevice(), this.surface, current)
+                    == VK_SUCCESS) {
+                int currentWidth = current.currentExtent().width();
+                int currentHeight = current.currentExtent().height();
+                if (currentWidth > 0 && currentHeight > 0
+                        && (currentWidth != this.width || currentHeight != this.height)) {
+                    this.width = currentWidth;
+                    this.height = currentHeight;
+                }
+            }
+        }
         if (image == VK_NULL_HANDLE || this.width <= 0 || this.height <= 0) {
             return false;
         }
