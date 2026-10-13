@@ -22,6 +22,18 @@
 | video settings の反映・復元（目標 (e)） | **未測定** ✗ — `guiScale` の強制は測ってある ✓（`guiScaleForced=3` ✓）が、**復元は knob `celtium.validation.guiScaleRestoreAtTick`（`:80` ✓）を設定していない leg だったため `guiScaleRestoredAtTick=None`** ✓ ⇒ **「未復元」ではなく「未測定」** ✓✓（**表の誤読を訂正** ✓）⇒ **`guiScaleRestoreAtTick=400` の leg で反映・復元・reload を確認するのが次の1契約** ✓ |
 | CPU 契約19本 | **pass 相当 10 ✓・not-run 4 ✓・入力違い 1 ✓**（`verify_line_check` は候補ログが別構成 ✓）⇒ **実質的な FAIL なし** ✓ |
 
+**完成条件ごとの状態（(a)〜(h) を区別して記載 ✓）**
+| 条件 | 状態 |
+|---|---|
+| **(a)** 全 vanilla 描画・UI・設定画面・loading・最終合成/present が native | **一部受入 ✓✓／一部未完 ✗** — loading は**受入済み ✓✓**（1色→35色 ✓）・terrain/world は**両 GPU 受入済み ✓✓**・**in-world GUI 画面は presented に到達しないと実測 ✓✗**（2画面×複数run ✓）・**設定画面の presented は未測定** ✗ |
+| **(b)** GL context を作らず、通常 frame に GL 描画/readback/bridge/swap を要しない | **report で確認済み ✓✓**（GL-less leg の `status=PASSED` ✓・presented dump は native 経路 ✓） |
+| **(c)** native swapchain から実 window/compositor 出力へ到達 | **受入済み ✓✓**（compositor 到達を実測 ✓・**scanout は未測定と明記** ✓） |
+| **(d)** AMD/Intel で主要 scene・world-switch・resize・失敗復旧 | **両 GPU 受入済み ✓✓**・**P1-a/b/c は両 GPU で閉 ✓✓**・**残存 P0/P1 なし** ✓ |
+| **(e)** video settings が native 描画へ反映され、変更・復元・reload が動く | **未測定** ✗ — 強制は測ってある ✓（`guiScaleForced=3` ✓）が、**復元は knob 未設定の leg だった** ✓ ⇒ **`gscale1` を投入済み** ✓ |
+| **(f)** 主要 mod の対応表が実受入と一致し、併用構成で成立 | **併用構成（7 jar）受入済み ✓✓**・対応表は `docs/mod-compatibility.md` ✓ |
+| **(g)** 通常 Celeritas との公平な性能比較・回帰の説明 | **収束済み ✓✓**（warm A 1.196 ↔ B 1.182 ms ✓・cold A 3.599 ↔ B 3.595 ms ✓・p95 2.78/2.81・p99 140.8/141.1 ✓） |
+| **(h)** docs・実装・配布物の scope・ライセンス・Java 条件・能力・未検証範囲が一致 | **hash と HEAD の一致を監査 ✓✓**・**未検証 GPU/OS は明記** ✓（`docs/minimum-capabilities.md` ✓） |
+
 **優先順（最新の証拠で更新 ✓）**
 1. **PR #64 の merge**（CI 緑待ち ✓）と **loading の受入**（`load2` で distinct>1 を確認 ✓）
 2. **HEI の較正**（絶対 world time で固定 ✓・`heipin7/8` ✓）
@@ -330,3 +342,5 @@
 | **round 651: round 650 の「fixture jar hash 不一致」は誤読と訂正 ✓✓（旧値は歴史的な round 行の中 ✓・表は一致していた ✓）** | **表に fixture jar hash を追記して監査を完了 ✓** | **訂正（✓✓・自分の誤り）**: **`cf867ab66f8060fd1549` は冒頭表ではなく round 576 の行（`:245` ✓）の中** ✓ ⇒ **歴史的な記録なので更新しないのが正しい** ✓ ⇒ **round 650 の「不一致」は誤読** ✗ ⇒ **表と実物は一致していた** ✓✓（**表は forge jar の hash のみを持ち、それが `b4bc6c3f6ea64f2fbd0e2653` で実物と一致** ✓）。**改善（✓）**: **fixture jar の hash（`706fbb981d0e3083c370a278` ✓）を表に追記** ✓ ⇒ **2つの jar を hash で区別できる** ✓（**以後の leg の帰属が明確** ✓）。**規律（✓✓）**: **監査で見つけた「不一致」も、まず所在を確認する** ✓（**歴史行の値を現在値と取り違えない** ✓・**誤りは誤りとして記録する** ✓）。|
 
 | **round 652: 目標 (e) の「未復元」は未測定と訂正 ✓✓（knob `guiScaleRestoreAtTick` ✓ が未設定だっただけ ✓）／復元 leg を投入 ✓** | **反映・復元・reload の実測が次 ✓** | **原典（✓✓）**: **`:80` に `celtium.validation.guiScaleRestoreAtTick`（既定 0＝無効 ✓）** があり、**`:3609` が `guiScaleRestoredAtTick`／`:3610` が `guiScaleRestoredTo=0` を記録** ✓ ⇒ **`vset1`／`vset2` は knob を設定していなかった** ✗ ⇒ **`None` は「復元されなかった」ではなく「復元を試みていない」** ✓✓。**訂正（✓✓・自分の誤読）**: 表の「**未復元を観測 ✓✗**」を「**未測定** ✗」へ直す ✓（**未測定を欠陥として書かない** ✓・**未測定を成功とも書かない** ✓）。**次の1契約（✓）**: **`guiScale=3` ＋ `guiScaleRestoreAtTick=400`** の leg を回し ✓ ⇒ **`guiScaleForced=3` ✓・`guiScaleRestoredAtTick=400` ✓・`guiScaleRestoredTo=0` ✓** を確認 ✓（**目標 (e) の反映・復元の受入** ✓）。|
+
+| **round 653: 完成条件 (a)〜(h) を1枚に整理 ✓✓（受入済み／未測定／未完を区別 ✓）** | **未測定は (e) と設定画面 presented の2点 ✓・どちらも leg を投入済み ✓** | **整理（✓✓）**: **(a)** loading ✓✓・terrain/world ✓✓・**in-world GUI ✗**・**設定画面 presented 未測定** ✗／**(b)** report で確認 ✓✓／**(c)** 受入 ✓✓（**scanout は未測定と明記** ✓）／**(d)** 両 GPU ✓✓・P1-a/b/c 閉 ✓／**(e)** **未測定 → `gscale1` 投入 ✓**／**(f)** 7 jar 併用 ✓✓／**(g)** 収束 ✓✓／**(h)** hash・HEAD 監査 ✓✓。**意味（✓✓）**: **「受入済み」「未測定」「未完」を同じ行に混ぜない** ✓ ⇒ **残る未測定は (e) と設定画面 presented の2点** ✓ と明確化 ✓（**未測定を成功とも失敗とも書かない** ✓）。|
