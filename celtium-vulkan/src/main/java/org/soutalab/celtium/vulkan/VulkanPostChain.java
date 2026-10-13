@@ -407,6 +407,9 @@ public final class VulkanPostChain {
                 + " (device=0x" + Long.toHexString(context.device().address()) + ", frameImage=0x"
                 + Long.toHexString(frameTarget.colorImage()) + ")");
         VkDevice device = context.device();
+        long renderPass = 0L, setLayout = 0L, descriptorPool = 0L, sampler = 0L;
+        VulkanUniformBuffer uniformBlocks = null;
+        boolean published = false;
         try (MemoryStack stack = stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(context.physicalDevice(), properties);
@@ -438,7 +441,7 @@ public final class VulkanPostChain {
                     .pAttachments(attachment).pSubpasses(subpass);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateRenderPass(device, passInfo, null, handle), "vkCreateRenderPass(post chain)");
-            long renderPass = handle.get(0);
+            renderPass = handle.get(0);
 
             VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(3, stack);
             bindings.get(0).binding(0).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
@@ -455,7 +458,7 @@ public final class VulkanPostChain {
                     .pBindings(bindings);
             check(vkCreateDescriptorSetLayout(device, layoutInfo, null, handle),
                     "vkCreateDescriptorSetLayout(post chain)");
-            long setLayout = handle.get(0);
+            setLayout = handle.get(0);
 
             VkDescriptorPoolSize.Buffer poolSizes = VkDescriptorPoolSize.calloc(2, stack);
             poolSizes.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(64);
@@ -465,7 +468,7 @@ public final class VulkanPostChain {
                     .maxSets(32).pPoolSizes(poolSizes);
             check(vkCreateDescriptorPool(device, poolInfo, null, handle),
                     "vkCreateDescriptorPool(post chain)");
-            long descriptorPool = handle.get(0);
+            descriptorPool = handle.get(0);
 
             // The uniform-buffer route's ring, established here - before any recording exists - from what the
             // *_ubo variants declare, so a pass never has to ask whether there is room for it. A device where any of
@@ -479,7 +482,6 @@ public final class VulkanPostChain {
                 uniformRouteRefusal = "the uniform-buffer route's shaders could not be read: " + error;
             }
             long uniformStride = 0;
-            VulkanUniformBuffer uniformBlocks = null;
             // The limit is a uint32; RADV reports 0xFFFFFFFF for it (measured on this AMD device: read as a signed
             // int it is -1, which refused the route before this comparison was made unsigned).
             long maxUniformBufferRange = Integer.toUnsignedLong(properties.limits().maxUniformBufferRange());
@@ -511,7 +513,7 @@ public final class VulkanPostChain {
                     .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .mipLodBias(0.0f).minLod(0.0f).maxLod(0.0f);
             check(vkCreateSampler(device, samplerInfo, null, handle), "vkCreateSampler(post chain)");
-            long sampler = handle.get(0);
+            sampler = handle.get(0);
             VulkanPostChain chain = new VulkanPostChain(context, frameTarget, renderPass, setLayout,
                     descriptorPool, sampler, maxPush, uniformBlocks, uniformRouteStride, uniformRouteBytes,
                     uniformRouteRefusal);
@@ -543,7 +545,18 @@ public final class VulkanPostChain {
                         + " blockBytes=" + uniformBlockBytes + " stride=" + uniformStride
                         + " mapped=" + (chain.uniformView != null));
             }
+            published = true;
             return chain;
+        } finally {
+            if (!published) {
+                // Nothing in this factory is submitted or exposed before the return. Drop descriptor sets
+                // first, then their resources, and leave the context/frame target owned by the caller alone.
+                if (descriptorPool != 0L) vkDestroyDescriptorPool(device, descriptorPool, null);
+                if (sampler != 0L) vkDestroySampler(device, sampler, null);
+                if (uniformBlocks != null) uniformBlocks.delete();
+                if (setLayout != 0L) vkDestroyDescriptorSetLayout(device, setLayout, null);
+                if (renderPass != 0L) vkDestroyRenderPass(device, renderPass, null);
+            }
         }
     }
 
@@ -1755,6 +1768,8 @@ public final class VulkanPostChain {
                 throw new IllegalArgumentException("chain target needs a size, got " + width + "x" + height);
             }
             VkDevice device = context.device();
+            long image = 0L, memory = 0L, view = 0L, fb = 0L;
+            boolean published = false;
             try (MemoryStack stack = stackPush()) {
                 LongBuffer handle = stack.mallocLong(1);
                 VkImageCreateInfo imageInfo = VkImageCreateInfo.calloc(stack).sType$Default()
@@ -1767,7 +1782,7 @@ public final class VulkanPostChain {
                         .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
                 imageInfo.extent(it -> it.width(width).height(height).depth(1));
                 check(vkCreateImage(device, imageInfo, null, handle), "vkCreateImage(post chain)");
-                long image = handle.get(0);
+                image = handle.get(0);
                 VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
                 vkGetImageMemoryRequirements(device, image, requirements);
                 VkMemoryAllocateInfo alloc = VkMemoryAllocateInfo.calloc(stack).sType$Default()
@@ -1775,20 +1790,30 @@ public final class VulkanPostChain {
                         .memoryTypeIndex(context.memoryTypeIndex(requirements.memoryTypeBits(),
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "post chain target"));
                 check(vkAllocateMemory(device, alloc, null, handle), "vkAllocateMemory(post chain)");
-                long memory = handle.get(0);
+                memory = handle.get(0);
                 check(vkBindImageMemory(device, image, memory, 0), "vkBindImageMemory(post chain)");
                 VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default()
                         .image(image).viewType(VK_IMAGE_VIEW_TYPE_2D).format(VK_FORMAT_R8G8B8A8_UNORM);
                 viewInfo.subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0)
                         .levelCount(1).baseArrayLayer(0).layerCount(1));
                 check(vkCreateImageView(device, viewInfo, null, handle), "vkCreateImageView(post chain)");
-                long view = handle.get(0);
+                view = handle.get(0);
                 LongBuffer attachments = stack.longs(view);
                 VkFramebufferCreateInfo fbInfo = VkFramebufferCreateInfo.calloc(stack).sType$Default()
                         .renderPass(renderPass).pAttachments(attachments).width(width).height(height).layers(1);
                 check(vkCreateFramebuffer(device, fbInfo, null, handle), "vkCreateFramebuffer(post)");
-                long fb = handle.get(0);
-                return new Target(identity, width, height, image, memory, view, fb, true);
+                fb = handle.get(0);
+                Target result = new Target(identity, width, height, image, memory, view, fb, true);
+                published = true;
+                return result;
+            } finally {
+                if (!published) {
+                    if (fb != 0L) vkDestroyFramebuffer(device, fb, null);
+                    if (view != 0L) vkDestroyImageView(device, view, null);
+                    // A bound image is destroyed before the memory backing it is freed.
+                    if (image != 0L) vkDestroyImage(device, image, null);
+                    if (memory != 0L) vkFreeMemory(device, memory, null);
+                }
             }
         }
 
