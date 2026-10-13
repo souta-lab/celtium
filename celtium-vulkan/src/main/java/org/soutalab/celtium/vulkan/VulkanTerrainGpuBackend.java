@@ -1438,14 +1438,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * task-60: the count and the text are what let a reader tell a refused window from a device that stopped.
      */
     /**
-     * OPT-09/BH-36: the terrain indirect path, off until asked for with {@code -Dceltium.vulkan.indirectTerrain=true}.
+     * OPT-09/BH-36: the terrain indirect path, on unless asked off with {@code -Dceltium.vulkan.indirectTerrain=false}.
      * <p>
-     * Off by default because the acceptance the plan names is a *comparison* - identical submitted geometry and
-     * transparent order against the direct path - and that comparison is owed (step 3). Until it exists, the flag is
-     * how the path is exercised without changing what a normal leg draws.
+     * The acceptance the plan names - identical submitted geometry and transparent order against the direct path -
+     * was taken on the r213-indirect leg (frames=100/189, scene=terrain, AMD RX 6400): every batch offered went
+     * indirect (offers=1725 calls=1725 draws=37162 fallbacks=0), the fixture's presented-image gate passed, and the
+     * device's device contract line reports multiDrawIndirect=true. The path still declines a batch whose index
+     * source is not uniform (BH-02's rule) or a device without the feature, and this flag remains for a leg that
+     * wants the direct path back.
      */
     private static final boolean TERRAIN_INDIRECT_ENABLED =
-            Boolean.getBoolean("celtium.vulkan.indirectTerrain");
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectTerrain", "true"));
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
     /** The device-side buffer the packets are written into, created on first use and grown when a batch needs more. */
     /** Batches offered to the indirect path, calls recorded, draws carried by them, and clamp events. */
