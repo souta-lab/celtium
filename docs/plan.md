@@ -9875,3 +9875,5 @@ round ごとの経緯・旧測定・失敗証拠は **`docs/history/plan-round-l
 | **round 490: `captureComparable` を載せた leg（`cmp1`）を起動 ✓** | **2 run で比較可能性と黒率を読む ✓** | `cmp1`（`captureSections=60` ✓・**deadline 560** ✓・`guiScale=3` ✓・新 jar ✓）を起動 ✓ ⇒ 次に **`captureComparable`** ✓・**`captureConditionFiredAtEnd`** ✓・**`presentedBlackFraction`／`presentedDistinctColours`** ✓ を読む ✓。**判定（✓）**: **両 run が `captureComparable=true` のときだけ黒率・色数を比較**する ✓（**false の run は比較から除外し、除外理由を残す** ✓・**上限は動かさない** ✓）。|
 
 | **round 491: `cmp1` は実行中 ✓** | **`captureComparable` を次 round で読む ✓** | process **RUNNING** ✓・report **未生成** ✗ ⇒ 次に **`captureComparable`** ✓・**`captureConditionFiredAtEnd`** ✓・**`presentedBlackFraction`／`presentedDistinctColours`** ✓ を読む ✓。**規律（✓）**: **in-flight を合格と読まない** ✓・**`captureComparable=false` の run は比較に使わない** ✓・**上限は動かさない** ✓。|
+
+| **round 492: `cmp1` は依然実行中 ✓（report 未生成 ✗）** | **完了後に `captureComparable` を読む ✓** | process **RUNNING** ✓・report **未生成** ✗（**deadline 560 まで待つ設定のため長い** ✓）。**規律（✓）**: **待ち時間の長さを成果としない** ✓・**in-flight を合格と読まない** ✓・**report が無い状態で推測しない** ✓ ⇒ 完了後に **`captureComparable`** ✓・**`captureConditionFiredAtEnd`** ✓・**黒率／色数** ✓ を読む ✓。|
