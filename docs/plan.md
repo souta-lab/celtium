@@ -27,7 +27,7 @@
 |---|---|
 | **(a)** 全 vanilla 描画・UI・設定画面・loading・最終合成/present が native | **一部受入 ✓✓／一部未完 ✗** — loading は**受入済み ✓✓**（1色→35色 ✓）・terrain/world は**両 GPU 受入済み ✓✓**・**in-world GUI 画面は presented に到達しないと実測 ✓✗**（2画面×複数run ✓）・**設定画面の presented は未測定** ✗ |
 | **(b)** GL context を作らず、通常 frame に GL 描画/readback/bridge/swap を要しない | **report で確認済み ✓✓**（GL-less leg の `status=PASSED` ✓・presented dump は native 経路 ✓） |
-| **(c)** native swapchain から実 window/compositor 出力へ到達 | **受入済み ✓✓**（compositor 到達を実測 ✓・**scanout は未測定と明記** ✓） |
+| **(c)** native swapchain から実 window/compositor 出力へ到達 | **受入済み ✓✓✓✓（現行 main で再取得 ✓）** — `compositor-0065.png` ≡ `frame-60.png` ✓✓（`differentPixels=0` ✓・`maxChannelDifference=0` ✓・計器自身が `identical: true` ✓）・`compositor-0088.png` ≡ `frame-300.png` ✓✓ も独立に 0 px ✓ ⇒ **画素完全一致で束縛** ✓✓✓✓。**scanout（CRTC が物理モニタへ走査出力する段）は未測定** ✓ と明記 ✓ |
 | **(d)** AMD/Intel で主要 scene・world-switch・resize・失敗復旧 | **両 GPU 受入済み ✓✓**・**P1-a/b/c は両 GPU で閉 ✓✓**・**残存 P0/P1 なし** ✓ |
 | **(e)** video settings が native 描画へ反映され、変更・復元・reload が動く | **受入済み ✓✓✓**（`gscale1` ✓・jar `b4bc6c3f6ea64f2fbd0e2653` ✓・AMD ✓）— **`guiScaleForced=3`** ✓・**`guiScaleRestoredAtTick=400`** ✓（**要求 tick どおり** ✓）・**`guiScaleRestoredTo=0`** ✓・**`status=PASSED`** ✓ ⇒ **変更と復元が native 経路で動く** ✓（**reload 側は別途** ✓） |
 | **(f)** 主要 mod の対応表が実受入と一致し、併用構成で成立 | **併用構成（7 jar）受入済み ✓✓**・対応表は `docs/mod-compatibility.md` ✓ |
