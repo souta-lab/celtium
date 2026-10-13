@@ -8,6 +8,7 @@ such as the official Cleanroom instance; it is not a general Minecraft launcher.
 
 import argparse
 import configparser
+import fcntl
 from contextlib import nullcontext
 import hashlib
 import json
@@ -17,6 +18,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import uuid
@@ -149,6 +151,84 @@ def inspect(instance, java):
     return report, java, classpath, main_class, tweakers, jvm_args, prism / "assets", assets["id"]
 
 
+def shared_game_slot(root):
+    """Git worktrees share one GPU slot; an unpacked standalone source tree retains its local slot."""
+    root = Path(root).resolve()
+    try:
+        done = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=root,
+                              capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        if (root / ".git").exists():
+            raise RuntimeError("cannot locate the shared repository game slot") from error
+        return root / ".celtium-work" / "game-slot"
+    if done.returncode != 0 or not done.stdout.strip():
+        if (root / ".git").exists():
+            raise RuntimeError("git did not identify the shared repository game slot")
+        return root / ".celtium-work" / "game-slot"
+    common = Path(done.stdout.strip())
+    if not common.is_absolute():
+        common = root / common
+    return common.resolve().parent / ".celtium-work" / "game-slot"
+
+
+def claim_pid_file(lock):
+    """Publish a complete PID atomically; another runner must never observe an empty live owner's file."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="ascii", dir=lock.parent,
+                                         prefix=".owner-", delete=False) as pending:
+            temporary = Path(pending.name)
+            pending.write(str(os.getpid()))
+        # link is an exclusive creation, like O_EXCL, but the inode already contains the complete PID.
+        os.link(temporary, lock)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+
+def game_slot_owner(lock):
+    try:
+        holder = int(lock.read_text(encoding="ascii").strip() or "0")
+    except (OSError, ValueError):
+        return 0, False
+    if holder > 0:
+        try:
+            os.kill(holder, 0)
+            return holder, True
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            return holder, True
+    return holder, False
+
+
+def try_claim_game_slot(lock):
+    """Serialize stale inspection/replacement as well as initial publication."""
+    # Keep this guard inode: unlinking it would let old and new openers hold distinct flock objects.
+    with (lock.parent / ".owner.guard").open("a") as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        try:
+            claim_pid_file(lock)
+            return True, os.getpid()
+        except FileExistsError:
+            holder, alive = game_slot_owner(lock)
+            if alive:
+                return False, holder
+            print(f"Reclaiming the game slot from pid {holder}, which is gone")
+            lock.unlink(missing_ok=True)
+            claim_pid_file(lock)
+            return True, os.getpid()
+
+
+def release_game_slot(lock):
+    """A runner can release only its own owner record."""
+    with (lock.parent / ".owner.guard").open("a") as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        holder, _ = game_slot_owner(lock)
+        if holder == os.getpid():
+            lock.unlink(missing_ok=True)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("instance", type=Path, help="Prism instance directory (parent of minecraft/)")
@@ -274,46 +354,26 @@ def main():
         return 0
     # ---- one game instance at a time, arbitrated rather than hoped for -------------------------------
     # Every worker was told to check for a running client before launching, and four of them passed that check in the
-    # same second: the check-then-launch window is the problem, not anyone's discipline. The slot is a directory created
-    # atomically, holding the pid of the process that owns it; a stale slot (owner gone) is reclaimed, and a live one is
+    # same second: the check-then-launch window is the problem, not anyone's discipline. All Git worktrees use
+    # the same slot. Its PID is written before atomic publication; a stale owner is reclaimed, and a live one is
     # waited for. Two runs on one GPU are not evidence, and the runs they cost are the expensive part.
-    slot = Path(__file__).resolve().parent.parent / ".celtium-work" / "game-slot"
+    slot = shared_game_slot(Path(__file__).resolve().parent.parent)
     slot.mkdir(parents=True, exist_ok=True)
     lock = slot / "owner.pid"
     deadline = time.monotonic() + args.slot_wait
     while True:
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, str(os.getpid()).encode("ascii"))
-            os.close(fd)
+        claimed, holder = try_claim_game_slot(lock)
+        if claimed:
             break
-        except FileExistsError:
-            try:
-                holder = int(lock.read_text(encoding="ascii").strip() or "0")
-            except (OSError, ValueError):
-                holder = 0
-            alive = False
-            if holder > 0:
-                try:
-                    os.kill(holder, 0)
-                    alive = True
-                except ProcessLookupError:
-                    alive = False
-                except PermissionError:
-                    alive = True
-            if not alive:
-                print(f"Reclaiming the game slot from pid {holder}, which is gone")
-                lock.unlink(missing_ok=True)
-                continue
-            if time.monotonic() >= deadline:
-                parser.error(f"the game slot is held by pid {holder} and --slot-wait ({args.slot_wait}s) expired; "
-                             "one instance at a time is a measurement requirement, not a courtesy")
-            print(f"Waiting for the game slot (held by pid {holder}) ...")
-            time.sleep(5)
+        if time.monotonic() >= deadline:
+            parser.error(f"the game slot is held by pid {holder} and --slot-wait ({args.slot_wait}s) expired; "
+                         "one instance at a time is a measurement requirement, not a courtesy")
+        print(f"Waiting for the game slot (held by pid {holder}) ...")
+        time.sleep(5)
     try:
         return run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser)
     finally:
-        lock.unlink(missing_ok=True)
+        release_game_slot(lock)
 
 
 def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser):
