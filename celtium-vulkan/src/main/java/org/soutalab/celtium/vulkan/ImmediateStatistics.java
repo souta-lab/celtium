@@ -538,9 +538,21 @@ public final class ImmediateStatistics {
         return this.immediateRetryCount;
     }
 
+    /**
+     * Whether the per-state-setter call count is worth its increments. ~113,000 setters fire a frame on a world leg;
+     * one field increment each is small per call but not free at that rate, and the number only matters to a leg
+     * looking for call-volume regressions. Default off; {@code -Dceltium.vulkan.immediateStateCalls=true} or
+     * diagnostics restores it. A settable counter ({@link #setImmediateStateCalls}) bypasses the gate on purpose.
+     */
+    private static final boolean COUNT_IMMEDIATE_STATE_CALLS =
+            "true".equalsIgnoreCase(System.getProperty("celtium.vulkan.immediateStateCalls", "false"))
+                    || VulkanDiagnostics.enabled();
+
     /** Records one immediateStateCalls. */
     void noteImmediateStateCalls() {
-        this.immediateStateCalls++;
+        if (COUNT_IMMEDIATE_STATE_CALLS) {
+            this.immediateStateCalls++;
+        }
     }
 
     /** Sets immediateStateCalls. */

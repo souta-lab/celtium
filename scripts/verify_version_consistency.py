@@ -164,9 +164,12 @@ def main():
                        "ok": manifest_version == name_version, "detail": "manifest attribute"})
 
     # 2. The build's default and the plan's header table.
-    checks.append({"check": "build default is a development build of a named release",
-                   "artifact": "build-1122/build.gradle.kts", "measured": dev, "expected": "<x.y.z>-dev",
-                   "ok": dev is not None and dev.endswith("-dev"),
+    # Gradle now uses the target release as its base version and adds -dev only to development artifacts.
+    # Requiring the base itself to end in -dev rejects a correct 0.0.4-alpha release build.
+    checks.append({"check": "build default names a valid release or development version",
+                   "artifact": "build-1122/build.gradle.kts", "measured": dev,
+                   "expected": "<x.y.z>[-prerelease][-dev]",
+                   "ok": bool(dev and re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)*", dev)),
                    "detail": "providers.gradleProperty('celtium_release_version').orElse(...)"})
     checks.append({"check": "the artifact is a build of the configured default", "artifact": jar,
                    "measured": name_version, "expected": dev,
