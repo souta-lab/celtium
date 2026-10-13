@@ -4314,6 +4314,12 @@ public final class ValidationClient {
             }
             celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
                     + this.celtium$pinnedSectionsStableFrames + " frames)";
+            // This block counted and named the settled state but never returned, so the value it wrote was
+            // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
+            // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
+            // and the verdict still came from "tick-sections-deadline (listed 36 of 0)". The pinned path was
+            // dead - it could never be the condition that fired. Returning here is what makes it live.
+            return true;
         }
         if ("sections".equals(CAPTURE_CONDITION)) {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
