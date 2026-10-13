@@ -840,6 +840,12 @@ public final class ValidationClient {
             Integer.getInteger("celtium.validation.dumpPresentedWorldLoadTick", 0).intValue();
     private boolean celtium$worldLoadDumpRequested;
     /**
+     * Whether a screen that is not the title screen has already been cleared on the way to the world. A mod can
+     * put its own screen up first; without this the launch condition never held and the leg never entered a world.
+     * Reported as {@code screenDismissedBeforeWorld}, so which screen it was stays in the record.
+     */
+    private boolean celtium$foreignScreenDismissed;
+    /**
      * Client ticks to hold the title screen before any world is created, {@code -Dceltium.validation.menuHoldTicks}.
      * <p>
      * The panorama's acceptance is a {@code CELTIUM_TEX_COPY_SERVED ... mean=} line, and that copy is made by
@@ -2955,7 +2961,20 @@ public final class ValidationClient {
             celtium$requestPresentedDump(mc, "world-load");
         }
         try {
-            if (!launched && mc.currentScreen instanceof GuiMainMenu) {
+            // A mod may put its own screen up before the title screen is ever reached (measured with a seven-mod
+            // cohort: the world was never launched, so the fixture sat on a non-menu screen for the whole leg,
+            // worldTicks stayed 0, the capture condition never fired and the run ended on its duration with only
+            // the loading dump). Reaching the world is this fixture's job, so a foreign screen is dismissed and
+            // named, and the launch below then accepts a cleared screen as well as the title screen.
+            if (!launched && mc.world == null && mc.currentScreen != null
+                    && !(mc.currentScreen instanceof GuiMainMenu) && !celtium$foreignScreenDismissed) {
+                celtium$foreignScreenDismissed = true;
+                report.addProperty("screenDismissedBeforeWorld", mc.currentScreen.getClass().getName());
+                mc.displayGuiScreen((net.minecraft.client.gui.GuiScreen) null);
+            }
+            boolean menuOrCleared = mc.currentScreen instanceof GuiMainMenu
+                    || (mc.currentScreen == null && celtium$clientTicks >= 100);
+            if (!launched && menuOrCleared) {
                 // The menu-phase resize: ask for the new size while the title screen is up, and hold the world launch
                 // briefly so the menu's own frames are drawn at it. Holding for a few ticks is what makes this a
                 // resize *during the menu* rather than a resize immediately followed by a world load.
