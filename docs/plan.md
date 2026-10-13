@@ -10,6 +10,9 @@
 
 **画像の軸（正直に分離 ✓）** — 現在の leg は **`FAILED_PRESENTED_IMAGE`（要求された画像が無い）** ✗ で、これを「黒い」とも「正常」とも読まない ✓。較正/未較正/FAIL を別軸で記録する ✓。
 
+**収束結論（round 340・ユーザー緊急指示の回答 ✓✓）** — 同一条件（854x480・保存済み world・`holdUntilTick=620`・診断 readback **off**・同一 mod/JVM/flags・AMD RX 6400 ✓）で **warm A 1.196 ↔ B 1.182 ms（差 <1.2% ✓・n≈2045 ずつ ✓）**、**cold A 3.599 ↔ B 3.595 ms（n=560 ずつ ✓）**、**p95 2.78 ↔ 2.81・p99 140.8 ↔ 141.1** ⇒ **退行なし・優位なし** ✓✓。**ユーザーが見た 34 ms cold は fresh-world の chunk build** ✓（`arenaUploads` 11792 ↔ 両側 ~90 ✓・`uploadRingPressureWaits` 246 ↔ 0 ✓）で、**matched leg で確認済み** ✓。**`bootstrapSubmitWaits` 5388/5459 の正体は per-frame readback の診断税** ✓✓（readback off で **144（両側）** ✓・`VulkanBuffer:136/187` の readback submit が `endCommands` を通る ✓）⇒ **texture upload/copy は支配的でなく、JFR は不要（計器が名指しした ✓）・修正すべき owner/producer 契約は見つかっていない** ✓。**p99 ≈140 ms は両側同一** ✓（退行ではない ✓）。
+**凍結の対応（確認 ✓）**: 使用 jar `457ab7f1659eeefc` は **code が `033b70969`** ✓（`033b70969..HEAD` の `celtium-vulkan`/`validation` 差分は **round 340 の per-caller counter のみ** ✓）⇒ **plan のみの commit が HEAD を進めたため見かけの不一致**で、A/B の妥当性は保たれている ✓。round 340 の counter（`submitReasons=` ✓）は**この結論を1 leg で確認できる安価な計器** ✓（readback off なら `buffer-readback` が 144 前後 ✓ になるはず ✓）。
+
 **unit 2 完了 ✓（round 339・`perf-ring`・同一条件 854x480・保存済み world・診断 readback off は Aw2/Bw2 で確認 ✓）**:
 | leg | cold p50 | warm p50 | warm p95 | warm n |
 |---|---|---|---|---|
