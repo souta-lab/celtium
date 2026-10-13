@@ -248,6 +248,18 @@ public final class ValidationClient {
     /** The listed-section count {@code sections} waits for; 0 disables that condition. */
     private static final int CAPTURE_SECTIONS =
             Integer.getInteger("celtium.validation.captureSections", 0).intValue();
+
+    /**
+     * Pending chunk rebuilds (the debug line's {@code P1}) the capture frame may still have outstanding.
+     * <p>
+     * Measured on 2026-10-13: two legs of one jar with identical flags both reached
+     * {@code tick-sections-target (listed 64)} and both recorded {@code captureComparable=true}, yet one held
+     * {@code listedSections=62 P1=088 deviceUsed=43} and the other {@code listedSections=63 P1=028
+     * deviceUsed=26}, and their distinct colours were 12,517 and 2,638. Reaching the same section count is
+     * therefore not reaching the same world: the count says how many sections exist, not whether any of them
+     * are still being rebuilt. The capture condition gains this clause so the two runs can be compared.
+     */
+    private static final int CAPTURE_MAX_P1 = Integer.getInteger("celtium.validation.captureMaxP1", 0);
     /** The tick at which {@code built} and {@code sections} give up waiting and capture anyway. */
     private static final int CAPTURE_DEADLINE_TICK =
             Integer.getInteger("celtium.validation.captureDeadlineTick", 400).intValue();
@@ -4178,6 +4190,20 @@ public final class ValidationClient {
     }
 
     /** The largest per-pass section count in the renderer's debug strings, or -1 when no such line is present. */
+    /** {@return the debug line's pending rebuild count (P1), or -1 when no queue line is present} */
+    private static int celtium$pendingP1(java.util.List<String> lines) {
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("P1=(\\d+)");
+        for (String line : lines) {
+            if (line != null && line.contains("Chunk Queues:")) {
+                java.util.regex.Matcher m = p.matcher(line);
+                if (m.find()) {
+                    return Integer.parseInt(m.group(1));
+                }
+            }
+        }
+        return -1;
+    }
+
     private static int celtium$listedSections(java.util.List<String> lines) {
         if (lines == null) {
             return -1;
@@ -4274,8 +4300,10 @@ public final class ValidationClient {
         if ("sections".equals(CAPTURE_CONDITION)) {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
             int listed = celtium$listedSections(sectionLines);
-            if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS) {
-                celtium$captureConditionFired = "sections-target";
+            int pendingP1 = celtium$pendingP1(sectionLines);
+            if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS
+                    && (pendingP1 < 0 || pendingP1 <= CAPTURE_MAX_P1)) {
+                celtium$captureConditionFired = "sections-target (pendingP1=" + pendingP1 + ")";
                 return true;
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
@@ -4291,8 +4319,11 @@ public final class ValidationClient {
             // section count here is the same gate the sections condition uses, deadline included.
             java.util.List<String> tickLines = celtium$rendererDebugLines();
             int tickListed = celtium$listedSections(tickLines);
-            if (CAPTURE_SECTIONS > 0 && tickListed >= CAPTURE_SECTIONS) {
-                celtium$captureConditionFired = "tick-sections-target (listed " + tickListed + ")";
+            int tickP1 = celtium$pendingP1(tickLines);
+            if (CAPTURE_SECTIONS > 0 && tickListed >= CAPTURE_SECTIONS
+                    && (tickP1 < 0 || tickP1 <= CAPTURE_MAX_P1)) {
+                celtium$captureConditionFired = "tick-sections-target (listed " + tickListed
+                        + ", pendingP1=" + tickP1 + ")";
                 return true;
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
