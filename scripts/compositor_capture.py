@@ -89,6 +89,40 @@ def game_pid(game_directory):
     return None
 
 
+def run_outcome(game, launcher_code, records):
+    """Preserve the launcher's verdict and require both run metadata and a successful screen capture."""
+    reasons = []
+    # Popen uses negative return codes for signals; shell callers need the usual 128 + signal value.
+    exit_code = launcher_code if launcher_code >= 0 else 128 - launcher_code
+    validation_code = None
+    metadata = game / "validation-process.json"
+    try:
+        outcome = json.loads(metadata.read_text(encoding="utf-8"))
+        validation_code = outcome.get("validationExitCode")
+        if type(validation_code) is not int or validation_code < 0:
+            reasons.append("validation-process.json has no valid validationExitCode")
+        elif validation_code != 0:
+            reasons.append(f"validationExitCode={validation_code}")
+            if exit_code == 0:
+                exit_code = validation_code
+        if outcome.get("gpuRequirementMet") is False:
+            reasons.append("the game did not use the required GPU")
+        if outcome.get("validationClean") is False:
+            reasons.append("the launcher reported Vulkan validation errors")
+    except (OSError, ValueError, AttributeError) as error:
+        reasons.append(f"the launcher's validation-process.json is unavailable: {error}")
+    successful = sum(1 for record in records
+                     if record.get("grimExit") == 0 and record.get("pngBytes")
+                     and record.get("pngSha256"))
+    if successful == 0:
+        reasons.append("no compositor capture succeeded")
+    if launcher_code != 0:
+        reasons.insert(0, f"launcherExitCode={launcher_code}")
+    if reasons and exit_code == 0:
+        exit_code = 1
+    return exit_code, validation_code, successful, reasons
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -205,14 +239,17 @@ def main():
                 if remaining > 0:
                     time.sleep(remaining)
             code = launcher.wait(timeout=60)
-            summary = {"launcherExitCode": code, "captures": len(records), "output": output,
+            exit_code, validation_code, successful, failures = run_outcome(game, code, records)
+            summary = {"launcherExitCode": code, "validationExitCode": validation_code,
+                       "captureExitCode": exit_code, "successfulCaptures": successful,
+                       "failureReasons": failures, "captures": len(records), "output": output,
                        "waylandDisplay": environment["WAYLAND_DISPLAY"], "swaySocket": environment["SWAYSOCK"],
                        "xDisplay": environment["DISPLAY"], "captureDir": str(captures),
                        "gameDir": str(game), "finishedWall": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
             (captures / "captures.json").write_text(json.dumps({"summary": summary, "records": records}, indent=2) + "\n",
                                                     encoding="utf-8")
             print(json.dumps(summary, indent=2), flush=True)
-            return 0
+            return exit_code
         finally:
             if launcher.poll() is None:
                 os.killpg(launcher.pid, signal.SIGTERM)
