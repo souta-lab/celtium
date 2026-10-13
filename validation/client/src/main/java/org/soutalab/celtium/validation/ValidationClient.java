@@ -3312,6 +3312,12 @@ public final class ValidationClient {
             // listedSections 45/55/57/57 with captureStableFrames=0 and no way to tell from the report whether the
             // capture was taken on a settled scene or fell through to the deadline.
             report.addProperty("captureConditionFiredAtEnd", this.celtium$captureConditionFired);
+            // Whether this capture may be compared with another leg's. A deadline capture is a different scene:
+            // sec1 reached the sixty-section target and held 23,363 colours, sec2 fell through to the deadline at
+            // fifty-one sections with 2,543, and both legs passed, so the report has to say which one this is.
+            String firedAtEnd = this.celtium$captureConditionFired;
+            report.addProperty("captureComparable",
+                    Boolean.valueOf(firedAtEnd != null && firedAtEnd.indexOf("deadline") < 0));
 
             // The five-tick "no frame after the capture" clause fires mid-burst on a held run: runTick catches up
             // several ticks inside one render iteration, so a capture at the burst's start sees frames not advance
