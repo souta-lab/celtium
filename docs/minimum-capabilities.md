@@ -60,6 +60,6 @@ table exists so a support request can be answered without reading the spec.
 | Device | Driver | Status |
 |---|---|---|
 | AMD Radeon RX 6400 (RADV NAVI24) | Mesa RADV | accepted; every measurement in `docs/plan.md` is from this device unless a leg says otherwise |
-| Intel(R) UHD Graphics 630 (CFL GT2) | Mesa ANV | accepted in earlier legs; re-acceptance is on the plan's list |
+| Intel(R) UHD Graphics 630 (CFL GT2) | Mesa ANV | re-accepted 2026-10-13: failure recovery (`intelfout2`), reload (`intelreload1`), resize (`intelresize1`, UNCALIBRATED as on AMD), the seven-jar mod combination (`intelmods1`) and video settings (`intelvset3`, `intelrestore1`) all passed with the device line naming this adapter |
 
 Every other vendor, driver and operating system is **unverified**. Nothing in this file claims otherwise.
