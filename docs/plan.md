@@ -1,5 +1,18 @@
 # Celtium 現状表（現在状態・優先順・受入）
 
+## 現在状態（2026-10-13 09:15 JST・ユーザー指示で収束）
+
+**凍結** — A = user branch `40cf799d6`（dirty 0 ✓）/ B = main `97613034c`（dirty 0 ✓）。jar は A `3f22bcc08617b12f` ✓・B `457ab7f1659eeefc` ✓、fixture `e478dbb86919a08c` ✓。
+
+**性能の結論（同一条件 A/B/A・854x480・`saveSlot="New World"`・診断 OFF・RX 6400）** — cold p50: A1 2.8779 ✓・A2 2.8962 ✓・B1 3.2630 ✓・**B2 2.8639** ✓。**B2 が両 A より速い** ✓ ⇒ **A の8本の perf commit による差は棄却（run-to-run 分散 ✓・B 自身の幅 14% > A/B 差 ~12%）** ✓。**34 ms は同条件で再現しない** ✓✓。warm 窓は `abg-Aw` で到達 ✓（`worldTicksAtEnd=619` ✓・**n=1975** ✓・**warm p50 1.4195 / p95 3.2226 ms** ✓）。34 ms の出所は **新規 world の chunk 仕事量** ✓（`arenaUploads` 11,792 ↔ 73 ✓・`gameTickMillisMean` 22 ms ↔ 4 ms ✓）。
+
+**run が warm に入らなかった契約（コードで確定 ✓・推測しない）** — `ValidationClient:5232` は `glLessInstalled && !presentedImageAtCapture` のとき**verdict を「要求した dump が書かれた最初の frame」へ延期**し、そうでなければ `judgePictures`→`requestFinish`（**hold を尊重**）へ進む ✓。A1/B1/A2 は `holdUntilTick=620` はあるが **`presentedImageAtCapture` も `dumpPresentedImage` も無い** ✗ ⇒ 延期先が永遠に来ず **watchdog で終了**（`worldTicksAtEnd=241` ✓）。**正しい flag は実コードが読む2つだけ** ✓: `-Dceltium.validation.dumpPresentedImage=true` ✓（`:6297` が world 段の dump を要求 ✓）と `-Dceltium.validation.presentedImageAtCapture=true` ✓（capture で判定 ✓）。**watchdog を無効化して warm へ進める修正はしない** ✓。
+
+**画像の軸（正直に分離 ✓）** — 現在の leg は **`FAILED_PRESENTED_IMAGE`（要求された画像が無い）** ✗ で、これを「黒い」とも「正常」とも読まない ✓。較正/未較正/FAIL を別軸で記録する ✓。
+
+**次の単位（固定）** — (1) 上記2 flag で **画像要求→提示 dump 到達→warm 400..600 の非zero samples を1 run で成立** ✓（失敗なら原因1つだけ修復 ✓）(2) 同条件 A/B/A の **warm p50/p95/p99 と n** ✓＋fresh-world cold を別欄 ✓＋診断税 ON/OFF を対照欄 ✓ (3) 差が残る時だけ warm 区間の **JFR＋既存 counter** で支配項を帰属し、**1つの owner/producer 契約**の関連修正をまとめて実装 ✓（未測定 micro-opt を積まない ✓）(4) 本節を現在状態として維持 ✓。**担当**: main = fixture/plan 現在状態と renderer 正しさ ✓ / `perf-ring` = perf 比較と JFR ✓（一度に1ゲーム ✓・同一 backend 同時編集なし ✓）。
+
+
 > **影対応の後続計画:** [shader-plan.md](shader-plan.md)。**フルVK化＋主要modのshaderless対応が完了してから着手する。** この計画を理由に現在の本体実装を中断・前倒ししない。
 
 > **構造分割の実行計画:** [refactoring-plan.md](refactoring-plan.md)（2026-10-12 作成・ユーザ指示「vulkanterraingpubackend を分割してみんなで編集したほうがいい」に対する単一の分割計画）。
