@@ -263,25 +263,29 @@ publishing {
 
 // A separate test mod drives a fixed world and observes the existing GL FBO.
 // None of its classes or dependencies are part of Celtium's distributable.
+// The optional HEI/JEI fixture must be compiled against the *exact* mod jar used in the
+// runtime acceptance leg. Opt in explicitly for reproducible runs; retain the historical
+// work-directory fallback for earlier acceptance scripts. Neither mode shades HEI/JEI into
+// the published Celtium jar. An incorrect explicit path is an error, not silent partial proof.
+val validationJeiJar = providers.gradleProperty("celtium_validation_jei_jar").orNull?.let { supplied ->
+    file(supplied).also { require(it.isFile) { "celtium_validation_jei_jar is not a file: $supplied" } }
+} ?: file("${rootProject.projectDir.parentFile}/.celtium-work/major-mods")
+    .listFiles()?.firstOrNull { it.name.startsWith("jei_") && it.name.endsWith(".jar") }
+
 val validation = sourceSets.create("validation") {
     java.srcDir("../validation/client/src/main/java")
-    // JEI's recipe screen is exercised only when the mod's jar has been fetched into the work directory. The plugin source
-    // lives in its own directory, so a normal build - and every ordinary run - is unchanged by its absence.
-    val jeiJar = file("${rootProject.projectDir.parentFile}/.celtium-work/major-mods")
-        .listFiles()?.firstOrNull { it.name.startsWith("jei_") && it.name.endsWith(".jar") }
-    if (jeiJar != null) {
+    if (validationJeiJar != null) {
         java.srcDir("../validation/client/src/jei/java")
-        logger.lifecycle("validation client: JEI plugin enabled against ${jeiJar.name}")
+        logger.lifecycle("validation client: JEI/HEI plugin enabled against ${validationJeiJar.name}")
     }
     compileClasspath += sourceSets.main.get().compileClasspath.filter {
         !it.name.startsWith("jabel-javac-plugin-")
     }
 }
 dependencies {
-    // Same condition as the source directory above: the fixture can reach the mod's plugin API only when the jar is present.
-    file("${rootProject.projectDir.parentFile}/.celtium-work/major-mods")
-        .listFiles()?.firstOrNull { it.name.startsWith("jei_") && it.name.endsWith(".jar") }
-        ?.let { add(validation.compileOnlyConfigurationName, files(it)) }
+    // Same exact opt-in jar as the plugin's source set, so the compiled API and the
+    // tested HEI/JEI runtime cannot silently differ.
+    validationJeiJar?.let { add(validation.compileOnlyConfigurationName, files(it)) }
     add(validation.compileOnlyConfigurationName, platform("org.lwjgl:lwjgl-bom:3.4.1"))
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl")
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-opengl")

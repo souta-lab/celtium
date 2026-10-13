@@ -44,6 +44,23 @@ These runs do not newly verify filtered-search interactions, recipe cycling, per
 or arbitrary third-party modpacks. The 2026-10-12 historical reference/candidate findings below remain as
 historical evidence and are superseded for the particular tooltip bug by PR #70's controlled test.
 
+**HEI API tests require an opt-in validation plugin, separate from the HEI mod itself.**
+The normal renderer jar and default validation jar omit `CeltiumJeiPlugin` by design. On a clean worktree,
+passing `-Dceltium.validation.jeiFilterText=diamond` or `-Dceltium.validation.jeiRecipe=true` without
+compiling that plugin yields `ClassNotFoundException`/`jeiRecipeOpened=false`; this is a **fixture packaging
+precondition**, not evidence that HEI's renderer or input failed. Rebuild the validation-only jar against the
+same exact HEI jar installed in the test Prism instance:
+
+```sh
+HEI_JAR=/absolute/path/to/HadEnoughItems_1.12.2-4.31.2.jar
+scripts/build.sh :forge122:validationRemapJar -Pceltium_validation_jei_jar="$HEI_JAR"
+jar tf forge122/build/libs/celtium-validation-client-0.0.4-alpha.jar | grep CeltiumJeiPlugin
+```
+
+The optional plugin is never included in the published Celtium renderer JAR. The legacy work-directory
+`jei_*.jar` opt-in still works for older scripts. Verify the plugin class in the **actual fixture JAR**
+and the mod jar in the **actual game log** before making API-interaction claims.
+
 ## Planned cohort (2026-10-12): the item/recipe mod is HEI, not JEI
 
 Cleanroom's own modpack guide names **HadEnoughItems (HEI)** as the current choice for 1.12.2 and marks JEI
