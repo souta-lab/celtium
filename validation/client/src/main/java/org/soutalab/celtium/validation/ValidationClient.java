@@ -272,6 +272,17 @@ public final class ValidationClient {
      * are still being rebuilt. The capture condition gains this clause so the two runs can be compared.
      */
     private static final int CAPTURE_MAX_P1 = Integer.getInteger("celtium.validation.captureMaxP1", 0);
+    /**
+     * How many finished chunk build results the capture tolerates, or -1 to ignore the field.
+     * <p>
+     * `Chunk Queues: U=` is `buildResults.size()` in Embeddium's RenderSectionManager, so it counts builds that
+     * finished and are still held. Measured 2026-10-13: with the absolute world clock pinned to the same tick
+     * (1200 in both legs) and pendingP1=0 in both, two legs still held 12 and 9 results and their vertex arena
+     * allocations were 45 MiB and 77 MiB - the same tick, a different amount of world built. Default -1 keeps
+     * every existing leg and calibration key where it is.
+     */
+    private static final int CAPTURE_MAX_HELD_BUILDS =
+            Integer.getInteger("celtium.validation.captureMaxHeldBuilds", -1).intValue();
     /** The tick at which {@code built} and {@code sections} give up waiting and capture anyway. */
     private static final int CAPTURE_DEADLINE_TICK =
             Integer.getInteger("celtium.validation.captureDeadlineTick", 400).intValue();
@@ -4235,6 +4246,31 @@ public final class ValidationClient {
     }
 
     /** {@return the debug line's pending rebuild count (P1), or -1 when no queue line is present} */
+    /**
+     * {@return the held build-result count (U) from the chunk queue line, or -1 when no such line is present}.
+     */
+    private static int celtium$heldBuildResults(java.util.List<String> lines) {
+        if (lines == null) {
+            return -1;
+        }
+        java.util.regex.Matcher matcher =
+                java.util.regex.Pattern.compile("Chunk Queues: U=(\\d+)").matcher("");
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            matcher.reset(line);
+            if (matcher.find()) {
+                try {
+                    return Integer.parseInt(matcher.group(1));
+                } catch (NumberFormatException ignored) {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
     private static int celtium$pendingP1(java.util.List<String> lines) {
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("P1=(\\d+)");
         for (String line : lines) {
@@ -4347,6 +4383,10 @@ public final class ValidationClient {
             if (pinPendingP1 >= 0 && pinPendingP1 > CAPTURE_MAX_P1) {
                 return false;
             }
+            int pinHeld = celtium$heldBuildResults(pinLines);
+            if (CAPTURE_MAX_HELD_BUILDS >= 0 && pinHeld >= 0 && pinHeld > CAPTURE_MAX_HELD_BUILDS) {
+                return false;
+            }
             if (!celtium$worldClockReached()) {
                 return false;
             }
@@ -4354,7 +4394,7 @@ public final class ValidationClient {
                 return false;
             }
             celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
-                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ")";
+                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ", held=" + pinHeld + ")";
             // This block counted and named the settled state but never returned, so the value it wrote was
             // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
             // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
