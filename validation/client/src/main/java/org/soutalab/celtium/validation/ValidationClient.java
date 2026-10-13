@@ -1622,6 +1622,7 @@ public final class ValidationClient {
     // that tick and the reload would run dozens of times instead of once (audit S22).
     private boolean celtium$reloaded;
     private boolean celtium$resized;
+    private boolean celtium$worldTimeHeld;
     private boolean celtium$weatherShown;
     private boolean celtium$particlesSpawned;
     private boolean celtium$glyphParticlesSpawned;
@@ -4622,6 +4623,16 @@ public final class ValidationClient {
             // the capture is what makes that pair possible, and it is a property rather than the new default because the
             // other scenes are calibrated without the screen.
             mc.displayGuiScreen(null);
+        }
+        // A scene whose world time advances between runs is not the same scene: two runs of one jar had identical
+        // pose, dimension and entity count and differed on 16% of their pixels, and the only value that differed was
+        // totalWorldTime (219 against 229). Hold the clock so the captured frame is comparable at all.
+        if (!celtium$worldTimeHeld && Boolean.getBoolean("celtium.validation.fixedWorldTime") && mc.world != null) {
+            celtium$worldTimeHeld = true;
+            mc.world.getGameRules().setOrCreateGameRule("doDaylightCycle", "false");
+            mc.world.getWorldInfo().setWorldTime(6000L);
+            mc.world.setTotalWorldTime(6000L);
+            System.out.println("celtium validation: world time held at 6000 for a comparable capture");
         }
         if (worldTicks >= 100 && !celtium$resized && Boolean.getBoolean("celtium.validation.resize")) {
             celtium$resized = true;
