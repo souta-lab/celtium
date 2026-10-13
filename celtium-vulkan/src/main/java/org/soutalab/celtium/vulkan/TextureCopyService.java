@@ -992,7 +992,7 @@ public final class TextureCopyService {
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
-            this.host.context().endCommands(commands);
+            this.host.context().endCommands(commands, "texture-copy");
             org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
             if (org.lwjgl.vulkan.VK10.vkMapMemory(this.host.context().device(), memory, 0, bytes, 0, mapped)
                     != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
@@ -1113,7 +1113,7 @@ public final class TextureCopyService {
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
-            this.host.context().endCommands(commands);
+            this.host.context().endCommands(commands, "texture-copy");
 
             org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
             if (org.lwjgl.vulkan.VK10.vkMapMemory(this.host.context().device(), memory, 0, bytes, 0, mapped)

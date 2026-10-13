@@ -8631,6 +8631,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " bootstrapQueueWaitMillis=" + VulkanContext.bootstrapQueueWaitMillis
                 + " bootstrapQueueWaitWorstMillis=" + VulkanContext.bootstrapQueueWaitWorstMillis
                 + " bootstrapSubmitWaits=" + VulkanContext.bootstrapSubmitWaits
+                + " submitReasons=" + this.context.submitReasons()
                 + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
                 + " " + this.context.uploadBatchSummary()

@@ -786,6 +786,25 @@ public final class VulkanContext {
                 + " deviceIdleFailures=" + deviceIdleFailures;
     }
 
+    /** Per-caller count of command buffers that take the one-copy submit path, so the path can be attributed. */
+    private final java.util.Map<String, Integer> submitReasons = new java.util.LinkedHashMap<String, Integer>();
+
+    /**
+     * {@code endCommands} with the caller named. The one-copy path submits and waits per call, so "which caller
+     * issues them" is the question that decides what to fix; the name is recorded here rather than inferred from a
+     * stack walk on the hot path.
+     */
+    public void endCommands(VkCommandBuffer commandBuffer, String reason) {
+        Integer seen = this.submitReasons.get(reason);
+        this.submitReasons.put(reason, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+        endCommands(commandBuffer, "context-internal");
+    }
+
+    /** {@return the per-caller counts of the one-copy submit path} */
+    public java.util.Map<String, Integer> submitReasons() {
+        return this.submitReasons;
+    }
+
     public void endCommands(VkCommandBuffer commandBuffer) {
         if (commandBuffer == null) {
             throw new IllegalArgumentException("commandBuffer must not be null");

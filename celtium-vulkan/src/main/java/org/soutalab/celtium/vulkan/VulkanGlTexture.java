@@ -2872,7 +2872,7 @@ public final class VulkanGlTexture {
             vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
         }
         // Submitted and waited for by the context helper, so the staging buffer holds the level when this returns.
-        context.endCommands(commands);
+        context.endCommands(commands, "texture-upload");
         if (!stagingCoherent) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkMappedMemoryRange.Buffer range = VkMappedMemoryRange.calloc(1, stack);
@@ -3256,7 +3256,7 @@ public final class VulkanGlTexture {
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
         }
-        context.endCommands(commands);
+        context.endCommands(commands, "texture-upload");
 
         GlLevel gl = readGlLevel0(glTextureId, GL_TEXTURE_2D);
         try {

@@ -133,7 +133,7 @@ public final class VulkanBuffer {
         } finally {
             // Same shape as the backend's own readback: whatever was recorded is submitted and waited for, and the
             // command buffer is freed, even when recording threw halfway through.
-            this.context.endCommands(commandBuffer);
+            this.context.endCommands(commandBuffer, "buffer-readback");
         }
     }
 
@@ -184,7 +184,7 @@ public final class VulkanBuffer {
                 copy.get(0).srcOffset(0L).dstOffset(0L).size(oldSize);
                 vkCmdCopyBuffer(commandBuffer, oldHandle, this.handle, copy);
             }
-            this.context.endCommands(commandBuffer);
+            this.context.endCommands(commandBuffer, "buffer-readback");
         } catch (RuntimeException | Error error) {
             // The contents were not copied, so the new buffer is undefined: drop it and stay on the intact one.
             // The old buffer may still be referenced by commands submitted in an earlier frame, so the queue is

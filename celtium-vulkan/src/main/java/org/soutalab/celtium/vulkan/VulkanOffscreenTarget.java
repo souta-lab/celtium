@@ -231,7 +231,7 @@ public final class VulkanOffscreenTarget {
             region.get(0).imageOffset().set(0, 0, 0);
             region.get(0).imageExtent().set(width, height, 1);
             vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readbackBuffer, region);
-            context.endCommands(commands);
+            context.endCommands(commands, "offscreen-target");
         }
         return readBackMatches(red, green, blue, alpha);
     }
