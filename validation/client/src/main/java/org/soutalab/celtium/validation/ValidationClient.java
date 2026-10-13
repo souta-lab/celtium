@@ -5828,6 +5828,24 @@ public final class ValidationClient {
     }
 
     /**
+     * {@return the presented frame the renderer recorded for this evidence's path}, or null when it cannot say.
+     * <p>
+     * The swapchain counts its own successful writes per file name and the backend names the present that wrote
+     * them, so the answer is the frame the file holds rather than whichever frame the observation happens to run
+     * on - and a dump written for a different request cannot be taken as this one's, because the answer is asked
+     * for this file's name. Null means "the backend predates the record" and the caller falls back to the counter
+     * at observation.
+     */
+    private Integer celtium$presentedDumpWrittenFrame(PictureEvidence evidence) {
+        Object frame = celtium$backendCall("celtium$presentedDumpWrittenFrameFor",
+                new Class<?>[] { String.class }, evidence.image.getFileName().toString());
+        if (frame instanceof Integer && ((Integer) frame).intValue() > 0) {
+            return (Integer) frame;
+        }
+        return null;
+    }
+
+    /**
      * Samples both frame counters at the start of a world, so the presented-frame assertion can be scoped to the world
      * whose picture it judges.
      * <p>
@@ -6391,10 +6409,11 @@ public final class ValidationClient {
      * Observes the presented-image requests that have been written, and completes their identities.
      * <p>
      * This is where the frame becomes a fact rather than an inference. The request was made inside the capture's frame
-     * and is consumed by the next present, so when the file appears the renderer's presented-frame counter must read
-     * exactly one more than it did at the request. If it reads anything else, a second present intervened and the frame
-     * the file holds cannot be named: the mismatch is recorded and the verdict refuses the picture instead of judging
-     * whatever happens to be at that path.
+     * and is consumed by the next present; the renderer records which presented frame wrote each file, so the identity
+     * is taken from the write itself when that record exists, and from the counter at observation otherwise - which
+     * must then read exactly one more than it did at the request, because several presents can pass between writes
+     * inside one observation window. A record or counter that names a different frame is a different frame: the
+     * mismatch is recorded and the verdict refuses the picture instead of judging whatever happens to be at that path.
      */
     private void celtium$completePendingDumps() {
         if (celtium$pendingDumps.isEmpty()) {
@@ -6415,17 +6434,38 @@ public final class ValidationClient {
             int expectedImmediate = evidence.presentedFramesAtRequest;
             int expected = observed == expectedImmediate ? expectedImmediate : expectedQueued;
             evidence.completedAtTick = worldTicks;
-            if (observed != expected) {
-                evidence.completionError = "the image appeared while the renderer's presented-frame counter read "
-                        + observed + ", not the " + expected + " this request expected, so the frame it holds cannot be"
-                        + " named";
+            // The renderer's own record of which present wrote this file is the binding when it exists: this method
+            // runs once per render tick, and several presents fit inside that window - measured at startup, where the
+            // request's file first existed while the counter read 16 - so the counter at observation is a later frame
+            // than the one the file holds. The written-frame answer stays meaningful; the observed counter is the
+            // fallback for a backend that predates it.
+            Integer written = celtium$presentedDumpWrittenFrame(evidence);
+            boolean matched;
+            if (written != null) {
+                matched = written.intValue() == expectedQueued || written.intValue() == expectedImmediate;
+                if (!matched) {
+                    evidence.completionError = "the renderer's own record says this file was written on presented"
+                            + " frame " + written + ", not the " + expectedQueued
+                            + " this request expected, so the frame it holds cannot be named";
+                } else {
+                    evidence.presentedFrame = written.intValue();
+                    evidence.worldTick = evidence.requestedAtTick;
+                    evidence.worldFrames = evidence.worldFramesAtRequest;
+                }
             } else {
-                evidence.presentedFrame = observed;
-                evidence.worldTick = evidence.requestedAtTick;
-                evidence.worldFrames = evidence.worldFramesAtRequest;
+                matched = observed == expected;
+                if (!matched) {
+                    evidence.completionError = "the image appeared while the renderer's presented-frame counter read "
+                            + observed + ", not the " + expected + " this request expected, so the frame it holds cannot be"
+                            + " named";
+                } else {
+                    evidence.presentedFrame = observed;
+                    evidence.worldTick = evidence.requestedAtTick;
+                    evidence.worldFrames = evidence.worldFramesAtRequest;
+                }
             }
             celtium$readAndHash(evidence);
-            if (observed != expected) {
+            if (!matched) {
                 // A request that has already been answered keeps that answer. The renderer refreshes the last requested
                 // path every fortieth presented frame, so a later poll sees the same evidence again on a different
                 // frame counter; clearing it there would turn a completed observation back into "nothing was written".

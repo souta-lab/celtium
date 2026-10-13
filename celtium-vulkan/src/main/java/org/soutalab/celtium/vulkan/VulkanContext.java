@@ -91,6 +91,14 @@ public final class VulkanContext {
     private static final int REQUIRED_API_MAJOR = 1;
     private static final int REQUIRED_API_MINOR = 2;
 
+    /**
+     * Whether a {@code VK_PHYSICAL_DEVICE_TYPE_CPU} device may be selected. Default off: a software ICD (lavapipe)
+     * exists alongside every real GPU, and choosing it silently would render slowly rather than report the
+     * no-matching-device failure. {@code -Dceltium.vulkan.allowCpuDevice=true} is for test legs on hosts with no
+     * DRM device at all, where the software rasterizer is the intended device.
+     */
+    private static final boolean ALLOW_CPU_DEVICE = Boolean.getBoolean("celtium.vulkan.allowCpuDevice");
+
     private static final String VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
 
     /** Vulkan requires buffer copy offsets and sizes to be a multiple of 4. */
@@ -1723,7 +1731,11 @@ public final class VulkanContext {
                 if (openGl != null && !openGl.deviceUuids.contains(uuid)) {
                     continue;
                 }
-                if (properties.properties().deviceType() == VK_PHYSICAL_DEVICE_TYPE_CPU) {
+                if (properties.properties().deviceType() == VK_PHYSICAL_DEVICE_TYPE_CPU
+                        && !ALLOW_CPU_DEVICE) {
+                    // A CPU device is never chosen by default: on a real system a software ICD sits alongside the
+                    // GPUs, and falling back to it would render slowly rather than report the failure. Test legs
+                    // that intend it (a host with no DRM device at all) opt in explicitly.
                     continue;
                 }
                 int apiVersion = properties.properties().apiVersion();
