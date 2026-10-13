@@ -4190,6 +4190,21 @@ public final class ValidationClient {
     }
 
     /** The largest per-pass section count in the renderer's debug strings, or -1 when no such line is present. */
+    /**
+     * {@return whether the capture-time screen state is complete}.
+     * <p>
+     * The JEI variant drives its search box over three once-flags (before / typed / after), so a capture that
+     * fires while they are still arriving photographs a different screen each run: measured 2026-10-13, two
+     * legs with identical flags reached the same section count with pendingP1=0 and still differed by
+     * 0.035368 against 0.037254 in black fraction and 10,681 against 11,435 in distinct colours. This is the
+     * condition every capture path must honour, not only the section-count one - the HEI leg fires through the
+     * pinned path, and a clause added to the count path alone measured no effect at all (heiref3 fired
+     * 'tick-sections-deadline (listed 45 of 0)' with the clause already in the tree).
+     */
+    private boolean celtium$jeiSettled() {
+        return !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
+    }
+
     /** {@return the debug line's pending rebuild count (P1), or -1 when no queue line is present} */
     private static int celtium$pendingP1(java.util.List<String> lines) {
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("P1=(\\d+)");
@@ -4282,7 +4297,9 @@ public final class ValidationClient {
         // PIN_SECTIONS_STABLE_FRAMES consecutive frames, at or below PIN_SECTIONS - and reports the value it settled
         // at, so a comparison that quotes two legs can say what world each of them held.
         if (PIN_SECTIONS > 0) {
-            int listed = celtium$listedSections(celtium$rendererDebugLines());
+            java.util.List<String> pinLines = celtium$rendererDebugLines();
+            int listed = celtium$listedSections(pinLines);
+            int pinPendingP1 = celtium$pendingP1(pinLines);
             if (listed != this.celtium$pinnedSectionsSeen) {
                 this.celtium$pinnedSectionsSeen = listed;
                 this.celtium$pinnedSectionsStableFrames = 0;
@@ -4294,8 +4311,24 @@ public final class ValidationClient {
                     || this.celtium$pinnedSectionsStableFrames < PIN_SECTIONS_STABLE_FRAMES) {
                 return false;
             }
+            // A stable section count is not a settled world: measured 2026-10-13, heipin2 fired here at
+            // "pinned-sections (listed 39 stable for 20 frames)" with P1=058 - 58 chunk rebuilds still
+            // outstanding - so the picture it photographed was still moving. The count path already refuses
+            // that state; this path promises the settled world in its own name, so it refuses it too.
+            if (pinPendingP1 >= 0 && pinPendingP1 > CAPTURE_MAX_P1) {
+                return false;
+            }
+            if (!this.celtium$jeiSettled()) {
+                return false;
+            }
             celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
-                    + this.celtium$pinnedSectionsStableFrames + " frames)";
+                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ")";
+            // This block counted and named the settled state but never returned, so the value it wrote was
+            // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
+            // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
+            // and the verdict still came from "tick-sections-deadline (listed 36 of 0)". The pinned path was
+            // dead - it could never be the condition that fired. Returning here is what makes it live.
+            return true;
         }
         if ("sections".equals(CAPTURE_CONDITION)) {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
@@ -4307,7 +4340,8 @@ public final class ValidationClient {
                 return true;
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
-                celtium$captureConditionFired = "sections-deadline (listed " + listed + " of " + CAPTURE_SECTIONS + ")";
+                celtium$captureConditionFired = "sections-deadline (listed " + listed + " of "
+                        + CAPTURE_SECTIONS + ", jeiSettled=" + this.celtium$jeiSettled() + ")";
                 return true;
             }
             return false;
@@ -4326,7 +4360,7 @@ public final class ValidationClient {
             // section count and the same pendingP1=0, yet their black fraction was 0.035368 against 0.037254
             // and their distinct colours 10,681 against 11,435. The capture therefore waits for the JEI state
             // to be complete when the variant is in use.
-            boolean jeiSettled = !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
+            boolean jeiSettled = this.celtium$jeiSettled();
             if (CAPTURE_SECTIONS > 0 && tickListed >= CAPTURE_SECTIONS
                     && (tickP1 < 0 || tickP1 <= CAPTURE_MAX_P1) && jeiSettled) {
                 celtium$captureConditionFired = "tick-sections-target (listed " + tickListed
@@ -4335,7 +4369,7 @@ public final class ValidationClient {
             }
             if (worldTicks >= CAPTURE_DEADLINE_TICK) {
                 celtium$captureConditionFired = "tick-sections-deadline (listed " + tickListed + " of "
-                        + CAPTURE_SECTIONS + ")";
+                        + CAPTURE_SECTIONS + ", jeiSettled=" + this.celtium$jeiSettled() + ")";
                 return true;
             }
             return false;
@@ -5089,6 +5123,16 @@ public final class ValidationClient {
             report.addProperty("captureMinWorldFrames", Integer.valueOf(CAPTURE_MIN_WORLD_FRAMES));
             report.addProperty("captureListedSections", Integer.valueOf(celtium$listedSections(captureLines)));
             report.addProperty("captureBuildState", celtium$buildState(captureLines));
+            // The pinned path needs PIN_SECTIONS_STABLE_FRAMES consecutive frames at or below PIN_SECTIONS,
+            // and until now the report did not say how far it got. Measured 2026-10-13: the JEI variant runs 406
+            // ticks with listed 43-45 against pinSections=64, so the condition looks satisfied for far longer
+            // than the required 64 frames, yet the capture still fires through tick-sections-deadline. Without
+            // this counter the report cannot separate "the pin never counted" from "the pin counted and the fire
+            // condition is elsewhere" - the existing instruments cannot answer the question, so this one is added
+            // and named here.
+            report.addProperty("capturePinnedStableFrames", Integer.valueOf(this.celtium$pinnedSectionsStableFrames));
+            report.addProperty("capturePinnedStableFramesRequired", Integer.valueOf(PIN_SECTIONS_STABLE_FRAMES));
+            report.addProperty("capturePinnedSectionsLimit", Integer.valueOf(PIN_SECTIONS));
             report.addProperty("captureWorldFrames", Integer.valueOf(worldFrames));
         } else if (celtium$worldStageTaken) {
             // The world stage of this scene is already captured. The capture body used to run again on the next frame -
