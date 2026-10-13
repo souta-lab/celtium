@@ -7,7 +7,7 @@
 **ブランチと成果物（実測 ✓）**
 - `main` = **`7c0529082`**（**PR #66**「queued loading frame を提示する」✓ merge 20:46 JST）。その下に **`0c1e82d9b` = PR #67**（**DynamicTexture の GL45 直接照会を除去** ✓・BH-35 の部分 ✓）。
 - 私の作業ブランチ = **`fix/native-validation-screenshot-20261013`**（**PR #64 = review-ready ✓**）。**main を merge 済み** ✓（`c40a81965` ✓・`ValidationClient` は自動 merge ✓・`docs/plan.md` は行を統合して解決 ✓）。
-- 再 build 済み jar（PR #66/#67 込み ✓）= **sha256 先頭 `b4bc6c3f6ea64f2fbd0e2653`** ✓。**以後の leg はこの hash で記録** ✓。
+- 再 build 済み jar（PR #66/#67 込み ✓）: `celtium-forge-mc1.12.2-0.0.4-alpha.jar` **sha256 先頭 `b4bc6c3f6ea64f2fbd0e2653`** ✓／`celtium-validation-client-0.0.4-alpha.jar` **sha256 先頭 `706fbb981d0e3083c370a278`** ✓。**以後の leg はこの2つの hash で記録** ✓。
 
 **受入状況（区別して記載 ✓）**
 | 項目 | 状態 |
@@ -326,3 +326,5 @@
 | **round 648: GUI 欠落の仮説を原典から精密化 ✓✓（menu は「色を clear しない」経路 ✓・in-world は「screen を presented に重ねる」段が無い ✓）** | **GUI 担当へ渡す焦点が確定 ✓** | **原典（✓✓・`GllessFrameTarget.java:962-981`）**: **`clearOffTarget()` は `defaultPair.clearDepthOnly(command)` のみ** ✓ ⇒ **既定フレームバッファの色は一切 clear しない** ✓ と明記され、**その理由が「world 未ロード時の `EntityRenderer.updateCameraAndRender` は `clear(256)`＝depth のみで `currentScreen.drawScreen` へ進む」** ✓（**menu の panorama が成立するのはこのため** ✓・**色を clear すると 28% opaque の黒になる** ✓ と実測つきで記録 ✓）。**仮説（✓✓・実測と整合）**: **menu 経路は「screen が既定フレームバッファに直接描かれ、色を消さない」** ✓ のに対し、**in-world 経路では world を presented に描いた後で `currentScreen` を presented に重ねる段が無い** ✓ ⇒ **私の実測（画面を開いても presented が world と byte 同一 ✓）と一致** ✓✓。**GUI 担当への焦点（✓）**: **「in-world のとき `currentScreen.drawScreen` の結果が presented（既定フレームバッファ）に載るか」** ✓ を1点で確認すればよい ✓（**menu 側は既に成立しているので、同じ扱いを in-world に広げる形** ✓）。**注記（✓・確定ではない）**: **これは候補であり確定ではない** ✓（**発火は run で確認する** ✓・**私はコードを触らない** ✓）。|
 
 | **round 649: 冒頭表と実物の整合を監査 ✓✓（jar hash・main HEAD・fixture jar が一致 ✓）** | **表と実装の乖離なし ✓・`heipin9/10` は待機 ✓** | **監査（✓✓）**: **冒頭表の jar sha256 先頭 `b4bc6c3f6ea64f2fbd0e2653`** ✓ ⇔ **実物 `celtium-forge-mc1.12.2-0.0.4-alpha.jar` が一致** ✓✓・**表の `main` = `7c0529082`** ✓ ⇔ **`origin/main` が一致** ✓✓・**私のブランチ tip `628b67259`** ✓ ⇒ **表と実物の乖離なし** ✓（**目標 (h)「docs・実装・配布物の一致」の一部を実測で確認** ✓）。**待機（✓）**: **`heipin9`／`heipin10` は他担当の `gui-leg.sh` が GPU を保持しているため待機** ✓（**`gpu.lock` で直列化** ✓）・**PR #64 は `probe` pass ✓／`minecraft-1122` pending** ✗。|
+
+| **round 651: round 650 の「fixture jar hash 不一致」は誤読と訂正 ✓✓（旧値は歴史的な round 行の中 ✓・表は一致していた ✓）** | **表に fixture jar hash を追記して監査を完了 ✓** | **訂正（✓✓・自分の誤り）**: **`cf867ab66f8060fd1549` は冒頭表ではなく round 576 の行（`:245` ✓）の中** ✓ ⇒ **歴史的な記録なので更新しないのが正しい** ✓ ⇒ **round 650 の「不一致」は誤読** ✗ ⇒ **表と実物は一致していた** ✓✓（**表は forge jar の hash のみを持ち、それが `b4bc6c3f6ea64f2fbd0e2653` で実物と一致** ✓）。**改善（✓）**: **fixture jar の hash（`706fbb981d0e3083c370a278` ✓）を表に追記** ✓ ⇒ **2つの jar を hash で区別できる** ✓（**以後の leg の帰属が明確** ✓）。**規律（✓✓）**: **監査で見つけた「不一致」も、まず所在を確認する** ✓（**歴史行の値を現在値と取り違えない** ✓・**誤りは誤りとして記録する** ✓）。|
