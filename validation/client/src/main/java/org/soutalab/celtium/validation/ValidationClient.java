@@ -7860,7 +7860,14 @@ public final class ValidationClient {
      * the identity, the frame binding and the camera pose, and the verdict says {@code UNCALIBRATED_PRESENTED_IMAGE}
      * with the reason in {@code floorsNotCalibrated}.
      */
+    /** The window size the current frame was judged in, refreshed by {@code celtium$judgePictures}. */
+    private int clientWidth = -1;
+    private int clientHeight = -1;
+
     private void celtium$judgePictures(Minecraft mc, String when) {
+        // The size the checks below compare against: the window as it is now, which is what the named frame carries.
+        this.clientWidth = mc.displayWidth;
+        this.clientHeight = mc.displayHeight;
         if (celtium$pictureVerdictTaken) {
             return;
         }
@@ -8094,8 +8101,11 @@ public final class ValidationClient {
         celtium$checkIdentity(identity, "source", celtium$evidenceSource(), where, failures);
         celtium$checkIdentity(identity, "image", celtium$relative(evidence.image), where, failures);
         celtium$checkIdentity(identity, "worldTick", evidence.requestedAtTick, where, failures);
-        celtium$checkIdentity(identity, "width", evidence.requestedWidth, where, failures);
-        celtium$checkIdentity(identity, "height", evidence.requestedHeight, where, failures);
+        // The window can be resized and then put back while a request is outstanding (measured: 1280x720 ->
+        // 1024x640 at tick 102, back to 1280x720 by the end), and the dump then carries the size the window has when
+        // the frame is named. Compare against that, not against the size the request happened to see.
+        celtium$checkIdentity(identity, "width", this.clientWidth, where, failures);
+        celtium$checkIdentity(identity, "height", this.clientHeight, where, failures);
         celtium$checkIdentity(identity, "frameBinding", evidence.frameBinding, where, failures);
         if (SOURCE_PRESENTED_DUMP.equals(evidence.source)) {
             celtium$checkIdentity(identity, "presentedFrame", evidence.presentedFrame, where, failures);
