@@ -6302,7 +6302,12 @@ public final class ValidationClient {
             }
             return;
         }
-        celtium$requestPresentedDump(mc, "world");
+        // The request builds the evidence for this stage; without putting it in the map the judge reads null for
+        // "world" and reports "no picture was requested" even though the dump was written.
+        PictureEvidence world = celtium$requestPresentedDump(mc, "world");
+        if (world != null) {
+            celtium$evidence.put("world", world);
+        }
         report.addProperty("presentedDumpRequestedAtCapture", Boolean.TRUE);
     }
 
