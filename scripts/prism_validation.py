@@ -8,6 +8,7 @@ such as the official Cleanroom instance; it is not a general Minecraft launcher.
 
 import argparse
 import configparser
+import fcntl
 from contextlib import nullcontext
 import hashlib
 import json
@@ -185,6 +186,49 @@ def claim_pid_file(lock):
             temporary.unlink(missing_ok=True)
 
 
+
+def game_slot_owner(lock):
+    try:
+        holder = int(lock.read_text(encoding="ascii").strip() or "0")
+    except (OSError, ValueError):
+        return 0, False
+    if holder > 0:
+        try:
+            os.kill(holder, 0)
+            return holder, True
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            return holder, True
+    return holder, False
+
+
+def try_claim_game_slot(lock):
+    """Serialize stale inspection/replacement as well as initial publication."""
+    # Keep this guard inode: unlinking it would let old and new openers hold distinct flock objects.
+    with (lock.parent / ".owner.guard").open("a") as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        try:
+            claim_pid_file(lock)
+            return True, os.getpid()
+        except FileExistsError:
+            holder, alive = game_slot_owner(lock)
+            if alive:
+                return False, holder
+            print(f"Reclaiming the game slot from pid {holder}, which is gone")
+            lock.unlink(missing_ok=True)
+            claim_pid_file(lock)
+            return True, os.getpid()
+
+
+def release_game_slot(lock):
+    """A runner can release only its own owner record."""
+    with (lock.parent / ".owner.guard").open("a") as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        holder, _ = game_slot_owner(lock)
+        if holder == os.getpid():
+            lock.unlink(missing_ok=True)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("instance", type=Path, help="Prism instance directory (parent of minecraft/)")
@@ -318,36 +362,18 @@ def main():
     lock = slot / "owner.pid"
     deadline = time.monotonic() + args.slot_wait
     while True:
-        try:
-            claim_pid_file(lock)
+        claimed, holder = try_claim_game_slot(lock)
+        if claimed:
             break
-        except FileExistsError:
-            try:
-                holder = int(lock.read_text(encoding="ascii").strip() or "0")
-            except (OSError, ValueError):
-                holder = 0
-            alive = False
-            if holder > 0:
-                try:
-                    os.kill(holder, 0)
-                    alive = True
-                except ProcessLookupError:
-                    alive = False
-                except PermissionError:
-                    alive = True
-            if not alive:
-                print(f"Reclaiming the game slot from pid {holder}, which is gone")
-                lock.unlink(missing_ok=True)
-                continue
-            if time.monotonic() >= deadline:
-                parser.error(f"the game slot is held by pid {holder} and --slot-wait ({args.slot_wait}s) expired; "
-                             "one instance at a time is a measurement requirement, not a courtesy")
-            print(f"Waiting for the game slot (held by pid {holder}) ...")
-            time.sleep(5)
+        if time.monotonic() >= deadline:
+            parser.error(f"the game slot is held by pid {holder} and --slot-wait ({args.slot_wait}s) expired; "
+                         "one instance at a time is a measurement requirement, not a courtesy")
+        print(f"Waiting for the game slot (held by pid {holder}) ...")
+        time.sleep(5)
     try:
         return run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser)
     finally:
-        lock.unlink(missing_ok=True)
+        release_game_slot(lock)
 
 
 def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser):

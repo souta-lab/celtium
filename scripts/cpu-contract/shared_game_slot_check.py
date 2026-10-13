@@ -27,6 +27,15 @@ def contender(lock, barrier, release, results):
         release.wait(timeout=5)
 
 
+def reclaim_contender(lock, barrier, release, results):
+    barrier.wait(timeout=5)
+    claimed, holder = runner.try_claim_game_slot(Path(lock))
+    results.put(("winner" if claimed else "busy", holder))
+    release.wait(timeout=5)
+    runner.release_game_slot(Path(lock))
+
+
+
 class SharedGameSlotCheck(unittest.TestCase):
     def test_git_worktrees_have_one_slot(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,6 +86,65 @@ class SharedGameSlotCheck(unittest.TestCase):
                         worker.join()
                 for worker in workers:
                     self.assertEqual(worker.exitcode, 0)
+
+    def test_competing_stale_reclaimers_cannot_replace_the_new_owner(self):
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "owner.pid"
+            expired = context.Process(target=lambda: None)
+            expired.start()
+            expired.join(timeout=5)
+            self.assertEqual(expired.exitcode, 0)
+            lock.write_text(str(expired.pid))
+            barrier = context.Barrier(8)
+            release = context.Event()
+            results = context.Queue()
+            workers = [context.Process(target=reclaim_contender, args=(str(lock), barrier, release, results))
+                       for _ in range(8)]
+            for worker in workers:
+                worker.start()
+            try:
+                outcomes = [results.get(timeout=5) for _ in workers]
+                winners = [pid for kind, pid in outcomes if kind == "winner"]
+                self.assertEqual(len(winners), 1)
+                self.assertEqual(int(lock.read_text()), winners[0])
+                self.assertTrue(all(pid == winners[0] for _, pid in outcomes))
+            finally:
+                release.set()
+                for worker in workers:
+                    worker.join(timeout=5)
+                    if worker.is_alive():
+                        worker.terminate()
+                        worker.join()
+                for worker in workers:
+                    self.assertEqual(worker.exitcode, 0)
+            self.assertFalse(lock.exists())
+
+    def test_release_does_not_remove_a_different_live_owner(self):
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "owner.pid"
+            released = context.Event()
+            worker = context.Process(target=lambda: released.wait(timeout=5))
+            worker.start()
+            try:
+                lock.write_text(str(worker.pid))
+                runner.release_game_slot(lock)
+                self.assertEqual(int(lock.read_text()), worker.pid)
+            finally:
+                released.set()
+                worker.join(timeout=5)
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join()
+
+    def test_owner_releases_its_own_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "owner.pid"
+            self.assertEqual(runner.try_claim_game_slot(lock), (True, os.getpid()))
+            runner.release_game_slot(lock)
+            self.assertFalse(lock.exists())
+            self.assertTrue((lock.parent / ".owner.guard").exists())
 
     def test_existing_owner_is_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:
