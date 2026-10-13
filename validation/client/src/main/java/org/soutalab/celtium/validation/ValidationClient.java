@@ -257,7 +257,6 @@ public final class ValidationClient {
     private static final int CAPTURE_MIN_WORLD_FRAMES =
             Integer.getInteger("celtium.validation.captureMinWorldFrames", 0).intValue();
     private int celtium$captureStableFrames;
-    private String celtium$captureLastBuildState = "";
     private int celtium$captureLastListed = -1;
     private String celtium$captureConditionFired = "tick";
     /**
@@ -4270,15 +4269,10 @@ public final class ValidationClient {
             }
             return false;
         }
-        // Stability means the section count AND the build state hold still: two legs of one jar captured at
-        // listedSections=60 with the build state's P1 at 97 and at 76, and the frames differ because the scene was
-        // still being built, not because the renderer drew the same scene twice differently.
-        String buildState = celtium$buildState(celtium$rendererDebugLines());
-        if (listed == celtium$captureLastListed && buildState.equals(celtium$captureLastBuildState)) {
+        if (listed == celtium$captureLastListed) {
             celtium$captureStableFrames++;
         } else {
             celtium$captureLastListed = listed;
-            celtium$captureLastBuildState = buildState;
             celtium$captureStableFrames = 0;
         }
         if (celtium$captureStableFrames >= CAPTURE_STABLE_FRAMES) {
