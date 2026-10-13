@@ -1662,10 +1662,14 @@ public final class VulkanTextureRegistry {
         if (glTextureId == 0) {
             return null;
         }
+        // One box per lookup: this method used to run Integer.valueOf at every one of its map gets - up to ten on the
+        // stale path - on a call the immediate path makes twice per group. Names past the Integer cache (-128..127)
+        // allocate each time, so the single box is the win, not the lookups it keys.
+        Integer id = Integer.valueOf(glTextureId);
         // Published images are resolved before every other source: their content is live (the renderer is writing
         // that image right now), so no announcement and no captured upload could describe it, and a mirror built
         // from either would be a second image under a name that already stands for the frame's own.
-        VulkanGlTexture external = this.externalImages.get(Integer.valueOf(glTextureId));
+        VulkanGlTexture external = this.externalImages.get(id);
         if (external != null) {
             HIT_CALLS++;
             return external;
@@ -1677,30 +1681,30 @@ public final class VulkanTextureRegistry {
         // Hoisting it costs one map lookup on a path that already does several, and the method itself returns
         // immediately when nothing moved.
         if (SAMPLER_CONFIRM_EARLY) {
-            Entry samplerEntry = this.entries.get(Integer.valueOf(glTextureId));
+            Entry samplerEntry = this.entries.get(id);
             if (samplerEntry != null) {
                 samplerEntry.texture.confirmSamplerStateFromRecord(glTextureId);
             }
         }
         // The ownership path: when the upload hook has handed over the image this texture is being filled with, and the
         // mirrors are not copying GL's mip levels (which would need the readback), the mirror is built from those pixels.
-        java.awt.image.BufferedImage announced = this.announcedImages.get(Integer.valueOf(glTextureId));
+        java.awt.image.BufferedImage announced = this.announcedImages.get(id);
         if (announced != null) {
             // The conversion is 1.17 ms per call and it ran on almost every batch: the announcement stayed pending, so the
             // same image was turned into RGBA again and again. A consumed generation means the mirror already holds these
             // pixels, and this lookup is then a plain hit.
-            Integer current = this.announcedGeneration.get(Integer.valueOf(glTextureId));
-            Integer consumed = this.consumedGeneration.get(Integer.valueOf(glTextureId));
-            if (current != null && current.equals(consumed) && this.entries.get(Integer.valueOf(glTextureId)) != null) {
+            Integer current = this.announcedGeneration.get(id);
+            Integer consumed = this.consumedGeneration.get(id);
+            if (current != null && current.equals(consumed) && this.entries.get(id) != null) {
                 ANNOUNCED_SKIPS++;
                 HIT_CALLS++;
-                return this.entries.get(Integer.valueOf(glTextureId)).texture;
+                return this.entries.get(id).texture;
             }
             long announcedStart = System.nanoTime();
             try {
                 VulkanGlTexture converted = this.fromImage(glTextureId, announced, nearestFilter);
                 if (converted != null) {
-                    this.consumedGeneration.put(Integer.valueOf(glTextureId), current);
+                    this.consumedGeneration.put(id, current);
                     return converted;
                 }
                 // The announcement could not become an image - an unreadable size, a buffer that would not fit, a
@@ -1712,14 +1716,14 @@ public final class VulkanTextureRegistry {
                 ANNOUNCED_CALLS++;
             }
         }
-        Entry existing = this.entries.get(glTextureId);
+        Entry existing = this.entries.get(id);
         if (existing != null) {
             // The confirmation runs at the head of this method (BH-23) so the announcement path cannot skip it; with
             // the measurement control off it runs here instead, which is the pre-fix order.
             if (!SAMPLER_CONFIRM_EARLY) {
                 existing.texture.confirmSamplerStateFromRecord(glTextureId);
             }
-            if (this.staleIds.remove(Integer.valueOf(glTextureId))) {
+            if (this.staleIds.remove(id)) {
                 if (canSkipReadback(glTextureId)) {
                     // The write that made this texture stale announced its pixels, and they are already in this image:
                     // the refresh the direct path skips must be skipped here too, or registry-held textures (anything
@@ -1760,7 +1764,7 @@ public final class VulkanTextureRegistry {
                     // Which textures still come through the readback, named once each. The image path takes every refresh that
                     // arrives with an announced image pending; these are the ones that do not, and knowing their ids is the
                     // difference between guessing why and knowing why.
-                    if (this.readbackIds.size() < 8 && this.readbackIds.add(Integer.valueOf(glTextureId))) {
+                    if (this.readbackIds.size() < 8 && this.readbackIds.add(id)) {
                         System.out.println("[Celtium] CELTIUM_READBACK_REFRESH glTexture=" + glTextureId
                                 + " size=" + existing.width + "x" + existing.height
                                 + " view=" + Long.toHexString(existing.texture.view())
@@ -1780,7 +1784,7 @@ public final class VulkanTextureRegistry {
             // uploads the stub captured. The capture is asked first, and it carries the whole surface.
             if (fillFromCapture(glTextureId, nearestFilter, false)) {
                 HIT_CALLS++;
-                return this.entries.get(Integer.valueOf(glTextureId)).texture;
+                return this.entries.get(id).texture;
             }
             // Nothing announced, nothing captured, and no readback either. The mirror is still created at the size the
             // stub recorded - when even that is unknown there is no image to build, and no size may be invented - and it

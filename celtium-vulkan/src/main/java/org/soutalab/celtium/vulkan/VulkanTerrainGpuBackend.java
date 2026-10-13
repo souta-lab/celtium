@@ -1874,6 +1874,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** CPU time spent in the frame's own fence wait: the serialisation OPT-08's second step (two frames in flight) targets. */
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
+    /** The four-float scratch {@code GL_CURRENT_COLOR} is read into, reused across groups rather than alloc/freed. */
+    private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+    /** The nine-float working matrix {@link #celtium$lightParams} inverts the modelview's upper 3x3 into. */
+    private final float[] lightInverseScratch = new float[9];
+    /** Shared immutable white for a group whose GL colour read failed; only ever read, never written. */
+    private static final float[] WHITE_GROUP_COLOR = {1.0f, 1.0f, 1.0f, 1.0f};
     /**
      * True when this group's vertices are baked with each batch's own modelView on append and the recorded modelView
      * is identity (OPT-18b). Only normal-free, unlit, unfogged formats under an axis-aligned matrix qualify: for them
@@ -2263,6 +2269,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public static final boolean CPU_SPLIT = Boolean.parseBoolean(
             System.getProperty("celtium.vulkan.cpuSplit", "false"));
 
+    /**
+     * Whether the per-batch/per-group {@code System.nanoTime()} deltas the immediateStatistics *Nanos counters take
+     * are read at all. The investigation added one nanoTime pair per stage of the batch-accept path - matrix copy,
+     * state capture, state key, program query, preflight, clone, group create, append - eight-to-ten clock reads on a
+     * ~3600-batch frame ≈ 1.3-1.9 ms/frame spent measuring, not drawing. Off by default
+     * ({@code -Dceltium.vulkan.batchTimings=true} or a diagnostics run re-enables); with it off the counters read 0,
+     * which the reports already treat as a missing measurement.
+     */
+    public static final boolean BATCH_TIMINGS = Boolean.getBoolean("celtium.vulkan.batchTimings")
+            || VulkanDiagnostics.enabled();
+
     public static long threadCpuNanos() {
         if (!CPU_SPLIT) {
             return -1L;
@@ -2499,6 +2516,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * worth and releasing it at the next flush is enough, because a pass only starts after the previous one signalled.
      */
     private final java.util.List<ImmediateGroup> retiredImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
+    /** Scratch for the flush pass's kept groups; compacted back into {@link #immediateGroups} once per pass. */
+    private final java.util.List<ImmediateGroup> keptImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanImmediatePipeline immediatePipeline;
     /** The matrices in force when the pending batches were built; the flush runs a frame later. */
     /**
@@ -2713,6 +2732,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final String IMMEDIATE_FOG_DISTANCE =
             System.getProperty("celtium.vulkan.immediateFogDistance", "radial").trim().toLowerCase();
+    /** {@link #IMMEDIATE_FOG_DISTANCE} resolved once: the selector ran two String equals per fog-enabled group. */
+    private static final boolean IMMEDIATE_FOG_DISTANCE_PLANAR = "planar".equals(IMMEDIATE_FOG_DISTANCE);
+    private static final boolean IMMEDIATE_FOG_DISTANCE_AUTO = "auto".equals(IMMEDIATE_FOG_DISTANCE);
     /** Bounded, like the other per-run diagnostics: the fog state changes a handful of times per frame. */
     private static final int IMMEDIATE_FOG_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.immediateFogLog", 8).intValue();
@@ -2832,9 +2854,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             mode = 2; // GL_EXP, which is also GlStateManager.FogState's default
         }
         boolean planar;
-        if ("planar".equals(IMMEDIATE_FOG_DISTANCE)) {
+        if (IMMEDIATE_FOG_DISTANCE_PLANAR) {
             planar = true;
-        } else if ("auto".equals(IMMEDIATE_FOG_DISTANCE)) {
+        } else if (IMMEDIATE_FOG_DISTANCE_AUTO) {
             planar = !this.fogRadialRequested;
         } else {
             planar = false; // radial
@@ -3407,7 +3429,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private float[] celtium$textureAffine() {
         try {            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
             // and reading the shared stack would return whichever unit was last active.
-            float[] matrix = this.immediateState.textureMatrix(0);
+            float[] matrix = this.immediateState.peekTextureMatrix(0);
             if (matrix == null) {
                 return null;
             }
@@ -3440,17 +3462,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         float b = modelView[4], e = modelView[5], h = modelView[6];
         float c = modelView[8], f = modelView[9], i22 = modelView[10];
         float det = a * (e * i22 - f * h) - b * (d * i22 - f * g) + c * (d * h - e * g);
-        float[] inv;
+        // The inverse is a local working matrix: a member scratch rather than a nine-float allocation per lit group.
+        float[] inv = this.lightInverseScratch;
         if (Math.abs(det) < 1.0e-8f) {
             // A singular modelview degenerates the draw anyway; identity directions refuse nothing.
-            inv = new float[] {1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f};
+            java.util.Arrays.fill(inv, 0f);
+            inv[0] = inv[4] = inv[8] = 1f;
         } else {
             float invDet = 1.0f / det;
-            inv = new float[] {
-                    (e * i22 - f * h) * invDet, (f * g - d * i22) * invDet, (d * h - e * g) * invDet,
-                    (c * h - b * i22) * invDet, (a * i22 - c * g) * invDet, (b * g - a * h) * invDet,
-                    (b * f - c * e) * invDet, (c * d - a * f) * invDet, (a * e - b * d) * invDet,
-            };
+            inv[0] = (e * i22 - f * h) * invDet; inv[1] = (f * g - d * i22) * invDet; inv[2] = (d * h - e * g) * invDet;
+            inv[3] = (c * h - b * i22) * invDet; inv[4] = (a * i22 - c * g) * invDet; inv[5] = (b * g - a * h) * invDet;
+            inv[6] = (b * f - c * e) * invDet; inv[7] = (c * d - a * f) * invDet; inv[8] = (a * e - b * d) * invDet;
         }
         float[] params = new float[20];
         float[] dirs = this.immediateState.lightDirections();
@@ -3571,7 +3593,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The model path creates its own group, so the per-identity texture census has to see it here as well: with the
         // census only at the immediate path's creation site the verification line listed a single identity (the loading
         // screen's) while the world and the GUI stage had both been drawn, which reads as "those stages never ran".
-        celtium$noteTargetStage(target != Long.MIN_VALUE ? target : this.currentGroupTarget, texture, VulkanImmediateFormats.ITEM);
+        if (TARGET_CENSUS_ENABLED) {
+            celtium$noteTargetStage(target != Long.MIN_VALUE ? target : this.currentGroupTarget, texture, VulkanImmediateFormats.ITEM);
+        }
         this.immediateGroups.add(group);
         this.immediateStatistics.noteImmediateGroupsClosed();
         if (target != this.targetRegistry.mainIdentity()) {
@@ -3778,7 +3802,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             java.nio.FloatBuffer live = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
             try {
                 org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, live);
-                float[] mirrored = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+                float[] mirrored = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
                 float delta = 0.0f;
                 for (int i = 0; i < 16; i++) {
                     delta = Math.max(delta, Math.abs(mirrored[i] - live.get(i)));
@@ -3791,7 +3815,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     while (this.trace.size() >= 12) {
                         this.trace.remove(0);
                     }
-                    float[] mvBefore = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+                    float[] mvBefore = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
                     java.nio.FloatBuffer glMv = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, glMv);
@@ -3829,7 +3853,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void loadIdentity() {
         celtium$fontMatrixBoundary();
         if (this.trace.size() < 40) {
-            float[] v = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            float[] v = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
             this.trace.add("L" + this.framesSeen + "[mv " + fmt3(v[12]) + "," + fmt3(v[13]) + "," + fmt3(v[14]) + "]");
         }
         this.mirrorMidSetup = true;
@@ -4495,6 +4519,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Distinct identities {@code CELTIUM_TARGET_IMAGE} has reported; see {@link #celtium$noteTargetIdentity}. */
     private static final int TARGET_IMAGE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.targetImageLines", 12).intValue();
+    /**
+     * Whether the per-group target-identity census runs at all: {@code targetStageTextures}/{@code targetStageFormats}
+     * and {@link #tracedTargetIdentities} are read only by the {@code targetStages} verification line and the bounded
+     * {@code CELTIUM_TARGET_IMAGE} census, but the tracking they feed ran two boxed map lookups and two set writes for
+     * every closed group (~3600 groups/frame ≈ 0.5-1.0 ms/frame of pure diagnostic cost). Off by default;
+     * {@code -Dceltium.vulkan.targetCensus=true} or a diagnostics run turns it back on.
+     */
+    private static final boolean TARGET_CENSUS_ENABLED =
+            Boolean.getBoolean("celtium.vulkan.targetCensus") || VulkanDiagnostics.enabled();
     private final java.util.Set<Long> tracedTargetIdentities = new java.util.HashSet<Long>();
     private int targetImageLogs;
     /** Textures and formats seen per render-target identity, for {@code targetStages} in the verification line. */
@@ -4639,12 +4672,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // "main=true pair=chain-pair" - a label that named an image no main-identity draw goes to. The rule and this
         // separation live in GllessFrameTarget.routeLabelForBinding.
         // BH-14: the census is fed here because this is the one place the routing rule is applied to a live bind.
-        org.soutalab.celtium.vulkan.GllessFrameTarget.noteIdentityForCensus(targetIdentity, isMain);
-        if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
-            record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
-                    + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
-                    + " pair=" + pairOfOffTargetIdentity(targetIdentity)
-                    + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
+        if (TARGET_CENSUS_ENABLED) {
+            org.soutalab.celtium.vulkan.GllessFrameTarget.noteIdentityForCensus(targetIdentity, isMain);
+            if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
+                record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
+                        + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
+                        + " pair=" + pairOfOffTargetIdentity(targetIdentity)
+                        + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
+            }
         }
     }
 
@@ -4776,7 +4811,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             // The camera transform is mirrored from the hooked GlStateManager matrix calls, so it is already here:
             // the GL read would answer zeros, and a zeroed camera transform degenerates every world draw.
-            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
                     this.worldSnapshotModelView, 0, 16);
         } else {
             java.nio.FloatBuffer modelView = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
@@ -5547,19 +5582,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // only one this path is guaranteed to be able to mirror.
                 boundTexture = whiteTextureId();
             }
-            long matrixCopyStart = System.nanoTime();
+            long matrixCopyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             if (MIRRORED_MATRICES) {
-                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
+                // peekMatrix: matrix() returns a sixteen-float copy that is fed straight to arraycopy here - an
+                // allocation made only to be copied again. The stack's own array is the same sixteen floats.
+                System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
                         this.glProjection, 0, 16);
-                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+                System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
                         this.glModelView, 0, 16);
                 this.matricesDirty = false;
             }
-            this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
-            long captureStart = System.nanoTime();
+            if (BATCH_TIMINGS) this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
+            long captureStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             int[] state = celtium$captureState();
-            this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - captureStart);
-            long keyStart = System.nanoTime();
+            if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - captureStart);
+            long keyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             long stateKey = celtium$stateKey(formatId, state);
             // A bound-texture term was tried here and reverted: the reuse predicate already compares
             // `currentGroupTexture != boundTexture` (below), and an A/B on two menu-hold legs of the same scene shows
@@ -5568,7 +5605,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // A bit of its own, so the preflight can pick the line pipeline without being told the mode again.
                 stateKey |= 1L << 61;
             }
-            this.immediateStatistics.addStateKeyNanos(System.nanoTime() - keyStart);
+            if (BATCH_TIMINGS) this.immediateStatistics.addStateKeyNanos(System.nanoTime() - keyStart);
             // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
             // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
             // full-screen passes with real programs, each of which mirrored its source texture - measured at 898
@@ -5577,12 +5614,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // keeps drawing those passes with the program that is actually bound. The question is per-batch state the
             // group key cannot see, so it is answered before the fast-merge decision - the fast path must not skip a
             // check that would have refused.
-            long programQueryStart = System.nanoTime();
+            long programQueryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             int boundProgram = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8B8D);
             if (boundProgram == Integer.MIN_VALUE) {
                 boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
             }
-            this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
+            if (BATCH_TIMINGS) this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
             this.immediateStatistics.noteProgramQueryCount();
             if (boundProgram != 0) {
                 // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
@@ -5670,8 +5707,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (!fastMerged) {
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
-            long preflightStart = System.nanoTime();
-            long preflightCpuStart = threadCpuNanos();
+            long preflightStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            long preflightCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             // A texture nothing has announced yet gets its one full supply here, before the preflight that refuses when no
             // mirror exists. Entity and TESR models sample their own skins and none of the upload hooks see them, so without
             // this their offers could never be accepted however correct the rest of the path was. Once per GL id.
@@ -5714,8 +5751,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
             }
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
-            long preflightCpuEnd = threadCpuNanos();
-            this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
+            long preflightCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+            if (BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
             if (preflightCpuStart >= 0 && preflightCpuEnd >= 0) this.preflightCpuNanos += preflightCpuEnd - preflightCpuStart;
             this.immediateStatistics.notePrepareImmediateCalls();
             if (prepared == null) {
@@ -5795,11 +5832,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     || lightParamsMoved) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
-                long groupCreateStart = System.nanoTime();
-                long groupCreateCpuStart = threadCpuNanos();
+                long groupCreateStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+                long groupCreateCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
                 this.currentImmediateMesh = celtium$newImmediateMesh();
-                long groupCreateCpuEnd = threadCpuNanos();
-                this.immediateStatistics.addGroupCreateNanos(System.nanoTime() - groupCreateStart);
+                long groupCreateCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+                if (BATCH_TIMINGS) this.immediateStatistics.addGroupCreateNanos(System.nanoTime() - groupCreateStart);
                 if (groupCreateCpuStart >= 0 && groupCreateCpuEnd >= 0) this.groupCreateCpuNanos += groupCreateCpuEnd - groupCreateCpuStart;
                 this.immediateStatistics.noteGroupCreateCount();
                 // The target and viewport belong to the group being created, here, and not to whichever group happened to be
@@ -5807,7 +5844,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // group after the first kept the first group's target - the main framebuffer - and the batches offered while a
                 // second framebuffer was bound were enqueued as main-target work. That is why the off-target pass found an
                 // empty queue every run (audit A10/A32). Resetting the flag keeps the older path consistent as well.
-                celtium$notePairNameSamplingDraw(boundTexture);
+                if (TARGET_CENSUS_ENABLED) {
+                    celtium$notePairNameSamplingDraw(boundTexture);
+                }
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
@@ -5851,9 +5890,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // depth test, depth write, culling and the alpha reference all off - a state-keyed pipeline cache whose
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
-                long cloneStart = System.nanoTime();
+                long cloneStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 this.currentGroupState = state.clone();
-                this.immediateStatistics.addGroupCloneNanos(System.nanoTime() - cloneStart);
+                if (BATCH_TIMINGS) this.immediateStatistics.addGroupCloneNanos(System.nanoTime() - cloneStart);
                 this.immediateStatistics.noteGroupCloneCount();
                 // The fog this batch was offered under, taken here for the same reason the state above is: at this
                 // moment the live fog state is the batch's own, and by the time the group closes the game may have
@@ -5922,15 +5961,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                             this.immediateState.colorGreen(), this.immediateState.colorBlue(),
                             this.immediateState.colorAlpha()};
                 } else if (formatId == 7 || formatId == 6 || formatId == 9) {
-                    java.nio.FloatBuffer colour = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+                    // The colour read needs only a four-float scratch: one native buffer reused across groups rather
+                    // than an alloc/free pair per group.
+                    java.nio.FloatBuffer colour = this.colourScratch;
+                    colour.clear();
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, colour);
                         this.currentGroupColor = new float[] {colour.get(0), colour.get(1), colour.get(2),
                                 colour.get(3)};
                     } catch (RuntimeException | LinkageError error) {
-                        this.currentGroupColor = new float[] {1.0f, 1.0f, 1.0f, 1.0f};
-                    } finally {
-                        org.lwjgl.system.MemoryUtil.memFree(colour);
+                        // Read-only after the group holds it, so the shared white cannot be corrupted by a later
+                        // group that draws it.
+                        this.currentGroupColor = WHITE_GROUP_COLOR;
                     }
                 } else {
                     this.currentGroupColor = null;
@@ -5943,10 +5985,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
                 this.currentGroupBlendDst = this.immediateStatistics.blendObserved() ? this.observedBlendDst
                         : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                Long pair = Long.valueOf((((long) this.currentGroupBlendSrc) << 20) | this.currentGroupBlendDst);
-                Integer seen = this.blendPairs.get(pair);
-                this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
-                celtium$notePairNameSamplingDraw(boundTexture);
+                if (TARGET_CENSUS_ENABLED) {
+                    Long pair = Long.valueOf((((long) this.currentGroupBlendSrc) << 20) | this.currentGroupBlendDst);
+                    Integer seen = this.blendPairs.get(pair);
+                    this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+                    celtium$notePairNameSamplingDraw(boundTexture);
+                }
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupTexMatrix = celtium$textureAffine();
@@ -5983,16 +6027,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return false;
             }
 
-            long appendStart = System.nanoTime();
-            long appendCpuStart = threadCpuNanos();
+            long appendStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            long appendCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             // A pre-transformed group bakes the live modelView into this batch's positions on append: the GUI matrices
             // that would have split the group are applied exactly here instead of being carried in its key.
             boolean appended = this.currentGroupPreTransformed
                     ? this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
                             indices, this.glModelView)
                     : this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices);
-            long appendCpuEnd = threadCpuNanos();
-            this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
+            long appendCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+            if (BATCH_TIMINGS) this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
             if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
             this.immediateStatistics.noteAppendCount();
             if (!appended) {
@@ -6146,24 +6190,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.retiredImmediateGroups.isEmpty()) {
             return;
         }
-        java.util.Iterator<ImmediateGroup> iterator = this.retiredImmediateGroups.iterator();
-        while (iterator.hasNext()) {
-            ImmediateGroup group = iterator.next();
-            if (group.retireSequence > this.scheduler.completedSubmitSequence()) {
+        // Swap-remove rather than the iterator's remove(): iterator.remove() on an ArrayList shifts the whole tail
+        // one slot per call, so draining N retired groups was O(N^2) element moves. A retire's place in this list is
+        // positional noise - the watermark, not the order, decides who is released - so moving the tail into the hole
+        // and re-reading the same index is correct and O(1) a removal.
+        java.util.List<ImmediateGroup> retired = this.retiredImmediateGroups;
+        long completed = this.scheduler.completedSubmitSequence();
+        for (int i = 0; i < retired.size(); ) {
+            ImmediateGroup group = retired.get(i);
+            if (group.retireSequence > completed) {
                 // Its submission is still in flight; the mesh stays until the watermark covers it.
+                i++;
                 continue;
             }
             this.immediateStatistics.addImmediateCompletedBatches(group.batches);
             if (group.target != this.targetRegistry.mainIdentity()) this.offTargetCompletedBatches += group.batches;
-            if (group.stamp != null
-                    && (group.stamp).meshBorrowed) {
-                // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so retiring
-                // the group must not free it.
-                iterator.remove();
-                continue;
+            if (group.stamp == null
+                    || !(group.stamp).meshBorrowed) {
+                // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so a
+                // borrowed-mesh group retires without freeing it; an owned mesh goes with the group.
+                group.mesh.delete();
             }
-            group.mesh.delete();
-            iterator.remove();
+            ImmediateGroup tail = retired.remove(retired.size() - 1);
+            if (i < retired.size()) {
+                retired.set(i, tail);
+            }
         }
     }
 
@@ -6788,7 +6839,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Skip while the mirror is still the zeroed array a reset leaves, which is the condition itself rather than a
         // proxy for it: a flag that cleared after one skip was too narrow, and the worst sample stayed a zeroed matrix.
         // Comparing an unset matrix with GL's measures the interval between two frames, not the mirror.
-        float[] viewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        float[] viewNow = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
         if (viewNow[0] == 0.0f && viewNow[5] == 0.0f && viewNow[12] == 0.0f && viewNow[13] == 0.0f && viewNow[14] == 0.0f) {
             this.midSetupComparisonsSkipped++;
             return;
@@ -6811,9 +6862,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         this.matrixComparisons++;
-        float projectionDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION),
+        float projectionDelta = maxDelta(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION),
                 this.glProjection);
-        float modelViewDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW),
+        float modelViewDelta = maxDelta(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW),
                 this.glModelView);
         // Dump the first comparison's sixteen elements from each side. The counter said the mirror is wrong
         // everywhere; whether that is a transpose, a clip-depth remap or a different stack cannot be read from a
@@ -7068,8 +7119,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Counted here, after the emptiness check: clearOrderFlushes counts *calls* (many return early), so it cannot
         // say how many handoffs a frame really makes. The wall time is what says whether a handoff is a stall.
         this.immediateStatistics.noteActualFlushes();
-        long flushStartedNanos = System.nanoTime();
-        long flushCpuStartedNanos = threadCpuNanos();
+        long flushStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0;
+        long flushCpuStartedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
         try {
             FramePassTimings.begin("flush");
             try {
@@ -7085,8 +7136,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 FramePassTimings.end("flush");
             }
             this.immediateStatistics.noteOrderPreservingFlushes();
-            long tookNanos = System.nanoTime() - flushStartedNanos;
-            long flushCpuEndedNanos = threadCpuNanos();
+            long tookNanos = BATCH_TIMINGS ? System.nanoTime() - flushStartedNanos : 0;
+            long flushCpuEndedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (flushCpuStartedNanos >= 0 && flushCpuEndedNanos >= 0) {
                 this.immediateStatistics.addActualFlushCpuNanos(flushCpuEndedNanos - flushCpuStartedNanos);
             }
@@ -7684,7 +7735,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
-        long prepLookupStart = System.nanoTime();
+        long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
         // A fallback to this.terrainPipelineForFrame was tried here and measured preparePassFallbacks=0: the frame's world
         // pipeline is null at the same moments, which is what says those offers belong to the composite path's own layout
@@ -7692,7 +7743,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // rather than kept as an unreachable branch; only the named failure reason below is kept, because it is what
         // settled the question. Under the GL-less window the same absence means a UI-only screen, and those batches
         // must still draw: the standalone frame-compatible render pass stands in.
-        this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
         if (terrain == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             terrain = null; // keep the pass lookup result; the render pass handle below substitutes for it
         } else if (terrain == null) {
@@ -7709,7 +7760,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return null;
         }
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
-        long prepRegistryStart = System.nanoTime();
+        long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
         if (texture == null && textureId != 0) {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
@@ -7719,8 +7770,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 texture = this.textureRegistry.get(textureId);
             }
         }
-        this.immediateStatistics.addPrepRegistryNanos(System.nanoTime() - prepRegistryStart);
-        this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepRegistryNanos(System.nanoTime() - prepRegistryStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
         if (format != 1 && texture == null) {
             this.prepareDescriptorFailures++;
             this.lastPrepareFailure = "format=" + format + " texture=" + textureId
@@ -7728,7 +7779,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return null;
         }
         long pass = terrain != null ? terrain.renderPass() : uiRenderPass();
-        long prepBranchStart = System.nanoTime();
+        long prepBranchStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         Object pipeline;
         long descriptor = 0;
         if (format == 5) {
@@ -7813,7 +7864,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.lineBatchesNative++;
             }
         }
-        this.immediateStatistics.addPrepBranchNanos(System.nanoTime() - prepBranchStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepBranchNanos(System.nanoTime() - prepBranchStart);
         if (format != 1 && descriptor == 0) {
             // "pipeline or descriptor preflight failed" merged three different causes into one line and a decision could
             // not be made from it: no mirror, a mirror that never received its full content, or a descriptor that could
@@ -8479,10 +8530,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // Both facts are available here and nowhere earlier: the identity the group was accepted under and the
             // texture and format it carries. Noting them at the open was tried and printed nothing, because the open
             // runs on a path that does not always reach a new group.
-            if (celtium$noteTargetIdentity(this.currentGroupTarget)) {
-                celtium$printTargetImage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
+            if (TARGET_CENSUS_ENABLED) {
+                if (celtium$noteTargetIdentity(this.currentGroupTarget)) {
+                    celtium$printTargetImage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
+                }
+                celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             }
-            celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             celtium$reportHudGroup(projection);
             ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
@@ -13298,14 +13351,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // id4/id9 were accepted and never drawn (windowFlushFailures=64, windowFlushDroppedBatches=9680,
             // drawnByFormat id4=0 id9=0).
             ByteBuffer push = stack.calloc(216);
-            Iterator<ImmediateGroup> iterator = this.immediateGroups.iterator();
-            while (iterator.hasNext()) {
-                ImmediateGroup group = iterator.next();
+            // Compaction rather than iterator.remove(): removing each drawn or retired group shifted the remaining
+            // tail left, so a flush that drew N of M groups cost O(N*M) array moves. The groups that stay are collected
+            // into keptImmediateGroups in order - the draw order is the list order, so order must be preserved - and
+            // the list is rebuilt once at the end. Iterating by index is safe because nothing in the body mutates
+            // immediateGroups; the moves go to retiredImmediateGroups and recordedImmediateGroups.
+            this.keptImmediateGroups.clear();
+            java.util.List<ImmediateGroup> groups = this.immediateGroups;
+            for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+                ImmediateGroup group = groups.get(groupIndex);
                 if (group.target != target) {
                     // Kept for its own pass, and now counted: this is the site the counter's name describes, and
                     // without an increment here a "kept" group and a "dropped" one both read as zero. It counts
                     // keep-events, like the pass-boundary counter counts boundary events, so a group held across
                     // three flushes raises it three times.
+                    this.keptImmediateGroups.add(group);
                     this.immediateStatistics.noteImmediateGroupsKeptForOtherTargets();
                     continue;
                 }
@@ -13314,7 +13374,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // The game's finished-frame composite, sampling the image it is about to be drawn into. Dropped by
                     // name rather than drawn: see SELF_COMPOSITE_SKIP for the measurement that makes this the repair
                     // and celtium$isScreenSelfComposite for the three shapes the same rule had in 2026-10-11.
-                    iterator.remove();
                     this.retiredImmediateGroups.add(group);
                     this.immediateStatistics.noteSelfCompositeSkips();
                     continue;
@@ -13325,7 +13384,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // Recorded against a frame target that has since been destroyed: its pipeline and render pass are
                         // gone, so drawing it would bind the wrong thing. Retired without drawing and counted; the mesh is
                         // freed by the next completion drain, which is safe because this group was never submitted.
-                        iterator.remove();
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleTargetGeneration();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
@@ -13337,7 +13395,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // this would read freed geometry. The target-generation stamp cannot see that: a frame target
                         // survives a world change. Retired without drawing and counted; the mesh is freed by the next
                         // completion drain, which is safe because the group was never submitted.
-                        iterator.remove();
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleWorldEpoch();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
@@ -13455,7 +13512,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                         + Long.toHexString(currentTexture.key())
                                         + "; the group is refused rather than drawn with a destroyed view");
                             }
-                            iterator.remove();
                             this.retiredImmediateGroups.add(group);
                             this.immediateStatistics.noteImmediateGroupsDiscarded();
                             continue;
@@ -13563,7 +13619,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // overlay's draws and disables it immediately after, so a group flushed later used to read the
                 // disabled state and draw the overlay with no bias at all (measured: 62 glPolygonOffset calls, the
                 // overlay in the frame, and immediateDepthBiasedGroups=0).
-                long groupDrawStart = System.nanoTime();
+                long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 boolean offsetEnabled = group.polygonOffsetEnabled;
                 float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
                 float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
@@ -13590,7 +13646,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
-                this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
+                if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
                 int batches = group.batches;
                 this.immediateStatistics.addImmediateRecordedBatches(batches);
@@ -13642,10 +13698,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                             + " groupGeneration=" + (group.stamp == null ? -1 : group.stamp.targetGeneration)
                             + " borrowed=" + (group.stamp != null && group.stamp.meshBorrowed));
                 }
-                iterator.remove();
                 this.pendingImmediateIndices -= mesh.indexCount();
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
             }
+            // Rebuild immediateGroups as only the kept groups, in order. Drawn and retired groups were moved to their
+            // own lists during the pass; what remains in keptImmediateGroups is exactly the other-target groups the
+            // old iterator.remove() would have left behind, in the same order.
+            groups.clear();
+            groups.addAll(this.keptImmediateGroups);
             // Back to the pass's own rectangle: the groups above may have narrowed it, and whatever is drawn after this
             // flush - terrain, another pass, the final blit - expects the target's viewport, not the last GUI batch's.
             if (this.groupViewportNarrowed) {
@@ -13937,8 +13997,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // Minecraft's overlay/FBO setup uses the mirrored GlStateManager ortho/model-view stacks. These batches ARE
             // accepted: returning without capturing them left the previous world's perspective here and clipped real GUI
             // geometry. Snapshot the local pass matrices, never borrow another pass's camera.
-            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
-            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
             return;
         }
         try {
