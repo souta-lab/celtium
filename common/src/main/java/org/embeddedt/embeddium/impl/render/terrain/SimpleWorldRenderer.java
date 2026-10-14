@@ -40,8 +40,13 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     protected SECTIONMANAGER renderSectionManager;
 
     public void setWorld(WORLD world) {
+        // Temporary probe (2026-10-15): the client stalls inside Minecraft.loadWorld, after the world field is
+        // assigned and before the player is created, and this is the project's own entry into that window. Entry and
+        // exit lines say whether this method is left at all.
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD setWorld enter world=" + (world != null));
         // Check that the world is actually changing
         if (this.world == world) {
+            System.out.println("[Celtium] CELTIUM_WORLD_LOAD setWorld leave (same world)");
             return;
         }
 
@@ -59,9 +64,13 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     protected void loadWorld(WORLD world) {
         this.world = world;
 
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD loadWorld enter, creating a command list");
         try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
+            System.out.println("[Celtium] CELTIUM_WORLD_LOAD command list created, initialising the renderer");
             this.initRenderer(commandList);
+            System.out.println("[Celtium] CELTIUM_WORLD_LOAD renderer initialised");
         }
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD loadWorld leave");
     }
 
     protected void unloadWorld() {
