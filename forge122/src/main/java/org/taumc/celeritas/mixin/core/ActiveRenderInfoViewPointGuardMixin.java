@@ -58,24 +58,26 @@ public abstract class ActiveRenderInfoViewPointGuardMixin {
         }
     }
 
+
     /**
      * Keeps the previous camera state while there is no camera entity.
      * <p>
-     * Measured 2026-10-15 (leg {@code gv-cohort-fix132}, after the camera-transform guard): the client died with
-     * {@code NullPointerException: Cannot read field "field_70125_A" because "entityplayerIn" is null} inside
-     * {@code updateRenderInfo}, reached from {@code EntityRenderer.updateCameraAndRender:1330}, which passes
-     * {@code this.mc.getRenderViewEntity()} and does not check it.
+     * Measured on legs {@code gv-cohort-fix132} and {@code gv-cohort-fix134}: {@code NullPointerException: Cannot read
+     * field "field_70125_A" because "entityplayerIn" is null} inside {@code updateRenderInfo}, reached from
+     * {@code EntityRenderer.updateCameraAndRender:1330}, which passes the render view entity without checking it. A
+     * fallback answering {@code Minecraft.getRenderViewEntity} with the player did not prevent it, because that call
+     * site reads the field rather than going through the getter.
      * <p>
-     * This is the third entry point of the same class and the same window as the two above. Cancelling leaves the
-     * static camera fields as the previous frame left them, which is what the fog guard's comment describes vanilla
-     * doing with the fog colour; there is no camera to compute them from.
+     * With no camera entity the static camera fields keep the previous frame's values instead of being computed from
+     * null, which is what the fog guard's comment describes vanilla doing with the fog colour.
      * <p>
-     * The method guarded is the Forge-added {@code (Entity, boolean)} overload rather than the {@code (EntityPlayer,
-     * boolean)} one: the overload is the one that dereferences, and it is the one that keeps its name at runtime - it
-     * has no SRG mapping, which is why the crash stack names it instead of a {@code func_} form. A null
-     * {@code EntityPlayer} reaches it as a null {@code Entity} and is covered too.
+     * The guarded method is the Forge-added {@code (Entity, boolean)} overload, which has no SRG mapping and keeps
+     * its source name at runtime - hence {@code remap = false}. Naming it in a vanilla class without that flag
+     * aborted the class definition and killed the run with {@code NoClassDefFoundError} on leg
+     * {@code gv-cohort-fix133}; the flag is what makes an unmapped member addressable. The {@code (EntityPlayer,
+     * boolean)} overload is not targeted: it only delegates, and a null argument arrives at the method below.
      */
-    @Inject(method = "updateRenderInfo", at = @At("HEAD"), cancellable = true, require = 0)
+    @Inject(method = "updateRenderInfo", at = @At("HEAD"), cancellable = true, require = 0, remap = false)
     private static void celtium$keepCameraStateWithoutEntity(Entity entityIn, boolean thirdPerson, CallbackInfo info) {
         if (entityIn == null) {
             info.cancel();
