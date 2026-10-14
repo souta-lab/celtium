@@ -1,0 +1,38 @@
+// celtium-shaderpack: CPU-only OptiFine/Iris-style shaderpack frontend (S1).
+//
+// Deliberate constraints (see docs/shader-plan.md and issue #76):
+//   - pure JDK, no runtime dependencies: this code must be embeddable in the mod
+//     without dragging Guava, LWJGL, Minecraft or transformer libraries in
+//   - no GPU objects, no GL context, no SPIR-V: the output is an immutable
+//     program/target plan, not a renderable pipeline
+//   - Java 21 bytecode like the rest of the mod-side modules
+plugins {
+    id 'java-library'
+}
+
+group = 'org.soutalab.celtium'
+version = '0.1.0-dev.1'
+
+repositories { mavenCentral() }
+
+java {
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    maxHeapSize = '512M'
+    // UTF-8 locale so test paths like the BSL zip under ~/ダウンロード/ encode correctly
+    environment 'LC_ALL', 'C.UTF-8'
+    environment 'LANG', 'C.UTF-8'
+}

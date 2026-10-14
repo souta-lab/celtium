@@ -1,0 +1,3 @@
+// Standalone build entry point so the frontend can be exercised without the
+// Stonecutter multi-version tree: ./gradlew -p celtium-shaderpack test
+rootProject.name = 'celtium-shaderpack'
