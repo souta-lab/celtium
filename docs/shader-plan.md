@@ -1,6 +1,6 @@
 # Celtium shader plan
 
-**状態: Deferred — 計画・調査のみ。影対応の実装は「フルVK化」と「主要modのshaderless対応」の両方が完了してから。**
+**状態: Experimental development ACTIVE（2026-10-14 ユーザー指示）。主要Mod互換とS0/S1 shaderpack frontend・native影の実験基盤を並行開発。一般ユーザー向け影pack互換は未完成／未受入。**
 
 調査日: 2026-10-10（JST）。対象: Minecraft 1.12.2 / CleanroomMC / Celtium。Javaの配布ターゲットは `--release 21`。ゲーム・ビルド・検証でJDK 25を使う方針は維持する。
 
@@ -10,13 +10,9 @@
 
 **backend決定（2026-10-10）:** CeltiumのVulkan直結を維持し、SDL GPUへの全面移行は行わない。既存のnative描画・資源・同期・提示の成果を継続する。AngelicaのGLSM＋SDL GPU全体は移植せず、shader変換・reflection・cache・batch境界・互換性試験を部品ごとに比較する。SDL採用だけで既存mod互換が得られるとは扱わない。SDLによるwindow/inputの補助利用はGPU backend選択と別件。macOSは将来MoltenVKのportability条件を検証する。[R46–R47]
 
-開発順序は次に固定する。
+製品版の完成・互換受入は、(1)全vanilla native、(2)主要Mod shaderless、(3)既存packのnative Vulkan実描画の依存順を維持する。一方、**2026-10-14の明示的なユーザー指示によって、実装着手の順序だけを変更**した。主要Modテストと独立したS0/S1のCPU pack frontend、後続のSPIR-V interfaceおよび既定OFFのnative Shadow Map診断を並行して作れる。各段階は既存のnative所有権を再利用し、GL context fallbackや任意GLエミュレーションを復活させない。
 
-1. 全vanillaを含むCeltium本体のフルVK化を完成させる。
-2. 主要modのshaderless描画・起動・ライフサイクル対応を完成させる。
-3. その確定したnative描画基盤へシェーダーパック対応を追加する。
-
-この文書の存在を影対応の着手指示と解釈しない。以下のgateを受入記録で満たすまで、パックローダー、変換器、shadow pass、影用UI・依存ライブラリの実装を開始しない。現在の本体作業で必要なバニラ `ShaderGroup`、spectator効果、entity outline、FBO/postprocessは延期対象に含めない。
+以下のG1–G6は、**一般配布・互換性を「完成」と呼ぶための受入gate**として残す。未達のgateを通過したと見なさず、早期の実験コードを既定で有効化しない。バニラ `ShaderGroup`、spectator効果、entity outline、FBO/postprocessは従来どおり本体の機能である。実行中の工程とテスト証拠は[#76](https://github.com/souta-lab/celtium/issues/76)（影）と[#77](https://github.com/souta-lab/celtium/issues/77)（Mod）で追跡する。
 
 | Gate | 着手前に必要な証拠 |
 | --- | --- |
@@ -182,7 +178,7 @@ attachmentを分割すれば必ず同じ画像になる、precisionを落とせ�
 
 ## 9. 段階と受入
 
-以下はG1–G6がすべて閉じた後の作業。各段階は同じ所有・状態契約に関わる関連変更をまとめ、毎編集ごとのゲーム起動を反復しない。
+**S0–S2のCPU/コンパイル実験と、既定OFFの小さなS3 Shadow Map試作は先行できる。** S3以降の製品互換性受入・既定ON・S4–S6の完了宣言はG1–G6の実測gateを必要とする。各段階は同じ所有・状態契約に関わる変更をまとめ、毎編集ごとのゲーム起動を反復しない。
 
 | 段階 | 成果物 | 次へ進む条件 |
 | --- | --- | --- |
