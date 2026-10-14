@@ -103,3 +103,27 @@ returned a report immediately.
 So before reading a silent leg as a renderer finding, list `<run>/mods/` and count the celtium jars,
 and pass `--exclude-instance-mod` for anything the run is not testing. A duplicate jar is a
 *different artefact*, not a stale copy of the one you built: the results belong to nobody.
+
+## A mixin target must be the name the class has at runtime
+
+A mixin that cannot be applied does not degrade: the transformer throws while the class loader is
+defining the target, the class is never defined, and the game dies on `NoClassDefFoundError` a few
+frames later at whatever touched that class first. Measured on 2026-10-15 (leg `gv-cohort-fix133`):
+an `@Inject` naming `ActiveRenderInfo.updateRenderInfo` - the **Forge-added** `(Entity, boolean)`
+overload, which has no SRG mapping and keeps its deobfuscated name - killed
+`net.minecraft.client.renderer.ActiveRenderInfo` itself, and the crash surfaced as
+`NoClassDefFoundError: net/minecraft/client/renderer/ActiveRenderInfo` at
+`EntityRenderer.func_175068_a:1361`. The two other injections in the same mixin, both naming
+`func_` forms, applied and behaved.
+
+So: **in this environment, target vanilla members by their SRG name and Forge-added members by name
+only when the class is not remapped at all.** The runtime is SRG-named - crash stacks print
+`func_186703_a`, `field_70125_A` - while the sources under `forge122/build/rfg/minecraft-src` are
+MCP-named, so the string in the annotation is the runtime name and the compiler never checks it.
+`scripts/mc-sources.sh --srg` and the `mcp-srg.srg` table answer "what is this called at runtime";
+if a member has no entry there, do not target it with a mixin. `require = 0` does not save you: it
+controls whether a *missing* target is an error, not whether an *unmappable* one aborts the define.
+
+Prefer a targetable choke point over an untargetable one: the guard that answers a null camera
+entity belongs on an SRG-named method such as `Minecraft.getRenderViewEntity`, not on a Forge
+overload that no mapping reaches.
