@@ -194,10 +194,26 @@ public class MinecraftMixin {
                     } catch (Throwable ignored) {
                         // leave the count as unknown
                     }
+                    // The two values that decide the fix, and they are different fixes: whether the capabilities
+                    // object was built with the ARB shader-object extension in its set at all (our stub answers
+                    // glGetString(GL_EXTENSIONS) with an empty string on purpose, so a set derived from it contains
+                    // nothing and LWJGL leaves every extension function at zero), and what address that function
+                    // actually has. false means "install a capabilities built from our own 427-extension set first";
+                    // true-with-zero means the write-once ICD is holding an older object.
+                    String arbState = "unknown";
+                    try {
+                        Object flag = capabilities.getClass().getField("GL_ARB_shader_objects").get(capabilities);
+                        Object address = capabilities.getClass().getField("glCreateShaderObjectARB").get(capabilities);
+                        arbState = "GL_ARB_shader_objects=" + flag + " glCreateShaderObjectARB=0x"
+                                + Long.toHexString(((Number) address).longValue());
+                    } catch (Throwable ignored) {
+                        // leave it as unknown
+                    }
                     capabilitiesState = capabilities.getClass().getName() + "@"
                             + Integer.toHexString(System.identityHashCode(capabilities))
                             + " addresses=" + addresses
-                            + " nonZeroFirst" + sampled + "=" + (nonZero < 0 ? "unknown" : Long.toString(nonZero));
+                            + " nonZeroFirst" + sampled + "=" + (nonZero < 0 ? "unknown" : Long.toString(nonZero))
+                            + " " + arbState;
                 }
             } catch (Throwable error) {
                 Throwable cause = error.getCause() == null ? error : error.getCause();
