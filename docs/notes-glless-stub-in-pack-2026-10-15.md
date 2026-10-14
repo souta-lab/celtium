@@ -80,3 +80,37 @@ TConstruct and Forestry), so the bisect must add one candidate at a time to the 
 `CELTIUM_GLLESS stub GL provider installed`, `window hinted GLFW_NO_API`, CleanMix's `LwjglxDisplayMixin` line and
 `Found N mixin classes`, plus any new "loaded too early" line. `StellarCore` is first because its reference is in a
 plain class rather than a mixin; the rest follow in the order above.
+
+## The one-leg experiment that decides it: a class-load trace (designed 2026-10-15, GPU-free design)
+
+Everything measured so far narrows the pack's signature to: the plugin **found 66 mixin classes** (logged in every
+leg), the Display mixin is therefore in the list it returns, the cohort sees Mixin try to resolve its target
+(`Error loading class: org/lwjgl/opengl/Display (CNFE)` → `@Mixin target … was not found` → later `APPLY`), and the
+pack has **no line about it at all** — not the CNFE attempt, not the warning, not the apply.
+
+Two mechanisms could produce "never processed", and the logs so far cannot separate them:
+
+1. **The target class was already loaded when the config was prepared.** Mixin then has nothing to defer to and drops
+   the mixin without the CNFE/warning pair. The five mods that *reference* `org/lwjgl/opengl/Display` were tested
+   directly (leg `gv-cohort-all5`: cohort + StellarCore + loliasm + RenderLib + vintagefix + UniversalTweaks +
+   mixinbooter) and **refuted as a sufficient cause** — that leg logs the full four-line sequence and installs the
+   stub. So if this is the mechanism, one of the other ~260 pack JARs loads the class, directly or indirectly.
+2. **CleanMix/Mixin never bound the mixin to that target at all** (config preparation path), which would be a
+   CleanMix-side difference between the two configurations rather than a mod loading a class.
+
+**A class-load trace separates them in one leg, with no code change**: run the pack leg with
+`--jvm-arg=-Xlog:class+load=info` (optionally `:file=…`) and read
+
+- the timestamp and **source** of `org.lwjgl.opengl.Display`'s load (`[class,load] org.lwjgl.opengl.Display source:
+  jar:file:…`), which names the JAR that caused it, and
+- the same log's `Preparing mixins.celeritas.json` / `Found 66 mixin classes` timestamps.
+
+If Display loads **before** the celtium config is prepared, mechanism 1 holds and the source line names the mod; if it
+loads **after** and the mixin still never appears, mechanism 2 holds and the next step is a CleanMix-side trace
+(`-Dmixin.debug=true`, which prints config preparation and target selection) rather than another bisect.
+
+`shouldApplyMixin` is **not** the cause: this plugin returns `false` unconditionally, but CleanMix's
+`MixinInfo.shouldApplyMixin(String)` only consults the plugin when `ignorePlugin` is false, and plugin-supplied
+mixins are constructed with `ignorePlugin = true` (`MixinProcessor.applyMixins` → `MixinInfo.shouldApplyMixin` →
+`PluginHandle` is the call chain, read from `cleanmix-0.7.2.jar` bytecode). That matches the round-705 note that the
+`false` "is not used for whether a mixin is applied".
