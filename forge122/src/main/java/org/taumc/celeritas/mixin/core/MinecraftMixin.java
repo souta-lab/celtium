@@ -130,6 +130,7 @@ public class MinecraftMixin {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
     }
 
+
     @Inject(method = "startGame", at = @At("HEAD"), require = 0)
     private void celtium$splashHookControl(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");

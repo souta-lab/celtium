@@ -99,6 +99,15 @@ def main():
             'setCapabilities' in source and 'getDeclaredConstructor' in source)
     require('there is a per-thread entry point for the threads the game calls GL on',
             'ensureThreadCapabilities' in source)
+    coremod = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
+    require('the mod-load entry point is installed from the transformer chain, not from a mixin',
+            'CeltiumGllessModLoadTransformer' in coremod)
+    transformer = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessModLoadTransformer.java').read_text(encoding='utf-8')
+    require('that transformer targets FMLClientHandler.beginMinecraftLoading',
+            'net.minecraftforge.fml.client.FMLClientHandler' in transformer and 'beginMinecraftLoading' in transformer)
+    require('the install reports itself once per thread, so a leg can tell a hook that never fired',
+            'ensureThreadCapabilities on thread=' in (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8'))
+
     mixin = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java').read_text(encoding='utf-8')
     require('the game thread calls it from more than one entry point',
             mixin.count('ensureThreadCapabilities()') >= 3)

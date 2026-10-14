@@ -21,6 +21,19 @@ public final class CeltiumGllessHint {
     private CeltiumGllessHint() {
     }
 
+    /**
+     * Gives the calling thread its LWJGL3 capabilities from the stub. Called from injected instructions on the
+     * threads the game calls GL from - see {@link CeltiumGllessModLoadTransformer}. Never throws into the game.
+     */
+    public static void ensureThreadCapabilities() {
+        try {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
+        } catch (Throwable error) {
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
+                    "CELTIUM_GLLESS per-thread capabilities install failed: {}", error.toString());
+        }
+    }
+
     /** Called from the injected instruction; never throws into the window creation path. */
     public static void beforeWindowCreation() {
         if (applied || "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {

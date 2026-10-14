@@ -632,6 +632,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Failure is logged and never fatal, as everywhere else on this path.
      */
     public static void ensureThreadCapabilities() {
+        // One line per thread, so a leg can tell an entry point that never fired from one that fired and found the
+        // thread already covered. Written once per thread name to stay bounded.
+        if (installed != null && CELTIUM$CAPABILITY_THREADS.add(Thread.currentThread().getName())) {
+            celtium$printAtExit("CELTIUM_GLLESS ensureThreadCapabilities on thread="
+                    + Thread.currentThread().getName() + " already=" + celtium$hasCapabilities());
+        }
         if (installed == null) {
             return;
         }
@@ -643,6 +649,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             // GL.getCapabilities() throws when the thread has none, which is the case this method exists for.
         }
         celtium$createLwjgl3Capabilities();
+    }
+
+    /** Thread names that have already reported an ensure call. */
+    private static final java.util.Set<String> CELTIUM$CAPABILITY_THREADS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static String celtium$hasCapabilities() {
+        try {
+            return org.lwjgl.opengl.GL.getCapabilities() != null ? "yes" : "no";
+        } catch (Throwable none) {
+            return "throws";
+        }
     }
 
     private static void celtium$createLwjgl3Capabilities() {
