@@ -22,6 +22,11 @@ public final class CeltiumGllessHint {
     }
 
 
+    /** The maximum texture size this renderer claims, in one place for every surface that has to answer it. */
+    public static int claimedMaxTextureSize() {
+        return 16384;
+    }
+
     /** The GL-less renderer's name, for GL_RENDERER. */
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
 
