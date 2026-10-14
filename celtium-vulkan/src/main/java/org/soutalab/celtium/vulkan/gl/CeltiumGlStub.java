@@ -619,16 +619,45 @@ public final class CeltiumGlStub implements FunctionProvider {
      * the census and the validation report stay readable either way.
      */
     private static void celtium$createLwjgl3Capabilities() {
+        if (org.lwjgl.opengl.GL.getCapabilities() != null) {
+            return;
+        }
+        // GL.createCapabilities() is not usable here, and that is measured rather than assumed: in LWJGL 3.4.1 it
+        // throws "No GLCapabilities instance set for the current thread" when nothing has set capabilities yet
+        // (leg gv-e2e-268-fix128d), so the instance is built through the package-private constructor and installed
+        // with GL.setCapabilities - the second of the two solutions LWJGL's own message offers.
+        //
+        // The extension set is taken from the capabilities class's own public fields: LWJGL generates one boolean per
+        // extension it knows (GL_ARB_shader_objects and so on), and the constructor only fills an extension's function
+        // addresses when its name is in the set. Passing the full list is what makes a mod's ARB call resolve to this
+        // provider instead of aborting the JVM.
         try {
-            if (org.lwjgl.opengl.GL.getCapabilities() != null) {
-                return;
+            Class<?> capabilitiesClass = Class.forName("org.lwjgl.opengl.GLCapabilities");
+            java.util.Set<String> extensions = new java.util.HashSet<>();
+            for (java.lang.reflect.Field field : capabilitiesClass.getFields()) {
+                String name = field.getName();
+                if (name.startsWith("GL_")) {
+                    extensions.add(name);
+                }
             }
-            org.lwjgl.opengl.GLCapabilities capabilities = org.lwjgl.opengl.GL.createCapabilities();
-            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities created from the stub provider: "
-                    + (capabilities == null ? "null" : "ok"));
+            java.lang.reflect.Constructor<?> constructor = capabilitiesClass.getDeclaredConstructor(
+                    org.lwjgl.system.FunctionProvider.class, java.util.Set.class, boolean.class,
+                    java.util.function.IntFunction.class);
+            constructor.setAccessible(true);
+            Object capabilities = constructor.newInstance(installed, extensions, Boolean.FALSE,
+                    (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
+            org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities installed from the stub provider: extensions="
+                    + extensions.size());
+            return;
         } catch (Throwable error) {
-            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities could not be created from the stub: "
-                    + error);
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities could not be built from the stub: " + error);
+        }
+        try {
+            org.lwjgl.opengl.GL.createCapabilities();
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities created from the stub provider: createCapabilities");
+        } catch (Throwable error) {
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities could not be created from the stub: " + error);
         }
     }
 

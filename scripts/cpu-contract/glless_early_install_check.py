@@ -65,8 +65,12 @@ def main():
     stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8')
     require('the stub gives LWJGL3 capabilities addresses from itself',
             'celtium$createLwjgl3Capabilities' in stub and 'GL.createCapabilities()' in stub)
+    require('the capabilities are built through the constructor and installed with setCapabilities',
+            'setCapabilities' in stub and 'getDeclaredConstructor' in stub)
+    require('the extension set comes from the capabilities class fields',
+            'startsWith("GL_")' in stub)
     require('a failure to build them is logged and not fatal',
-            'LWJGL3 capabilities could not be created from the stub' in stub)
+            'LWJGL3 capabilities could not be built from the stub' in stub)
 
     if not all(checks):
         print(f'{checks.count(False)} contract check(s) failed')
