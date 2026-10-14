@@ -144,6 +144,26 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // Shader and program status queries: the caller reads the buffer (iv forms) or the return value (i forms), and
+        // vanilla decides from them whether a shader is usable. Same family as glGetIntegerv, same reason.
+        if (returnType.equals("V") && (name.endsWith("nglGetShaderiv") || name.endsWith("nglGetProgramiv"))
+                && descriptor.startsWith("(IJ)")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetShaderProgramiv", "(IJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (returnType.equals("I") && (name.endsWith("nglGetShaderi") || name.endsWith("nglGetProgrami"))
+                && descriptor.startsWith("(II)")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetShaderProgrami", "(II)I", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         switch (returnType) {
             case "V":
                 method.visitInsn(Opcodes.RETURN);

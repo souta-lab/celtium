@@ -135,6 +135,58 @@ public final class CeltiumGllessHint {
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
     }
 
+    /**
+     * Answers the shader and program status queries the game validates, writing into the caller's buffer.
+     * <p>
+     * The same family as {@link #glGetIntegerv}: the caller reads the buffer, and the value decides whether the game
+     * treats a shader as usable. Vanilla's {@code RenderGlobal.makeEntityOutlineShader} and {@code ShaderGroup} check
+     * {@code GL_COMPILE_STATUS} and {@code GL_LINK_STATUS} and log or throw when they are false, so answering zero
+     * would turn every shader into a failed one. This renderer takes the shaders' source and draws with its own
+     * pipeline, so the honest answer to "did this compile" is yes - and {@code GL_INFO_LOG_LENGTH} is 0 because there
+     * is no log to read.
+     */
+    public static void glGetShaderProgramiv(int pname, long params) {
+        if (params == 0L) {
+            return;
+        }
+        int value;
+        switch (pname) {
+            case 0x8B81: // GL_COMPILE_STATUS
+            case 0x8B82: // GL_LINK_STATUS
+            case 0x8B83: // GL_VALIDATE_STATUS
+                value = 1; // GL_TRUE
+                break;
+            case 0x8B84: // GL_INFO_LOG_LENGTH
+            case 0x8B86: // GL_ACTIVE_UNIFORMS
+            case 0x8B87: // GL_ACTIVE_UNIFORM_MAX_LENGTH
+            case 0x8B89: // GL_ACTIVE_ATTRIBUTES
+            case 0x8B8A: // GL_ACTIVE_ATTRIBUTE_MAX_LENGTH
+                value = 0;
+                break;
+            case 0x8B85: // GL_ATTACHED_SHADERS
+                value = 1;
+                break;
+            default:
+                value = 0;
+                break;
+        }
+        org.lwjgl.system.MemoryUtil.memPutInt(params, value);
+    }
+
+    /** {@return the integer answer for the single-value shader and program queries} */
+    public static int glGetShaderProgrami(int pname) {
+        switch (pname) {
+            case 0x8B81: // GL_COMPILE_STATUS
+            case 0x8B82: // GL_LINK_STATUS
+            case 0x8B83: // GL_VALIDATE_STATUS
+                return 1;
+            case 0x8B85: // GL_ATTACHED_SHADERS
+                return 1;
+            default:
+                return 0;
+        }
+    }
+
     /** Called from the injected instruction; never throws into the window creation path. */
     public static void beforeWindowCreation() {
         if (applied || "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
