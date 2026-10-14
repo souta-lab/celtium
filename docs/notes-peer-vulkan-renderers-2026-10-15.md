@@ -316,3 +316,26 @@ generator - which is why the fixture's own placement check (`placedBlock=minecra
 is the evidence to use, and it says the spot is fine. **And a Nether scene is expected to be slow**: MC-193806 reports
 that going through a Nether portal can leave the client on "loading terrain" until it times out, so a Nether leg that
 runs far longer than an overworld one is not by itself a hang.
+
+## The wrong-position mechanism behind "chunks arrive but nothing renders" (read 2026-10-15)
+
+[MC-120079](https://bugs.mojang.com/browse/MC-120079) explains a vanilla failure that has the same shape as this
+project's Nether leg, in the maintainer's own words:
+
+> "the server is sending those chunks **before sending player position**, which means that until then client will
+> assume it's 8, 64, 8 ... markBlocksForUpdate will mark the right RenderChunk instances, but they have the **wrong
+> position** set ... if the chunk is close to the currently assumed player position it will update it immediately and
+> mark it as updated, but it ends up doing it for the wrong position, which means **nothing will render there until new
+> block updates are scheduled there** ... Forge also allows to work around the issue by **forcing threaded chunk
+> updates**, which skips the immediate update in `RenderGlobal#setupTerrain` and always queues an update."
+
+A dimension change is the same situation from the other side: the client's chunks for the new dimension arrive while
+the position it is scheduling for is still the old one, so the updates land on the wrong sections and nothing schedules
+them again. **This project's fork already has the workaround** - `RenderGlobalMixin` replaces both `setupTerrain` and
+`markBlocksForUpdate` outright, so vanilla's immediate-update path does not exist here and every update goes through
+the renderer's queue.
+
+What that leaves is the other half of the same problem: the chunks the tracker already knows are never re-evaluated
+for the new position, so the renderer is never told they are ready. That is exactly what
+`ChunkTracker.refreshReadyChunks` adds on world load - the tracker's own queue is what turns a ready chunk into a
+section, so re-evaluating readiness is what re-schedules the sections.
