@@ -2909,6 +2909,18 @@ public final class ValidationClient {
         if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
         celtium$clientTicks++;
+        // Liveness, in the log, because nothing else here can answer "did the fixture tick at all?". Every other
+        // fact this handler produces is a report property, and the report is written at shutdown - so a run that is
+        // killed by its time limit reports nothing, and the absence of those properties then reads as "the handler
+        // never ran". That inference was drawn from a 268-mod leg and it was wrong: exit 143 with MISSING_REPORT
+        // says how the run ended, not what the handler did. One line on the first tick, then a heartbeat, so a
+        // killed run still says whether it was ticking and how far it got.
+        if (celtium$clientTicks == 1 || celtium$clientTicks % 1200 == 0) {
+            System.out.println("[Celtium] CELTIUM_FIXTURE_TICK clientTicks=" + celtium$clientTicks
+                    + " worldTicks=" + worldTicks
+                    + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName())
+                    + " world=" + (mc.world != null));
+        }
         // The unicode font surface: every string routes through renderUnicodeChar, which a locale like ja_jp selects
         // automatically - and which every isolated leg so far has skipped, because the fresh game dir launches in
         // en_us. The flag reproduces `forceUnicodeFont` (same setUnicodeFlag call Minecraft makes at init).
