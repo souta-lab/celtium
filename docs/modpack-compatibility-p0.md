@@ -394,6 +394,36 @@ way, and neither is a Celtium defect claim: a scene that transfers needs an expl
 definition, and loosening the 3x3 readiness merge (the opt-in mode Sodium #3713 adds) is a
 pack-compatibility improvement worth having.
 
+Four more legs attacked it, with the fixture's settle gate and one config change, and between
+them they **rule out two of the four candidates**:
+
+| leg | change | settle | colours | blackFrac | nonBg | verdict |
+|---|---|---:|---:|---:|---:|---|
+| `leg11-nether-amd` | none | - | 630 | 0.353469 | 0.156345 | FAILED |
+| `leg14-nether-settle` | `dimensionSettleFrames=400` | 400 | 636 | 0.018979 | **0.274415** | FAILED |
+| `leg15-nether-nofog` | DS `Enable Fog Processing=false`, `No Dust Effects=true` | 400 | 651 | 0.022484 | **0.280879** | FAILED |
+| `leg13-nether-pose50` | pose `y=50` | - | - | - | - | `NO_CAPTURE`, no material |
+
+**Waiting helps but does not fix it.** The settle gate fired and was recorded
+(`dimensionSettleFrames 400`, `captureWorldFrames` 354 -> 447), and the frame improved sharply -
+`blackFraction` 0.353469 -> 0.018979 and `nonBackgroundFraction` 0.156345 -> 0.274415. It still
+misses the 0.8 floor by a wide margin, and the fixture did **not** report "not settled", so the
+capture was taken after the wait it was asked for.
+
+**DynamicSurroundings' fog and dust are ruled out.** Disabling both
+(`B:"Enable Fog Processing"=false`, `B:"No Dust Effects"=true`, values restored afterwards) changed
+the frame by nothing outside noise: nonBackgroundFraction 0.274415 -> 0.280879, colours 636 -> 651,
+blackFraction 0.018979 -> 0.022484. The candidate came from
+[DynamicSurroundings #598](https://github.com/OreCruncher/DynamicSurroundings/issues/598), where
+Nether biome fog is reported to go black because dust colour overrides fog colour; that mechanism is
+not what these numbers show.
+
+So of the four candidates, (c) is **refuted** and (d) is **weakened** - the wait is necessary but not
+sufficient. What remains is (a) the pose sitting inside rock in RLCraft's modded Nether and (b) a
+real Nether rendering issue in Celtium. `leg13`'s pose attempt is not evidence either way because it
+never captured; the same pose change now needs re-running **with** `dimensionSettleFrames=400`, which
+is the next leg.
+
 **Record hygiene:** the fixture's content hash changed with the settle gate - the current jar is
 `celtium-validation-client-2.5.0-dev.jar` with content hash
 `b7fc9e9ebc453b6f6193af15a4b18ac306b0b7964c4c60989bc0419d80103175` (18 entries, re-verified here),
