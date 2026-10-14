@@ -74,3 +74,41 @@ installation requires a verified CurseForge projectID/fileID download resolution
 **E2E:** Industrial and magic machine TESRs, AE2 terminal and item screens, multiblocks, transparent fluid and conduit draw order, modded dimensions, animated particles and overlays. **RLCraft:** large custom animated creatures and rider/mount geometry, entity lighting, particle effects, modded foliage/weather, sky, translucent water and GUI/HUD overlays. These are test hypotheses, **not observed Celtium bugs**; test genuine installed components and do not infer the contents of a pack merely from its theme.
 
 Full pack testing needs more storage than a manifest inspection. Remote machine at baseline had **~13 GiB free / 16 GiB physical RAM**; avoid duplicating the existing PrismLauncher Cleanroom instance and cache. Stage **one complete pack at a time**, reuse content-addressed downloaded jars, measure disk use and memory headroom, preserve user worlds/configs and do not suppress failing coremods just to record a pass. Never run both bulky clients concurrently.
+
+### E2E renderer substitution (required for Celtium; user policy 2026-10-14)
+
+**Do not install two terrain renderers together.** E2E 1.93a's downloaded upstream
+archive pins 270 mods, but a Celtium runtime must exclude exactly the competing
+`Nothirium-1.12.2-0.4.9-beta.jar` (CurseForge project `624960`, file `7441674`)
+and its exclusively Nothirium-targeted helper `naughthirium-2.3.0.jar` (project
+`1153019`, file `6473489`). Celtium **replaces** Nothirium, rather than trying
+to run their mutually exclusive terrain renderers together. All **268 remaining
+original JARs** must be present. Keep the official E2E ZIP/download cache intact
+for provenance; excluding a JAR from the **game's runtime** is not deleting it
+from the original archive. This replacement does not prove all pack features work.
+
+`e2e_celtium_mods.py` checks the pinned upstream E2E 1.93a lock and downloader
+report, verifies every downloaded file SHA-256, emits only the 268 eligible JARs,
+and refuses a runtime that still contains either competing renderer or lacks any
+required selected Mod. Example on locally obtained original archives/JARs:
+
+```sh
+python3 scripts/modpack-compat/e2e_celtium_mods.py \
+  --lock docs/modpack-locks/e2e-1.93a.lock.json \
+  --report /private/e2e-staged/stage-report.json \
+  --staged-mods /private/e2e-staged/mods \
+  --runtime-mods /private/e2e-runtime/mods
+```
+
+Test is synthetic and offline:
+`python3 scripts/modpack-compat/test_e2e_celtium_mods.py`.
+
+**First actual full-pack runtime evidence (2026-10-14):** the 270-mod + Celtium
+attempt failed with Nothirium `MixinRenderGlobal` transformer conflict. The
+Celtium-selected 268-mod + original Nutrition override + Celtium + validation
+attempt loaded 306 Forge Mod IDs (`Forge Mod Loader has successfully loaded 306
+mods`) and reached Celtium's swap-point loop; it did **not** reach a validated
+world or record a GPU image. The run ended after 750.9 seconds (`MISSING_REPORT`,
+exit 143/time-limit, no world frames). Treat this as a **startup/fixture blocker,
+not a Modpack PASS**. Focus next on world/validation flow and actual content
+rendering with Nothirium absent, not making two renderer cores coexist.
