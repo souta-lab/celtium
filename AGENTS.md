@@ -127,3 +127,42 @@ controls whether a *missing* target is an error, not whether an *unmappable* one
 Prefer a targetable choke point over an untargetable one: the guard that answers a null camera
 entity belongs on an SRG-named method such as `Minecraft.getRenderViewEntity`, not on a Forge
 overload that no mapping reaches.
+
+## An overloaded mixin target needs its descriptor, or the class never defines
+
+Measured on 2026-10-15, legs `gv-cohort-fix133` and `gv-cohort-fix135`: an `@Inject` naming
+`ActiveRenderInfo.updateRenderInfo` - a class with **two** overloads of that name - failed with
+
+```
+InvalidInjectionException: Invalid descriptor on mixins.celeritas.json:core.ActiveRenderInfoViewPointGuardMixin
+    at ...CallbackInjector.inject(CallbackInjector.java:564)
+MixinTransformerError: An unexpected critical error was encountered
+```
+
+and that failure aborts the definition of the target class, so the run dies a few frames later with
+`NoClassDefFoundError: net/minecraft/client/renderer/ActiveRenderInfo` at whatever touched it first
+(`EntityRenderer.func_175068_a:1361`). **`require = 0` does not help**: it governs whether a *missing*
+target is an error, not whether a *mismatched* one aborts the define. **`remap = false` does not help
+either** - both attempts failed identically, so the flag was not the cause.
+
+Spell the descriptor when the name is overloaded:
+
+```java
+@Inject(method = "updateRenderInfo(Lnet/minecraft/entity/Entity;Z)V", at = @At("HEAD"), ...)
+```
+
+Three things worth knowing before writing the next one.
+
+The **runtime** jar (`forge122/build/rfg/recompiled_minecraft-1.12.2.jar`) carries **source (MCP)
+names**: `javap` on it shows `updateRenderInfo(Entity, boolean)`, `projectViewFromEntity`,
+`getBlockStateAtEntityViewpoint`. Crash reports and the SRG tables speak in `func_`/`field_` names.
+So "is this name right at runtime" is answered by `javap` on that jar, not by the sources under
+`.celtium-work/mc-sources`.
+
+Mixin maps `func_` targets to those source names for us - that is why the `func_`-named guards in the
+same mixin applied - so both spellings reach a vanilla member, and one with **no SRG entry** is still
+reachable by its own name plus the descriptor.
+
+A crashing frame is not a still frame: the process stays alive drawing the crash screen until the leg
+script's duration expires, so read the leg's own summary - `run-gv-<leg>` and the `.out` beside it -
+rather than treating a live `java` process as a running leg.
