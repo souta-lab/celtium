@@ -40,7 +40,8 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
         }
 
         return new String[] {"org.taumc.celeritas.core.CeltiumGllessWindowTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessNativeTransformer"};
+                "org.taumc.celeritas.core.CeltiumGllessNativeTransformer",
+                "org.taumc.celeritas.core.CeltiumGllessSplashTransformer"};
     }
 
     @Override
