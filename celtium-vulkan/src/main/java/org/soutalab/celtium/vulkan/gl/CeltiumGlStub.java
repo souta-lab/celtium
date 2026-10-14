@@ -620,6 +620,54 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
 
     /**
+     * Builds LWJGL3's {@code GLCapabilities} from this stub and installs it, and must be called <b>before</b> anything
+     * else creates one.
+     * <p>
+     * Measured offline 2026-10-15 with the game's own LWJGL 3.4.1 jars: a capabilities object built with an
+     * <b>empty</b> extension set - which is what {@code GL.createCapabilities()} produces, because this stub answers
+     * {@code glGetString(GL_EXTENSIONS)} with an empty string on purpose - has
+     * {@code GL_ARB_shader_objects=false} and {@code glCreateShaderObjectARB=0x0}, so the call aborts the JVM. Built
+     * with the 427 extension names the capabilities class itself declares, the same fields are {@code true} and a real
+     * address. Both have 2236 non-zero entries, so "is the table populated" does not separate them; the extension set
+     * does.
+     * <p>
+     * Being first matters because LWJGL's ICD is write-once: the first capabilities set supplies the addresses the
+     * generated classes read, and a later different one only falls back to a thread lookup (with a warning that is
+     * suppressed unless LWJGL debug is on). That is why installing ours later - from a mixin entry point - changed
+     * nothing, and why installing it on a thread while an empty set was already the first made every GL call abort
+     * instead of throwing.
+     */
+    public static synchronized void installFirstCapabilities() {
+        if (installed == null || capabilitiesInstalled) {
+            return;
+        }
+        try {
+            Class<?> capabilitiesClass = Class.forName("org.lwjgl.opengl.GLCapabilities");
+            java.util.Set<String> extensions = new java.util.HashSet<>();
+            for (java.lang.reflect.Field field : capabilitiesClass.getFields()) {
+                if (field.getName().startsWith("GL_")) {
+                    extensions.add(field.getName());
+                }
+            }
+            java.lang.reflect.Constructor<?> constructor = capabilitiesClass.getDeclaredConstructor(
+                    org.lwjgl.system.FunctionProvider.class, java.util.Set.class, boolean.class,
+                    java.util.function.IntFunction.class);
+            constructor.setAccessible(true);
+            Object capabilities = constructor.newInstance(installed, extensions, Boolean.FALSE,
+                    (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
+            org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
+            capabilitiesInstalled = true;
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities installed first from the stub provider: extensions="
+                    + extensions.size() + " thread=" + Thread.currentThread().getName());
+        } catch (Throwable error) {
+            celtium$printAtExit("CELTIUM_GLLESS first capabilities install failed: " + error);
+        }
+    }
+
+    /** True once {@link #installFirstCapabilities()} has set this stub's capabilities. */
+    private static volatile boolean capabilitiesInstalled;
+
+    /**
      * Installs this provider as the process's GL function source; call before {@code GL.createCapabilities()}.
      * LWJGL only lets {@code GL.create} supply the function source when the library's default load was deferred,
      * so this also asserts {@link Configuration#OPENGL_EXPLICIT_INIT} - the window-creation path must set it before

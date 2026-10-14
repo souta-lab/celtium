@@ -18,8 +18,27 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
      * {@code gv-e2e-268-xlog}), so {@code core.LwjglxDisplayMixin} never applied and the window got a real GL
      * context. This array is read when the coremod loads, before either.
      */
+    /**
+     * The earliest Java point this mod controls, and therefore the right place to install the GL-less capabilities.
+     * <p>
+     * LWJGL's ICD is write-once, so whoever sets capabilities first supplies the addresses every generated GL class
+     * reads; the plugin's {@code onLoad} (7.1 s) is already too late in a 268-mod pack. Measured offline: a set built
+     * from this stub's own 427 extension names has {@code GL_ARB_shader_objects=true} and a real
+     * {@code glCreateShaderObjectARB} address, while one built from the stub's empty {@code GL_EXTENSIONS} answer has
+     * {@code false} and {@code 0x0} - which is the abort the pack legs keep hitting.
+     */
     @Override
     public @Nullable String[] getASMTransformerClass() {
+        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
+            try {
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.install();
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.installFirstCapabilities();
+            } catch (Throwable error) {
+                org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
+                        "CELTIUM_GLLESS early capabilities install failed: {}", error.toString());
+            }
+        }
+
         return new String[] {"org.taumc.celeritas.core.CeltiumGllessWindowTransformer",
                 "org.taumc.celeritas.core.CeltiumGllessNativeTransformer"};
     }
