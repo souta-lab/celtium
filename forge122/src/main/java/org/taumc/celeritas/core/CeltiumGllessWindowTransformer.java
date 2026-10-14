@@ -26,7 +26,21 @@ import org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin;
  * ASM9 is not on this compile classpath.
  */
 public class CeltiumGllessWindowTransformer implements IClassTransformer {
+    /**
+     * The class this transformer edits, under both names it has here: Cleanroom's lwjglxx ships it as
+     * {@code org/lwjglx/opengl/Display} and relocates it to {@code org.lwjgl.opengl.Display} at runtime, so a
+     * transformer that knew only one of them would silently do nothing. The log line names which one it saw.
+     */
     private static final String TARGET = "org.lwjgl.opengl.Display";
+    private static final String TARGET_RELOCATED = "org.lwjglx.opengl.Display";
+    /**
+     * The visitor API version as a literal rather than {@code Opcodes.ASM9}: this module compiles against an ASM
+     * whose {@code Opcodes} predates that constant, while the ASM the game runs is 9.10.1, which is what has to read
+     * a Java 25 class file. {@code Display.class} is major 69 and carries NestMember attributes, and an ASM5 visitor
+     * throws {@code UnsupportedOperationException: NestMember requires ASM7} on it - caught below, returning the
+     * original bytes, i.e. the fix would be silently absent. Measured offline before the first leg.
+     */
+    private static final int ASM_API = 9 << 16;
     private static final String GLFW = "org/lwjgl/glfw/GLFW";
     private static final String CREATE_WINDOW = "glfwCreateWindow";
     private static final String HINT_OWNER = "org/taumc/celeritas/core/CeltiumGllessHint";
@@ -38,18 +52,18 @@ public class CeltiumGllessWindowTransformer implements IClassTransformer {
             return null;
         }
         String target = transformedName != null ? transformedName : name;
-        if (!TARGET.equals(target)) {
+        if (!TARGET.equals(target) && !TARGET_RELOCATED.equals(target)) {
             return basicClass;
         }
         try {
             ClassReader reader = new ClassReader(basicClass);
             ClassWriter writer = new ClassWriter(reader, 0);
-            reader.accept(new ClassVisitor(Opcodes.ASM5, writer) {
+            reader.accept(new ClassVisitor(ASM_API, writer) {
                 @Override
                 public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
                                                  String[] exceptions) {
                     MethodVisitor next = super.visitMethod(access, methodName, descriptor, signature, exceptions);
-                    return new MethodVisitor(Opcodes.ASM5, next) {
+                    return new MethodVisitor(ASM_API, next) {
                         @Override
                         public void visitMethodInsn(int opcode, String owner, String calledName, String calledDescriptor,
                                                     boolean isInterface) {
@@ -62,7 +76,8 @@ public class CeltiumGllessWindowTransformer implements IClassTransformer {
                 }
             }, 0);
             CeleritasVintageMixinPlugin.LOGGER.info(
-                    "CELTIUM_GLLESS Display transformer installed (hint injected before glfwCreateWindow)");
+                    "CELTIUM_GLLESS Display transformer installed on {} (hint injected before glfwCreateWindow)",
+                    target);
             return writer.toByteArray();
         } catch (Throwable error) {
             CeleritasVintageMixinPlugin.LOGGER.error(
