@@ -39,7 +39,6 @@ class TextureAtlasSprite {
 }
 public class CeltiumAtlasLoader {
     static final Map<TextureAtlasSprite, Future<Boolean>> PENDING=new ConcurrentHashMap<>();
-    static final Set<TextureAtlasSprite> REFUSED=ConcurrentHashMap.newKeySet();
     static class Logger {void error(String pattern,String name) { /* expected on missing frames */ }}
     static final Logger LOGGER=new Logger();
     static long awaitedSprites, awaitedMillis, lastReportedStitch, windowMillis;
@@ -77,9 +76,9 @@ public class CeltiumAtlasLoader {
         require(PENDING.isEmpty(),"failed worker must be drained");
 
         TextureAtlasSprite customEmpty=new TextureAtlasSprite("mod:sync-empty",0);
-        REFUSED.add(customEmpty);
-        require(!await(customEmpty),"refused custom loader must not be stitched");
-        require(!REFUSED.contains(customEmpty),"sync refusal marker must be consumed");
+        // Failed custom-loader submit already returned false to Forge, so it was never enqueued
+        // for stitching. A direct frame-less nonasync request must still be rejected.
+        require(!await(customEmpty),"frame-less sync sprite must not be stitched");
 
         require(!await(new TextureAtlasSprite("mod:missing",0)),"sync no-frames must not be stitched");
         require(await(new TextureAtlasSprite("mod:ready",1)),"sync populated sprite must be stitched");
