@@ -1,0 +1,2162 @@
+{
+  "artifacts": [
+    {
+      "accessTransformers": [
+        "META-INF/spawnercontrol_at.cfg"
+      ],
+      "bytes": 49537,
+      "coremod": null,
+      "fileID": 2725062,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SpawnerControl-1.6.3b.jar",
+      "projectID": 284754,
+      "sha256": "0a5cf401bf58bf4163c08aeb79237e75d7d97e6fe1f4afc6fc2618f9fa8fe763"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 33264,
+      "coremod": null,
+      "fileID": 3136255,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "dynamictreesdefiledlands-1.12.2-1.0.0.jar",
+      "projectID": 427597,
+      "sha256": "a7549e566b27ea420c404581ead2823832e60e8109e57a3c1eec3147ac813c78"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 351907,
+      "coremod": null,
+      "fileID": 4370067,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "Emis_Rlcraft.zip",
+      "projectID": 678889,
+      "sha256": "73e30f54ac937a84ef05f615c32981c45663d4ad2e10c9977077640ef52d8181"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 909851,
+      "coremod": null,
+      "fileID": 3812473,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "DynamicTrees-1.12.2-0.9.29.jar",
+      "projectID": 252818,
+      "sha256": "82b779226d671ebbe305fca7d673a10fbc192508d7667273628b5c299e6fd83c"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 616968,
+      "coremod": null,
+      "fileID": 3341793,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "FantasticLib-1.12.2.047.jar",
+      "projectID": 315773,
+      "sha256": "138768f90c6e901743d581bb484a7b3ea03f98bf4c8592af17568e20bcfb06f0"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/jei_at.cfg"
+      ],
+      "bytes": 653210,
+      "coremod": null,
+      "fileID": 3043174,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "jei_1.12.2-4.16.1.302.jar",
+      "projectID": 238222,
+      "sha256": "9dbc2c0ec8c28821fdd5dca487909089501607ee25c0e8470c43c9fd0bd12053"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 431927,
+      "coremod": null,
+      "fileID": 3711089,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "grapplemod-1.12.2-v12.3.jar",
+      "projectID": 238911,
+      "sha256": "b43614cb82ced93fc1522e65dbbb151cef3e0cba847366f0ae672feb550761af"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 21728,
+      "coremod": null,
+      "fileID": 4448655,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BetterTabs-1.0.4.jar",
+      "projectID": 407190,
+      "sha256": "7f0f510696c136dc4152264622e54f42bde6aad715468fd5fe898d653f78e776"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 315968,
+      "coremod": null,
+      "fileID": 4325774,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "AnimEmis_InF_SW_Blue.zip",
+      "projectID": 517821,
+      "sha256": "ea99b1e3d8f2820bca05f2bedac3cb7df0e80e89eb137d1629f82423f19c8baa"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/fxcontrol_at.cfg"
+      ],
+      "bytes": 121908,
+      "coremod": null,
+      "fileID": 3002646,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "fxcontrol-1.12-0.1.15.jar",
+      "projectID": 313477,
+      "sha256": "475b901d1b715dfabd0d11740fdde0e3d951fe8cfbcc25cf4197d5d3325ee0fb"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 4174,
+      "coremod": null,
+      "fileID": 2683258,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "MainMenuScale-1.3.2.jar",
+      "projectID": 310375,
+      "sha256": "d2b59786e982b4b5a60714821edd9fd18b16a412a84bb3978b87f05be5c92a94"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 94188233,
+      "coremod": null,
+      "fileID": 4486512,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "lycanitesmobs-1.12.2-2.0.8.9.jar",
+      "projectID": 224770,
+      "sha256": "0f75bb546a41b95a55238998db4d7aae1517163722cf205f4a3be8cc582c68ac"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 4525,
+      "coremod": null,
+      "fileID": 4427962,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "AttributeFix-Forge-1.12.2-1.0.12.jar",
+      "projectID": 280510,
+      "sha256": "e152c6e45a13efcee7eb8786aa1cd2ca0a146ab203c8e0d4700c5c7b124cf1dd"
+    },
+    {
+      "accessTransformers": [
+        "realbench_at.cfg"
+      ],
+      "bytes": 17104,
+      "coremod": "pw.prok.realbench.asm.RBLoadingPlugin",
+      "fileID": 2505261,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RealBench-1.12.2-1.3.3.jar",
+      "projectID": 237414,
+      "sha256": "5ab18aa65c41f57389ad08cc6e97442e67911501a2aaabb48cbb859324165a46"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 690000,
+      "coremod": null,
+      "fileID": 3440963,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "base-1.12.2-3.14.0.jar",
+      "projectID": 246996,
+      "sha256": "5ec979220887e4e73772ecdb5dceb8a258b4da974bd4ece8fd85cade089913d4"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 30009,
+      "coremod": null,
+      "fileID": 3308160,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "MTLib-3.0.7.jar",
+      "projectID": 253211,
+      "sha256": "e978ce61b6177ec07a9db231d05a64415239c836f43f5cbcc0cf01bd9da4b3e2"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1974198,
+      "coremod": null,
+      "fileID": 4469269,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Trinkets and Baubles-32.4.jar",
+      "projectID": 279900,
+      "sha256": "2d34e3a66ede5b0048784c1802250f060d5906590efa56d620688e549fe6ec05"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 15040104,
+      "coremod": "org.orecruncher.dsurround.mixins.TransformLoader",
+      "fileID": 3098835,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "DynamicSurroundings-1.12.2-3.6.2.1.jar",
+      "projectID": 238891,
+      "sha256": "38ec972b7f1999754c598be8bfb4e0c15ea491b1b3364d69e049d86b52a257d3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1320474,
+      "coremod": "com.creativemd.creativecore.core.CreativePatchingLoader",
+      "fileID": 3626833,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "CreativeCore_v1.10.70_mc1.12.2.jar",
+      "projectID": 257814,
+      "sha256": "423220081e5d66eab253a966814e49e4fe9c16a1f051cb1e2213bee9109707a3"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/waystones_at.cfg"
+      ],
+      "bytes": 178994,
+      "coremod": null,
+      "fileID": 2859589,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Waystones_1.12.2-4.1.0.jar",
+      "projectID": 245755,
+      "sha256": "5e79f329154d9a6225130f2b29dbcb0f603e2e622637e39ca566f8179b02ca15"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 203327,
+      "coremod": null,
+      "fileID": 3334528,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "Lum.1.12.2.zip",
+      "projectID": 489807,
+      "sha256": "d967eb9e99ef53031afb064d60aebd87e249856bc7f4bffdb4f3c3a02145b8d9"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 2827422,
+      "coremod": null,
+      "fileID": 3542217,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "spark-forge.jar",
+      "projectID": 361579,
+      "sha256": "c77a59d84d68dd32f8394f7e0cf21e229db36c220c8f2f82bcffd832f1ffdaea"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 2075228,
+      "coremod": "dev.satyrn.wolfarmor.core.WolfArmorCore",
+      "fileID": 3648545,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "WolfArmorAndStorage-3.8.1+1.12.2.alpha.1-SNAPSHOT-signed.jar",
+      "projectID": 253689,
+      "sha256": "0e53b91a8ebb9c83ba10df038f36caf2ea5fd674379f9794b2a93a5698bb9b95"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1400465,
+      "coremod": null,
+      "fileID": 3107974,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "rustic-1.1.7.jar",
+      "projectID": 256141,
+      "sha256": "30976de836d72cf3819338469e3e62c0c6943f5b50a6a2b10221c73909f184d8"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 24273,
+      "coremod": null,
+      "fileID": 2801268,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "GooglyEyes-1.12.2-7.1.1.jar",
+      "projectID": 252188,
+      "sha256": "e3f8fae3738ffb5f85e434a1a0462b91434b93dee2df9b3441509b628264b448"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 6278399,
+      "coremod": "net.shadowfacts.forgelin.preloader.ForgelinPlugin",
+      "fileID": 2785465,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Forgelin-1.8.4.jar",
+      "projectID": 248453,
+      "sha256": "ccfcad80ef73ab815875a91979128ed58c262c479c7c0e5da65b225954bee197"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 2608,
+      "coremod": null,
+      "fileID": 2834985,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "FriendlyEndermite_v1.0.1_mc1.12.2.jar",
+      "projectID": 350337,
+      "sha256": "f4c0329a90fdba8da9d82d7472715eec6a7d27044c9cbded6beae454c547aa9d"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/sereneseasons_at.cfg"
+      ],
+      "bytes": 185187,
+      "coremod": "sereneseasons.asm.SSLoadingPlugin",
+      "fileID": 2799213,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SereneSeasons-1.12.2-1.2.18-universal.jar",
+      "projectID": 291874,
+      "sha256": "f52033660557331cc4847337325fdab05b07df0ceaa851382cf46137286e243a"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 186686,
+      "coremod": null,
+      "fileID": 2659258,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Aquaculture-1.12.2-1.6.8.jar",
+      "projectID": 60028,
+      "sha256": "b9bdf522c6b2891e0d34dde10e40ac71a8df9169990e54fd6b9ccfe9868e1c9a"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 163703,
+      "coremod": null,
+      "fileID": 2660325,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "armorunder-mc1.12.2-1.0.0.jar",
+      "projectID": 310383,
+      "sha256": "a4b1f9bab0cfd874d3a4357eb31696349c9d39e6f9f01507d6e0d4f033a936ac"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 65239,
+      "coremod": "io.github.xcube16.iseedragons.asm.FMLCorePlugin",
+      "fileID": 3932025,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ISeeDragons-1.2.1.jar",
+      "projectID": 345460,
+      "sha256": "c1c79a7bd5efbd6daa8a3c25040f332b81e818b3db50dfcb4a568ac7dd44c720"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 309188,
+      "coremod": null,
+      "fileID": 4507139,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "carryon-1.12.2-1.12.7.23.jar",
+      "projectID": 274259,
+      "sha256": "02fb9cee20990687149d19f668cd6383164a2b275c3dce0e43ca2b6f6a03f070"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 143885,
+      "coremod": "meldexun.renderlib.asm.RenderLibPlugin",
+      "fileID": 4486119,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RenderLib-1.12.2-1.2.8.jar",
+      "projectID": 624967,
+      "sha256": "4c27f9e965f4613ec3840855b30cccbe51e3fe08dfd0ecdc18ed6012d3836d28"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 4725314,
+      "coremod": null,
+      "fileID": 3507523,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "EnhancedVisuals_v1.4.4_mc1.12.2.jar",
+      "projectID": 255389,
+      "sha256": "4b8c538370ada6c25ab13990e90c903aed9e0bd0e63d59c34848ce59781fc966"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 201577,
+      "coremod": null,
+      "fileID": 4448659,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BQTweaker-1.3.5.jar",
+      "projectID": 423758,
+      "sha256": "c947f92623b22cc8baab77e82e58852710bb5b67123c85891b528b223ad4d3e5"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 75064,
+      "coremod": null,
+      "fileID": 3152820,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RealisticTorches-1.12.2-2.1.2.jar",
+      "projectID": 235729,
+      "sha256": "1b060fbd1ceefe2647a305d8143fbecec214b66a745183ff0df6c974410a7467"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 16086478,
+      "coremod": null,
+      "fileID": 2693547,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "iceandfire-1.7.1-1.12.2.jar",
+      "projectID": 264231,
+      "sha256": "cdf4e45fccc93bc4bac61256747e1d30b77728a00960a204785f32c883e10c17"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 11472,
+      "coremod": null,
+      "fileID": 3987130,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "PortalDupeBegone-1.0.0.jar",
+      "projectID": 676133,
+      "sha256": "40f0a0ad44cb964a6bf3831a5db0c61b1334e491472dbbc04d00d4e28a5be86c"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 80528,
+      "coremod": null,
+      "fileID": 3359843,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "MouseTweaks-2.10.1-mc1.12.2.jar",
+      "projectID": 60089,
+      "sha256": "5e13315f4e0d0c96b1f9b800a42fecb89f519aca81d556c91df617c8751aa575"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/champions_at.cfg"
+      ],
+      "bytes": 230539,
+      "coremod": null,
+      "fileID": 3177947,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "champions-1.12.2-1.0.11.10.jar",
+      "projectID": 307152,
+      "sha256": "3e7ea02af8016fe53690977d20b0521901f2e09d55e4c41f855190bd9b79e91f"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/kiwi_at.cfg"
+      ],
+      "bytes": 119062,
+      "coremod": null,
+      "fileID": 2704824,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Kiwi-1.12.2-0.5.3.32.jar",
+      "projectID": 303657,
+      "sha256": "b111a863a2bde3ab679b19b97f7967f18f56a3a9b87dee6218bad351d7fdb45c"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 290843,
+      "coremod": null,
+      "fileID": 2660247,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "carrotslib-mc1.12.2-1.0.0b1.jar",
+      "projectID": 311327,
+      "sha256": "b7ceac0f00126a3a30ea1a93cfc814b2d0608b82d7fbe4ecbc3af3ea94c0e521"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 13139,
+      "coremod": "bedbreakbegone.mixin.MixinLoader",
+      "fileID": 4442322,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BedBreakBegone-1.0.2.jar",
+      "projectID": 543277,
+      "sha256": "d032b6b60c8815be08003535350c7d8b33aaea62a23623032fd901d2fcd2f4a3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 52615,
+      "coremod": "com.creativemd.itemphysic.ItemPatchingLoader",
+      "fileID": 3487676,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ItemPhysic_Full_1.4.37_mc1.12.2.jar",
+      "projectID": 258587,
+      "sha256": "a0042bf4c1ad5eb4143f00927ad4b3d5383e7a603a6b17361b5644f617b54210"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1425671,
+      "coremod": null,
+      "fileID": 2950248,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BetterQuesting-3.5.329.jar",
+      "projectID": 238856,
+      "sha256": "f7803b91d54b98eb54b3e2f12143866e68a46e3f963d51997d1a1195b8469ba7"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/spartanweaponry_at.cfg"
+      ],
+      "bytes": 1984899,
+      "coremod": "com.oblivioussp.spartanweaponry.mixin.MixinLoader",
+      "fileID": 4467344,
+      "kind": "jar",
+      "mixinConfigs": [
+        "spartanweaponry.mixins.json"
+      ],
+      "name": "SpartanWeaponry-1.12.2-1.5.3.jar",
+      "projectID": 278141,
+      "sha256": "d7f376edce9581006b4115277c5015b8e7ac3e396171938217705ae7b6cc1d18"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 886037,
+      "coremod": null,
+      "fileID": 2817288,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BattleTowers-1.12.2.jar",
+      "projectID": 227877,
+      "sha256": "21a402410869dad8d023e05f3a5488e7b34680ca11e8226560c572f6d06e53f1"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/betterbiomeblend_at.cfg"
+      ],
+      "bytes": 37657,
+      "coremod": "fionathemortal.betterbiomeblend.core.CoreMod",
+      "fileID": 3554486,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "betterbiomeblend-1.12.2-1.1.7-forge.jar",
+      "projectID": 446253,
+      "sha256": "fa0eb97e2e7ee0682c3ba8527bbfbf15c0eef69817a75444f4c6cf83a8a38bc8"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/llibrary_at.cfg"
+      ],
+      "bytes": 884550,
+      "coremod": null,
+      "fileID": 3116493,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "llibrary-1.7.20-1.12.2.jar",
+      "projectID": 243298,
+      "sha256": "27fa8dbfc7428168229a445dad82a4696ba52cf0a6e054833bff0f93931d8ceb"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 161592,
+      "coremod": null,
+      "fileID": 3459767,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ToolBelt-1.12.2-1.9.14.jar",
+      "projectID": 260262,
+      "sha256": "66f4a7c5b894fe2d1c134c1868094709d9eceee36a5ea2ecec70b01ef1f5079c"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 5747128,
+      "coremod": null,
+      "fileID": 4356582,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RecurrentComplex-1.4.8.4.jar",
+      "projectID": 223150,
+      "sha256": "81457c01f6113b347dbda26459ad46f8e2b64d0c16348674fe5c2c68c6933755"
+    },
+    {
+      "accessTransformers": [
+        "invtweaks_at.cfg"
+      ],
+      "bytes": 286144,
+      "coremod": "invtweaks.forge.asm.FMLPlugin",
+      "fileID": 2923460,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "InventoryTweaks-1.64+dev.151.jar",
+      "projectID": 223094,
+      "sha256": "8b3d8f2392e3e455de6c99fac30740f558908c6896adc7dd7948be009b418f52"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/compatskills_at.cfg"
+      ],
+      "bytes": 378621,
+      "coremod": null,
+      "fileID": 2815688,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "CompatSkills-1.12.2-1.17.0.jar",
+      "projectID": 290541,
+      "sha256": "d12f25c2e724d8e957ead358f2af8e987ed1c2fff8f399c616cb13feb0026c90"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 369985,
+      "coremod": null,
+      "fileID": 2816920,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ScalingHealth-1.12.2-1.3.42+147.jar",
+      "projectID": 248027,
+      "sha256": "03ae1c25de660a2cf6677802892720b0b78df965fcf2af31686bb6c858569466"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 111302,
+      "coremod": null,
+      "fileID": 3507866,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "LootTweaker-0.3.1+MC1.12.2.jar",
+      "projectID": 255257,
+      "sha256": "a9ced2493bb42fbc1b2d60f3655dec896d3b003dd3bc467f06bbc116006a2d6a"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 16612,
+      "coremod": "lumien.resourceloader.asm.LoadingPlugin",
+      "fileID": 2477566,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ResourceLoader-MC1.12.1-1.5.3.jar",
+      "projectID": 226447,
+      "sha256": "5c5ee114dccab5caca1772e3487eca04e161c494baca4d53c8fddf5cf8722e56"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 83553,
+      "coremod": null,
+      "fileID": 2732994,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "QualityTools-1.0.7_for_1.12.2.jar",
+      "projectID": 264756,
+      "sha256": "c979852ce107064f779a1d1a5260caf7caf6b1566dc7f7fa07ccf4eb80aa555a"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 455763,
+      "coremod": "ivorius.ivtoolkit.IvToolkitLoadingPlugin",
+      "fileID": 2443253,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "IvToolkit-1.3.3-1.12.jar",
+      "projectID": 224535,
+      "sha256": "ffb745111790e27cb7810a2e03d5270265dee7ebd3ef98fde897c409d58b1e59"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 2096298,
+      "coremod": null,
+      "fileID": 2983385,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "notreepunching-2.0.21.jar",
+      "projectID": 289043,
+      "sha256": "71ecc926da62348ea6dcdeb11385ea68b88f0121a700096da5c12e5b4022290c"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 65644,
+      "coremod": null,
+      "fileID": 3858923,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "AnimEmis_Forgottenitems.zip",
+      "projectID": 639575,
+      "sha256": "2a87fe281f988796e09fa471049529b4b2febda5378f65443244e65e6204fae3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 496455,
+      "coremod": null,
+      "fileID": 3561087,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "switchbow-1.6.8.jar",
+      "projectID": 257820,
+      "sha256": "7f073fbe8ca85f8eb380981bfa0dbbed8832793cc792e0091cb6ca69bc4f165f"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 70966,
+      "coremod": null,
+      "fileID": 3459390,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "tschipplib-1.12.2-1.1.7.jar",
+      "projectID": 262886,
+      "sha256": "543a7cb0a4510771a3507b18e0e8d3739a0b4615b78404f6f2eeaab3c7a9da47"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 24940,
+      "coremod": "lumien.chunkanimator.asm.LoadingPlugin",
+      "fileID": 3850023,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ChunkAnimator-1.12.2-1.2.1.jar",
+      "projectID": 236484,
+      "sha256": "a41da9077db8709be752f02e429b5af572fb7662b5713fad4e672f0c29981855"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 615764,
+      "coremod": null,
+      "fileID": 2911713,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "LycanitesMobs32X.zip",
+      "projectID": 326400,
+      "sha256": "75a1806138680bb686ba76461d1fba6019da99e390f453eaf7c83aee07754768"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 91121,
+      "coremod": null,
+      "fileID": 2857869,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "CustomMainMenu-MC1.12.2-2.0.9.1.jar",
+      "projectID": 226406,
+      "sha256": "63b8e4d86b336739c9df8275d28e61519c73c815d0ba9ec18fb8d0cf8a218488"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 109193,
+      "coremod": null,
+      "fileID": 2733042,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "playerbosses-1.12.2-1.1.0.jar",
+      "projectID": 307605,
+      "sha256": "3a185b0f3b1d136c12601645ccaf46ac5ec69f66df8f3eb74f8633c409b1d779"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/lu_at.cfg"
+      ],
+      "bytes": 187346,
+      "coremod": null,
+      "fileID": 2763516,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Level Up! 2-1.1.23-1.12.jar",
+      "projectID": 251136,
+      "sha256": "d4cd1e13e4e09dbaf14337b3f94bfce2d73cd35ea716888d3b95258713966521"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 5414741,
+      "coremod": null,
+      "fileID": 3093214,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "DynamicTreesTraverse-1.12.2-2.1.jar",
+      "projectID": 407056,
+      "sha256": "5f9841a081c99547f7da093c126d3cca6d87e5c5f559c672a1713396cbf7f26a"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/quark_at.cfg"
+      ],
+      "bytes": 3877577,
+      "coremod": "vazkii.quark.base.asm.LoadingPlugin",
+      "fileID": 2924091,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Quark-r1.6-179.jar",
+      "projectID": 243121,
+      "sha256": "b72490ac2de814df2fd764afd6071e4e8731281ef68b3862f282c5233224259d"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 958635,
+      "coremod": "framevoidpatch.mixin.MixinLoader",
+      "fileID": 4102778,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "framevoidpatch-1.0.0.jar",
+      "projectID": 709188,
+      "sha256": "8fdad99abca803c10aade63558284f12f146fc6714a12e0034993f5957f0435a"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 45467,
+      "coremod": null,
+      "fileID": 3591538,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "spartandefiled-1.0.jar",
+      "projectID": 563768,
+      "sha256": "3b8309ac86f6912cca8c4c6d55bc6f45d34fc7adef61211b6499b677c9b09dbf"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 14941,
+      "coremod": null,
+      "fileID": 4375806,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "RLTooltips.zip",
+      "projectID": 813247,
+      "sha256": "d21e1d013086ffb3fa921efacc552836ceff9809dde2f393be57105d2eb16a46"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 25875,
+      "coremod": null,
+      "fileID": 2573301,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "roughTweaks0.2.4-1.12.2.jar",
+      "projectID": 251670,
+      "sha256": "c0dd9bc20a83778c189156d1fa10b161efc854b8787d98c79bb36bd22c11f5f3"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/librarianlib_at.cfg"
+      ],
+      "bytes": 40713059,
+      "coremod": "com.teamwizardry.librarianlib.asm.LibLibCorePlugin",
+      "fileID": 3041340,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "librarianlib-1.12.2-4.22.jar",
+      "projectID": 252910,
+      "sha256": "fb4b1db99785f79cef6f9bb45de99312897dabc64904851ba31331742a39e22f"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 43194,
+      "coremod": null,
+      "fileID": 3025806,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SoundFilters-0.12.1_for_1.12.jar",
+      "projectID": 222789,
+      "sha256": "6d9981db6aa738d025c732ff6457184abfa29d29b0035ee61069c56000e4a977"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 710631,
+      "coremod": null,
+      "fileID": 4434589,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "spartanfire_rlcraft-1.1.0.jar",
+      "projectID": 676392,
+      "sha256": "79297d85f573791403e9038188d0aaef84550fcf1cedca51f04be830921e8417"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 502574,
+      "coremod": "com.charles445.simpledifficulty.asm.CoreLoader",
+      "fileID": 3613814,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SimpleDifficulty-1.12.2-0.3.9.jar",
+      "projectID": 360779,
+      "sha256": "4c7f92455aae62e7dbc4171aad609c34983243c90d72add5a12ece1613fd1b4b"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 503299,
+      "coremod": null,
+      "fileID": 4203074,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "WearableBackpacks-RLCraft-1.12.2-3.2.6.jar",
+      "projectID": 684624,
+      "sha256": "f7fbe918d8db490a4f531c911ee10e4e2069b83794b555a03a5847ed59411a5d"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 460454,
+      "coremod": null,
+      "fileID": 2863771,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "StandardExpansion-3.4.173.jar",
+      "projectID": 238857,
+      "sha256": "405211aef15d442f857f92c4f755f051396283d6e6fc2de818f4f693091e89f9"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 108450,
+      "coremod": null,
+      "fileID": 2518667,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Baubles-1.12-1.5.2.jar",
+      "projectID": 227083,
+      "sha256": "b32010b2f2778aa1188585e7ead91ad46d4cb2c715f9c778a61848ba7fe51f8d"
+    },
+    {
+      "accessTransformers": [
+        "foamfix_runtime_at.cfg"
+      ],
+      "bytes": 229335,
+      "coremod": "pl.asie.foamfix.coremod.FoamFixCore",
+      "fileID": 3973967,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "foamfix-0.10.15-1.12.2.jar",
+      "projectID": 278494,
+      "sha256": "e6752973cf884f96fcd3835fe6c184b3b4180a27fd955ca07c561cf77e837dda"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 255987,
+      "coremod": null,
+      "fileID": 3570157,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Bountiful-1.12.2-2.2.3.jar",
+      "projectID": 309516,
+      "sha256": "0024f21e4c0a777949aabff6af6cf58632b531359fdebc296a3bb5a7ab4fe22c"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/BetterFoliage_at.cfg"
+      ],
+      "bytes": 864681,
+      "coremod": "mods.betterfoliage.loader.BetterFoliageLoader",
+      "fileID": 3393955,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BetterFoliage-MC1.12-2.3.3.jar",
+      "projectID": 228529,
+      "sha256": "567cbeb69e77bbf9e776045c790436c65f6477162b07457607a172b075d8ebfe"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 278152,
+      "coremod": null,
+      "fileID": 3331364,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ContentTweaker-1.12.2-4.10.0.jar",
+      "projectID": 237065,
+      "sha256": "3371fcccdda4c0701e0991d576db58e2806046c2cb27c22c1e52764080f0e3e9"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 108306,
+      "coremod": null,
+      "fileID": 2746011,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "AutoRegLib-1.3-32.jar",
+      "projectID": 250363,
+      "sha256": "d8610a94da8f30815db4612b3291ecdcfd8204eaf1a4db8c5d0663c7b1191d91"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/bnbgaminglib_at.cfg"
+      ],
+      "bytes": 132644,
+      "coremod": null,
+      "fileID": 2698688,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BNBGamingLib-1.12.2-2.17.6.jar",
+      "projectID": 229587,
+      "sha256": "868c7810de85e43913dc42d8b1443d5316a71ecc19e5983e5aa6cda69ed4db5d"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/particleculling_at.cfg"
+      ],
+      "bytes": 16945,
+      "coremod": "bl4ckscor3.mod.particleculling.ParticleCullingLoadingPl",
+      "fileID": 4439001,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "particleculling-1.12.2-v1.4.1.jar",
+      "projectID": 408853,
+      "sha256": "2790fc0c9072850874cc91c833d0d7132f202bfe74700b8408fa142508b58c29"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 605678,
+      "coremod": "com.charles445.rltweaker.asm.CoreLoader",
+      "fileID": 4486442,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RLTweaker-1.12.2-0.5.12.jar",
+      "projectID": 734347,
+      "sha256": "8d477062249747a115337499aa06ca19637539b2ba503c450023dbc9d9302ef3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 648621,
+      "coremod": null,
+      "fileID": 4389339,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "FishingMadeBetter-1.12.2-2.2.6.jar",
+      "projectID": 306780,
+      "sha256": "9287b049af372e4c5d7f4af601a4967e9d108199c53d6d17b1a1d3b4ca3affc9"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/inspirations_at.cfg"
+      ],
+      "bytes": 842254,
+      "coremod": null,
+      "fileID": 2843007,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Inspirations-1.12.2-0.2.9.jar",
+      "projectID": 284007,
+      "sha256": "a49505102150958cda125c380dd0164376c1c3fc3df3b2c5d860d1490a19048e"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 186600,
+      "coremod": null,
+      "fileID": 3431758,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "InfernalMobs-1.12.2.jar",
+      "projectID": 227875,
+      "sha256": "f1b0be3b482a2e36315f2c13198c64e305fe7cdace3babd5d54d9c6568b8f8a3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 10682288,
+      "coremod": null,
+      "fileID": 4358088,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "Wilhelm.zip",
+      "projectID": 815314,
+      "sha256": "3097aab9ae862ec6e9bd292fc261e25cdf1b330999c498a54a328bf74c04119e"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1119478,
+      "coremod": null,
+      "fileID": 3437402,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "_MixinBootstrap-1.1.0.jar",
+      "projectID": 357178,
+      "sha256": "17c589aad9907d4ba56d578d502afa80aac1ba2fa8677e8b4d06c019c41d7731"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1106601,
+      "coremod": null,
+      "fileID": 4167346,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "forgottenitems-1.12.2-1.3.1.4.jar",
+      "projectID": 262884,
+      "sha256": "51a1c5132f3629ebc2af2ec629b8781c9dcf8db1e2b25ff50d92a26e19f37cbd"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/tntutils_at.cfg"
+      ],
+      "bytes": 31034,
+      "coremod": "ljfa.tntutils.asm.TntuPlugin",
+      "fileID": 2514484,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "tnt_utilities-mc1.12-1.2.3.jar",
+      "projectID": 227449,
+      "sha256": "4b98430a706ba80397f99db8ab808017a4062d5bf8b246631754195b1c3c87ec"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/loadingscreen_at.cfg"
+      ],
+      "bytes": 42647,
+      "coremod": null,
+      "fileID": 2698971,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "LoadingScreens-1.12.2-0.3.1.jar",
+      "projectID": 319264,
+      "sha256": "6df26be8acc4a1224a9ba8d3d31709a5065d3c1fcce939cb4a5b830782f0f923"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/phosphor_at.cfg"
+      ],
+      "bytes": 1082311,
+      "coremod": "me.jellysquid.mods.phosphor.core.PhosphorFMLLoadingPlug",
+      "fileID": 2747710,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "phosphor-1.12.2-0.2.6+build50-universal.jar",
+      "projectID": 318255,
+      "sha256": "ed4581a7744929da8a25c19ac16a1da060312e32f46f48cf76947a720aa4c7e5"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 17317930,
+      "coremod": null,
+      "fileID": 4436467,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SRParasites-1.12.2v1.9.11.jar",
+      "projectID": 348025,
+      "sha256": "802e25427786b93c82199f34432bd0b7fa45832451179d427f349b66fdf87f72"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 228075,
+      "coremod": null,
+      "fileID": 3575333,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ElenaiDodge-1.12.2-2.1.jar",
+      "projectID": 373104,
+      "sha256": "2e604ea44fa705758b496b14206e37d9975c83e1c7ad5b332993f1996d6cddf1"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1769238,
+      "coremod": null,
+      "fileID": 2859893,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "betternether-0.1.8.6.jar",
+      "projectID": 311377,
+      "sha256": "6fffbb495ec446317f4cfdbc4f471a30bffa298c4f354adfed62e4ab5ab274b2"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/crafttweaker_at.cfg",
+        "META-INF/crafttweaker_at.cfg"
+      ],
+      "bytes": 1586790,
+      "coremod": null,
+      "fileID": 4459202,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "CraftTweaker2-1.12-4.1.20.687.jar",
+      "projectID": 239197,
+      "sha256": "7e731c752018d6d7eaccecf038ecf14b562a1fc87056b7d60e0ba579639011bf"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/reskillable_at.cfg"
+      ],
+      "bytes": 338650,
+      "coremod": "codersafterdark.reskillable.base.asm.LoadingPlugin",
+      "fileID": 2815686,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Reskillable-1.12.2-1.13.0.jar",
+      "projectID": 286382,
+      "sha256": "4f753070e7614790141717277dea0548533894fe32ad4b131c7511cb19bd0305"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 109321,
+      "coremod": null,
+      "fileID": 2666560,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "alcatrazcore-1.0.4.jar",
+      "projectID": 304493,
+      "sha256": "10b245b2485c2803ca335f15e371e91df507ca5e0fab7db329a09c93dcb12670"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 75098,
+      "coremod": null,
+      "fileID": 4005371,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "AnimEmis_srparasites.zip",
+      "projectID": 627630,
+      "sha256": "6636fbd2ca7be52b469bf36d57b2bb4736773b79bf55bcba9fbb84c86b5ccce1"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 867296,
+      "coremod": null,
+      "fileID": 3045381,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "[___MixinCompat-0.8___].jar",
+      "projectID": 405327,
+      "sha256": "1c7b61329e6b1aabcbc2d28eed8d803062f1f310d9f7511a8b74b1a4a53f490d"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 325619,
+      "coremod": null,
+      "fileID": 2722339,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "classyhats-1.6.0.jar",
+      "projectID": 281125,
+      "sha256": "1ecdb155f2a0b619c2b5706a2e780a11ac415937202ac1afa9ebbbd38576f859"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 479203,
+      "coremod": null,
+      "fileID": 4469260,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "better_survival-1.5.3.jar",
+      "projectID": 260360,
+      "sha256": "6cc9372e76a86bf428b6df446be138f8db3e622a127f2548cb73a4e4a887d1fb"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 373298,
+      "coremod": null,
+      "fileID": 3383460,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "mcw-bridges-1.0.6b-mc1.12.2.jar",
+      "projectID": 351725,
+      "sha256": "bc309b7c62f8157c65a7339b7fe69334767486aff78581f41678f3749de6debb"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 130065,
+      "coremod": null,
+      "fileID": 3568565,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "callablehorses-1.12.2-1.1.1.jar",
+      "projectID": 331746,
+      "sha256": "ccc0857a5651244d35b4554a6fcf387b4703728b1ae7eb4e8ff28e152f09f1ac"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 305086,
+      "coremod": null,
+      "fileID": 3247154,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BetterMineshaftsForge-1.12.2-2.2.1.jar",
+      "projectID": 389665,
+      "sha256": "6380ad3f470c38337e545afec5418084e95bd7ec3cd75658f9da81e46a2288b1"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/reborncore_at.cfg"
+      ],
+      "bytes": 2285146,
+      "coremod": null,
+      "fileID": 3330308,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RebornCore-1.12.2-3.19.5-universal.jar",
+      "projectID": 237903,
+      "sha256": "31571a6c01b9fd8daf481fa2f22615bbc99335c21f5e474a5607ea149bf2b9aa"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 7809,
+      "coremod": "meldexun.blockoverlayfix.asm.BlockOverlayFixPlugin",
+      "fileID": 3650166,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BlockOverlayFix-1.12.2-1.0.0.jar",
+      "projectID": 580690,
+      "sha256": "8ccf56670f0c0aeaefa4a8aea36a448f1dc22305ff58add0ce5a15eb3d41b684"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/testdummy_at.cfg",
+        "META-INF/testdummy_deobf_at.cfg"
+      ],
+      "bytes": 33622,
+      "coremod": null,
+      "fileID": 2503041,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "MmmMmmMmmMmm-1.12-1.14.jar",
+      "projectID": 225738,
+      "sha256": "def6e04f8ecb9b506447dc52ec0aa8e310c02463caaeb7f73955b612af59c252"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 58071,
+      "coremod": null,
+      "fileID": 4501444,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ShieldBreak-1.1.3.jar",
+      "projectID": 522574,
+      "sha256": "6fb5752bf9591362caa192277e32d8f8cc7f409586a96f7620067d78c4a35962"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 85307,
+      "coremod": null,
+      "fileID": 3543884,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "AIReducer-1.12.2-0.3.0.jar",
+      "projectID": 367831,
+      "sha256": "9e06e63ef116c8c621166e182e52d27f8d4b390683b9c0ab1b097fc800006d5b"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1364302,
+      "coremod": null,
+      "fileID": 2931151,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "Leviosa.zip",
+      "projectID": 376145,
+      "sha256": "f8c5c6a8214128bb79a008e58a75e1e5bc006f892119c421c687598b6a6b739a"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 132594,
+      "coremod": null,
+      "fileID": 3176964,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "corpsecomplex-1.12.2-1.0.12.0.jar",
+      "projectID": 271605,
+      "sha256": "268969a20ce1744f878279f0cd8cfe3202b4d9c57a1fe4d9096452280fe8efab"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 64791,
+      "coremod": "atomicstryker.multimine.common.fmlmagic.MMFMLCorePlugin",
+      "fileID": 2790649,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "MultiMine-1.12.2.jar",
+      "projectID": 227887,
+      "sha256": "00ba55e0484a46cb5ad156bfe92868df31dc0a74d27b52ae45a8e0a8aec068b9"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 65897,
+      "coremod": "meldexun.entityculling.asm.EntityCullingPlugin",
+      "fileID": 4433037,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "EntityCulling-1.12.2-6.3.1.jar",
+      "projectID": 409087,
+      "sha256": "209e4a3715a65e84b30cfdbb0dc775e87731d3d0a23c406c883aa22fbda2024c"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 920900,
+      "coremod": "snownee.snow.core.CoreMod",
+      "fileID": 4406440,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SnowRealMagic-1.12.2-0.7.1.jar",
+      "projectID": 308663,
+      "sha256": "a4e08b2d416ff374fe9144b70687a1166d0bfdeead93ac2991e0ab735d07abfa"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/rtg_at.cfg"
+      ],
+      "bytes": 2075023,
+      "coremod": null,
+      "fileID": 2782568,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RTG-1.12.2-6.1.0.0-snapshot.1.jar",
+      "projectID": 237989,
+      "sha256": "354317bea5c6b97d1dfe17f9431005fd741f853425fa57c8bedd801947f70f52"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 294329,
+      "coremod": null,
+      "fileID": 4442257,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "CollisionDamage-1.2.2.jar",
+      "projectID": 494559,
+      "sha256": "9cf3753d8da3d4ca10efb840f9341bdff150a0a04ba659374173fdc85e2f6c4e"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 341728,
+      "coremod": null,
+      "fileID": 2820815,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "OreLib-1.12.2-3.6.0.1.jar",
+      "projectID": 307806,
+      "sha256": "4483d8cc2b0334b82b7d0f5bb6354a2020a0e00ce63a48379e8ba5eb7d79eef9"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 770595,
+      "coremod": null,
+      "fileID": 3573346,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "MoBends_1.12.2-1.2.1-19.12.21.jar",
+      "projectID": 231347,
+      "sha256": "c29f1971acbf1603f5f733bc50e5f155287d0954f75c3794a26f386949f3e8cd"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 973137,
+      "coremod": null,
+      "fileID": 4414973,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RoguelikeDungeonsFnarEdition-1.12.2-2.4.4.jar",
+      "projectID": 373157,
+      "sha256": "101d8d75dec11d0c1c28491d90503cfd285119bcfe8cd1958caf472d40bda4d4"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 2383353,
+      "coremod": "svenhjol.charm.base.CharmLoadingPlugin",
+      "fileID": 3146596,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Charm-1.12.2-1.4.1.jar",
+      "projectID": 318872,
+      "sha256": "88817c93e103382d7377c78e29da7c48e74d5a397f62cb1631532c6d64195258"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 172724,
+      "coremod": null,
+      "fileID": 3519704,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "disenchanter[1.12]1.8.jar",
+      "projectID": 245769,
+      "sha256": "db6b3b16647cf5fa520aea8254c0aefef8262bff03ff55840349b9e1ba5e7832"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 14649,
+      "coremod": null,
+      "fileID": 3330021,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "itlt-1.12.x-1.0.4.jar",
+      "projectID": 232791,
+      "sha256": "e1bafe44c5a5c9b8119de308580f90183ab10075f640dd12c6e26c28019b0e87"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 99441,
+      "coremod": null,
+      "fileID": 3554966,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "AdHooks-1.12.2-3.3.1.0-build.0626.jar",
+      "projectID": 244849,
+      "sha256": "aae5b4181b71c1eee801e23a3e4d2b593862a8692294a456ee46e8e2a97d2c40"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/bountifulbaubles_at.cfg"
+      ],
+      "bytes": 447825,
+      "coremod": null,
+      "fileID": 3568240,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Bountiful Baubles-1.12.2-0.1.8.jar",
+      "projectID": 313536,
+      "sha256": "aa4c7609455916fb9f6dea575f164f89304f20cfe42cf93dd681e77a87181a9d"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/toastcontrol_at.cfg"
+      ],
+      "bytes": 21668,
+      "coremod": null,
+      "fileID": 2707353,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Toast Control-1.12.2-1.8.1.jar",
+      "projectID": 271740,
+      "sha256": "def0569f7098beeda519118ab1c3c53d8d5e411330ea6f669758681e2a7b23b6"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/lostcities_at.cfg"
+      ],
+      "bytes": 789743,
+      "coremod": null,
+      "fileID": 2861574,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "lostcities-1.12-2.0.22.jar",
+      "projectID": 269024,
+      "sha256": "d29a3fb8fa4c4d74dfadb9deee2eb501e5840c6217be80e24370dcbb709d32b3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 3642,
+      "coremod": "com.chocohead.biab.BornInABarn",
+      "fileID": 2641661,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Born In A Barn V1.8-1.12-1.1.jar",
+      "projectID": 285789,
+      "sha256": "9bd2527323564c66ac66e69c5b05384af24e9d9ce43d7d1f721094d2f4e392d8"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 957330,
+      "coremod": "net.darkhax.surge.core.SurgeLoadingPlugin",
+      "fileID": 2916357,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Surge-1.12.2-2.0.79.jar",
+      "projectID": 250290,
+      "sha256": "d6ab635ab4bc8538c3b362832e5392c4f38fca7306d4aa0e110998cdd82931f6"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 16936,
+      "coremod": null,
+      "fileID": 3602349,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "anvilpatch-1.1.1.jar",
+      "projectID": 320093,
+      "sha256": "be28628747aecea1a01e5781c02317fc19b88c7920b71466fafb7c7fd072f06b"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 11319,
+      "coremod": null,
+      "fileID": 2825356,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "PotionFingers-r1.0-8.jar",
+      "projectID": 344696,
+      "sha256": "e5553468144ae336df8c94f9d8a352483b5504e3d770467ba755ac087ffcc333"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 725244,
+      "coremod": null,
+      "fileID": 4094523,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "DoomlikeDungeons-1.14.12-MC1.12.2.jar",
+      "projectID": 74246,
+      "sha256": "a9debc52784b9402f9811e92b912c01c3c9c4cc319d905a4e5fff87eb37ff4e4"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 167301,
+      "coremod": null,
+      "fileID": 2880613,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "comforts-1.12.2-1.4.1.3.jar",
+      "projectID": 276951,
+      "sha256": "62183a1fa282032e2fea2c3ff6348611a03685a50769199243a42d38605d08a6"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 81460,
+      "coremod": null,
+      "fileID": 2573308,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "FoodExpansion1.3.3-1.12.2.jar",
+      "projectID": 235328,
+      "sha256": "35ac5d3f7ecdde3890f1c192b2f8efe8a580f0750b3af45d31b84cdca3f586ea"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 12600,
+      "coremod": null,
+      "fileID": 2701067,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "craftablechainmail-1.0.jar",
+      "projectID": 319746,
+      "sha256": "4970a6ea89dcf1e12c280b21683c22a1e63f62b90ffabf96ee9a4670bd0803c0"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 102639,
+      "coremod": null,
+      "fileID": 3517236,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "astikorcarts-1.12.2-0.1.2.8.jar",
+      "projectID": 273771,
+      "sha256": "fcddb62c18abef66da15f504eca0388fb0e607d5014b3c3f92776d9286392cbb"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/spartanhudbaubles_at.cfg"
+      ],
+      "bytes": 78418,
+      "coremod": null,
+      "fileID": 3566426,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SpartanHUDBaubles-1.12.2-1.0.0.jar",
+      "projectID": 557117,
+      "sha256": "a96397568625dcb39061177b0cb1326c165822ed8213fdbb74724ec66968b184"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 42657,
+      "coremod": null,
+      "fileID": 2549462,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "trumpetskeleton-1.12-1.0.2.1.jar",
+      "projectID": 279311,
+      "sha256": "9d3d96b8013a6697c58afc85b31c401d39516a367b66ecdce7512367d7ff1530"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/placebo_at.cfg"
+      ],
+      "bytes": 76902,
+      "coremod": null,
+      "fileID": 2694382,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Placebo-1.12.2-1.6.0.jar",
+      "projectID": 283644,
+      "sha256": "c2110db8b8abec23d9e2e9c4a89be010f6fe1150d52595397179c8804d942ee3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 48954,
+      "coremod": "meldexun.reachfix.asm.ReachFixPlugin",
+      "fileID": 4344825,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ReachFix-1.12.2-1.0.8.jar",
+      "projectID": 556777,
+      "sha256": "c832090999c2f2574225c3300260c9d497a7d6ae7cdc0fdb23e50c07cb9ac7de"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 8479,
+      "coremod": null,
+      "fileID": 2960301,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "XPFromHarvest-1.12.2-1.2.0.jar",
+      "projectID": 289397,
+      "sha256": "d40e86e58730485e6260b2b2cdf789c3c68a2c95f3e6a9c7f0901f0e7cb9aa6d"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 606829,
+      "coremod": "com.Shultrea.Rin.Transformer.CoreLoader",
+      "fileID": 3574478,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SoManyEnchantments-0.5.5.jar",
+      "projectID": 267035,
+      "sha256": "e7f4785d666dcebce4caa9d1ff2d1254832dade4d48040b250f9f66a60a1a0b0"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 780421,
+      "coremod": null,
+      "fileID": 2835318,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "defiledlands-1.12.2-1.4.3.jar",
+      "projectID": 273502,
+      "sha256": "62e8d6b2ecfd97c87b6a7f481e6d3b2ee28494b28cb9745b9e7151f2f0ee3f36"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/iChunUtil-deobf_at.cfg",
+        "META-INF/iChunUtil_at.cfg"
+      ],
+      "bytes": 581963,
+      "coremod": null,
+      "fileID": 2801262,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "iChunUtil-1.12.2-7.2.2.jar",
+      "projectID": 229060,
+      "sha256": "e0b90727cbe54a11fe568f3d60cd59d64ff3c14f82437e1d1c10b575886ab8a3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 64896,
+      "coremod": null,
+      "fileID": 4448656,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "BQ_Multiblock_Structure_Integration-1.0.9.jar",
+      "projectID": 375285,
+      "sha256": "9aef01baa65ce1c771b4b5d3e615c2246972a6d3304c839f93d9be642cc8549e"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 687259,
+      "coremod": null,
+      "fileID": 4475428,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RLArtifacts-1.1.2.jar",
+      "projectID": 819886,
+      "sha256": "6128d7da200a5d24e5262233dc24487e8a6ad827c64709b6f8173069636368f6"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 18527,
+      "coremod": null,
+      "fileID": 2595310,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Neat 1.4-17.jar",
+      "projectID": 238372,
+      "sha256": "2062c99a371921fb2eb7cf6833d682c05244ca5a527db8f0c36e7f12c8ca1379"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 23286,
+      "coremod": "materialtweaker.MaterialTweakerPlugin",
+      "fileID": 4178657,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "MaterialTweaker-1.1.1.jar",
+      "projectID": 679116,
+      "sha256": "72b6cdae57d68a374ebe80db67bad772fa0b9d6450093c81fe021439696e8600"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 369314,
+      "coremod": null,
+      "fileID": 2851111,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SilentLib-1.12.2-3.0.14+168.jar",
+      "projectID": 242998,
+      "sha256": "eabb5fc9bdbff1620db5e567663ac2f1bfedc02f7f3004313e7fdde66ec11d16"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1926432,
+      "coremod": "rlmixins.RLMixinsPlugin",
+      "fileID": 4611530,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RLMixins-1.2.15.jar",
+      "projectID": 711730,
+      "sha256": "f536f3278a2627358ceee875bc672dae3f0204530425344c0dd1cc1fcf734c8f"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 96279,
+      "coremod": null,
+      "fileID": 2820653,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "DynamicSurroundingsHuds-1.12.2-3.6.0.0.jar",
+      "projectID": 309318,
+      "sha256": "00167973cf283979337f5e99f748fd5c520603f9bf9e2810aeb3ff6ebfbdf582"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 41527,
+      "coremod": null,
+      "fileID": 3852378,
+      "kind": "other",
+      "mixinConfigs": [],
+      "name": "AnimEmis_defiledlands.zip",
+      "projectID": 638065,
+      "sha256": "c92d365235a9b58024f3f43163aca0d91f47c1dae1d359f2763c25167d6ba228"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 12161,
+      "coremod": null,
+      "fileID": 3007206,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "xptome-1.12.2-v1.1.6.jar",
+      "projectID": 344787,
+      "sha256": "470961851873acaede06d36864cb5b77a292ef4ae27e121b6ac10ab7dceb6672"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/Advanced_Fishing_at.cfg"
+      ],
+      "bytes": 277112,
+      "coremod": null,
+      "fileID": 2636803,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Advanced-Fishing-1.12.2-1.3.3.jar",
+      "projectID": 303541,
+      "sha256": "900a8a030eb8a24c70a949695dd1f36315b9092840b13043d5a6f63e9e50e1b7"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 381455,
+      "coremod": null,
+      "fileID": 2644656,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "FamiliarFauna-1.12.2-1.0.11.jar",
+      "projectID": 289347,
+      "sha256": "c16fc847d7c67b85137597c6837f43d7f9f43b18bc7bda250d871a137f0d6555"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 177413,
+      "coremod": null,
+      "fileID": 2632107,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "FancyBlockParticles-1.12.x-2.4.1.jar",
+      "projectID": 254441,
+      "sha256": "ba46a592a9e51d32d3b2fbdfa167690365ba0c8ea0d0d2a80ddaefea550e8ed0"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 36421,
+      "coremod": null,
+      "fileID": 4358246,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "LegendaryTooltips-1.12.2-1.1.9.jar",
+      "projectID": 532127,
+      "sha256": "e0987de7551d3568b93c034c8d3537adb7ea0aebfa1f929c0529701384ed202d"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/incontrol_at.cfg"
+      ],
+      "bytes": 152687,
+      "coremod": null,
+      "fileID": 3101719,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "incontrol-1.12-3.9.18.jar",
+      "projectID": 257356,
+      "sha256": "b249e9e59a20549fc7080108629f0089cab7f3f16241fea8f5070bb8178f83c3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 493285,
+      "coremod": null,
+      "fileID": 3840577,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "modtweaker-4.0.20.11.jar",
+      "projectID": 220954,
+      "sha256": "2c2db905cae947092fe46dba301d1f6777fdab9cc8e79140c050b09fe62dda7a"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 24050,
+      "coremod": null,
+      "fileID": 2654852,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "GlobalGameRules-1.12.2-2.2.7.jar",
+      "projectID": 227657,
+      "sha256": "1c446df3de8ee80758ab04e38a97b801854d17e3b70ff06afc808e312a0ac7dc"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1239580,
+      "coremod": null,
+      "fileID": 2823030,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "antiqueatlas-1.12.2-4.6.3.jar",
+      "projectID": 227795,
+      "sha256": "ffd0b65060c1e8375b192acd34c7f71606fcd852bdd36b0f5e37f1c8b6536d1d"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 10110,
+      "coremod": null,
+      "fileID": 2848862,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "sit-1.12.2-v1.3.jar",
+      "projectID": 278717,
+      "sha256": "3d4bb6569a06191fd2d8759c0995ae9a48e318a4b24323ecabdac148ab57ffc3"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1766394,
+      "coremod": null,
+      "fileID": 4466956,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "VariedCommodities_1.12.2-(31Mar23).jar",
+      "projectID": 257777,
+      "sha256": "bb1afc496b25e2afda523ffc02e3883b4f5a8e6c852c6d5818bd2d82afae6016"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/controlling_at.cfg"
+      ],
+      "bytes": 28932,
+      "coremod": null,
+      "fileID": 4428378,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Controlling-3.0.12.2.jar",
+      "projectID": 250398,
+      "sha256": "0f8c848d0e715142cb9e8af9a9b5cf369c89ab4bda784c200538083e556ef3a6"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 950755,
+      "coremod": "com.endertech.minecraft.forge.coremod.CorePlugin",
+      "fileID": 4402062,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "ForgeEndertech-1.12.2-4.5.6.1-build.0648.jar",
+      "projectID": 244844,
+      "sha256": "21e155cacd664ba822862ce459cd4b5c8aa56d4273d66d1408904b71b6115104"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/mantle_at.cfg",
+        "META-INF/mantle_deobf_at.cfg"
+      ],
+      "bytes": 843486,
+      "coremod": null,
+      "fileID": 2713386,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Mantle-1.12-1.3.3.55.jar",
+      "projectID": 74924,
+      "sha256": "0975ad3ef3b8b35fe43461feabe44d406b5521b0a2f3d1965c8d2f6a59ad2e65"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 270133,
+      "coremod": null,
+      "fileID": 2613657,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Traverse-1.12.2-1.6.0-69.jar",
+      "projectID": 267769,
+      "sha256": "be89ff855b55d10469779660089cbb13f1f438a9a934724ebffa49982f269414"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/firstaid_at.cfg"
+      ],
+      "bytes": 493904,
+      "coremod": null,
+      "fileID": 4414252,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "firstaid-1.6.22.jar",
+      "projectID": 276837,
+      "sha256": "55dfe81a58d20575b6f6aa635d4296370c804fe52b77485b455aa99910da31a4"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 72145,
+      "coremod": null,
+      "fileID": 3113274,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "YungsLaw-1.12.2-1.0.4.jar",
+      "projectID": 399377,
+      "sha256": "4e22359d9181f52f1df6a99f225298f234db280028f143b3fdce6239a5fc1253"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 17072,
+      "coremod": null,
+      "fileID": 2898966,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "EnchantmentDescriptions-1.12.2-1.1.20.jar",
+      "projectID": 250419,
+      "sha256": "a67a4cf91eb47c7cf345ad8ae956688e29b55bb99b03024d43981595e4282b96"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 87400,
+      "coremod": null,
+      "fileID": 2876841,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "tumbleweed-1.12-0.4.7.jar",
+      "projectID": 245028,
+      "sha256": "ff78f5ac00574912d60022b4a4208cc00f9d4fccfa444efcea38cf1cbb76bcce"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 102741,
+      "coremod": null,
+      "fileID": 4373489,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "RLCombat-1.12.2-2.0.8.jar",
+      "projectID": 711714,
+      "sha256": "8400238bd7eb316c5b2c862f2bc572a513670533eddac997df8aeb49b8415616"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 145329,
+      "coremod": null,
+      "fileID": 2905184,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "PotionCore-1.9_for_1.12.2.jar",
+      "projectID": 242872,
+      "sha256": "0851c95e297efffc18539212b826e3b935e9fc189363d9e311df4bb6d62e27dd"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 6778,
+      "coremod": null,
+      "fileID": 2479308,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "HelpFixer-1.12.1-1.5.18.jar",
+      "projectID": 223797,
+      "sha256": "a3cc25bd00e3d63724f667f569889001be461eb8f383c03b931104ec42833cd5"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 430876,
+      "coremod": null,
+      "fileID": 3567495,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SpartanShields-1.12.2-1.5.5.jar",
+      "projectID": 252239,
+      "sha256": "46b58f509e9023adda3ac087031ebd60acc9db8177125cd197a33099b8eea603"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 193604,
+      "coremod": null,
+      "fileID": 3003242,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "bettercaves-1.12.2-2.0.4.jar",
+      "projectID": 340583,
+      "sha256": "b81b66c2b90431d0cd764f95a2d7ff4561052fa040e8e694b7e2b8e8fa974a00"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 244703,
+      "coremod": null,
+      "fileID": 2721268,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Ruins-1.12.2.jar",
+      "projectID": 227873,
+      "sha256": "c9d4c4761f88e9e2e453778fd48d33288b48e07846e1fc578a5eea56ba0b888c"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 73465,
+      "coremod": null,
+      "fileID": 2560552,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "CoralReef-2.5-1.12.2.jar",
+      "projectID": 248994,
+      "sha256": "9398f88caa92f976eb765ac121aaa17fef94b0ac461aafa372b2c3874e246195"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 1529957,
+      "coremod": "melonslise.locks.mixin.MixinLoader",
+      "fileID": 3568569,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Locks-1.12.2-3.0.0.jar",
+      "projectID": 253456,
+      "sha256": "cfe162b2c919aef2acf0bc35e5c9124847d95458bba25a1141a1c359be66d809"
+    },
+    {
+      "accessTransformers": [
+        "META-INF/Bloodmoon_at.cfg"
+      ],
+      "bytes": 47505,
+      "coremod": "lumien.bloodmoon.asm.LoadingPlugin",
+      "fileID": 2537917,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "Bloodmoon-MC1.12.2-1.5.3.jar",
+      "projectID": 226321,
+      "sha256": "1d6082293067e1a1af002c65527a41df3919f8125eaa25a9c7c9d16ba25c4d06"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 75616,
+      "coremod": null,
+      "fileID": 3075168,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "SetBonus-1.12.2.020.jar",
+      "projectID": 317158,
+      "sha256": "b4d74ff037002ad3c06f1e704f1fabcb40ee23483ca43810c137a271ddf13740"
+    },
+    {
+      "accessTransformers": [],
+      "bytes": 4835065,
+      "coremod": null,
+      "fileID": 2951925,
+      "kind": "jar",
+      "mixinConfigs": [],
+      "name": "pigstep-1.12.jar",
+      "projectID": 381953,
+      "sha256": "23daedd2e063ec9036749e5c255afae5e5aa9eb9014a1cd8679254752b301203"
+    }
+  ],
+  "bytesOnDisk": 300765095,
+  "entries": 187,
+  "failed": 0,
+  "notStagedNonJar": [],
+  "pack": "RLCraft-2.9.3.zip",
+  "packSha256": "5caa25d31f47f4ac69846e4faa741811baa9239804747769f6d54f7b1bbf1291",
+  "present": 187,
+  "schema": 1,
+  "staged": 0,
+  "unresolved": [],
+  "urlSources": {
+    "resolve-index": 187
+  }
+}
