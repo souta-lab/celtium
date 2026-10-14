@@ -1,0 +1,183 @@
+package org.taumc.celeritas.core;
+
+import net.minecraft.launchwrapper.IClassTransformer;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin;
+
+/**
+ * Replaces LWJGL3's native GL methods with Java bodies, so a mod that calls them cannot abort the JVM.
+ * <p>
+ * The GL-less window has no OpenGL context, and LWJGL3's generated GL classes are {@code public static native}
+ * methods that dispatch through a per-thread function-address table. Without a context LWJGL either throws a
+ * catchable {@code IllegalStateException} (when no capabilities are set at all) or, when a capability set exists but
+ * a given address is still zero, aborts the whole JVM with
+ * <pre>
+ * FATAL ERROR in native method: No context is current or a function that is not available in the current context
+ * was called. The JVM will abort execution.
+ * </pre>
+ * Measured on 2026-10-15: legs {@code gv-e2e-268-fix128g..j} aborted this way in Thaumcraft's
+ * {@code ClientProxy.preInit} ({@code ARBShaderObjects.glCreateShaderObjectARB}), in Flare's
+ * {@code GpuInfo.queryGpuModel} ({@code GL11C.nglGetString}) and in {@code GL11C.nglGenTextures}. Installing a
+ * {@code GLCapabilities} built from the stub fixed the first and made the second worse - it turns the catchable
+ * exception into an abort - so the surface itself is replaced here instead of being made reachable.
+ * <p>
+ * The replacement keeps the methods' signatures and their meaning where a caller can act on it: {@code glGetString}
+ * returns this project's identity string, {@code glGetError} returns {@code GL_NO_ERROR}, and everything else returns
+ * the type's zero value. Bodies are straight-line and frame-free, and the class is written without recomputing
+ * frames so untouched methods keep theirs.
+ */
+public class CeltiumGllessNativeTransformer implements IClassTransformer {
+    private static final String PACKAGE = "org.lwjgl.opengl.";
+    /** The LWJGL2-compatible Display is Java and must not be touched; only native methods are rewritten anyway. */
+    private static final String DONT_TOUCH = "org.lwjgl.opengl.Display";
+    private static final int ASM_API = 9 << 16;
+    private static final String GET_STRING_DESC = "(I)Ljava/lang/String;";
+    private static final String GET_STRING_I_DESC = "(II)Ljava/lang/String;";
+    private static final String GET_ERROR_DESC = "()I";
+    private static final String IDENTITY = "Celtium (GL-less Vulkan)";
+
+    @Override
+    public byte[] transform(String name, String transformedName, byte[] basicClass) {
+        if (basicClass == null) {
+            return null;
+        }
+        String target = transformedName != null ? transformedName : name;
+        if (!target.startsWith(PACKAGE) || DONT_TOUCH.equals(target)) {
+            return basicClass;
+        }
+        try {
+            ClassReader reader = new ClassReader(basicClass);
+            ClassWriter writer = new ClassWriter(reader, 0);
+            int[] rewritten = new int[1];
+            reader.accept(new ClassVisitor(ASM_API, writer) {
+                @Override
+                public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
+                                                 String[] exceptions) {
+                    if ((access & Opcodes.ACC_NATIVE) == 0) {
+                        return super.visitMethod(access, methodName, descriptor, signature, exceptions);
+                    }
+                    rewritten[0]++;
+                    MethodVisitor method = super.visitMethod(access & ~Opcodes.ACC_NATIVE, methodName, descriptor,
+                            signature, exceptions);
+                    method.visitCode();
+                    emitDefaultReturn(method, methodName, descriptor);
+                    method.visitMaxs(2, argumentSlots(access, descriptor));
+                    method.visitEnd();
+                    return null;
+                }
+            }, 0);
+            if (rewritten[0] == 0) {
+                return basicClass;
+            }
+            CeleritasVintageMixinPlugin.LOGGER.info(
+                    "CELTIUM_GLLESS replaced {} native GL method(s) in {}", rewritten[0], target);
+            return writer.toByteArray();
+        } catch (Throwable error) {
+            CeleritasVintageMixinPlugin.LOGGER.error(
+                    "GL-less native replacement failed for {}; its native methods keep LWJGL's behaviour", target, error);
+            return basicClass;
+        }
+    }
+
+    private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
+        String returnType = descriptor.substring(descriptor.indexOf(')') + 1);
+        // Both the public wrapper's native and the "ngl" form take the name differently ((int) versus a pointer to
+        // the encoded name), and LWJGL3 generates the pointer form - so match on the name and the return type rather
+        // than on one descriptor. Returning this project's identity keeps a caller like Flare's GpuInfo working
+        // instead of handing it a null.
+        if (returnType.equals("Ljava/lang/String;") && (name.endsWith("glGetString"))) {
+            method.visitLdcInsn(IDENTITY);
+            method.visitInsn(Opcodes.ARETURN);
+            return;
+        }
+        // LWJGL3's own form is nglGetString(int) returning a pointer to NUL-terminated bytes; glGetString then
+        // decodes it. Handing back a pointer to this project's identity keeps that path working - returning 0 would
+        // leave a caller decoding a null pointer.
+        if (returnType.equals("J") && name.endsWith("glGetString")) {
+            method.visitLdcInsn(IDENTITY);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/system/MemoryUtil", "memASCII",
+                    "(Ljava/lang/CharSequence;)J", false);
+            method.visitInsn(Opcodes.LRETURN);
+            return;
+        }
+        if (returnType.equals("Ljava/lang/String;") && name.endsWith("glGetStringi")) {
+            method.visitInsn(Opcodes.ACONST_NULL);
+            method.visitInsn(Opcodes.ARETURN);
+            return;
+        }
+        if (GET_ERROR_DESC.equals(descriptor) && "glGetError".equals(name)) {
+            method.visitInsn(Opcodes.ICONST_0);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
+        switch (returnType) {
+            case "V":
+                method.visitInsn(Opcodes.RETURN);
+                break;
+            case "Z":
+            case "B":
+            case "C":
+            case "S":
+            case "I":
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitInsn(Opcodes.IRETURN);
+                break;
+            case "J":
+                method.visitInsn(Opcodes.LCONST_0);
+                method.visitInsn(Opcodes.LRETURN);
+                break;
+            case "F":
+                method.visitInsn(Opcodes.FCONST_0);
+                method.visitInsn(Opcodes.FRETURN);
+                break;
+            case "D":
+                method.visitInsn(Opcodes.DCONST_0);
+                method.visitInsn(Opcodes.DRETURN);
+                break;
+            default:
+                method.visitInsn(Opcodes.ACONST_NULL);
+                method.visitInsn(Opcodes.ARETURN);
+                break;
+        }
+    }
+
+    /** The argument slot count, needed because the rewritten method is not static-analysis computed. */
+    private static int argumentSlots(int access, String descriptor) {
+        int slots = (access & Opcodes.ACC_STATIC) == 0 ? 1 : 0;
+        int index = 1;
+        while (descriptor.charAt(index) != ')') {
+            char type = descriptor.charAt(index);
+            switch (type) {
+                case 'J':
+                case 'D':
+                    slots += 2;
+                    index += 2;
+                    break;
+                case 'L':
+                    slots += 1;
+                    index = descriptor.indexOf(';', index) + 1;
+                    break;
+                case '[':
+                    slots += 1;
+                    while (descriptor.charAt(index) == '[') {
+                        index++;
+                    }
+                    if (descriptor.charAt(index) == 'L') {
+                        index = descriptor.indexOf(';', index) + 1;
+                    } else {
+                        index++;
+                    }
+                    break;
+                default:
+                    slots += 1;
+                    index += 1;
+                    break;
+            }
+        }
+        return Math.max(slots, 1);
+    }
+}

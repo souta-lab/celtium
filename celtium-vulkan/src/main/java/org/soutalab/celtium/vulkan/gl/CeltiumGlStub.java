@@ -618,119 +618,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Failure is logged and never fatal: a run without capabilities is exactly the run this project had before, and
      * the census and the validation report stay readable either way.
      */
-    /**
-     * Gives the <b>calling thread</b> its own LWJGL3 capabilities from this stub. Safe to call repeatedly.
-     * <p>
-     * LWJGL3 keeps them in a {@code ThreadLocal} (measured 2026-10-15 by javap on lwjgl-opengl-3.4.1.jar:
-     * {@code private static final ThreadLocal<GLCapabilities> capabilitiesTLS}), so {@code GL.setCapabilities}
-     * only affects the thread that calls it. Installing from the mixin plugin's {@code onLoad} - which runs on
-     * {@code main} - therefore did nothing for the game's {@code Client thread}, where mods call GL: leg
-     * {@code gv-e2e-268-fix128f} still aborted in Thaumcraft's {@code ShaderHelper} with
-     * {@code Thread[#3,Client thread,7,main]} in the message. The same fact is why the offline check passed - it
-     * installed and called on one thread.
-     * <p>
-     * Failure is logged and never fatal, as everywhere else on this path.
-     */
-    public static void ensureThreadCapabilities() {
-        ensureThreadCapabilities(false);
-    }
-
-    /**
-     * The same install, but it replaces whatever capabilities the thread already has.
-     * <p>
-     * Measured 2026-10-15 (leg {@code gv-e2e-268-fix128i}): the mod-load hook ran at
-     * {@code FMLClientHandler.beginMinecraftLoading} and reported {@code already=yes}, and the window was created
-     * <em>after</em> it ({@code Display.create} at the next log lines) - so something installed capabilities on that
-     * thread before our first hook, or lwjglxx's own {@code Display.create} replaces them, and the abort in
-     * Thaumcraft's pre-init came later anyway. Whichever it is, the thread ends up with a capability set whose ARB
-     * addresses are zero, which is what "a function that is not available in the current context was called" means.
-     * This variant does not ask what is there; it installs this stub's set, once per call site.
-     */
-    public static void forceThreadCapabilities() {
-        ensureThreadCapabilities(true);
-    }
-
-    private static void ensureThreadCapabilities(boolean force) {
-        // One line per thread, so a leg can tell an entry point that never fired from one that fired and found the
-        // thread already covered. Written once per thread name to stay bounded.
-        if (installed != null && CELTIUM$CAPABILITY_THREADS.add(Thread.currentThread().getName())) {
-            celtium$printAtExit("CELTIUM_GLLESS ensureThreadCapabilities on thread="
-                    + Thread.currentThread().getName() + " already=" + celtium$hasCapabilities()
-                    + " force=" + force);
-        }
-        if (installed == null) {
-            return;
-        }
-        if (!force) {
-            try {
-                if (org.lwjgl.opengl.GL.getCapabilities() != null) {
-                    return;
-                }
-            } catch (Throwable alreadyUnset) {
-                // GL.getCapabilities() throws when the thread has none, which is the case this method exists for.
-            }
-        }
-        celtium$createLwjgl3Capabilities();
-    }
-
-    /** Thread names that have already reported an ensure call. */
-    private static final java.util.Set<String> CELTIUM$CAPABILITY_THREADS =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-    private static String celtium$hasCapabilities() {
-        try {
-            return org.lwjgl.opengl.GL.getCapabilities() != null ? "yes" : "no";
-        } catch (Throwable none) {
-            return "throws";
-        }
-    }
-
-    private static void celtium$createLwjgl3Capabilities() {
-        // There is deliberately no "are capabilities already set?" probe here. GL.getCapabilities() calls
-        // checkCapabilities(), which *throws* "No GLCapabilities instance set for the current thread" when none is
-        // set - and none being set is exactly the case this method exists for. Measured offline with the game's own
-        // LWJGL 3.4.1 jars before any leg: the probe was what produced that message in leg gv-e2e-268-fix128d, at
-        // this line, not createCapabilities().
-        //
-        // The instance is built through the package-private constructor and installed with GL.setCapabilities - the
-        // second of the two solutions LWJGL's own message offers. LWJGL's generator only fills an extension's
-        // function addresses when its name is in the set (`if (!ext.contains(capName)) return false;` before the
-        // address copy), so the set has to be complete; it is taken from the capabilities class's 427 public GL_*
-        // fields.
-        //
-        // The extension set is taken from the capabilities class's own public fields: LWJGL generates one boolean per
-        // extension it knows (GL_ARB_shader_objects and so on), and the constructor only fills an extension's function
-        // addresses when its name is in the set. Passing the full list is what makes a mod's ARB call resolve to this
-        // provider instead of aborting the JVM.
-        try {
-            Class<?> capabilitiesClass = Class.forName("org.lwjgl.opengl.GLCapabilities");
-            java.util.Set<String> extensions = new java.util.HashSet<>();
-            for (java.lang.reflect.Field field : capabilitiesClass.getFields()) {
-                String name = field.getName();
-                if (name.startsWith("GL_")) {
-                    extensions.add(name);
-                }
-            }
-            java.lang.reflect.Constructor<?> constructor = capabilitiesClass.getDeclaredConstructor(
-                    org.lwjgl.system.FunctionProvider.class, java.util.Set.class, boolean.class,
-                    java.util.function.IntFunction.class);
-            constructor.setAccessible(true);
-            Object capabilities = constructor.newInstance(installed, extensions, Boolean.FALSE,
-                    (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
-            org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
-            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities installed from the stub provider: extensions="
-                    + extensions.size() + " thread=" + Thread.currentThread().getName());
-            return;
-        } catch (Throwable error) {
-            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities could not be built from the stub: " + error);
-        }
-        try {
-            org.lwjgl.opengl.GL.createCapabilities();
-            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities created from the stub provider: createCapabilities");
-        } catch (Throwable error) {
-            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities could not be created from the stub: " + error);
-        }
-    }
 
     /**
      * Installs this provider as the process's GL function source; call before {@code GL.createCapabilities()}.
@@ -743,7 +630,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             installed = new CeltiumGlStub();
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
-            ensureThreadCapabilities();
+            // No GLCapabilities is built here on purpose. Measured 2026-10-15: installing one converts LWJGL3's
+            // catchable "no capabilities" exception into an uncatchable JVM abort whenever a function's address is
+            // still zero, which broke the cohort (Flare's GpuInfo.queryGpuModel calls glGetString during mod
+            // construction) while leaving the pack's own abort in place. The LWJGL3 surface is handled by
+            // CeltiumGllessNativeTransformer instead, which replaces the native methods themselves.
             // The census has to be readable after the run: the harness reads logs, and the renderer's own report
             // only carries the strings it knows to ask for. One line at exit, bounded. The glDrawArrays line sits
             // beside it because the two answer the same question from opposite sides: the census says which drawing

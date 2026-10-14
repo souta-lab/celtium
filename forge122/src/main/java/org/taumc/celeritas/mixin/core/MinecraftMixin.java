@@ -104,10 +104,6 @@ public class MinecraftMixin {
      * {@code startGame} is the earliest Client-thread point before {@code Loader.preinitializeMods}, and the call is
      * idempotent.
      */
-    @Inject(method = "startGame", at = @At("HEAD"), require = 0)
-    private void celtium$installThreadCapabilitiesAtStartGame(CallbackInfo ci) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
-    }
 
     /**
      * The same install on the thread that actually calls GL.
@@ -120,15 +116,7 @@ public class MinecraftMixin {
      * 02:04:46 while the abort comes at 02:05:1x), and {@code runTick} covers anything that starts calling GL after
      * the window exists. Both are idempotent.
      */
-    @Inject(method = "createDisplay", at = @At("HEAD"), require = 0)
-    private void celtium$installThreadCapabilitiesAtDisplay(CallbackInfo ci) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
-    }
 
-    @Inject(method = "runTick", at = @At("HEAD"), require = 0)
-    private void celtium$installThreadCapabilitiesAtTick(CallbackInfo ci) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
-    }
 
 
     @Inject(method = "startGame", at = @At("HEAD"), require = 0)

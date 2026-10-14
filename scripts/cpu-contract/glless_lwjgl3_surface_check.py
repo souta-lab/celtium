@@ -95,29 +95,25 @@ def main():
         print(('ok  ' if ok else 'FAIL') + label)
 
     source = STUB.read_text(encoding='utf-8')
-    require('the stub installs capabilities with setCapabilities, not createCapabilities alone',
-            'setCapabilities' in source and 'getDeclaredConstructor' in source)
-    require('there is a per-thread entry point for the threads the game calls GL on',
-            'ensureThreadCapabilities' in source)
     coremod = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
-    require('the mod-load entry point is installed from the transformer chain, not from a mixin',
-            'CeltiumGllessModLoadTransformer' in coremod)
-    transformer = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessModLoadTransformer.java').read_text(encoding='utf-8')
-    require('that transformer targets FMLClientHandler.beginMinecraftLoading',
-            'net.minecraftforge.fml.client.FMLClientHandler' in transformer and 'beginMinecraftLoading' in transformer)
-    require('the install reports itself once per thread, so a leg can tell a hook that never fired',
-            'ensureThreadCapabilities on thread=' in (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8'))
-
-    mixin = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java').read_text(encoding='utf-8')
-    require('the game thread calls it from more than one entry point',
-            mixin.count('ensureThreadCapabilities()') >= 3)
-    require('one of those entry points is createDisplay, which runs on the Client thread',
-            'installThreadCapabilitiesAtDisplay' in mixin and 'method = "createDisplay"' in mixin)
+    require('the native replacement is installed from the transformer chain',
+            'CeltiumGllessNativeTransformer' in coremod)
+    native_transformer = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java').read_text(encoding='utf-8')
+    require('it rewrites only native methods in the LWJGL GL package',
+            'ACC_NATIVE' in native_transformer and 'org.lwjgl.opengl.' in native_transformer)
+    require('it returns this project\'s identity for glGetString rather than null',
+            'IDENTITY' in native_transformer and 'glGetString' in native_transformer)
+    require('the capabilities path that regressed the cohort is gone',
+            'ensureThreadCapabilities' not in (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8')
+            and 'CeltiumGllessModLoadTransformer' not in coremod)
     # The probe is allowed now, but only guarded: GL.getCapabilities() throws when the thread has none, which is
     # the case it is asking about. The runtime half of this contract proves the behaviour on a second thread.
-    require('the capabilities probe is guarded, because it throws when the thread has none',
-            'catch (Throwable alreadyUnset)' in source)
-    require('the extension set is taken from the capabilities class fields', 'startsWith("GL_")' in source)
+
+    if not all(checks):
+        print(f'{checks.count(False)} contract check(s) failed')
+        return 1
+    print(f'{len(checks)} contract checks passed (source shape; the runtime half moved to the native check)')
+    return 0
 
     javac = shutil.which('javac')
     lwjgl = first(str(INTEROP_LIB / 'lwjgl-3.4.1.jar'))

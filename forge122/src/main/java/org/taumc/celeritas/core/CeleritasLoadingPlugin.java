@@ -21,7 +21,7 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
     @Override
     public @Nullable String[] getASMTransformerClass() {
         return new String[] {"org.taumc.celeritas.core.CeltiumGllessWindowTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessModLoadTransformer"};
+                "org.taumc.celeritas.core.CeltiumGllessNativeTransformer"};
     }
 
     @Override
