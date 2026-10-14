@@ -252,6 +252,43 @@ public final class CeltiumGllessHint {
      * bytes the caller allocated is not in the signature: writing more than the caller asked for would corrupt the
      * heap, so only the functions whose element count is exactly one are handled here.
      */
+    /** Fence tokens for the GL-less path; 0 means "no object" to every caller, as with the names. */
+    private static final java.util.concurrent.atomic.AtomicLong NEXT_FENCE =
+            new java.util.concurrent.atomic.AtomicLong(1);
+
+    /**
+     * Returns a fence token for {@code glFenceSync}, which cannot exist without a GL context.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-cohort-fix129}, the first run past the splash and the atlas): the client
+     * reached the world and then died in {@code Minecraft.postRender} with
+     * {@code RuntimeException: Failed to create fence object} from
+     * {@code RenderAheadManager.endFrame(RenderAheadManager.java:41)}, because the generic native fallback answers the
+     * type's zero and that class treats zero as failure. The renderer has no GL fences to hand out, so this returns a
+     * token that cannot be read as failure.
+     * <p>
+     * The serialisation that {@code RenderAheadManager} wants is not lost with it. Its fence exists to stop the CPU
+     * running ahead of the GPU and to keep a persistently-mapped staging buffer from being overwritten before the
+     * frame using it has finished. Under this renderer that bound is the frame-slot fence:
+     * {@code VulkanTerrainGpuBackend} acquires a slot per frame and, when the slot's previous submission is still in
+     * flight, waits on that slot's own {@code vkWaitForFences} before it may reset and re-record it (the slot-reuse
+     * wait, "OPT-08's retirement rule"), with a fixed number of slots. So at most {@code FRAME_SLOTS} submissions can
+     * be in flight, which is the same bound the GL fence pair enforced.
+     */
+    public static long glFenceSyncId(int condition, int flags) {
+        return NEXT_FENCE.getAndIncrement();
+    }
+
+    /**
+     * Answers {@code glClientWaitSync} with {@code GL_ALREADY_SIGNALED}.
+     * <p>
+     * There is no GL fence to wait on, and waiting on a token that will never signal would hang the client thread. The
+     * wait the caller wants has already happened on the renderer's side - see {@link #glFenceSyncId} for why the
+     * frame-slot fence is that wait - so the honest answer is that this fence is already satisfied.
+     */
+    public static int glClientWaitSyncStatus(long sync, int flags, long timeout) {
+        return 0x911A; // GL_ALREADY_SIGNALED
+    }
+
     public static void glGetZero(long params, int bytes) {
         if (params == 0L) {
             return;

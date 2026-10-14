@@ -114,6 +114,27 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // The fence pair: a GL fence object cannot exist without a GL context, and the generic fallback answers the
+        // type's zero, which RenderAheadManager.endFrame reads as failure and throws on (measured on leg
+        // gv-cohort-fix129, the first run that reached the world). See CeltiumGllessHint.glFenceSyncId for why the
+        // bound the fence provided is still enforced, by the renderer's own frame-slot fences.
+        if (returnType.equals("J") && name.endsWith("glFenceSync") && descriptor.startsWith("(II)")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glFenceSyncId", "(II)J", false);
+            method.visitInsn(Opcodes.LRETURN);
+            return;
+        }
+        if (returnType.equals("I") && name.endsWith("glClientWaitSync") && descriptor.startsWith("(JIJ)")) {
+            method.visitVarInsn(Opcodes.LLOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 2);
+            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClientWaitSyncStatus", "(JIJ)I", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         // Functions whose return value a caller checks, and where the type's zero is not a usable answer.
         // Measured 2026-10-15 (legs gv-cohort-fix128s / gv-e2e-268-fix128s): returning zero for
         // glCheckFramebufferStatus made vanilla throw "glCheckFramebufferStatus returned unknown status:0" during
