@@ -11,6 +11,7 @@ rather than counted as staged, because a mod that is silently missing looks exac
 """
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -110,6 +111,54 @@ def main() -> int:
         results.append(check("an entry without a URL is planned, not dropped", len(entries), 1))
         results.append(check("its url is empty", entries[0]["url"], ""))
         results.append(check("its name carries the ids", entries[0]["name"], "project284754-2725062.jar"))
+
+        # Filename and URL boundaries: a URL from a modpack is untrusted data.
+        for bad in ["https://edge.forgecdn.net/files/1/2/%2e%2e%2foutside.jar",
+                    "https://edge.forgecdn.net/files/1/2/evil%5cname.jar",
+                    "http://edge.forgecdn.net/files/1/2/test.jar",
+                    "https://127.0.0.1:4444/test.jar"]:
+            try:
+                pack_stage.plan_entries({"files": [{"projectID": 1, "fileID": 2,
+                                                     "required": True, "downloadUrl": bad}]}, None)
+                rejected = False
+            except pack_stage.PackError:
+                rejected = True
+            results.append(check("reject dangerous URL/name " + bad.rsplit('/', 1)[-1], rejected, True))
+
+        duplicate = {"files": [
+            {"projectID": 1, "fileID": 2, "downloadUrl": "https://edge.forgecdn.net/x/THING.jar"},
+            {"projectID": 3, "fileID": 4, "downloadUrl": "https://edge.forgecdn.net/y/thing.jar"},
+        ]}
+        try:
+            pack_stage.plan_entries(duplicate, None)
+            rejected_duplicate = False
+        except pack_stage.PackError:
+            rejected_duplicate = True
+        results.append(check("reject case-insensitive target collision", rejected_duplicate, True))
+
+        # A malicious CDN serving more bytes than HEAD advertised MUST NOT overfill the disk;
+        # the partial file must be erased even on a budget exception.
+        class FakeFetcher:
+            def open(self, req, timeout):
+                return io.BytesIO(b"0123456789")
+
+        original_fetcher = pack_stage.FETCHER
+        pack_stage.FETCHER = FakeFetcher()
+        target = td / "bounded.jar"
+        try:
+            try:
+                pack_stage.download_bounded("https://edge.forgecdn.net/files/1/2/bounded.jar", target, 5)
+                hit_limit = False
+            except pack_stage.BudgetExceeded:
+                hit_limit = True
+            results.append(check("runtime stream exceeding HEAD estimate is refused", hit_limit, True))
+            results.append(check("no partial or corrupt final jar on budget error",
+                                 target.exists() or (td / "bounded.jar.part").exists(), False))
+            results.append(check("valid bounded download returns exact bytes",
+                                 pack_stage.download_bounded("https://edge.forgecdn.net/files/1/2/bounded.jar", target, 10), 10))
+            results.append(check("final jar bytes are correct", target.read_bytes(), b"0123456789"))
+        finally:
+            pack_stage.FETCHER = original_fetcher
 
         # The pack archive is only read.
         results.append(check("the pack archive is unchanged", nourl.read_bytes() == before, True))

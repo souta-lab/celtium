@@ -5,8 +5,9 @@ Two things make a full pack different from a handful of test mods, and this scri
 
 The first is disk. E2E is 270 mods and RLCraft is 187; a shared download cache plus two instances is
 hundreds of megabytes of jars and gigabytes of game directory. So the plan is sized with a HEAD request
-per mod *before* anything is written, and the run refuses to start if the plan does not fit the budget it
-was given. A staging run that fills the disk is worse than no staging run.
+per mod *before* anything is written. HEAD may under-report or omit sizes, so every streaming download
+has the same hard byte budget, preserves 1 GiB filesystem free, and either renames a complete temporary
+file into place or cleans it on failure. A staging run that fills the disk is worse than no staging run.
 
 The second is that a pack's compatibility is decided before the game draws anything, by what its mods
 transform. A jar that declares ``FMLCorePlugin`` installs a class transformer; one that ships an
@@ -19,8 +20,9 @@ The pack archive itself is only ever read. Mods are written under ``--out`` and 
 Usage:
     pack_stage.py --pack <pack.zip> --out <dir> --budget-gb 8 [--only SUBSTR] [--dry-run]
 
-Exit codes: 0 staged (or planned, for --dry-run); 2 usage or unreadable pack; 3 the plan does not fit the
-budget; 4 a download failed (the report is still written, listing what landed).
+Exit codes: 0 staged (or planned, for --dry-run); 2 usage, unsafe manifest URL or unreadable pack;
+3 the preflight or streaming download exceeded the budget; 4 a download failed (the report is still
+written, listing what landed). Fetch URLs must be trusted HTTPS *.forgecdn.net hosts (including redirects).
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import urllib.error
 import urllib.parse
@@ -47,6 +50,57 @@ class PackError(Exception):
     A SystemExit carrying a message exits 1, not the documented code, so the failure is raised as a
     normal exception and the exit code is set at the one place that owns it.
     """
+
+
+class BudgetExceeded(Exception):
+    """A streaming download would exceed the caller's absolute byte budget."""
+
+
+def validate_url(url: str) -> urllib.parse.SplitResult:
+    """Only fetch the official HTTPS CurseForge CDN, never arbitrary manifest URLs."""
+    parsed = urllib.parse.urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    if (parsed.scheme != "https" or not host.endswith(".forgecdn.net") or
+            parsed.username or parsed.password or parsed.port not in (None, 443)):
+        raise PackError(f"untrusted mod download URL: {url[:200]}")
+    return parsed
+
+
+class ForgeCdnRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+FETCHER = urllib.request.build_opener(ForgeCdnRedirectHandler())
+
+
+def download_bounded(url: str, target: Path, remaining: int) -> int:
+    """Download atomically and refuse to write even 1 byte beyond the budget."""
+    validate_url(url)
+    partial = target.with_name(target.name + ".part")
+    if partial.exists() or partial.is_symlink():
+        raise PackError(f"existing download partial must be investigated: {partial}")
+    size = 0
+    try:
+        req = urllib.request.Request(url, headers=USER_AGENT)
+        with FETCHER.open(req, timeout=300) as response, partial.open("xb") as dest:
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                if len(chunk) > remaining - size:
+                    raise BudgetExceeded(f"{target.name}: remaining disk budget exhausted")
+                if shutil.disk_usage(target.parent).free < len(chunk) + 1024 ** 3:
+                    raise BudgetExceeded(f"{target.name}: preserving 1 GiB disk free")
+                dest.write(chunk)
+                size += len(chunk)
+        if not size:
+            raise PackError(f"{target.name}: empty download")
+        partial.replace(target)
+        return size
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def read_manifest(pack: Path) -> dict:
@@ -68,10 +122,20 @@ def plan_entries(manifest: dict, only: list[str] | None) -> list[dict]:
         if not f.get("required", True):
             continue
         url = f.get("downloadUrl") or ""
-        name = urllib.parse.unquote(url.rsplit("/", 1)[-1]) if url else f"project{f['projectID']}-{f['fileID']}.jar"
+        if url:
+            parsed = validate_url(url)
+            name = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
+        else:
+            name = f"project{f['projectID']}-{f['fileID']}.jar"
+        if (not name.lower().endswith(".jar") or name in (".", "..") or
+                any(c in name for c in "/\\\x00") or
+                any(ord(c) < 32 for c in name)):
+            raise PackError(f"unsafe mod jar filename: {name[:100]!r}")
         if only and not any(s.lower() in name.lower() for s in only):
             continue
         out.append({"name": name, "url": url, "projectID": f["projectID"], "fileID": f["fileID"]})
+    if len({e["name"].casefold() for e in out}) != len(out):
+        raise PackError("duplicate downloaded jar basename would overwrite another mod")
     return out
 
 
@@ -79,7 +143,8 @@ def head_size(url: str) -> int | None:
     """Content-Length without downloading, so the budget is decided before any bytes land."""
     try:
         req = urllib.request.Request(url, headers=USER_AGENT, method="HEAD")
-        with urllib.request.urlopen(req, timeout=30) as r:
+        validate_url(url)
+        with FETCHER.open(req, timeout=30) as r:
             n = r.headers.get("Content-Length")
             return int(n) if n else None
     except Exception:
@@ -132,7 +197,14 @@ def main() -> int:
     except PackError as e:
         print(e, file=sys.stderr)
         return 2
-    entries = plan_entries(manifest, args.only or None)
+    try:
+        entries = plan_entries(manifest, args.only or None)
+    except (PackError, KeyError, ValueError, TypeError) as e:
+        print(f"unusable mod manifest: {e}", file=sys.stderr)
+        return 2
+    if not (0 < args.budget_gb <= 1000):
+        print("--budget-gb must be positive and finite", file=sys.stderr)
+        return 2
     if not entries:
         print("nothing to stage (no matching manifest entries)", file=sys.stderr)
         return 2
@@ -149,6 +221,9 @@ def main() -> int:
     unknown = 0
     for e in entries:
         target = mods_dir / e["name"]
+        if target.is_symlink():
+            print(f"REFUSING: existing mod is a symlink: {target}", file=sys.stderr)
+            return 2
         if target.is_file():
             e["bytes"] = target.stat().st_size
             e["state"] = "present"
@@ -182,6 +257,7 @@ def main() -> int:
 
     mods_dir.mkdir(parents=True, exist_ok=True)
     failed = 0
+    consumed = sum(e["bytes"] for e in entries if e["state"] == "present")
     for e in entries:
         target = mods_dir / e["name"]
         if e["state"] == "present":
@@ -192,15 +268,15 @@ def main() -> int:
             failed += 1
             continue
         try:
-            req = urllib.request.Request(e["url"], headers=USER_AGENT)
-            with urllib.request.urlopen(req, timeout=300) as r, target.open("wb") as f:
-                while True:
-                    chunk = r.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            e["bytes"] = target.stat().st_size
+            e["bytes"] = download_bounded(e["url"], target, budget - consumed)
+            consumed += e["bytes"]
             e["state"] = "staged"
+        except BudgetExceeded as ex:
+            e["state"] = "budget-exceeded"
+            e["error"] = str(ex)[:160]
+            failed += 1
+            print(f"REFUSING: {ex}", file=sys.stderr)
+            break
         except Exception as ex:
             e["state"] = "failed"
             e["error"] = str(ex)[:80]
@@ -240,7 +316,7 @@ def main() -> int:
         print(f"  coremod  {c['name']:44s} {c['plugin']}")
     for a in report["accessTransformers"]:
         print(f"  at       {a['name']:44s} {','.join(x.split('/')[-1] for x in a['entries'])}")
-    return 4 if failed else 0
+    return 3 if any(e.get("state") == "budget-exceeded" for e in entries) else (4 if failed else 0)
 
 
 if __name__ == "__main__":

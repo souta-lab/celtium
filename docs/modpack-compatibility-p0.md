@@ -36,6 +36,28 @@ python3 scripts/modpack-compat/test_lock_archive.py
 
 The audit rejects malformed project IDs, invalid loader, unexpected Minecraft version, duplicate IDs, ZIP traversal/symlinks and oversized/decompression hazards, hashes the original download and every override file, and records embedded jar hashes. The CI check uses a **synthetic test ZIP only**; it does not fetch proprietary pack archives or assert client startup.
 
+### Disk-safe Mod download and transformer inventory (PR #85)
+
+After verifying the official ZIP's lock with `lock_archive.py`, use the **offline dry-run** first for
+planning. The staging helper (`scripts/pack_stage.py`) may perform HTTPS HEAD requests to estimate
+sizes but does **not** write on `--dry-run`. Runtime downloads accept only approved HTTPS
+`*.forgecdn.net` URLs, reject archive-derived unsafe file paths and duplicate target names, and
+apply a **hard streaming byte cap** even when Content-Length is missing or wrong. A partial file is
+never renamed to a complete JAR, and downloads preserve at least 1 GiB disk free.
+
+```sh
+python3 scripts/pack_stage.py --pack /private/Enigmatica2Expert-1.93a.zip \
+  --out /private/e2e-fixture --budget-gb 2 --dry-run
+python3 scripts/pack_stage.py --pack /private/Enigmatica2Expert-1.93a.zip \
+  --out /private/e2e-fixture --budget-gb 2
+```
+
+`--only` can narrow an investigative group before the full pack; such a subset is NOT an E2E/RLCraft
+acceptance. The report `stage-report.json` is generated from the actual landed JARs, listing coremod,
+access transformer, and Mixin config metadata. **RLCraft 2.9.3 manifest entries have no `downloadUrl`:**
+this helper reports them as `no-url` rather than silently assigning random JARs. Its full 187-Mod
+installation requires a verified CurseForge projectID/fileID download resolution step first.
+
 ## Compatibility release gates — never skip levels
 
 | Gate | What must be demonstrated | Status 2026-10-14 |
