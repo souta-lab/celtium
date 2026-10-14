@@ -7,8 +7,19 @@ import java.util.List;
 public final class ProbeReport {
     public final int schemaVersion = 1;
     public final String scope = "capability-query-only";
-    public final String effectiveTerrainBackend = "opengl";
-    public final boolean nativeTerrainImplemented = false;
+    /**
+     * The terrain backend this process is actually running, filled in by the caller that has a running client
+     * ({@code /celtium probe}) and left at {@code unknown} by the query itself.
+     * <p>
+     * These two fields used to be compile-time constants - {@code "opengl"} and {@code false} - which made the report
+     * state the opposite of the truth in a GL-less run whose renderer was drawing terrain natively. A capability query
+     * cannot know the answer, so it no longer claims to; {@link #terrainBackendSource} records where the value came
+     * from, and {@link #depthRoundtripVerified} stays false because no query proves a roundtrip.
+     */
+    public String effectiveTerrainBackend = "unknown";
+    public boolean nativeTerrainImplemented = false;
+    /** Where {@link #effectiveTerrainBackend} came from, so a default is never read as an observation. */
+    public String terrainBackendSource = "not observed by the capability query";
     public final boolean depthRoundtripVerified = false;
     public String operatingSystem = System.getProperty("os.name");
     public String contextSource = "current-gl-context";

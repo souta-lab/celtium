@@ -12,7 +12,12 @@ class InteropEligibilityTest {
         InteropEligibility.evaluate(report);
         assertEquals("CANDIDATE_FOR_INTEROP_TEST", report.status);
         assertEquals(UUID, report.matchedVulkanDeviceUuid);
-        assertEquals("opengl", report.effectiveTerrainBackend);
+        // The query does not observe the renderer, so it must not name a backend: these two fields used to be the
+        // compile-time constants "opengl"/false, which stated the opposite of the truth in a GL-less run whose native
+        // renderer was drawing the world. The caller that runs inside a client fills them in, and says so in
+        // terrainBackendSource; a bare query leaves both at the honest default.
+        assertEquals("unknown", report.effectiveTerrainBackend);
+        assertEquals("not observed by the capability query", report.terrainBackendSource);
         assertFalse(report.nativeTerrainImplemented);
         assertFalse(report.depthRoundtripVerified);
     }
@@ -112,6 +117,9 @@ class InteropEligibilityTest {
         String json = CeltiumProbe.toJson(report);
         assertTrue(json.contains("\"nativeTerrainImplemented\": false"));
         assertTrue(json.contains("\"depthRoundtripVerified\": false"));
+        // A reader has to be able to tell a default from an observation, so the source field is part of the contract.
+        assertTrue(json.contains("\"effectiveTerrainBackend\": \"unknown\""));
+        assertTrue(json.contains("\"terrainBackendSource\": \"not observed by the capability query\""));
     }
 
     private static void assertRejected(ProbeReport report, String reasonFragment) {
