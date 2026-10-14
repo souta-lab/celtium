@@ -82,3 +82,35 @@ Two further facts for that leg:
 - If RenderLib is the collider, the substitution to try first is **RenderLib 1.4.5** (the version already proven to
   coexist with this injection in E2E) rather than removing the mod, and either way the substitution belongs in the
   pack's documented list next to the Nothirium exclusion.
+
+## Correction: excluding RenderLib does not boot the pack, and the next failure has the same shape (measured 2026-10-15)
+
+Leg `bisect-r1-r6` runs the RLCraft set **without `RenderLib-1.12.2-1.2.8`** (178 jars in `mods/`, RenderLib absent,
+same fixture). Results:
+
+- The `RenderGlobal` failure is **gone** — no `Scanned 0 target(s)` for our mixin, and the game gets further.
+- It still dies, 7.9 s in, now inside **another mod's mixin**:
+  ```
+  [pl.asie.foamfix.coremod.FoamFixTransformer:spliceClasses:114]: Spliced in METHOD: net.minecraft.tileentity.TileEntity.func_190559_a
+  [CleanMix]: Mixin apply for mod entityculling failed mixins.entityculling.json:MixinTileEntity from mod entityculling
+      -> net.minecraft.tileentity.TileEntity
+  InvalidInjectionException: Critical injection failure: @Inject annotation on updateCachedBoundingBox
+      could not find any targets matching 'updateCachedBoundingBox' in net/minecraft/tileentity/TileEntity
+    at ...InjectionInfo.readAnnotation -> TargetSelectors.validate
+  ... Caused by: ClassNotFoundException: net.minecraft.tileentity.TileEntity
+  [Foundation]: Unable to launch
+  ```
+- Only 10 celtium mixins had applied by then (the full pack reaches 64), so the run aborts early.
+
+**What this changes**: the failure is **not unique to our mixin and not unique to `RenderGlobal`**. Two different mods
+fail with the same shape — an `@Inject` whose **MCP method name resolves to no target** — and the second one fires
+right after `FoamFixTransformer` spliced a method into `TileEntity`. RenderLib's transformer naming our exact method
+remains a real mechanism for the *first* failure, but **excluding RenderLib is not sufficient to boot the pack**, so
+"RenderLib is the collider" is **not** established and must not be recorded as the cause.
+
+The shape now points at a **pack-wide name-resolution or class-definition problem**, and the discriminators that would
+separate it are one leg each: **RLCraft − FoamFix** (it spliced into `TileEntity` immediately before the failure),
+**RLCraft − EntityCulling** (whose mixin fails), and **RLCraft − RLMixins** (the RLCraft-specific mixin/ASM bundle,
+the one component this pack has that the working E2E and cohort sets do not). Until one of those boots the pack, the
+honest statement is: *RLCraft's first blocker is a mixin whose MCP method name resolves to nothing, ours is one
+instance of it, and the shared cause is unidentified.*
