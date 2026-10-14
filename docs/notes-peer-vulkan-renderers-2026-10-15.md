@@ -298,3 +298,21 @@ frame a blue sky with fragments, the capture a uniform fog colour. **And the fix
 pipeline**, not in the world or the server: OptiFine fixed it in its renderer, and Sodium's issue 3497 states the same
 requirement in its own words, that the renderer has to be reloaded to invalidate the chunk tracker's state. The refresh
 added in this project's `initRenderer` is that same step.
+
+## What the RLCraft Nether actually is, for reading the pose question (read 2026-10-15)
+
+The RLCraft wiki is explicit that this is not the vanilla Nether:
+
+> "**RLCraft's Nether introduces new Ores, useful Items, Enemies, Biomes and Structures, courtesy of BetterNether,
+> Doomlike Dungeons, Battle Towers and Lycanites Mobs.** There are far more structures and plant-like organisms, as
+> well as generated structures, than in a typical 1.12 Nether."
+
+and the 2.9 changelog lists "**Better Nether! Complete overhaul of the nether with new sub biomes and features!**"
+
+Two consequences for the legs. **The pose cannot be judged against vanilla's Nether heights**: y=70 is an ordinary
+height in a vanilla Nether (the dimension spans 0 to 127 and forced portals land between 70 and 118), but BetterNether
+replaces the terrain generator, so whether the arrival spot is air with ground under it is a question about that
+generator - which is why the fixture's own placement check (`placedBlock=minecraft:air`, `ground=true`, `safe=true`)
+is the evidence to use, and it says the spot is fine. **And a Nether scene is expected to be slow**: MC-193806 reports
+that going through a Nether portal can leave the client on "loading terrain" until it times out, so a Nether leg that
+runs far longer than an overworld one is not by itself a hang.
