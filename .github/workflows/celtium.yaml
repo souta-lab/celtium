@@ -33,6 +33,7 @@ jobs:
           python3 scripts/cpu-contract/parallel_atlas_sync_refusal_check.py
           python3 scripts/modpack-compat/test_lock_archive.py
           python3 scripts/modpack-compat/test_e2e_celtium_mods.py
+          python3 scripts/modpack-compat/test_e2e_stellar_parallel_config.py
           python3 scripts/cpu-contract/pack_stage_check.py
           python3 scripts/cpu-contract/contested_mixin_exclusion_check.py
       - name: Test and package isolated capability probe

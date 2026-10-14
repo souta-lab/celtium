@@ -112,3 +112,38 @@ world or record a GPU image. The run ended after 750.9 seconds (`MISSING_REPORT`
 exit 143/time-limit, no world frames). Treat this as a **startup/fixture blocker,
 not a Modpack PASS**. Focus next on world/validation flow and actual content
 rendering with Nothirium absent, not making two renderer cores coexist.
+
+### E2E/Cleanroom: keep StellarCore, disable only incompatible parallel model loading
+
+The full 268-original-Mod Celtium test on Cleanroom 0.6.13-alpha exposed
+StellarCore 1.6.0 `mixins.stellar_core_forge_modelloader.json:MixinModelManager`
+`InvalidInjectionException`: its `@At(INVOKE)` on `ModelManager.onResourceManagerReload`
+did not match the Cleanroom-patched call site. **StellarCore is not a competing
+terrain renderer and should be retained.** Its own configuration documents the
+parallel model loader as experimental and incompatible with some model-loading
+architectures; set **only** `B:ParallelModelLoader=false`, preserving its
+other optimizations and gameplay. Read-only bytecode inspection of
+`StellarCoreEarlyMixinLoader` confirms the mixin configuration is conditionally
+registered according to this setting. The A/B run at 2026-10-14 22:42 used an
+**isolated private profile** with this one config change and logged:
+
+```
+[StellarCore-MixinLoader] Mixin config mixins.stellar_core_forge_modelloader.json is disabled by config or mod is not loaded.
+```
+
+This proves the exact failing mixin was not registered. **It does not by itself
+prove that E2E entered a world or produced correct Vulkan frames**: those need
+independent game reports and presented images. For a reproducible fixture, never
+edit the original installed config in place. Instead copy and transform a
+verified original into a fresh destination profile:
+
+```sh
+python3 scripts/modpack-compat/e2e_stellar_parallel_config.py \
+  --source /private/original/config/stellar_core.cfg \
+  --target /private/new-test-profile/config/stellar_core.cfg
+```
+
+The helper refuses missing, ambiguous, oversized, symlinked or already-existing
+targets. All other configuration bytes (including CRLF) are preserved. Its
+synthetic, offline contract is
+`python3 scripts/modpack-compat/test_e2e_stellar_parallel_config.py`.
