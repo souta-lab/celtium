@@ -113,6 +113,25 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // Functions whose return value a caller checks, and where the type's zero is not a usable answer.
+        // Measured 2026-10-15 (legs gv-cohort-fix128s / gv-e2e-268-fix128s): returning zero for
+        // glCheckFramebufferStatus made vanilla throw "glCheckFramebufferStatus returned unknown status:0" during
+        // startup, in both legs - the same shape headlessmc's README warns about for Buffer-returning methods, where
+        // a default value is not a valid one. These are the two families known to be checked here: the framebuffer
+        // status, which has to say COMPLETE for the game to use its framebuffer, and the location lookups, where -1
+        // is the documented "not found" and 0 would name a real location.
+        if (returnType.equals("I") && name.endsWith("glCheckFramebufferStatus")) {
+            method.visitLdcInsn(Integer.valueOf(0x8CD5)); // GL_FRAMEBUFFER_COMPLETE
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
+        if (returnType.equals("I") && (name.endsWith("glGetUniformLocation") || name.endsWith("glGetAttribLocation")
+                || name.endsWith("glGetSubroutineUniformLocation") || name.endsWith("glGetSubroutineIndex")
+                || name.endsWith("glGetFragDataLocation") || name.endsWith("glGetFragDataIndex"))) {
+            method.visitInsn(Opcodes.ICONST_M1);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         switch (returnType) {
             case "V":
                 method.visitInsn(Opcodes.RETURN);
