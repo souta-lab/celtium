@@ -251,3 +251,29 @@ that legs 27-30 spent so long on.
 The other half of the same source file is the reason Essential is cited in this project's notes at
 all: it ships a `GLBridgeTransformer` that redirects GL classes to a bridge, which is the
 call-site-rewriting approach this project weighed against replacing the natives.
+
+## The exact call chain behind the display-list failure (read 2026-10-15)
+
+[OptiFine issue 2167](https://github.com/sp614x/optifine/issues/2167) prints the stack this project's
+268-mod pack died on, and it names every link:
+
+```
+at org.lwjgl.opengl.GL11.nglGenLists(GL11.java:-1)
+at org.lwjgl.opengl.GL11.glGenLists(GL11.java:1415)
+at net.minecraft.client.renderer.GlStateManager.glGenLists(GlStateManager.java:922)
+at net.minecraft.client.renderer.GLAllocation.generateDisplayLists(GLAllocation.java:20)
+at net.minecraft.client.renderer.chunk.ListedRenderChunk.<init>(ListedRenderChunk.java:13)
+at net.minecraft.client.renderer.chunk.ListChunkFactory.create(ListChunkFactory.java:13)
+at net.minecraft.client.renderer.ViewFrustum.createRenderChunks(ViewFrustum.java:54)
+at net.minecraft.client.renderer.RenderGlobal.loadRenderers(RenderGlobal.java:663)
+```
+
+Three things this settles. **The LWJGL3 path is the one that runs** - `GL11.glGenLists` reaching
+`nglGenLists` - which is why the fix belongs in the replacement and why checking GL11C alone
+misled me; GL11 is where the legacy native lives. **The caller is the chunk renderer**, not Forge's
+cloud renderer alone: `RenderGlobal.loadRenderers` builds `ListedRenderChunk`s, so display lists
+are the terrain path of the list-based renderer, and a GL-less run reaches this as soon as the
+world's renderers load. **And the fix has to be cheap**: the same issue reports that generating
+hundreds of thousands of real display lists can take half an hour on some drivers, while the
+synthetic non-zero ids this renderer hands out are instant - which is the behaviour a GL-less
+client wants, because it never calls a list anyway.
