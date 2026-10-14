@@ -339,3 +339,30 @@ What that leaves is the other half of the same problem: the chunks the tracker a
 for the new position, so the renderer is never told they are ready. That is exactly what
 `ChunkTracker.refreshReadyChunks` adds on world load - the tracker's own queue is what turns a ready chunk into a
 section, so re-evaluating readiness is what re-schedules the sections.
+
+## Why skipping Forge's splash has to cover pause and finish too (read 2026-10-15)
+
+Two crash reports bracket the splash problem from both ends, and together they show that cancelling
+`start()` is the right single lever.
+
+[MCL-9986](https://mojira.dev/MCL-9986) is the second half:
+
+```
+java.lang.IllegalStateException: Splash thread
+    at SplashProgress.checkThreadState(SplashProgress.java:601)
+    at SplashProgress.pause(SplashProgress.java:614)
+    at Minecraft.func_71384_a(Minecraft.java:521)
+Caused by: java.lang.IllegalStateException: Texture creation: Invalid enum
+    at SplashProgress.checkGLError(SplashProgress.java:937)
+    at SplashProgress$Texture.<init>(SplashProgress.java:803)
+    at SplashProgress$2.run(SplashProgress.java:255)
+```
+
+Three things follow. **`Minecraft.init` itself calls `SplashProgress.pause()`** - the call site is in
+the game, not in a mod, so a renderer that leaves the splash half-initialised will be hit there.
+**The exception comes from a splash thread that already died** (its texture creation failed with an
+invalid enum), so `checkThreadState()` throws when the client thread asks the dead thread to pause.
+**And every one of those entry points is guarded by `if (!enabled) return;`** - `pause`, `resume` and
+`finish` all begin with it - so cancelling `start()` leaves `enabled` at its default false and the
+whole family returns early. That is why the fix cancels `start` and `finish` under the GL-less
+property rather than trying to answer each call: one lever, and the guards do the rest.
