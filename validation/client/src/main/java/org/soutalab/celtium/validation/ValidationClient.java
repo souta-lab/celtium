@@ -8577,6 +8577,10 @@ public final class ValidationClient {
                     Integer.valueOf(celtium$backendInt("celtium$presentSkips")));
             report.addProperty("picturePresentAttemptsAtVerdict_" + stage,
                     Integer.valueOf(celtium$backendInt("celtium$presentAttempts")));
+            // The third term: a frame that never reached the present entry point is neither declined nor failed, and
+            // the entry counter is not restarted when a world adopts the window-time backend, so it spans the process.
+            report.addProperty("picturePresentHookCallsAtVerdict_" + stage,
+                    Integer.valueOf(celtium$backendInt("celtium$presentHookCalls")));
             report.addProperty("pictureWorldFrameDeficit_" + stage, Integer.valueOf(framesInWorld - presentedInWorld));
             report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(delta));
             report.addProperty("pictureFrameDeltaWholeRun_" + stage, Integer.valueOf(wholeRunDelta));

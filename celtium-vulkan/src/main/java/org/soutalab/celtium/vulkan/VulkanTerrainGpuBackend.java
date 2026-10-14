@@ -12708,6 +12708,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * {@return how many per-frame present calls arrived at all}.
+     * <p>
+     * The third term of the same arithmetic: a frame that never reaches the entry point is neither declined nor
+     * failed, and only the entry counter can tell that apart from a present the renderer refused. It is not reset when
+     * a world adopts the window-time backend, so it spans the whole process while
+     * {@link #celtium$presentedFrameCount()} restarts with the world.
+     */
+    public int celtium$presentHookCalls() {
+        return this.presentHookCalls;
+    }
+
+    /**
      * {@return the presented-frame count of the present that wrote the named presented-image dump}, or -1 when no
      * write of that name has been recorded.
      * <p>
