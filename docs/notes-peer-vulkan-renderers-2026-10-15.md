@@ -60,3 +60,28 @@ Three things follow for how this project's work should be read:
    clouds, weather, entities, hand rendering and GUI produced by OpenGL and mirrors only terrain, particles and
    the block outline natively - so this project's GL-less results should be presented with that comparison in
    view rather than as the only way such a renderer can exist.
+
+## The 3x3 readiness rule, stated by Sodium itself (read 2026-10-15)
+
+The nether leg's failure has a mechanism in Sodium's own words, from
+[PR #3713 "Add opt-in rendering for loaded chunk edges"](https://github.com/CaffeineMC/sodium/pull/3713):
+
+> "Sodium currently merges readiness across the **3x3 chunk neighborhood**. **If any neighboring chunk is absent,
+> the merged status becomes empty, which can keep an otherwise complete center chunk out of the renderer.**"
+
+A dimension change is exactly the case where neighbours are missing, so a Celeritas-family renderer can draw
+nothing at all for a while - and the vanilla behaviour it is compared against hides the same gap with the
+24-block rule Sodium's issue 2232 describes. The same PR names the fix direction and its cost: an opt-in mode
+that lets a centre chunk render provisionally when its own block and light data are complete, records which
+neighbours were missing, and **rebuilds the mesh when they arrive** ("a mesh built while a neighbor was missing
+is not treated as final").
+
+Two consequences for this project:
+
+- **A scene captured immediately after a dimension change is not evidence about the renderer** unless the leg
+  says how long it waited. The RLCraft nether leg captured at `dimensionAtTick=80` with
+  `firstPresentedWorldFrame=2`, which is inside that window.
+- **Relaxing the 3x3 readiness rule is a real implementation item** (Sodium made it opt-in rather than default
+  because a provisional mesh has to be rebuilt when the neighbours arrive). It belongs on the list of
+  Celeritas-family behaviours to match - before the shadow and shaderpack work, since both depend on terrain
+  being present in the frame.
