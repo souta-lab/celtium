@@ -1,11 +1,29 @@
-# Celtium goal — 2026-10-12 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 41, phase active / activation armed / roundsStarted 103 / maxGoalRounds 1000, phase active / activation armed / roundsStarted 27 / maxGoalRounds 256）
+# Celtium goal — 2026-10-15 更新（live: `goal-8df71681-c0a5-4c71-a8a6-aa13f58f1ac7`, revision 2, phase active / activation armed / roundsStarted 22 / maxGoalRounds 10000）
 
-goal ID: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`
+goal ID: `goal-8df71681-c0a5-4c71-a8a6-aa13f58f1ac7`
 
-**persisted goal は目標のみを保持する**（ユーザー指示 2026-10-12: goal は俺が喋らないと変えられないので、目標だけにしろ）。
-goal revision 41 の objective は「完成目標 + 直近の必須修正3件 + 詳細はリポジトリの聖典に従う」の短い形で、
-**詳細な仕様・優先順・受入・作業規律・証拠の扱いはこのファイル・`docs/plan.md`・`AGENTS.md`・
-`docs/history/2026-10-11-code-bughunt.md` が聖典**である。以下はその詳細側（goal から移した canon）。
+**persisted goal は目標のみを保持する**（ユーザー指示 2026-10-12）。現行 objective は「Celtium を完成させる」の全文
+（Vanilla の正確な描画・安定性・FPS/frame time・既存 Forge Mod 互換性・配布品質 → Native Shadow Map と Shaderpack）で、
+**詳細な仕様・優先順・受入・作業規律・証拠の扱いはこのファイル・`docs/plan.md`・`AGENTS.md` が聖典**である。
+**現在状態の唯一の表は `docs/plan.md` 冒頭**であり、この節はその要約にすぎない。
+
+## 現在のマイルストーン（2026-10-15）
+
+- **RLCraft 2.9.3 P1 = PASSED (AMD and Intel)** ✓✓ — leg `rlcraft-p1-leg7-recipe`（AMD・exit 0・PASSED・131.6s・
+  `captureWorldFrames=1184`・`pictureFrameDelta_world=0`）と leg `rlcraft-p1-leg8-intel`（Intel UHD 630・
+  `gpuRequirementMet=true`・exit 0・PASSED・336 frames・`pictureFrameDelta_world=-1`。**Intel 再走で 0 ⇒ 単発**）。
+  Cleanroom 移行レシピ適用 profile（165 jar）＋ `--copy-pack-dir resources structures scripts`・184 mods。
+  **P2**（modded scene: entity／particle／foliage・weather／water／GUI・HUD／TESR／modded dimension）は `task-7`、
+  **P3**（save/reload・F3+T・dimension 遷移・resize・quit）はその後に別 task。
+- **E2E 1.93a P0**: world 到達 ✓・`MemoryStack` 枯渇の解消 ✓・validation clean ✓。残りは
+  (1) picture ゲートの assertion **1 件**（world/presented の deficit は **declined 7** と帰属済み）と、
+  (2) **268-mod pack の GL-less（完成条件 (b)）** — 原因は `RandomPatches` が `Display` を mixin 登録前に定義することと特定し、
+  coremod transformer（window hint）＋**スレッド単位の LWJGL3 capabilities** を実装済み（leg 12 待ち）。
+- **Intel 受入は現行 main で再取得済み**（`gv-intel-main`・device 行と `gpuRequirementMet` の両方）。
+  **P1-a（VUID-09600）は測定で閉止**（11 leg すべて VUID 0・帰属は未了と明記）。
+- **性能**: PR #93 は cohort では noise 内（multipart 密集 scene での再測定まで保留）。通常コホートの A/B は収束済み。
+
+## 過去の canon（2026-10-12 のユーザー指示・履歴として保持）
 
 ## 聖典・最優先の修正対象（2026-10-12 ユーザー指示）
 
