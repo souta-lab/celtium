@@ -72,7 +72,7 @@ resource packs, not mods**, so "187-Mod installation" is not the right descripti
 |---|---|---|
 | P0 exact fixture | Official ZIP SHA, exact files, config/override hashes, original pack/loader identity | **PASS metadata only** |
 | P1 complete pack boot | All original content Mods or minimal approved renderer substitutions installed in an isolated profile; actual client starts, world enters, exits cleanly on AMD/Intel | **PASSED (AMD and Intel)** for RLCraft 2.9.3 - `rlcraft-p1-leg7-recipe` (exit 0, 131.6 s, 1184 world frames) and `rlcraft-p1-leg8-intel` (exit 0, 148.0 s, 336 world frames, `Intel(R) UHD Graphics 630 (CFL GT2)`, `gpuRequirementMet true`), both `fixtureStatus PASSED`. E2E 1.93a still reaches a world without a passing picture gate |
-| P2 actual modded rendering | Native Vulkan presented screenshots of distinct Mod model, TESR, particles, liquids, translucent surfaces, entity animation, GUI, equipment and world-structure scenes; non-rendering dependencies untouched | **NOT TESTED** |
+| P2 actual modded rendering | Native Vulkan presented screenshots of distinct Mod model, TESR, particles, liquids, translucent surfaces, entity animation, GUI, equipment and world-structure scenes; non-rendering dependencies untouched | **IN PROGRESS** - RLCraft 2.9.3: `terrain` PASSED (AMD + Intel, from the P1 legs), `nether` **FAILED** with numbers, `entity` **NOT JUDGED** (renders, no calibrated gate). E2E 1.93a and the remaining RLCraft scenes untested |
 | P3 lifecycle | Save/reload, F3+T, dimension transitions, fullscreen/resize, game switch/quit with Vulkan VUID0 and no lingering GPU resource ownership | **NOT TESTED** |
 | P4 parity | Correct **same-scene** non-Celtium OpenGL reference screenshots with matched world seed/camera/time/GUI state; enumerate and fix remaining missing pixels/geometry | **NOT TESTED** |
 | P5 perf/reliability | Repeatable warm p50/p95/p99 + GPU/CPU measurements, baseline comparison and a non-regressing CI/GPU acceptance matrix | **NOT TESTED** |
@@ -324,6 +324,45 @@ python3 scripts/modpack-compat/test_cf_file_index.py
 python3 scripts/modpack-compat/test_pack_stage_resolve.py
 python3 scripts/cpu-contract/pack_stage_check.py
 ```
+
+### RLCraft 2.9.3 P2: scene-by-scene modded rendering (2026-10-15)
+
+Legs on the recipe profile (`recipe-profile`, 165 jars), same jar
+`8991330cd5e91df325f4471a14f81cee38ca5bbf19e9edf0b67d2084ce313626`, same fixture
+`celtium-validation-client-0.0.4-alpha.jar` with **content hash
+`dfe924a525ab0f7914e258bff39c08d03ff43c5fb3d97bd6257b7a0a1ffa4ce9`** (18 entries, via
+`scripts/jar-content-hash.py`). The fixture's own zip sha is not a content identity - two builds with
+byte-identical entries differ in it because entry timestamps differ - so legs record the content hash.
+
+| leg | scene / flags | GPU | exit | fixture verdict | colours | blackFrac | nonBg | delta | p50 |
+|---|---|---|---|---:|---|---:|---:|---:|---:|---:|
+| `leg7-recipe` | terrain | AMD RX 6400 | 0 | **PASSED** | 4692 | 0.008033 | 0.796948 | 0 | 39.5 |
+| `leg8-intel` | terrain | Intel UHD 630 | 0 | **PASSED** | 6364 | 0.019431 | 0.898466 | **-1** | 161.1 |
+| `leg9-intel-repeat` | terrain (repeat of leg8) | Intel UHD 630 | 0 | **PASSED** | 2834 | 0.008012 | - | **0** | - |
+| `leg10-entities-amd` | `keepEntities`+`captureEntities`+`glowEntities` | AMD RX 6400 | 0 | **UNCALIBRATED_PRESENTED_IMAGE** | 9328 | 0.008847 | 0.960468 | 0 | 93.6 |
+| `leg11-nether-amd` | `dimension=-1`, pose x=1.5 y=70 | AMD RX 6400 | 0 | **FAILED_PRESENTED_IMAGE** | 630 | 0.353469 | **0.156345** | - | 13.0 |
+
+**The Intel `-1` did not reproduce.** leg8 reported `worldFrames 336 / presentedFrame 335`
+(delta -1) on Intel while AMD reported 1184/1184 (delta 0); leg9, the same configuration on the same
+GPU, reported 557/557 (delta 0). It is therefore recorded as **a one-off, not an Intel property** -
+and it is written as `-1` for leg8 and `0` for leg9 rather than rounded to a single number. The
+counters that would name the missing present were not populated in leg8's report, so its cause is
+not attributed; with the delta not reproducing, naming it would need an added instrument.
+
+**The entity scene renders but cannot be judged.** `captureLoadedEntities 7`, 208 world frames,
+208 presents (delta 0), 9328 distinct colours and nonBackgroundFraction 0.960468 - more content than
+the terrain scene's 4692. The fixture has **no calibrated floor for this configuration**, so it
+returns `UNCALIBRATED_PRESENTED_IMAGE` instead of a verdict. `validationClean=true` with no verdict
+is **not** a pass; this is recorded as **NOT JUDGED**.
+
+**The Nether scene fails its own calibrated floor.** `scene=nether`, `captureDimension=-1`,
+354 world frames, 13.0 ms p50, but only **630 distinct colours**, `blackFraction 0.353469` and
+`nonBackgroundFraction 0.156345` against the scene's floor of **0.8** (the fixture's calibrated
+Nether reference is 0.938502). This is a measured failure, not a known-good state.
+**Its cause is not yet attributed**: the candidates are (a) RLCraft's modded Nether putting the pose
+`x=1.5 y=70` inside rock or generating different terrain, and (b) a real Celtium Nether rendering
+defect. Separating them needs one discriminating leg - a different pose, the `end` scene, or the
+fixture's `vanillaReference` path - and none has been run yet.
 
 The two committed artifacts hold numeric pins, file names, sizes, CDN URLs and SHA-256 digests
 only - no JAR bytes, no config text, no local paths:
