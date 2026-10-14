@@ -54,6 +54,19 @@ def main() -> int:
     # The counter it reports must be the one it increments, not a second one.
     results.append(check("it reports the counter the handler increments", "celtium$clientTicks++" in tick[:emit], True))
 
+    # The render-tick handler must be instrumented per phase: the 268-mod leg never reached the END half, and
+    # "event not delivered" versus "only START delivered" is exactly the distinction that needs to be readable.
+    frame = src[src.index("public void frame(TickEvent.RenderTickEvent event)"):]
+    frame = frame[: frame.index("\n    }")]
+    results.append(check("the frame handler logs START", "CELTIUM_FIXTURE_FRAME phase=START" in frame, True))
+    results.append(check("the frame handler logs END", "CELTIUM_FIXTURE_FRAME phase=END" in frame, True))
+    # START must be logged before its early return, or it would never be reached.
+    start_ret = frame.index("celtium$applyClientPoseOverride")
+    results.append(check("START is logged before the early return", frame.index("phase=START") < start_ret, True))
+    # And END before the call whose absence started this: an END line that came after it would prove nothing.
+    results.append(check("END is logged before completePendingDumps",
+                         frame.index("phase=END") < frame.index("celtium$completePendingDumps()"), True))
+
     failed = results.count(False)
     print(f"\nfixture liveness contract: {len(results) - failed}/{len(results)} checks passed")
     return 1 if failed else 0

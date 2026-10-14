@@ -845,6 +845,9 @@ public final class ValidationClient {
      * Reported as {@code screenDismissedBeforeWorld}, so which screen it was stays in the record.
      */
     private boolean celtium$foreignScreenDismissed;
+    /** Render-tick halves seen, so a leg can say which of them arrived. */
+    private int celtium$frameStartSeen;
+    private int celtium$frameEndSeen;
     /**
      * Client ticks to hold the title screen before any world is created, {@code -Dceltium.validation.menuHoldTicks}.
      * <p>
@@ -4509,7 +4512,16 @@ public final class ValidationClient {
     @SubscribeEvent
     public void frame(TickEvent.RenderTickEvent event) {
         if (!enabled || finished) return;
+        // Which halves of which events actually arrive, in the log. The 268-mod leg never called
+        // celtium$completePendingDumps, and that call is on the END half of this handler - so either the event was not
+        // delivered, or only its START half was, or the handler threw before reaching the call. Those are three
+        // different faults and the fixture could not tell them apart: the only trace of this handler was its effect,
+        // and an absent effect reads exactly like an absent event. START and END are logged separately, once each, so a
+        // leg that shows START and no END names the fault instead of leaving it to be inferred.
         if (event.phase == TickEvent.Phase.START) {
+            if (celtium$frameStartSeen++ == 0) {
+                System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=START first clientTicks=" + celtium$clientTicks);
+            }
             // The scene's own camera overrides are applied BEFORE the frame is rendered, which is where a pose has to be
             // set to be the pose that gets drawn. They used to live in the END half of this handler, next to the code
             // that inspects the finished frame - and since celtium$applyPose re-applies the scene pose from the client
@@ -4520,6 +4532,9 @@ public final class ValidationClient {
             // render the same pose.
             celtium$applyClientPoseOverride(Minecraft.getMinecraft());
             return;
+        }
+        if (celtium$frameEndSeen++ == 0) {
+            System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=END first clientTicks=" + celtium$clientTicks);
         }
         Minecraft mc = Minecraft.getMinecraft();
         // Every render tick: see whether a requested dump has been written, and complete its identity from the
