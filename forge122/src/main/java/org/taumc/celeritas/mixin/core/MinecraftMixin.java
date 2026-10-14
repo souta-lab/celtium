@@ -105,7 +105,28 @@ public class MinecraftMixin {
      * idempotent.
      */
     @Inject(method = "startGame", at = @At("HEAD"), require = 0)
-    private void celtium$installThreadCapabilities(CallbackInfo ci) {
+    private void celtium$installThreadCapabilitiesAtStartGame(CallbackInfo ci) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
+    }
+
+    /**
+     * The same install on the thread that actually calls GL.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-fix128g}): {@code startGame} runs on {@code main}, while the game's
+     * GL calls come from a separate thread named {@code Client thread} (thread #3 in the abort message, distinct from
+     * the launcher's #1) - so the {@code startGame} hook installed capabilities for the wrong thread and Thaumcraft's
+     * {@code ClientProxy.preInit} aborted anyway. This injection and the one below run on that thread:
+     * {@code createDisplay} is the first Client-thread point that touches the window (the leg logs its window lines at
+     * 02:04:46 while the abort comes at 02:05:1x), and {@code runTick} covers anything that starts calling GL after
+     * the window exists. Both are idempotent.
+     */
+    @Inject(method = "createDisplay", at = @At("HEAD"), require = 0)
+    private void celtium$installThreadCapabilitiesAtDisplay(CallbackInfo ci) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
+    }
+
+    @Inject(method = "runTick", at = @At("HEAD"), require = 0)
+    private void celtium$installThreadCapabilitiesAtTick(CallbackInfo ci) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
     }
 

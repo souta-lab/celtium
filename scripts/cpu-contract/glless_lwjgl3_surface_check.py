@@ -99,8 +99,11 @@ def main():
             'setCapabilities' in source and 'getDeclaredConstructor' in source)
     require('there is a per-thread entry point for the threads the game calls GL on',
             'ensureThreadCapabilities' in source)
-    require('the Client thread calls it before mod pre-init',
-            'ensureThreadCapabilities' in (ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java').read_text(encoding='utf-8'))
+    mixin = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java').read_text(encoding='utf-8')
+    require('the game thread calls it from more than one entry point',
+            mixin.count('ensureThreadCapabilities()') >= 3)
+    require('one of those entry points is createDisplay, which runs on the Client thread',
+            'installThreadCapabilitiesAtDisplay' in mixin and 'method = "createDisplay"' in mixin)
     # The probe is allowed now, but only guarded: GL.getCapabilities() throws when the thread has none, which is
     # the case it is asking about. The runtime half of this contract proves the behaviour on a second thread.
     require('the capabilities probe is guarded, because it throws when the thread has none',
