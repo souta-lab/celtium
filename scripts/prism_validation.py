@@ -28,9 +28,11 @@ from headless_wayland import HeadlessWayland
 
 #: Pack directories a caller may add to the isolated game dir. `mods`, `config`, `resourcepacks` and `saves` are
 #: copied unconditionally; these are the content directories a pack keeps beside them (`resources` for custom
-#: assets, `structures` for Recurrent Complex-style world content, `scripts` for CraftTweaker recipes). A name
-#: outside this list is refused rather than copied, so the harness never carries in something it has not audited.
-SUPPLEMENTAL_PACK_DIRS = ("scripts", "schematics", "resources")
+#: assets, `structures` for Recurrent Complex-style world content, `scripts` for CraftTweaker recipes,
+#: `schematics` for WorldEdit/Schematica files). A name outside this list is refused rather than copied, so the
+#: harness never carries in something it has not audited. `structures` was added when RLCraft 2.9.3's P1
+#: preparation measured 338 structure files in `overrides/structures` that no leg could otherwise carry in.
+SUPPLEMENTAL_PACK_DIRS = ("scripts", "schematics", "structures", "resources")
 
 
 def supplemental_pack_dirs(requested):
