@@ -49,3 +49,34 @@ make `GL.createCapabilities()` resolve against the stub regardless of that mixin
 its own robust path — a stub installed without the hint still leaves a GL context, which is exactly the hybrid state
 measured here. Neither change is made yet: the finding is recorded first, and the experiment above decides which of
 the two is the one to fix.
+
+## Follow-up investigation (GPU-free, 2026-10-15)
+
+**The mechanism has an upstream name.** CleanMix/Mixin reports `Critical problem: <config>:<mixin> … target <class>
+was loaded too early` for `MixinTargetAlreadyLoadedException`: the target class was loaded before Mixin could
+transform it. [SpongePowered/Mixin #328](https://github.com/SpongePowered/Mixin/pull/328) exists precisely because
+readers blamed another mod's transformation; the exception means early loading. [CleanMix](https://github.com/CleanroomMC/CleanMix)
+is the fork Cleanroom uses, and [CleanroomMC/Cleanroom#342](https://github.com/CleanroomMC/Cleanroom/issues/342)
+shows the same wording for `stellar_core_forge_asmmodparser.json` and `rlmixins` — the same two families the pack
+leg reports.
+
+**But that mechanism does not fully fit our case yet**: the pack's `logs/cleanmix.log` reports "loaded too early" for
+two other mods' mixins and has **no line for `core.LwjglxDisplayMixin` at all** — not even the `@Mixin target … was
+not found` warning the cohort logs. So "the target was loaded too early" is a candidate, not the established cause;
+the bisect below decides it.
+
+**Which staged jars reference `org/lwjgl/opengl/Display`** (scanned class by class over the 270 staged JARs):
+
+| JAR | class that references it |
+|---|---|
+| `loliasm-5.33` | `zone/rong/loliasm/common/crashes/mixins/MinecraftMixin` (a mixin) |
+| `RenderLib-1.12.2-1.4.5` | `meldexun/renderlib/mixin/debug/MixinMinecraft` (a mixin) |
+| `vintagefix-0.7.1` | `org/embeddedt/vintagefix/mixin/version_protest/MinecraftMixin` (a mixin) |
+| `StellarCore-1.6.0` | **`github/kasuminova/stellarcore/client/util/TitleUtils`** — a plain utility class, so anything that calls it early loads `Display` early |
+| `UniversalTweaks-1.12.2-1.21.0` | `…/gamewindow/mixin/UTDisplayTitleMixin`, `UTWindowIconMixin` (mixins) |
+
+**The 7-mod cohort contains none of them** (it is AutoRegLib, ImmersiveEngineering, Mantle, Mekanism, Quark,
+TConstruct and Forestry), so the bisect must add one candidate at a time to the cohort and read the same four lines:
+`CELTIUM_GLLESS stub GL provider installed`, `window hinted GLFW_NO_API`, CleanMix's `LwjglxDisplayMixin` line and
+`Found N mixin classes`, plus any new "loaded too early" line. `StellarCore` is first because its reference is in a
+plain class rather than a mixin; the rest follow in the order above.
