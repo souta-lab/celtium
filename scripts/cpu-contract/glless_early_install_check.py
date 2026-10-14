@@ -53,6 +53,20 @@ def main():
     require('the mixin still installs the stub',
             'CeltiumGlStub.install()' in mixin)
 
+    coremod = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
+    require('the coremod registers the GL-less transformer',
+            'CeltiumGllessWindowTransformer' in coremod and 'getASMTransformerClass' in coremod)
+    transformer = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessWindowTransformer.java').read_text(encoding='utf-8')
+    require('the transformer injects before glfwCreateWindow',
+            'glfwCreateWindow' in transformer and 'beforeWindowCreation' in transformer)
+    require('the transformer returns the original bytes on failure',
+            'catch (Throwable error)' in transformer and 'return basicClass;' in transformer)
+    hint = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java').read_text(encoding='utf-8')
+    require('the hint is gated on GL-less and applied once',
+            'celtium.vulkan.glless' in hint and 'applied' in hint)
+    require('the hint sets GLFW_CLIENT_API to GLFW_NO_API',
+            'glfwWindowHint' in hint and '0x00022001' in hint)
+
     if not all(checks):
         print(f'{checks.count(False)} contract check(s) failed')
         return 1

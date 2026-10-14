@@ -11,9 +11,16 @@ import java.util.Map;
 @IFMLLoadingPlugin.Name("Celeritas")
 @IFMLLoadingPlugin.MCVersion("1.12.2")
 public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoader {
+    /**
+     * The GL-less window hint is set from a transformer rather than only from a mixin, because a mixin can lose a
+     * race it cannot see: measured 2026-10-15, RandomPatches' tweak defines {@code org.lwjgl.opengl.Display} at
+     * 8.975 s in the 268-mod E2E pack while Mixin prepares its configurations at 9.837 s (leg
+     * {@code gv-e2e-268-xlog}), so {@code core.LwjglxDisplayMixin} never applied and the window got a real GL
+     * context. This array is read when the coremod loads, before either.
+     */
     @Override
     public @Nullable String[] getASMTransformerClass() {
-        return new String[0];
+        return new String[] {"org.taumc.celeritas.core.CeltiumGllessWindowTransformer"};
     }
 
     @Override
