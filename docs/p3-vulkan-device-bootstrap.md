@@ -18,8 +18,12 @@ terrain is uploaded, no draw is issued, and the terrain backend keeps using Open
 | `/celtium vulkan` | Runs the bootstrap on the client thread and writes `logs/celtium-vulkan-device.json` |
 
 The entry point is resolved reflectively and only after the explicit command, so an installation without Vulkan
-bindings keeps starting and rendering in GL. The report always states `effectiveTerrainBackend: opengl` and
-`nativeTerrainImplemented: false`.
+bindings keeps starting and rendering in GL. `effectiveTerrainBackend` and `nativeTerrainImplemented` state the
+terrain backend the process is **actually running**: the command that runs inside the client fills them in from the
+live renderer, and `terrainBackendSource` records where the value came from. The bootstrap itself leaves them at
+`unknown`/`false`, because a device bootstrap cannot observe the renderer. (Before 2026-10-15 these two fields were
+compile-time constants `opengl`/`false`, so a GL-less run whose native renderer was drawing the world reported
+OpenGL; the acceptance fixture now checks the report against the live backend instead of against the constant.)
 
 Matching rules, all fail-closed:
 

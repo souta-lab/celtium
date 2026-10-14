@@ -7,8 +7,21 @@ import java.util.List;
 public final class VulkanDeviceReport {
     public final int schemaVersion = 1;
     public final String scope = "device-bootstrap-only";
-    public final String effectiveTerrainBackend = "opengl";
-    public final boolean nativeTerrainImplemented = false;
+    /**
+     * The terrain backend this process is actually running, filled in by the caller that has a running client
+     * ({@code /celtium vulkan}) and left at {@code unknown} by the bootstrap itself.
+     * <p>
+     * These two fields used to be compile-time constants - {@code "opengl"} and {@code false} - so the report stated the
+     * opposite of the truth in a GL-less run where the native renderer was drawing the world (measured: the 268-mod E2E
+     * leg's {@code celtium-vulkan-device.json} said {@code effectiveTerrainBackend=opengl} while the same run's
+     * renderer reported {@code CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400"} and presented a world frame). A device
+     * bootstrap cannot know this, so it no longer claims to: {@link #terrainBackendSource} says where the value came
+     * from, and the acceptance fixture now checks the report against the live backend instead of against a constant.
+     */
+    public String effectiveTerrainBackend = "unknown";
+    public boolean nativeTerrainImplemented = false;
+    /** Where {@link #effectiveTerrainBackend} came from, so a default is never read as an observation. */
+    public String terrainBackendSource = "not observed by the device bootstrap";
     public String status = "UNSUPPORTED_OR_UNAVAILABLE";
     public String lwjglVersion;
     public String loaderVersion;

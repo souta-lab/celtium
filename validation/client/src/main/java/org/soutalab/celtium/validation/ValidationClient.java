@@ -3945,9 +3945,25 @@ public final class ValidationClient {
         }
         report.add("vulkanDevice", device);
         report.addProperty("vulkanBootstrapStatus", device.get("status").getAsString());
-        if (device.get("effectiveTerrainBackend").getAsString().equals("opengl") == false
-                || device.get("nativeTerrainImplemented").getAsBoolean()) {
-            throw new IllegalStateException("The Vulkan bootstrap changed or misreported the terrain backend");
+        // The report must agree with the backend this run is actually rendering with, not with a constant. It used to
+        // be asserted as `opengl`/false, which the report itself hardcoded, so the check could never fail and a GL-less
+        // run that drew the world natively was reported as OpenGL (measured: the 268-mod E2E leg's
+        // celtium-vulkan-device.json said effectiveTerrainBackend=opengl while the same run presented a world frame
+        // from the AMD device). Agreement is now the assertion: whichever backend is live, the report has to name it.
+        boolean nativeLive = celtium$vulkanBackend() != null;
+        String reportedBackend = device.has("effectiveTerrainBackend")
+                ? device.get("effectiveTerrainBackend").getAsString() : "missing";
+        boolean reportedNative = device.has("nativeTerrainImplemented")
+                && device.get("nativeTerrainImplemented").getAsBoolean();
+        report.addProperty("vulkanReportBackendAgreesWithLive", Boolean.valueOf(
+                reportedBackend.equals(nativeLive ? "vulkan" : "opengl") && reportedNative == nativeLive));
+        report.addProperty("vulkanReportTerrainBackendSource", device.has("terrainBackendSource")
+                ? device.get("terrainBackendSource").getAsString() : "none");
+        if (!reportedBackend.equals(nativeLive ? "vulkan" : "opengl") || reportedNative != nativeLive) {
+            throw new IllegalStateException("The Vulkan bootstrap report disagrees with the live terrain backend:"
+                    + " the report says " + reportedBackend + "/" + reportedNative + " (source: "
+                    + (device.has("terrainBackendSource") ? device.get("terrainBackendSource").getAsString() : "none")
+                    + "), the live backend is " + (nativeLive ? "vulkan" : "opengl"));
         }
         if (!expected) {
             return;
@@ -5389,12 +5405,36 @@ public final class ValidationClient {
                     throw new IllegalStateException("A Celtium client command did not execute");
                 }
                 JsonObject capabilities = JsonParser.parseString(new String(Files.readAllBytes(probe), StandardCharsets.UTF_8)).getAsJsonObject();
-                // The capability query reports what the device could do, not what is rendering. It must never claim
-                // that native terrain exists or that a depth roundtrip was proven; the live backend is recorded
-                // separately below from the renderer itself.
-                if (capabilities.get("nativeTerrainImplemented").getAsBoolean()
-                        || capabilities.get("depthRoundtripVerified").getAsBoolean()) {
-                    throw new IllegalStateException("Capability command misreported the backend");
+                // Two different claims. The capability query reports what the device could do, and it must never claim
+                // a proven depth roundtrip - no query proves one. Its terrain-backend fields are the process's live
+                // backend, which the command fills in from the renderer, so those are checked for agreement rather
+                // than for a constant: the fields used to be hardcoded `opengl`/false and this check enforced the
+                // constant, which is how a GL-less run that drew terrain natively could report OpenGL and pass.
+                boolean nativeLive = celtium$vulkanBackend() != null;
+                String reportedBackend = capabilities.has("effectiveTerrainBackend")
+                        ? capabilities.get("effectiveTerrainBackend").getAsString() : "missing";
+                boolean reportedNative = capabilities.has("nativeTerrainImplemented")
+                        && capabilities.get("nativeTerrainImplemented").getAsBoolean();
+                if (capabilities.get("depthRoundtripVerified").getAsBoolean()) {
+                    throw new IllegalStateException("Capability command claimed a depth roundtrip it did not prove");
+                }
+                // Only a file the command wrote can be checked for agreement: the source field says where the value
+                // came from, and another writer (the bench fixture asks CeltiumProbe directly) leaves it at the honest
+                // default. Asserting agreement on such a file would fail a leg over a report nothing claims is an
+                // observation, so the source is recorded and the judgement is skipped instead.
+                String backendSource = capabilities.has("terrainBackendSource")
+                        ? capabilities.get("terrainBackendSource").getAsString() : "missing";
+                report.addProperty("capabilitiesBackendSource", backendSource);
+                if (backendSource.startsWith("not observed by the")) {
+                    report.addProperty("capabilitiesBackendAgreesWithLive",
+                            "not judged: the file was not written by the capability command (" + backendSource + ")");
+                } else {
+                    if (!reportedBackend.equals(nativeLive ? "vulkan" : "opengl") || reportedNative != nativeLive) {
+                        throw new IllegalStateException("Capability command disagrees with the live terrain backend:"
+                                + " the report says " + reportedBackend + "/" + reportedNative + ", the live backend is "
+                                + (nativeLive ? "vulkan" : "opengl"));
+                    }
+                    report.addProperty("capabilitiesBackendAgreesWithLive", Boolean.TRUE);
                 }
                 report.add("capabilities", capabilities);
             }
