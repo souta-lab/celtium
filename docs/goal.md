@@ -81,7 +81,7 @@ mod cohort、Intel の残り場面。
 - GPU 名ではなく必要な API/feature/format/surface 能力で選ぶ。mesh shader を必須化しない。
   AMD RX6400 / Intel UHD630 の両方で実機検証し、未検証 vendor/OS は明記する。
 - Celeritas 固定参照 989ebf2e を比較基準にする。制限付きの現行 Sodium ソースをコピー・翻訳・改名・cherry-pick しない。
-- 影 mod / shader pack 互換は本体の shaderless 完成後。バニラの ShaderGroup・spectator 効果・entity outline は本体機能として省略しない。
+- 2026-10-14のユーザー指示により、主要Mod互換と影mod／shaderpackの**実験開発を並行着手**する（[#76](https://github.com/souta-lab/celtium/issues/76)、[#77](https://github.com/souta-lab/celtium/issues/77)）。製品版の影pack互換受入には shaderless 本体・Mod・GPU/寿命の実測gateを残し、未達を完了扱いしない。影は既定OFFのnative実験経路から始める。バニラの ShaderGroup・spectator 効果・entity outline は本体機能として省略しない。
 - 一括削除・全面書き直しをしない。有効な修正を保持し、一つの根因の所有・状態契約を揃える小さな修正を進める。
 
 ## 原典を読む（必須・2026-10-11 追加）
