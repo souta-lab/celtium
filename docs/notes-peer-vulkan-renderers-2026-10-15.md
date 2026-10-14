@@ -197,3 +197,23 @@ java.lang.IllegalStateException: 5s timeout reached when waiting for VK semaphor
 A renderer that replaces the pipeline inherits the job of pacing it: the goal's "CPU/GPU synchronisation and idle"
 item and its fence-and-retirement work are the same problem, and upstream has not solved it either. A stall of this
 kind is a real risk for Celtium's own submit path, and worth a leg of its own once the GL-less surface is stable.
+
+## The atlas limit, and a peer mod that does exactly what this project's fix does (read 2026-10-15)
+
+The StitcherException this project hit has three independent confirmations that the atlas size **is** the maximum
+texture size, and that forcing it is an established answer:
+
+- **OptiFine issue #2228** explains a crash with the same message shape - `atlas: 4096x4096, atlasMax: 4096x4096` - as
+  "the GPU maximum texture size is 4096x4096 which is pretty small, most current GPUs support 16384x16384", and
+  suggests disabling connected textures or removing texture-heavy mods.
+- **Galacticraft issue #2972** has the same message and the maintainer's explanation that every mod's textures go into
+  one atlas, that the limit is the hardware's, and that "the normal is 16384x16384".
+- **Texture Atlas Size Fix** ([CurseForge](https://www.curseforge.com/minecraft/mc-mods/texture-atlas-size-fix)) is a mod
+  whose entire purpose is the fix this project just made: "This mod simply forces the texture atlas size to be
+  16k x 16k, allowing lower-end devices to run more mods without the worry of the texture atlas crash."
+
+So the fix is not a workaround invented here: the message's `atlas:` field is the value under test, 16384 is the
+conventional ceiling, and forcing it is what other projects ship. The corollary matters for the packs this project
+accepts against: a 268-mod pack or RLCraft may genuinely need more than 16384, and the mitigation then is the one
+**Texture Scaler** uses - downscale the sprites that would not fit - not a larger claim, because claiming more than
+16384 is a lie about the hardware that the next `glTexImage2D` would expose.
