@@ -253,6 +253,10 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         this.renderSectionManager = this.createRenderSectionManager(commandList);
 
         var tracker = ChunkTrackerHolder.get(this.world);
+        // Re-evaluate readiness before seeding: a world change moves the player to chunks the tracker already knows
+        // but has not accepted, and without this the new manager is seeded with whatever was ready for the old
+        // position. See ChunkTracker.refreshReadyChunks and Sodium's issue 3497.
+        tracker.refreshReadyChunks();
         ChunkTracker.forEachChunk(tracker.getReadyChunks(), this.renderSectionManager::onChunkAdded);
     }
 
