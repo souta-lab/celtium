@@ -186,7 +186,11 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // 268-mod pack), so these get a fresh non-zero name instead of the type's zero.
         // The array forms (nglGenTextures(int, long)) return void and are handled by the zero-writer below; only the
         // single-id forms reach this, nglGenLists(int) among them.
-        if (returnType.equals("I") && (name.startsWith("nglGen") || name.startsWith("nglCreate"))) {
+        // Both spellings: LWJGL3's GL11 keeps some legacy natives under their bare name, and glGenLists is one of them
+        // (public static native int glGenLists(int) in GL11, absent from GL11C) - the first version of this only
+        // matched the ngl* form, and an offline check of the transformed class showed it still returning iconst_0.
+        if (returnType.equals("I") && (name.startsWith("nglGen") || name.startsWith("glGen")
+                || name.startsWith("nglCreate") || name.startsWith("glCreate"))) {
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glGenName", "()I", false);
             method.visitInsn(Opcodes.IRETURN);
