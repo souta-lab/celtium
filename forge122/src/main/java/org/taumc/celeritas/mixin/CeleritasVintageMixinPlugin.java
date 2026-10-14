@@ -99,7 +99,42 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
         if (possibleMixinClasses.size() == 0) {
             throw new IllegalStateException("Found no mixin classes, something went very wrong");
         }
+        // A mixin that cannot be applied does not degrade, it takes the run with it: the failure surfaces inside
+        // the transformer while the class loader is defining the target, so the class is never defined and the
+        // game dies on NoClassDefFoundError. That is measured, not assumed - with LoliASM 5.33 present,
+        // ExplicitGcMixin's injection into Minecraft fails, MixinProcessor converts it to a critical
+        // MixinTransformerError, and the run exits before a frame is drawn (rounds 702-705). Neither
+        // @Redirect(require = 0) nor shouldApplyMixin can reach that path; the only lever is whether the class is
+        // registered at all, which is decided here.
+        //
+        // So a class whose target is contested is dropped from the list, by name, with the reason logged. What is
+        // lost is the optimisation it carried, which is why the drop is named rather than silent: an unlogged
+        // exclusion reads exactly like a mixin that applied.
+        if (possibleMixinClasses.remove("core.ExplicitGcMixin")) {
+            LOGGER.warn("Excluding core.ExplicitGcMixin: {} is on the classpath and also transforms "
+                    + "net.minecraft.client.Minecraft, where this mixin's injection does not survive. The vanilla "
+                    + "System.gc() calls stay in place; the pause they cause is kept rather than the run being lost.",
+                    contestedTargetProbe());
+        }
         return new ArrayList<>(possibleMixinClasses);
+    }
+
+    /**
+     * {@return the name of the coremod whose presence makes {@code ExplicitGcMixin} unsafe}, or a note that it was
+     * not found.
+     * <p>
+     * The probe is the coremod's own plugin class, which is on the classpath by the time a mixin config plugin
+     * runs. The mod list is deliberately not consulted: this runs before it is dependable, and a wrong answer here
+     * would either drop a mixin that would have applied or keep one that kills the run.
+     */
+    private static String contestedTargetProbe() {
+        try {
+            Class.forName("zone.rong.loliasm.core.LoliLoadingPlugin", false,
+                    CeleritasVintageMixinPlugin.class.getClassLoader());
+            return "LoliASM";
+        } catch (Throwable absent) {
+            return "an unidentified transformer";
+        }
     }
 
     @Override
