@@ -848,6 +848,8 @@ public final class ValidationClient {
     /** Render-tick halves seen, so a leg can say which of them arrived. */
     private int celtium$frameStartSeen;
     private int celtium$frameEndSeen;
+    /** How many times a foreign screen was cleared; a re-asserting menu makes this greater than one. */
+    private int celtium$foreignScreenDismissals;
     /**
      * Client ticks to hold the title screen before any world is created, {@code -Dceltium.validation.menuHoldTicks}.
      * <p>
@@ -2976,20 +2978,29 @@ public final class ValidationClient {
             celtium$requestPresentedDump(mc, "world-load");
         }
         try {
-            // A mod may put its own screen up before the title screen is ever reached (measured with a seven-mod
-            // cohort: the world was never launched, so the fixture sat on a non-menu screen for the whole leg,
-            // worldTicks stayed 0, the capture condition never fired and the run ended on its duration with only
-            // the loading dump). Reaching the world is this fixture's job, so a foreign screen is dismissed and
-            // named, and the launch below then accepts a cleared screen as well as the title screen.
-            if (!launched && mc.world == null && mc.currentScreen != null
-                    && !(mc.currentScreen instanceof GuiMainMenu) && !celtium$foreignScreenDismissed) {
-                celtium$foreignScreenDismissed = true;
-                report.addProperty("screenDismissedBeforeWorld", mc.currentScreen.getClass().getName());
+            // A mod may put its own screen up before the title screen is ever reached. Reaching the world is this
+            // fixture's job, so a foreign screen is dismissed and named.
+            //
+            // The dismissal has to be repeatable, and it has to let the launch happen on the same tick. Dismissing
+            // once and waiting for a later tick to observe a cleared screen assumes the screen stays cleared - and
+            // a custom main menu re-asserts its own. Measured on the 268-mod E2E pack, which ships CustomMainMenu:
+            // the screen was still `lumien.custommainmenu.gui.GuiCustom` at clientTicks=1200 with worldTicks=0,
+            // the one-shot flag had already been spent, and the run ended with no world for the whole leg. The
+            // PR #90 instrumentation is what made this readable - both `ClientTickEvent` and both halves of
+            // `RenderTickEvent` were arriving, so the events were never the problem and the screen was.
+            boolean menuOrCleared = mc.currentScreen instanceof GuiMainMenu;
+            if (!launched && mc.world == null && !menuOrCleared && mc.currentScreen != null) {
+                if (!celtium$foreignScreenDismissed) {
+                    celtium$foreignScreenDismissed = true;
+                    report.addProperty("screenDismissedBeforeWorld", mc.currentScreen.getClass().getName());
+                }
+                celtium$foreignScreenDismissals++;
+                report.addProperty("screenDismissalsBeforeWorld", Integer.valueOf(celtium$foreignScreenDismissals));
                 mc.displayGuiScreen((net.minecraft.client.gui.GuiScreen) null);
+                // The launch may proceed on this tick. Waiting for the next one is what let a re-asserting menu win.
+                menuOrCleared = true;
             }
-            boolean menuOrCleared = mc.currentScreen instanceof GuiMainMenu
-                    || (mc.currentScreen == null && celtium$clientTicks >= 100);
-            if (!launched && menuOrCleared) {
+            if (!launched && (menuOrCleared || (mc.currentScreen == null && celtium$clientTicks >= 100))) {
                 // The menu-phase resize: ask for the new size while the title screen is up, and hold the world launch
                 // briefly so the menu's own frames are drawn at it. Holding for a few ticks is what makes this a
                 // resize *during the menu* rather than a resize immediately followed by a world load.
