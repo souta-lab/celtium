@@ -245,3 +245,50 @@ design for the next unit, in order:
 
 Until this is done, **a pack that installs the stub can still abort in a mod's pre-init**, and the honest reading of
 a leg like this one is "the substitution fixed the window, and the pack then failed on the other GL surface".
+
+## The addresses come from the write-once ICD, not from the thread's capabilities (read 2026-10-15)
+
+LWJGL's own generator settles a question the legs could not:
+
+```kotlin
+// modules/lwjgl/opengl/src/templates/kotlin/opengl/GLBinding.kt
+override fun generateFunctionAddress(writer: PrintWriter, function: Func) {
+    writer.println("$t${t}long $FUNCTION_ADDRESS = GL.getICD().${function.name};")
+}
+```
+
+Every function address a `GLCapabilities` instance holds is read from **`GL.getICD()`**, and the default ICD
+implementation is write-once:
+
+```java
+// GL (mirrored from GLES.java)
+private static class ICDStatic implements ICD {
+    private static @Nullable GLCapabilities tempCaps;
+    public void set(@Nullable GLCapabilities caps) {
+        if (tempCaps == null) {
+            tempCaps = caps;                       // the first capabilities set wins
+        } else if (caps != null && caps != tempCaps
+                   && ThreadLocalUtil.areCapabilitiesDifferent(tempCaps.addresses, caps.addresses)) {
+            apiLog("[WARNING] Incompatible context detected. Falling back to thread-local lookup for GL contexts.");
+            icd = GL::getCapabilities;             // only now does the thread lookup take over
+        }
+    }
+    public GLCapabilities get() { return WriteOnce.caps; }
+}
+```
+
+Three consequences for this project's work:
+
+1. **The first capabilities object set in the process is the one whose addresses LWJGL uses**, for every thread, until
+   a *different* one is set and `areCapabilitiesDifferent` says so. Setting ours later is not enough by itself: it
+   either triggers the fallback (with that log line) or changes nothing.
+2. **No leg has produced the "Incompatible context detected" line** (checked in `gv-e2e-268-fix128g..k`), which means
+   the first capabilities set was either ours or one whose addresses LWJGL considered equivalent. Either way, the
+   fix cannot be "set capabilities later" - it has to be **first**, or it has to avoid the dispatch entirely.
+3. `ThreadLocalUtil.setCapabilities(addresses)` writes the thread's JNIEnv slot, and the generated *native* methods
+   dispatch through that slot, while the *capabilities class fields* come from the ICD - so the two paths can
+   disagree, which is exactly the state the legs keep landing in.
+
+The measurement that will decide between them is the one already queued: the
+`CELTIUM_GLLESS LWJGL3 dispatch on thread=… provider=… capabilities=…` line reports the provider's class and the
+capabilities identity with its address buffer, at the point where the window exists and mod pre-init has not run.
