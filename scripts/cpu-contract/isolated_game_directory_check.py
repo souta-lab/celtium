@@ -54,6 +54,7 @@ class IsolatedGameDirectoryCheck(unittest.TestCase):
         # Only content directories may be added; the four the harness always copies are not supplemental, and
         # anything else is refused rather than silently carried into a run the harness never audited.
         self.assertEqual(["scripts", "resources"], runner.supplemental_pack_dirs(["scripts", "resources"]))
+        self.assertEqual(["structures"], runner.supplemental_pack_dirs(["structures"]))
         self.assertEqual(["resources"], runner.supplemental_pack_dirs(["resources", "resources"]))
         self.assertEqual([], runner.supplemental_pack_dirs([]))
         for refused in ("mods", "config", "resourcepacks", "saves", "memory_repo", "../evil", "/etc"):
