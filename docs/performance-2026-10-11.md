@@ -232,6 +232,11 @@ times are the thing the objective asked to measure. The comparison in §4.1 is t
   assigns them the constants `"opengl"` and `false`, which is why the file says `opengl` while the drawing
   renderer's own live line says `Terrain Backend: vulkan (Vulkan device matched the OpenGL device UUID and
   the interop contract was satisfied)` in every Celtium run. The live line is the backend evidence here.
+  **Correction (2026-10-15)**: the two fields are no longer constants. `ProbeReport`/`VulkanDeviceReport` leave
+  them at `unknown`/false and `/celtium vulkan` and `/celtium probe` fill them from the live backend
+  (`TerrainBackendStatus.nativeInstalled()`), recording where the value came from in `terrainBackendSource`
+  (PR #95, `b81641a0e`; the acceptance fixture now asserts agreement with the live backend instead of the
+  constant). The paragraph above describes the file as it was on 2026-10-11.
 - **Per-terrain-pass GPU time** (the backend's own Vulkan timestamp queries) is published only by Celtium:
   `solid 0.379–0.386 ms` and `translucent 0.655–0.658 ms` over 147 sections, in every Celtium run. The
   pinned reference publishes `?? ms` for the same passes — its OpenGL backend has no timestamp queries, so
