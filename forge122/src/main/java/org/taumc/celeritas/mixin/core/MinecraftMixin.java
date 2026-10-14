@@ -181,13 +181,15 @@ public class MinecraftMixin {
                     long nonZero = -1;
                     long sampled = 0;
                     try {
-                        java.nio.ByteBuffer buffer = (java.nio.ByteBuffer) addresses.getClass()
-                                .getMethod("getBuffer").invoke(addresses);
-                        int capacity = buffer.capacity() / Long.BYTES;
+                        // PointerBuffer has get(int) and capacity(); the first version of this called getBuffer(),
+                        // which does not exist, and every leg reported nonZeroFirst0=unknown because of it.
+                        java.lang.reflect.Method get = addresses.getClass().getMethod("get", int.class);
+                        java.lang.reflect.Method capacityMethod = addresses.getClass().getMethod("capacity");
+                        int capacity = ((Number) capacityMethod.invoke(addresses)).intValue();
                         sampled = Math.min(capacity, 256);
                         nonZero = 0;
                         for (int i = 0; i < sampled; i++) {
-                            if (buffer.getLong(i * Long.BYTES) != 0L) {
+                            if (((Number) get.invoke(addresses, Integer.valueOf(i))).longValue() != 0L) {
                                 nonZero++;
                             }
                         }
