@@ -151,3 +151,27 @@ meldexun/renderlib/util/MutableAABB`
 goes and the game boots, SereneSeasons' transformer is the second blocker and the substitution list gains a second
 entry with a named reason. If it does not, the same `VerifyError` shape should be read as a *combination* effect and
 the next candidate is whatever else patches `addRainParticles`.
+
+## The second blocker is a known Cleanroom-ecosystem issue, not ours (verified externally 2026-10-15)
+
+The `VerifyError` in `EntityRenderer.func_78484_h` (`addRainParticles`) that leg 3 dies of is reported, with the
+same method and the same failure shape, against Cleanroom's own built-in mod:
+
+- [CleanroomMC/Fugue#118 "[Crash] Regression: VerifyError in EntityRenderer with Serene Seasons & OptiFine"](https://github.com/CleanroomMC/Fugue/issues/118):
+  "The crash occurs in `EntityRenderer.func_78484_h` (`addRainParticles`)" — the reporter's environment is
+  **Cleanroom 0.3.35-alpha, Serene Seasons 1.2.18** (the exact version RLCraft 2.9.3 pins), and the maintainer's
+  reply distinguishes it from a plain Fugue regression. In the thread the suggested direction is explicit:
+  *"Can we just disable the ASM patches from Serene Seasons and use mixins instead?" — "That's a solution."*
+- SereneSeasons upstream **removed** that transformer: the repository comparison shows
+  `src/main/java/sereneseasons/asm/transformer/EntityRendererTransformer.java | removed | 0 | 195` alongside
+  `ASMHelper`/`ObfHelper`/`SSLoadingPlugin`, i.e. the ASM patch this crash comes from was later dropped in favour of
+  mixins ([Glitchfiend/SereneSeasons comparison](https://github.com/Glitchfiend/SereneSeasons/compare/SS-1.7.10-1.x.x...SS-public)).
+- A third-party account of the same patch's fragility: *"it's caused by Optifine messed some bytecode and then Serene
+  Seasons accidentally removed the `if` statement in `EntityRenderer#renderRainSnow`"*
+  ([OptiFine#5959 comment](https://github.com/spx/optifine/issues/5959)) — the transformer edits a method's control
+  flow and does not survive another transformer changing it first.
+
+So the second RLCraft blocker is **SereneSeasons' own ASM transformer under Cleanroom**, and the honest handling is a
+documented substitution (remove SereneSeasons, or use a build/config without that patch) rather than a change to our
+renderer. The leg that confirms it stays the same: **RenderLib 1.4.5 kept, SereneSeasons removed** — if the
+`VerifyError` disappears and the game boots, the substitution list gains its third entry with this citation.
