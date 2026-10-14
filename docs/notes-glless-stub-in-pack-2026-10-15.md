@@ -114,3 +114,41 @@ loads **after** and the mixin still never appears, mechanism 2 holds and the nex
 mixins are constructed with `ignorePlugin = true` (`MixinProcessor.applyMixins` → `MixinInfo.shouldApplyMixin` →
 `PluginHandle` is the call chain, read from `cleanmix-0.7.2.jar` bytecode). That matches the round-705 note that the
 `false` "is not used for whether a mixin is applied".
+
+## Cause named: RandomPatches loads `Display` before the mixin list exists (measured 2026-10-15)
+
+The `-Xlog:class+load=info` leg (`gv-e2e-268-xlog`) reproduced the pack's failure and put timestamps on it:
+
+| time | event |
+|---|---|
+| **7.123 s** | `Adding [mixins.celeritas.json] mixin configuration.` |
+| 8.953 s | `com.therandomlabs.randompatches.config.RPConfig$Window` loads |
+| **8.975 s** | **`org.lwjgl.opengl.Display source: __JVM_DefineClass__`** |
+| **9.837 s** | **`Found 66 mixin classes`** (the plugin's `getMixins()` runs here) |
+
+So `org.lwjgl.opengl.Display` is defined **after** the celeritas config is added but **before** the mixin list is
+built, triggered by **RandomPatches' own tweak initialisation** (`RPConfig$Window`, and its
+`randompatches.client.WindowIconHandler.setWindowIcon` appears in the same leg's log). CleanMix defines the class at
+that moment, when no celeritas mixin exists yet, so `LwjglxDisplayMixin` can never apply — which is why the pack has
+**no line about it at all** while the cohort logs the CNFE/defer/apply sequence. No other config mixins into
+`org.lwjgl.opengl.Display` (0 matching CleanMix lines), so the early load is a plain class reference, not a mixin.
+
+**This closes the loop with the platform's own recipe.** RandomPatches is on the Cleanroom migration notes' remove
+list for this pack family — the E2Eu entry lists *BetterFPS, Clumps, Hesperus, NotEnoughIDs, Old Java Warning,
+**RandomPatches**, Shadowfacts' Forgelin* — and the E2E 1.93a set in this project does contain
+`randompatches-1.12.2-1.22.1.10.jar`. RLCraft does **not** contain RandomPatches, and the RLCraft leg installs the
+stub and renders GL-less, which is the same fact from the other side.
+
+**Consequences**
+
+1. **The immediate unblock for the pack is a documented substitution**: remove RandomPatches (and the rest of the
+   recipe for that family) and the stub should install. The confirmation leg (7-mod cohort plus RandomPatches alone,
+   predicting the two `CELTIUM_GLLESS` lines disappear) still pins the cause to one mod, which is task-6's
+   acceptance (a).
+2. **The fix design changes**: installing `CeltiumGlStub` from the mod's construction would not restore
+   `GLFW_NO_API`, because the hint is needed immediately before the window is created — and in this environment that
+   creation is triggered by RandomPatches' path, not by a mixin we own. A robust (b) needs a hint path that does not
+   depend on `Display.create` at all (a loading-plugin/coremod hook that calls `glfwWindowHint(GLFW_CLIENT_API,
+   GLFW_NO_API)` by reflection before any window exists), or a target class that is guaranteed to load after our
+   mixins are registered. That is a design decision for the next unit, and it is worth doing even once RandomPatches
+   is removed: "one mixin must win a race against every coremod" is the property that failed here.
