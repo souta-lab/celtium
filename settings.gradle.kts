@@ -90,6 +90,7 @@ includeBuild("plugins/celeritas-mdg-plugin")
 include("common")
 include("celtium-probe")
 include("celtium-vulkan")
+include("celtium-shaderpack")
 
 val versionFilter: (String) -> Boolean =
     if (extra.has("celeritas_target_versions")) {
