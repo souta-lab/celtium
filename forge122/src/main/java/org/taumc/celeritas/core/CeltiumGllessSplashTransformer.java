@@ -39,6 +39,22 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
             public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
                     String[] exceptions) {
                 MethodVisitor target = super.visitMethod(access, methodName, descriptor, signature, exceptions);
+                // The maximum texture size is measured by probing GL_PROXY_TEXTURE_2D and reading it back with
+                // glGetTexLevelParameteriv, which answers zero without a GL context, so Forge's own method returns
+                // -1 and TextureMap builds Stitcher(-1, -1) - measured on this same leg as
+                // "StitcherException: Unable to fit: immersiveengineering:blocks/metal_multiblock_crusher". The mixin
+                // that answered this never reached the class either, so the answer is given here, where the stubbing
+                // above proves this transformer is applied.
+                if ("getMaxTextureSize".equals(methodName) && "()I".equals(descriptor)) {
+                    target.visitCode();
+                    target.visitLdcInsn(Integer.valueOf(16384));
+                    target.visitInsn(Opcodes.IRETURN);
+                    target.visitMaxs(1, 0);
+                    target.visitEnd();
+                    System.out.println("[Celtium] CELTIUM_GLLESS answered SplashProgress.getMaxTextureSize with 16384"
+                            + " (the proxy-texture probe cannot run without a GL context)");
+                    return null;
+                }
                 boolean splashEntryPoint = ("start".equals(methodName) || "finish".equals(methodName))
                         && "()V".equals(descriptor);
                 if (!splashEntryPoint) {
