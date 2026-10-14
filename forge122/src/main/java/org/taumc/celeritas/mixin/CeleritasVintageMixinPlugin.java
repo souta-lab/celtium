@@ -18,6 +18,10 @@ import java.util.stream.Stream;
 public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
     public static final Logger LOGGER = LogManager.getLogger("CeltiumMixins");
 
+    /** GL-less is the default; {@code -Dceltium.vulkan.glless=false} is the bridge opt-out. */
+    private static final boolean GLLESS_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
+
     @Override
     public void onLoad(String mixinPackage) {
         // Celtium targets CleanroomMC only. The previous revision probed for RetroFuturaBootstrap here and, when it
@@ -25,6 +29,44 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
         // supported runtime is pinned (see docs/plan.md section 0), so there is nothing to detect and nothing to
         // patch, and the mod no longer reflects into another component's internals at startup.
         LOGGER.info("Loaded Celeritas mixin plugin (CleanroomMC target)");
+        celtium$installGllessEarly();
+    }
+
+    /**
+     * Installs the GL-less stub and hints the window's client API from the plugin, not only from a mixin.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-xlog}, {@code -Xlog:class+load=info}): in the 268-mod E2E pack
+     * RandomPatches' tweak initialisation defines {@code org.lwjgl.opengl.Display} at <b>8.975 s</b>, while this
+     * plugin's {@link #getMixins()} only runs at <b>9.837 s</b>. A mixin registered after its target class is
+     * defined can never apply, so {@code core.LwjglxDisplayMixin} never ran, the stub was never installed and the
+     * window was created with a real GL 4.6 context - a hybrid run rather than the GL-less path, with CleanMix
+     * logging nothing at all. {@code onLoad} runs at 7.1 s in the same leg, before both.
+     * <p>
+     * So the two things that mixin does are done here as well: install the stub (idempotent - {@code install()}
+     * returns the existing provider) and set {@code GLFW_CLIENT_API = GLFW_NO_API} by reflection. Both are gated on
+     * GL-less being enabled, so the bridge opt-out is untouched. The mixin stays: when it does apply it sets the
+     * hint immediately before {@code glfwCreateWindow}, which is still the strongest place for it, and this path
+     * exists so that GL-less does not depend on one mixin winning a race against every coremod in a pack.
+     */
+    private static void celtium$installGllessEarly() {
+        if (!GLLESS_ENABLED) {
+            return;
+        }
+        try {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.install();
+            LOGGER.info("CELTIUM_GLLESS stub GL provider installed early (from the mixin plugin)");
+        } catch (Throwable error) {
+            LOGGER.warn("CELTIUM_GLLESS early stub install failed: {}", error.toString());
+        }
+        try {
+            java.lang.reflect.Method hint = Class.forName("org.lwjgl.glfw.GLFW")
+                    .getMethod("glfwWindowHint", int.class, int.class);
+            // GLFW_CLIENT_API 0x00022001, GLFW_NO_API 0. glfwWindowHint may be called before glfwInit.
+            hint.invoke(null, Integer.valueOf(0x00022001), Integer.valueOf(0));
+            LOGGER.info("CELTIUM_GLLESS window hinted GLFW_NO_API early (from the mixin plugin)");
+        } catch (Throwable error) {
+            LOGGER.warn("CELTIUM_GLLESS early GLFW hint failed: {}", error.toString());
+        }
     }
 
     @Override
