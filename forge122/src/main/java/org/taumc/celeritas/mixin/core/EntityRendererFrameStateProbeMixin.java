@@ -53,27 +53,34 @@ public abstract class EntityRendererFrameStateProbeMixin {
         celtium$report("renderWorld");
     }
 
+    /** The last state reported, so a line is written when something changes rather than every frame. */
+    @Unique
+    private static String celtium$lastState;
+
     @Unique
     private static void celtium$report(String site) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null) {
             return;
         }
-        boolean noCamera = mc.player == null || mc.getRenderViewEntity() == null;
         boolean early = celtium$probeFrames <= CELTIUM_PROBE_ALWAYS_FRAMES;
-        if (!noCamera && !early) {
+        String screen = mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName();
+        String state = "player=" + (mc.player != null)
+                + " renderViewEntity=" + (mc.getRenderViewEntity() != null)
+                + " world=" + (mc.world != null)
+                + " skipRenderWorld=" + mc.skipRenderWorld
+                + " screen=" + screen;
+        // Reported on change, not per frame: the first version filled its cap with sixty identical lines and the
+        // transition it was written to catch - when the world appears, and when a player arrives - was exactly what it
+        // could no longer show.
+        if (!early && state.equals(celtium$lastState)) {
             return;
         }
         if (celtium$probeLines >= CELTIUM_PROBE_MAX_LINES) {
             return;
         }
+        celtium$lastState = state;
         celtium$probeLines++;
-        System.out.println("[Celtium] CELTIUM_FRAME_STATE site=" + site
-                + " frame=" + celtium$probeFrames
-                + " player=" + (mc.player != null)
-                + " renderViewEntity=" + (mc.getRenderViewEntity() != null)
-                + " world=" + (mc.world != null)
-                + " skipRenderWorld=" + mc.skipRenderWorld
-                + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName()));
+        System.out.println("[Celtium] CELTIUM_FRAME_STATE site=" + site + " frame=" + celtium$probeFrames + " " + state);
     }
 }
