@@ -85,3 +85,24 @@ Two consequences for this project:
   because a provisional mesh has to be rebuilt when the neighbours arrive). It belongs on the list of
   Celeritas-family behaviours to match - before the shadow and shaderpack work, since both depend on terrain
   being present in the frame.
+
+## How other automation waits for a scene, and what this fixture should do (read 2026-10-15)
+
+The nether leg captured at `dimensionAtTick=80` with `firstPresentedWorldFrame=2` - inside the window the 3x3
+readiness rule leaves empty - and a screenshot tool in the same ecosystem already solves this properly:
+
+**[Jeroen-45/screenshot-bot](https://github.com/Jeroen-45/screenshot-bot/)** documents its `screenshot` command as:
+*"Wait until no chunk loading activity is detected anymore, then take a screenshot and save it"* - a gate on
+loading activity, not a fixed delay.
+
+That is the shape this fixture's dimension scenes need. The properties it has today (`dimensionAtTick`,
+`dimensionWaitUntilTick`, `minDimensionFrames`) are all **time**-based, and time is the wrong unit when the
+thing being waited for is "the renderer has meshed what it is going to mesh": a faster machine and a slower one
+need different numbers, and a leg that guesses low produces a frame that says nothing about the renderer.
+
+The concrete item, for whoever owns the fixture next: a **settle gate** for dimension changes - capture only
+after the presented frame has stopped changing (for example, the presented dump's colour count and
+non-background fraction are unchanged across N consecutive frames, both of which the fixture already measures),
+with the time-based properties kept as a bounded fallback and recorded in the leg. Until that exists, every
+dimension-change leg must state its wait and be read with that in mind - the nether FAILED is a capture taken
+inside the empty window, not yet a statement about the renderer.
