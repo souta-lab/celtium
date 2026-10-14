@@ -26,6 +26,48 @@ import uuid
 from headless_wayland import HeadlessWayland
 
 
+#: Pack directories a caller may add to the isolated game dir. `mods`, `config`, `resourcepacks` and `saves` are
+#: copied unconditionally; these are the content directories a pack keeps beside them (`resources` for custom
+#: assets, `structures` for Recurrent Complex-style world content, `scripts` for CraftTweaker recipes). A name
+#: outside this list is refused rather than copied, so the harness never carries in something it has not audited.
+SUPPLEMENTAL_PACK_DIRS = ("scripts", "schematics", "resources")
+
+
+def supplemental_pack_dirs(requested):
+    """Validate `--copy-pack-dir` names and return them deduplicated in the caller's order.
+
+    Measured need (RLCraft 2.9.3): the pack ships `overrides/resources` (816 files), `overrides/structures`
+    (338) and `overrides/scripts` (9) beside `overrides/config` (2,205), and only the last of those reaches a
+    run dir. A boot that then reports missing content cannot say whether the pack is broken or the harness
+    left the content behind, which is exactly the ambiguity this option removes.
+    """
+    unknown = [name for name in requested if name not in SUPPLEMENTAL_PACK_DIRS]
+    if unknown:
+        raise ValueError("--copy-pack-dir accepts only " + ", ".join(SUPPLEMENTAL_PACK_DIRS)
+                         + "; refused: " + ", ".join(sorted(set(unknown))))
+    return list(dict.fromkeys(requested))
+
+
+def copy_pack_into_game_dir(source_game, game, extra_dirs, ignored_mods):
+    """Copy the pack's game directories into an isolated game dir; report what the extra ones carried.
+
+    `mods`, `config`, `resourcepacks` and `saves` are always copied. `extra_dirs` (already validated by
+    :func:`supplemental_pack_dirs`) are copied too, and each one is recorded with its file count, so a run can
+    say whether the content it needed was present instead of assuming the request was honoured. A directory the
+    source profile does not have is recorded as `copied: false` rather than counted as content.
+    """
+    for name in ("mods", "config", "resourcepacks", "saves", *extra_dirs):
+        source = source_game / name
+        if source.is_dir():
+            ignore = shutil.ignore_patterns(*ignored_mods) if name == "mods" else None
+            shutil.copytree(source, game / name, ignore=ignore)
+    if not extra_dirs:
+        return []
+    return [{"name": name, "copied": (source_game / name).is_dir(),
+             "files": sum(1 for p in (game / name).rglob("*") if p.is_file()) if (game / name).is_dir() else 0}
+            for name in extra_dirs]
+
+
 def create_isolated_game_directory(game):
     """Claim a new isolated directory without removing any previous run or unrelated user files."""
     Path(game).mkdir(parents=True, exist_ok=False)
@@ -243,6 +285,9 @@ def main():
     parser.add_argument("--mod", type=Path, action="append", default=[])
     parser.add_argument("--exclude-instance-mod", action="append", default=[],
                         help="Glob of instance mods not to copy into the test game dir (e.g. 'StorageDrawers-*'); the instance itself is untouched")
+    parser.add_argument("--copy-pack-dir", action="append", default=[],
+                        help="Also copy one of the pack's content directories (" + ", ".join(SUPPLEMENTAL_PACK_DIRS)
+                             + ") into the test game dir; the source profile is never changed")
     parser.add_argument("--library", type=Path, action="append", default=[], help="Extra test-only classpath jar; the source profile stays unchanged")
     parser.add_argument("--force-x11", action="store_true",
                         help="Hide the Wayland socket from the game so GLFW uses the Xwayland display instead; the "
@@ -266,6 +311,12 @@ def main():
         parser.error("Duration must be positive")
     if (args.mod or args.library or args.run) and not args.game_dir:
         parser.error("--mod, --library and --run require an isolated --game-dir")
+    try:
+        args.copy_pack_dir = supplemental_pack_dirs(args.copy_pack_dir)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.copy_pack_dir and not args.game_dir:
+        parser.error("--copy-pack-dir requires an isolated --game-dir")
     if args.validate and not args.run:
         parser.error("--validate requires --run")
     if args.headless and (not args.run or not args.render_node):
@@ -300,11 +351,9 @@ def main():
     # different file name (to keep two legs on one hash) then gets the instance's jar copied alongside it, and the game
     # dies on a duplicate mod id - which cost fog-path a leg before this line existed.
     ignored_mods = ("celtium-forge-*.jar", "celtium-validation-client-*.jar") + tuple(supplied) + tuple(args.exclude_instance_mod)
-    for name in ("mods", "config", "resourcepacks", "saves"):
-        source = source_game / name
-        if source.is_dir():
-            ignore = shutil.ignore_patterns(*ignored_mods) if name == "mods" else None
-            shutil.copytree(source, game / name, ignore=ignore)
+    supplemental = copy_pack_into_game_dir(source_game, game, args.copy_pack_dir, ignored_mods)
+    if supplemental:
+        report["supplementalPackDirs"] = supplemental
     (game / "mods").mkdir(exist_ok=True)
     for mod in args.mod:
         target = game / "mods" / mod.name
