@@ -9,6 +9,7 @@ import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -54,6 +55,30 @@ public abstract class ActiveRenderInfoViewPointGuardMixin {
             CallbackInfoReturnable<Vec3d> info) {
         if (entityIn == null) {
             info.setReturnValue(Vec3d.ZERO);
+        }
+    }
+
+    /**
+     * Keeps the previous camera state while there is no camera entity.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-cohort-fix132}, after the camera-transform guard): the client died with
+     * {@code NullPointerException: Cannot read field "field_70125_A" because "entityplayerIn" is null} inside
+     * {@code updateRenderInfo}, reached from {@code EntityRenderer.updateCameraAndRender:1330}, which passes
+     * {@code this.mc.getRenderViewEntity()} and does not check it.
+     * <p>
+     * This is the third entry point of the same class and the same window as the two above. Cancelling leaves the
+     * static camera fields as the previous frame left them, which is what the fog guard's comment describes vanilla
+     * doing with the fog colour; there is no camera to compute them from.
+     * <p>
+     * The method guarded is the Forge-added {@code (Entity, boolean)} overload rather than the {@code (EntityPlayer,
+     * boolean)} one: the overload is the one that dereferences, and it is the one that keeps its name at runtime - it
+     * has no SRG mapping, which is why the crash stack names it instead of a {@code func_} form. A null
+     * {@code EntityPlayer} reaches it as a null {@code Entity} and is covered too.
+     */
+    @Inject(method = "updateRenderInfo", at = @At("HEAD"), cancellable = true, require = 0)
+    private static void celtium$keepCameraStateWithoutEntity(Entity entityIn, boolean thirdPerson, CallbackInfo info) {
+        if (entityIn == null) {
+            info.cancel();
         }
     }
 }
