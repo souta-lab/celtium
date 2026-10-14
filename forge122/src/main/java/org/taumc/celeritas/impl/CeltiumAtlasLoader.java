@@ -123,21 +123,18 @@ public final class CeltiumAtlasLoader {
         if (REFUSED.remove(sprite)) {
             return false;
         }
-        if (sprite.getFrameCount() == 0) {
-            // The stitcher uploads frame 0 for every sprite it holds, so a sprite that reaches it without
-            // frames takes the whole atlas down. Refusing it costs one missing sprite; stitching it cost the
-            // game. This is the backstop for any path that still produces a frame-less sprite.
-            LOGGER.error("Refusing to stitch {} with no frames; it would crash the atlas", sprite.getIconName());
-            return false;
-        }
+        // Never examine async frame data before the worker has finished populating it: a normal sprite
+        // starts with zero frames, and an early check would falsely refuse it, leaving its Future in PENDING.
         Future<Boolean> future = PENDING.remove(sprite);
         if (future == null) {
-            return true;
+            return stitchable(sprite);
         }
         long started = System.nanoTime();
         try {
             Boolean result = future.get();
-            return result != null && result;
+            // Worker success does not guarantee that a modded sprite supplied frame 0.
+            // Conversely, missing frames before future.get() says nothing about the eventual result.
+            return Boolean.TRUE.equals(result) && stitchable(sprite);
         } finally {
             awaitedSprites++;
             awaitedMillis += (System.nanoTime() - started) / 1000000L;
@@ -149,6 +146,16 @@ public final class CeltiumAtlasLoader {
                 System.out.println("[Celtium] " + summary());
             }
         }
+    }
+
+    /** Only call after the sprite's worker finishes (or when it never had an async worker). */
+    private static boolean stitchable(TextureAtlasSprite sprite) {
+        if (sprite.getFrameCount() == 0) {
+            // Stitcher subsequently requests frame 0, which would throw for an empty modded sprite.
+            LOGGER.error("Refusing to stitch {} with no frames; it would crash the atlas", sprite.getIconName());
+            return false;
+        }
+        return true;
     }
 
     /** The sequential equivalent for sprites whose own loader code may not be thread-safe. */
