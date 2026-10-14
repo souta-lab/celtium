@@ -152,6 +152,48 @@ public class MinecraftMixin {
     @Unique
     private static int celtium$splashHookFailures;
 
+    /**
+     * Reports the LWJGL3 GL dispatch state once the display exists, so a leg can say why a mod's GL call aborts.
+     * <p>
+     * The aborts this project has chased (legs {@code gv-e2e-268-fix128g..k}) happen in mod code calling LWJGL3's
+     * generated GL classes, and the two candidate explanations - our function provider not being the one LWJGL3
+     * uses, and a capabilities object that is not ours - look identical from the outside. This line separates them:
+     * the provider's class name says whether {@code GL.create(provider)} took effect, and the capabilities identity
+     * plus its address buffer say what the native dispatch would use. Reflection keeps this module free of an LWJGL3
+     * compile-time dependency, and the report is one bounded line at the point where the window exists and mod
+     * pre-init has not run yet.
+     */
+    @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
+    private void celtium$reportLwjgl3DispatchState(CallbackInfo ci) {
+        try {
+            Class<?> gl = Class.forName("org.lwjgl.opengl.GL");
+            Object provider = gl.getMethod("getFunctionProvider").invoke(null);
+            String capabilitiesState;
+            try {
+                Object capabilities = gl.getMethod("getCapabilities").invoke(null);
+                if (capabilities == null) {
+                    capabilitiesState = "null";
+                } else {
+                    Object addresses = capabilities.getClass().getMethod("getAddressBuffer").invoke(capabilities);
+                    capabilitiesState = capabilities.getClass().getName() + "@"
+                            + Integer.toHexString(System.identityHashCode(capabilities))
+                            + " addresses=" + addresses;
+                }
+            } catch (Throwable error) {
+                Throwable cause = error.getCause() == null ? error : error.getCause();
+                capabilitiesState = "throws(" + cause.getClass().getSimpleName() + ")";
+            }
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(
+                    "CELTIUM_GLLESS LWJGL3 dispatch on thread={} provider={} capabilities={}",
+                    Thread.currentThread().getName(),
+                    provider == null ? "null" : provider.getClass().getName(),
+                    capabilitiesState);
+        } catch (Throwable error) {
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
+                    "CELTIUM_GLLESS LWJGL3 dispatch report failed: {}", error.toString());
+        }
+    }
+
     @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
         Minecraft mc = Minecraft.getMinecraft();
