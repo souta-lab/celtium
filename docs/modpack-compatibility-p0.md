@@ -121,6 +121,40 @@ exit 143/time-limit, no world frames). Treat this as a **startup/fixture blocker
 not a Modpack PASS**. Focus next on world/validation flow and actual content
 rendering with Nothirium absent, not making two renderer cores coexist.
 
+### The substitution list, and the platform's own compatibility table (verified 2026-10-15)
+
+A substitution is a deviation from the pack's own configuration, so each one is recorded with the measurement that
+forced it and with what the platform says about the same component. Two sources are authoritative for the second
+half: the [Cleanroom end-user guide's compatibility table](https://github.com/CleanroomMC/cleanroom-website/blob/main/docs/wiki/end-user-guide/preparing-your-modpack.md)
+and the [Cleanroom Modpack Migration Notes](https://gist.github.com/Rongmario/90d02fe1a2cee5458ea4c74c3b30cecc).
+
+**What the platform names outright** (from the end-user guide):
+
+| component | platform's verdict | platform's replacement |
+|---|---|---|
+| **RandomPatches** | **"Known to cause crashes."** | Universal Tweaks |
+| Phosphor | Incompatible | Alfheim Lighting Engine / Hesperus |
+| Clumps | Outdated | Fixeroo |
+| JustEnoughIDs / NotEnoughIDs | Outdated | RoughlyEnoughIDs (REID) |
+
+That first row is the same component this project measured as the cause of the pack's GL-less failure: RandomPatches'
+tweak initialisation defines `org.lwjgl.opengl.Display` at 8.975 s, before the celtium mixin list exists at 9.837 s,
+so the GL-less stub was never installed and the window got a real GL 4.6 context (`docs/notes-glless-stub-in-pack-2026-10-15.md`).
+The E2Eu entry of the migration notes removes it as well (BetterFPS, Clumps, Hesperus, NotEnoughIDs, Old Java
+Warning, **RandomPatches**, Shadowfacts' Forgelin) and updates CensoredASM.
+
+**What this project has measured and must document as its own substitutions**:
+
+| pack | substituted | measured reason |
+|---|---|---|
+| E2E 1.93a | **Nothirium** removed | two terrain renderers owning the same classes; the pack is run with Celtium as the renderer |
+| RLCraft 2.9.3 | **RenderLib 1.2.8 → 1.4.5** | its coremod transformer rewrites `RenderGlobal.renderEntities`, where our injection then finds `Scanned 0 target(s)` and `RenderGlobal` never defines; the platform's RLCraft entry says to *update* RenderLib |
+| RLCraft 2.9.3 | **SereneSeasons** (removal under test) | its `EntityRendererTransformer` produces a `VerifyError` in `EntityRenderer.addRainParticles` under Cleanroom; the same method and version are reported in [Fugue#118](https://github.com/CleanroomMC/Fugue/issues/118), and upstream later removed that transformer. **Not on the platform's RLCraft list**, so this one is a Celtium-specific deviation that has to justify itself — leg 5 keeps it removed only to isolate the blocker |
+
+**The rule this table exists to enforce**: a pack leg starts from the platform's recipe, then from this project's
+measured substitutions, and any further deviation is named here with its measurement rather than applied quietly.
+A run that used a substitution is never reported as the pack's own configuration.
+
 ### RLCraft on Cleanroom: the platform's own migration recipe (verified 2026-10-15)
 
 Cleanroom publishes per-pack migration notes, and the RLCraft entry is the authoritative substitution set for this
