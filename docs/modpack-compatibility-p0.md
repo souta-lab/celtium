@@ -355,14 +355,52 @@ the terrain scene's 4692. The fixture has **no calibrated floor for this configu
 returns `UNCALIBRATED_PRESENTED_IMAGE` instead of a verdict. `validationClean=true` with no verdict
 is **not** a pass; this is recorded as **NOT JUDGED**.
 
-**The Nether scene fails its own calibrated floor.** `scene=nether`, `captureDimension=-1`,
-354 world frames, 13.0 ms p50, but only **630 distinct colours**, `blackFraction 0.353469` and
-`nonBackgroundFraction 0.156345` against the scene's floor of **0.8** (the fixture's calibrated
-Nether reference is 0.938502). This is a measured failure, not a known-good state.
-**Its cause is not yet attributed**: the candidates are (a) RLCraft's modded Nether putting the pose
-`x=1.5 y=70` inside rock or generating different terrain, and (b) a real Celtium Nether rendering
-defect. Separating them needs one discriminating leg - a different pose, the `end` scene, or the
-fixture's `vanillaReference` path - and none has been run yet.
+**The Nether scene fails its own calibrated floor - but not as a renderer verdict.**
+`scene=nether`, `captureDimension=-1`, 354 world frames, 13.0 ms p50, only **630 distinct colours**,
+`blackFraction 0.353469` and `nonBackgroundFraction 0.156345` against the scene's floor of **0.8**
+(the fixture's calibrated Nether reference is 0.938502).
+
+That failure is a real measurement of the frame that was captured, but it is **not evidence about
+the renderer**, because the frame was captured inside the window the transfer leaves empty. The leg
+transferred at `dimensionAtTick=80` and captured at `firstPresentedWorldFrame=2`; Celeritas merges
+chunk readiness across the 3x3 neighbourhood, so right after a transfer a complete centre chunk is
+kept out of the renderer while its neighbours are absent - stated by Sodium's own
+[PR #3713](https://github.com/CaffeineMC/sodium/pull/3713) ("if any neighboring chunk is absent, the
+merged status becomes empty, which can keep an otherwise complete center chunk out of the
+renderer"), with the vanilla comparison in
+[sodium #2232](https://github.com/CaffeineMC/sodium-fabric/issues/2232) (vanilla force-renders
+chunks closer than 24 blocks to hide exactly this). A frame with no meshed terrain in it is not a
+statement about how terrain renders.
+
+Two attempts to attribute it produced **no discriminating material** and are recorded as such:
+
+- `leg12-nether-vanilla-ref` (same pose, no Celtium jar, `vanillaReference=true`): exit 255,
+  95.5 s, `fixtureStatus NO_CAPTURE`, `captureDimension null`. Real OpenGL did run
+  (`glRendererPreflight AMD Radeon RX 6400 (radeonsi, navi24, ...)`, `gpuRequirementMet true`), but
+  the fixture's own `celtium$pendingP1` threw
+  `NullPointerException: Cannot invoke "java.util.List.iterator()" because "lines" is null`
+  (`ValidationClient.java:4337`), so that path cannot currently produce a reference.
+- `leg13-nether-pose50` (pose `x=0.5 y=50 z=0.5`): exit 143 at the 900 s limit,
+  `fixtureStatus NO_CAPTURE`, `captureDimension null` - the transfer never registered, so the pose
+  was never judged either.
+
+The next leg therefore uses the fixture's new
+`-Dceltium.validation.dimensionSettleFrames=<N>` (default 0, existing calibration keys unchanged),
+which fails a capture taken fewer than N world frames after arrival **and says so in the report**
+rather than failing silently. The recommended run is `dimensionSettleFrames=400`. Its outcome decides
+between "the frame was captured too early" and "the Nether path still renders nothing once settled",
+and only the second would be a renderer finding. Two implementation notes follow from this either
+way, and neither is a Celtium defect claim: a scene that transfers needs an explicit capture-wait
+definition, and loosening the 3x3 readiness merge (the opt-in mode Sodium #3713 adds) is a
+pack-compatibility improvement worth having.
+
+**Record hygiene:** the fixture's content hash changed with the settle gate - the current jar is
+`celtium-validation-client-2.5.0-dev.jar` with content hash
+`b7fc9e9ebc453b6f6193af15a4b18ac306b0b7964c4c60989bc0419d80103175` (18 entries, re-verified here),
+superseding the `0fc313c2...` quoted earlier. Legs 7-11 used
+`celtium-validation-client-0.0.4-alpha.jar`, content hash
+`dfe924a525ab0f7914e258bff39c08d03ff43c5fb3d97bd6257b7a0a1ffa4ce9`, and **image statistics must not
+be compared across the two fixtures**.
 
 The two committed artifacts hold numeric pins, file names, sizes, CDN URLs and SHA-256 digests
 only - no JAR bytes, no config text, no local paths:
