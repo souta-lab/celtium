@@ -27,7 +27,7 @@ public final class CeltiumGllessHint {
      */
     public static void ensureThreadCapabilities() {
         try {
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.forceThreadCapabilities();
         } catch (Throwable error) {
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
                     "CELTIUM_GLLESS per-thread capabilities install failed: {}", error.toString());

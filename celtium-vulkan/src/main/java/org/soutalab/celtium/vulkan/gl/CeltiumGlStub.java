@@ -632,21 +632,43 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Failure is logged and never fatal, as everywhere else on this path.
      */
     public static void ensureThreadCapabilities() {
+        ensureThreadCapabilities(false);
+    }
+
+    /**
+     * The same install, but it replaces whatever capabilities the thread already has.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-fix128i}): the mod-load hook ran at
+     * {@code FMLClientHandler.beginMinecraftLoading} and reported {@code already=yes}, and the window was created
+     * <em>after</em> it ({@code Display.create} at the next log lines) - so something installed capabilities on that
+     * thread before our first hook, or lwjglxx's own {@code Display.create} replaces them, and the abort in
+     * Thaumcraft's pre-init came later anyway. Whichever it is, the thread ends up with a capability set whose ARB
+     * addresses are zero, which is what "a function that is not available in the current context was called" means.
+     * This variant does not ask what is there; it installs this stub's set, once per call site.
+     */
+    public static void forceThreadCapabilities() {
+        ensureThreadCapabilities(true);
+    }
+
+    private static void ensureThreadCapabilities(boolean force) {
         // One line per thread, so a leg can tell an entry point that never fired from one that fired and found the
         // thread already covered. Written once per thread name to stay bounded.
         if (installed != null && CELTIUM$CAPABILITY_THREADS.add(Thread.currentThread().getName())) {
             celtium$printAtExit("CELTIUM_GLLESS ensureThreadCapabilities on thread="
-                    + Thread.currentThread().getName() + " already=" + celtium$hasCapabilities());
+                    + Thread.currentThread().getName() + " already=" + celtium$hasCapabilities()
+                    + " force=" + force);
         }
         if (installed == null) {
             return;
         }
-        try {
-            if (org.lwjgl.opengl.GL.getCapabilities() != null) {
-                return;
+        if (!force) {
+            try {
+                if (org.lwjgl.opengl.GL.getCapabilities() != null) {
+                    return;
+                }
+            } catch (Throwable alreadyUnset) {
+                // GL.getCapabilities() throws when the thread has none, which is the case this method exists for.
             }
-        } catch (Throwable alreadyUnset) {
-            // GL.getCapabilities() throws when the thread has none, which is the case this method exists for.
         }
         celtium$createLwjgl3Capabilities();
     }
