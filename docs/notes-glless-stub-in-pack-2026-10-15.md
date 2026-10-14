@@ -203,3 +203,45 @@ Three facts follow, and they are quoted from [MixinConfig.java](https://github.c
   transformer chain, where the hint can be placed after `glfwInit` and before `glfwCreateWindow` regardless of when
   any mixin config is prepared. The early `CeltiumGlStub.install()` from `onLoad` stays useful either way: it makes
   the GL function surface resolve to the stub, but it cannot prevent the context from being created.
+
+## The second surface: LWJGL3's own GL bindings abort the JVM without a context (measured 2026-10-15)
+
+With RandomPatches removed the stub installs and the hint is set (leg `gv-e2e-268-no-randompatches`: the four
+GL-less lines are back, cleanmix shows `LwjglxDisplayMixin` three times), and the pack then dies at **38.75 s with
+SIGABRT**, not with a Java exception:
+
+```
+FATAL ERROR in native method: Thread[#3,Client thread,7,main]: No context is current or a function that is not
+available in the current context was called. The JVM will abort execution.
+    at org.lwjgl.opengl.ARBShaderObjects.glCreateShaderObjectARB(Native Method)
+    at thaumcraft.client.lib.ender.ShaderHelper.createShader(ShaderHelper.java:121)
+    at thaumcraft.client.lib.ender.ShaderHelper.initShaders(ShaderHelper.java:55)
+    at thaumcraft.proxies.ClientProxy.preInit(ClientProxy.java:31)
+    at thaumcraft.Thaumcraft.preInit(Thaumcraft.java:44)
+```
+
+Thaumcraft's `preInit` uses **LWJGL3's GL bindings**, not the LWJGL2-compatible surface the stub replaces. So the
+stub being installed is a necessary condition for the pack and not a sufficient one: the run gets past the window and
+dies in mod pre-initialisation.
+
+**Why the two surfaces are different, from the jars themselves** (`javap` on lwjgl-opengl-3.4.1.jar):
+
+- `ARBShaderObjects.glCreateShaderObjectARB(int)` is declared **`public static native`**, and the class's static
+  initialiser is `GL.initialize()`.
+- `org.lwjgl.opengl.GL` exposes `create(FunctionProvider)`, `getFunctionProvider()` and `createCapabilities()` - the
+  same shape as the LWJGL2 hook the stub already uses.
+
+So LWJGL3 binds its GL natives from the provider that is current when `GL.initialize()` runs. That gives a concrete
+design for the next unit, in order:
+
+1. **Install the stub into the LWJGL3 surface too** - call LWJGL3's `GL.create(provider)` - and do it **before any
+   GL class initialises**, which is exactly what the coremod/transformer path added in PR #128 is for (it runs at
+   7.1 s, before the window and before mod pre-init).
+2. **Check that the stub's provider answers for the LWJGL3 entry-point names.** The stub's table was built for the
+   LWJGL2 surface; `glCreateShaderObjectARB` and friends have to resolve to a stub address rather than 0, or the
+   native binding fails a different way.
+3. Only if that is not enough, skip or route the mod's shader initialisation when GL-less is on - the least
+   attractive option, because it puts a mod name into the renderer.
+
+Until this is done, **a pack that installs the stub can still abort in a mod's pre-init**, and the honest reading of
+a leg like this one is "the substitution fixed the window, and the pack then failed on the other GL surface".
