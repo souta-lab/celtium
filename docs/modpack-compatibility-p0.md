@@ -55,8 +55,12 @@ python3 scripts/pack_stage.py --pack /private/Enigmatica2Expert-1.93a.zip \
 `--only` can narrow an investigative group before the full pack; such a subset is NOT an E2E/RLCraft
 acceptance. The report `stage-report.json` is generated from the actual landed JARs, listing coremod,
 access transformer, and Mixin config metadata. **RLCraft 2.9.3 manifest entries have no `downloadUrl`:**
-this helper reports them as `no-url` rather than silently assigning random JARs. Its full 187-Mod
-installation requires a verified CurseForge projectID/fileID download resolution step first.
+this helper reports them as `no-url` rather than silently assigning random JARs. The verified
+projectID/fileID resolution step that the earlier revision of this paragraph said was still missing
+now exists and is measured in
+[RLCraft 2.9.3: key-free pin resolution and disk-safe staging](#rlcraft-293-key-free-pin-resolution-and-disk-safe-staging-2026-10-15)
+below; with it the same helper stages all 187 pins. Note also that **10 of those 187 pins are
+resource packs, not mods**, so "187-Mod installation" is not the right description of this pack.
 
 ## Compatibility release gates — never skip levels
 
@@ -177,3 +181,137 @@ nested frame is alive. `scripts/cpu-contract/immediate_group_stack_scope_check.p
 ensures the scope still encloses viewport and all pipeline families. Verify on
 real AMD and Intel devices, with world frames and actual presented screenshots,
 **before** claiming the original crash is resolved or E2E compatible.
+
+### RLCraft 2.9.3: key-free pin resolution and disk-safe staging (2026-10-15)
+
+Everything in this section is **measured** on the genuine archive
+`RLCraft-2.9.3.zip` (SHA-256 `5caa25d31f47f4ac69846e4faa741811baa9239804747769f6d54f7b1bbf1291`,
+re-checked by the tools below and recorded in the resolve index). No API key, account or token is
+involved anywhere. The archive was only ever read.
+
+#### The problem, restated from the bytes
+
+The manifest's 187 required entries are bare `{projectID, fileID, required}`: **0 of 187 carry a
+`downloadUrl`**. The bundled `modlist.html` lists **188 project links - 178 under `mc-mods` and 10
+under `texture-packs` - and contains no file ID at all**, so it cannot name a pinned file, and it is
+not even a 1:1 map of the 187 pins.
+
+#### What each candidate route actually answers
+
+`scripts/modpack-compat/probe_cf_resolution.py` re-runs every row below live; it issues read-only
+requests only. Last run: **13/13 rows matched**, and the raw observations were written to a JSON
+alongside the fixture.
+
+| Route | Observed | Verdict |
+|---|---|---|
+| `api.curseforge.com/v1/mods/{p}/files/{f}/download-url`, no key | **403** | rejected |
+| same URL with a deliberately wrong `x-api-key` | **403** | key-gated, not header-gated; a real key needs user approval |
+| `www.curseforge.com/.../files/{f}`, ordinary user agent | **403** (0/10 repeats succeeded) | Cloudflare interstitial |
+| same URL **plus** `Sec-Fetch-Dest: document` and `Sec-Fetch-Mode: navigate` | **200** (6/6), body contains the exact file name | first-party, but needs a project *slug* |
+| same, wrong slug or wrong file id | **404** | the slug is load-bearing, so the pin alone is not enough |
+| `edge.forgecdn.net/files/{f//1000}/{f%1000}/{exact name}` | **200** | the artifact route |
+| same path, any other name | **403** (`AccessDenied` from S3/CloudFront) | the numeric path alone is not enough |
+| `mediafilez.forgecdn.net/?list-type=2&prefix=files/` | **403** | no bucket listing to enumerate names from |
+| `addons-ecs.forgesvc.net/api/v2/addon/{p}/file/{f}` | no answer (URLError) | retired |
+| `api.cfwidget.com/{projectID}` | **200** | key-free metadata, adopted |
+
+#### Adopted route
+
+`scripts/modpack-compat/cf_file_index.py` reads each pin's exact file name from the public
+`api.cfwidget.com` index - one GET per distinct project, 1 s apart, retried once on 429/5xx - and
+builds the **official CurseForge CDN** URL from the pin and that name. Result on the real archive:
+
+```
+pins      : 187 required entries, 187 distinct projects
+resolved  : 187 of 187 pins (286.8 MiB reported by upstream)
+by state  : {'ok': 187}
+by kind   : {'jar': 177, 'other': 10}
+```
+
+**Where the trust ends.** The *artifact* always comes from the official CDN, and the CDN is itself
+the verifier of the name: the path encodes the file ID, so a wrong or stale name cannot answer 200.
+Every staged byte is additionally size-checked against the resolved size, and a disagreement keeps
+nothing. Independently, `probe_cf_resolution.py --index` re-fetched 12 sampled file pages from the
+**first-party** site and **12/12 contained the resolved name verbatim**. The third party supplies
+metadata only; it cannot substitute a different artifact without a 403.
+
+#### Ten of the 187 pins are not mods
+
+They resolve to resource packs - `Wilhelm.zip`, `Emis_Rlcraft.zip`, `LycanitesMobs32X.zip`,
+`Leviosa.zip`, `RLTooltips.zip` and five more - and they are exactly the ten `texture-packs` links in
+`modlist.html`. Two earlier readings are corrected here: the pack's 187 manifest entries are
+**177 mods + 10 resource packs**, and a `.zip` pin is not an "unsafe" name. `pack_stage.py` now
+classifies pins by `kind` and **never writes a resource pack into `mods/`**; with
+`--resourcepacks-out` it fetches them into that directory under the same budget and atomicity rules,
+and without it, it reports them as not staged and exits **5** rather than 0.
+
+#### Staged on the real archive
+
+`--budget-gb 2`, the 1 GiB free-space floor never approached, every download streamed under a hard
+byte cap and renamed only when complete:
+
+| | artifacts | bytes |
+|---|---:|---:|
+| mod jars to `mods/` | 177 | 287,034,329 |
+| resource packs to `resourcepacks/` | 10 | 13,730,766 |
+| **total** | **187** | **300,765,095** (286.8 MiB) |
+| unresolved / failed / not staged | 0 / 0 / 0 | - |
+
+The staged total equals the upstream-reported total to the byte, which is only possible because all
+187 individually size-matched. A second, verification pass over the landed tree reported
+`187 already present, 0 not fetched`, re-derived all 187 SHA-256 values, and left free space at
+26 GiB (the staging itself costs 287 MiB; the larger change during the window came from other agents
+freeing disk, not from this run). All 187 landed files are readable ZIP archives, no basename
+collides, and 162 distinct `modid`s were read out of their `mcmod.info` files. The transformer
+surface read from the landed jars: **41 coremods, 41 with access transformers, 1 with a mixin
+config**.
+
+#### The bundled `overrides/mods/` jars are not manifest pins
+
+The archive ships exactly three jars under `overrides/mods/`: `antiquecities-1.2.1.jar` (a real mod
+jar, `mcmod.info` modid `antiquecities`) and two Maven-layout libraries under `memory_repo/`
+(`com.github.mcjty:mcjtytools:0.0.21` and `net.ilexiconn:llibrary-core:1.0.11-1.12.2`). Each
+`memory_repo` jar has a sibling `.jar.meta` whose `Maven-Artifact:` header names that coordinate,
+and the `llibrary-core` one also carries `FMLCorePlugin:
+net.ilexiconn.llibrary.server.core.plugin.LLibraryPlugin` plus per-class `SHA-256-Digest` entries.
+**None of them is one of the 187 pins**, no file inside the pack references `memory_repo`, and they
+belong to the `overrides/` tree rather than to the pin set - so a staging run must not count them as
+downloaded mods, and it must not "fix" their absence from the manifest by inventing pins for them.
+`overrides/` (2,403 config files, 939 resource files, 343 structures, 10 scripts, 2 resource packs)
+is a separate extraction step that `pack_stage.py` does not perform.
+
+#### Reproduce
+
+```sh
+# What does each route answer today?
+python3 scripts/modpack-compat/probe_cf_resolution.py \
+  --index docs/modpack-locks/rlcraft-2.9.3.resolve-index.json --sample 12
+
+# Resolve all pins (network); --cache-dir makes later runs offline, --offline uses that cache
+python3 scripts/modpack-compat/cf_file_index.py --pack /private/RLCraft-2.9.3.zip \
+  --out docs/modpack-locks/rlcraft-2.9.3.resolve-index.json --cache-dir /private/cf-cache
+
+# Size first, then stage; the archive is read-only throughout
+python3 scripts/pack_stage.py --pack /private/RLCraft-2.9.3.zip --out /private/rlcraft-stage \
+  --budget-gb 2 --resolve-index docs/modpack-locks/rlcraft-2.9.3.resolve-index.json --dry-run
+python3 scripts/pack_stage.py --pack /private/RLCraft-2.9.3.zip --out /private/rlcraft-stage \
+  --budget-gb 2 --resolve-index docs/modpack-locks/rlcraft-2.9.3.resolve-index.json \
+  --resourcepacks-out /private/rlcraft-stage/resourcepacks \
+  --fingerprint-report docs/modpack-locks/rlcraft-2.9.3.stage-fingerprints.json
+
+python3 scripts/modpack-compat/test_cf_file_index.py
+python3 scripts/modpack-compat/test_pack_stage_resolve.py
+python3 scripts/cpu-contract/pack_stage_check.py
+```
+
+The two committed artifacts hold numeric pins, file names, sizes, CDN URLs and SHA-256 digests
+only - no JAR bytes, no config text, no local paths:
+
+- `docs/modpack-locks/rlcraft-2.9.3.resolve-index.json` - the resolution, anchored to the archive
+  SHA-256.
+- `docs/modpack-locks/rlcraft-2.9.3.stage-fingerprints.json` - per-artifact `kind`, bytes and
+  SHA-256, plus the classification of anything that did not land.
+
+**This is still not a P1 pass.** Resolving and staging every pinned artifact says the fixture can be
+assembled; it says nothing about whether RLCraft boots or renders under Cleanroom/Celtium, which
+remains `NOT TESTED` in the gate table above.
