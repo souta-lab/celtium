@@ -71,7 +71,7 @@ resource packs, not mods**, so "187-Mod installation" is not the right descripti
 | Gate | What must be demonstrated | Status 2026-10-14 |
 |---|---|---|
 | P0 exact fixture | Official ZIP SHA, exact files, config/override hashes, original pack/loader identity | **PASS metadata only** |
-| P1 complete pack boot | All original content Mods or minimal approved renderer substitutions installed in an isolated profile; actual client starts, world enters, exits cleanly on AMD/Intel | **PASSED (AMD)** - `rlcraft-p1-leg7-recipe`, exit 0, 131.6 s, `fixtureStatus PASSED`, 1184 world frames, 4692 colours, `pictureFrameDelta_world 0`. **Intel NOT TESTED**; E2E 1.93a still reaches a world without a passing picture gate |
+| P1 complete pack boot | All original content Mods or minimal approved renderer substitutions installed in an isolated profile; actual client starts, world enters, exits cleanly on AMD/Intel | **PASSED (AMD and Intel)** for RLCraft 2.9.3 - `rlcraft-p1-leg7-recipe` (exit 0, 131.6 s, 1184 world frames) and `rlcraft-p1-leg8-intel` (exit 0, 148.0 s, 336 world frames, `Intel(R) UHD Graphics 630 (CFL GT2)`, `gpuRequirementMet true`), both `fixtureStatus PASSED`. E2E 1.93a still reaches a world without a passing picture gate |
 | P2 actual modded rendering | Native Vulkan presented screenshots of distinct Mod model, TESR, particles, liquids, translucent surfaces, entity animation, GUI, equipment and world-structure scenes; non-rendering dependencies untouched | **NOT TESTED** |
 | P3 lifecycle | Save/reload, F3+T, dimension transitions, fullscreen/resize, game switch/quit with Vulkan VUID0 and no lingering GPU resource ownership | **NOT TESTED** |
 | P4 parity | Correct **same-scene** non-Celtium OpenGL reference screenshots with matched world seed/camera/time/GUI state; enumerate and fix remaining missing pixels/geometry | **NOT TESTED** |
@@ -353,6 +353,7 @@ Celtium booting the 268-mod E2E cohort to a world in 194.8 s (`gv-e2e-268-step4`
 | `rlcraft-p1-leg5-rl145-no-ss` | RenderLib 1.4.5, − SereneSeasons | **exit 143, 1200.8 s**, `MISSING_REPORT` | **invalid as a P1 measurement** - FML halted on an error screen (Forgelin blacklisted) and no window renderer was created; see the retraction below |
 | `rlcraft-p1-leg6-recipe` | Cleanroom recipe applied | **exit 1, 0 s** | **invalid leg** - the profile was not in the `instances/<name>/` layout the harness expects, so it never launched |
 | `rlcraft-p1-leg7-recipe` | recipe + RenderLib 1.4.5 + Recurrent Complex 1.4.8.7, SereneSeasons **restored** | **exit 0, 131.6 s, `fixtureStatus PASSED`** | - |
+| `rlcraft-p1-leg8-intel` | same profile, `DRI_PRIME=pci-0000_00_02_0!`, Intel render node | **exit 0, 148.0 s, `fixtureStatus PASSED`**, `CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"`, `gpuRequirementMet True` | - |
 
 #### Blocker 1 - RenderLib 1.2.8's coremod transformer removes our injection point
 
@@ -430,7 +431,7 @@ ClassNotFoundException: ValidationClient` has the same cause: the class *is* in 
 `celtium-validation-client-0.0.4-alpha.jar` (16 entries match), but FML halted before the mod class
 loader was assembled.
 
-#### P1 verdict: PASSED on AMD
+#### P1 verdict: PASSED on AMD and Intel
 
 Leg 7 applied the Cleanroom recipe, RenderLib 1.4.5 and Recurrent Complex 1.4.8.7, **restored
 SereneSeasons** (it is not in the recipe), dropped the validation flag, and carried
@@ -466,8 +467,30 @@ presented dump is this configuration's picture.
 | world enters | **YES** - 1184 world frames, presented images written |
 | exits cleanly | **YES** - `exitCode 0`, `process-exit` |
 
-**AMD only.** No Intel leg has been run for RLCraft, so the gate table records
-`PASSED (AMD) / Intel NOT TESTED`.
+The Intel leg (`rlcraft-p1-leg8-intel`) ran the **same profile and jars** with
+`DRI_PRIME=pci-0000_00_02_0!` and the Intel render node, and `--require-gpu 'UHD Graphics 630'` -
+the renderer string the driver reports, not the vendor word. Both required checks agree:
+
+| | AMD (`leg7`) | Intel (`leg8`) |
+|---|---|---|
+| exitCode / endedBy | 0 / process-exit | 0 / process-exit |
+| elapsedSeconds | 131.6 | 148.0 |
+| fixtureStatus | **PASSED** | **PASSED** |
+| `CELTIUM_NATIVE_DEVICE name=` | `AMD Radeon RX 6400 (RADV NAVI24)` | `Intel(R) UHD Graphics 630 (CFL GT2)` |
+| `gpuRequirementMet` | **True** | **True** |
+| validationMessageCount | 0 | 0 |
+| captureWorldFrames | 1184 | 336 |
+| firstPresentedWorldFrame | 2 | 3 |
+| presentedDistinctColours | 4692 | 6364 |
+| presentedBlackFraction | 0.008033 | 0.019431 |
+| `pictureFrameDelta_world` | 0 | **-1** |
+| frameIntervalP50Ms / warm p50 | 39.5 / 40.3 | 161.1 / 64.0 |
+
+Intel was confirmed by **both** the device line and `gpuRequirementMet`, as AGENTS.md requires;
+an AMD run under an Intel render node is not an Intel result, and this one reports Intel in its own
+log. The Intel leg's `pictureFrameDelta_world` is **-1** where AMD's is 0 - a one-frame
+present/world difference at capture. It did not fail the gate, but it is recorded rather than
+rounded away, and it is the first thing to look at if the picture accounting is revisited.
 
 `nativeDeviceName = null` and `gpuRequirementMet = false` in **leg 5's** report are **not** evidence
 about the GPU: the capability report is written once a world is entered, and leg 5 never entered one.
