@@ -132,6 +132,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // The integer queries write into the caller's buffer, so they cannot be answered by a return value at all:
+        // the body has to forward both arguments to a helper. glGetIntegerv(int, IntBuffer) is Java in LWJGL3 and
+        // reaches this native with the buffer's address, and Minecraft reads the result in eleven places.
+        if (returnType.equals("V") && name.endsWith("nglGetIntegerv") && descriptor.startsWith("(IJ)")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetIntegerv", "(IJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         switch (returnType) {
             case "V":
                 method.visitInsn(Opcodes.RETURN);

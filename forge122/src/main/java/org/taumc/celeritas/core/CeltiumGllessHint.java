@@ -46,6 +46,58 @@ public final class CeltiumGllessHint {
         return identityPointer;
     }
 
+    /**
+     * Answers the integer queries the game itself validates, writing into the caller's buffer.
+     * <p>
+     * Measured 2026-10-15 (legs {@code gv-cohort-fix128s} / {@code gv-e2e-268-fix128s}): a replacement that returns
+     * the type's zero for everything makes Minecraft throw during startup - {@code glCheckFramebufferStatus}
+     * returned "unknown status:0" from {@code Framebuffer.checkFramebufferComplete}, called from
+     * {@code Minecraft.init}. gpu-verifier's rule is the general form of it: <b>a zero-returning replacement breaks
+     * every query whose result the caller checks</b>, and {@code glGetIntegerv} has eleven call sites inside
+     * Minecraft (GL_MAX_TEXTURE_SIZE and friends, where 0 causes a different failure further on).
+     * <p>
+     * Writing the buffer rather than leaving it alone matters: LWJGL's {@code glGetIntegerv(int, IntBuffer)} is Java
+     * and calls this native with the buffer's address, so the caller reads whatever is at that address. The values
+     * below are the ones this renderer can honestly claim - a large but finite texture limit, the texture-unit and
+     * attribute counts a GL 3.0 profile guarantees - and anything unknown is written as 0 rather than left as
+     * uninitialised memory.
+     */
+    public static void glGetIntegerv(int pname, long params) {
+        if (params == 0L) {
+            return;
+        }
+        int value;
+        switch (pname) {
+            case 0x0D33: // GL_MAX_TEXTURE_SIZE
+                value = 16384;
+                break;
+            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS
+                value = 16;
+                break;
+            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
+                value = 32;
+                break;
+            case 0x8869: // GL_MAX_VERTEX_ATTRIBS
+                value = 16;
+                break;
+            case 0x80E9: // GL_MAX_VERTEX_UNIFORM_COMPONENTS
+            case 0x8B4A: // GL_MAX_FRAGMENT_UNIFORM_COMPONENTS
+                value = 4096;
+                break;
+            case 0x0D3B: // GL_MAX_VIEWPORT_DIMS
+                org.lwjgl.system.MemoryUtil.memPutInt(params, 16384);
+                org.lwjgl.system.MemoryUtil.memPutInt(params + 4L, 16384);
+                return;
+            case 0x821D: // GL_NUM_EXTENSIONS
+                value = 0;
+                break;
+            default:
+                value = 0;
+                break;
+        }
+        org.lwjgl.system.MemoryUtil.memPutInt(params, value);
+    }
+
     /** Called from the injected instruction; never throws into the window creation path. */
     public static void beforeWindowCreation() {
         if (applied || "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
