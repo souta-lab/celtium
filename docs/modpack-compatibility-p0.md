@@ -1,0 +1,54 @@
+# Full-modpack P0: E2E and RLCraft (2026-10-14)
+
+**Status: official packs obtained and their CurseForge manifests fingerprinted; full client game instances NOT installed, and no complete-pack GL-less acceptance yet.** The earlier successful 7-mod cohort is *not* a full pack compatibility claim. Owner issues: [#82 E2E](https://github.com/souta-lab/celtium/issues/82), [#83 RLCraft](https://github.com/souta-lab/celtium/issues/83). Experimental native shadow/shaderpack features remain an independent track [#76](https://github.com/souta-lab/celtium/issues/76).
+
+## Official reference archives (kept only in local fixture storage)
+
+| Pack | Official CurseForge release | Archive SHA-256 | Required manifest `(projectID,fileID)` records | Forge loader | Config overrides | Embedded JARs outside manifest |
+|---|---|---|---:|---|---:|---:|
+| [E2E 1.93a](https://www.curseforge.com/minecraft/modpacks/enigmatica2expert/files/9088147) | Project `282744`, file `9088147`, 2026-10-07 | `feb355136a644191bcb2f9f68f2ac30987e1c5485290acc09f4b3bf2a08832ae` | **270** | `forge-14.23.5.2860` | 1,204 config files | 1 `overrides/mods/*.jar` |
+| [RLCraft 2.9.3](https://www.curseforge.com/minecraft/modpacks/rlcraft/files/4612979) | Project `285109`, file `4612979`, 2023-06-27 | `5caa25d31f47f4ac69846e4faa741811baa9239804747769f6d54f7b1bbf1291` | **187** | `forge-14.23.5.2860` | 2,403 config files | 3 nested/loose `overrides/mods/*.jar` including repository libraries |
+
+**Important distinctions:** The manifest entries are **file references**, not proof all those JARs have been downloaded/loaded. A bundled nested library under `overrides/mods/memory_repo/` is not necessarily an extra Forge Mod. Config paths such as `nothirium.cfg`, `vintagefix.properties`, `foamfix.cfg` and `phosphor.json` do **not** prove those exact Mods were enabled: installed JARs and client logs must decide. OptiFine does not appear in the RLCraft 2.9.3 bundled `modlist.html`, so never silently install it for compatibility testing. Keep a stable baseline from the exact original pack and explicitly document any necessary Cleanroom/renderer substitutions.
+
+Official manifest comparison (from the two full distribution ZIPs): **32 common CurseForge project IDs**, of which **23** specify the same exact file ID and **9** specify different file IDs. Unique projects: **238 E2E** and **155 RLCraft**. The precise divergent IDs are reproducible with `scripts/modpack-compat/compare_locks.py`.
+
+## Lockfiles and offline verification
+
+The repository contains only original *numeric references* and cryptographic fingerprints, **not copyrighted Mod JARs, downloaded ZIPs, original config texts, or shader assets**:
+
+- `docs/modpack-locks/e2e-1.93a.lock.json`
+- `docs/modpack-locks/rlcraft-2.9.3.lock.json`
+
+After obtaining the genuine original CurseForge ZIPs locally, re-run:
+
+```sh
+python3 scripts/modpack-compat/lock_archive.py /private/Enigmatica2Expert-1.93a.zip \
+  --project-id 282744 --file-id 9088147 \
+  --check docs/modpack-locks/e2e-1.93a.lock.json
+python3 scripts/modpack-compat/lock_archive.py /private/RLCraft-2.9.3.zip \
+  --project-id 285109 --file-id 4612979 \
+  --check docs/modpack-locks/rlcraft-2.9.3.lock.json
+python3 scripts/modpack-compat/compare_locks.py \
+  docs/modpack-locks/e2e-1.93a.lock.json docs/modpack-locks/rlcraft-2.9.3.lock.json
+python3 scripts/modpack-compat/test_lock_archive.py
+```
+
+The audit rejects malformed project IDs, invalid loader, unexpected Minecraft version, duplicate IDs, ZIP traversal/symlinks and oversized/decompression hazards, hashes the original download and every override file, and records embedded jar hashes. The CI check uses a **synthetic test ZIP only**; it does not fetch proprietary pack archives or assert client startup.
+
+## Compatibility release gates — never skip levels
+
+| Gate | What must be demonstrated | Status 2026-10-14 |
+|---|---|---|
+| P0 exact fixture | Official ZIP SHA, exact files, config/override hashes, original pack/loader identity | **PASS metadata only** |
+| P1 complete pack boot | All original content Mods or minimal approved renderer substitutions installed in an isolated profile; actual client starts, world enters, exits cleanly on AMD/Intel | **NOT TESTED** |
+| P2 actual modded rendering | Native Vulkan presented screenshots of distinct Mod model, TESR, particles, liquids, translucent surfaces, entity animation, GUI, equipment and world-structure scenes; non-rendering dependencies untouched | **NOT TESTED** |
+| P3 lifecycle | Save/reload, F3+T, dimension transitions, fullscreen/resize, game switch/quit with Vulkan VUID0 and no lingering GPU resource ownership | **NOT TESTED** |
+| P4 parity | Correct **same-scene** non-Celtium OpenGL reference screenshots with matched world seed/camera/time/GUI state; enumerate and fix remaining missing pixels/geometry | **NOT TESTED** |
+| P5 perf/reliability | Repeatable warm p50/p95/p99 + GPU/CPU measurements, baseline comparison and a non-regressing CI/GPU acceptance matrix | **NOT TESTED** |
+
+### First failing render families to target
+
+**E2E:** Industrial and magic machine TESRs, AE2 terminal and item screens, multiblocks, transparent fluid and conduit draw order, modded dimensions, animated particles and overlays. **RLCraft:** large custom animated creatures and rider/mount geometry, entity lighting, particle effects, modded foliage/weather, sky, translucent water and GUI/HUD overlays. These are test hypotheses, **not observed Celtium bugs**; test genuine installed components and do not infer the contents of a pack merely from its theme.
+
+Full pack testing needs more storage than a manifest inspection. Remote machine at baseline had **~13 GiB free / 16 GiB physical RAM**; avoid duplicating the existing PrismLauncher Cleanroom instance and cache. Stage **one complete pack at a time**, reuse content-addressed downloaded jars, measure disk use and memory headroom, preserve user worlds/configs and do not suppress failing coremods just to record a pass. Never run both bulky clients concurrently.
