@@ -597,6 +597,42 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static CeltiumGlStub installed;
 
     /**
+     * Gives LWJGL3's own GL bindings addresses from this stub, so a mod that calls them does not abort the JVM.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-no-randompatches}, 268-mod pack minus RandomPatches): with the
+     * stub installed and the window created GL-less, the run died at 38.75 s with
+     * <pre>
+     * FATAL ERROR in native method: No context is current or a function that is not available in the current
+     * context was called. The JVM will abort execution.
+     *     at org.lwjgl.opengl.ARBShaderObjects.glCreateShaderObjectARB(Native Method)
+     *     at thaumcraft.client.lib.ender.ShaderHelper.createShader(ShaderHelper.java:121)
+     * </pre>
+     * {@code GL.create(provider)} supplies the <em>library</em> the GL classes ask for, but LWJGL3's generated GL
+     * classes are {@code public static native} and take their addresses from the thread's {@code GLCapabilities},
+     * which is built by {@code GL.createCapabilities()} - and that needs a current context. This stub answers
+     * {@code glGetError}, {@code glGetIntegerv} and {@code glGetString} itself, so the capability query succeeds
+     * against the stub's own identity and the resulting addresses are this provider's trampolines. That turns a mod
+     * calling LWJGL3 GL entry points from "the JVM aborts" into "the stub answers", which is the whole point of the
+     * GL-less window.
+     * <p>
+     * Failure is logged and never fatal: a run without capabilities is exactly the run this project had before, and
+     * the census and the validation report stay readable either way.
+     */
+    private static void celtium$createLwjgl3Capabilities() {
+        try {
+            if (org.lwjgl.opengl.GL.getCapabilities() != null) {
+                return;
+            }
+            org.lwjgl.opengl.GLCapabilities capabilities = org.lwjgl.opengl.GL.createCapabilities();
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities created from the stub provider: "
+                    + (capabilities == null ? "null" : "ok"));
+        } catch (Throwable error) {
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities could not be created from the stub: "
+                    + error);
+        }
+    }
+
+    /**
      * Installs this provider as the process's GL function source; call before {@code GL.createCapabilities()}.
      * LWJGL only lets {@code GL.create} supply the function source when the library's default load was deferred,
      * so this also asserts {@link Configuration#OPENGL_EXPLICIT_INIT} - the window-creation path must set it before
@@ -607,6 +643,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             installed = new CeltiumGlStub();
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
+            celtium$createLwjgl3Capabilities();
             // The census has to be readable after the run: the harness reads logs, and the renderer's own report
             // only carries the strings it knows to ask for. One line at exit, bounded. The glDrawArrays line sits
             // beside it because the two answer the same question from opposite sides: the census says which drawing

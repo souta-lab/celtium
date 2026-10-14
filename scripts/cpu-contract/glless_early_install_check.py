@@ -67,6 +67,12 @@ def main():
     require('the hint sets GLFW_CLIENT_API to GLFW_NO_API',
             'glfwWindowHint' in hint and '0x00022001' in hint)
 
+    stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8')
+    require('the stub gives LWJGL3 capabilities addresses from itself',
+            'celtium$createLwjgl3Capabilities' in stub and 'GL.createCapabilities()' in stub)
+    require('a failure to build them is logged and not fatal',
+            'LWJGL3 capabilities could not be created from the stub' in stub)
+
     if not all(checks):
         print(f'{checks.count(False)} contract check(s) failed')
         return 1
