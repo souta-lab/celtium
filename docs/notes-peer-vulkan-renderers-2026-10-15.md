@@ -139,3 +139,31 @@ compatibility table lists:
 So the peer that replaces the terrain renderer **defers to Celeritas** rather than competing with it. That is the
 slot this project occupies, and it is worth stating in the project's own compatibility documentation: on a pack with
 Celtium installed, a mod like VulkanMod-Next is expected to stand aside, and the reverse should be true too.
+
+## The primary source for the Vulkan switch, and the architecture it lands on (read 2026-10-15)
+
+The earlier note cites a news article; the announcement itself is
+[Minecraft.net, 2026-02-18](https://www.minecraft.net/en-us/article/another-step-towards-vibrant-visuals-for-java-edition):
+
+> "Following this work, we're now preparing to make a change to the underlying technology we use to render the game, by
+> switching from OpenGL to Vulkan. ... you'll start to see Vulkan rolling out side-by-side with OpenGL in snapshots while
+> we work to minimize any issues arising from this implementation. Once this happens, players will be able to switch
+> between OpenGL rendering and Vulkan rendering ... while we iron out issues with stability and any bugs. ... Once we're
+> happy with the performance and stability of Vulkan across devices we will remove the OpenGL implementation."
+
+That is the same shape this project works in on 1.12.2 - a Vulkan renderer beside an OpenGL one, with the old path
+kept until the new one is proven - and it is worth citing the announcement rather than a report of it.
+
+**What the modern renderer's architecture looks like**, per [minecraftdocs.dev's Blaze3D pages](https://minecraftdocs.dev/systems/rendering/blaze3d),
+is also worth having in view for this project's own "common contracts" work: the game talks to `GpuDevice`,
+`CommandEncoder` and `RenderPass`, and a backend under `com/mojang/renderpearl/backend/opengl` or `.../vulkan` turns
+that into real calls. Blend mode, depth test, cull and polygon mode are fields of a `RenderPipeline` declared once and
+applied by the backend; `RenderSystem` contains no GL call at all; OpenGL is imported by exactly fifteen files, all but
+one inside the GL backend. Presentation is a four-step protocol - `GpuSurface.configure`, `acquireNextTexture`,
+`blitFromTexture`, `present` - rather than a swap, and pacing is a two-deep submit fence rather than the present.
+
+The parallel with this project's own state is direct: the goal asks for a common allocator, buffer, descriptor,
+pipeline and resource registry with one contract for draw state and resource lifetime, which is the same separation
+between what the game declares and what a backend does with it. Where this project differs is that the boundary has to
+exist **inside** a 1.12.2 client whose mods call GL directly, so the "backend" here also has to answer calls the game
+never routed through any abstraction.
