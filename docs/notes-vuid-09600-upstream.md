@@ -36,12 +36,32 @@ still correct (`status=PASSED`). Closure condition on record: fix the layout tra
   ("there are both record time and submit time checks… effectively we track the *first* use of a given resource
   and check that against the global (submit) image layout at submit time").
 
+## The layer this project actually loads (measured 2026-10-15, GPU-free)
+
+The harness exports the repo's extracted layers itself (`scripts/prism_validation.py:474-482` sets `VK_LAYER_PATH`
+to `.celtium-work/gpu-tools/extracted/usr/share/vulkan/explicit_layer.d` and `LD_LIBRARY_PATH` to the matching
+`usr/lib/x86_64-linux-gnu`), and that manifest reads:
+
+```
+VK_LAYER_KHRONOS_validation  api_version 1.4.363  implementation_version 1  library_path libVkLayer_khronos_validation.so
+```
+
+(read with `python3 -c "import json; print(json.load(open('.celtium-work/gpu-tools/extracted/usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json'))['layer'])"`;
+the system loader is `libvulkan.so.1.4.363`, and no other `VkLayer_khronos_validation` exists on this machine).
+
+PR #10316 landed between the `vulkan-sdk-1.4.313.0` and `vulkan-sdk-1.4.321.0` tags, so **the layer every leg
+loads already carries the queue-retire image-layout fix** — this is the measurement the previous section said was
+missing, and it points the other way: the upstream false-positive class does **not** explain our messages on this
+machine.
+
 ## What this changes, and what it does not
 
-**Does**: it names the mechanism our own rounds inferred from the message pattern (submit-time first-use check
-against a global layout) and gives a concrete, cheap experiment for the next P1-a unit — the layer version. The
-legs report a Vulkan loader of 1.4.363; whether the installed layer predates PR #10316 is a fact we have not
-measured, and "the fix is in a newer SDK" is not a claim about the binary on this machine.
+**Does**: it removes the false-positive explanation for the current legs. What remains is either our own layout
+accounting — round 249 measured that the chain pair's render pass declares a constant `GENERAL` attachment layout
+while the sampling path moves the image to `SHADER_READ_ONLY_OPTIMAL`, and that the pair has no per-frame layout
+bookkeeping — or a different upstream bug than #10185. The next measurement is a **current-jar leg reading
+`validationMessageCount` and the message text**: the round-722 regression legs on `main` are exactly that, and the
+268-mod pack leg already reported `validationMessageCount=0` on a different scene.
 
 **Does not**: it does not close P1-a. Two runs of one jar with the same message count are our evidence of
 non-determinism only if we run them (round 255 planned exactly that and it is still the closure test), and a
