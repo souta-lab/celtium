@@ -23,6 +23,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * world pass open.
  * <p>
  * Written every frame, so it clears itself as soon as a camera exists again.
+ * <p>
+ * The world test is part of the condition, and that was found the hard way on leg {@code gv-cohort-fix139}: without it
+ * the flag is also set in the main menu, where there is no world and no camera either, so nothing that depends on
+ * {@code updateCameraAndRender} runs there at all. The frame-state probe's silence was the symptom - not one line
+ * from either site - and the fixture stopped at four lines with no crash and no progress.
  */
 @Mixin(Minecraft.class)
 public abstract class MinecraftSkipWorldWithoutCameraMixin {
@@ -31,7 +36,7 @@ public abstract class MinecraftSkipWorldWithoutCameraMixin {
     private void celtium$skipWorldWithoutCamera(CallbackInfo info) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc != null) {
-            mc.skipRenderWorld = mc.player == null && mc.getRenderViewEntity() == null;
+            mc.skipRenderWorld = mc.world != null && mc.player == null && mc.getRenderViewEntity() == null;
         }
     }
 }
