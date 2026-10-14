@@ -45,6 +45,7 @@ jobs:
           python3 scripts/cpu-contract/isolated_game_directory_check.py
           python3 scripts/cpu-contract/glless_early_install_check.py
           python3 scripts/cpu-contract/glless_transformer_injection_check.py
+          python3 scripts/cpu-contract/glless_lwjgl3_surface_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
       - name: Test shaderpack frontend (pure CPU, fixture packs only)
