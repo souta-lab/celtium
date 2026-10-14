@@ -77,7 +77,13 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
      * @return The number of chunk renders which are visible in the current camera's frustum
      */
     public int getVisibleChunkCount() {
-        return this.renderSectionManager.getVisibleChunkCount();
+        // Measured 2026-10-15 (leg gv-cohort-fix141): the debug HUD asks this on the frame a world arrives, before the
+        // renderer has one, and the null manager took the client down -
+        // NullPointerException in getVisibleChunkCount from RenderGlobal.func_184382_g through
+        // EntityRenderer.func_184373_n. It is a read-only query, and with no manager nothing is visible, so zero is
+        // the honest answer; the rendering-path methods below are deliberately left unguarded, because a null manager
+        // there is a real fault rather than a question asked too early.
+        return this.renderSectionManager != null ? this.renderSectionManager.getVisibleChunkCount() : 0;
     }
 
     /**
@@ -401,6 +407,10 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
 
     public String getChunksDebugString() {
         // C: visible/total D: distance
+        // Same window as getVisibleChunkCount above: the HUD's own string is asked on the same frames.
+        if (this.renderSectionManager == null) {
+            return null;
+        }
         return String.format("C: %d/%d D: %d %s", this.renderSectionManager.getVisibleChunkCount(),
                 this.renderSectionManager.getTotalSections(), this.renderDistance,
                 this.renderSectionManager.getTickerDebugString());
