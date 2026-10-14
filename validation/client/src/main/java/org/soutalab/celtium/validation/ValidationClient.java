@@ -6701,6 +6701,8 @@ public final class ValidationClient {
 
     /** The world stage's picture: the presented dump under GL-less, the game's screenshot in a GL-bridge run. */
     private void celtium$takeWorldStageEvidence(Minecraft mc) {
+        // Recorded at the capture, beside the frame it describes: see celtium$recordDarkRegionProbe.
+        celtium$recordDarkRegionProbe(mc);
         if (!Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
             if (celtium$glLessInstalled()) {
                 report.addProperty("pictureEvidenceProblem", "GL-less without -Dceltium.vulkan.presentReadback and"
@@ -6716,6 +6718,51 @@ public final class ValidationClient {
             celtium$evidence.put("world", world);
         }
         report.addProperty("presentedDumpRequestedAtCapture", Boolean.TRUE);
+    }
+
+    /**
+     * Records what the world capture was actually looking at, so a picture that trips the world gate's
+     * {@code blackFraction} ceiling can be attributed instead of guessed at.
+     * <p>
+     * Measured 2026-10-15 on the cohort A/B: three of eight legs failed {@code blackFraction<=0.05}, and decoding the
+     * preserved presented PNGs put the near-black pixels in the lower-middle/right of the frame (region black fraction
+     * 0.19-0.22 against 0.003-0.056 on passing legs, with no row and no column more than half black, and far more
+     * distinct colours in that region than on the passing legs). Three explanations stayed unseparated - dark terrain
+     * content, the player's arm (the cohort sets no held item, so the arm is drawn from the player's own skin), or an
+     * unlit or unbuilt section - and no existing counter tells them apart. This probe is the separator: the held
+     * stack, the block the camera's ray first hits, that block's light level and the skin, recorded beside the frame
+     * they belong to. It records only; nothing here changes what is drawn.
+     */
+    private void celtium$recordDarkRegionProbe(Minecraft mc) {
+        try {
+            if (mc.player == null || mc.world == null) {
+                report.addProperty("probeUnavailable", "no player or world at the capture");
+                return;
+            }
+            net.minecraft.util.math.Vec3d eye = mc.player.getPositionEyes(1.0F);
+            net.minecraft.util.math.Vec3d look = mc.player.getLook(1.0F);
+            net.minecraft.util.math.Vec3d reach = eye.add(look.scale(8.0D));
+            net.minecraft.util.math.RayTraceResult hit = mc.world.rayTraceBlocks(eye, reach, false, true, false);
+            if (hit != null && hit.typeOfHit == net.minecraft.util.math.RayTraceResult.Type.BLOCK) {
+                net.minecraft.util.math.BlockPos pos = hit.getBlockPos();
+                net.minecraft.block.state.IBlockState state = mc.world.getBlockState(pos);
+                report.addProperty("probeLookBlock", String.valueOf(state));
+                report.addProperty("probeLookBlockPos", pos.getX() + "," + pos.getY() + "," + pos.getZ());
+                report.addProperty("probeLookBlockLight", Integer.valueOf(mc.world.getLightFromNeighbors(pos)));
+            } else {
+                report.addProperty("probeLookBlock", "none within 8 blocks");
+            }
+            net.minecraft.item.ItemStack held = mc.player.getHeldItemMainhand();
+            report.addProperty("probeHeldItem", held.isEmpty() ? "empty"
+                    : String.valueOf(held.getItem().getRegistryName()) + "@" + held.getMetadata());
+            report.addProperty("probePlayerSkin", mc.player.getLocationSkin() == null ? "none"
+                    : mc.player.getLocationSkin().toString());
+            report.addProperty("probeGuiScale", Integer.valueOf(mc.gameSettings.guiScale));
+            report.addProperty("probeRotation", mc.player.rotationPitch + "/" + mc.player.rotationYaw);
+        } catch (Throwable error) {
+            // A probe must never break the capture it is describing.
+            report.addProperty("probeError", error.toString());
+        }
     }
 
     // ---------------------------------------------------------------------------------------------------------------
