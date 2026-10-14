@@ -169,10 +169,14 @@ Vintagium and its forks** (Relictium, Neonium). Two consequences for this projec
   cannot own the same classes": it is a documented incompatibility of the renderer this project forks. The
   distinction recorded above still stands - Cleanroom's own guide recommends Nothirium, so the exclusion remains
   this project's substitution and not a platform requirement.
-- **RLCraft 2.9.3 contains two of the other names**: `ChunkAnimator-1.12.2-1.2.1.jar` and
-  `LittleTiles_v1.5.87_mc1.12.2.jar` are both in the staged 177. Neither has been measured in a Celtium run yet, so
-  they are **predicted collisions to look for** in the RLCraft legs (a chunk-render animation and a block model
-  system that the guide says do not coexist with Celeritas), not findings.
+- **One of the other names is in each pack** (corrected 2026-10-15, after the first version of this paragraph
+  claimed both were in RLCraft - the check had been run against the wrong staged directory):
+  - **RLCraft 2.9.3 contains `ChunkAnimator-1.12.2-1.2.1.jar`** (and not LittleTiles).
+  - **E2E 1.93a contains `LittleTiles_v1.5.87_mc1.12.2.jar`** (and not ChunkAnimator).
+  Neither has been measured in a Celtium run, so both are **predicted collisions to look for**, not findings: a
+  chunk-render animation in RLCraft, and a block model system in the pack whose 268-mod leg has already reached a
+  world and presented frames - which is why the E2E legs' block/model scenes are the place that prediction would
+  show up.
 
 **What this project has measured and must document as its own substitutions**:
 
