@@ -187,6 +187,76 @@ public final class CeltiumGllessHint {
         }
     }
 
+    /**
+     * Writes zeros for the single-value "get" functions whose result the caller reads out of its own buffer.
+     * <p>
+     * The general rule this belongs to, stated by gpu-verifier for this project and by headlessmc for its own GL
+     * instrumentation: a replacement that returns the type's zero is fine for a function whose result nobody checks,
+     * and wrong for every query the caller validates - and a query that writes into the caller's buffer is worse than
+     * wrong, because a no-op leaves <b>uninitialised memory</b> there. The sizes are per function because the number of
+     * bytes the caller allocated is not in the signature: writing more than the caller asked for would corrupt the
+     * heap, so only the functions whose element count is exactly one are handled here.
+     */
+    public static void glGetZero(long params, int bytes) {
+        if (params == 0L) {
+            return;
+        }
+        for (int i = 0; i < bytes; i++) {
+            org.lwjgl.system.MemoryUtil.memPutByte(params + i, (byte) 0);
+        }
+    }
+
+    /** {@return the element size, in bytes, of a single-value get function, or 0 when it is not one} */
+    public static int glGetZeroSize(String name) {
+        switch (name) {
+            case "nglGetBooleanv":
+            case "nglGetBooleanIndexedv":
+                return 1;
+            case "nglGetIntegerv":
+            case "nglGetIntegeri_v":
+            case "nglGetTexLevelParameteriv":
+            case "nglGetTexParameteriv":
+            case "nglGetTexParameterIiv":
+            case "nglGetTexParameterIuiv":
+            case "nglGetBufferParameteriv":
+            case "nglGetBufferParameteri64v":
+            case "nglGetVertexAttribiv":
+            case "nglGetVertexAttribIiv":
+            case "nglGetVertexAttribIuiv":
+            case "nglGetQueryObjectiv":
+            case "nglGetQueryObjectuiv":
+            case "nglGetQueryObjecti64v":
+            case "nglGetQueryObjectui64v":
+            case "nglGetSynciv":
+            case "nglGetFramebufferAttachmentParameteriv":
+            case "nglGetRenderbufferParameteriv":
+            case "nglGetSamplerParameteriv":
+            case "nglGetSamplerParameterIiv":
+            case "nglGetSamplerParameterIuiv":
+            case "nglGetMultisamplefv":
+            case "nglGetShaderiv":
+            case "nglGetProgramiv":
+                return 4;
+            case "nglGetInteger64v":
+            case "nglGetInteger64i_v":
+            case "nglGetBufferParameteri64v64":
+                return 8;
+            case "nglGetFloatv":
+            case "nglGetTexParameterfv":
+            case "nglGetBufferParameterfv":
+            case "nglGetVertexAttribfv":
+            case "nglGetSamplerParameterfv":
+            case "nglGetFramebufferAttachmentParameterfv":
+            case "nglGetRenderbufferParameterfv":
+                return 4;
+            case "nglGetDoublev":
+            case "nglGetVertexAttribdv":
+                return 8;
+            default:
+                return 0;
+        }
+    }
+
     /** Called from the injected instruction; never throws into the window creation path. */
     public static void beforeWindowCreation() {
         if (applied || "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {

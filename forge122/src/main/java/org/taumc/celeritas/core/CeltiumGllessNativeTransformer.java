@@ -164,6 +164,23 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // The remaining single-value get functions: the caller reads its own buffer, so a no-op would leave
+        // uninitialised memory there. Only the ones whose element count is exactly one are handled, because the
+        // signature does not say how many bytes the caller allocated and writing more would corrupt the heap.
+        if (returnType.equals("V") && descriptor.endsWith("J)V")) {
+            int size = CeltiumGllessHint.glGetZeroSize(name);
+            if (size > 0) {
+                // The pointer is the last argument. Every one of these natives is static, so the slot is the sum of
+                // the preceding arguments' slots with no `this` to account for.
+                int slot = lastArgumentSlot(descriptor);
+                method.visitVarInsn(Opcodes.LLOAD, slot);
+                method.visitLdcInsn(Integer.valueOf(size));
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetZero", "(JI)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+        }
         switch (returnType) {
             case "V":
                 method.visitInsn(Opcodes.RETURN);
@@ -196,6 +213,44 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     }
 
     /** The argument slot count, needed because the rewritten method is not static-analysis computed. */
+    /** {@return the local-variable slot of the last argument of a static method's descriptor} */
+    private static int lastArgumentSlot(String descriptor) {
+        int slot = 0;
+        int index = 1;
+        int last = 0;
+        while (descriptor.charAt(index) != ')') {
+            last = slot;
+            char type = descriptor.charAt(index);
+            switch (type) {
+                case 'J':
+                case 'D':
+                    slot += 2;
+                    index += 1;
+                    break;
+                case 'L':
+                    slot += 1;
+                    index = descriptor.indexOf(';', index) + 1;
+                    break;
+                case '[':
+                    slot += 1;
+                    while (descriptor.charAt(index) == '[') {
+                        index++;
+                    }
+                    if (descriptor.charAt(index) == 'L') {
+                        index = descriptor.indexOf(';', index) + 1;
+                    } else {
+                        index++;
+                    }
+                    break;
+                default:
+                    slot += 1;
+                    index += 1;
+                    break;
+            }
+        }
+        return last;
+    }
+
     private static int argumentSlots(int access, String descriptor) {
         int slots = (access & Opcodes.ACC_STATIC) == 0 ? 1 : 0;
         int index = 1;
