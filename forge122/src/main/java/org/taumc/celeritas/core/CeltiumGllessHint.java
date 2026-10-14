@@ -22,6 +22,37 @@ public final class CeltiumGllessHint {
     }
 
 
+    /**
+     * Whether the GL-less surface is in use, read from the same property the rest of the mod uses.
+     * <p>
+     * The mixins that answer calls the GL surface cannot need to be inert on a hybrid run, where a real GL context
+     * exists and its answers are the right ones.
+     */
+    public static boolean isGllessClaimed() {
+        return !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
+    }
+
+    /** The next object name this renderer hands out; starts at 1 because 0 means "none" to every caller. */
+    private static final java.util.concurrent.atomic.AtomicInteger NEXT_NAME =
+            new java.util.concurrent.atomic.AtomicInteger(1);
+
+    /**
+     * A fresh, non-zero object name for the {@code glGen*} and {@code glCreate*} families.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-fix128w}, the 268-mod pack): after the atlas was built the pack died
+     * with {@code java.lang.IllegalStateException: glGenLists returned an ID of 0 for a count of 1, GL error (0): No
+     * error code reported}, which is vanilla's own check in {@code GLAllocation.generateDisplayLists} - it treats a
+     * zero id as failure and reads the error code to explain it, and this renderer reports no error, so the message
+     * ends up saying nothing. The same shape applies to every generator: the id is the caller's handle, 0 means "no
+     * object", and a replacement that answers the type's zero makes correct callers fail.
+     * <p>
+     * The ids are opaque here - this renderer keeps its own resources and ignores display lists, textures and buffers
+     * created through the GL surface - so all that is required is that they are non-zero and distinct.
+     */
+    public static int glGenName() {
+        return NEXT_NAME.getAndIncrement();
+    }
+
     /** The maximum texture size this renderer claims, in one place for every surface that has to answer it. */
     public static int claimedMaxTextureSize() {
         return 16384;

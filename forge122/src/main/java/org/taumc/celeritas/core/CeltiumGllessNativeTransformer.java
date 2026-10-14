@@ -181,6 +181,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 return;
             }
         }
+        // The id-returning generators: glGenLists, glGenTextures, glCreateShader and the rest. 0 means "no object" to
+        // every caller, and vanilla itself throws when it sees one (GLAllocation.generateDisplayLists, measured on the
+        // 268-mod pack), so these get a fresh non-zero name instead of the type's zero.
+        // The array forms (nglGenTextures(int, long)) return void and are handled by the zero-writer below; only the
+        // single-id forms reach this, nglGenLists(int) among them.
+        if (returnType.equals("I") && (name.startsWith("nglGen") || name.startsWith("nglCreate"))) {
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGenName", "()I", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         switch (returnType) {
             case "V":
                 method.visitInsn(Opcodes.RETURN);

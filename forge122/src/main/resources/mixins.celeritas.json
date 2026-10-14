@@ -5,7 +5,8 @@
   "package": "org.taumc.celeritas.mixin",
   "compatibilityLevel": "JAVA_8",
   "client": [
-    "core.SplashProgressMixin"
+    "core.SplashProgressMixin",
+    "core.GLAllocationMixin"
   ],
   "injectors": {
     "defaultRequire": 1
