@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Fail-closed contract: GL-less must not depend on one mixin winning a class-load race.
+
+Measured 2026-10-15 (leg `gv-e2e-268-xlog`, `-Xlog:class+load=info`): in the 268-mod E2E
+pack RandomPatches' tweak initialisation defines `org.lwjgl.opengl.Display` at 8.975 s,
+while the celtium mixin plugin's `getMixins()` only runs at 9.837 s. A mixin registered
+after its target class is defined can never apply, so `core.LwjglxDisplayMixin` never ran,
+the GL-less stub was never installed, the window was created with a real GL 4.6 context and
+CleanMix logged nothing about it at all. `onLoad` runs at 7.1 s in the same leg.
+
+The contract is that the two things that mixin does are also done from the plugin, gated on
+GL-less, and that the mixin itself stays as the strongest place for the window hint.
+"""
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+PLUGIN = ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java'
+MIXIN = ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/LwjglxDisplayMixin.java'
+
+
+def main():
+    checks = []
+
+    def require(label, ok):
+        checks.append(bool(ok))
+        print(('ok  ' if ok else 'FAIL') + label)
+
+    plugin = PLUGIN.read_text(encoding='utf-8')
+    require('onLoad installs GL-less early',
+            'celtium$installGllessEarly();' in plugin and 'public void onLoad(String mixinPackage)' in plugin)
+    require('the early path is gated on the GL-less property',
+            'celtium.vulkan.glless' in plugin and 'GLLESS_ENABLED' in plugin)
+    require('the early path installs the stub',
+            'CeltiumGlStub.install()' in plugin)
+    # A call, not a mention: the method's javadoc explains why the hint cannot be set here.
+    require('the early path does NOT call glfwWindowHint before init',
+            'glfwWindowHint(' not in plugin)
+    require('a failure in the early path is logged, not fatal',
+            'early stub install failed' in plugin)
+    require('the early install is distinguishable in a leg log',
+            'installed early' in plugin)
+
+    config = (ROOT / 'forge122/src/main/resources/mixins.celeritas.json').read_text(encoding='utf-8')
+    require('the Display mixin is declared in the config JSON, which is read before the class can exist',
+            'core.LwjglxDisplayMixin' in config)
+    require('the plugin gives that mixin a single owner (it is dropped from the dynamic list)',
+            'possibleMixinClasses.remove("core.LwjglxDisplayMixin")' in plugin)
+
+    mixin = MIXIN.read_text(encoding='utf-8')
+    require('the mixin still hints the window client API before creation',
+            'glfwWindowHint' in mixin and '0x00022001' in mixin)
+    require('the mixin still installs the stub',
+            'CeltiumGlStub.install()' in mixin)
+
+    if not all(checks):
+        print(f'{checks.count(False)} contract check(s) failed')
+        return 1
+    print(f'{len(checks)} contract checks passed')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

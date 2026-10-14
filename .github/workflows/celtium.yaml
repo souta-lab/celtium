@@ -43,6 +43,7 @@ jobs:
           python3 scripts/cpu-contract/immediate_group_stack_scope_check.py
           python3 scripts/cpu-contract/live_terrain_backend_report_check.py
           python3 scripts/cpu-contract/isolated_game_directory_check.py
+          python3 scripts/cpu-contract/glless_early_install_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
       - name: Test shaderpack frontend (pure CPU, fixture packs only)

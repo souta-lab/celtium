@@ -33,20 +33,21 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
     }
 
     /**
-     * Installs the GL-less stub and hints the window's client API from the plugin, not only from a mixin.
+     * Installs the GL-less stub from the plugin, so GL-less does not depend only on a mixin.
      * <p>
      * Measured 2026-10-15 (leg {@code gv-e2e-268-xlog}, {@code -Xlog:class+load=info}): in the 268-mod E2E pack
      * RandomPatches' tweak initialisation defines {@code org.lwjgl.opengl.Display} at <b>8.975 s</b>, while this
-     * plugin's {@link #getMixins()} only runs at <b>9.837 s</b>. A mixin registered after its target class is
-     * defined can never apply, so {@code core.LwjglxDisplayMixin} never ran, the stub was never installed and the
-     * window was created with a real GL 4.6 context - a hybrid run rather than the GL-less path, with CleanMix
-     * logging nothing at all. {@code onLoad} runs at 7.1 s in the same leg, before both.
+     * plugin's {@link #getMixins()} only runs at <b>9.837 s</b>. {@code onLoad} runs at 7.1 s in the same leg, so
+     * the stub is installed here as well; {@code install()} is idempotent and the call is gated on GL-less being
+     * enabled, leaving the bridge opt-out untouched.
      * <p>
-     * So the two things that mixin does are done here as well: install the stub (idempotent - {@code install()}
-     * returns the existing provider) and set {@code GLFW_CLIENT_API = GLFW_NO_API} by reflection. Both are gated on
-     * GL-less being enabled, so the bridge opt-out is untouched. The mixin stays: when it does apply it sets the
-     * hint immediately before {@code glfwCreateWindow}, which is still the strongest place for it, and this path
-     * exists so that GL-less does not depend on one mixin winning a race against every coremod in a pack.
+     * The window's {@code GLFW_NO_API} hint is <b>not</b> set here, and deliberately: GLFW only permits the
+     * init-related calls before {@code glfwInit} (its introduction lists {@code glfwInitHint}, not
+     * {@code glfwWindowHint}), and {@code glfwInit} resets window hints to their defaults anyway - so a hint from
+     * this point would either be a {@code GLFW_NOT_INITIALIZED} no-op or be wiped. The hint belongs where
+     * {@code core.LwjglxDisplayMixin} puts it, after init and immediately before {@code glfwCreateWindow}; what
+     * this plugin changes is <em>when that mixin is registered</em> (the JSON's {@code client} list, read at
+     * 7.123 s, instead of {@link #getMixins()} at 9.837 s), which is what lets it apply at all.
      */
     private static void celtium$installGllessEarly() {
         if (!GLLESS_ENABLED) {
@@ -55,17 +56,8 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
         try {
             org.soutalab.celtium.vulkan.gl.CeltiumGlStub.install();
             LOGGER.info("CELTIUM_GLLESS stub GL provider installed early (from the mixin plugin)");
-        } catch (Throwable error) {
+        } catch (RuntimeException | LinkageError error) {
             LOGGER.warn("CELTIUM_GLLESS early stub install failed: {}", error.toString());
-        }
-        try {
-            java.lang.reflect.Method hint = Class.forName("org.lwjgl.glfw.GLFW")
-                    .getMethod("glfwWindowHint", int.class, int.class);
-            // GLFW_CLIENT_API 0x00022001, GLFW_NO_API 0. glfwWindowHint may be called before glfwInit.
-            hint.invoke(null, Integer.valueOf(0x00022001), Integer.valueOf(0));
-            LOGGER.info("CELTIUM_GLLESS window hinted GLFW_NO_API early (from the mixin plugin)");
-        } catch (Throwable error) {
-            LOGGER.warn("CELTIUM_GLLESS early GLFW hint failed: {}", error.toString());
         }
     }
 
@@ -157,6 +149,21 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
                     + "net.minecraft.client.Minecraft, where this mixin's injection does not survive. The vanilla "
                     + "System.gc() calls stay in place; the pause they cause is kept rather than the run being lost.",
                     contestedTargetProbe());
+        }
+        // core.LwjglxDisplayMixin is declared in mixins.celeritas.json's `client` list, and that placement is a
+        // measured difference rather than a preference. This method runs when the config is prepared, which in the
+        // 268-mod E2E pack is 9.837 s (leg gv-e2e-268-xlog, -Xlog:class+load=info) - after RandomPatches' tweak has
+        // already defined org.lwjgl.opengl.Display at 8.975 s. A mixin registered after its target class is defined
+        // can never apply: the stub is never installed, the window is created with a real GL 4.6 context, and the
+        // run is a hybrid with no CleanMix line to show for it. The JSON list is read at 7.123 s in the same leg,
+        // before that class exists, which is what lets Mixin's defer path apply it when it is loaded. Registering
+        // the same mixin in both places would list it twice in one config, so the JSON is its single owner and it is
+        // dropped from this list by name - logged, so the exclusion reads as a decision rather than as a mixin that
+        // silently did not apply.
+        if (possibleMixinClasses.remove("core.LwjglxDisplayMixin")) {
+            LOGGER.info("core.LwjglxDisplayMixin is registered from mixins.celeritas.json's client list, not from "
+                    + "this plugin: this list is built after a coremod in a pack can have defined "
+                    + "org.lwjgl.opengl.Display, and a mixin registered that late can never apply to it.");
         }
         return new ArrayList<>(possibleMixinClasses);
     }

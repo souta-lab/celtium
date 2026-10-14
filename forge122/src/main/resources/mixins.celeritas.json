@@ -5,6 +5,7 @@
   "package": "org.taumc.celeritas.mixin",
   "compatibilityLevel": "JAVA_8",
   "client": [
+    "core.LwjglxDisplayMixin"
   ],
   "injectors": {
     "defaultRequire": 1
