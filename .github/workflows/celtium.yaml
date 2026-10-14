@@ -36,6 +36,7 @@ jobs:
           python3 scripts/modpack-compat/test_e2e_stellar_parallel_config.py
           python3 scripts/cpu-contract/pack_stage_check.py
           python3 scripts/cpu-contract/contested_mixin_exclusion_check.py
+          python3 scripts/cpu-contract/fixture_tick_liveness_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
       - name: Test shaderpack frontend (pure CPU, fixture packs only)

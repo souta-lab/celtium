@@ -845,6 +845,9 @@ public final class ValidationClient {
      * Reported as {@code screenDismissedBeforeWorld}, so which screen it was stays in the record.
      */
     private boolean celtium$foreignScreenDismissed;
+    /** Render-tick halves seen, so a leg can say which of them arrived. */
+    private int celtium$frameStartSeen;
+    private int celtium$frameEndSeen;
     /**
      * Client ticks to hold the title screen before any world is created, {@code -Dceltium.validation.menuHoldTicks}.
      * <p>
@@ -2909,6 +2912,18 @@ public final class ValidationClient {
         if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
         celtium$clientTicks++;
+        // Liveness, in the log, because nothing else here can answer "did the fixture tick at all?". Every other
+        // fact this handler produces is a report property, and the report is written at shutdown - so a run that is
+        // killed by its time limit reports nothing, and the absence of those properties then reads as "the handler
+        // never ran". That inference was drawn from a 268-mod leg and it was wrong: exit 143 with MISSING_REPORT
+        // says how the run ended, not what the handler did. One line on the first tick, then a heartbeat, so a
+        // killed run still says whether it was ticking and how far it got.
+        if (celtium$clientTicks == 1 || celtium$clientTicks % 1200 == 0) {
+            System.out.println("[Celtium] CELTIUM_FIXTURE_TICK clientTicks=" + celtium$clientTicks
+                    + " worldTicks=" + worldTicks
+                    + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName())
+                    + " world=" + (mc.world != null));
+        }
         // The unicode font surface: every string routes through renderUnicodeChar, which a locale like ja_jp selects
         // automatically - and which every isolated leg so far has skipped, because the fresh game dir launches in
         // en_us. The flag reproduces `forceUnicodeFont` (same setUnicodeFlag call Minecraft makes at init).
@@ -4497,7 +4512,16 @@ public final class ValidationClient {
     @SubscribeEvent
     public void frame(TickEvent.RenderTickEvent event) {
         if (!enabled || finished) return;
+        // Which halves of which events actually arrive, in the log. The 268-mod leg never called
+        // celtium$completePendingDumps, and that call is on the END half of this handler - so either the event was not
+        // delivered, or only its START half was, or the handler threw before reaching the call. Those are three
+        // different faults and the fixture could not tell them apart: the only trace of this handler was its effect,
+        // and an absent effect reads exactly like an absent event. START and END are logged separately, once each, so a
+        // leg that shows START and no END names the fault instead of leaving it to be inferred.
         if (event.phase == TickEvent.Phase.START) {
+            if (celtium$frameStartSeen++ == 0) {
+                System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=START first clientTicks=" + celtium$clientTicks);
+            }
             // The scene's own camera overrides are applied BEFORE the frame is rendered, which is where a pose has to be
             // set to be the pose that gets drawn. They used to live in the END half of this handler, next to the code
             // that inspects the finished frame - and since celtium$applyPose re-applies the scene pose from the client
@@ -4508,6 +4532,9 @@ public final class ValidationClient {
             // render the same pose.
             celtium$applyClientPoseOverride(Minecraft.getMinecraft());
             return;
+        }
+        if (celtium$frameEndSeen++ == 0) {
+            System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=END first clientTicks=" + celtium$clientTicks);
         }
         Minecraft mc = Minecraft.getMinecraft();
         // Every render tick: see whether a requested dump has been written, and complete its identity from the
