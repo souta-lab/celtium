@@ -350,7 +350,7 @@ Celtium booting the 268-mod E2E cohort to a world in 194.8 s (`gv-e2e-268-step4`
 | `rlcraft-p1-leg2-bisect` | − EntityCulling, particleculling, BlockOverlayFix | **exit 255, 15.9 s**, same failure | those three are not the cause |
 | `rlcraft-p1-leg3-renderlib145` | RenderLib **1.2.8 → 1.4.5** | **exit 255, 21.7 s**, but the `RenderGlobal` failure is **gone**; new `VerifyError` in `EntityRenderer.func_78484_h` (`addRainParticles`) | RenderLib 1.2.8 is the first blocker |
 | `rlcraft-p1-leg4-no-renderlib` | − RenderLib, − EntityCulling | **exit 255, 16.3 s** | **invalid leg**: EntityCulling references `meldexun/renderlib` in 16 classes, so removing RenderLib breaks its dependants instead of testing anything |
-| `rlcraft-p1-leg5-rl145-no-ss` | RenderLib 1.4.5, − SereneSeasons | **exit 143, 1200.8 s, no crash report at all**, `MISSING_REPORT` | the blockers above; what remains is throughput |
+| `rlcraft-p1-leg5-rl145-no-ss` | RenderLib 1.4.5, − SereneSeasons | **exit 143, 1200.8 s**, `MISSING_REPORT` | **invalid as a P1 measurement** - FML halted on an error screen (Forgelin blacklisted) and no window renderer was created; see the retraction below |
 
 #### Blocker 1 - RenderLib 1.2.8's coremod transformer removes our injection point
 
@@ -388,37 +388,60 @@ concludes the ASM patch should be disabled, and Serene Seasons later **removed**
 upstream. SereneSeasons 1.12.2 exposes **no config toggle** for it - `config/sereneseasons/` holds
 only `seasons.cfg`, `cropfertility.cfg` and `biome_info.json`, all gameplay settings.
 
-#### What leg 5 actually shows
+#### Leg 5 is retracted as a P1 measurement: it was an FML error screen
 
-Excluding SereneSeasons as well, the client boots. Measured in
-`runtime-rlcraft-rlcraft-p1-leg5-rl145-no-ss`:
+A first reading of leg 5 concluded "the client boots GL-less but is limited to ~2.3 s/frame by the
+stub's no-op path". **That reading is withdrawn.** Reading the log to the end shows three setup
+errors, and the leg measures the harness, not the pack:
 
-- `CELTIUM_GLLESS stub GL provider installed`, `window hinted GLFW_NO_API`,
-  `splash progress skipped (no shared GL context)` - the GL-less path is live.
-- `CELTIUM_SPLASH_HOOK`, `CELTIUM_SWAPPOINT` and `CELTIUM_FRAME_PASS_SPLIT frames=512`: frames keep
-  being presented from 01:23:12 to 01:43:11 with **no crash report at all**.
-- `CELTIUM_DRAWARRAYS glDrawArraysCalls=524288 drawn=0 vertices=0 empty=0 refused=524288` - every
-  draw call is refused, so nothing is drawn.
-- `CELTIUM_NOOP_CENSUS noopEntryPoints=24 noopCalls=210925038 top=[glTexCoord2f=103517976
-  glVertex3f=103517976 ...]`.
-- Harness: `exitCode 143`, `endedBy time-limit`, `elapsedSeconds 1200.8`, `fixtureStatus
-  MISSING_REPORT`, `screenshotSaved false`, `nativeDeviceName null`, `gpuRequirementMet false`,
-  `validationMessageCount 0`.
+1. **FML halted before any world.** Cleanroom blacklists Shadowfacts' Forgelin's loading plugin:
 
-512 frames in 1,200 s is **~2.3 s per frame**, and the loading screen's immediate-mode path is what
-runs in that time. The client is advancing, not hung; it simply does not reach a world inside the
-20-minute limit, so the fixture never writes a verdict. For comparison the 268-mod E2E cohort
-reached a world in 194.8 s.
+   ```
+   [Cleanroom]: Loading plugin net.shadowfacts.forgelin.preloader.ForgelinPlugin for mod
+                Forgelin-1.8.4.jar is in the forge_early.cfg blacklist and won't be loaded.
+   [FML]: MissingModsException: Mod bountiful (Bountiful) requires [forgelin@[1.8.0,1.9.0)]
+   [FML]: MissingModsException: Mod librarianlib (LibrarianLib) requires [forgelin@[1.8.0,)]
+   [FML]: An exception was thrown, the game will display an error screen and halt.
+   ```
+
+   The 19 minutes were that error screen. `Forgelin-1.8.4.jar` is the right version for the pack but
+   **does not run under Cleanroom**, which is precisely why the migration recipe removes it and adds
+   Forgelin-Continuous. The recipe is therefore not optional for this pack.
+
+2. **The window renderer was never created.**
+   `CELTIUM_WINDOW_RENDERER created=false attempt=1..8`, reason
+   `Vulkan device creation failed at window creation: IllegalStateException: Validation was
+   requested with -Dceltium.vulkan.validation=true, but the layer VK_LAYER_KHRONOS_validation is not
+   installed.` The leg passed the validation flag without `VK_LAYER_PATH`, so no renderer existed.
+
+3. **The frame counter was not advancing.** `CELTIUM_FRAME_PASS_SPLIT frames=512` appears **351
+   times** - it reached 512 at 01:23:42 and never moved again - while `CELTIUM_SWAPPOINT calls` grew
+   from 1 to 70,500. So the run was repainting the error screen, not drawing a loading screen slowly.
+   `CELTIUM_DRAWARRAYS ... refused=524288` and `CELTIUM_NOOP_CENSUS noopCalls=210925038` describe
+   that error screen and are **not** evidence of a throughput limit.
+
+The harness still reports `exitCode 143`, `endedBy time-limit`, `elapsedSeconds 1200.8`,
+`fixtureStatus MISSING_REPORT`, `screenshotSaved false`, `nativeDeviceName null`,
+`gpuRequirementMet false`, `validationMessageCount 0` - and those numbers are what a leg with a
+halted FML and no renderer looks like. `CELTIUM_SPLASH_HOOK fixture call failed:
+ClassNotFoundException: ValidationClient` has the same cause: the class *is* in the run's
+`celtium-validation-client-0.0.4-alpha.jar` (16 entries match), but FML halted before the mod class
+loader was assembled.
 
 #### P1 verdict
 
-**NOT PASSED**, and specifically not a crash:
+**NOT PASSED.** The verdict rests on blockers 1 and 2, which are reproducible crashes, not on leg 5:
 
 | P1 requirement | Measured |
 |---|---|
-| actual client starts | **YES** - FML loads the pack, the GL-less stub installs, frames are presented |
-| world enters | **NO** - no fixture report, no presented image, `MISSING_REPORT` |
-| exits cleanly | **NO** - killed at the duration limit (`exitCode 143`) |
+| actual client starts | **PARTLY** - FML loads and halts on an error screen; no window renderer was created |
+| world enters | **NO** - no leg has entered a world; no fixture report, no presented image |
+| exits cleanly | **NO** - `exitCode 143` at the duration limit |
+
+The three setup errors above are all fixable without touching the pack's content, and the next leg
+applies them: the Cleanroom recipe (so Forgelin-Continuous satisfies `bountiful`/`librarianlib`),
+RenderLib 1.4.5, SereneSeasons restored (it is not in the recipe), and the validation flag dropped
+or paired with `VK_LAYER_PATH`.
 
 `nativeDeviceName = null` and `gpuRequirementMet = false` in that report are **not** evidence about
 the GPU: the capability report is written once a world is entered, and this leg never entered one.
@@ -439,13 +462,21 @@ Recorded the way the E2E Nothirium exclusion is recorded - a substitution, never
    patch is a VerifyError under Cleanroom, independently reported upstream. **Impact: seasons,
    temperature and crop-fertility behaviour are lost** - this is a gameplay change, not a rendering
    one, and it should be replaced rather than dropped if a fixed build appears.
+3. **Shadowfacts' Forgelin 1.8.4 -> Forgelin-Continuous 2.4.20.0.** Reason: Cleanroom blacklists
+   `net.shadowfacts.forgelin.preloader.ForgelinPlugin` in `forge_early.cfg`, so `forgelin` never
+   registers and `bountiful` and `librarianlib` both abort the load with `MissingModsException`.
+   This is the migration recipe's Forgelin item and it is **required**, not optional: without it the
+   client never gets past the FML error screen.
 
-The Cleanroom pack-migration notes' RLCraft section lists a larger substitution set (remove
+The Cleanroom pack-migration notes' RLCraft section lists the wider substitution set (remove
 AttributeFix, Born in a Barn, BreakBedBegone, Block Overlay Fix, Entity Culling, FoamFix, Frame Void
 Patch, HelpFixer, JEI, LibrarianLib, MixinBootstrap, MixinCompatibility, Quark, Phosphor,
 PortalDupeBegone, Forgelin, Spark, Surge, Toast Control; add Fugue, Scalar Legacy, Had Enough Items,
 LibrarianLib-Continuous, Forgelin-Continuous, Quark: RotN Edition; update RenderLib, Recurrent
-Complex, RLTweaker). That recipe is **not yet measured here**; it agrees with what these legs
-measured for EntityCulling and RenderLib, and it does not address the throughput limit above, which
-is what stands between this pack and a P1 pass.
+Complex, RLTweaker). It is recorded as a plan in
+`docs/modpack-locks/rlcraft-2.9.3.cleanroom-recipe.json`, marked **no leg has run with it**; the two
+mods missing locally were resolved through the same key-free cfwidget -> official-CDN route as the
+staging work and size-verified exactly. Two of its items are already confirmed by measurement here -
+EntityCulling (whose removal breaks its RenderLib dependants) and RenderLib (1.2.8 -> 1.4.5) - and
+a third, Forgelin, is the reason leg 5 halted.
 
