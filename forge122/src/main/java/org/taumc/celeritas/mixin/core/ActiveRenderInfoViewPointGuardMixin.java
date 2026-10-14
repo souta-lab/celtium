@@ -71,13 +71,14 @@ public abstract class ActiveRenderInfoViewPointGuardMixin {
      * With no camera entity the static camera fields keep the previous frame's values instead of being computed from
      * null, which is what the fog guard's comment describes vanilla doing with the fog colour.
      * <p>
-     * The guarded method is the Forge-added {@code (Entity, boolean)} overload, which has no SRG mapping and keeps
-     * its source name at runtime - hence {@code remap = false}. Naming it in a vanilla class without that flag
-     * aborted the class definition and killed the run with {@code NoClassDefFoundError} on leg
-     * {@code gv-cohort-fix133}; the flag is what makes an unmapped member addressable. The {@code (EntityPlayer,
-     * boolean)} overload is not targeted: it only delegates, and a null argument arrives at the method below.
+     * The descriptor is spelled out because this class has two {@code updateRenderInfo} overloads: naming the method
+     * alone let Mixin pick the wrong one and fail with {@code InvalidInjectionException: Invalid descriptor} on legs
+     * {@code gv-cohort-fix133} and {@code gv-cohort-fix135} - and that failure aborts the class definition, so the run
+     * died with {@code NoClassDefFoundError} rather than a warning, with {@code require = 0} in place either way.
+     * {@code remap = false} is right because the runtime jar carries the source names for this class.
      */
-    @Inject(method = "updateRenderInfo", at = @At("HEAD"), cancellable = true, require = 0, remap = false)
+    @Inject(method = "updateRenderInfo(Lnet/minecraft/entity/Entity;Z)V", at = @At("HEAD"), cancellable = true,
+            require = 0, remap = false)
     private static void celtium$keepCameraStateWithoutEntity(Entity entityIn, boolean thirdPerson, CallbackInfo info) {
         if (entityIn == null) {
             info.cancel();
