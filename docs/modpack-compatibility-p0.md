@@ -6,8 +6,8 @@
 
 | Pack | Official CurseForge release | Archive SHA-256 | Required manifest `(projectID,fileID)` records | Forge loader | Config overrides | Embedded JARs outside manifest |
 |---|---|---|---:|---|---:|---:|
-| [E2E 1.93a](https://www.curseforge.com/minecraft/modpacks/enigmatica2expert/files/9088147) | Project `282744`, file `9088147`, 2026-10-07 | `feb355136a644191bcb2f9f68f2ac30987e1c5485290acc09f4b3bf2a08832ae` | **270** | `forge-14.23.5.2860` | 1,204 config files | 1 `overrides/mods/*.jar` |
-| [RLCraft 2.9.3](https://www.curseforge.com/minecraft/modpacks/rlcraft/files/4612979) | Project `285109`, file `4612979`, 2023-06-27 | `5caa25d31f47f4ac69846e4faa741811baa9239804747769f6d54f7b1bbf1291` | **187** | `forge-14.23.5.2860` | 2,403 config files | 3 nested/loose `overrides/mods/*.jar` including repository libraries |
+| [E2E 1.93a](https://www.curseforge.com/minecraft/modpacks/enigmatica2expert/files/9088147) | Project `282744`, file `9088147`, 2026-10-07 | `feb355136a644191bcb2f9f68f2ac30987e1c5485290acc09f4b3bf2a08832ae` | **270** | `forge-14.23.5.2860` | 1,095 config files (1,204 entries) | 1 `overrides/mods/*.jar` |
+| [RLCraft 2.9.3](https://www.curseforge.com/minecraft/modpacks/rlcraft/files/4612979) | Project `285109`, file `4612979`, 2023-06-27 | `5caa25d31f47f4ac69846e4faa741811baa9239804747769f6d54f7b1bbf1291` | **187** | `forge-14.23.5.2860` | 2,205 config files (2,403 entries) | 3 nested/loose `overrides/mods/*.jar` including repository libraries |
 
 **Important distinctions:** The manifest entries are **file references**, not proof all those JARs have been downloaded/loaded. A bundled nested library under `overrides/mods/memory_repo/` is not necessarily an extra Forge Mod. Config paths such as `nothirium.cfg`, `vintagefix.properties`, `foamfix.cfg` and `phosphor.json` do **not** prove those exact Mods were enabled: installed JARs and client logs must decide. Keep a stable baseline from the exact original pack and explicitly document any necessary Cleanroom/renderer substitutions.
 
@@ -281,8 +281,25 @@ net.ilexiconn.llibrary.server.core.plugin.LLibraryPlugin` plus per-class `SHA-25
 **None of them is one of the 187 pins**, no file inside the pack references `memory_repo`, and they
 belong to the `overrides/` tree rather than to the pin set - so a staging run must not count them as
 downloaded mods, and it must not "fix" their absence from the manifest by inventing pins for them.
-`overrides/` (2,403 config files, 939 resource files, 343 structures, 10 scripts, 2 resource packs)
-is a separate extraction step that `pack_stage.py` does not perform.
+`overrides/` carries 3,381 files across 3,721 ZIP entries. Counts in this document are **files**;
+an earlier revision printed ZIP *entry* counts and called them files, which inflated every number:
+
+| tree | entries (incl. directories) | files |
+|---|---:|---:|
+| `config` | 2,403 | 2,205 |
+| `resources` | 939 | 816 |
+| `structures` | 343 | 338 |
+| `mods` | 16 | 5 (3 jars + 2 `.jar.meta`) |
+| `scripts` | 10 | 9 |
+| `resourcepacks` | 2 | 1 (`RLHats.zip`) |
+| root files | 8 | 7 |
+
+The authoritative numbers are the lock files themselves: `lock_archive.py` counts files, so
+`docs/modpack-locks/e2e-1.93a.lock.json` records `configFileCount: 1095` and
+`docs/modpack-locks/rlcraft-2.9.3.lock.json` records `configFileCount: 2205`. Any prose that
+disagrees with those is wrong.
+
+Extracting that tree is a separate step that `pack_stage.py` does not perform.
 
 #### Reproduce
 
@@ -319,3 +336,116 @@ only - no JAR bytes, no config text, no local paths:
 **This is still not a P1 pass.** Resolving and staging every pinned artifact says the fixture can be
 assembled; it says nothing about whether RLCraft boots or renders under Cleanroom/Celtium, which
 remains `NOT TESTED` in the gate table above.
+
+### RLCraft 2.9.3 P1: the client boots GL-less and does not reach a world (2026-10-15)
+
+Five legs, one variable at a time. Every number below is read from a leg's own harness report, game
+log or run directory; none is inferred. The control is the same harness and the same generation of
+Celtium booting the 268-mod E2E cohort to a world in 194.8 s (`gv-e2e-268-step4`, exit 0,
+`nativeDeviceName = AMD Radeon RX 6400`, `gpuRequirementMet = true`).
+
+| leg | configuration | result | what it ruled out |
+|---|---|---|---|
+| `rlcraft-p1-leg1` | all 178 pack jars | **exit 255, 15.2 s**, `MISSING_REPORT`, `NoClassDefFoundError: RenderGlobal` | - |
+| `rlcraft-p1-leg2-bisect` | − EntityCulling, particleculling, BlockOverlayFix | **exit 255, 15.9 s**, same failure | those three are not the cause |
+| `rlcraft-p1-leg3-renderlib145` | RenderLib **1.2.8 → 1.4.5** | **exit 255, 21.7 s**, but the `RenderGlobal` failure is **gone**; new `VerifyError` in `EntityRenderer.func_78484_h` (`addRainParticles`) | RenderLib 1.2.8 is the first blocker |
+| `rlcraft-p1-leg4-no-renderlib` | − RenderLib, − EntityCulling | **exit 255, 16.3 s** | **invalid leg**: EntityCulling references `meldexun/renderlib` in 16 classes, so removing RenderLib breaks its dependants instead of testing anything |
+| `rlcraft-p1-leg5-rl145-no-ss` | RenderLib 1.4.5, − SereneSeasons | **exit 143, 1200.8 s, no crash report at all**, `MISSING_REPORT` | the blockers above; what remains is throughput |
+
+#### Blocker 1 - RenderLib 1.2.8's coremod transformer removes our injection point
+
+`RenderLibClassTransformer` is an `IClassTransformer`, so it runs **before** Mixin, and it names
+`RenderGlobal#renderEntities(Entity, ICamera, float)` directly. RLCraft 2.9.3 pins RenderLib
+**1.2.8**; the E2E cohort carries **1.4.5**, and only 1.4.5's transformer also carries the SRG name
+`func_180446_a`. With 1.2.8 the class Mixin receives no longer matches, and Celtium's
+`@Inject(method = "renderEntities", at = @At(INVOKE, RenderHelper.enableStandardItemLighting,
+ordinal = 1))` reports:
+
+```
+Critical injection failure: Callback method sodium$renderTileEntities(...) in
+mixins.celeritas.json:core.terrain.RenderGlobalMixin from mod celeritas failed injection check,
+(0/1) succeeded. Scanned 0 target(s). No refMap loaded.
+```
+
+Vanilla `RenderGlobal.renderEntities` (`mc-sources.sh` -> `RenderGlobal.java:574`) has that call
+twice, at lines 696 and 713, so the injection is correct against the original; something rewrote the
+method before Mixin saw it. Substituting 1.4.5 removes exactly this failure.
+
+#### Blocker 2 - SereneSeasons' ASM patch produces a VerifyError under Cleanroom
+
+With 1.4.5 in place the run gets 6.5 s further and dies differently:
+
+```
+java.lang.VerifyError: Bad type on operand stack
+  Location: net/minecraft/client/renderer/EntityRenderer.func_78484_h()V @289: invokestatic
+  Reason: Type 'WorldClient' (stack[1]) is not assignable to 'Biome'
+```
+
+`func_78484_h` is `EntityRenderer.addRainParticles`. This is **not a Celtium bug**: CleanroomMC's
+own tracker carries the same VerifyError in the same method with Serene Seasons 1.2.18 on
+Cleanroom 0.3.35-alpha ([Fugue #118](https://github.com/CleanroomMC/Fugue/issues/118)), the thread
+concludes the ASM patch should be disabled, and Serene Seasons later **removed** that transformer
+upstream. SereneSeasons 1.12.2 exposes **no config toggle** for it - `config/sereneseasons/` holds
+only `seasons.cfg`, `cropfertility.cfg` and `biome_info.json`, all gameplay settings.
+
+#### What leg 5 actually shows
+
+Excluding SereneSeasons as well, the client boots. Measured in
+`runtime-rlcraft-rlcraft-p1-leg5-rl145-no-ss`:
+
+- `CELTIUM_GLLESS stub GL provider installed`, `window hinted GLFW_NO_API`,
+  `splash progress skipped (no shared GL context)` - the GL-less path is live.
+- `CELTIUM_SPLASH_HOOK`, `CELTIUM_SWAPPOINT` and `CELTIUM_FRAME_PASS_SPLIT frames=512`: frames keep
+  being presented from 01:23:12 to 01:43:11 with **no crash report at all**.
+- `CELTIUM_DRAWARRAYS glDrawArraysCalls=524288 drawn=0 vertices=0 empty=0 refused=524288` - every
+  draw call is refused, so nothing is drawn.
+- `CELTIUM_NOOP_CENSUS noopEntryPoints=24 noopCalls=210925038 top=[glTexCoord2f=103517976
+  glVertex3f=103517976 ...]`.
+- Harness: `exitCode 143`, `endedBy time-limit`, `elapsedSeconds 1200.8`, `fixtureStatus
+  MISSING_REPORT`, `screenshotSaved false`, `nativeDeviceName null`, `gpuRequirementMet false`,
+  `validationMessageCount 0`.
+
+512 frames in 1,200 s is **~2.3 s per frame**, and the loading screen's immediate-mode path is what
+runs in that time. The client is advancing, not hung; it simply does not reach a world inside the
+20-minute limit, so the fixture never writes a verdict. For comparison the 268-mod E2E cohort
+reached a world in 194.8 s.
+
+#### P1 verdict
+
+**NOT PASSED**, and specifically not a crash:
+
+| P1 requirement | Measured |
+|---|---|
+| actual client starts | **YES** - FML loads the pack, the GL-less stub installs, frames are presented |
+| world enters | **NO** - no fixture report, no presented image, `MISSING_REPORT` |
+| exits cleanly | **NO** - killed at the duration limit (`exitCode 143`) |
+
+`nativeDeviceName = null` and `gpuRequirementMet = false` in that report are **not** evidence about
+the GPU: the capability report is written once a world is entered, and this leg never entered one.
+The leg was launched with `--require-gpu 'RX 6400'`, so its requirement check is vacuous. Nor does
+the game log carry a `CELTIUM_NATIVE_DEVICE` line - grepped, **0 occurrences** - so this leg holds
+**no device evidence at all**, and none should be read out of it. A leg without a world report
+cannot judge GPU requirement in either direction.
+
+#### Substitutions this pack needs, with reasons
+
+Recorded the way the E2E Nothirium exclusion is recorded - a substitution, never a silent edit:
+
+1. **RenderLib 1.2.8 -> 1.4.5** (`eeca6dc4ef5acf3069e4…`; the pack pins `4c27f9e965f4613ec384…`).
+   Reason: 1.2.8's `IClassTransformer` rewrites `RenderGlobal.renderEntities` before Mixin and
+   destroys the injection point Celtium needs. 1.4.5 is the version the E2E cohort already runs
+   against the same injection.
+2. **SereneSeasons excluded** (1.2.18, the newest 1.12.2 build). Reason: its `addRainParticles` ASM
+   patch is a VerifyError under Cleanroom, independently reported upstream. **Impact: seasons,
+   temperature and crop-fertility behaviour are lost** - this is a gameplay change, not a rendering
+   one, and it should be replaced rather than dropped if a fixed build appears.
+
+The Cleanroom pack-migration notes' RLCraft section lists a larger substitution set (remove
+AttributeFix, Born in a Barn, BreakBedBegone, Block Overlay Fix, Entity Culling, FoamFix, Frame Void
+Patch, HelpFixer, JEI, LibrarianLib, MixinBootstrap, MixinCompatibility, Quark, Phosphor,
+PortalDupeBegone, Forgelin, Spark, Surge, Toast Control; add Fugue, Scalar Legacy, Had Enough Items,
+LibrarianLib-Continuous, Forgelin-Continuous, Quark: RotN Edition; update RenderLib, Recurrent
+Complex, RLTweaker). That recipe is **not yet measured here**; it agrees with what these legs
+measured for EntityCulling and RenderLib, and it does not address the throughput limit above, which
+is what stands between this pack and a P1 pass.
+
