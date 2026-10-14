@@ -16,7 +16,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java'
-MIXIN = ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/LwjglxDisplayMixin.java'
 
 
 def main():
@@ -42,16 +41,12 @@ def main():
             'installed early' in plugin)
 
     config = (ROOT / 'forge122/src/main/resources/mixins.celeritas.json').read_text(encoding='utf-8')
-    require('the Display mixin is declared in the config JSON, which is read before the class can exist',
-            'core.LwjglxDisplayMixin' in config)
-    require('the plugin gives that mixin a single owner (it is dropped from the dynamic list)',
-            'possibleMixinClasses.remove("core.LwjglxDisplayMixin")' in plugin)
+    require('the config JSON no longer claims to register the Display mixin',
+            'LwjglxDisplayMixin' not in config)
+    require('the dead Display mixin is gone', not (ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/LwjglxDisplayMixin.java').exists())
 
-    mixin = MIXIN.read_text(encoding='utf-8')
-    require('the mixin still hints the window client API before creation',
-            'glfwWindowHint' in mixin and '0x00022001' in mixin)
-    require('the mixin still installs the stub',
-            'CeltiumGlStub.install()' in mixin)
+    require('the window hint and the stub no longer depend on that mixin',
+            'CeltiumGllessWindowTransformer' in (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8'))
 
     coremod = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
     require('the coremod registers the GL-less transformer',

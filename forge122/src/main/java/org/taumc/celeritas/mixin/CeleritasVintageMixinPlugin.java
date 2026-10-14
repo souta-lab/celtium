@@ -150,21 +150,14 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
                     + "System.gc() calls stay in place; the pause they cause is kept rather than the run being lost.",
                     contestedTargetProbe());
         }
-        // core.LwjglxDisplayMixin is declared in mixins.celeritas.json's `client` list, and that placement is a
-        // measured difference rather than a preference. This method runs when the config is prepared, which in the
-        // 268-mod E2E pack is 9.837 s (leg gv-e2e-268-xlog, -Xlog:class+load=info) - after RandomPatches' tweak has
-        // already defined org.lwjgl.opengl.Display at 8.975 s. A mixin registered after its target class is defined
-        // can never apply: the stub is never installed, the window is created with a real GL 4.6 context, and the
-        // run is a hybrid with no CleanMix line to show for it. The JSON list is read at 7.123 s in the same leg,
-        // before that class exists, which is what lets Mixin's defer path apply it when it is loaded. Registering
-        // the same mixin in both places would list it twice in one config, so the JSON is its single owner and it is
-        // dropped from this list by name - logged, so the exclusion reads as a decision rather than as a mixin that
-        // silently did not apply.
-        if (possibleMixinClasses.remove("core.LwjglxDisplayMixin")) {
-            LOGGER.info("core.LwjglxDisplayMixin is registered from mixins.celeritas.json's client list, not from "
-                    + "this plugin: this list is built after a coremod in a pack can have defined "
-                    + "org.lwjgl.opengl.Display, and a mixin registered that late can never apply to it.");
-        }
+        // core.LwjglxDisplayMixin used to be excluded here because it was declared in mixins.celeritas.json's
+        // `client` list instead. Measured 2026-10-15 (gpu-verifier, cohort + the fixed jar): the JSON entry
+        // registers nothing - the list is parsed in the same deferred prepareConfigs pass as this one, which the
+        // measured leg puts at 9.837 s, after Display is defined at 8.975 s - so with the exclusion in place the
+        // mixin was registered by nobody at all (cleanmix.log: 0 LwjglxDisplayMixin lines and 64 APPLY against the
+        // unmodified jar's 3 and 65). The mixin and the JSON entry are both gone; the window hint comes from
+        // CeltiumGllessWindowTransformer and the stub from this plugin's onLoad, and the cohort leg passes with
+        // openGl.vendor="Celtium" without either of them.
         return new ArrayList<>(possibleMixinClasses);
     }
 
