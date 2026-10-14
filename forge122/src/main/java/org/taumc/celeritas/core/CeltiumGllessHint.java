@@ -32,6 +32,25 @@ public final class CeltiumGllessHint {
         return !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
     }
 
+    /**
+     * Writes {@code count} fresh non-zero names into the caller's buffer, for the array forms of the generators
+     * ({@code glGenTextures(int n, IntBuffer)}, {@code glGenBuffers}, {@code glGenFramebuffers} and the rest).
+     * <p>
+     * The array forms differ from the single-id ones in a way that makes them safe to answer here: the count is an
+     * argument, so the number of bytes the caller allocated is known from the signature, unlike the query functions
+     * where only the caller knows. A no-op would leave the buffer as it was - for LWJGL's own wrappers that is a
+     * zeroed stack buffer, so every caller would receive texture, buffer and framebuffer name 0, which is exactly the
+     * "no object" answer that makes correct callers fail (measured on {@code glGenLists} in the 268-mod pack).
+     */
+    public static void glGenNames(int count, long out) {
+        if (out == 0L || count <= 0) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            org.lwjgl.system.MemoryUtil.memPutInt(out + (long) i * 4L, glGenName());
+        }
+    }
+
     /** The next object name this renderer hands out; starts at 1 because 0 means "none" to every caller. */
     private static final java.util.concurrent.atomic.AtomicInteger NEXT_NAME =
             new java.util.concurrent.atomic.AtomicInteger(1);

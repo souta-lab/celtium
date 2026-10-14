@@ -164,6 +164,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // The array forms of the generators: nglGenTextures(int n, long out) and friends write their names into the
+        // caller's buffer, and the count is in the signature, so the whole buffer can be filled safely.
+        if (returnType.equals("V") && descriptor.startsWith("(IJ)")
+                && (name.startsWith("nglGen") || name.startsWith("glGen")
+                        || name.startsWith("nglCreate") || name.startsWith("glCreate"))) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGenNames", "(IJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         // The remaining single-value get functions: the caller reads its own buffer, so a no-op would leave
         // uninitialised memory there. Only the ones whose element count is exactly one are handled, because the
         // signature does not say how many bytes the caller allocated and writing more would corrupt the heap.
