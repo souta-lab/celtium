@@ -121,6 +121,34 @@ exit 143/time-limit, no world frames). Treat this as a **startup/fixture blocker
 not a Modpack PASS**. Focus next on world/validation flow and actual content
 rendering with Nothirium absent, not making two renderer cores coexist.
 
+### RLCraft on Cleanroom: the platform's own migration recipe (verified 2026-10-15)
+
+Cleanroom publishes per-pack migration notes, and the RLCraft entry is the authoritative substitution set for this
+target: [Cleanroom Modpack Migration Notes](https://gist.github.com/Rongmario/90d02fe1a2cee5458ea4c74c3b30cecc)
+(by Rongmario, credited there to Radplay/Radk6). Its RLCraft section says to
+
+- **remove**: AttributeFix, Born in a Barn, BreakBedBegone, **Block Overlay Fix**, **Entity Culling (by Meldexun)**,
+  **FoamFix**, Frame Void Patch, HelpFixer, Just Enough Items, LibrarianLib, MixinBootstrap, MixinCompatibility,
+  Quark, **Phosphor**, PortalDupeBegone, Shadowfacts' Forgelin, Spark, **Surge**, Toast Control;
+- **install**: Fugue, Scalar Legacy, Had Enough Items, LibrarianLib-Continuous, Forgelin-Continuous,
+  Quark: RotN Edition;
+- **update**: **RenderLib**, Recurrent Complex (delete and re-download it), RLTweaker.
+
+Two of the failures this project measured are on that list, which is why they should never have been read as Celtium
+defects: **Entity Culling** is the mod whose `MixinTileEntity` failed in the leg where RenderLib was removed, and
+**FoamFix** is the coremod that spliced a method into `TileEntity` immediately before it. **RenderLib** is the mod the
+notes say to *update* — exactly the 1.2.8 → 1.4.5 substitution this project arrived at from its own measurement.
+`Block Overlay Fix` (whose mixin CleanMix excluded with `PACKAGE_TRANSFORMER_EXCLUSION` in one leg) is on the list as
+well.
+
+So RLCraft's runtime for Celtium should be built from **this recipe first** and only then from leg-by-leg bisection:
+the recipe is the platform's own statement of which components do not work on Cleanroom, and a Celtium-specific
+substitution (such as removing SereneSeasons, which is *not* on the list) is a deviation that has to be justified
+separately. First measured state with the recipe's direction: leg `rlcraft-p1-leg5-rl145-no-ss` (RenderLib 1.4.5,
+SereneSeasons removed, the rest of the pack unchanged) boots past both blockers, installs the GL-less stub
+(`CELTIUM_GLLESS stub GL provider installed`, `window hinted GLFW_NO_API`) and renders; its harness report was still
+pending when this was written, so it is **not** an acceptance.
+
 ### E2E/Cleanroom: keep StellarCore, disable only incompatible parallel model loading
 
 The full 268-original-Mod Celtium test on Cleanroom 0.6.13-alpha exposed
