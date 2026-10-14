@@ -24,13 +24,27 @@ public final class CeltiumWorldEntryWatch {
     /** Set when a world is assigned while the player is still absent. */
     private static volatile boolean worldArrivedWithoutPlayer;
 
+    /** Bounded reporting, so the next leg says whether the record is taken and whether it is read early enough. */
+    private static final java.util.concurrent.atomic.AtomicInteger REPORTED =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    private static void report(String what) {
+        int n = REPORTED.incrementAndGet();
+        if (n <= 12) {
+            System.out.println("[Celtium] CELTIUM_WORLD_ENTRY " + what);
+        }
+    }
+
     private CeltiumWorldEntryWatch() {
     }
 
     /** Records that a world was just assigned, if the player is not there yet. */
     public static void noteWorldAssigned(Minecraft mc) {
+        report("assigned world=" + (mc != null && mc.world != null)
+                + " player=" + (mc != null && mc.player != null));
         if (mc != null && mc.world != null && mc.player == null) {
             worldArrivedWithoutPlayer = true;
+            report("recorded: world without player");
         }
     }
 
@@ -44,9 +58,17 @@ public final class CeltiumWorldEntryWatch {
             return false;
         }
         if (mc.player != null) {
+            if (worldArrivedWithoutPlayer) {
+                report("cleared: a player exists again");
+            }
             worldArrivedWithoutPlayer = false;
             return false;
         }
-        return worldArrivedWithoutPlayer;
+        if (worldArrivedWithoutPlayer) {
+            report("skipping a frame: world present, no player");
+            return true;
+        }
+        report("frame without player but nothing recorded");
+        return false;
     }
 }
