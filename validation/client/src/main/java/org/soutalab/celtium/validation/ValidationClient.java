@@ -3039,6 +3039,15 @@ public final class ValidationClient {
                 launched = true;
                 report.addProperty("scope", "fixed flat world startup, commands and GL framebuffer observation");
                 
+                // The instance ships pauseOnLostFocus:true (measured in the cleanroom-0.6.13-alpha instance's
+                // options.txt), and in a headless or compositor-captured window focus is easy to lose - at which
+                // point the game pauses, world ticks stop, and every wait this fixture has (dimensionAtTick,
+                // dimensionWaitUntilTick, minDimensionFrames, the settle gate) waits for something that will never
+                // come. That is the shape of the legs that ran to their duration limit with no capture. HeadlessMc's
+                // own launch notes list pauseOnLostFocus alongside the accessibility screen as settings to turn off
+                // for automated runs. The fixture forces it off so the measurement does not depend on who has focus.
+                mc.gameSettings.pauseOnLostFocus = false;
+                report.addProperty("pauseOnLostFocusForcedOff", Boolean.TRUE);
                 mc.gameSettings.renderDistanceChunks = 8;
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
                 mc.gameSettings.limitFramerate = 260;
