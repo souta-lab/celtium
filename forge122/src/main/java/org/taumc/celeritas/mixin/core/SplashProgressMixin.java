@@ -44,6 +44,24 @@ public class SplashProgressMixin {
         }
     }
 
+    /**
+     * Skips the matching {@code finish()}, which would otherwise throw.
+     * <p>
+     * Forge's {@code finish()} calls {@code checkThreadState()}, which throws {@code IllegalStateException("Splash
+     * thread")} when the current thread is not the splash thread - and a search for this crash signature shows exactly
+     * that in the wild, reached from {@code FMLClientHandler.finishMinecraftLoading} through
+     * {@code SplashProgress.finish}. With {@code start()} cancelled there is no splash thread at all, so leaving
+     * {@code finish()} alone would replace the shared-context crash with this one. Both ends are cancelled together,
+     * which is the programmatic form of the {@code enabled=false} in {@code config/splash.properties} that the reports
+     * recommend.
+     */
+    @Inject(method = "finish", at = @At("HEAD"), cancellable = true, remap = false)
+    private static void celtium$skipSplashFinish(CallbackInfo ci) {
+        if (CeltiumGllessHint.isGllessClaimed()) {
+            ci.cancel();
+        }
+    }
+
     @Inject(method = "getMaxTextureSize", at = @At("RETURN"), cancellable = true, remap = false)
     private static void celtium$answerMaxTextureSize(CallbackInfoReturnable<Integer> cir) {
         // At RETURN, not HEAD: calling SplashProgress.getMaxTextureSize() from inside that same method would re-enter
