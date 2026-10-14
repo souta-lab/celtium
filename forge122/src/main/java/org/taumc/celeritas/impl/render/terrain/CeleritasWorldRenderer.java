@@ -71,7 +71,41 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     /**
      * Performs a render pass for the given {@link BlockRenderLayer} and draws all visible chunks for it.
      */
+    /** Frames between tracker reports; a dimension change is visible within a second at 60 fps. */
+    private int celtium$trackerReportCountdown = 20;
+
+    /**
+     * Reports the chunk tracker's known and ready counts, and the section count, so a leg can say which side of the
+     * terrain pipeline is stuck. Logged from the per-layer draw because that is the once-per-frame entry point this
+     * implementation already has, throttled to a line every twenty frames.
+     */
+    private void celtium$reportTrackerState() {
+        if (--this.celtium$trackerReportCountdown > 0) {
+            return;
+        }
+        this.celtium$trackerReportCountdown = 20;
+        try {
+            net.minecraft.client.multiplayer.WorldClient world = net.minecraft.client.Minecraft.getMinecraft().world;
+            if (world == null) {
+                return;
+            }
+            org.embeddedt.embeddium.impl.render.chunk.map.ChunkTracker tracker =
+                    org.embeddedt.embeddium.impl.render.chunk.map.ChunkTrackerHolder.get(world);
+            int sections = this.getRenderSectionManager() != null
+                    ? this.getRenderSectionManager().getTotalSections() : -1;
+            System.out.println("[Celtium] CELTIUM_TRACKER known=" + tracker.knownChunkCount()
+                    + " ready=" + tracker.readyChunkCount()
+                    + " sections=" + sections
+                    + " dimension=" + world.provider.getDimension()
+                    + " worldFrames=" + this.celtium$trackerReportCountdown);
+        } catch (Throwable error) {
+            System.out.println("[Celtium] CELTIUM_TRACKER unavailable: " + error);
+        }
+    }
+
+    @Override
     public void drawChunkLayer(BlockRenderLayer renderLayer, double x, double y, double z) {
+        this.celtium$reportTrackerState();
         super.drawChunkLayer(renderLayer, x, y, z);
 
         GlStateManager.resetColor();
