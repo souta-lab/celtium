@@ -384,6 +384,15 @@ Two attempts to attribute it produced **no discriminating material** and are rec
   `fixtureStatus NO_CAPTURE`, `captureDimension null` - the transfer never registered, so the pose
   was never judged either.
 
+The image evidence names what is left: after the transfer the frame shows an **Overworld sky**
+(early frame: bright blue gradient with scattered dark blocks) and the final capture is a nearly
+uniform dark red-black (`0x0F0000`, 2,759-byte PNG) with no terrain at all. That reading fits every
+number: `presentedBackgroundColour 0x0F0000`, `presentedVerticalBands 705` against a reference of
+720 (the sky's gradient bands), 625 colours against a reference of 1937/1894, and
+`nonBackgroundFraction 0.190947` against 0.938502 - terrain is not drawn and only the sky is. The
+remaining cause is therefore the **renderer's state after a dimension change** (the Nether sky/fog
+switch and the Nether chunk meshes), which is what the gate table's `world-switch` item names.
+
 The next leg therefore uses the fixture's new
 `-Dceltium.validation.dimensionSettleFrames=<N>` (default 0, existing calibration keys unchanged),
 which fails a capture taken fewer than N world frames after arrival **and says so in the report**
@@ -418,8 +427,25 @@ blackFraction 0.018979 -> 0.022484. The candidate came from
 Nether biome fog is reported to go black because dust colour overrides fog colour; that mechanism is
 not what these numbers show.
 
-So of the four candidates, (c) is **refuted** and (d) is **weakened** - the wait is necessary but not
-sufficient. What remains is (a) the pose sitting inside rock in RLCraft's modded Nether and (b) a
+Two later legs closed the remaining escape routes and are recorded here rather than left implied:
+
+- `leg16-nether-pausefix` (fixture `cffc3509...`, `pauseOnLostFocusForcedOff true`,
+  `dimensionSettleFrames 400`, 459 world frames): **still FAILED**, `nonBackgroundFraction
+  0.190947`, 625 colours. The fixture's pause fix works and the settle gate was used, so neither
+  "captured too early" nor "ticks were paused" explains it.
+- `leg17-nether-pose40` (pose `y=40`): **exit 143 at the limit, `NO_CAPTURE`**, `captureDimension
+  null` - the pose was never judged, so this leg is **not evidence** either way. Recorded because a
+  missing result must not read as a negative one.
+
+The fixture's own arrival check also rules the pose out independently:
+`dimensionArrivalPlacement arrival=0,70,1 ... placed=1,70,1 placedBlock=minecraft:air
+placedInPortal=false ground=true safe=true candidates=13`, with `rendererCameraAtPose=True`. And
+`celtium$netherGate()`'s reference runs (`scene-floors/nether-c1`/`-c2`, 2026-10-11) used the **same**
+scene key and the **same** pose `x=1.5 y=70.0 z=1.5 yaw=180 pitch=20`, measured over a real GL
+context, so the floor is not mis-calibrated for this pose.
+
+So of the four candidates, (c) is **refuted**, (d) is **refuted**, the calibration is **not** at
+fault, and the pose is **not** at fault. What remains is (a) the pose sitting inside rock in RLCraft's modded Nether and (b) a
 real Nether rendering issue in Celtium. `leg13`'s pose attempt is not evidence either way because it
 never captured; the same pose change now needs re-running **with** `dimensionSettleFrames=400`, which
 is the next leg.
