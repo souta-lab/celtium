@@ -167,3 +167,33 @@ pipeline and resource registry with one contract for draw state and resource lif
 between what the game declares and what a backend does with it. Where this project differs is that the boundary has to
 exist **inside** a 1.12.2 client whose mods call GL directly, so the "backend" here also has to answer calls the game
 never routed through any abstraction.
+
+## What upstream's own Vulkan backend gets wrong, and what that says about this project's failure modes
+
+Two reports on Mojang's tracker are worth having beside this project's own notes, because they are the same failure
+modes arriving in a renderer that has far more resources behind it.
+
+**[MC-311954](https://mojira.dev/MC-311954) - OpenGL cannot be used under XWayland.** The game cannot retrieve the
+OpenGL functions and the backend fails to load:
+
+```
+com.mojang.renderpearl.api.device.BackendCreationException: OpenGL is not supported: Could not retrieve OpenGL functions
+    at com.mojang.renderpearl.backend.opengl.GlBackend.loadLibrary(GlBackend.java:36)
+```
+
+That is the failure this project's GL-less work exists to remove the *need* for: a client whose GL function table
+cannot be filled. Upstream's answer is to fall back to the other backend; Celtium's answer is to keep the window and
+answer the calls anyway, which is a strictly harder promise - and the reason the stub's coverage of what mods call
+matters more here than it would in a renderer that can hand the frame back to OpenGL.
+
+**[MC-307503](https://mojira.dev/MC-307503) - the game can crash on a Vulkan synchronisation timeout.**
+
+```
+java.lang.IllegalStateException: 5s timeout reached when waiting for VK semaphore
+    at com.mojang.blaze3d.vulkan.VulkanCommandEncoder.submit(VulkanCommandEncoder.java:258)
+    at net.minecraft.client.Minecraft.renderFrame(Minecraft.java:1361)
+```
+
+A renderer that replaces the pipeline inherits the job of pacing it: the goal's "CPU/GPU synchronisation and idle"
+item and its fence-and-retirement work are the same problem, and upstream has not solved it either. A stall of this
+kind is a real risk for Celtium's own submit path, and worth a leg of its own once the GL-less surface is stable.
