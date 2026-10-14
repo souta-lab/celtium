@@ -618,6 +618,33 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Failure is logged and never fatal: a run without capabilities is exactly the run this project had before, and
      * the census and the validation report stay readable either way.
      */
+    /**
+     * Gives the <b>calling thread</b> its own LWJGL3 capabilities from this stub. Safe to call repeatedly.
+     * <p>
+     * LWJGL3 keeps them in a {@code ThreadLocal} (measured 2026-10-15 by javap on lwjgl-opengl-3.4.1.jar:
+     * {@code private static final ThreadLocal<GLCapabilities> capabilitiesTLS}), so {@code GL.setCapabilities}
+     * only affects the thread that calls it. Installing from the mixin plugin's {@code onLoad} - which runs on
+     * {@code main} - therefore did nothing for the game's {@code Client thread}, where mods call GL: leg
+     * {@code gv-e2e-268-fix128f} still aborted in Thaumcraft's {@code ShaderHelper} with
+     * {@code Thread[#3,Client thread,7,main]} in the message. The same fact is why the offline check passed - it
+     * installed and called on one thread.
+     * <p>
+     * Failure is logged and never fatal, as everywhere else on this path.
+     */
+    public static void ensureThreadCapabilities() {
+        if (installed == null) {
+            return;
+        }
+        try {
+            if (org.lwjgl.opengl.GL.getCapabilities() != null) {
+                return;
+            }
+        } catch (Throwable alreadyUnset) {
+            // GL.getCapabilities() throws when the thread has none, which is the case this method exists for.
+        }
+        celtium$createLwjgl3Capabilities();
+    }
+
     private static void celtium$createLwjgl3Capabilities() {
         // There is deliberately no "are capabilities already set?" probe here. GL.getCapabilities() calls
         // checkCapabilities(), which *throws* "No GLCapabilities instance set for the current thread" when none is
@@ -652,7 +679,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
             org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
             celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities installed from the stub provider: extensions="
-                    + extensions.size());
+                    + extensions.size() + " thread=" + Thread.currentThread().getName());
             return;
         } catch (Throwable error) {
             celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities could not be built from the stub: " + error);
@@ -676,7 +703,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             installed = new CeltiumGlStub();
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
-            celtium$createLwjgl3Capabilities();
+            ensureThreadCapabilities();
             // The census has to be readable after the run: the harness reads logs, and the renderer's own report
             // only carries the strings it knows to ask for. One line at exit, bounded. The glDrawArrays line sits
             // beside it because the two answer the same question from opposite sides: the census says which drawing

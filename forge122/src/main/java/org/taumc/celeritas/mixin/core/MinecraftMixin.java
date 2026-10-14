@@ -94,6 +94,21 @@ public class MinecraftMixin {
      * read as "the mixin did not apply" rather than "the splash method was not reached" - the two have different
      * fixes and the same silence otherwise.
      */
+    /**
+     * Gives the Client thread its own LWJGL3 GLCapabilities before mod pre-initialisation runs on it.
+     * <p>
+     * LWJGL3 stores them per thread, so the install the mixin plugin does on {@code main} does not reach this
+     * thread - and a mod that calls LWJGL3 GL entry points here aborts the JVM
+     * ({@code No context is current or a function that is not available in the current context was called}).
+     * Measured 2026-10-15: Thaumcraft's {@code ClientProxy.preInit} does exactly that from this thread.
+     * {@code startGame} is the earliest Client-thread point before {@code Loader.preinitializeMods}, and the call is
+     * idempotent.
+     */
+    @Inject(method = "startGame", at = @At("HEAD"), require = 0)
+    private void celtium$installThreadCapabilities(CallbackInfo ci) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ensureThreadCapabilities();
+    }
+
     @Inject(method = "startGame", at = @At("HEAD"), require = 0)
     private void celtium$splashHookControl(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");

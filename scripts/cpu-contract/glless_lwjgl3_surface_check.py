@@ -39,6 +39,11 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLCapabilities;
 import org.lwjgl.opengl.ARBShaderObjects;
 
+/**
+ * LWJGL3 keeps its capabilities in a ThreadLocal, so the install has to be repeated on every thread that calls
+ * GL. This harness measures both halves: the installing thread works, and a second thread reports the exact
+ * IllegalStateException the game hit until it installs its own.
+ */
 public class Lwjgl3SurfaceCheck {
     public static void main(String[] args) throws Exception {
         Class<?> stub = Class.forName("org.soutalab.celtium.vulkan.gl.CeltiumGlStub");
@@ -51,6 +56,27 @@ public class Lwjgl3SurfaceCheck {
         }
         // The call that used to abort the JVM: it must return the stub's answer instead.
         System.out.println("createShaderObjectARB " + ARBShaderObjects.glCreateShaderObjectARB(0x8B31));
+
+        Thread other = new Thread(() -> {
+            System.out.println("other_before " + state());
+            try {
+                stub.getMethod("ensureThreadCapabilities").invoke(null);
+            } catch (Throwable error) {
+                System.out.println("other_ensure_threw " + error);
+            }
+            System.out.println("other_after " + state());
+            System.out.println("other_createShaderObjectARB " + ARBShaderObjects.glCreateShaderObjectARB(0x8B31));
+        }, "ContractOtherThread");
+        other.start();
+        other.join();
+    }
+
+    static String state() {
+        try {
+            return GL.getCapabilities() == null ? "null" : "present";
+        } catch (Throwable error) {
+            return "throws(" + error.getClass().getSimpleName() + ")";
+        }
     }
 }
 '''
@@ -71,8 +97,14 @@ def main():
     source = STUB.read_text(encoding='utf-8')
     require('the stub installs capabilities with setCapabilities, not createCapabilities alone',
             'setCapabilities' in source and 'getDeclaredConstructor' in source)
-    require('no probe calls GL.getCapabilities() before the capabilities exist',
-            'GL.getCapabilities() != null' not in source)
+    require('there is a per-thread entry point for the threads the game calls GL on',
+            'ensureThreadCapabilities' in source)
+    require('the Client thread calls it before mod pre-init',
+            'ensureThreadCapabilities' in (ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java').read_text(encoding='utf-8'))
+    # The probe is allowed now, but only guarded: GL.getCapabilities() throws when the thread has none, which is
+    # the case it is asking about. The runtime half of this contract proves the behaviour on a second thread.
+    require('the capabilities probe is guarded, because it throws when the thread has none',
+            'catch (Throwable alreadyUnset)' in source)
     require('the extension set is taken from the capabilities class fields', 'startsWith("GL_")' in source)
 
     javac = shutil.which('javac')
@@ -104,6 +136,11 @@ def main():
     require('the ARB shader-object extension is reported available', 'arb_shader_objects true' in out)
     require('the call that used to abort the JVM returns the stub answer',
             'createShaderObjectARB 0' in out)
+    require('a second thread starts without capabilities, as the game did',
+            'other_before throws(IllegalStateException)' in out)
+    require('the per-thread entry point fixes that thread too', 'other_after present' in out)
+    require('and the ARB call works on that thread as well',
+            'other_createShaderObjectARB 0' in out)
 
     if not all(checks):
         print(f'{checks.count(False)} contract check(s) failed')
