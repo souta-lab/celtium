@@ -277,3 +277,24 @@ world's renderers load. **And the fix has to be cheap**: the same issue reports 
 hundreds of thousands of real display lists can take half an hour on some drivers, while the
 synthetic non-zero ids this renderer hands out are instant - which is the behaviour a GL-less
 client wants, because it never calls a list anyway.
+
+## The dimension-change chunk failure is a known bug class, with a fix that shipped (read 2026-10-15)
+
+The RLCraft Nether failure has four independent reports behind it, all of the same shape:
+
+- [OptiFine #5757](https://github.com/sp614x/optifine/issues/5757) - "Chunk not loading when you change dimension", with the
+  picture described as "**a black screen only showing the horizon and the sun**", and the repro narrowed by a commenter
+  to "**if you only go through portals close to or at spawn it's ok, but if you go through ones further away then chunks
+  won't load**". Fixed upstream.
+- [MC-227996](https://mojira.dev/MC-227996) - "Chunks don't load after travelling between dimensions", filed against
+  vanilla and **resolved as caused by OptiFine**, pointing at the same issue.
+- [MC-228819](https://mojira.dev/MC-228819) and [MC-229785](https://mojira.dev/MC-229785) - duplicates of it, the first
+  noting it happens "about 90% of the time" and less often the more a dimension is visited.
+- OptiFine's own changelog for 1.17 G9 pre21 lists "**fixed chunks not loading when changing dimension (#5757)**".
+
+Two things this changes for this project. **The symptom is diagnostic, not ambiguous**: a frame with sky and horizon but
+no terrain after a dimension change is this bug class, which is exactly what the leg's screenshots show - the early
+frame a blue sky with fragments, the capture a uniform fog colour. **And the fix lives in the renderer's chunk
+pipeline**, not in the world or the server: OptiFine fixed it in its renderer, and Sodium's issue 3497 states the same
+requirement in its own words, that the renderer has to be reloaded to invalidate the chunk tracker's state. The refresh
+added in this project's `initRenderer` is that same step.
