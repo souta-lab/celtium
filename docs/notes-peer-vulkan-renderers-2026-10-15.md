@@ -217,3 +217,37 @@ conventional ceiling, and forcing it is what other projects ship. The corollary 
 accepts against: a 268-mod pack or RLCraft may genuinely need more than 16384, and the mitigation then is the one
 **Texture Scaler** uses - downscale the sprites that would not fit - not a larger claim, because claiming more than
 16384 is a lie about the hardware that the next `glTexImage2D` would expose.
+
+## How a real mod checks GL errors, and why answering zero is the right GL-less contract (read 2026-10-15)
+
+**Essential's `GlDebug.checkGlError`** ([source](https://endernon.crepe.moe/mpreg64/Essential-Upstream/src/branch/main/subprojects/lwjgl3/src/main/kotlin/gg/essential/util/lwjgl3/asm/GLBridgeTransformer.kt))
+is the pattern worth knowing, because Essential is in the E2E pack and this is how a mod that takes GL seriously behaves:
+
+```kotlin
+fun checkGlError(methodName: String) {
+    // Need to manually check if there is an OpenGL context active in the current thread,
+    // LWJGL2 will throw if there is no OpenGL context yet, see GLContext.getCapabilities
+    try {
+        while (true) {
+            val error = GL11.glGetError()
+            if (error == GL11.GL_NO_ERROR) return
+            ...
+        }
+    } catch (e: RuntimeException) {
+        ... return
+    }
+}
+```
+
+Two things follow for this project's GL-less surface. **First, the loop exits on the first
+`GL_NO_ERROR`**, so answering 0 for `glGetError` - which the replacement does - is exactly the "no
+error" contract a checking mod wants, and it is why the sweep in round 806 found no vanilla or
+Forge path that would trip. **Second, the comment is the same lesson this project learned the hard
+way**: on a thread with no GL context, LWJGL2 throws from `GLContext.getCapabilities`, which is the
+failure mode the stub exists to remove. A mod that catches it degrades gracefully; one that does
+not aborts the JVM, which is the difference between the catchable exception and the native abort
+that legs 27-30 spent so long on.
+
+The other half of the same source file is the reason Essential is cited in this project's notes at
+all: it ships a `GLBridgeTransformer` that redirects GL classes to a bridge, which is the
+call-site-rewriting approach this project weighed against replacing the natives.
