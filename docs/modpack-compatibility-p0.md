@@ -160,6 +160,20 @@ so the GL-less stub was never installed and the window got a real GL 4.6 context
 The E2Eu entry of the migration notes removes it as well (BetterFPS, Clumps, Hesperus, NotEnoughIDs, Old Java
 Warning, **RandomPatches**, Shadowfacts' Forgelin) and updates CensoredASM.
 
+**What third parties say about the Celeritas family** (which Celtium forks): the
+[1.12.2 optimization guide](https://github.com/Polytetrafluoroethylene-PTFE/MC-Optimization-Guide/blob/main/mods-n-stuff/1.12.2.md)
+lists Celeritas' current known incompatibilities as **Chunk Animator, LittleTiles, Nothirium, OptiFine, and
+Vintagium and its forks** (Relictium, Neonium). Two consequences for this project:
+
+- The **Nothirium exclusion in E2E is corroborated from the Celeritas side**, not only from "two terrain renderers
+  cannot own the same classes": it is a documented incompatibility of the renderer this project forks. The
+  distinction recorded above still stands - Cleanroom's own guide recommends Nothirium, so the exclusion remains
+  this project's substitution and not a platform requirement.
+- **RLCraft 2.9.3 contains two of the other names**: `ChunkAnimator-1.12.2-1.2.1.jar` and
+  `LittleTiles_v1.5.87_mc1.12.2.jar` are both in the staged 177. Neither has been measured in a Celtium run yet, so
+  they are **predicted collisions to look for** in the RLCraft legs (a chunk-render animation and a block model
+  system that the guide says do not coexist with Celeritas), not findings.
+
 **What this project has measured and must document as its own substitutions**:
 
 | pack | substituted | measured reason |
