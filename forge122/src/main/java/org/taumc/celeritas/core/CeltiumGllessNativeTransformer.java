@@ -97,9 +97,10 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // LWJGL3's own form is nglGetString(int) returning a pointer to NUL-terminated bytes; glGetString then
         // decodes it. Handing back a pointer to this project's identity keeps that path working - returning 0 would
         // leave a caller decoding a null pointer.
-        if (returnType.equals("J") && name.endsWith("glGetString")) {
+        if (returnType.equals("J") && name.endsWith("glGetString") && descriptor.startsWith("(I)")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
-                    "glStringPointer", "()J", false);
+                    "glStringPointer", "(I)J", false);
             method.visitInsn(Opcodes.LRETURN);
             return;
         }

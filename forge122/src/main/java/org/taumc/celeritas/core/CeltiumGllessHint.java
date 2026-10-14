@@ -22,28 +22,65 @@ public final class CeltiumGllessHint {
     }
 
 
-    /** The GL-less identity this project answers GL_RENDERER and friends with. */
+    /** The GL-less renderer's name, for GL_RENDERER. */
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
 
-    /** The off-heap bytes behind {@link #glStringPointer()}; held so the address stays valid. */
-    private static java.nio.ByteBuffer identityBytes;
-    private static long identityPointer;
+    /**
+     * One NUL-terminated off-heap copy per queried name, kept so the addresses stay valid. {@code glGetString} can be
+     * called every frame, so allocating per call would leak.
+     */
+    private static final java.util.Map<Integer, java.nio.ByteBuffer> STRINGS = new java.util.HashMap<>();
+    private static final java.util.Map<Integer, Long> STRING_ADDRESSES = new java.util.HashMap<>();
 
     /**
-     * The address of the NUL-terminated identity string, for LWJGL3's pointer-returning {@code nglGetString}.
+     * The address of the NUL-terminated string for a {@code glGetString} name, for LWJGL3's pointer-returning
+     * {@code nglGetString}.
      * <p>
-     * Measured 2026-10-15: the first version of this emitted {@code MemoryUtil.memASCII(CharSequence)} expecting a
-     * {@code long}, and LWJGL 3.4.1's overload returns a {@code ByteBuffer} - so every leg died at 8-15 s with
-     * {@code NoSuchMethodError: 'long org.lwjgl.system.MemoryUtil.memASCII(java.lang.CharSequence)'}. The pointer is
-     * {@code memAddress(memASCII(...))}, computed once and kept: {@code glGetString} can be called every frame, and
-     * allocating off-heap memory per call would leak.
+     * Measured 2026-10-15, in two steps. The first version emitted {@code MemoryUtil.memASCII(CharSequence)} expecting
+     * a {@code long}, and LWJGL 3.4.1's overload returns a {@code ByteBuffer} - every leg died at 8-15 s with
+     * {@code NoSuchMethodError}. The second returned one identity string for every name, and the cohort leg then died
+     * at 24.8 s with {@code java.lang.RuntimeException: Failed to parse the OpenGL version.} - thrown by Cleanroom's
+     * own Kirino patch ({@code com.cleanroommc.kirino.KirinoClientCore}), which parses {@code glGetString(GL_VERSION)}
+     * and cannot parse a renderer name.
+     * <p>
+     * So the answers are per name and deliberately the same strings {@code CeltiumGlStub} gives the LWJGL2 surface -
+     * {@code "3.0.0 Celtium"} for GL_VERSION (the version whose gates are all backed, per the stub's own note),
+     * {@code ""} for GL_EXTENSIONS (this renderer interprets no extension), {@code "1.20"} for the shading language -
+     * because the two GL surfaces have to agree: one of them being parseable and the other not is a crash, not a
+     * difference of opinion.
      */
-    public static synchronized long glStringPointer() {
-        if (identityPointer == 0L) {
-            identityBytes = org.lwjgl.system.MemoryUtil.memASCII(IDENTITY);
-            identityPointer = org.lwjgl.system.MemoryUtil.memAddress(identityBytes);
+    public static synchronized long glStringPointer(int pname) {
+        Long cached = STRING_ADDRESSES.get(Integer.valueOf(pname));
+        if (cached != null) {
+            return cached.longValue();
         }
-        return identityPointer;
+        String value;
+        switch (pname) {
+            case 0x1F00: // GL_VENDOR
+                value = "Celtium";
+                break;
+            case 0x1F01: // GL_RENDERER
+                value = IDENTITY;
+                break;
+            case 0x1F02: // GL_VERSION - must stay parseable: Cleanroom's Kirino patch reads it
+                value = "3.0.0 Celtium";
+                break;
+            case 0x1F03: // GL_EXTENSIONS
+                value = "";
+                break;
+            case 0x8B8C: // GL_SHADING_LANGUAGE_VERSION
+            case 0x821B: // GL_SHADING_LANGUAGE_VERSION_ARB - the same question, the ARB spelling
+                value = "1.20";
+                break;
+            default:
+                value = "";
+                break;
+        }
+        java.nio.ByteBuffer bytes = org.lwjgl.system.MemoryUtil.memASCII(value);
+        long address = org.lwjgl.system.MemoryUtil.memAddress(bytes);
+        STRINGS.put(Integer.valueOf(pname), bytes);
+        STRING_ADDRESSES.put(Integer.valueOf(pname), Long.valueOf(address));
+        return address;
     }
 
     /**
