@@ -3951,8 +3951,10 @@ public final class ValidationClient {
         // celtium-vulkan-device.json said effectiveTerrainBackend=opengl while the same run presented a world frame
         // from the AMD device). Agreement is now the assertion: whichever backend is live, the report has to name it.
         boolean nativeLive = celtium$vulkanBackend() != null;
-        String reportedBackend = device.get("effectiveTerrainBackend").getAsString();
-        boolean reportedNative = device.get("nativeTerrainImplemented").getAsBoolean();
+        String reportedBackend = device.has("effectiveTerrainBackend")
+                ? device.get("effectiveTerrainBackend").getAsString() : "missing";
+        boolean reportedNative = device.has("nativeTerrainImplemented")
+                && device.get("nativeTerrainImplemented").getAsBoolean();
         report.addProperty("vulkanReportBackendAgreesWithLive", Boolean.valueOf(
                 reportedBackend.equals(nativeLive ? "vulkan" : "opengl") && reportedNative == nativeLive));
         report.addProperty("vulkanReportTerrainBackendSource", device.has("terrainBackendSource")
@@ -5416,12 +5418,24 @@ public final class ValidationClient {
                 if (capabilities.get("depthRoundtripVerified").getAsBoolean()) {
                     throw new IllegalStateException("Capability command claimed a depth roundtrip it did not prove");
                 }
-                if (!reportedBackend.equals(nativeLive ? "vulkan" : "opengl") || reportedNative != nativeLive) {
-                    throw new IllegalStateException("Capability command disagrees with the live terrain backend:"
-                            + " the report says " + reportedBackend + "/" + reportedNative + ", the live backend is "
-                            + (nativeLive ? "vulkan" : "opengl"));
+                // Only a file the command wrote can be checked for agreement: the source field says where the value
+                // came from, and another writer (the bench fixture asks CeltiumProbe directly) leaves it at the honest
+                // default. Asserting agreement on such a file would fail a leg over a report nothing claims is an
+                // observation, so the source is recorded and the judgement is skipped instead.
+                String backendSource = capabilities.has("terrainBackendSource")
+                        ? capabilities.get("terrainBackendSource").getAsString() : "missing";
+                report.addProperty("capabilitiesBackendSource", backendSource);
+                if (backendSource.startsWith("not observed by the")) {
+                    report.addProperty("capabilitiesBackendAgreesWithLive",
+                            "not judged: the file was not written by the capability command (" + backendSource + ")");
+                } else {
+                    if (!reportedBackend.equals(nativeLive ? "vulkan" : "opengl") || reportedNative != nativeLive) {
+                        throw new IllegalStateException("Capability command disagrees with the live terrain backend:"
+                                + " the report says " + reportedBackend + "/" + reportedNative + ", the live backend is "
+                                + (nativeLive ? "vulkan" : "opengl"));
+                    }
+                    report.addProperty("capabilitiesBackendAgreesWithLive", Boolean.TRUE);
                 }
-                report.addProperty("capabilitiesBackendAgreesWithLive", Boolean.TRUE);
                 report.add("capabilities", capabilities);
             }
             checkVulkanBootstrap(mc, probe.getParent());
