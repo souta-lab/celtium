@@ -51,3 +51,34 @@ means the injection applied) and the crash in each leg.
    callback performs, so it is a recovery path that must be logged as a lost injection, never a silent pass. The
    project already learned this shape twice (round 704: `require = 0` did not reach a critical transformer error;
    round 718: a change justified by reading bytecode rather than by a measurement was reverted).
+
+## The strongest candidate: RenderLib's coremod rewrites that exact method (measured 2026-10-15)
+
+`RenderLibClassTransformer` (an `IClassTransformer`, i.e. a coremod transformer that runs **before** Mixin) in the
+RLCraft set names our target method directly:
+
+| jar | strings in `RenderLibClassTransformer` |
+|---|---|
+| RLCraft `RenderLib-1.12.2-1.2.8` | `net/minecraft/client/renderer/RenderGlobal`, **`renderEntities`**, `(Lnet/minecraft/entity/Entity;Lnet/minecraft/client/renderer/culling/ICamera;F)V`, `Transforming method: RenderGlobal#renderEntities(Entity, ICamera, float)` |
+| E2E `RenderLib-1.12.2-1.4.5` (where our injection **works**) | the same, plus the SRG name **`func_180446_a`** and `func_71192_d`/`func_71195_b_`/`func_76318_c` |
+
+So the pack that fails carries a coremod that transforms the very method our `@Inject(method = "renderEntities")`
+targets, and it is an **older version** (1.2.8) than the one in the pack where the same injection applies (1.4.5).
+That is a mechanism, not a proof: what the 1.2.8 transformer does to the method (and why Mixin's selector then finds
+`Scanned 0 target(s)`) is not established here, and the version difference is confounded with the rest of the
+RLCraft set. The one-leg test decides it: **RLCraft minus `RenderLib-1.12.2-1.2.8`**, reading whether the game
+reaches a world and whether `CELTIUM_RENDERENTITIES` appears.
+
+Two further facts for that leg:
+
+- **`Scanned 0 target(s)` means the target method could not be resolved at all**, and the public reports of that
+  message are overwhelmingly name-resolution failures in a production environment
+  ([geckolib/NeoForge](https://stackoverflow.com/questions/79664084/geckolib-humanoidarmorlayermixin-critical-injection-failure-no-refmap-loaded-neo),
+  [Subtle Effects](https://github.com/MincraftEinstein/SubtleEffects/issues/255),
+  [Sable](https://github.com/ryanhcode/sable/issues/413)) — and at least one case where **another mod's
+  transformation of the target class** caused it, with the workaround being a compatibility fix
+  ([Carpet's report naming Lithium](https://github.com/gnembon/fabric-carpet/issues/1999)). Both families are
+  consistent with what is measured here; neither is proven for RLCraft yet.
+- If RenderLib is the collider, the substitution to try first is **RenderLib 1.4.5** (the version already proven to
+  coexist with this injection in E2E) rather than removing the mod, and either way the substitution belongs in the
+  pack's documented list next to the Nothirium exclusion.
