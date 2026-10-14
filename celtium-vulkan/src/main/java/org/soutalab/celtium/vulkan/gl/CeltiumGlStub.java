@@ -619,13 +619,17 @@ public final class CeltiumGlStub implements FunctionProvider {
      * the census and the validation report stay readable either way.
      */
     private static void celtium$createLwjgl3Capabilities() {
-        if (org.lwjgl.opengl.GL.getCapabilities() != null) {
-            return;
-        }
-        // GL.createCapabilities() is not usable here, and that is measured rather than assumed: in LWJGL 3.4.1 it
-        // throws "No GLCapabilities instance set for the current thread" when nothing has set capabilities yet
-        // (leg gv-e2e-268-fix128d), so the instance is built through the package-private constructor and installed
-        // with GL.setCapabilities - the second of the two solutions LWJGL's own message offers.
+        // There is deliberately no "are capabilities already set?" probe here. GL.getCapabilities() calls
+        // checkCapabilities(), which *throws* "No GLCapabilities instance set for the current thread" when none is
+        // set - and none being set is exactly the case this method exists for. Measured offline with the game's own
+        // LWJGL 3.4.1 jars before any leg: the probe was what produced that message in leg gv-e2e-268-fix128d, at
+        // this line, not createCapabilities().
+        //
+        // The instance is built through the package-private constructor and installed with GL.setCapabilities - the
+        // second of the two solutions LWJGL's own message offers. LWJGL's generator only fills an extension's
+        // function addresses when its name is in the set (`if (!ext.contains(capName)) return false;` before the
+        // address copy), so the set has to be complete; it is taken from the capabilities class's 427 public GL_*
+        // fields.
         //
         // The extension set is taken from the capabilities class's own public fields: LWJGL generates one boolean per
         // extension it knows (GL_ARB_shader_objects and so on), and the constructor only fills an extension's function
