@@ -154,8 +154,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             switch (type) {
                 case 'J':
                 case 'D':
+                    // Two slots, one character: advancing by two characters walked past the ')' on any descriptor
+                    // whose last argument is a long or a double - (D)V, (IJ)V, (IIIJ)V - and threw
+                    // StringIndexOutOfBoundsException, which the caller's catch turned into "the original bytes keep
+                    // LWJGL's behaviour". Measured on the real GL11C: every such method failed.
                     slots += 2;
-                    index += 2;
+                    index += 1;
                     break;
                 case 'L':
                     slots += 1;
