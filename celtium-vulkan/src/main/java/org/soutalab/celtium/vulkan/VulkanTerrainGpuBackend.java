@@ -13801,45 +13801,53 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // The batch's own viewport, applied as the drawable sub-rect GL would have used. Without this the
                 // pipeline's baked-in viewport (set once per pass by setViewportAndScissor) would draw a 256x256 GUI
                 // batch across the whole target - wrong pixels, which is why the batch used to be refused instead.
-                celtium$setGroupViewport(stack, group);
-                // BH-11: GL's polygon offset, applied as this group's depth bias. It is command state - one
-                // pipeline serves every offset the game sets, which is why the pipelines declare
-                // VK_DYNAMIC_STATE_DEPTH_BIAS and depthBiasEnable. The two names are swapped between the APIs: GL's
-                // units is Vulkan's constant factor and GL's factor is Vulkan's slope factor, with the sign carrying
-                // across unchanged (smaller is nearer in both). Block entities and the break overlay are the callers:
-                // with the offset dropped, the TESR and the block face it sits on z-fight. Issued only when the game
-                // has actually called glPolygonOffset, so a scene that never uses it pays one branch.
-                // The group's own captured offset, not the live record: vanilla enables the offset around the break
-                // overlay's draws and disables it immediately after, so a group flushed later used to read the
-                // disabled state and draw the overlay with no bias at all (measured: 62 glPolygonOffset calls, the
-                // overlay in the frame, and immediateDepthBiasedGroups=0).
+                // The outer stack owns the reusable push-constant block for the entire flush.
+                // Native bind arrays, descriptor handles and group viewport structs are transient,
+                // however: retaining them across thousands of E2E item/model groups exhausted
+                // LWJGL MemoryStack (OutOfMemoryError: Out of stack space at bindAndDraw).
+                // Bound the lifetime to ONE group. All vkCmd* calls synchronously consume these
+                // parameter arrays before this scope ends; Vulkan owns the recorded handles.
                 long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-                boolean offsetEnabled = group.polygonOffsetEnabled;
-                float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
-                float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
-                // Issued for every group, not only when the game has called glPolygonOffset: the pipelines declare
-                // depthBiasEnable statically, so a draw whose command buffer never saw vkCmdSetDepthBias is a
-                // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
-                // whatever the last draw left. Zeros are the state GL has when the offset is off.
-                if (constantFactor != this.passBiasC || slopeFactor != this.passBiasS) {
-                    org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
-                    this.passBiasC = constantFactor;
-                    this.passBiasS = slopeFactor;
-                } else {
-                    // The common case - the game leaves the offset off - re-emits (0,0) for every group. The
-                    // skip is still VUID-07834-clean: the first group of the buffer always emits because the
-                    // tracker starts at NaN, and a later group's same-valued bias changes nothing the draw reads.
-                    this.immediateStatistics.noteStateSkipsDepthBias();
+                try (MemoryStack groupStack = MemoryStack.stackPush()) {
+                    celtium$setGroupViewport(groupStack, group);
+                    // BH-11: GL's polygon offset, applied as this group's depth bias. It is command state - one
+                    // pipeline serves every offset the game sets, which is why the pipelines declare
+                    // VK_DYNAMIC_STATE_DEPTH_BIAS and depthBiasEnable. The two names are swapped between the APIs: GL's
+                    // units is Vulkan's constant factor and GL's factor is Vulkan's slope factor, with the sign carrying
+                    // across unchanged (smaller is nearer in both). Block entities and the break overlay are the callers:
+                    // with the offset dropped, the TESR and the block face it sits on z-fight. Issued only when the game
+                    // has actually called glPolygonOffset, so a scene that never uses it pays one branch.
+                    // The group's own captured offset, not the live record: vanilla enables the offset around the break
+                    // overlay's draws and disables it immediately after, so a group flushed later used to read the
+                    // disabled state and draw the overlay with no bias at all (measured: 62 glPolygonOffset calls, the
+                    // overlay in the frame, and immediateDepthBiasedGroups=0).
+                    boolean offsetEnabled = group.polygonOffsetEnabled;
+                    float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
+                    float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
+                    // Issued for every group, not only when the game has called glPolygonOffset: the pipelines declare
+                    // depthBiasEnable statically, so a draw whose command buffer never saw vkCmdSetDepthBias is a
+                    // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
+                    // whatever the last draw left. Zeros are the state GL has when the offset is off.
+                    if (constantFactor != this.passBiasC || slopeFactor != this.passBiasS) {
+                        org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
+                        this.passBiasC = constantFactor;
+                        this.passBiasS = slopeFactor;
+                    } else {
+                        // The common case - the game leaves the offset off - re-emits (0,0) for every group. The
+                        // skip is still VUID-07834-clean: the first group of the buffer always emits because the
+                        // tracker starts at NaN, and a later group's same-valued bias changes nothing the draw reads.
+                        this.immediateStatistics.noteStateSkipsDepthBias();
+                    }
+                    if (offsetEnabled) {
+                        this.immediateStatistics.noteImmediateDepthBiasedGroups();
+                    }
+                    Object pipeline = prepared.pipeline;
+                    if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                    else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                    else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                    else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                    else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
                 }
-                if (offsetEnabled) {
-                    this.immediateStatistics.noteImmediateDepthBiasedGroups();
-                }
-                Object pipeline = prepared.pipeline;
-                if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
                 int batches = group.batches;

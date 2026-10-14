@@ -147,3 +147,33 @@ The helper refuses missing, ambiguous, oversized, symlinked or already-existing
 targets. All other configuration bytes (including CRLF) are preserved. Its
 synthetic, offline contract is
 `python3 scripts/modpack-compat/test_e2e_stellar_parallel_config.py`.
+
+### E2E 268-mod first Vulkan world: immediate-group MemoryStack exhaustion (2026-10-14)
+
+The full E2E1.93a/Celtium fixture (268 original JARs, Nothirium/Naughthirium
+replaced, original Nutrition override, Celtium and validation) **did launch a
+Minecraft world** after PR #91 repaired the `CustomMainMenu` fixture trap.
+Cleanroom 0.6.13-alpha/Java25 loaded **306 FML Mod IDs**, the integrated server
+created the validation world and its modded dimensions, and RADV chose
+`AMD Radeon RX 6400` as the native Vulkan device. The first presented world
+frame was #9; the fixture recorded **40 world frames and 196 world ticks**.
+
+**That run failed**, exit 255, `NO_CAPTURE`, and had no calibrated world image:
+Minecraft reported `java.lang.OutOfMemoryError: Out of stack space` at
+`MemoryStack.nmalloc` -> `VulkanDynamicMesh.bindAndDraw` in the item-immediate
+pipeline. Zero Vulkan VUIDs occurred **before** the crash; this does not pass the
+full pack. The renderer's `drawPendingImmediate` shared one outer LWJGL
+`MemoryStack` frame across all queued groups; every group then allocated native
+viewport, descriptor-set and vertex-binding arrays through the same stack, but
+none of those allocations were released until the entire flush completed. E2E
+recorded enough item/model groups to exhaust that stack while drawing.
+
+The targeted fix makes a **nested `MemoryStack.stackPush()` frame for each
+individual drawn group**, spanning the viewport and all five immediate pipeline
+dispatches, and closes it before per-group accounting. The unchanged outer stack
+retains only the reusable 216-byte push-constant block. Vulkan's synchronous
+`vkCmd*` record functions consume the temporary native pointer arrays while the
+nested frame is alive. `scripts/cpu-contract/immediate_group_stack_scope_check.py`
+ensures the scope still encloses viewport and all pipeline families. Verify on
+real AMD and Intel devices, with world frames and actual presented screenshots,
+**before** claiming the original crash is resolved or E2E compatible.
