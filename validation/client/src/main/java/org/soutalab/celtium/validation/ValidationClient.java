@@ -5741,6 +5741,24 @@ public final class ValidationClient {
         }
     }
 
+    /**
+     * Why the configuration probe reads what it reads.
+     * <p>
+     * A {@code false} from {@link #celtium$glLessInstalled()} has two very different causes - the stub is genuinely not
+     * installed, or the class could not be reached from this caller - and the boolean alone cannot tell them apart. The
+     * 268-mod E2E leg read {@code false} in a run whose GL screenshot was one colour by construction (the stub's own
+     * behaviour), so the reason is recorded rather than inferred.
+     */
+    private static String celtium$glLessProbeDetail() {
+        try {
+            return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                    ? "probe: the stub class is present and installed"
+                    : "probe: the stub class is present but reports no installation";
+        } catch (RuntimeException | LinkageError absent) {
+            return "probe: the stub class could not be reached from this caller (" + absent + ")";
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------------------------
     // Dimension transfer: the destination placement, the trace, and the capture's dimension gate.
     // ---------------------------------------------------------------------------------------------------------------
@@ -5964,6 +5982,17 @@ public final class ValidationClient {
     private static int celtium$presentedFrameCount() {
         Object count = celtium$backendCall("celtium$presentedFrameCount", new Class<?>[0]);
         return count instanceof Integer ? ((Integer) count).intValue() : -1;
+    }
+
+    /**
+     * A no-argument {@code int} counter on the live backend by name, or -1 when this run has none to ask.
+     * <p>
+     * The name is the backend's own accessor, so a counter that is not there reads as -1 in the report instead of
+     * failing the run: the reference leg (upstream Celeritas) has no such backend at all.
+     */
+    private static int celtium$backendInt(String accessor) {
+        Object value = celtium$backendCall(accessor, new Class<?>[0]);
+        return value instanceof Integer ? ((Integer) value).intValue() : -1;
     }
 
     /**
@@ -6459,6 +6488,7 @@ public final class ValidationClient {
             return;
         }
         report.addProperty("pictureScreenshot_" + stage, "screenshots/" + fileName);
+        report.addProperty("pictureGlLessProbe_" + stage, celtium$glLessProbeDetail());
         if (celtium$glLessInstalled()) {
             report.addProperty("pictureScreenshotUsable_" + stage, Boolean.FALSE);
             report.addProperty("pictureScreenshotNote_" + stage, "black by construction under the GL-less stub: there"
@@ -8524,7 +8554,23 @@ public final class ValidationClient {
         celtium$checkIdentity(identity, "runId", celtium$runId, where, failures);
         celtium$checkIdentity(identity, "scene", celtium$scene.name, where, failures);
         celtium$checkIdentity(identity, "stage", stage, where, failures);
-        celtium$checkIdentity(identity, "source", celtium$evidenceSource(), where, failures);
+        // The source is compared against the one this capture's own record carries, not against a fresh probe. Every
+        // other field here is a value recorded at the capture; this one used to be re-derived from a live global, so a
+        // probe that reads differently at verdict time failed the identity of a picture that is correct. Measured in
+        // the 268-mod E2E leg (runtime-e2e-268-amd-pr92-stack-scope): the picture's identity says
+        // source=presented-dump while the verdict's probe read gl-screenshot, and the GL screenshot it named was a
+        // single colour by construction (2811 bytes, 2 distinct values in 1280x720), so the failure was in the
+        // comparison rather than in the frame. The live probe is recorded beside the check, so a real mid-run change
+        // is visible as its own field instead of being read as a mismatch.
+        celtium$checkIdentity(identity, "source", evidence.source, where, failures);
+        String sourceProbe = celtium$evidenceSource();
+        report.addProperty("pictureSourceProbe_" + stage, sourceProbe);
+        if (!sourceProbe.equals(evidence.source)) {
+            report.addProperty("pictureSourceProbeDisagreement_" + stage, "the configuration probe reads " + sourceProbe
+                    + " now while this capture's picture was taken as " + evidence.source + "; the picture's identity is"
+                    + " judged against the value recorded with the capture, and the probe is recorded here so the"
+                    + " disagreement is named rather than silent (" + celtium$glLessProbeDetail() + ")");
+        }
         celtium$checkIdentity(identity, "image", celtium$relative(evidence.image), where, failures);
         celtium$checkIdentity(identity, "worldTick", evidence.requestedAtTick, where, failures);
         // The window can be resized and then put back while a request is outstanding (measured: 1280x720 ->
@@ -8603,6 +8649,26 @@ public final class ValidationClient {
             int framesInWorld = captureWorldFrames - celtium$worldFramesAtWorldStart;
             int delta = presentedInWorld - framesInWorld;
             int wholeRunDelta = evidence.presentedFrame - captureWorldFrames;
+            // This assertion compares the picture's presented frame with the world frames the world drew, which is the
+            // same claim only while every world frame presents. A run whose presents lag its frames fails here for a
+            // reason these two numbers do not yet attribute, so both counters and their deficit are recorded at the
+            // verdict. Measured in the 268-mod E2E leg (runtime-e2e-268-amd-pr92-stack-scope): 146 presents against
+            // 153 world frames, and the deficit existed at the dump request already (145 against 153), so the dump did
+            // not create it. Recorded, not yet explained.
+            report.addProperty("picturePresentedAtVerdict_" + stage,
+                    Integer.valueOf(celtium$presentedFrameCount()));
+            // The renderer's own arithmetic, so the deficit is attributed in the same run rather than inferred: skips
+            // are frames whose present call was declined before the swapchain, and attempts minus presented is what the
+            // swapchain refused. A deficit that is neither is frames that never reached the present call at all.
+            report.addProperty("picturePresentSkipsAtVerdict_" + stage,
+                    Integer.valueOf(celtium$backendInt("celtium$presentSkips")));
+            report.addProperty("picturePresentAttemptsAtVerdict_" + stage,
+                    Integer.valueOf(celtium$backendInt("celtium$presentAttempts")));
+            // The third term: a frame that never reached the present entry point is neither declined nor failed, and
+            // the entry counter is not restarted when a world adopts the window-time backend, so it spans the process.
+            report.addProperty("picturePresentHookCallsAtVerdict_" + stage,
+                    Integer.valueOf(celtium$backendInt("celtium$presentHookCalls")));
+            report.addProperty("pictureWorldFrameDeficit_" + stage, Integer.valueOf(framesInWorld - presentedInWorld));
             report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(delta));
             report.addProperty("pictureFrameDeltaWholeRun_" + stage, Integer.valueOf(wholeRunDelta));
             report.addProperty("pictureFrameScope_" + stage, "world window " + (celtium$worldStarts + 1) + ": the"
