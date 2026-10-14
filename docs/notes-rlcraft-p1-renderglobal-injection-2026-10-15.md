@@ -114,3 +114,40 @@ separate it are one leg each: **RLCraft − FoamFix** (it spliced into `TileEnti
 the one component this pack has that the working E2E and cohort sets do not). Until one of those boots the pack, the
 honest statement is: *RLCraft's first blocker is a mixin whose MCP method name resolves to nothing, ours is one
 instance of it, and the shared cause is unidentified.*
+
+## The blocker chain, measured (2026-10-15, after the substitution legs)
+
+pack-ranger ran the two substitutions. Together with the external evidence, the chain is now:
+
+**1. `RenderLib-1.12.2-1.2.8` breaks our `RenderGlobal` injection** — its `RenderLibClassTransformer` (a coremod
+`IClassTransformer`, so it runs before Mixin) names `RenderGlobal.renderEntities` outright, and the leg with that jar
+dies at 15.2 s with `Scanned 0 target(s)` for `sodium$renderTileEntities` → `RenderGlobal` never defines.
+
+**2. With RenderLib swapped to 1.4.5 (leg `rlcraft-p1-leg3-renderlib145`) our injection gets past that**, and the run
+reaches **21.7 s** — then dies of a *different* failure:
+
+```
+Description: Initializing game
+java.lang.VerifyError: Bad type on operand stack
+  Location: net/minecraft/client/renderer/EntityRenderer.func_78484_h()V @289: invokestatic
+  Reason:   Type 'net/minecraft/client/multiplayer/WorldClient' (current frame, stack[1]) is not assignable to
+            'net/minecraft/world/biome/Biome'
+```
+
+`func_78484_h` is **`addRainParticles`** (`scripts/mc-sources.sh --srg func_78484_h`), and the JAR that patches that
+method is **SereneSeasons**: `sereneseasons/asm/transformer/EntityRendererTransformer` references `addRainParticles`,
+`func_78484_h`, `net/minecraft/world/biome/Biome`, `net/minecraft/world/World` and `SeasonASMHelper` — i.e. a
+shape-sensitive ASM patch of exactly the method the verifier rejects. (DynamicSurroundings' weather renderer also
+references `addRainParticles`, but it is not a transformer of it.)
+
+**3. Removing RenderLib is not a valid substitution** — `EntityCulling-1.12.2-6.3.1` references
+`meldexun/renderlib` in **16 classes**, so leg `rlcraft-p1-leg4-no-renderlib` (16.3 s, same VerifyError) is **invalid
+evidence**: it breaks a dependency rather than isolating a cause. An independent crash report shows the same shape
+when RenderLib is absent — `MixinPreProcessorException … MutableAABB … ClassNotFoundException:
+meldexun/renderlib/util/MutableAABB`
+([Minecraft Forum thread](https://www.minecraftforum.net/forums/support/java-edition-support/3193345-log-error-meaning)).
+
+**Next discriminator (one leg)**: RLCraft with **RenderLib 1.4.5** and **SereneSeasons removed** — if the VerifyError
+goes and the game boots, SereneSeasons' transformer is the second blocker and the substitution list gains a second
+entry with a named reason. If it does not, the same `VerifyError` shape should be read as a *combination* effect and
+the next candidate is whatever else patches `addRainParticles`.
