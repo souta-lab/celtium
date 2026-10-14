@@ -128,14 +128,31 @@ forced it and with what the platform says about the same component. Two sources 
 half: the [Cleanroom end-user guide's compatibility table](https://github.com/CleanroomMC/cleanroom-website/blob/main/docs/wiki/end-user-guide/preparing-your-modpack.md)
 and the [Cleanroom Modpack Migration Notes](https://gist.github.com/Rongmario/90d02fe1a2cee5458ea4c74c3b30cecc).
 
-**What the platform names outright** (from the end-user guide):
+**What the platform names outright** (fetched from the end-user guide's
+[problematic-mods table](https://github.com/CleanroomMC/cleanroom-website/blob/main/docs/wiki/end-user-guide/preparing-your-modpack.md),
+2026-10-15):
 
 | component | platform's verdict | platform's replacement |
 |---|---|---|
-| **RandomPatches** | **"Known to cause crashes."** | Universal Tweaks |
+| **RandomPatches** | **"Known to cause crashes with certain mods."** | Universal Tweaks |
+| **FoamFix** | **"Outdated and prone to cause issues in Cleanroom Environment"** | VintageFix |
 | Phosphor | Incompatible | Alfheim Lighting Engine / Hesperus |
 | Clumps | Outdated | Fixeroo |
 | JustEnoughIDs / NotEnoughIDs | Outdated | RoughlyEnoughIDs (REID) |
+| BetterFPS | "Outdated and breaks core functionality" | — (remove) |
+| Farsight | "caches chunk indefinitely, which might impact RAM usage" | — (remove) |
+| AdvancedShader | "Binary patching, incompatible" | — (remove) |
+| Raw Input | already included in Cleanroom | — (remove) |
+
+Two of the rows above are components whose failure this project measured independently: **RandomPatches** (the
+GL-less cause, below) and **FoamFix** (the coremod that spliced a method into `TileEntity` in the RLCraft bisect).
+The platform's own words are recorded next to our measurement so a reader can see the two agree rather than having
+to take either on trust.
+
+**One correction to this project's own framing**: the same guide *recommends* **Celeritas** and **Nothirium** as
+optimization mods ("Celeritas and Nothirium do decrease ram usage and footprint"). So removing Nothirium from E2E is
+**not** a platform requirement — it is Celtium's own substitution, because Celtium replaces the terrain renderer and
+two of them cannot own the same classes. That distinction belongs in the table rather than being implied.
 
 That first row is the same component this project measured as the cause of the pack's GL-less failure: RandomPatches'
 tweak initialisation defines `org.lwjgl.opengl.Display` at 8.975 s, before the celtium mixin list exists at 9.837 s,
