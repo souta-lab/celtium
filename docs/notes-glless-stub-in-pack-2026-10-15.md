@@ -152,3 +152,54 @@ stub and renders GL-less, which is the same fact from the other side.
    GLFW_NO_API)` by reflection before any window exists), or a target class that is guaranteed to load after our
    mixins are registered. That is a design decision for the next unit, and it is worth doing even once RandomPatches
    is removed: "one mixin must win a race against every coremod" is the property that failed here.
+
+## What Mixin's own source says about the two registration lists (read 2026-10-15)
+
+The fix in PR #128 moves `core.LwjglxDisplayMixin` from the plugin's `getMixins()` list into
+`mixins.celeritas.json`'s `client` list. Whether that changes *when* the mixin is registered is a question about
+Mixin, and its source answers it - with a caveat that matters:
+
+```java
+// MixinConfig
+void prepare(Extensions extensions) {
+    ...
+    this.prepareMixins("mixins", this.mixinClasses, false, extensions);
+    switch (this.env.getSide()) {
+        case CLIENT: this.prepareMixins("client", this.mixinClassesClient, false, extensions); break;
+        ...
+    }
+}
+
+void postInitialise(Extensions extensions) {
+    if (this.plugin != null) {
+        List<String> pluginMixins = this.plugin.getMixins();
+        this.prepareMixins("companion plugin", pluginMixins, true, extensions);
+    }
+    ...
+}
+```
+
+Three facts follow, and they are quoted from [MixinConfig.java](https://github.com/SpongePowered/Mixin/blob/master/src/main/java/org/spongepowered/asm/mixin/transformer/MixinConfig.java):
+
+1. **The JSON `client` list is prepared before the plugin's list** - but both are prepared by the *same*
+   `prepareConfigs` pass, and the class javadoc says that pass is deferred: "we will invoke the initialisation on
+   the first call to either the `hasMixinsFor()` or `getMixinsFor()` methods". In the measured pack leg that pass is
+   where `Found 66 mixin classes` appears at **9.837 s** - *after* `Display` was defined at 8.975 s. So moving the
+   mixin from one list to the other may **not** change the timing at all, and PR #128's own claim is therefore
+   "plausible, unverified" until a leg says otherwise.
+2. **Plugin-supplied mixins are prepared with `ignorePlugin = true`** (`prepareMixins("companion plugin", …, true,
+   …)`), which confirms the earlier bytecode reading: `MixinInfo.shouldApplyMixin` only consults the plugin when
+   `ignorePlugin` is false, so this plugin's unconditional `false` never vetoed its own mixins.
+3. A target that is already loaded is a hard error for a `required` config
+   (`MixinTargetAlreadyLoadedException` from `MixinInfo.readDeclaredTargets`, seen in the wild as "target … was
+   loaded too early"), yet the pack leg neither errors nor logs. That asymmetry is itself evidence that the mixin is
+   dropped before that check - and it is the thing the next leg has to look at.
+
+**What the next leg must therefore distinguish**, for the pack with RandomPatches present:
+
+- the JSON route worked (any `LwjglxDisplayMixin` line appears, or the stub installs), or
+- it did not (still zero lines), in which case the fix has to be **independent of Mixin registration order
+  entirely** - a coremod/`IFMLLoadingPlugin` ASM transformer that edits `org.lwjgl.opengl.Display.create` in the
+  transformer chain, where the hint can be placed after `glfwInit` and before `glfwCreateWindow` regardless of when
+  any mixin config is prepared. The early `CeltiumGlStub.install()` from `onLoad` stays useful either way: it makes
+  the GL function surface resolve to the stub, but it cannot prevent the context from being created.
