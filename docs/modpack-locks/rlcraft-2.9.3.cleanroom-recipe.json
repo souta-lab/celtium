@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "source": "Cleanroom Modpack Migration Notes, RLCraft section (gist.github.com/Rongmario/90d02fe1a2ce5458ea4c74c3b30cecc)",
-  "status": "PLAN ONLY - no leg has run with this recipe yet",
+  "status": "MEASURED - leg rlcraft-p1-leg7-recipe applied this recipe (plus RenderLib 1.4.5 and RecurrentComplex 1.4.8.7) and reached fixtureStatus PASSED, exit 0, 131.6s on AMD",
   "remove": [
     {
       "pattern": "AttributeFix",

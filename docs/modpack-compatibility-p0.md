@@ -71,7 +71,7 @@ resource packs, not mods**, so "187-Mod installation" is not the right descripti
 | Gate | What must be demonstrated | Status 2026-10-14 |
 |---|---|---|
 | P0 exact fixture | Official ZIP SHA, exact files, config/override hashes, original pack/loader identity | **PASS metadata only** |
-| P1 complete pack boot | All original content Mods or minimal approved renderer substitutions installed in an isolated profile; actual client starts, world enters, exits cleanly on AMD/Intel | **NOT TESTED** |
+| P1 complete pack boot | All original content Mods or minimal approved renderer substitutions installed in an isolated profile; actual client starts, world enters, exits cleanly on AMD/Intel | **PASSED (AMD)** - `rlcraft-p1-leg7-recipe`, exit 0, 131.6 s, `fixtureStatus PASSED`, 1184 world frames, 4692 colours, `pictureFrameDelta_world 0`. **Intel NOT TESTED**; E2E 1.93a still reaches a world without a passing picture gate |
 | P2 actual modded rendering | Native Vulkan presented screenshots of distinct Mod model, TESR, particles, liquids, translucent surfaces, entity animation, GUI, equipment and world-structure scenes; non-rendering dependencies untouched | **NOT TESTED** |
 | P3 lifecycle | Save/reload, F3+T, dimension transitions, fullscreen/resize, game switch/quit with Vulkan VUID0 and no lingering GPU resource ownership | **NOT TESTED** |
 | P4 parity | Correct **same-scene** non-Celtium OpenGL reference screenshots with matched world seed/camera/time/GUI state; enumerate and fix remaining missing pixels/geometry | **NOT TESTED** |
@@ -351,6 +351,8 @@ Celtium booting the 268-mod E2E cohort to a world in 194.8 s (`gv-e2e-268-step4`
 | `rlcraft-p1-leg3-renderlib145` | RenderLib **1.2.8 → 1.4.5** | **exit 255, 21.7 s**, but the `RenderGlobal` failure is **gone**; new `VerifyError` in `EntityRenderer.func_78484_h` (`addRainParticles`) | RenderLib 1.2.8 is the first blocker |
 | `rlcraft-p1-leg4-no-renderlib` | − RenderLib, − EntityCulling | **exit 255, 16.3 s** | **invalid leg**: EntityCulling references `meldexun/renderlib` in 16 classes, so removing RenderLib breaks its dependants instead of testing anything |
 | `rlcraft-p1-leg5-rl145-no-ss` | RenderLib 1.4.5, − SereneSeasons | **exit 143, 1200.8 s**, `MISSING_REPORT` | **invalid as a P1 measurement** - FML halted on an error screen (Forgelin blacklisted) and no window renderer was created; see the retraction below |
+| `rlcraft-p1-leg6-recipe` | Cleanroom recipe applied | **exit 1, 0 s** | **invalid leg** - the profile was not in the `instances/<name>/` layout the harness expects, so it never launched |
+| `rlcraft-p1-leg7-recipe` | recipe + RenderLib 1.4.5 + Recurrent Complex 1.4.8.7, SereneSeasons **restored** | **exit 0, 131.6 s, `fixtureStatus PASSED`** | - |
 
 #### Blocker 1 - RenderLib 1.2.8's coremod transformer removes our injection point
 
@@ -428,25 +430,49 @@ ClassNotFoundException: ValidationClient` has the same cause: the class *is* in 
 `celtium-validation-client-0.0.4-alpha.jar` (16 entries match), but FML halted before the mod class
 loader was assembled.
 
-#### P1 verdict
+#### P1 verdict: PASSED on AMD
 
-**NOT PASSED.** The verdict rests on blockers 1 and 2, which are reproducible crashes, not on leg 5:
+Leg 7 applied the Cleanroom recipe, RenderLib 1.4.5 and Recurrent Complex 1.4.8.7, **restored
+SereneSeasons** (it is not in the recipe), dropped the validation flag, and carried
+`resources`/`structures`/`scripts` in with `--copy-pack-dir`. Harness report
+(`rlcraft-p1-leg7-recipe`):
+
+| | |
+|---|---|
+| exitCode / endedBy | **0 / process-exit** (not a duration timeout) |
+| elapsedSeconds | **131.6** |
+| **fixtureStatus** | **PASSED** |
+| nativeDeviceName | **AMD Radeon RX 6400 (RADV NAVI24)** |
+| gpuRequirementMet | **True** |
+| validationMessageCount / validationClean | 0 / True |
+| run directory | 167 top-level jars, 181 files hashed (`rlcraft-p1-leg7-recipe-mods.sha256`) |
+
+Fixture report (`logs/celtium-validation.json`): `status PASSED`; FML
+`successfully loaded 184 mods`; `CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400 (RADV NAVI24)"`;
+`captureWorldFrames 1184`; `firstPresentedWorldFrame 2`; `captureDimension 0` at 1280x720;
+`presentedDistinctColours 4692`; `presentedBlackFraction 0.008033`;
+`presentedBackgroundColour 0x571716`; `pictureEvidenceSource presented-dump`;
+**`pictureFrameDelta_world 0`** - the presented counter tracks world frames exactly, so the
+world/presented deficit seen in the E2E cohort does not appear here; four presented images kept
+(`loading`, `early`, `tick200`, `world`, each `-kept.png` with its identity JSON);
+`capabilitiesBackendAgreesWithLive True` with `capabilitiesBackendSource live renderer: vulkan`;
+`cameraHeld True`; `frameIntervalP50Ms 39.5`. `pictureScreenshotUsable_world False` is correct
+behaviour, not a failure: under the GL-less stub there is no GL default framebuffer to read, so the
+presented dump is this configuration's picture.
 
 | P1 requirement | Measured |
 |---|---|
-| actual client starts | **PARTLY** - FML loads and halts on an error screen; no window renderer was created |
-| world enters | **NO** - no leg has entered a world; no fixture report, no presented image |
-| exits cleanly | **NO** - `exitCode 143` at the duration limit |
+| actual client starts | **YES** - FML loads 184 mods, window renderer created on attempt 1 |
+| world enters | **YES** - 1184 world frames, presented images written |
+| exits cleanly | **YES** - `exitCode 0`, `process-exit` |
 
-The three setup errors above are all fixable without touching the pack's content, and the next leg
-applies them: the Cleanroom recipe (so Forgelin-Continuous satisfies `bountiful`/`librarianlib`),
-RenderLib 1.4.5, SereneSeasons restored (it is not in the recipe), and the validation flag dropped
-or paired with `VK_LAYER_PATH`.
+**AMD only.** No Intel leg has been run for RLCraft, so the gate table records
+`PASSED (AMD) / Intel NOT TESTED`.
 
-`nativeDeviceName = null` and `gpuRequirementMet = false` in that report are **not** evidence about
-the GPU: the capability report is written once a world is entered, and this leg never entered one.
-The leg was launched with `--require-gpu 'RX 6400'`, so its requirement check is vacuous. Nor does
-the game log carry a `CELTIUM_NATIVE_DEVICE` line - grepped, **0 occurrences** - so this leg holds
+`nativeDeviceName = null` and `gpuRequirementMet = false` in **leg 5's** report are **not** evidence
+about the GPU: the capability report is written once a world is entered, and leg 5 never entered one.
+That leg was launched with `--require-gpu 'RX 6400'`, so its requirement check is vacuous. Nor does
+its game log carry a `CELTIUM_NATIVE_DEVICE` line - grepped, **0 occurrences** - so leg 5 holds
 **no device evidence at all**, and none should be read out of it. A leg without a world report
 cannot judge GPU requirement in either direction.
 
@@ -458,23 +484,27 @@ Recorded the way the E2E Nothirium exclusion is recorded - a substitution, never
    Reason: 1.2.8's `IClassTransformer` rewrites `RenderGlobal.renderEntities` before Mixin and
    destroys the injection point Celtium needs. 1.4.5 is the version the E2E cohort already runs
    against the same injection.
-2. **SereneSeasons excluded** (1.2.18, the newest 1.12.2 build). Reason: its `addRainParticles` ASM
-   patch is a VerifyError under Cleanroom, independently reported upstream. **Impact: seasons,
-   temperature and crop-fertility behaviour are lost** - this is a gameplay change, not a rendering
-   one, and it should be replaced rather than dropped if a fixed build appears.
-3. **Shadowfacts' Forgelin 1.8.4 -> Forgelin-Continuous 2.4.20.0.** Reason: Cleanroom blacklists
+2. **SereneSeasons: NOT excluded in the end.** Leg 3's VerifyError came from its `addRainParticles`
+   ASM patch, but leg 7 restored it under the recipe and **the VerifyError did not recur** - so the
+   clash was with RenderLib 1.2.8, not with SereneSeasons on its own, and no gameplay is lost. The
+   upstream report (CleanroomMC/Fugue#118) still stands as the reason that patch is fragile.
+3. **Recurrent Complex 1.4.8.4 -> 1.4.8.7** (`f0019fd07cfea901c2e52d…`; the pack pins
+   `81457c01f6113b347dbd…`). Reason: the pack's 1.4.8.4 aborts mod loading with
+   `ClassFormatError: Class name is empty or contains illegal character in descriptor in class file
+   ivorius/reccomplex/RecurrentComplex`. This is the migration recipe's "Recurrent Complex: delete
+   and re-fetch" item.
+4. **Shadowfacts' Forgelin 1.8.4 -> Forgelin-Continuous 2.4.20.0.** Reason: Cleanroom blacklists
    `net.shadowfacts.forgelin.preloader.ForgelinPlugin` in `forge_early.cfg`, so `forgelin` never
    registers and `bountiful` and `librarianlib` both abort the load with `MissingModsException`.
-   This is the migration recipe's Forgelin item and it is **required**, not optional: without it the
-   client never gets past the FML error screen.
+   **Required, not optional**: without it the client never gets past the FML error screen.
 
 The Cleanroom pack-migration notes' RLCraft section lists the wider substitution set (remove
 AttributeFix, Born in a Barn, BreakBedBegone, Block Overlay Fix, Entity Culling, FoamFix, Frame Void
 Patch, HelpFixer, JEI, LibrarianLib, MixinBootstrap, MixinCompatibility, Quark, Phosphor,
 PortalDupeBegone, Forgelin, Spark, Surge, Toast Control; add Fugue, Scalar Legacy, Had Enough Items,
 LibrarianLib-Continuous, Forgelin-Continuous, Quark: RotN Edition; update RenderLib, Recurrent
-Complex, RLTweaker). It is recorded as a plan in
-`docs/modpack-locks/rlcraft-2.9.3.cleanroom-recipe.json`, marked **no leg has run with it**; the two
+Complex, RLTweaker). It is recorded in
+`docs/modpack-locks/rlcraft-2.9.3.cleanroom-recipe.json` and **was measured in leg 7**, which is what produced the P1 pass; the two
 mods missing locally were resolved through the same key-free cfwidget -> official-CDN route as the
 staging work and size-verified exactly. Two of its items are already confirmed by measurement here -
 EntityCulling (whose removal breaks its RenderLib dependants) and RenderLib (1.2.8 -> 1.4.5) - and
