@@ -92,3 +92,22 @@ the module like the rest of the repo.
   and Voxy programs map onto the native pipeline.
 - `noiseTextureResolution`/`colortexNFormat`/`const` target metadata is already
   collected per program — the SPIR-V backend consumes it directly.
+
+## S2 preliminary: actual Vulkan SPIR-V stage probe (2026-10-14)
+
+A standalone `SpirvStageCompiler` now exercises a real `glslangValidator` with
+`-V --target-env vulkan1.2 --spirv-val` and checks the resulting SPIR-V 1.5
+entrypoint and hash. Synthetic GLSL 450 produced **1,048-byte vertex** and
+**492-byte fragment** stages on the local extracted glslang 16.6.0, with SHA256
+`1908edd12c0e5236db1a9c2f36aaff88731b38b7108a47f2e8448e43120f9afd`
+(vertex) and `7e8cf6f457ae73b8e7fa97efb7d8ece1cedbf43571ba1da595ab42862a1d8417`
+(fragment). Both had the expected SPIR-V version 1.5 and passed glslang's
+embedded `spirv-val`. The bytecode was generated only from **original synthetic
+fixture shaders**; no BSL shader source was copied or compiled.
+
+This is **not** yet a pack-level compiler: BSL stages use `#version 130`, legacy
+OpenGL builtins and unbound uniforms, which must be deliberately lowered for
+Vulkan rather than auto-replacing just the GLSL version token. The stage probe
+refuses GLSL < 450, tessellation, geometry and compute. Descriptor/vertex
+interface reflection, pack option substitution and real native shadow images
+remain unimplemented.

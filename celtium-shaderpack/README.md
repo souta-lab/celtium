@@ -86,3 +86,33 @@ profile/override flips, and zip-vs-directory determinism. When a real BSL zip is
 reachable (`-Dceltium.bslZip=...` or `CELTIUM_BSL_ZIP`), one extra test loads it
 and asserts the census is error-free with the expected dimension map; CI skips
 it cleanly.
+
+## S2 stage compiler probe (experimental)
+
+A deliberately isolated Vulkan 1.2 SPIR-V compiler/inspector is available in
+`SpirvStageCompiler` and `SpirvModule`. It accepts **already lowered Vulkan
+GLSL 450+** vertex and fragment source and calls an *explicitly supplied*
+`glslangValidator` binary using `ProcessBuilder` (never a shell). It applies
+source-size and output-size limits, a 15-second deadline, `--spirv-val`,
+validates the returned SPIR-V 1.0–1.5 header/instruction structure and entrypoint
+execution model, and exposes immutable bytes plus SHA-256. Compiler temp files
+are deleted. Nothing runs at game startup and no compiler is bundled with Celtium.
+
+```sh
+# Synthetic Vulkan GLSL 450 test sources; NOT an OptiFine pack source.
+./gradlew -p celtium-shaderpack test
+java -cp celtium-shaderpack/build/classes/java/main \
+  org.soutalab.celtium.shaderpack.cli.SpirvCompileProbe \
+  /absolute/path/to/glslangValidator VERTEX /tmp/triangle.vert /tmp/triangle.vert.spv
+```
+
+The JUnit suite has compiler-free structural/process tests plus an optional
+real `glslangValidator` integration test (set `CELTIUM_GLSLANG_VALIDATOR` to its
+absolute executable path). **BSL v10.1.8 uses legacy `#version 130` and OptiFine
+fixed-function semantics:** it cannot be fed directly into this compiler. Such
+stages are rejected with a precise "needs explicit S2 lowering" error. Future
+S2 work must bind the S1 `PackManifest` program selection to safe preprocessed
+source, translate legacy attributes/coordinates/material uniforms and rewrite
+samplers/descriptors, then inspect stage interfaces and resource limits. Neither
+this probe nor S1 claims shaderpack render correctness; the first actual Vulkan
+shadow depth pass and AMD/Intel image acceptance is S3.
