@@ -106,3 +106,36 @@ non-background fraction are unchanged across N consecutive frames, both of which
 with the time-based properties kept as a bounded fallback and recorded in the leg. Until that exists, every
 dimension-change leg must state its wait and be read with that in mind - the nether FAILED is a capture taken
 inside the empty window, not yet a statement about the renderer.
+
+## The peers' scope, in their own words (read 2026-10-15)
+
+**Vulkanizator Alpha 22** ([CurseForge file page](https://www.curseforge.com/minecraft/mc-mods/vulkanizator/files/8494271)) lists
+what its "safe default renderer path" actually does, and the list is the clearest statement of the hybrid design
+available anywhere:
+
+> 1. Minecraft's remaining compatibility framebuffer is captured through the asynchronous **OpenGL PBO ring**.
+> 2. The image is copied into a Vulkan upload image.
+> 3. Opaque, cutout and translucent chunk VBOs are mirrored into persistent world-space Vulkan buffers and rendered
+>    into the offscreen Vulkan colour/depth target.
+> 4. Vanilla ParticleManager layers and the targeted-block outline are rendered through the native Vulkan
+>    dynamic-scene pipeline.
+> 5. The completed image is transferred to the overlay swapchain using `vkCmdBlitImage`.
+> 6. The final frame is displayed by `vkQueuePresentKHR`.
+>
+> Sky, clouds, weather, entities, hand rendering and GUI remain compatibility-produced and are preserved in the
+> captured base image.
+
+It also states that its crash-prone fullscreen graphics composite "is not created by default" and needs an explicit
+`-Dvulcanizator.experimental.graphicsComposite=true` - a reminder that shipping the safe path by default and gating
+the ambitious one is a legitimate shape for a renderer like this, and one this project could copy for its own
+GL-less mode.
+
+**VulkanMod-Next** ([CurseForge](https://www.curseforge.com/minecraft/mc-mods/vulkanmod-next), 1.12.2) draws terrain
+in Vulkan and "**shares one depth buffer** so everything lines up" with the game's remaining GL rendering, and its
+compatibility table lists:
+
+> | Celeritas, Actinium | 🟡 | Sodium ports - a second terrain renderer. **This one steps aside.** |
+
+So the peer that replaces the terrain renderer **defers to Celeritas** rather than competing with it. That is the
+slot this project occupies, and it is worth stating in the project's own compatibility documentation: on a pack with
+Celtium installed, a mod like VulkanMod-Next is expected to stand aside, and the reverse should be true too.
