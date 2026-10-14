@@ -4,6 +4,7 @@ import net.minecraftforge.fml.client.SplashProgress;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.taumc.celeritas.core.CeltiumGllessHint;
 
@@ -24,6 +25,25 @@ import org.taumc.celeritas.core.CeltiumGllessHint;
  */
 @Mixin(SplashProgress.class)
 public class SplashProgressMixin {
+    /**
+     * Skips Forge's splash screen entirely under the GL-less surface.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-cohort-fix128x}, the first cohort run carrying the fix above): the game died
+     * during {@code Minecraft.init} with
+     * {@code net.minecraftforge.fml.client.SplashProgress$4: org.lwjgl.LWJGLException: Couldn't create shared context}
+     * and Forge's own message that it had detected an error loading Minecraft and disabled the splash screen. The
+     * splash thread creates a shared GL context, which a {@code GLFW_NO_API} window cannot provide, so answering
+     * {@code getMaxTextureSize} let the splash get far enough to reach that attempt - before the fix its -1 sentinel
+     * failed earlier and the splash disabled itself quietly. The atlas still needs the real answer, so the value below
+     * stays; what is skipped is the splash itself.
+     */
+    @Inject(method = "start", at = @At("HEAD"), cancellable = true, remap = false)
+    private static void celtium$skipSplashWithoutContext(CallbackInfo ci) {
+        if (CeltiumGllessHint.isGllessClaimed()) {
+            ci.cancel();
+        }
+    }
+
     @Inject(method = "getMaxTextureSize", at = @At("RETURN"), cancellable = true, remap = false)
     private static void celtium$answerMaxTextureSize(CallbackInfoReturnable<Integer> cir) {
         // At RETURN, not HEAD: calling SplashProgress.getMaxTextureSize() from inside that same method would re-enter
