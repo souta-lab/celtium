@@ -175,9 +175,29 @@ public class MinecraftMixin {
                     capabilitiesState = "null";
                 } else {
                     Object addresses = capabilities.getClass().getMethod("getAddressBuffer").invoke(capabilities);
+                    // How many of the first entries are non-zero is what separates "a capabilities table built from
+                    // our provider" from "a table that exists but is empty", and the write-once ICD means the first
+                    // one created wins for the whole process - so the count matters more than the buffer's metadata.
+                    long nonZero = -1;
+                    long sampled = 0;
+                    try {
+                        java.nio.ByteBuffer buffer = (java.nio.ByteBuffer) addresses.getClass()
+                                .getMethod("getBuffer").invoke(addresses);
+                        int capacity = buffer.capacity() / Long.BYTES;
+                        sampled = Math.min(capacity, 256);
+                        nonZero = 0;
+                        for (int i = 0; i < sampled; i++) {
+                            if (buffer.getLong(i * Long.BYTES) != 0L) {
+                                nonZero++;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // leave the count as unknown
+                    }
                     capabilitiesState = capabilities.getClass().getName() + "@"
                             + Integer.toHexString(System.identityHashCode(capabilities))
-                            + " addresses=" + addresses;
+                            + " addresses=" + addresses
+                            + " nonZeroFirst" + sampled + "=" + (nonZero < 0 ? "unknown" : Long.toString(nonZero));
                 }
             } catch (Throwable error) {
                 Throwable cause = error.getCause() == null ? error : error.getCause();
