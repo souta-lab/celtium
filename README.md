@@ -9,7 +9,7 @@ An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, 
 >
 > **Vulkanだけで描画・表示できますが、現状は非常に重く、大きなカクつきや一時的な停止があります。描画とmod互換性も開発中で、通常プレイ向けの完成版ではありません。**
 
-Status updated: **2026-10-12**.
+Status updated: **2026-10-15**.
 
 ## Current status
 
@@ -44,6 +44,16 @@ See [the current status and priorities](docs/plan.md), [the performance plan](do
 - Shader-pack and shadow-mod compatibility is planned **after** the shaderless renderer and major gameplay mods work. Vanilla ShaderGroup, spectator effects and entity outlines remain part of the base renderer's scope.
 - This is not a general OpenGL-to-Vulkan translator. Native passes follow Minecraft's terrain, model/item, entity/TESR, particle, UI, texture and framebuffer semantics.
 - Mesh shaders are **not required or planned**. Optimizations must preserve a usable baseline on weaker GPUs.
+- **GL-less depends on the window hint actually being applied, and in a large pack it may not be.** Measured
+  2026-10-15 in the 268-mod E2E pack: another mod loaded `org.lwjgl.opengl.Display` before CleanMix registered
+  Celtium's mixins (RandomPatches' tweak initialisation defines it at 8.975 s, the mixin list is built at 9.837 s),
+  so the `GLFW_NO_API` hint was never set, the window was created with a real OpenGL 4.6 context and the run was a
+  **hybrid** rather than GL-less. Cleanroom's own
+  [compatibility table](https://github.com/CleanroomMC/cleanroom-website/blob/main/docs/wiki/end-user-guide/preparing-your-modpack.md)
+  lists RandomPatches as "Known to cause crashes with certain mods". A fix that sets the hint from the coremod's
+  transformer chain instead of from a mixin is in review; until it lands, treat a pack that contains RandomPatches as
+  **not verified** for GL-less operation, and read `CELTIUM_GLLESS stub GL provider installed` in the log rather than
+  assuming it.
 
 The supported development direction is Vulkan-only. Old bridge/probe experiments and retained upstream OpenGL code are not a supported alternate renderer or a promise of custom OpenGL compatibility.
 
