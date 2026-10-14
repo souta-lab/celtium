@@ -643,10 +643,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         try {
             Class<?> capabilitiesClass = Class.forName("org.lwjgl.opengl.GLCapabilities");
+            // Both the extension names (GL_*) and the version pseudo-extensions (OpenGL11 ... OpenGL46): the
+            // generated checks ask for a version with ext.contains("OpenGL30") as well as for extension names, so a
+            // set built from GL_* alone leaves core functions gated on a version at zero. Measured offline before any
+            // leg: glGetString came out 0x0 with only the GL_* names and non-zero with both.
             java.util.Set<String> extensions = new java.util.HashSet<>();
             for (java.lang.reflect.Field field : capabilitiesClass.getFields()) {
-                if (field.getName().startsWith("GL_")) {
-                    extensions.add(field.getName());
+                String name = field.getName();
+                if (name.startsWith("GL_") || name.startsWith("OpenGL")) {
+                    extensions.add(name);
                 }
             }
             java.lang.reflect.Constructor<?> constructor = capabilitiesClass.getDeclaredConstructor(
