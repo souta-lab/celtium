@@ -5945,6 +5945,17 @@ public final class ValidationClient {
     }
 
     /**
+     * A no-argument {@code int} counter on the live backend by name, or -1 when this run has none to ask.
+     * <p>
+     * The name is the backend's own accessor, so a counter that is not there reads as -1 in the report instead of
+     * failing the run: the reference leg (upstream Celeritas) has no such backend at all.
+     */
+    private static int celtium$backendInt(String accessor) {
+        Object value = celtium$backendCall(accessor, new Class<?>[0]);
+        return value instanceof Integer ? ((Integer) value).intValue() : -1;
+    }
+
+    /**
      * {@return the presented frame the renderer recorded for this evidence's path}, or null when it cannot say.
      * <p>
      * The swapchain counts its own successful writes per file name and the backend names the present that wrote
@@ -8559,6 +8570,13 @@ public final class ValidationClient {
             // not create it. Recorded, not yet explained.
             report.addProperty("picturePresentedAtVerdict_" + stage,
                     Integer.valueOf(celtium$presentedFrameCount()));
+            // The renderer's own arithmetic, so the deficit is attributed in the same run rather than inferred: skips
+            // are frames whose present call was declined before the swapchain, and attempts minus presented is what the
+            // swapchain refused. A deficit that is neither is frames that never reached the present call at all.
+            report.addProperty("picturePresentSkipsAtVerdict_" + stage,
+                    Integer.valueOf(celtium$backendInt("celtium$presentSkips")));
+            report.addProperty("picturePresentAttemptsAtVerdict_" + stage,
+                    Integer.valueOf(celtium$backendInt("celtium$presentAttempts")));
             report.addProperty("pictureWorldFrameDeficit_" + stage, Integer.valueOf(framesInWorld - presentedInWorld));
             report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(delta));
             report.addProperty("pictureFrameDeltaWholeRun_" + stage, Integer.valueOf(wholeRunDelta));

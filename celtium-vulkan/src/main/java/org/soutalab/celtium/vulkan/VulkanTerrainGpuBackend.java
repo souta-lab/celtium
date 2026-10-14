@@ -1062,6 +1062,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
     private int framePresentedFromVulkan;
     private int presentAttempts;
+    /**
+     * Present calls the entry point declined before reaching the swapchain, so the reason in
+     * {@code presentSkipReason} can be counted instead of only recorded. The fixture's picture assertion compares the
+     * presented counter with its own world-frame counter, and a deficit has two very different causes - presents that
+     * were declined, and presents that failed - which those two counters alone cannot tell apart (measured in the
+     * 268-mod E2E leg: 146 presents against 153 world frames).
+     */
+    private int presentSkips;
     private int presentFailures;
     /** Frame composites left to the present path because Vulkan had already shown the frame. */
     private int glCompositesSkipped;
@@ -12037,12 +12045,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         if (this.frameTarget == null || this.gpuStalled) {
             this.presentSkipReason = "no frame target, or stalled";
+            this.presentSkips++;
             return false;
         }
         if (!ensureSwapchain()) {
             // The swapchain is created here rather than only by the diagnostic probe: "anything that needs to present calls
             // this" is what that method's own contract says, and this is the second caller it was written for.
             this.presentSkipReason = "swapchain unavailable";
+            this.presentSkips++;
             return false;
         }
         // GL's updateDisplay presents everything drawn since the last swap, but this renderer defers immediate
@@ -12071,6 +12081,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         if (!this.lastFrameReachedQueue) {
             this.presentSkipReason = "no completed frame waiting";
+            this.presentSkips++;
             // No completed frame's content is waiting in the shared image. frameSubmitReachedQueue cannot be used here:
             // it is cleared when the next frame begins, and this call happens after that.
             return false;
@@ -12080,6 +12091,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         try {
             if (!ensureFrameTarget()) {
                 this.presentSkipReason = "frame target not available";
+                this.presentSkips++;
                 return false;
             }
             // No beginFrame/endFrame around this any more. The probe needed them because it produced the content itself,
@@ -12677,6 +12689,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@return how many frames have been presented from Vulkan so far}. */
     public int celtium$presentedFrameCount() {
         return this.framePresentedFromVulkan;
+    }
+
+    /**
+     * {@return how many present calls the entry point declined before reaching the swapchain}.
+     * <p>
+     * Read beside {@link #celtium$presentAttempts()} and {@link #celtium$presentedFrameCount()} it turns a deficit
+     * between the fixture's world frames and the presented counter into an attribution: a declined call is a frame that
+     * was drawn and never offered to the swapchain, a failed attempt is one the swapchain refused.
+     */
+    public int celtium$presentSkips() {
+        return this.presentSkips;
+    }
+
+    /** {@return how many present calls reached the swapchain present}. */
+    public int celtium$presentAttempts() {
+        return this.presentAttempts;
     }
 
     /**
