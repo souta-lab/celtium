@@ -289,6 +289,29 @@ public final class CeltiumGllessHint {
         return 0x911A; // GL_ALREADY_SIGNALED
     }
 
+    /**
+     * Answers {@code glGetTexLevelParameteriv} for the two queries a caller divides by.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-cohort-fix152}, the first run whose world load returned): the client got past
+     * the join and died with {@code ArithmeticException: / by zero} at
+     * {@code net.minecraftforge.client.CloudRenderer.render(CloudRenderer.java:326)} - {@code offU = offU % texW} -
+     * reached through {@code FMLClientHandler.renderClouds} and {@code RenderGlobal.func_180447_b}. Forge fills those
+     * two fields from {@code glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH/HEIGHT)} (CloudRenderer.java
+     * 479-480), and the generic zero-writer answered zero, which is not a usable divisor.
+     * <p>
+     * The value is Forge's own: the same class defines {@code PX_SIZE = 1 / 256F} and its cloud texture is 256 square,
+     * so 256 is what that query is asked about rather than a guess. Everything else keeps the zero answer, because for
+     * the rest of the queries a caller reads a number it does not divide by, and inventing values for those would be
+     * the kind of lying the stub's comments elsewhere refuse.
+     */
+    public static void glGetTexLevelParameteriv(int target, int level, int pname, long params) {
+        int value = (pname == 0x1000 || pname == 0x1001) ? 256 : 0; // GL_TEXTURE_WIDTH / GL_TEXTURE_HEIGHT
+        if (params == 0L) {
+            return;
+        }
+        org.lwjgl.system.MemoryUtil.memPutInt(params, value);
+    }
+
     public static void glGetZero(long params, int bytes) {
         if (params == 0L) {
             return;

@@ -197,6 +197,20 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // glGetTexLevelParameteriv carries the property being asked for, and Forge's cloud renderer divides by two of
+        // its answers (GL_TEXTURE_WIDTH/HEIGHT, filled at CloudRenderer.java 479-480 and used as a modulus at 326).
+        // The generic zero-writer below answers zero, which is not a usable divisor, so this one query gets a real
+        // answer. See CeltiumGllessHint.glGetTexLevelParameteriv for why 256 is the value Forge asks about.
+        if (returnType.equals("V") && name.endsWith("nglGetTexLevelParameteriv") && descriptor.startsWith("(IIIJ)")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.ILOAD, 2);
+            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetTexLevelParameteriv", "(IIIJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         // The remaining single-value get functions: the caller reads its own buffer, so a no-op would leave
         // uninitialised memory there. Only the ones whose element count is exactly one are handled, because the
         // signature does not say how many bytes the caller allocated and writing more would corrupt the heap.
