@@ -7792,10 +7792,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                             + " texture=" + (this.lightmapTexture == null ? "null" : "set"));
                 }
                 if (size[0] > 0 && size[1] > 0) {
+                    // Bounded stage marker. Leg gv-cohort-lm3 showed valid inputs (id=18, size=256x256) and still left
+                    // the mirror null with no failure recorded, so the question is which of these four calls is where
+                    // it stops - the report's counters are a single early heartbeat and cannot say.
+                    celtium$lightmapStage("imageFor");
                     org.soutalab.celtium.vulkan.VulkanGlTexture established =
                             celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
+                    celtium$lightmapStage("upload");
                     established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    celtium$lightmapStage("markInitialized");
                     celtium$registry().markFullyInitialized(this.lightmapGlId);
+                    celtium$lightmapStage("assigned");
                     this.lightmapTexture = established;
                     this.lightmapReestablished++;
                     this.lightmapSuppliedOnDemand++;
@@ -7806,6 +7813,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
+
+    /** Bounded stage marker for the light map mirror's establishment. */
+    private void celtium$lightmapStage(String stage) {
+        if (celtium$lightmapStages++ < 12) {
+            System.out.println("[Celtium] CELTIUM_LIGHTMAP_STAGE stage=" + stage
+                    + " id=" + this.lightmapGlId + " count=" + celtium$lightmapStages);
+        }
+    }
+
+    /** Bounded stage counter for the light map mirror. */
+    private int celtium$lightmapStages;
     private boolean supportedImmediateTarget() {
         // Every condition names itself. One shared message covered all five and could not say which one refused, which is
         // how 870 format-2 refusals in a run stayed unnamed (measured: the stage marker said this gate, and the tally
