@@ -258,14 +258,23 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     protected abstract SECTIONMANAGER createRenderSectionManager(CommandList commandList);
 
     protected void initRenderer(CommandList commandList) {
+        // Temporary probe (2026-10-15): leg gv-cohort-fix149 reached "command list created, initialising the
+        // renderer" and never printed "renderer initialised", so the stall is inside this method. One line per call
+        // says which one, and the constructor's own suspects - the chunk builder's worker threads and
+        // TerrainBackendLoader.createVulkan - are on the other side of the middle line.
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD initRenderer enter, old manager="
+                + (this.renderSectionManager != null));
         if (this.renderSectionManager != null) {
             this.renderSectionManager.destroy();
             this.renderSectionManager = null;
         }
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD old manager destroyed");
 
         this.renderDistance = getEffectiveRenderDistance();
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD creating the section manager (chunk builder + Vulkan backend)");
 
         this.renderSectionManager = this.createRenderSectionManager(commandList);
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD section manager created");
 
         var tracker = ChunkTrackerHolder.get(this.world);
         // Re-evaluate readiness before seeding: a world change moves the player to chunks the tracker already knows
@@ -273,6 +282,8 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         // position. See ChunkTracker.refreshReadyChunks and Sodium's issue 3497.
         tracker.refreshReadyChunks();
         ChunkTracker.forEachChunk(tracker.getReadyChunks(), this.renderSectionManager::onChunkAdded);
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD initRenderer leave, sections="
+                + this.renderSectionManager.getTotalSections());
     }
 
     /**
