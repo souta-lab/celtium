@@ -277,6 +277,12 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         System.out.println("[Celtium] CELTIUM_WORLD_LOAD section manager created");
 
         var tracker = ChunkTrackerHolder.get(this.world);
+        // Measured 2026-10-15 (the cohort on merged source): the client reaches the world, the renderer initialises,
+        // and it reports sections=0 - so the terrain pass has nothing to draw, nothing is submitted, and the present
+        // has no picture. The tracker is where sections come from, so its counts at this moment separate "the chunks
+        // never arrived" from "they arrived and were not accepted".
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD tracker known=" + tracker.knownChunkCount()
+                + " ready=" + tracker.readyChunkCount());
         // Re-evaluate readiness before seeding: a world change moves the player to chunks the tracker already knows
         // but has not accepted, and without this the new manager is seeded with whatever was ready for the old
         // position. See ChunkTracker.refreshReadyChunks and Sodium's issue 3497.
