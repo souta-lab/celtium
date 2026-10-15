@@ -291,11 +291,15 @@ public class OcclusionCuller {
                         // is what MC-306810 describes, where a zero window height made the projection matrix NaN and
                         // the frustum culled everything.
                         + " vp=" + this.celtium$describeMatrix(viewport.getVpMatrix())
-                        // Camera-relative, not absolute: this frustum is rotation-only and the culler tests boxes
-                        // relative to the camera, so asking it about a world-space box near a distant camera position
-                        // answers a different question - which is what the first version of this test did, and why it
-                        // read false while the matrix it was testing was finite and in use.
-                        + " cameraBoxVisible=" + viewport.isBoxVisible(-1, -1, -1, 1, 1, 1)
+                        // Absolute world coordinates: isBoxVisible(double...) subtracts the camera's block position
+                        // itself, so a relative box asks about a place the camera's world offset away. Both earlier
+                        // versions of this test were wrong in opposite directions - the first passed absolute
+                        // coordinates to the relative overload and the second the reverse - and the direct frustum
+                        // test is what settled which wrapper does what.
+                        + " cameraBoxVisible=" + viewport.isBoxVisible(
+                                viewport.getBlockCoord().x() - 1, viewport.getBlockCoord().y() - 1,
+                                viewport.getBlockCoord().z() - 1, viewport.getBlockCoord().x() + 1,
+                                viewport.getBlockCoord().y() + 1, viewport.getBlockCoord().z() + 1)
                         // The same box asked of the viewport's own frustum, bypassing the viewport's transform. The
                         // build site's self-test is true, so a false here means the culler holds a different frustum;
                         // a true here means the viewport's transform is what turns the box away.
