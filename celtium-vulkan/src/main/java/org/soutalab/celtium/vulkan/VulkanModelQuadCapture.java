@@ -170,7 +170,9 @@ public final class VulkanModelQuadCapture {
             float nx, float ny, float nz) {
         celtium$noteSourceOnce();
         boolean glless = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
-        int listId = celtium$glInt(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+        int listId = glless
+                ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compilingList()
+                : celtium$glInt(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
         if (glless && listId <= 0) {
             // GL_LIST_INDEX names the list under construction and the spec keeps it at 0 while one is being executed.
             // A compiled model is drawn by glCallList, so its quads arrive with the query answering 0 while a list is

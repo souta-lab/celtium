@@ -806,6 +806,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub == null ? 0 : stub.executingList;
     }
 
+    /**
+     * {@return the display list {@code glNewList} is currently compiling, or 0 when none is}.
+     *
+     * <p>This is the same value {@code GL_LIST_INDEX} is supposed to answer, and the stub does answer that pname.
+     * The model capture nevertheless read 0 from the query: the leg's function census shows {@code glGetIntegerv}
+     * arriving four times with the capability pnames {@code 0x821B}..{@code 0x821E} and never with
+     * {@code 0x0B33}, so the capture's call does not reach this stub at all and LWJGL answers it - with 0, because
+     * there is no GL context under GL-less. Asking here is the same fix the replay side already needed, and it
+     * does not depend on which path LWJGL happens to take.
+     */
+    public static int compilingList() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.compilingList;
+    }
+
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
     private static final int GL_SCISSOR_TEST = 0x0C11;
 
