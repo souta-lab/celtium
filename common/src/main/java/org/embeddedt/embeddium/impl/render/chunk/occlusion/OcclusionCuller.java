@@ -127,6 +127,10 @@ public class OcclusionCuller {
     // Lattice index of the camera section when it is the search root, else -1. It is visited inline, never tested.
     private int cameraSectionIndex;
 
+    /** Bounded report state for the visibility search. */
+    private static int celtium$visibleReports;
+    private static int celtium$lastVisibleCount = -1;
+
     public OcclusionCuller(SectionLattice lattice, int minSectionY, int maxSectionY, boolean rasterOcclusion) {
         this.lattice = lattice;
         this.minSectionY = minSectionY;
@@ -212,6 +216,21 @@ public class OcclusionCuller {
             this.lattice.visibleCount = this.visibleCount;
         }
         this.visitState = null;
+        // Measured 2026-10-15 (leg gv-cohort-vis2): the manager reports sections=3920 with visible=1 and an empty
+        // build queue, so the search itself is the limit. These three values separate the explanations: a camera in
+        // an unloaded section disables occlusion culling and stops the walk, a cameraSectionIndex of -1 means no root
+        // was found at all, and a visible count of one with a valid root means the root was added and no neighbour
+        // was enqueued. Bounded, and only when the count changes.
+        if (this.visibleCount != celtium$lastVisibleCount || celtium$visibleReports < 6) {
+            celtium$lastVisibleCount = this.visibleCount;
+            if (celtium$visibleReports++ < 12) {
+                System.out.println("[Celtium] CELTIUM_VISIBLE count=" + this.visibleCount
+                        + " cameraSection=" + this.cameraSectionIndex
+                        + " unloadedSection=" + this.isCameraInUnloadedSection
+                        + " multiRoot=" + this.isMultiRootSearch
+                        + " raster=" + this.rasterActive + " occlusion=" + useOcclusionCulling);
+            }
+        }
     }
 
     /**
