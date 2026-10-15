@@ -312,6 +312,38 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // Display lists. glNewList(list, mode), glEndList() and glCallList(list) all return void, so without this
+        // they land in the zero-writer below and do nothing at all - which is why the model capture read list=0 from
+        // GL_LIST_INDEX and refused every quad with `reason=unknown-list`, and why captured stayed at 0. A model
+        // compiles its display list exactly once (ModelRenderer.render only calls compileDisplayList while compiled
+        // is false, and the quads only run inside it), so that one refusal costs the model its only chance.
+        // The hint tracks the open list and answers GL_LIST_INDEX from it; these three calls are what set and use it.
+        // Both spellings again: GL11 keeps some legacy natives under their bare name, as glGenLists does.
+        if (returnType.equals("V")) {
+            if ("glNewList".equals(name) || "nglNewList".equals(name)) {
+                // (II)V - the natives are static, so the arguments are at slots 0 and 1.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glNewList", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glEndList".equals(name) || "nglEndList".equals(name)) {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glEndList", "()V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glCallList".equals(name) || "nglCallList".equals(name)) {
+                // (I)V
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glCallList", "(I)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+        }
         switch (returnType) {
             case "V":
                 method.visitInsn(Opcodes.RETURN);

@@ -245,6 +245,26 @@ public final class CeltiumGllessHint {
         return listIndex != 0;
     }
 
+    /**
+     * Executes a display list, as {@code glCallList(int list)} does.
+     *
+     * <p>Recorded rather than drawn here: the geometry of a compiled list was captured while it was compiled
+     * ({@code VulkanModelQuadCapture} files a quad under {@link #listIndex}), so what a replay has to do is hand
+     * that captured geometry to the renderer again. The name is kept so the renderer can ask which list is being
+     * drawn, and {@link #lastCalledList} is what the capture reads for that.
+     */
+    public static void glCallList(int list) {
+        lastCalledList = list;
+    }
+
+    /** The last list {@code glCallList} named, 0 before any call. */
+    private static volatile int lastCalledList;
+
+    /** {@return the list {@code glCallList} last named}. */
+    public static int lastCalledList() {
+        return lastCalledList;
+    }
+
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
     public static void glViewport(int x, int y, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);
