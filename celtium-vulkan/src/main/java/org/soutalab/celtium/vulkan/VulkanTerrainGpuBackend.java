@@ -7799,7 +7799,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     org.soutalab.celtium.vulkan.VulkanGlTexture established =
                             celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
                     celtium$lightmapStage("upload");
-                    established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    try {
+                        established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    } catch (IllegalStateException captureMiss) {
+                        // The stub captured no upload for this level, because 1.12.2 uploads the light map through
+                        // GlStateManager, which skips the GL calls when its cache already holds the state. Measured on
+                        // leg gv-cohort-lm5, where this threw on every attempt and the mirror stayed null. The
+                        // DynamicTexture that owns the pixels answers instead - the same route the texture name took.
+                        int[] pixels = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapPixels();
+                        if (pixels == null || pixels.length < 256 || !established.uploadFromImage(16, 16, celtium$argbToRgba(pixels))) {
+                            throw captureMiss;
+                        }
+                    }
                     celtium$lightmapStage("markInitialized");
                     celtium$registry().markFullyInitialized(this.lightmapGlId);
                     celtium$lightmapStage("assigned");
@@ -7822,6 +7833,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
 
+
+    /**
+     * {@return the game's ARGB light map pixels as the RGBA bytes the mirror's upload takes}.
+     * <p>
+     * 1.12.2's DynamicTexture keeps its pixels as ARGB ints, and every Vulkan upload here is RGBA8, so the two
+     * channels swap. The alpha byte is left as the game's own: the light map is opaque, and inventing an alpha
+     * would change what the shader multiplies.
+     */
+    private static java.nio.ByteBuffer celtium$argbToRgba(int[] pixels) {
+        java.nio.ByteBuffer buffer = org.lwjgl.BufferUtils.createByteBuffer(pixels.length * 4);
+        for (int pixel : pixels) {
+            buffer.put((byte) ((pixel >> 16) & 0xFF));
+            buffer.put((byte) ((pixel >> 8) & 0xFF));
+            buffer.put((byte) (pixel & 0xFF));
+            buffer.put((byte) ((pixel >>> 24) & 0xFF));
+        }
+        buffer.flip();
+        return buffer;
+    }
     /** Bounded stage marker for the light map mirror's establishment. */
     private void celtium$lightmapStage(String stage) {
         if (celtium$lightmapStages++ < 12) {

@@ -19,6 +19,7 @@ import java.util.function.IntSupplier;
  */
 public final class LightmapIdSource {
     private static volatile IntSupplier source;
+    private static volatile java.util.function.Supplier<int[]> pixelSource;
 
     private LightmapIdSource() {
     }
@@ -26,6 +27,31 @@ public final class LightmapIdSource {
     /** Installs the supplier the game side provides; the last installation wins. */
     public static void install(IntSupplier supplier) {
         source = supplier;
+    }
+
+    /** Installs the pixel supplier the game side provides; the last installation wins. */
+    public static void installPixels(java.util.function.Supplier<int[]> supplier) {
+        pixelSource = supplier;
+    }
+
+    /**
+     * {@return the light map's pixels as the game's own ARGB ints, or null when none are available}.
+     * <p>
+     * The mirror needs the texels and cannot get them from the stub: 1.12.2 uploads the light map through
+     * GlStateManager, which skips the GL calls when its cache already holds the state, so the stub captures no
+     * upload for that level and uploadFromGlTexture throws 'the stub captured no upload for this texture level'
+     * (measured on leg gv-cohort-lm5). The DynamicTexture that owns the pixels always has them.
+     */
+    public static int[] lightmapPixels() {
+        java.util.function.Supplier<int[]> current = pixelSource;
+        if (current == null) {
+            return null;
+        }
+        try {
+            return current.get();
+        } catch (RuntimeException | LinkageError error) {
+            return null;
+        }
     }
 
     /** {@return the light map's GL texture name, or -1 when the game side has not installed a source} */

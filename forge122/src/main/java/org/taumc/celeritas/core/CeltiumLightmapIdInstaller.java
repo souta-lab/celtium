@@ -33,5 +33,17 @@ public final class CeltiumLightmapIdInstaller {
             var texture = ((EntityRendererLightmapAccessor) renderer).celtium$getLightmapTexture();
             return texture == null ? -1 : texture.getGlTextureId();
         });
+
+        // The pixels as well, for the same reason: the mirror cannot read them back from GL, and the
+        // DynamicTexture that owns them always can.
+        LightmapIdSource.installPixels(() -> {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null || mc.entityRenderer == null) {
+                return null;
+            }
+
+            var texture = ((EntityRendererLightmapAccessor) mc.entityRenderer).celtium$getLightmapTexture();
+            return texture == null ? null : texture.getTextureData();
+        });
     }
 }
