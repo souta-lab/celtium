@@ -26,6 +26,8 @@ public final class VulkanModelQuadCapture {
 
     /** What a GL query that did not answer returns. Zero is a real answer, so it cannot mean "unknown". */
     private static final int UNKNOWN = Integer.MIN_VALUE;
+    /** The id a quad drawn outside any display list is filed under. Zero means "the read failed". */
+    private static final int NO_LIST = -1;
 
     /** Refusal reasons, in the order the counters are reported. */
     private static final int REFUSED_UNKNOWN_LIST = 0;
@@ -183,12 +185,13 @@ public final class VulkanModelQuadCapture {
         int texture = UNKNOWN;
         if (glless) {
             if (listId <= 0) {
-                // "No list is being compiled" is an answer, not an identity: a quad filed under list 0 is one no
-                // callList can ever reach, which is exactly the state this capture started in.
-                celtium$trace(listId, UNKNOWN, false);
-                celtium$refuse(REFUSED_UNKNOWN_LIST,
-                        "list=" + celtium$value(listId) + " " + celtium$textureDiagnostic(), count);
-                return;
+                // A quad drawn outside a display list is not an error and must not be refused. Measured on leg
+                // gv-cohort-dl8: the transformer's own census reports glNewList arriving (glEndList=49,
+                // glCallList=36040), while the capture ran exactly once in the whole run - before the first
+                // glNewList - and refused that one quad, so no model geometry was ever captured. GL_LIST_INDEX
+                // is 0 for a quad drawn immediately rather than compiled into a list, and 0 is a real answer.
+                // It is filed under a synthetic id so the census still separates the two cases.
+                listId = NO_LIST;
             }
             texture = celtium$glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
             if (texture <= 0) {

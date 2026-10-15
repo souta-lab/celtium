@@ -231,6 +231,7 @@ public final class CeltiumGllessHint {
      */
     public static void glNewList(int list, int mode) {
         noteDisplayListCall();
+        NEW_LIST_CALLS.incrementAndGet();
         listIndex = list;
         listMode = mode;
     }
