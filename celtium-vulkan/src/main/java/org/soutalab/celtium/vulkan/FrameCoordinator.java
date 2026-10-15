@@ -112,7 +112,17 @@ public final class FrameCoordinator {
         submitCommands(true);
     }
 
+    /** Bounded probe counter for the submit entry (2026-10-15). */
+    private static int celtium$submitEntryLogs;
+
     void submitCommands(boolean withFrameSemaphores) {
+        // Temporary probe: the present skips with "no completed frame waiting" and the frame-queued setter is never
+        // called with true, while gpuStalled is false. This line says whether the submit is entered at all, which
+        // splits "never called" from "returns early" in one leg.
+        if (celtium$submitEntryLogs++ < 12) {
+            System.out.println("[Celtium] CELTIUM_SUBMIT_ENTRY call=" + celtium$submitEntryLogs
+                    + " withFrameSemaphores=" + withFrameSemaphores + " gpuStalled=" + this.host.gpuStalled());
+        }
         if (this.host.gpuStalled()) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
             // reported, after the pass-level ones.

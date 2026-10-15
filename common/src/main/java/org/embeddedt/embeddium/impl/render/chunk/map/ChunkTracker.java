@@ -143,6 +143,45 @@ public class ChunkTracker implements ClientChunkEventListener {
         }
     }
 
+    /**
+     * {@return the number of chunks this tracker knows about, whatever their status flags}.
+     * <p>
+     * Added for the Nether legs: a dimension change rebuilds and reseeds the section manager correctly, yet the
+     * RLCraft Nether ended with four listed sections. Separating the known count from the ready count says which
+     * side is stuck - chunks never reaching the tracker (known stays flat) or the 3x3 readiness rule rejecting them
+     * (known grows, ready does not).
+     */
+    public int knownChunkCount() {
+        return this.chunkStatus.size();
+    }
+
+    /** {@return the number of chunks considered ready for rendering, which requires their neighbours} */
+    public int readyChunkCount() {
+        return this.chunkReady.size();
+    }
+
+    /**
+     * Re-evaluates every tracked chunk's readiness, queueing the ones that become ready.
+     * <p>
+     * Added for the dimension-change case: the section manager is rebuilt and reseeded correctly, but the readiness
+     * of the chunks already known to the tracker is only recomputed when a chunk's own status changes or when the
+     * neighbour radius is tightened. A world change moves the player somewhere else entirely, where chunks that were
+     * tracked but not ready may now have all their neighbours - and Sodium's own issue 3497 says exactly this is
+     * missing, that the renderer has to be reloaded "to invalidate the state of the chunk tracker".
+     * <p>
+     * The loop is the one {@code setRequiredNeighborRadius} already runs; this exposes it without changing the radius.
+     */
+    public void refreshReadyChunks() {
+        var trackedChunksIterator = this.chunkStatus.keySet().iterator();
+        while (trackedChunksIterator.hasNext()) {
+            long pos = trackedChunksIterator.nextLong();
+            if (this.chunkReady.contains(pos)) {
+                continue;
+            }
+            this.updateMerged(PositionUtil.unpackChunkX(pos), PositionUtil.unpackChunkZ(pos));
+        }
+    }
+
     public LongCollection getReadyChunks() {
         return LongSets.unmodifiable(this.chunkReady);
     }

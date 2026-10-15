@@ -40,8 +40,13 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     protected SECTIONMANAGER renderSectionManager;
 
     public void setWorld(WORLD world) {
+        // Temporary probe (2026-10-15): the client stalls inside Minecraft.loadWorld, after the world field is
+        // assigned and before the player is created, and this is the project's own entry into that window. Entry and
+        // exit lines say whether this method is left at all.
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD setWorld enter world=" + (world != null));
         // Check that the world is actually changing
         if (this.world == world) {
+            System.out.println("[Celtium] CELTIUM_WORLD_LOAD setWorld leave (same world)");
             return;
         }
 
@@ -59,9 +64,13 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     protected void loadWorld(WORLD world) {
         this.world = world;
 
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD loadWorld enter, creating a command list");
         try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
+            System.out.println("[Celtium] CELTIUM_WORLD_LOAD command list created, initialising the renderer");
             this.initRenderer(commandList);
+            System.out.println("[Celtium] CELTIUM_WORLD_LOAD renderer initialised");
         }
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD loadWorld leave");
     }
 
     protected void unloadWorld() {
@@ -77,7 +86,13 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
      * @return The number of chunk renders which are visible in the current camera's frustum
      */
     public int getVisibleChunkCount() {
-        return this.renderSectionManager.getVisibleChunkCount();
+        // Measured 2026-10-15 (leg gv-cohort-fix141): the debug HUD asks this on the frame a world arrives, before the
+        // renderer has one, and the null manager took the client down -
+        // NullPointerException in getVisibleChunkCount from RenderGlobal.func_184382_g through
+        // EntityRenderer.func_184373_n. It is a read-only query, and with no manager nothing is visible, so zero is
+        // the honest answer; the rendering-path methods below are deliberately left unguarded, because a null manager
+        // there is a real fault rather than a question asked too early.
+        return this.renderSectionManager != null ? this.renderSectionManager.getVisibleChunkCount() : 0;
     }
 
     /**
@@ -243,17 +258,32 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     protected abstract SECTIONMANAGER createRenderSectionManager(CommandList commandList);
 
     protected void initRenderer(CommandList commandList) {
+        // Temporary probe (2026-10-15): leg gv-cohort-fix149 reached "command list created, initialising the
+        // renderer" and never printed "renderer initialised", so the stall is inside this method. One line per call
+        // says which one, and the constructor's own suspects - the chunk builder's worker threads and
+        // TerrainBackendLoader.createVulkan - are on the other side of the middle line.
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD initRenderer enter, old manager="
+                + (this.renderSectionManager != null));
         if (this.renderSectionManager != null) {
             this.renderSectionManager.destroy();
             this.renderSectionManager = null;
         }
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD old manager destroyed");
 
         this.renderDistance = getEffectiveRenderDistance();
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD creating the section manager (chunk builder + Vulkan backend)");
 
         this.renderSectionManager = this.createRenderSectionManager(commandList);
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD section manager created");
 
         var tracker = ChunkTrackerHolder.get(this.world);
+        // Re-evaluate readiness before seeding: a world change moves the player to chunks the tracker already knows
+        // but has not accepted, and without this the new manager is seeded with whatever was ready for the old
+        // position. See ChunkTracker.refreshReadyChunks and Sodium's issue 3497.
+        tracker.refreshReadyChunks();
         ChunkTracker.forEachChunk(tracker.getReadyChunks(), this.renderSectionManager::onChunkAdded);
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD initRenderer leave, sections="
+                + this.renderSectionManager.getTotalSections());
     }
 
     /**
@@ -397,6 +427,10 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
 
     public String getChunksDebugString() {
         // C: visible/total D: distance
+        // Same window as getVisibleChunkCount above: the HUD's own string is asked on the same frames.
+        if (this.renderSectionManager == null) {
+            return null;
+        }
         return String.format("C: %d/%d D: %d %s", this.renderSectionManager.getVisibleChunkCount(),
                 this.renderSectionManager.getTotalSections(), this.renderDistance,
                 this.renderSectionManager.getTickerDebugString());

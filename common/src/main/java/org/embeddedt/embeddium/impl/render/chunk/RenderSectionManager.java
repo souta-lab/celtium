@@ -153,18 +153,26 @@ public abstract class RenderSectionManager {
 
         this.renderPassConfiguration = configuration;
 
+        // Temporary probe (2026-10-15): the client stalls inside createRenderSectionManager, and these three steps are
+        // the whole of that interval. A line before and after each says which one is entered and never left.
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD step: chunk builder");
         this.builder = new ChunkBuilder(this::managedBlock, contextSupplier, requestedThreads);
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD step: chunk builder done");
 
         this.renderDistance = renderDistance;
 
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD step: region manager");
         this.regions = new RenderRegionManager(commandList, this.renderPassConfiguration);
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD step: region manager done");
 
         // Celtium is a Vulkan mod, so the terrain backend must be created for this device. There is deliberately no
         // OpenGL fallback: a configuration that cannot serve Vulkan reports why and stops, rather than silently
         // rendering with the backend this mod exists to replace.
         List<String> backendReasons = new ArrayList<>();
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD step: Vulkan terrain backend");
         TerrainGpuBackend nativeBackend = TerrainBackendLoader.createVulkan(configuration, this.chunkRenderer,
                 this.regions, backendReasons);
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD step: Vulkan terrain backend done");
         this.terrainBackendSelection = TerrainBackendSelection.select(nativeBackend, backendReasons);
         this.terrainBackend = nativeBackend;
 

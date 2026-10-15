@@ -18,6 +18,10 @@ import java.util.stream.Stream;
 public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
     public static final Logger LOGGER = LogManager.getLogger("CeltiumMixins");
 
+    /** GL-less is the default; {@code -Dceltium.vulkan.glless=false} is the bridge opt-out. */
+    private static final boolean GLLESS_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
+
     @Override
     public void onLoad(String mixinPackage) {
         // Celtium targets CleanroomMC only. The previous revision probed for RetroFuturaBootstrap here and, when it
@@ -25,6 +29,36 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
         // supported runtime is pinned (see docs/plan.md section 0), so there is nothing to detect and nothing to
         // patch, and the mod no longer reflects into another component's internals at startup.
         LOGGER.info("Loaded Celeritas mixin plugin (CleanroomMC target)");
+        celtium$installGllessEarly();
+    }
+
+    /**
+     * Installs the GL-less stub from the plugin, so GL-less does not depend only on a mixin.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-xlog}, {@code -Xlog:class+load=info}): in the 268-mod E2E pack
+     * RandomPatches' tweak initialisation defines {@code org.lwjgl.opengl.Display} at <b>8.975 s</b>, while this
+     * plugin's {@link #getMixins()} only runs at <b>9.837 s</b>. {@code onLoad} runs at 7.1 s in the same leg, so
+     * the stub is installed here as well; {@code install()} is idempotent and the call is gated on GL-less being
+     * enabled, leaving the bridge opt-out untouched.
+     * <p>
+     * The window's {@code GLFW_NO_API} hint is <b>not</b> set here, and deliberately: GLFW only permits the
+     * init-related calls before {@code glfwInit} (its introduction lists {@code glfwInitHint}, not
+     * {@code glfwWindowHint}), and {@code glfwInit} resets window hints to their defaults anyway - so a hint from
+     * this point would either be a {@code GLFW_NOT_INITIALIZED} no-op or be wiped. The hint belongs where
+     * {@code core.LwjglxDisplayMixin} puts it, after init and immediately before {@code glfwCreateWindow}; what
+     * this plugin changes is <em>when that mixin is registered</em> (the JSON's {@code client} list, read at
+     * 7.123 s, instead of {@link #getMixins()} at 9.837 s), which is what lets it apply at all.
+     */
+    private static void celtium$installGllessEarly() {
+        if (!GLLESS_ENABLED) {
+            return;
+        }
+        try {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.install();
+            LOGGER.info("CELTIUM_GLLESS stub GL provider installed early (from the mixin plugin)");
+        } catch (RuntimeException | LinkageError error) {
+            LOGGER.warn("CELTIUM_GLLESS early stub install failed: {}", error.toString());
+        }
     }
 
     @Override
@@ -116,6 +150,14 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
                     + "System.gc() calls stay in place; the pause they cause is kept rather than the run being lost.",
                     contestedTargetProbe());
         }
+        // core.LwjglxDisplayMixin used to be excluded here because it was declared in mixins.celeritas.json's
+        // `client` list instead. Measured 2026-10-15 (gpu-verifier, cohort + the fixed jar): the JSON entry
+        // registers nothing - the list is parsed in the same deferred prepareConfigs pass as this one, which the
+        // measured leg puts at 9.837 s, after Display is defined at 8.975 s - so with the exclusion in place the
+        // mixin was registered by nobody at all (cleanmix.log: 0 LwjglxDisplayMixin lines and 64 APPLY against the
+        // unmodified jar's 3 and 65). The mixin and the JSON entry are both gone; the window hint comes from
+        // CeltiumGllessWindowTransformer and the stub from this plugin's onLoad, and the cohort leg passes with
+        // openGl.vendor="Celtium" without either of them.
         return new ArrayList<>(possibleMixinClasses);
     }
 

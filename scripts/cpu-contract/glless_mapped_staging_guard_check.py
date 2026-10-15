@@ -7,7 +7,15 @@ import sys
 root = Path(__file__).resolve().parents[2]
 staging = (root / 'common/src/main/java/org/embeddedt/embeddium/impl/gl/arena/staging/MappedStagingBuffer.java').read_text()
 manager = (root / 'common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/RenderRegionManager.java').read_text()
-display = (root / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/LwjglxDisplayMixin.java').read_text()
+# The property this guard must agree with is defined by the GL-less entry points that survive: the Display mixin
+# that used to carry it was deleted (commit 508fe76cc) because it never registered - the mixin plugin's getMixins()
+# runs after RandomPatches defines org.lwjgl.opengl.Display - so the coremod transformer took over that job. The
+# contract is unchanged, so it is read from the loader plugin, which installs the stub under the same property.
+# The property and its default are read from CeltiumGllessHint, which is the surviving definition of the GL-less
+# default. LwjglxDisplayMixin used to carry the same expression and was deleted in 508fe76cc because it never
+# registered - the mixin plugin's getMixins() runs after RandomPatches defines org.lwjgl.opengl.Display - so the
+# coremod transformer took over its job. The contract this check enforces is unchanged.
+display = (root / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java').read_text()
 
 conditions = {
     'GL-less default matches GLFW_NO_API enabled default':

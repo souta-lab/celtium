@@ -94,6 +94,31 @@ public class MinecraftMixin {
      * read as "the mixin did not apply" rather than "the splash method was not reached" - the two have different
      * fixes and the same silence otherwise.
      */
+    /**
+     * Gives the Client thread its own LWJGL3 GLCapabilities before mod pre-initialisation runs on it.
+     * <p>
+     * LWJGL3 stores them per thread, so the install the mixin plugin does on {@code main} does not reach this
+     * thread - and a mod that calls LWJGL3 GL entry points here aborts the JVM
+     * ({@code No context is current or a function that is not available in the current context was called}).
+     * Measured 2026-10-15: Thaumcraft's {@code ClientProxy.preInit} does exactly that from this thread.
+     * {@code startGame} is the earliest Client-thread point before {@code Loader.preinitializeMods}, and the call is
+     * idempotent.
+     */
+
+    /**
+     * The same install on the thread that actually calls GL.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-fix128g}): {@code startGame} runs on {@code main}, while the game's
+     * GL calls come from a separate thread named {@code Client thread} (thread #3 in the abort message, distinct from
+     * the launcher's #1) - so the {@code startGame} hook installed capabilities for the wrong thread and Thaumcraft's
+     * {@code ClientProxy.preInit} aborted anyway. This injection and the one below run on that thread:
+     * {@code createDisplay} is the first Client-thread point that touches the window (the leg logs its window lines at
+     * 02:04:46 while the abort comes at 02:05:1x), and {@code runTick} covers anything that starts calling GL after
+     * the window exists. Both are idempotent.
+     */
+
+
+
     @Inject(method = "startGame", at = @At("HEAD"), require = 0)
     private void celtium$splashHookControl(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");
@@ -126,6 +151,86 @@ public class MinecraftMixin {
     /** Bounded lines for {@link #celtium$dumpLoadingFrame}'s failure path. */
     @Unique
     private static int celtium$splashHookFailures;
+
+    /**
+     * Reports the LWJGL3 GL dispatch state once the display exists, so a leg can say why a mod's GL call aborts.
+     * <p>
+     * The aborts this project has chased (legs {@code gv-e2e-268-fix128g..k}) happen in mod code calling LWJGL3's
+     * generated GL classes, and the two candidate explanations - our function provider not being the one LWJGL3
+     * uses, and a capabilities object that is not ours - look identical from the outside. This line separates them:
+     * the provider's class name says whether {@code GL.create(provider)} took effect, and the capabilities identity
+     * plus its address buffer say what the native dispatch would use. Reflection keeps this module free of an LWJGL3
+     * compile-time dependency, and the report is one bounded line at the point where the window exists and mod
+     * pre-init has not run yet.
+     */
+    @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
+    private void celtium$reportLwjgl3DispatchState(CallbackInfo ci) {
+        try {
+            Class<?> gl = Class.forName("org.lwjgl.opengl.GL");
+            Object provider = gl.getMethod("getFunctionProvider").invoke(null);
+            String capabilitiesState;
+            try {
+                Object capabilities = gl.getMethod("getCapabilities").invoke(null);
+                if (capabilities == null) {
+                    capabilitiesState = "null";
+                } else {
+                    Object addresses = capabilities.getClass().getMethod("getAddressBuffer").invoke(capabilities);
+                    // How many of the first entries are non-zero is what separates "a capabilities table built from
+                    // our provider" from "a table that exists but is empty", and the write-once ICD means the first
+                    // one created wins for the whole process - so the count matters more than the buffer's metadata.
+                    long nonZero = -1;
+                    long sampled = 0;
+                    try {
+                        // PointerBuffer has get(int) and capacity(); the first version of this called getBuffer(),
+                        // which does not exist, and every leg reported nonZeroFirst0=unknown because of it.
+                        java.lang.reflect.Method get = addresses.getClass().getMethod("get", int.class);
+                        java.lang.reflect.Method capacityMethod = addresses.getClass().getMethod("capacity");
+                        int capacity = ((Number) capacityMethod.invoke(addresses)).intValue();
+                        sampled = Math.min(capacity, 256);
+                        nonZero = 0;
+                        for (int i = 0; i < sampled; i++) {
+                            if (((Number) get.invoke(addresses, Integer.valueOf(i))).longValue() != 0L) {
+                                nonZero++;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // leave the count as unknown
+                    }
+                    // The two values that decide the fix, and they are different fixes: whether the capabilities
+                    // object was built with the ARB shader-object extension in its set at all (our stub answers
+                    // glGetString(GL_EXTENSIONS) with an empty string on purpose, so a set derived from it contains
+                    // nothing and LWJGL leaves every extension function at zero), and what address that function
+                    // actually has. false means "install a capabilities built from our own 427-extension set first";
+                    // true-with-zero means the write-once ICD is holding an older object.
+                    String arbState = "unknown";
+                    try {
+                        Object flag = capabilities.getClass().getField("GL_ARB_shader_objects").get(capabilities);
+                        Object address = capabilities.getClass().getField("glCreateShaderObjectARB").get(capabilities);
+                        arbState = "GL_ARB_shader_objects=" + flag + " glCreateShaderObjectARB=0x"
+                                + Long.toHexString(((Number) address).longValue());
+                    } catch (Throwable ignored) {
+                        // leave it as unknown
+                    }
+                    capabilitiesState = capabilities.getClass().getName() + "@"
+                            + Integer.toHexString(System.identityHashCode(capabilities))
+                            + " addresses=" + addresses
+                            + " nonZeroFirst" + sampled + "=" + (nonZero < 0 ? "unknown" : Long.toString(nonZero))
+                            + " " + arbState;
+                }
+            } catch (Throwable error) {
+                Throwable cause = error.getCause() == null ? error : error.getCause();
+                capabilitiesState = "throws(" + cause.getClass().getSimpleName() + ")";
+            }
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(
+                    "CELTIUM_GLLESS LWJGL3 dispatch on thread={} provider={} capabilities={}",
+                    Thread.currentThread().getName(),
+                    provider == null ? "null" : provider.getClass().getName(),
+                    capabilitiesState);
+        } catch (Throwable error) {
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
+                    "CELTIUM_GLLESS LWJGL3 dispatch report failed: {}", error.toString());
+        }
+    }
 
     @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
@@ -248,6 +353,11 @@ public class MinecraftMixin {
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                     && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // The frame's pending work is flushed at GL draw and bind boundaries, and a GL-less frame crosses none
+                // of them - measured on legs gv-cohort-fix154/155, where submitCommands was never entered and every
+                // present skipped with "no completed frame waiting". This is the boundary both paths do reach, so the
+                // flush happens here, before the present that needs its result.
+                vulkan.celtium$flushPendingAtFrameBoundary();
                 vulkan.celtium$presentFrame();
             }
         } catch (RuntimeException | LinkageError ignored) {

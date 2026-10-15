@@ -597,6 +597,82 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static CeltiumGlStub installed;
 
     /**
+     * Gives LWJGL3's own GL bindings addresses from this stub, so a mod that calls them does not abort the JVM.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-e2e-268-no-randompatches}, 268-mod pack minus RandomPatches): with the
+     * stub installed and the window created GL-less, the run died at 38.75 s with
+     * <pre>
+     * FATAL ERROR in native method: No context is current or a function that is not available in the current
+     * context was called. The JVM will abort execution.
+     *     at org.lwjgl.opengl.ARBShaderObjects.glCreateShaderObjectARB(Native Method)
+     *     at thaumcraft.client.lib.ender.ShaderHelper.createShader(ShaderHelper.java:121)
+     * </pre>
+     * {@code GL.create(provider)} supplies the <em>library</em> the GL classes ask for, but LWJGL3's generated GL
+     * classes are {@code public static native} and take their addresses from the thread's {@code GLCapabilities},
+     * which is built by {@code GL.createCapabilities()} - and that needs a current context. This stub answers
+     * {@code glGetError}, {@code glGetIntegerv} and {@code glGetString} itself, so the capability query succeeds
+     * against the stub's own identity and the resulting addresses are this provider's trampolines. That turns a mod
+     * calling LWJGL3 GL entry points from "the JVM aborts" into "the stub answers", which is the whole point of the
+     * GL-less window.
+     * <p>
+     * Failure is logged and never fatal: a run without capabilities is exactly the run this project had before, and
+     * the census and the validation report stay readable either way.
+     */
+
+    /**
+     * Builds LWJGL3's {@code GLCapabilities} from this stub and installs it, and must be called <b>before</b> anything
+     * else creates one.
+     * <p>
+     * Measured offline 2026-10-15 with the game's own LWJGL 3.4.1 jars: a capabilities object built with an
+     * <b>empty</b> extension set - which is what {@code GL.createCapabilities()} produces, because this stub answers
+     * {@code glGetString(GL_EXTENSIONS)} with an empty string on purpose - has
+     * {@code GL_ARB_shader_objects=false} and {@code glCreateShaderObjectARB=0x0}, so the call aborts the JVM. Built
+     * with the 427 extension names the capabilities class itself declares, the same fields are {@code true} and a real
+     * address. Both have 2236 non-zero entries, so "is the table populated" does not separate them; the extension set
+     * does.
+     * <p>
+     * Being first matters because LWJGL's ICD is write-once: the first capabilities set supplies the addresses the
+     * generated classes read, and a later different one only falls back to a thread lookup (with a warning that is
+     * suppressed unless LWJGL debug is on). That is why installing ours later - from a mixin entry point - changed
+     * nothing, and why installing it on a thread while an empty set was already the first made every GL call abort
+     * instead of throwing.
+     */
+    public static synchronized void installFirstCapabilities() {
+        if (installed == null || capabilitiesInstalled) {
+            return;
+        }
+        try {
+            Class<?> capabilitiesClass = Class.forName("org.lwjgl.opengl.GLCapabilities");
+            // Both the extension names (GL_*) and the version pseudo-extensions (OpenGL11 ... OpenGL46): the
+            // generated checks ask for a version with ext.contains("OpenGL30") as well as for extension names, so a
+            // set built from GL_* alone leaves core functions gated on a version at zero. Measured offline before any
+            // leg: glGetString came out 0x0 with only the GL_* names and non-zero with both.
+            java.util.Set<String> extensions = new java.util.HashSet<>();
+            for (java.lang.reflect.Field field : capabilitiesClass.getFields()) {
+                String name = field.getName();
+                if (name.startsWith("GL_") || name.startsWith("OpenGL")) {
+                    extensions.add(name);
+                }
+            }
+            java.lang.reflect.Constructor<?> constructor = capabilitiesClass.getDeclaredConstructor(
+                    org.lwjgl.system.FunctionProvider.class, java.util.Set.class, boolean.class,
+                    java.util.function.IntFunction.class);
+            constructor.setAccessible(true);
+            Object capabilities = constructor.newInstance(installed, extensions, Boolean.FALSE,
+                    (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
+            org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
+            capabilitiesInstalled = true;
+            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities installed first from the stub provider: extensions="
+                    + extensions.size() + " thread=" + Thread.currentThread().getName());
+        } catch (Throwable error) {
+            celtium$printAtExit("CELTIUM_GLLESS first capabilities install failed: " + error);
+        }
+    }
+
+    /** True once {@link #installFirstCapabilities()} has set this stub's capabilities. */
+    private static volatile boolean capabilitiesInstalled;
+
+    /**
      * Installs this provider as the process's GL function source; call before {@code GL.createCapabilities()}.
      * LWJGL only lets {@code GL.create} supply the function source when the library's default load was deferred,
      * so this also asserts {@link Configuration#OPENGL_EXPLICIT_INIT} - the window-creation path must set it before
@@ -607,6 +683,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             installed = new CeltiumGlStub();
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
+            // No GLCapabilities is built here on purpose. Measured 2026-10-15: installing one converts LWJGL3's
+            // catchable "no capabilities" exception into an uncatchable JVM abort whenever a function's address is
+            // still zero, which broke the cohort (Flare's GpuInfo.queryGpuModel calls glGetString during mod
+            // construction) while leaving the pack's own abort in place. The LWJGL3 surface is handled by
+            // CeltiumGllessNativeTransformer instead, which replaces the native methods themselves.
             // The census has to be readable after the run: the harness reads logs, and the renderer's own report
             // only carries the strings it knows to ask for. One line at exit, bounded. The glDrawArrays line sits
             // beside it because the two answer the same question from opposite sides: the census says which drawing
@@ -2892,9 +2973,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 return 16;
             case 0x821B: // GL_MAJOR_VERSION
-                return 4;
+                // Kept consistent with the version string this stub advertises ("3.0.0 Celtium", see the
+                // GL_VERSION case below). The two used to disagree - the string said 3.0 while these said 4.6 -
+                // and the disagreement was not harmless: MappedStagingBuffer.isSupported asks
+                // LWJGL.isOpenGLVersionSupported(4, 4), got true from these numbers, and took the persistent
+                // mapping path, whose constructor maps 16 MB through commandList.mapBuffer. Measured
+                // 2026-10-15 (leg gv-cohort-fix151): the client stalls inside that construction, in
+                // RenderRegionManager's createStagingBuffer, with the world loaded and no player ever created.
+                // A capability claim has to be one story: with 3.0 the support test is false and the fallback
+                // staging buffer is used instead, which creates a plain mutable buffer.
+                return 3;
             case 0x821C: // GL_MINOR_VERSION
-                return 6;
+                return 0;
             case 0x821D: // GL_NUM_EXTENSIONS
                 return 0;
             case 0x8513: // GL_TEXTURE_MAX_ANISOTROPY samples? actually MAX_TEXTURE_MAX_ANISOTROPY is 0x84FF
