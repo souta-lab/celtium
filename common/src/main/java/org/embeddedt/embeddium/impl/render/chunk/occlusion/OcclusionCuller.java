@@ -164,7 +164,11 @@ public class OcclusionCuller {
      * traverse with".
      */
     private long celtium$rootVisibility() {
-        if (this.cameraSectionIndex < 0 || this.cameraSectionIndex >= this.lattice.installedCount) {
+        // Bounded by the array, not by installedCount: that is a count of installed cells, and the camera section's
+        // lattice index is an array index, so comparing the two rejected every valid root and reported -1 for a
+        // section that was there. Measured on leg gv-cohort-vis4, where the report read rootVisibility=-1 while the
+        // search had just added the root.
+        if (this.cameraSectionIndex < 0 || this.cameraSectionIndex >= this.lattice.latticeSection.length) {
             return -1L;
         }
         RenderSection section = this.lattice.sectionAt(this.cameraSectionIndex);
