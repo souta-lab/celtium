@@ -4,7 +4,21 @@
 
 ## 現在状態（2026-10-15）
 
-作業ブランチ: `fix/glless-section-visibility-20261015`（継続）。直近の実装基点 `322f0b5c0`、照合済み `origin/main=da8a934a4`。現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
+作業ブランチ: `fix/glless-section-visibility-20261015`（継続）。直近の統合基点 `b58b5d828`、照合済み `origin/main=b58b5d828`。
+
+**🎯🎯🎯 scene・resize・reload が AMD と Intel の両方で PASS（実測 ✓✓✓・2026-10-15）**
+- **AMD RX 6400（RADV NAVI24）**: 主要scene `gv-cohort-fix1` PASSED ✓／resize `gv-cohort-resize2`（`HEADLESS-1` を 800x600 → 1600x900 → 1280x720）PASSED・validation 0件 ✓・**提示画像が 1600x900**（アプリが swapchain を作り直した証拠 ✓）／reload `gv-cohort-reload2` PASSED・`resourceReloadRequestedAtTick=60` ✓・`resourceReloadElapsedMillis=11673` ✓・0件 ✓。
+- **Intel UHD 630（CFL GT2）**: 主要scene `gv-cohort-intel1` PASSED ✓／resize `gv-cohort-resize3` PASSED・0件 ✓（**修正前は `VUID-vkDestroyFramebuffer-framebuffer-00892` 2件** ✗ → `27d26cebf` で settle を破棄箇所へ移して 2→0 ✓✓）／reload `gv-cohort-reload3` PASSED・tick 60 発火 ✓・`resourceReloadElapsedMillis=10700` ✓・0件 ✓。
+- デバイス行で確定: 両 Intel leg の `CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"` ✓ と `gpuRequirementMet=true`（`gpuRequirementSource=nativeDeviceName`）✓。
+- **統合済み**: PR #285（間接コマンドバッファのページング → 地形が画面に出た ✓）・PR #286（framebuffer 破棄前の settle ✓）。`origin/main = b58b5d828` ✓。
+- **world-switch（Nether 転送・2026-10-15 実測）**: レンダラ層は **GREEN** ✓ — `gv-cohort-switch8`（AMD, `-Dceltium.validation.dimensionAtTick=80`, render distance 8）で **Nether 到着 t82 ✓・192 フレーム描画 ✓・72 フレーム提示 ✓・validation 0件 ✓**。サーバー側も `dimensionServerResult=transferred` ✓・配置 `1,70,1`（ポータル外・`safe=true`）✓。クライアント追随の3修正はすべて実行を記録: `dimensionClientPositionPush=setPositionAndUpdate 1.5,70,1.5` ✓・`dimensionChunkReloadNotice=SPacketChangeGameState 13` ✓・`dimensionLoadingScreenClosedAtTick=83`（`GuiDownloadTerrain` を閉じた ✓）。
+- **world-switch の残る失敗はテスト機の制約** ✗: 転送後 `Can't keep up! Did the system time change, or the server is overloaded? Running 509…` が出ており、Nether の地形生成が `NetherPlayServer` の keepalive タイムアウト（wall-clock 30 秒、`fml.readTimeout` とは別の時計）に間に合わない。実測: 30 秒キックは t242〜t324 に現れ、`fml.readTimeout` を 30→120 にすると戻りは t255→t324・描画は 79→196 フレームへ増えたが消えなかった。`renderDistanceChunks` は既に 8（`ValidationClient:3050`）でサーバーにも伝わっている。原典の対策（Geyser は転送中に render distance を偽って下げる／`BDS-19244` は Nether 読み込みが render distance に比例）を踏まえると、次のレバーはさらに下げるか、より速いホストで回すこと。
+- **minimize（2026-10-15 実測・AMD）**: **PASSED** ✓ — `gv-cohort-iconify1`（`-Dceltium.validation.iconifyAtTick=240`, 画像取得後）で `fixtureStatus=PASSED`・`validationClean=true`・`validationMessageCount=0`、`iconifyCall=glfwIconifyWindow` ✓・`iconifySizeBefore=1280x720` ✓・`iconifySizeAfter=1280x720` ✓。
+  - **防御はコード側で確認済み**: `SwapchainCreateArguments.clampExtent` は `Math.max(1, ...)` で「never below the minimum and never zero」を明示しており、これは Blender が同じ問題に入れた修正（"Minimized windows have the resolution of 0,0 ... use a minimum resolution of 1,1"）と Win32/X11 の規則（swapchain image は 0 サイズ不可）に一致する。minimize で報告されている VUID は `VkSwapchainCreateInfoKHR-imageExtent-01689`／`VkFramebufferCreateInfo-width-00885`／`-height-00887` の3つで、前者を防げば後2つは従属する。
+  - **Wayland では最小化状態が存在しない**: `xdg_toplevel::set_minimized` は「コンポジタが解釈する要求」で、「現在最小化されているかを知る方法も、解除する方法も無い」。Sway はこれを無視し得るので 0×0 の経路に入らない — 実測どおりサイズは変わらなかった。したがってこの leg が証明するのは「最小化を要求しても落ちず、validation も汚さない」ことで、0 サイズ経路そのものはコード側の clamp が受け持つ。GLFW も Wayland では `GLFW_ICONIFIED` が常に false で `glfwRestoreWindow` で戻せないため、この計器は一方通行で leg の最後に置いてある。
+- **未測定**: 復旧・monitor move。resize の受入マトリクス（外部: hoihky.dev「swapchain recreate」）は slow drag 30s／fast maximize／minimize 10s（スピン・`DEVICE_LOST` なし）／monitor move（`SUBOPTIMAL` のち安定）の4項目で、**我々はそのうち maximize 相当のみ**。
+- **既知の外部欠陥（同じ形）**: MC-307344（Vulkan のみ resize で性能が 30/60/160 fps と不定 ✓）・MC-167219（リロード8回で 2fps ✓）・MC-298898（リロード毎に VRAM +1.3GB ✓）・MC-98707（1.12.2 の `deleteTexture` がマップから消さない ✓）・MC-310176（**Mojang 自身の Vulkan レンダラがリソースパックメニューで `VUID-VkWriteDescriptorSet-descriptorType-02996`** ✓）。
+現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
 
 **🎯🎯🎯 GL-less の地形が画面に出た・AMD と Intel の両方で PASS（実測 ✓✓✓・2026-10-15）**
 - **根因**: 間接コマンドバッファのページング欠如。ページを「領域」ではなく「記録スロット」に属させ、そのスロットのフェンス完了まで別オフセットを保ち、延期した全アップロードを記録済み領域描画より前に投入する修正（`322f0b5c0`）で解消した。

@@ -668,6 +668,8 @@ public final class ValidationClient {
     private final int celtium$dimensionAtTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
     private final int celtium$dimension = Integer.getInteger("celtium.validation.dimension", -1).intValue();
     private boolean celtium$changedDimension;
+    /** Whether the fixture closed the transfer's loading screen, and which screen it was. */
+    private boolean celtium$loadingScreenClosed;
 
     /**
      * The dimension trace, bounded.
@@ -793,6 +795,46 @@ public final class ValidationClient {
      * frame target or the device. The harness only sets the size at launch ({@code --width}/{@code --height}), which is
      * why this is driven from inside the game.
      */
+    /**
+     * Ask the game to reload its resources once, at this world tick, and whether that has been done.
+     * <p>
+     * The reload is the other transition the renderer has to survive: the atlas is re-stitched and every texture
+     * that hangs off it is replaced, so the mirror the native path samples has to be rebuilt rather than left
+     * pointing at the old image. Its known failure is a leak rather than a black frame - MC-298898 records the
+     * atlas allocating a new texture on every reload and keeping the old one, measured at ~1.3 GB of VRAM growth
+     * per reload with a 512x512 pack, and MC-298986 records repeated reloads ending in graphics corruption.
+     * <p>
+     * FMLClientHandler rather than Minecraft.refreshResources(): the latter is deprecated and the Forge javadoc
+     * says so in as many words ("@Deprecated // Forge: Use selective refreshResources method in
+     * FMLClientHandler"). ReloadRequirements.all() is the readable way to ask for every resource type.
+     * <p>
+     * Its own property, -Dceltium.validation.resourceReloadAtTick, and not the existing
+     * celtium.validation.reloadAtTick: that one already means "rebuild the chunk meshes" (it calls
+     * renderGlobal.loadRenderers) and reusing the name would have made two instruments share one key.
+     */
+    private final int celtium$resourceReloadAtTick =
+            Integer.getInteger("celtium.validation.resourceReloadAtTick", 0).intValue();
+    private boolean celtium$resourceReloadRequested;
+    /**
+     * The world tick to iconify the window at, and whether that has been done.
+     * <p>
+     * The third case of the resize matrix, and the one the renderer's own code answers by construction:
+     * {@code SwapchainCreateArguments.clampExtent} never returns zero, which is the fix Blender shipped for the
+     * same problem ("Minimized windows have the resolution of 0,0 ... use a minimum resolution of 1,1") and what
+     * the Win32/X11 rule requires, because a swapchain image cannot be zero-sized.
+     * <p>
+     * It is one-way on purpose and must be the last thing a leg does. GLFW's own documentation is explicit for
+     * Wayland: "Once a window is iconified, glfwRestoreWindow won't be able to restore it. This is a design
+     * decision of the xdg-shell protocol", and GLFW_ICONIFIED is always false there, so the leg cannot ask
+     * whether it worked. What it can record is that the call was made, what the window measured before and
+     * after, and whether the game kept presenting - a leg that survives to its own end with validation clean is
+     * the evidence, and the picture is taken before this runs.
+     * <p>
+     * Off unless -Dceltium.validation.iconifyAtTick is set.
+     */
+    private final int celtium$iconifyAtTick = Integer.getInteger("celtium.validation.iconifyAtTick", 0).intValue();
+    private boolean celtium$iconifyRequested;
+    private long celtium$resourceReloadElapsedMillis = -1L;
     private final int celtium$resizeAtTick = Integer.getInteger("celtium.validation.resizeAtTick", 0).intValue();
     private final String celtium$resizeTo = System.getProperty("celtium.validation.resizeTo", "1024x640");
     /**
@@ -3164,6 +3206,37 @@ public final class ValidationClient {
                                         // used to zero it, which re-armed the return trip instead.
                                         player.timeUntilPortal = player.getPortalCooldown();
                                         celtium$portalCooldownAfterTransfer = player.timeUntilPortal;
+                                        // The client's copy of the position: setLocationAndAngles inside the teleporter
+                                        // never told it, and a client that is not where the server put it never
+                                        // finishes the loading screen. Reported either way, so a run where the
+                                        // push did not happen cannot be read as one where it did.
+                                        net.minecraft.util.math.BlockPos settled = celtium$settledArrival;
+                                        if (settled == null) {
+                                            report.addProperty("dimensionClientPositionPush", "none-settled");
+                                        } else {
+                                            player.setPositionAndUpdate(settled.getX() + 0.5D, settled.getY(),
+                                                    settled.getZ() + 0.5D);
+                                            report.addProperty("dimensionClientPositionPush",
+                                                    "setPositionAndUpdate " + (settled.getX() + 0.5D) + "," + settled.getY()
+                                                            + "," + (settled.getZ() + 0.5D));
+                                        }
+                                        // The second half of the same handshake, and the one the position alone did not
+                                        // supply: a client that is waiting in GuiDownloadTerrain does not close it on a
+                                        // position packet, it closes it when the world chunks are sent again. Measured on
+                                        // gv-cohort-switch2: with only the position pushed the client reached the Nether
+                                        // and presented 477 frames (98 before the push), then the server pulled it back
+                                        // to dimension 0 at tick 259 with screen=GuiDownloadTerrain still up. The
+                                        // notification is a game-state packet; 13 is the level-chunks-load-start state,
+                                        // which is what the protocol names and what a server sends to make the client
+                                        // rebuild its chunk view after a respawn.
+                                        try {
+                                            player.connection.sendPacket(new net.minecraft.network.play.server
+                                                    .SPacketChangeGameState(13, 0.0F));
+                                            report.addProperty("dimensionChunkReloadNotice", "SPacketChangeGameState 13");
+                                        } catch (Throwable error) {
+                                            report.addProperty("dimensionChunkReloadNotice",
+                                                    "failed: " + error.getClass().getName() + ": " + error.getMessage());
+                                        }
                                         celtium$transfer = new TransferSnapshot("transferred", worldTicks, rotation);
                                     } catch (Throwable error) {
                                         celtium$transfer = new TransferSnapshot("error: " + error, worldTicks, rotation);
@@ -3187,6 +3260,26 @@ public final class ValidationClient {
             }
             // The arrival is observed on the client, which is the side that has to be in the new dimension for the
             // capture to mean anything: a scheduled server task is not evidence that the client followed it.
+            // The loading screen the transfer puts up does not close on its own here, and the reason is measured:
+            // the server is still generating the destination while the client waits, so the client's keepalive
+            // replies stop and NetHandlerPlayServer kicks it after its own 30-second wall-clock timeout - which is a
+            // different clock from fml.readTimeout (raising that one from 30 to 120 only moved the return from tick
+            // 255 to 324 and doubled the frames drawn, 79 to 196, without removing it). The log carries the cause:
+            // "Can't keep up! ... Running 509...ms behind". A player's client closes this screen when the chunk it
+            // is standing in arrives; the fixture waits for the renderer instead and closes it once frames have
+            // actually been drawn in the target dimension, which is the condition this run is about. Recorded, so a
+            // run where the screen closed by itself is told apart from one where the fixture closed it. The
+            // threshold is the arrival itself and not a frame count: with 20 frames required the close landed on tick
+            // 284, which is the very tick the server returned the player, so the keepalive window had already
+            // expired by then. A client closes this screen as soon as it has terrain to stand on.
+            if (celtium$dimensionAtTick > 0 && celtium$changedDimension && celtium$arrivedAtTick > 0
+                    && !celtium$loadingScreenClosed
+                    && mc.currentScreen != null) {
+                celtium$loadingScreenClosed = true;
+                report.addProperty("dimensionLoadingScreenClosedAtTick", Integer.valueOf(worldTicks));
+                report.addProperty("dimensionLoadingScreenWas", mc.currentScreen.getClass().getSimpleName());
+                mc.displayGuiScreen(null);
+            }
             if (celtium$dimensionAtTick > 0 && celtium$arrivedAtTick < 0 && celtium$changedDimension
                     && mc.player != null && mc.world != null
                     && mc.player.dimension == celtium$dimension
@@ -3373,8 +3466,59 @@ public final class ValidationClient {
             if (celtium$resizeAtTick > 0 && !celtium$resizeRequested && worldTicks >= celtium$resizeAtTick) {
                 celtium$requestResize(mc, "world");
             }
-            worldTicks++;
-            // The churn toggle is timed to the held window, not the capture: it only runs once the capture has
+            // The world-phase reload, the sibling of the resize above and driven the same way: once, at the
+            // requested tick, with a world loaded. The capture tick is chosen later than this, so the frame the
+            // verdict judges is drawn after the atlas was re-stitched.
+            if (celtium$resourceReloadAtTick > 0 && !celtium$resourceReloadRequested
+                    && worldTicks >= celtium$resourceReloadAtTick) {
+                celtium$resourceReloadRequested = true;
+                long started = System.nanoTime();
+                try {
+                    // VanillaResourceType, not ReloadRequirements: ReloadRequirements is a 1.13+ class and
+                    // does not exist in 1.12.2, where the parameter is the IResourceType varargs. The javadoc
+                    // for this Forge version lists refreshResources(IResourceType...) and
+                    // refreshResources(Predicate<IResourceType>) and nothing else.
+                    net.minecraftforge.fml.client.FMLClientHandler.instance().refreshResources(
+                            net.minecraftforge.client.resource.VanillaResourceType.TEXTURES,
+                            net.minecraftforge.client.resource.VanillaResourceType.MODELS,
+                            net.minecraftforge.client.resource.VanillaResourceType.SHADERS);
+                    celtium$resourceReloadElapsedMillis = (System.nanoTime() - started) / 1_000_000L;
+                    report.addProperty("resourceReloadRequestedAtTick", Integer.valueOf(worldTicks));
+                    report.addProperty("resourceReloadElapsedMillis",
+                            Long.valueOf(celtium$resourceReloadElapsedMillis));
+                    celtium$resizeTrace("CELTIUM_RESOURCE_RELOAD tick=" + worldTicks
+                            + " millis=" + celtium$resourceReloadElapsedMillis);
+                } catch (Throwable error) {
+                    report.addProperty("resourceReloadFailed",
+                            error.getClass().getName() + ": " + error.getMessage());
+                    celtium$resizeTrace("CELTIUM_RESOURCE_RELOAD_FAILED " + error);
+                }
+            }
+            // The one-way minimize, after everything else in the leg: see the field's note for why it cannot be
+            // undone on Wayland and why the picture must already exist by the time it runs.
+            if (celtium$iconifyAtTick > 0 && !celtium$iconifyRequested && worldTicks >= celtium$iconifyAtTick) {
+                celtium$iconifyRequested = true;
+                long window = celtium$windowHandle();
+                int[] before = celtium$glfwWindowSize(window);
+                report.addProperty("iconifyRequestedAtTick", Integer.valueOf(worldTicks));
+                report.addProperty("iconifyWindowHandle", Long.valueOf(window));
+                report.addProperty("iconifySizeBefore",
+                        before == null ? "unreadable" : before[0] + "x" + before[1]);
+                try {
+                    org.lwjgl.glfw.GLFW.glfwIconifyWindow(window);
+                    report.addProperty("iconifyCall", "glfwIconifyWindow");
+                } catch (Throwable error) {
+                    report.addProperty("iconifyCall", "failed: " + error.getClass().getName() + ": " + error.getMessage());
+                }
+                int[] after = celtium$glfwWindowSize(window);
+                report.addProperty("iconifySizeAfter",
+                        after == null ? "unreadable" : after[0] + "x" + after[1]);
+                // Not restored: Wayland cannot, and the leg ends here either way.
+                celtium$resizeTrace("CELTIUM_ICONIFY tick=" + worldTicks + " handle=" + window
+                        + " before=" + (before == null ? "?" : before[0] + "x" + before[1])
+                        + " after=" + (after == null ? "?" : after[0] + "x" + after[1]));
+            }
+            worldTicks++;            // The churn toggle is timed to the held window, not the capture: it only runs once the capture has
             // happened, so the frames the verdict judges stay the unchanged world, and the slow-frame dump and the
             // pass split then see rebuild frames rather than steady ones.
             if (this.celtium$churnInterval > 0 && celtium$captureStartTick > 0
@@ -5891,6 +6035,9 @@ public final class ValidationClient {
      * and the destination block are reported either way, so a placement the fixture guessed is visible in the report
      * rather than implied by the player's later position.
      */
+    /** The position celtium$settleArrival chose, or null when it chose none. */
+    private net.minecraft.util.math.BlockPos celtium$settledArrival;
+
     private void celtium$settleArrival(net.minecraft.world.WorldServer world, net.minecraft.entity.Entity entity,
             float rotationYaw) {
         int arrivalX = net.minecraft.util.math.MathHelper.floor(entity.posX);
@@ -5952,8 +6099,16 @@ public final class ValidationClient {
         boolean safe = chosen != null;
         if (safe) {
             net.minecraft.util.math.BlockPos destination = arrival.add(chosen[0], chosen[1], chosen[2]);
+            // setLocationAndAngles moves the server's copy and stops there: it sends no packet, so the client keeps
+            // the position it had before the transfer and its loading screen waits for a chunk it is not standing
+            // in. Measured on gv-cohort-switch1: the server placed the player at 1,70,1 (placedInPortal=false,
+            // safe=true) while the client stayed at 0,12,0 for 195 ticks with screen=GuiDownloadTerrain, and the
+            // server then pulled the player back to dimension 0 at tick 276. The position is remembered here and
+            // pushed with EntityPlayerMP.setPositionAndUpdate once the transfer has returned - the same call this
+            // file already relies on elsewhere because it is the one that sends the position-look packet.
             entity.setLocationAndAngles(destination.getX() + 0.5D, destination.getY(), destination.getZ() + 0.5D,
                     rotationYaw, entity.rotationPitch);
+            celtium$settledArrival = destination;
             entity.motionX = 0.0D;
             entity.motionY = 0.0D;
             entity.motionZ = 0.0D;
