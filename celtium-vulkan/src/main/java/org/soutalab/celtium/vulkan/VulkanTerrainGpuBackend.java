@@ -7809,6 +7809,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
             } catch (RuntimeException | LinkageError error) {
                 this.lastLightmapSupplyFailure = String.valueOf(error);
+                // The failure was only ever readable through the heartbeat, which prints once, so leg gv-cohort-lm4
+                // showed the upload being entered and the loop restarting without ever naming the exception. Bounded,
+                // and at the moment it happens.
+                if (celtium$lightmapFailures++ < 4) {
+                    System.out.println("[Celtium] CELTIUM_LIGHTMAP_FAILURE id=" + this.lightmapGlId
+                            + " error=" + error);
+                    error.printStackTrace(System.out);
+                }
             }
         }
     }
@@ -7824,6 +7832,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Bounded stage counter for the light map mirror. */
     private int celtium$lightmapStages;
+
+    /** Bounded failure counter for the light map mirror. */
+    private int celtium$lightmapFailures;
     private boolean supportedImmediateTarget() {
         // Every condition names itself. One shared message covered all five and could not say which one refused, which is
         // how 870 format-2 refusals in a run stayed unnamed (measured: the stage marker said this gate, and the tally
