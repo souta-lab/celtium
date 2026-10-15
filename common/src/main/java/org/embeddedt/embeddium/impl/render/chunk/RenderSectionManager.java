@@ -105,6 +105,9 @@ public abstract class RenderSectionManager {
     @Getter
     private final RenderPassConfiguration<?> renderPassConfiguration;
 
+    /** Bounded report counter for the terrain pass reaching the backend. */
+    private int celtium$layerReports;
+
     private final Set<TerrainRenderPass> disabledRenderPasses;
 
     private final int minSection, maxSection;
@@ -593,6 +596,14 @@ public abstract class RenderSectionManager {
     public void renderLayer(ChunkRenderMatrices matrices, TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera) {
         if (disabledRenderPasses.contains(pass)) {
             return;
+        }
+
+        // Bounded report of the terrain pass reaching the backend. Leg gv-cohort-lm8 showed the render lists holding
+        // geometry, no refusals at all and yet no firstDraw record from the backend, so the question is whether this
+        // call arrives and at which backend: the two are different objects when the GL-less path has swapped the
+        // terrain backend, and only one of them draws into the presented image.
+        if (celtium$layerReports++ < 8) {
+            System.out.println("[Celtium] CELTIUM_RENDER_LAYER pass=" + pass + " backend=" + this.terrainBackend.getClass().getSimpleName());
         }
 
         this.terrainBackend.render(matrices, this.getCurrentRenderListManager().getRenderLists(), pass,
