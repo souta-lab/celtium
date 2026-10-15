@@ -96,6 +96,14 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
             System.out.println("[Celtium] CELTIUM_TRACKER known=" + tracker.knownChunkCount()
                     + " ready=" + tracker.readyChunkCount()
                     + " sections=" + sections
+                    // Visible and queued are the two counts that say whether the pass has work. Measured 2026-10-15
+                    // (leg gv-cohort-vis1): sections=3920 with visible=1 - so the visibility search is the limit, and
+                    // an unbuilt graph leaves that search with only its starting section, which is exactly one. The
+                    // queue state says whether the graph still has work waiting or has gone quiet.
+                    + " visible=" + (this.getRenderSectionManager() != null
+                            ? this.getRenderSectionManager().getVisibleChunkCount() : -1)
+                    + " queueEmpty=" + (this.getRenderSectionManager() != null
+                            ? this.getRenderSectionManager().getBuilder().isBuildQueueEmpty() : true)
                     + " dimension=" + world.provider.getDimension()
                     + " worldFrames=" + this.celtium$trackerReportCountdown);
         } catch (Throwable error) {

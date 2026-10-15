@@ -1,5 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk.occlusion;
 
+import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
 import grondag.bitraster.AbstractRasterizer;
 import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.render.chunk.LocalSectionIndex;
@@ -127,6 +128,10 @@ public class OcclusionCuller {
     // Lattice index of the camera section when it is the search root, else -1. It is visited inline, never tested.
     private int cameraSectionIndex;
 
+    /** Bounded report state for the visibility search. */
+    private static int celtium$visibleReports;
+    private static int celtium$lastVisibleCount = -1;
+
     public OcclusionCuller(SectionLattice lattice, int minSectionY, int maxSectionY, boolean rasterOcclusion) {
         this.lattice = lattice;
         this.minSectionY = minSectionY;
@@ -150,6 +155,51 @@ public class OcclusionCuller {
      * @param recordVisible whether to record the visible cells into the lattice's
      *                      {@code visibleCells} buffer for a subsequent shadow search
      */
+    /**
+     * {@return the search root's connectedness encoding, or -1 when there is no root}.
+     * <p>
+     * The walk only leaves a section through a face its visibility data allows, and that data is written when the
+     * section is built. A NULL encoding says the root was never built, which stops the walk at the root however many
+     * neighbours exist - which is the difference between "the graph is missing edges" and "there is nothing to
+     * traverse with".
+     */
+    private long celtium$rootVisibility() {
+        // Bounded by the array, not by installedCount: that is a count of installed cells, and the camera section's
+        // lattice index is an array index, so comparing the two rejected every valid root and reported -1 for a
+        // section that was there. Measured on leg gv-cohort-vis4, where the report read rootVisibility=-1 while the
+        // search had just added the root.
+        if (this.cameraSectionIndex < 0 || this.cameraSectionIndex >= this.lattice.latticeSection.length) {
+            return -1L;
+        }
+        RenderSection section = this.lattice.sectionAt(this.cameraSectionIndex);
+        return section == null ? -1L : section.getVisibilityData();
+    }
+
+    /**
+     * {@return a one-word classification of the view-projection matrix}.
+     * <p>
+     * The frustum rejected a box at the camera itself, so the question is what the matrix looks like: absent, not a
+     * number, or finite. MC-306810 is the shape this is looking for - a zero window height making the projection
+     * matrix NaN, after which the frustum culls everything.
+     */
+    private String celtium$describeMatrix(org.joml.Matrix4fc matrix) {
+        if (matrix == null) {
+            return "null";
+        }
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                float value = matrix.get(column, row);
+                if (Float.isNaN(value)) {
+                    return "nan";
+                }
+                if (Float.isInfinite(value)) {
+                    return "infinite";
+                }
+            }
+        }
+        return "finite";
+    }
+
     public void findVisible(Visitor visitor,
                             Viewport viewport,
                             long[] visitState,
@@ -194,6 +244,13 @@ public class OcclusionCuller {
             allowFrustumClamping = false;
         }
 
+        // A/B experiment (2026-10-15, leg gv-cohort-vis5): the root is built - rootVisibility is non-zero - and the
+        // walk still reports one, so every edge out of the root is rejected. The two candidates are the connectedness
+        // test and the frustum, and turning occlusion culling off keeps the frustum and drops the connectedness test,
+        // so the visible count in that mode says which one is rejecting. Set celtium.vulkan.forceNoOcclusion to run it.
+        if (Boolean.getBoolean("celtium.vulkan.forceNoOcclusion")) {
+            useOcclusionCulling = false;
+        }
         this.rasterActive = this.rasterOccluder != null && useOcclusionCulling && viewport.getVpMatrix() != null;
 
         if (this.rasterActive) {
@@ -212,6 +269,43 @@ public class OcclusionCuller {
             this.lattice.visibleCount = this.visibleCount;
         }
         this.visitState = null;
+        // Measured 2026-10-15 (leg gv-cohort-vis2): the manager reports sections=3920 with visible=1 and an empty
+        // build queue, so the search itself is the limit. These three values separate the explanations: a camera in
+        // an unloaded section disables occlusion culling and stops the walk, a cameraSectionIndex of -1 means no root
+        // was found at all, and a visible count of one with a valid root means the root was added and no neighbour
+        // was enqueued. Bounded, and only when the count changes.
+        if (this.visibleCount != celtium$lastVisibleCount || celtium$visibleReports < 6) {
+            celtium$lastVisibleCount = this.visibleCount;
+            if (celtium$visibleReports++ < 12) {
+                System.out.println("[Celtium] CELTIUM_VISIBLE count=" + this.visibleCount
+                        + " cameraSection=" + this.cameraSectionIndex
+                        + " unloadedSection=" + this.isCameraInUnloadedSection
+                        + " multiRoot=" + this.isMultiRootSearch
+                        + " raster=" + this.rasterActive + " occlusion=" + useOcclusionCulling
+                        // The walk only leaves a section through a face its visibility data allows, and that data is
+                        // written when the section is built. A NULL encoding here says the root was never built, which
+                        // stops the walk at the root no matter how many neighbours exist.
+                        + " rootVisibility=" + this.celtium$rootVisibility()
+                        // The cleanest test of the frustum itself: a box at the camera's own position must be visible.
+                        // If it is not, the frustum is degenerate rather than the neighbours being outside it - which
+                        // is what MC-306810 describes, where a zero window height made the projection matrix NaN and
+                        // the frustum culled everything.
+                        + " vp=" + this.celtium$describeMatrix(viewport.getVpMatrix())
+                        // Absolute world coordinates: isBoxVisible(double...) subtracts the camera's block position
+                        // itself, so a relative box asks about a place the camera's world offset away. Both earlier
+                        // versions of this test were wrong in opposite directions - the first passed absolute
+                        // coordinates to the relative overload and the second the reverse - and the direct frustum
+                        // test is what settled which wrapper does what.
+                        + " cameraBoxVisible=" + viewport.isBoxVisible(
+                                viewport.getBlockCoord().x() - 1, viewport.getBlockCoord().y() - 1,
+                                viewport.getBlockCoord().z() - 1, viewport.getBlockCoord().x() + 1,
+                                viewport.getBlockCoord().y() + 1, viewport.getBlockCoord().z() + 1)
+                        // The same box asked of the viewport's own frustum, bypassing the viewport's transform. The
+                        // build site's self-test is true, so a false here means the culler holds a different frustum;
+                        // a true here means the viewport's transform is what turns the box away.
+                        + " frustumDirect=" + viewport.getFrustum().testAab(-1, -1, -1, 1, 1, 1));
+            }
+        }
     }
 
     /**
