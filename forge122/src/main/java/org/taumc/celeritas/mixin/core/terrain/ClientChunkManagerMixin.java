@@ -39,6 +39,9 @@ public abstract class ClientChunkManagerMixin {
 
     /** Bounded report counter, so a leg can see the tracker filling. */
     private static int celtium$chunkAddLogs;
+    /** The last reported pair, so lines are written on change. */
+    private static int celtium$lastKnown = -1;
+    private static int celtium$lastReady = -1;
 
     @Inject(method = "func_73158_c", at = @At("RETURN"), require = 0)
     private void afterLoadChunk(int x, int z, CallbackInfoReturnable<Chunk> cir) {
@@ -58,9 +61,17 @@ public abstract class ClientChunkManagerMixin {
     private void celtium$noteChunkAdded(int x, int z, String path) {
         var tracker = ChunkTrackerHolder.get(this.world);
         tracker.onChunkStatusAdded(x, z, ChunkStatus.FLAG_ALL);
-        if (celtium$chunkAddLogs++ < 12) {
-            System.out.println("[Celtium] CELTIUM_CHUNK_ADD path=" + path + " x=" + x + " z=" + z
-                    + " known=" + tracker.knownChunkCount() + " ready=" + tracker.readyChunkCount());
+        int known = tracker.knownChunkCount();
+        int ready = tracker.readyChunkCount();
+        // Reported on change rather than for the first N adds: the first version spent its cap on twelve adds of the
+        // same chunk (known=1, ready=0) and could not show whether either count ever moved. A line whenever the pair
+        // changes says when chunks accumulate and when readiness follows, which is what sections are built from.
+        if (known != celtium$lastKnown || ready != celtium$lastReady) {
+            celtium$lastKnown = known;
+            celtium$lastReady = ready;
+            if (celtium$chunkAddLogs++ < 24) {
+                System.out.println("[Celtium] CELTIUM_CHUNK_ADD path=" + path + " known=" + known + " ready=" + ready);
+            }
         }
     }
 }
