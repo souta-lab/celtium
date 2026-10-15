@@ -517,6 +517,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     // and an unbound target as name 0.
     private static final int FLAT_MAP_SIZE = 0x10000;
     private final byte[] enables = new byte[FLAT_MAP_SIZE];
+    // A false value may be an observed disable or simply an untouched provider default. Native replacements
+    // can bypass callbacks, so the latter must never erase state captured through Minecraft's API.
+    private final boolean[] capabilityObserved = new boolean[FLAT_MAP_SIZE];
     private final int[] bufferBindings = new int[FLAT_MAP_SIZE];
     /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
      * of an unbound (unit,target) returns -1 - never a valid GL name. */
@@ -866,6 +869,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.scissorBox[3] = height;
     }
 
+    /** Records the viewport selected through Minecraft's API or LWJGL3's native entry point. */
+    public static void celtium$viewport(int x, int y, int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.viewportX = x;
+            stub.viewportY = y;
+            stub.viewportW = width;
+            stub.viewportH = height;
+        }
+    }
+
     /** glScissor calls seen, so a leg can say whether the scene clipped at all rather than only whether a group did. */
     private long scissorCallCount;
 
@@ -941,6 +955,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static boolean blendEnabled() {
         CeltiumGlStub stub = installed;
         return stub != null && stub.enables[GL_BLEND] != 0;
+    }
+
+    public static boolean blendEnableRecorded() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.capabilityObserved[GL_BLEND];
+    }
+
+    public static boolean cullEnableRecorded() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.capabilityObserved[GL_CULL_FACE];
+    }
+
+    public static boolean cullFaceRecorded() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.cullFaceCalled;
     }
 
     /** {@return the RGB source factor GL was last given}, or GL's initial {@code ONE} when it was never told. */
@@ -1152,6 +1181,46 @@ public final class CeltiumGlStub implements FunctionProvider {
             return -1;
         }
         return stub.pendingClears.get() == 0 ? -1 : stub.pendingClearDrawFbo;
+    }
+
+    /** Records a clear through the same producer used by callback dispatch. */
+    public static void celtium$clear(int mask) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.recordClear(mask);
+        }
+    }
+
+    public static void celtium$clearColor(float red, float green, float blue, float alpha) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.recordClearColor(red, green, blue, alpha);
+        }
+    }
+
+    public static void celtium$clearDepth(double depth) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.recordClearDepth(depth);
+        }
+    }
+
+    private void recordClear(int mask) {
+        // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
+        this.pendingClearDrawFbo = this.drawFbo;
+        this.pendingClearIsMain = this.drawFramebufferIsMain;
+        this.pendingClears.getAndUpdate(previous -> previous | mask);
+    }
+
+    private void recordClearColor(float red, float green, float blue, float alpha) {
+        this.clearRed = red;
+        this.clearGreen = green;
+        this.clearBlue = blue;
+        this.clearAlpha = alpha;
+    }
+
+    private void recordClearDepth(double depth) {
+        this.clearDepth = Math.max(0.0D, Math.min(1.0D, depth));
     }
 
     public static int consumePendingClears() {
@@ -1913,6 +1982,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                         noteDrawStateBoundary();
                     }
                     this.enables[(int) a0] = 1;
+                    this.capabilityObserved[(int) a0] = true;
                 }
                 return 0L;
             case SEM_DISABLE:
@@ -1924,6 +1994,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                         noteDrawStateBoundary();
                     }
                     this.enables[(int) a0] = 0;
+                    this.capabilityObserved[(int) a0] = true;
                 }
                 return 0L;
             case SEM_CULL_FACE:
@@ -2142,23 +2213,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 bindFramebuffer((int) a0, (int) a1);
                 return 0L;
             case SEM_CLEAR:
-                this.pendingClears.getAndUpdate(mask -> mask | (int) a0);
-                // Which framebuffer this clear belongs to. A clear issued while one of the game's own framebuffers is
-                // bound names that image, not the delivered frame - and under GL-less every non-main identity shares
-                // the chain pair, so applying such a clear to the pair wipes whatever another identity had just drawn
-                // there (measured: the panorama's faces are cleared to white before the copy reads them).
-                this.pendingClearDrawFbo = this.drawFbo;
-                this.pendingClearIsMain = this.drawFramebufferIsMain;
+                this.recordClear((int) a0);
                 return 0L;
             case SEM_CLEAR_COLOR:
-                this.clearRed = Float.intBitsToFloat((int) c[0]);
-                this.clearGreen = Float.intBitsToFloat((int) c[1]);
-                this.clearBlue = Float.intBitsToFloat((int) c[2]);
-                this.clearAlpha = Float.intBitsToFloat((int) c[3]);
+                this.recordClearColor(Float.intBitsToFloat((int) c[0]), Float.intBitsToFloat((int) c[1]),
+                        Float.intBitsToFloat((int) c[2]), Float.intBitsToFloat((int) c[3]));
                 return 0L;
             case SEM_CLEAR_DEPTH:
-                this.clearDepth = "glClearDepth".equals(fn.name) ? Double.longBitsToDouble(c[0])
-                        : (double) Float.intBitsToFloat((int) c[0]);
+                this.recordClearDepth("glClearDepth".equals(fn.name) ? Double.longBitsToDouble(c[0])
+                        : (double) Float.intBitsToFloat((int) c[0]));
                 return 0L;
             case SEM_BUFFER_SUBDATA:
                 bufferSubData(fn, c);
@@ -2998,6 +3061,22 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * Answers tracked integer state for LWJGL3's replaced native query. Untracked capability limits are
+     * left to the bootstrap helper, which can also answer them before this provider is installed.
+     */
+    public static boolean celtium$getIntegers(int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return false;
+        }
+        if (pname != 0x0BA2 && pname != 0x0C10 && stub.getIntegerValue(pname) == Integer.MIN_VALUE) {
+            return false;
+        }
+        stub.getInts(pname, out, null);
+        return true;
+    }
+
     private void getInts(int pname, long out, Fn fn) {
         if (out == 0L) {
             return;
@@ -3039,14 +3118,30 @@ public final class CeltiumGlStub implements FunctionProvider {
      * <p>
      * One float was written for every pname before this, which left the rest of the caller's buffer uninitialised: a
      * sixteen-float matrix read produced one zero and fifteen words of whatever the allocation held, and every
-     * transform built from it was garbage. Matrices answer the identity and the single-valued states answer the value
-     * a fresh GL context starts them at, which is the honest answer for a context that never had them set.
+     * transform built from it was garbage. Matrices read the renderer's live state mirror (identity only before a
+     * backend exists); scalar and vector queries write exactly the number of components implied by their pname.
      */
     private void getFloats(int pname, long out, Fn fn) {
+        getFloats(pname, out, "glGetDoublev".equals(fn.name));
+    }
+
+    /** The same state-query implementation for callback dispatch and LWJGL3's replaced native entry points. */
+    public static void celtium$getFloats(int pname, long out, boolean asDouble) {
         if (out == 0L) {
             return;
         }
-        boolean asDouble = "glGetDoublev".equals(fn.name);
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.getFloats(pname, out, asDouble);
+        } else {
+            putFloatOrDouble(out, 0, 0.0f, asDouble);
+        }
+    }
+
+    private void getFloats(int pname, long out, boolean asDouble) {
+        if (out == 0L) {
+            return;
+        }
         switch (pname) {
             case 0x0BA6: // GL_MODELVIEW_MATRIX
             case 0x0BA7: // GL_PROJECTION_MATRIX
@@ -3342,13 +3437,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      * carries no game bytes, so it is counted apart from the full images.
      */
     private void undefinedLevel(int name, int level, int width, int height, int depth) {
-        long bytes = (long) width * (long) height * 4L;
-        if (depth > 1 || width <= 0 || height <= 0 || bytes > MAX_CAPTURE_BYTES) {
+        long pixels = (long) width * (long) height;
+        if (depth > 1 || width <= 0 || height <= 0 || pixels > MAX_CAPTURE_BYTES / 4L) {
             // No shape to lay a surface out from: a 2D record cannot describe depth, and this level is past the size
             // the stub will mirror at all. The extent stands, the pixels do not.
             this.unconvertedUploads.incrementAndGet();
             return;
         }
+        long bytes = pixels * 4L;
         ByteBuffer zeros = ByteBuffer.allocateDirect((int) bytes);
         // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small
         // buffer, and a garbage surface is exactly the silently wrong atlas this path exists to prevent.
@@ -3537,6 +3633,33 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code bytes} rounded up to a GL unpack alignment, which is always a power of two: 1, 2, 4 or 8. */
     private static int aligned(int bytes, int alignment) {
         return (bytes + alignment - 1) & ~(alignment - 1);
+    }
+
+    /**
+     * Records TextureUtil's named allocation after its delete/bind/allocate sequence. The dimensions describe
+     * storage, not uploaded content: an undefined surface becomes usable only when an actual write is announced.
+     * The mip argument is the maximum level, not a level count, just like TextureUtil.allocateTextureImpl.
+     */
+    public static void recordTextureAllocation(int name, int mipmapLevels, int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || name <= 0 || mipmapLevels < 0 || mipmapLevels > 31 || width < 0 || height < 0) {
+            return;
+        }
+        stub.forgetTexture(name);
+        for (int level = 0; level <= mipmapLevels; level++) {
+            int levelWidth = width >> level;
+            int levelHeight = height >> level;
+            stub.texLevels.put(texLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
+            stub.undefinedLevel(name, level, levelWidth, levelHeight, 1);
+        }
+    }
+
+    /** Deletes the named storage record too when native glDeleteTextures cannot reach callback dispatch. */
+    public static void forgetTextureAllocation(int name) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && name > 0) {
+            stub.forgetTexture(name);
+        }
     }
 
     /**

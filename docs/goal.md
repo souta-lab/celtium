@@ -1,13 +1,78 @@
-# Celtium goal — 2026-10-15 更新（live: `goal-8df71681-c0a5-4c71-a8a6-aa13f58f1ac7`, revision 2, phase active / activation armed / roundsStarted 22 / maxGoalRounds 10000）
+# Goal: Celtiumを完成させる
 
-goal ID: `goal-8df71681-c0a5-4c71-a8a6-aa13f58f1ac7`
+現行 goal ID: `goal-0075306c-a69d-43e2-b28f-ee7b559d3882`。
+識別履歴（維持）: `goal-8df71681-c0a5-4c71-a8a6-aa13f58f1ac7`、revision 2、旧上限 10000 round。
+実行状態は DSH の goal を参照し、この文書を per-round の状態記録にしない。
 
-**persisted goal は目標のみを保持する**（ユーザー指示 2026-10-12）。現行 objective は「Celtium を完成させる」の全文
-（Vanilla の正確な描画・安定性・FPS/frame time・既存 Forge Mod 互換性・配布品質 → Native Shadow Map と Shaderpack）で、
-**詳細な仕様・優先順・受入・作業規律・証拠の扱いはこのファイル・`docs/plan.md`・`AGENTS.md` が聖典**である。
-**現在状態の唯一の表は `docs/plan.md` 冒頭**であり、この節はその要約にすぎない。
+Minecraft 1.12.2 / CleanroomMC専用の**高性能・高互換性ネイティブVulkanレンダラ「Celtium」**を完成させる。
+Vanillaの正確な描画、安定性、FPS・frame time、既存Forge Mod互換性、配布品質を仕上げ、その後は既存の影開発計画に従ってNative Shadow MapとShaderpack対応を完成させる。
+**最終的な成果は、実際のゲームで正しく動作し、既存レンダラと比較して性能と互換性を証明できるソフトウェアである。**
+計画・監査・実験・リファクタリングは完成に向けた手段であり、実装・修正・最適化・統合を継続する。
 
-## 現在のマイルストーン（2026-10-15）
+## 1. 継続開発
+
+- 毎round、最新HEAD・dirty差分・既存担当・artifact・[plan.md](plan.md)を確認し、同じ実装単位・ブランチ・根因・TODOを必要な複数roundにわたり継続する。roundはcommitやPRの単位ではない。
+- 担当起動後も主担当は実装・最適化・レビュー・統合を進める。Teammateは必要に応じ最大10名程度。長いbuild・ゲーム検証はbackground jobとして管理し、GPUは直列で共有する。
+- 根因に必要な複数箇所を修正し、コンパイル・限定CPU契約・AMD/Intel実機受入を接続する。動作するソース変更とテスト・証拠が揃った単位をcommitし、CI・権限・保護条件に従って統合する。
+- PR直前に `git diff origin/main --name-only` と内容を確認する。round経過だけのdocs-onlyブランチ・PR・即マージは禁止。例外は明示的な文書依頼、ライセンス・安全性・配布等の独立した目的だけ。
+- [plan.md](plan.md)冒頭の現状表は実装・根因・受入が意味的に変わった節目で直接更新する。途中経過はローカルメモか既存Issue/PRへ。主成果はレンダラであり、PR件数・round数・文書量ではない。
+- 継続時はHEAD・TODO・artifactから復元し、DSHのactive/armed/runningを確認する。実際の制限や中断は原因を確認して継続可能な作業から再開する。
+
+## 2. 現状管理と証拠
+
+**現在状態の唯一の表は[plan.md](plan.md)冒頭。** 実装済み・局所検証・AMD成功・Intel成功・両GPU成功・未較正・FAILED・未完を区別する。この文書は目標と完成条件を保持し、下の履歴を現行受入と解釈しない。
+
+- 変更前にproducer・consumer・呼び出し順・所有権・状態契約を確認する。Minecraft/Forge原典と実行時Kirinoパッチを優先し、[mc-sources.sh](../scripts/mc-sources.sh)の `--grep`・`--srg`・`--notch`・`--cleanroom` を使用する。
+- 既存counter・dump・fixture・reportを読み、不足する情報だけ計器を拡張する。baseline/candidate、commit、JAR/SPIR-V hash、GPU、設定、scene、camera、測定区間、exit、validation、画像比較、frame timeを記録する。
+- 競合仮説は条件を揃えた最小A/Bで判別する。失敗gateを正常扱いしない。CPU契約の成功はゲーム画質の受入ではない。
+- 調査資料は[audit-2026-10-09-third.md](audit-2026-10-09-third.md)、[full-audit-0903.md](history/2026-10-11-full-audit-0903.md)、[full-audit-1058.md](history/2026-10-11-full-audit-1058.md)、[構造引継ぎ](handoff-structure-recovery-2026-10-10.md)、[Nether資料](hints-2026-10-10-nether.md)。歴史は現在のソースと実機結果を上書きしない。
+
+## 3. 技術的な完成仕様
+
+- 基準はCleanroom `0.6.13-alpha`、LWJGL `3.4.1`、Java25。Celtium対象モジュールはJava `--release 21`、class major65以下。比較基準はCeleritas固定参照 `989ebf2e`。既存の有効な最適化を保持・改善する。
+- Minecraftの意味に沿ったnative passを完成する: terrain/chunk/sky/fog/weather、model/item/entity/TESR/particle、camera/matrix/lighting/texture/animation、font/GUI/loading/video settings、FBO/ShaderGroup/postprocess/spectator/outline、frame recording/composition/swapchain present。
+- allocator・buffer・descriptor・pipeline・resource registryを共通化し、描画状態と資源寿命を一貫した契約で管理する。通常frameはGL contextなしの純ネイティブVulkanとし、GL/VK bridge・GL fallbackの機能はnative passへ置き換える。
+- GPUは名前でなくVulkan feature・format・surface能力で分岐する。広いGPUを対象としmesh shaderは任意。Minecraft/Forge公開interface・イベント・modelデータ等、Cleanroomで動く既存Modの互換入口を維持する。
+- 有効な変更を保護しつつ共通状態契約を改善し、個別修正の蓄積を減らす。
+
+## 4. 開発優先順位
+
+優先順は最新の失敗・未実装・性能測定から更新する。
+
+**A. 正しさ・安定性**: P0/P1、crash、破損・欠落・freeze・validation違反を解消する。draw snapshot、matrix、texture unit、blend/alpha、viewport/scissor、target identity、clear順序、record/submit、resource lifetimeを共通契約として完成し、Vanillaの全描画・UI・loading・ShaderGroup・outline・presentを正しくする。
+
+**B. FPS/frame time**: [performance_plan.md](performance_plan.md)に沿い描画修正と並行する。CPU/GPU同期・idle、upload ring/suballocation/frame slots、buffer/descriptor/pipeline再利用、batch/indirect、mesh/texture cache、GC/native allocation、copy/readback/submit削減、fence/retirementを改善する。Angelicaや1.12.2最適化Mod・近年の設計をライセンスに適合させて参照する。通常Celeritasとの同一GPU・world・camera・設定・解像度でp50/p95/p99、CPU/GPU時間、stall、allocation、draw/upload数を比較する。
+
+**C. 主要Mod**: JEI・GUI・custom item/model・entity layer・TESR・particle・fluids・animation・FBO・reload・world-switchを実際のModで完成する。**E2E1.93aとRLCraft2.9.3は最優先の完全Modpack互換性ターゲット。** E2EではCeltiumがNothiriumを置換しNaughthiriumも除外する。他のゲーム内容Modは保持しStellarCore等は機能単位で互換化する。RLCraftは大型entity・animation・equipment・particle・foliage・weather・water・HUDを重点対象とする。両packで実world・GUI・Modded描画・保存再読込・安定性・性能まで受け入れる。
+
+**D. 配布品質**: 設定画面・F3 Vulkan device/driver・ライセンス・credits・リブランド・最低GPU能力・Java条件・対応Mod一覧・既知問題・再現可能buildを完成する。
+
+**E. 影/Shaderpack**: shaderless本体と主要Modの描画成立後、既存計画・実装を活用し、解析・GLSL lowering・SPIR-V・native Shadow Map・sampling・composition・pack state/resource契約を接続する。BSL等の実packで実画面の影・性能と両GPU受入を証明する。
+
+## 5. 完成判定
+
+全項目を満たすまでGoalを完了しない。
+
+1. Vanilla主要全描画・UI・設定・loading・最終合成が正しい。
+2. 通常frameがGL contextなしのnative Vulkanで動き、swapchainから実window/compositorへ提示される。
+3. AMD RX6400とIntel UHD630で主要scene・reload・world-switch・resize・失敗復旧を通す。
+4. OpenGL参照との画像・状態比較で正しさを確認する。
+5. 主要ModとE2E/RLCraftの代表sceneが正常に動く。
+6. 公平なCeleritas性能比較があり重要な回帰を解消する。
+7. 実装・文書・ライセンス・設定・配布物が一致する。
+8. 影/Shaderpackは実native描画と両GPU受入で証明する。
+
+失敗は次の根因修正へ接続する。修正後に必要な比較を取り、成功した契約を統合する。
+
+## 6. 自律的な継続
+
+理解した問題は実装へ移す。同じ仮説が停滞すれば判別実験か別手段へ進む。各roundは可能な限り実装・検証・統合・次の実装開始まで進め、Goal全体・TODOと照合して局所偏重を避ける。通常の開発判断・変更・検証・commit/pushは既存権限内で自律実行する。background jobのPID・終了状態・artifactを管理する。
+
+**個々の調査・PR・roundの終了はGoal全体の終了ではない。開発可能な未完を継続して解消する。** 報告は簡潔な日本語とし、作業に時間を使う。
+
+---
+
+## 過去のマイルストーン（2026-10-15・現在状態ではない）
 
 - **RLCraft 2.9.3 P1 = PASSED (AMD and Intel)** ✓✓ — leg `rlcraft-p1-leg7-recipe`（AMD・exit 0・PASSED・131.6s・
   `captureWorldFrames=1184`・`pictureFrameDelta_world=0`）と leg `rlcraft-p1-leg8-intel`（Intel UHD 630・

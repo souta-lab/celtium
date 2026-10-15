@@ -1156,12 +1156,17 @@ public final class VulkanTerrainPipeline {
                     .sampleShadingEnable(false)
                     .alphaToCoverageEnable(false)
                     .alphaToOneEnable(false);
+            // Isolation switch for one A/B: with the terrain's depth test off, a picture that appears says the
+            // loss is in depth (the values, the compare, or the buffer's contents) and a picture that stays black
+            // says it is not. Every statically readable candidate had already been excluded by measurement, so the
+            // next step has to separate the remaining explanations rather than read more source.
+            boolean depth = !Boolean.getBoolean("celtium.vulkan.noTerrainDepth");
             VkPipelineDepthStencilStateCreateInfo depthStencil = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
                     .sType$Default()
-                    .depthTestEnable(true)
+                    .depthTestEnable(depth)
                     // Depth writes stay enabled for every pass, including translucent, matching the pass contract
                     // used by this backend; the vanilla GL renderer disables them for its translucent layer.
-                    .depthWriteEnable(!this.blended) // Minecraft draws its translucent layer with depth writes off
+                    .depthWriteEnable(depth && !this.blended) // Minecraft draws its translucent layer with depth writes off
                     .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL)
                     .depthBoundsTestEnable(false)
                     .stencilTestEnable(false)

@@ -63,6 +63,10 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     @Override
     protected ChunkRenderMatrices createChunkRenderMatrices() {
+        // EntityRenderer sets up the camera and updates ActiveRenderInfo before drawing terrain. Under
+        // GL-less, the query entry points now read the renderer's real state mirror, including Forge camera
+        // events, interpolated rotation, eye height and the current FOV. Keep these in OpenGL convention;
+        // the Vulkan backend remaps clip depth exactly once when it pushes the projection.
         return new ChunkRenderMatrices(ActiveRenderInfoAccessor.getProjectionMatrix(), ActiveRenderInfoAccessor.getModelViewMatrix());
     }
 

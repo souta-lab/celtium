@@ -82,6 +82,7 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
     int   u_FragmentDiscardEnabled; // offset 56
     int   u_ChunkFadeEnabled;       // offset 60
     vec4  u_ChunkFadeParams;        // offset 64
+    int   u_SolidTerrain;           // offset 80 (A/B only: 1 draws a constant colour)
 } celtium;
 
 layout(set = 0, binding = 2) uniform sampler2D u_BlockTex; // The block texture
@@ -127,6 +128,14 @@ vec4 _expFog(vec4 fragColor, float fragDistance, vec4 fogColor, float fogDensity
 }
 
 void main() {
+    // Isolation switch for one A/B. A constant colour that reaches the frame image says the geometry is
+    // rasterised and the loss is in the fragment maths (the texture, the vertex colour, the light map); a frame
+    // that stays black says nothing is being rasterised at all. Every other candidate had been excluded by
+    // measurement, so the next step separates the two remaining explanations instead of reading more source.
+    if (celtium.u_SolidTerrain != 0) {
+        fragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
     vec4 diffuseColor = texture(u_BlockTex, v_TexCoord, v_MaterialMipBias);
 
 

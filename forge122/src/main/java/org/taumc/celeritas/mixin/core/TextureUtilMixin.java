@@ -32,6 +32,16 @@ public class TextureUtilMixin {
     private static int celtium$animationHits;
 
     /**
+     * Allocation supplies the image's real extent before any sprite patch arrives. TAIL is essential: the original
+     * method first deletes the same name, so a HEAD record would be retired before the atlas can use it.
+     */
+    @Inject(method = "func_180600_a(IIII)V", at = @At("TAIL"), require = 1)
+    private static void celtium$recordAllocatedTexture(int glTextureId, int mipmapLevels, int width, int height,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.recordTextureAllocation(glTextureId, mipmapLevels, width, height);
+    }
+
+    /**
      * The animation path.
      * <p>
      * Reading the sources settled which method actually animates a sprite: {@code TextureMap.func_94248_c} binds the
@@ -161,6 +171,7 @@ public class TextureUtilMixin {
     @Inject(method = "func_147942_a", at = @At("HEAD"), require = 0)
     private static void celtium$forgetDeletedTexture(int glTextureId,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.forgetTextureAllocation(glTextureId);
         try {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();

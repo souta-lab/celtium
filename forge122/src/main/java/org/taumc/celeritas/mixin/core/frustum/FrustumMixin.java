@@ -28,6 +28,14 @@ public class FrustumMixin implements ViewportProvider {
     @Override
     public Viewport sodium$createViewport() {
         var frustum = ((IClippingHelper)clippingHelper).celeritas$getJomlFrustum();
-        return new Viewport(frustum::testAab, new org.joml.Vector3d(this.x, this.y, this.z).add(CameraHelper.getThirdPersonOffset()));
+        var offset = CameraHelper.getThirdPersonOffset();
+        // The graph starts at the optical camera, but the planes were built from P * MV, where MV already
+        // contains the offset from the entity's feet to that camera (EntityRenderer.orientCamera). Viewport
+        // subtracts its own position before calling this predicate, so put the offset back to recover the
+        // feet-relative coordinates isBoxInFrustum above supplies. Otherwise eye/third-person translation applies twice.
+        return new Viewport((minX, minY, minZ, maxX, maxY, maxZ) -> frustum.testAab(
+                minX + offset.x, minY + offset.y, minZ + offset.z,
+                maxX + offset.x, maxY + offset.y, maxZ + offset.z),
+                new org.joml.Vector3d(this.x, this.y, this.z).add(offset));
     }
 }

@@ -27,7 +27,8 @@ class VulkanDeviceReportTest {
     void defaultsNeverClaimNativeTerrain() {
         VulkanDeviceReport report = new VulkanDeviceReport();
         assertEquals("UNSUPPORTED_OR_UNAVAILABLE", report.status);
-        assertEquals("opengl", report.effectiveTerrainBackend);
+        assertEquals("unknown", report.effectiveTerrainBackend);
+        assertEquals("not observed by the device bootstrap", report.terrainBackendSource);
         assertFalse(report.nativeTerrainImplemented);
         assertFalse(report.logicalDeviceCreated);
         assertEquals(1, report.requiredContract.samples);
@@ -54,7 +55,8 @@ class VulkanDeviceReportTest {
         assertEquals("DEVICE_READY", json.get("status").getAsString());
         assertTrue(json.get("logicalDeviceCreated").getAsBoolean());
         assertFalse(json.get("nativeTerrainImplemented").getAsBoolean());
-        assertEquals("opengl", json.get("effectiveTerrainBackend").getAsString());
+        assertEquals("unknown", json.get("effectiveTerrainBackend").getAsString());
+        assertEquals("not observed by the device bootstrap", json.get("terrainBackendSource").getAsString());
         JsonObject matched = json.getAsJsonObject("matched");
         assertTrue(matched.get("uuidMatchesOpenGl").getAsBoolean());
         assertTrue(matched.get("driverUuidMatchesOpenGl").getAsBoolean());

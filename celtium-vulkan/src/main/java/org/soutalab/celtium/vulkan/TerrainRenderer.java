@@ -299,7 +299,16 @@ public final class TerrainRenderer {
         this.statistics = statistics;
     }
 
+    private static final int INDIRECT_PAGE_BYTES = 64 * 1024;
+    // Pages belong to a recording slot, not a region. Earlier regions' packets stay at distinct offsets until the
+    // slot's own fence completes; all deferred uploads are submitted before any of the recorded region draws.
+    private final List<List<VulkanBuffer>> indirectSlotPages = new ArrayList<>();
+    private int indirectRecordingSlot = -1;
+    private int indirectPageIndex;
+    private long indirectWriteCursor;
+    private long indirectBatchOffset;
     private VulkanBuffer indirectBuffer;
+    private ByteBuffer indirectPackets;
     private long indirectGrowths;
     private String lastTerrainIndirectFallback = "none";
 
@@ -427,15 +436,23 @@ public final class TerrainRenderer {
             this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
             return false;
         }
-        int needed = size * INDIRECT_COMMAND_BYTES;
-        if (!this.ensureIndirectBuffer(context, needed)) {
+        if (size > Integer.MAX_VALUE / INDIRECT_COMMAND_BYTES) {
             this.terrainIndirectFallbacks++;
-            this.lastTerrainIndirectFallback = "the indirect packet buffer could not be created";
+            this.lastTerrainIndirectFallback = "the indirect packet byte count exceeds the supported range";
+            return false;
+        }
+        int needed = size * INDIRECT_COMMAND_BYTES;
+        if (!this.reserveIndirectPacketBytes(context, needed)) {
+            this.terrainIndirectFallbacks++;
+            return false;
+        }
+        ByteBuffer packets = this.indirectPackets(needed);
+        if (packets == null) {
+            this.terrainIndirectFallbacks++;
             return false;
         }
         this.bindIndexBuffer(commandBuffer, regionIndex ? resources.indexArena.buffer()
                 : sharedIndexBuffers.get(primitiveType));
-        ByteBuffer packets = stack.calloc(needed);
         for (int i = 0; i < size; i++) {
             long byteOffset = batch.indexByteOffset(i);
             packets.putInt(i * INDIRECT_COMMAND_BYTES, batch.elementCount(i));
@@ -447,7 +464,8 @@ public final class TerrainRenderer {
             packets.putInt(i * INDIRECT_COMMAND_BYTES + 16, 0);
         }
         if (TERRAIN_INDIRECT_COMPARE) {
-            // The same enumeration the direct loop would perform, folded into its own counters rather than issued.
+            // Compare the encoded CPU packet with the direct enumeration, not the same CPU values twice. This is
+            // an encoder check, not a GPU readback or proof of the packet's resource lifetime.
             for (int i = 0; i < size; i++) {
                 long byteOffset = batch.indexByteOffset(i);
                 long directFirstIndex = regionIndex ? (byteOffset / 4) : 0L;
@@ -456,7 +474,9 @@ public final class TerrainRenderer {
                         batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
                 this.terrainIndirectCommandDraws++;
                 this.terrainIndirectCommandChecksum = commandHash(this.terrainIndirectCommandChecksum,
-                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
+                        packets.getInt(i * INDIRECT_COMMAND_BYTES),
+                        Integer.toUnsignedLong(packets.getInt(i * INDIRECT_COMMAND_BYTES + 8)),
+                        packets.getInt(i * INDIRECT_COMMAND_BYTES + 12));
             }
         }
         long address = MemoryUtil.memAddress(packets);
@@ -466,8 +486,9 @@ public final class TerrainRenderer {
             if (count != size - first) {
                 this.terrainIndirectClampEvents++;
             }
-            long offsetBytes = (long) first * INDIRECT_COMMAND_BYTES;
-            this.indirectBuffer.write(offsetBytes, address + offsetBytes, count * INDIRECT_COMMAND_BYTES);
+            long sourceOffset = (long) first * INDIRECT_COMMAND_BYTES;
+            long offsetBytes = this.indirectBatchOffset + sourceOffset;
+            this.indirectBuffer.write(offsetBytes, address + sourceOffset, count * INDIRECT_COMMAND_BYTES);
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
             this.terrainIndirectCalls++;
@@ -478,23 +499,97 @@ public final class TerrainRenderer {
         return true;
     }
 
-    boolean ensureIndirectBuffer(VulkanContext context, int bytes) {
+    /** Called after this command slot's prior fence completed and its command buffer was reset successfully. */
+    void beginIndirectRecording(int slot) {
+        if (slot < 0 || slot >= FrameSubmissionScheduler.FRAME_SLOTS) {
+            throw new IllegalArgumentException("invalid indirect recording slot: " + slot);
+        }
+        while (this.indirectSlotPages.size() <= slot) {
+            this.indirectSlotPages.add(new ArrayList<>());
+        }
+        this.indirectRecordingSlot = slot;
+        this.indirectPageIndex = 0;
+        this.indirectWriteCursor = 0;
+        this.indirectBatchOffset = 0;
+        this.indirectBuffer = null;
+    }
+
+    private boolean reserveIndirectPacketBytes(VulkanContext context, int bytes) {
+        if (this.indirectRecordingSlot < 0) {
+            this.lastTerrainIndirectFallback = "no indirect recording slot owns the packets";
+            return false;
+        }
         try {
-            if (this.indirectBuffer != null && this.indirectBuffer.size() >= bytes) {
-                return true;
+            List<VulkanBuffer> pages = this.indirectSlotPages.get(this.indirectRecordingSlot);
+            int pageIndex = this.indirectPageIndex;
+            VulkanBuffer page = this.indirectBuffer;
+            long offset = this.indirectWriteCursor;
+            if (page == null || offset > page.size() - bytes) {
+                if (page != null) {
+                    pageIndex++;
+                }
+                page = pageIndex < pages.size() ? pages.get(pageIndex) : null;
+                if (page == null || page.size() < bytes) {
+                    VulkanBuffer replacement = new VulkanBuffer(context, Math.max((long) bytes, INDIRECT_PAGE_BYTES),
+                            org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+                    // This page has not been used in this recording. The selected slot's previous use is fenced;
+                    // unlike growing the active page, replacing it cannot destroy a handle in recorded draws.
+                    if (page != null) {
+                        page.delete();
+                        pages.set(pageIndex, replacement);
+                    } else {
+                        pages.add(replacement);
+                    }
+                    page = replacement;
+                    this.indirectGrowths++;
+                }
+                offset = 0;
             }
-            if (this.indirectBuffer != null) {
-                this.indirectBuffer.delete();
-                this.indirectBuffer = null;
-            }
-            long size = Math.max(bytes, 64L * 1024L);
-            this.indirectBuffer = new VulkanBuffer(context, size,
-                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-            this.indirectGrowths++;
+            this.indirectBuffer = page;
+            this.indirectPageIndex = pageIndex;
+            this.indirectBatchOffset = offset;
+            this.indirectWriteCursor = offset + bytes;
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.lastTerrainIndirectFallback = "indirect buffer: " + describe(error);
             return false;
+        }
+    }
+
+    private ByteBuffer indirectPackets(int bytes) {
+        try {
+            if (this.indirectPackets == null || this.indirectPackets.capacity() < bytes) {
+                ByteBuffer replacement = MemoryUtil.memAlloc(Math.max(bytes, INDIRECT_PAGE_BYTES));
+                // VulkanBuffer.write snapshots source bytes into Context's staging ring before returning, so no GPU
+                // command retains this CPU scratch buffer. Reuse avoids per-region allocation and stack overflow.
+                if (this.indirectPackets != null) {
+                    MemoryUtil.memFree(this.indirectPackets);
+                }
+                this.indirectPackets = replacement;
+            }
+            return this.indirectPackets;
+        } catch (RuntimeException | LinkageError | OutOfMemoryError error) {
+            this.lastTerrainIndirectFallback = "indirect packet scratch: " + describe(error);
+            return null;
+        }
+    }
+
+    /** Releases all packet pages only after the backend drained their command slots and outstanding uploads. */
+    void releaseIndirectBuffers() {
+        for (List<VulkanBuffer> pages : this.indirectSlotPages) {
+            for (VulkanBuffer page : pages) {
+                page.delete();
+            }
+        }
+        this.indirectSlotPages.clear();
+        this.indirectBuffer = null;
+        this.indirectRecordingSlot = -1;
+        this.indirectPageIndex = 0;
+        this.indirectWriteCursor = 0;
+        this.indirectBatchOffset = 0;
+        if (this.indirectPackets != null) {
+            MemoryUtil.memFree(this.indirectPackets);
+            this.indirectPackets = null;
         }
     }
 
@@ -636,6 +731,9 @@ public final class TerrainRenderer {
         // that difference is the chain's content or the LOD the shader asks for.
         block.putFloat(base + 44, MIP_BIAS_ADD);
         block.putInt(base + 48, fogMode());
+        // A/B only: a constant fragment colour that reaches the frame image says the geometry is rasterised and the
+        // loss is in the fragment maths; a frame that stays black says nothing is being rasterised at all.
+        block.putInt(base + 80, Boolean.getBoolean("celtium.vulkan.solidTerrain") ? 1 : 0);
         block.putInt(base + 52, this.fogService != null ? this.fogService.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL);
         block.putInt(base + 56, pass.supportsFragmentDiscard() ? 1 : 0);
         // Chunk fade is a separate feature that the Vulkan path does not port yet; 0 keeps the GL default look.
