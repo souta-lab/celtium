@@ -201,6 +201,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // its answers (GL_TEXTURE_WIDTH/HEIGHT, filled at CloudRenderer.java 479-480 and used as a modulus at 326).
         // The generic zero-writer below answers zero, which is not a usable divisor, so this one query gets a real
         // answer. See CeltiumGllessHint.glGetTexLevelParameteriv for why 256 is the value Forge asks about.
+        // The int-returning twin: LWJGL's glGetTexLevelParameteri has its own native and returns the value rather
+        // than writing a buffer, so the rule below never covered it and textureSize() read zero for every texture.
+        // See CeltiumGllessHint.glGetTexLevelParameteri for the measurement.
+        if (returnType.equals("I") && name.endsWith("nglGetTexLevelParameteri") && descriptor.startsWith("(III)")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.ILOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetTexLevelParameteri", "(III)I", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         if (returnType.equals("V") && name.endsWith("nglGetTexLevelParameteriv") && descriptor.startsWith("(IIIJ)")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
