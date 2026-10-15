@@ -52,6 +52,17 @@ public class MappedStagingBuffer implements StagingBuffer {
     }
 
     public static boolean isSupported(RenderDevice instance) {
+        // Celtium starts GL-less by default (same contract as LwjglxDisplayMixin).
+        // A GL stub can report an OpenGL version or buffer_storage extension without
+        // providing any actual context-backed, persistently mappable storage. During
+        // world load, trusting that synthetic capability would call mapBuffer on a
+        // non-existent GL buffer and stall before the native Vulkan backend starts.
+        // This legacy staging manager is still constructed for chunk bookkeeping;
+        // use the non-mapped path until the Vulkan backend owns chunk staging.
+        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
+            return false;
+        }
+
         var functions = instance.getDeviceFunctions();
         return (LWJGL.isOpenGLVersionSupported(4, 4)
                 || LWJGL.isExtensionSupported(GLExtension.ARB_buffer_storage))
