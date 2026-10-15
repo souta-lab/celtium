@@ -1357,6 +1357,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
+
+    /** Bounded report counter for the light map mirror's decision. */
+    private int celtium$lightmapReports;
     private int animatedAnnounceDiagnostics;
     private int dynamicAnnounceDiagnostics;
     private String lastInvalidationOrigin = "unknown";
@@ -7780,6 +7783,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.lightmapGlId > 0) {
             try {
                 int[] size = textureSize(this.lightmapGlId);
+                // Bounded report of the decision this block makes. Leg gv-cohort-lm2 learned the id (18) and still
+                // left lightmapSuppliedOnDemand at zero with no failure recorded, which means one of the silent
+                // conditions here is the one that fires; the size and the id together say which.
+                if (celtium$lightmapReports++ < 8) {
+                    System.out.println("[Celtium] CELTIUM_LIGHTMAP id=" + this.lightmapGlId
+                            + " size=" + size[0] + "x" + size[1]
+                            + " texture=" + (this.lightmapTexture == null ? "null" : "set"));
+                }
                 if (size[0] > 0 && size[1] > 0) {
                     org.soutalab.celtium.vulkan.VulkanGlTexture established =
                             celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
