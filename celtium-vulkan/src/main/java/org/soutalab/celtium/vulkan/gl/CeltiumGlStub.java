@@ -2973,9 +2973,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 return 16;
             case 0x821B: // GL_MAJOR_VERSION
-                return 4;
+                // Kept consistent with the version string this stub advertises ("3.0.0 Celtium", see the
+                // GL_VERSION case below). The two used to disagree - the string said 3.0 while these said 4.6 -
+                // and the disagreement was not harmless: MappedStagingBuffer.isSupported asks
+                // LWJGL.isOpenGLVersionSupported(4, 4), got true from these numbers, and took the persistent
+                // mapping path, whose constructor maps 16 MB through commandList.mapBuffer. Measured
+                // 2026-10-15 (leg gv-cohort-fix151): the client stalls inside that construction, in
+                // RenderRegionManager's createStagingBuffer, with the world loaded and no player ever created.
+                // A capability claim has to be one story: with 3.0 the support test is false and the fallback
+                // staging buffer is used instead, which creates a plain mutable buffer.
+                return 3;
             case 0x821C: // GL_MINOR_VERSION
-                return 6;
+                return 0;
             case 0x821D: // GL_NUM_EXTENSIONS
                 return 0;
             case 0x8513: // GL_TEXTURE_MAX_ANISOTROPY samples? actually MAX_TEXTURE_MAX_ANISOTROPY is 0x84FF
