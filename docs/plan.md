@@ -4,7 +4,16 @@
 
 ## 現在状態（2026-10-15）
 
-作業ブランチ: `fix/glless-section-visibility-20261015`（継続）。clear統合基点 `4aebd9281`、照合済み `origin/main=da8a934a4`。現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
+作業ブランチ: `fix/glless-section-visibility-20261015`（継続）。直近の実装基点 `322f0b5c0`、照合済み `origin/main=da8a934a4`。現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
+
+**🎯🎯🎯 GL-less の地形が画面に出た・AMD と Intel の両方で PASS（実測 ✓✓✓・2026-10-15）**
+- **根因**: 間接コマンドバッファのページング欠如。ページを「領域」ではなく「記録スロット」に属させ、そのスロットのフェンス完了まで別オフセットを保ち、延期した全アップロードを記録済み領域描画より前に投入する修正（`322f0b5c0`）で解消した。
+- **A/B（同一 jar・3 leg）**: 旧 jar ×2 = `presentedBlackFraction=0.923356` ✗✗ ／ 新 jar `f79b602d` ＋ `-Dceltium.vulkan.indirectCompare` = **PASS** ✓✓✓ ／ **新 jar のみ（フラグ無し）= PASS** ✓✓✓。`indirectCompare` はエンコード済みパケットと直接列挙を比べるエンコーダ検査のみで描画経路を変えないため、**フラグの寄与は無い**と確定。
+- **AMD 受入**: `gv-cohort-fix1`（jar `f79b602d`）— `fixtureStatus PASSED` ✓・`fixtureUncalibrated false` ✓・`nativeDeviceName "AMD Radeon RX 6400 (RADV NAVI24)"` ✓・`gpuRequirementMet true` ✓・`pictureEvidenceSource presented-dump` ✓・`presented 263` ✓。
+- **Intel 受入**: `gv-cohort-intel1`（同 jar）— `fixtureStatus PASSED` ✓・`nativeDeviceName "Intel(R) UHD Graphics 630 (CFL GT2)"` ✓✓・`gpuRequirementMet true`（`gpuRequirementSource nativeDeviceName`）✓・`validationClean true` ✓・`validationMessageCount 0` ✓。
+- **証拠画像**: 両 leg の `-kept.png` が正しい世界を示す（チェック柄の地形 ✓・空 ✓・地平線 ✓・ホットバー ✓・手 ✓・トースト ✓）。
+- **検証した Vulkan 契約（7項目すべて充足）**: `drawCount-02718`（`multiDrawIndirect` ゲート ✓）・`drawCount-02719`（`maxDrawIndirectCount` クランプ ✓）・`drawCount-00528`（`stride=20` ✓）・`offset-02710` ✓・`drawCount-00540` ✓・`firstInstance-00530`（0 ✓）・`VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT` ✓。
+- **未測定**: cohort の単一シーンのみ。**reload・world-switch・resize・復旧**、主要 Mod / E2E / RLCraft の代表シーンは未測定。
 
 **過去のブランチ・統合・成果物記録（現在のHEAD/受入ではない）**
 - **`origin/main` = `2117b78dc`** ✓✓（2026-10-15 09:5x JST ✓・**PR #128 の merge** ✓）— **GL-less の world 入場チェーン（splash → atlas → fence → viewpoint → camera → world 入場 → 雲 ✓）・`CeltiumGlStub` の版数申告統一（`d8e2b94f4` ✓・**これが世界読込の停止を解消** ✓）・雲の texture size 応答 ✓・5つの計器 ✓・stale contract 2件の修正 ✓ を含む 69 commits** ✓。**merge 後の main は build SUCCESSFUL ✓（jar `e38335d7…` ✓）・contracts 全 ok ✓**。旧: `origin/main` = **`8bc3d90cc`** ✓（2026-10-15 01:2x JST ✓）。round 721 の merge ✓: **PR #92**「fix(vulkan): bound immediate group MemoryStack lifetimes in full E2E」`2d1bf9d0c` ✓（第一親 `69533dc7c`＝round 720 ✓・PR head `b904ea8d6` ✓）・**PR #94** docs/plan の現状同期 `ef41e8e16` ✓・**PR #97** RLCraft の key-free 解決と disk-safe staging `c54b130b0` ✓・**PR #95** capability report を live backend に `b81641a0e` ✓。
