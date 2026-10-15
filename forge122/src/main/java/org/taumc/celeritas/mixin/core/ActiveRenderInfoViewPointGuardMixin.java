@@ -77,55 +77,6 @@ public abstract class ActiveRenderInfoViewPointGuardMixin {
      * died with {@code NoClassDefFoundError} rather than a warning, with {@code require = 0} in place either way.
      * {@code remap = false} is right because the runtime jar carries the source names for this class.
      */
-    /**
-     * Writes Vulkan-convention matrices into the buffers the terrain renderer reads.
-     * <p>
-     * {@code updateRenderInfo} fills MODELVIEW and PROJECTION by asking GL, and the terrain's
-     * {@code createChunkRenderMatrices} hands those two buffers straight to the chunk renderer. With no GL context
-     * the buffers keep whatever the stub left, which is the OpenGL convention: NDC depth in [-1,1] and no Y flip.
-     * Vulkan clips at [0,1], so every terrain vertex fell outside the depth range and was clipped away while the
-     * 2D path - which does not use depth - kept drawing. Measured 2026-10-15 (leg gv-cohort-clip13): 60354 native
-     * draws recorded, the window draw adopted into the frame image, and 92% of the presented image still black.
-     * <p>
-     * The descriptor is spelled out because this name has two overloads; naming only the method aborts the
-     * definition of the target class (see AGENTS.md).
-     */
-    @Inject(method = "updateRenderInfo(Lnet/minecraft/entity/Entity;Z)V", at = @At("TAIL"), require = 0)
-    private static void celtium$writeVulkanMatrices(Entity entityIn, boolean thirdPerson, CallbackInfo info) {
-        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            return;
-        }
-
-        // The same builder the frustum uses, so the two cannot disagree about the camera.
-        org.joml.Matrix4f projection = org.taumc.celeritas.core.GllessViewProjection.projection();
-        org.joml.Matrix4f modelView = org.taumc.celeritas.core.GllessViewProjection.modelView();
-        if (projection == null || modelView == null) {
-            return;
-        }
-        celtium$store(org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor.getProjectionMatrix(), projection);
-        celtium$store(org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor.getModelViewMatrix(), modelView);
-    }
-
-    private static float celtium$aspect() {
-        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
-        if (mc == null || mc.displayHeight == 0) {
-            return 1.0f;
-        }
-        return (float) mc.displayWidth / (float) mc.displayHeight;
-    }
-
-    /** Overwrites a 16-float buffer from a matrix, in the column-major order GL and the shaders expect. */
-    private static void celtium$store(java.nio.FloatBuffer buffer, org.joml.Matrix4f matrix) {
-        if (buffer == null) {
-            return;
-        }
-        int position = buffer.position();
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                buffer.put(position + (column * 4) + row, matrix.get(row, column));
-            }
-        }
-    }
     @Inject(method = "updateRenderInfo(Lnet/minecraft/entity/Entity;Z)V", at = @At("HEAD"), cancellable = true,
             require = 0, remap = false)
     private static void celtium$keepCameraStateWithoutEntity(Entity entityIn, boolean thirdPerson, CallbackInfo info) {
