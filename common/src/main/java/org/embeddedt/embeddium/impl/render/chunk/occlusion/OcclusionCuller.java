@@ -219,6 +219,13 @@ public class OcclusionCuller {
             allowFrustumClamping = false;
         }
 
+        // A/B experiment (2026-10-15, leg gv-cohort-vis5): the root is built - rootVisibility is non-zero - and the
+        // walk still reports one, so every edge out of the root is rejected. The two candidates are the connectedness
+        // test and the frustum, and turning occlusion culling off keeps the frustum and drops the connectedness test,
+        // so the visible count in that mode says which one is rejecting. Set celtium.vulkan.forceNoOcclusion to run it.
+        if (Boolean.getBoolean("celtium.vulkan.forceNoOcclusion")) {
+            useOcclusionCulling = false;
+        }
         this.rasterActive = this.rasterOccluder != null && useOcclusionCulling && viewport.getVpMatrix() != null;
 
         if (this.rasterActive) {
