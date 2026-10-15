@@ -70,6 +70,14 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
         }
 
         this.celeritas$frustum.set(vp, true);
+
+        // Self-test at the build site: a box at the camera's own position must intersect. If this is true here and the
+        // culler still reads false, the culler is looking at a different frustum instance; if it is false here, the
+        // matrix built above is wrong. Bounded.
+        if (celtium$frustumReports < 8) {
+            System.out.println("[Celtium] CELTIUM_FRUSTUM selfTest=" + this.celeritas$frustum.testAab(-1, -1, -1, 1, 1, 1)
+                    + " aspect=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled());
+        }
     }
 
     /** {@return the frustum from the vanilla buffers, which are valid when a GL context exists} */
