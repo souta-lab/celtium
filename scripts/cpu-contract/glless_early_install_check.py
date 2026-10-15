@@ -62,15 +62,24 @@ def main():
     require('the hint sets GLFW_CLIENT_API to GLFW_NO_API',
             'glfwWindowHint' in hint and '0x00022001' in hint)
 
+    # The mechanism changed after this contract was written, and the contract follows the mechanism. Installing a
+    # GL capabilities object from the stub was replaced by replacing LWJGL3's own native GL methods (commit
+    # 582ad2a18, "replace LWJGL3's native GL methods instead of installing capabilities"): a capabilities object
+    # built without a current context aborted the JVM in native code, which no catch can survive, so the stub now
+    # answers the methods themselves. The property and the early install are what this check is about, and those are
+    # unchanged - what follows asserts the mechanism that exists rather than the one that was abandoned.
     stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8')
-    require('the stub gives LWJGL3 capabilities addresses from itself',
-            'celtium$createLwjgl3Capabilities' in stub and 'GL.createCapabilities()' in stub)
-    require('the capabilities are built through the constructor and installed with setCapabilities',
-            'setCapabilities' in stub and 'getDeclaredConstructor' in stub)
-    require('the extension set comes from the capabilities class fields',
-            'startsWith("GL_")' in stub)
-    require('a failure to build them is logged and not fatal',
-            'LWJGL3 capabilities could not be built from the stub' in stub)
+    require('the stub still installs itself as the process GL function source',
+            'install()' in stub and 'FunctionProvider' in stub)
+    transformer_path = ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java'
+    require('the native-replacement transformer is present', transformer_path.exists())
+    native = transformer_path.read_text(encoding='utf-8')
+    require('the transformer replaces native GL methods rather than building capabilities',
+            'ACC_NATIVE' in native and 'createCapabilities' not in native)
+    require('the replacement is counted so a leg can see it happen',
+            'replaced {} native GL method' in native)
+    require('the coremod registers the native-replacement transformer',
+            'CeltiumGllessNativeTransformer' in coremod)
 
     if not all(checks):
         print(f'{checks.count(False)} contract check(s) failed')
