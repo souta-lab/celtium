@@ -158,6 +158,11 @@ public final class CeltiumGllessHint {
         if (params == 0L) {
             return;
         }
+        // ActiveRenderInfo unprojects through a four-component viewport. The native replacement must use
+        // the same live rectangles/bindings as the callback path, not write one zero into that array.
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getIntegers(pname, params)) {
+            return;
+        }
         int value;
         switch (pname) {
             case 0x0D33: // GL_MAX_TEXTURE_SIZE
@@ -188,6 +193,26 @@ public final class CeltiumGllessHint {
                 break;
         }
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
+    }
+
+    /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
+    public static void glViewport(int x, int y, int width, int height) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) {
+            backend.viewport(x, y, width, height);
+        }
+    }
+
+    /** Returns the live mirrored state with the component count implied by pname, not one scalar zero. */
+    public static void glGetFloatv(int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getFloats(pname, params, false);
+    }
+
+    /** Double-precision output follows the same state/query contract as the float entry point. */
+    public static void glGetDoublev(int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getFloats(pname, params, true);
     }
 
     /**

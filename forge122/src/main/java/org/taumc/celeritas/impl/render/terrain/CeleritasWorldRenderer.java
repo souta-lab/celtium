@@ -63,20 +63,10 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     @Override
     protected ChunkRenderMatrices createChunkRenderMatrices() {
-        // Under the GL-less path the matrices come from the shared builder rather than from ActiveRenderInfo's
-        // buffers. ChunkRenderMatrices copies whatever the buffers hold at construction, and updateRenderInfo - the
-        // method that fills them - runs at a point in the frame that does not always precede this call, so the
-        // terrain could be handed zero matrices: measured 2026-10-15 (leg gv-cohort-late21) as
-        // CELTIUM_GROUP_DEPTH row1=0.0,0.0,-1.0,-0.05 mvT=0.0,0.0,0.0 - a real projection against a zero model
-        // view, with 179369 draw calls recorded and 92% of the presented image black.
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            org.joml.Matrix4f projection = org.taumc.celeritas.core.GllessViewProjection.projection();
-            org.joml.Matrix4f modelView = org.taumc.celeritas.core.GllessViewProjection.modelView();
-            if (projection != null && modelView != null) {
-                return new ChunkRenderMatrices(projection, modelView);
-            }
-        }
-
+        // EntityRenderer sets up the camera and updates ActiveRenderInfo before drawing terrain. Under
+        // GL-less, the query entry points now read the renderer's real state mirror, including Forge camera
+        // events, interpolated rotation, eye height and the current FOV. Keep these in OpenGL convention;
+        // the Vulkan backend remaps clip depth exactly once when it pushes the projection.
         return new ChunkRenderMatrices(ActiveRenderInfoAccessor.getProjectionMatrix(), ActiveRenderInfoAccessor.getModelViewMatrix());
     }
 

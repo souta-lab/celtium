@@ -4784,6 +4784,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     public void viewport(int x, int y, int width, int height) {
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);
+        }
         // No flush here. Every queued group is drawn with the current target's own viewport and scissor, so a viewport
         // change cannot strand or invalidate one; it only makes *new* offers outside the full-target contract, and those
         // are refused before acceptance, where the ordering flush already happens. Flushing here as well cost a whole
@@ -6675,31 +6678,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private final int[] celtium$stateScratch = new int[15];
 
-    private int[] celtium$captureState() {
-        boolean blend = this.immediateState.blendEnabled();
-        int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
-        int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
-        int sourceAlpha = blend ? glBlendFactorToVk(this.immediateState.blendSrcAlpha()) : 0;
-        int destinationAlpha = blend ? glBlendFactorToVk(this.immediateState.blendDstAlpha()) : 0;
-        int colorOp = glBlendEquationToVk(this.immediateState.blendEquationRgb());
-        int alphaOp = glBlendEquationToVk(this.immediateState.blendEquationAlpha());
-        int writeMask = this.immediateState.colorMask();
-        // Comparison switch, default on: forcing the threshold to zero turns every discard off, which isolates the
-        // alpha test's effect inside one build instead of comparing across builds.
-        float alphaReference = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
-                ? this.immediateState.alphaFuncReference() : 0.0f;
-        // BH-08: the cull state the game actually set, read from the recording the stub keeps for exactly this -
-        // the capability from the same enables map glEnable/glDisable write, and the face from glCullFace. Nothing
-        // else ever wrote these two fields, so the pipeline was built with culling off for every immediate batch.
-        //
-        // BH-07/BH-10: the same reading, for the same reason, of the state that used to stop at the game's own
-        // wrapper. `GlStateManager.blendFunc(int,int)` calls `GL11.glBlendFunc` directly and both
-        // `tryBlendFuncSeparate` overloads go through `OpenGlHelper.glBlendFunc` -> `GL14.glBlendFuncSeparate`, so
-        // the mixin that hooks the enum overload is not the whole path - and `glColorMask` has no mixin at all. The
-        // stub's record is the one place every caller of every shape lands, and it holds exactly what GL was told.
+    /** Merge only state the callback provider actually observed, never its untouched defaults. */
+    private void celtium$mergeRecordedDrawState() {
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // The mirror is kept in step as well, so `describe()` and any later reader of the mirror see the same
-            // state the capture took rather than the last wrapper call.
             if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendFactorsRecorded()) {
                 this.immediateState.blendFunc(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcRgb(),
                         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstRgb(),
@@ -6713,18 +6694,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMaskRecorded()) {
                 this.immediateState.colorMask(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMask());
             }
-            this.immediateState.blendEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEnabled());
-            this.immediateState.cullEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnabled());
-            this.immediateState.cullFace(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFace());
-            blend = this.immediateState.blendEnabled();
-            source = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcRgb()) : 0;
-            destination = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstRgb()) : 0;
-            sourceAlpha = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcAlpha()) : 0;
-            destinationAlpha = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstAlpha()) : 0;
-            colorOp = glBlendEquationToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationRgb());
-            alphaOp = glBlendEquationToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationAlpha());
-            writeMask = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMask();
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEnableRecorded()) {
+                this.immediateState.blendEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEnabled());
+            }
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnableRecorded()) {
+                this.immediateState.cullEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnabled());
+            }
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFaceRecorded()) {
+                this.immediateState.cullFace(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFace());
+            }
         }
+    }
+
+    private int[] celtium$captureState() {
+        // LWJGL3's native replacement can bypass callback dispatch while Minecraft's wrapper hooks still
+        // capture state. Installing the provider does not mean its defaults are observations. Erasing the
+        // wrapper's blend state made the multiplicative vignette an opaque fullscreen overwrite.
+        celtium$mergeRecordedDrawState();
+        boolean blend = this.immediateState.blendEnabled();
+        int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
+        int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
+        int sourceAlpha = blend ? glBlendFactorToVk(this.immediateState.blendSrcAlpha()) : 0;
+        int destinationAlpha = blend ? glBlendFactorToVk(this.immediateState.blendDstAlpha()) : 0;
+        int colorOp = glBlendEquationToVk(this.immediateState.blendEquationRgb());
+        int alphaOp = glBlendEquationToVk(this.immediateState.blendEquationAlpha());
+        int writeMask = this.immediateState.colorMask();
+        // Comparison switch, default on: forcing the threshold to zero isolates alpha testing in one build.
+        float alphaReference = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
+                ? this.immediateState.alphaFuncReference() : 0.0f;
         // The one-flag controls. Each keeps the captured state but substitutes the value the pipeline baked before the
         // finding was fixed, so a single build can be run twice and the picture compared against itself rather than
         // against another build's picture - the difference between the legs is then the state and nothing else.

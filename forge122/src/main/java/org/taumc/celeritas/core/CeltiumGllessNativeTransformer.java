@@ -26,9 +26,9 @@ import org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin;
  * exception into an abort - so the surface itself is replaced here instead of being made reachable.
  * <p>
  * The replacement keeps the methods' signatures and their meaning where a caller can act on it: {@code glGetString}
- * returns this project's identity string, {@code glGetError} returns {@code GL_NO_ERROR}, and everything else returns
- * the type's zero value. Bodies are straight-line and frame-free, and the class is written without recomputing
- * frames so untouched methods keep theirs.
+ * returns this project's identity string, and tracked state queries read the renderer's semantic state, with the
+ * component count required by the query. Unsupported operations still return the type's zero value. Bodies are
+ * straight-line and frame-free; maximum stack sizes are computed without replacing untouched methods' frames.
  */
 public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static final String PACKAGE = "org.lwjgl.opengl.";
@@ -51,7 +51,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         try {
             ClassReader reader = new ClassReader(basicClass);
-            ClassWriter writer = new ClassWriter(reader, 0);
+            // Query helpers consume an int plus a pointer (three stack slots), and some existing helpers
+            // consume more. Preserve existing frames, but calculate each replacement's actual stack bound.
+            ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
             int[] rewritten = new int[1];
             reader.accept(new ClassVisitor(ASM_API, writer) {
                 @Override
@@ -162,6 +164,28 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.LLOAD, 1);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glGetIntegerv", "(IJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glViewport".equals(name) && "(IIII)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.ILOAD, 2);
+            method.visitVarInsn(Opcodes.ILOAD, 3);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glViewport", "(IIII)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        // Matrix queries are arrays, not scalar zero-returning functions. ActiveRenderInfo reads both
+        // matrices before unprojecting the camera; ClippingHelper reads them before terrain visibility.
+        // Dispatch to the existing state mirror for all 16 components in the caller's numeric type.
+        if ("(IJ)V".equals(descriptor)
+                && ("nglGetFloatv".equals(name) || "nglGetDoublev".equals(name))) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "nglGetDoublev".equals(name) ? "glGetDoublev" : "glGetFloatv", "(IJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
