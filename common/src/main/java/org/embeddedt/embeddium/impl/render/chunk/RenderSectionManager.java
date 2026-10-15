@@ -603,6 +603,36 @@ public abstract class RenderSectionManager {
         return this.getCurrentRenderListManager().isSectionVisible(x, y, z);
     }
 
+    /**
+     * Moves sections with a pending mesh update into the rebuild lists the submission path reads.
+     * <p>
+     * The two existing producers of those lists are sort schedulers, so this is the only path that carries
+     * {@link ChunkUpdateType#INITIAL_BUILD} and {@link ChunkUpdateType#REBUILD} to {@code submitRebuildTasks}.
+     */
+    private void celtium$queueMeshUpdates() {
+        var rebuildLists = this.getCurrentRenderListManager().getRebuildLists().byUpdateType();
+
+        for (RenderSection section : this.sectionByPosition.values()) {
+            if (section.isDisposed()) {
+                continue;
+            }
+
+            ChunkUpdateType pending = section.getPendingUpdate();
+
+            if (pending != ChunkUpdateType.INITIAL_BUILD
+                    && pending != ChunkUpdateType.REBUILD
+                    && pending != ChunkUpdateType.IMPORTANT_REBUILD) {
+                continue;
+            }
+
+            var queue = rebuildLists.get(pending);
+
+            if (queue != null && !queue.contains(section)) {
+                queue.add(section);
+            }
+        }
+    }
+
     private boolean rebuildListHasUpdates() {
         for (var queue : this.getCurrentRenderListManager().getRebuildLists().byUpdateType().values()) {
             if (!queue.isEmpty()) {
@@ -669,6 +699,14 @@ public abstract class RenderSectionManager {
         }
 
         this.promoteInterimRebuildList();
+
+        // Mesh work has no producer of its own in this fork: the rebuild lists this method reads are fed only by
+        // scheduleTranslucencyUpdates and scheduleTreeSort, both of which carry sorts, and submitRebuildTasks reads
+        // nothing else. So a section marked INITIAL_BUILD never reached a queue, rebuildListHasUpdates() stayed false,
+        // and this return ran before any mesh task was ever submitted - measured on leg gv-cohort-rl2, where
+        // sections=4096 and every build queue read P0=P1=P2=0 while the chunk data was real. Feeding the mesh types in
+        // here gives the existing submission path the work it was already written to drain.
+        this.celtium$queueMeshUpdates();
 
         if (!rebuildListHasUpdates()) {
             if (CONTINUOUSLY_REMESH_WORLD && !this.getCurrentRenderListManager().getRebuildLists().hasAdditionalUpdates()) {
