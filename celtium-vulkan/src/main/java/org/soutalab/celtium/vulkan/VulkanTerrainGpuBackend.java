@@ -109,7 +109,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         @Override public void record(String message) { VulkanTerrainGpuBackend.this.record(message); }
         @Override public void setSubmissionPending(boolean pending) { VulkanTerrainGpuBackend.this.submissionPending = pending; }
         @Override public void setFrameSubmitReachedQueue(boolean reached) { VulkanTerrainGpuBackend.this.frameSubmitReachedQueue = reached; }
-        @Override public void setLastFrameReachedQueue(boolean reached) { VulkanTerrainGpuBackend.this.lastFrameReachedQueue = reached; }
+        @Override public void setLastFrameReachedQueue(boolean reached) {
+            // Temporary probe (2026-10-15): the present skips every frame with "no completed frame waiting" even though
+            // the pass-submission counter shows frames being submitted, so the question is whether this setter is ever
+            // called with true at all. Bounded to a dozen lines.
+            if (reached && celtium$lastFrameReachedQueueLogs++ < 12) {
+                System.out.println("[Celtium] CELTIUM_FRAME_QUEUED reached=true call=" + celtium$lastFrameReachedQueueLogs
+                        + " presentHookCalls=" + VulkanTerrainGpuBackend.this.presentHookCalls);
+            }
+            VulkanTerrainGpuBackend.this.lastFrameReachedQueue = reached;
+        }
     });
 
 
@@ -1086,6 +1095,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     private int presentHookCalls;
+    /** Bounded probe counter for the frame-queued setter. */
+    private int celtium$lastFrameReachedQueueLogs;
     /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
     private java.nio.file.Path presentedDumpPath;
     /**
