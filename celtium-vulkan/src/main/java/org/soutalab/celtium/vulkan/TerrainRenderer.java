@@ -636,6 +636,9 @@ public final class TerrainRenderer {
         // that difference is the chain's content or the LOD the shader asks for.
         block.putFloat(base + 44, MIP_BIAS_ADD);
         block.putInt(base + 48, fogMode());
+        // A/B only: a constant fragment colour that reaches the frame image says the geometry is rasterised and the
+        // loss is in the fragment maths; a frame that stays black says nothing is being rasterised at all.
+        block.putInt(base + 80, Boolean.getBoolean("celtium.vulkan.solidTerrain") ? 1 : 0);
         block.putInt(base + 52, this.fogService != null ? this.fogService.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL);
         block.putInt(base + 56, pass.supportsFragmentDiscard() ? 1 : 0);
         // Chunk fade is a separate feature that the Vulkan path does not port yet; 0 keeps the GL default look.
