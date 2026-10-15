@@ -643,6 +643,18 @@ public final class VulkanModelQuadCapture {
         return geometry == null ? 0 : geometry.generation;
     }
 
+    /**
+     * {@return a counter that moves whenever captured geometry changes}.
+     *
+     * <p>It is the global generation: one step per list compiled or recompiled. A reader that builds something from
+     * the whole table keys its own build on this, so a list captured after the build can be told apart from one that
+     * was already there - the model draw path uses it to ask for exactly one rebuild per new capture instead of one
+     * per frame or one per list.
+     */
+    public static synchronized int captureVersion() {
+        return generations;
+    }
+
     /** {@return the display-list compile and delete counters, for the run summary}. */
     public static synchronized String lifecycle() {
         int withQuads = 0;

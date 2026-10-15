@@ -11004,8 +11004,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private void celtium$buildModelMeshes() {
         // The table, its generation-driven builder and the lending rule moved to ModelGeometryCache (R3a).
+        // The capture version is recorded first so the model draw path can ask for one extra build per new capture
+        // and no more (see celtium$drawModelList): a list compiled after this build is not in the table.
+        this.modelMeshBuiltCaptureVersion = org.soutalab.celtium.vulkan.VulkanModelQuadCapture.captureVersion();
         this.modelGeometry.build(this.context);
     }
+
+    /**
+     * The capture version of the last mesh-table build, so the draw path bounds its own rebuild to one per new
+     * capture. A frame counter would have been one rebuild per frame and missed a list compiled after that frame's
+     * build - which is the case being fixed; a per-list rule would rebuild once per list in a scene that compiles
+     * many at once, and the first rebuild already covers them all.
+     */
+    private int modelMeshBuiltCaptureVersion = -1;
 
     /** Whether the model meshes are built from the captured display lists (lab switch: off leaves GL drawing them). */
     // On by default since the staged acceptance: two scenes, both GPUs, the model draw inside the default's own
@@ -11161,13 +11172,29 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " lastRefusal=[" + this.modelLastRefusal + "]");
             }
         }
-        if (!MODEL_DRAW || this.modelGeometry.modelMeshes() == null || !this.targetRegistry.targetKnown()) {
+        if (!MODEL_DRAW || !this.targetRegistry.targetKnown()) {
             return false;
         }
         if (MODEL_ONLY_LIST != 0 && listId != MODEL_ONLY_LIST) {
             return false;
         }
-        VulkanDynamicMesh mesh = this.modelGeometry.modelMeshes().get(Integer.valueOf(listId));
+        java.util.Map<Integer, VulkanDynamicMesh> meshes = this.modelGeometry.modelMeshes();
+        VulkanDynamicMesh mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
+        if ((mesh == null || mesh.isEmpty()) && this.context != null
+                && this.modelMeshBuiltCaptureVersion != VulkanModelQuadCapture.captureVersion()
+                && VulkanModelQuadCapture.quadsForList(listId) > 0) {
+            // The table is built at the frame's first terrain pass, and a model's own replay can come before the
+            // next one: a list compiled in this frame is drawn for the first time in this frame, so the measured
+            // shape was `CELTIUM_MODEL_MISSING` for every list's first replay while every later replay drew (leg
+            // gv-cohort-dl11ent: 8 missing against 38538 draws). The geometry is already captured, so the build is
+            // asked for it here - the same call the pass makes, which reuses every mesh whose generation has not
+            // moved - and the lookup is retried once. A list nobody captured keeps the old path.
+            // Once per new capture at most: a scene that compiles many lists at once would otherwise rebuild the
+            // table once per new list, and the first rebuild already finds them all.
+            celtium$buildModelMeshes();
+            meshes = this.modelGeometry.modelMeshes();
+            mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
+        }
         if (mesh == null || mesh.isEmpty()) {
             // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
             // body would draw and that nothing draws without a context. Counting it is what turns "the model is missing"
