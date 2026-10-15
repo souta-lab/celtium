@@ -10206,7 +10206,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " lightmapView=" + (this.lightmapTexture == null ? "none"
                                 : Long.toHexString(this.lightmapTexture.view())));
             }
-            if (this.groupDepthRowsSeen < 2) {
+            // The first rows are drawn before updateRenderInfo has run, so their matrices are legitimately zero and
+            // say nothing about the frames that matter. Leg gv-cohort-mat20 read mvT=0.0,0.0,0.0 there while the
+            // per-frame probe showed the model view tracking the camera; the report below therefore waits until the
+            // world has been drawn for a while and then reports the rows the terrain actually draws with.
+            if (this.groupDepthRowsSeen < 6 && this.presentHookCalls > 100) {
                 // The depth row of the projection each group draws with, plus the model-view translation, so a model group and
                 // an immediate group can be told apart and compared: the order instrument said the terrain ran first, so the
                 // depth values are what is left.
