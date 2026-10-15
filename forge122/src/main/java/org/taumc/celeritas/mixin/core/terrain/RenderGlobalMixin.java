@@ -228,7 +228,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         }
     }
 
-    @Inject(method = "renderEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/RenderHelper;enableStandardItemLighting()V", shift = At.Shift.AFTER, ordinal = 1), cancellable = true)
+    @Inject(method = "renderEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/RenderHelper;enableStandardItemLighting()V", shift = At.Shift.AFTER, ordinal = 1), cancellable = true, require = 0)
     public void sodium$renderTileEntities(Entity entity, ICamera camera, float partialTicks, CallbackInfo ci, @Local(ordinal = 0) int pass) {
         // Whether this injection runs at all is an open question in the runtime we target: Cleanroom's Kirino
         // replaces EntityRenderer.renderWorld and calls its own renderEntities, and the only callers of
