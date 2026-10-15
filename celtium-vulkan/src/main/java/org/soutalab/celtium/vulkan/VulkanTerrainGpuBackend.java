@@ -7807,14 +7807,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // leg gv-cohort-lm5, where this threw on every attempt and the mirror stayed null. The
                         // DynamicTexture that owns the pixels answers instead - the same route the texture name took.
                         int[] pixels = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapPixels();
-                        boolean uploaded = pixels != null && pixels.length >= 256
-                                && established.uploadFromImage(16, 16, celtium$argbToRgba(pixels));
+                        boolean usable = pixels != null && pixels.length >= 256;
+                        if (usable) {
+                            // false is not a failure here: uploadFromImage returns false when the image already holds
+                            // exactly these pixels (same hash, same size), which is the state a second call in the same
+                            // frame finds. Measured on leg gv-cohort-lm7, where the pixels were present (256 of them,
+                            // a 16x16 map) and the upload answered false, and this check rethrew on it - reading a
+                            // no-op as a failure. The image having the pixels is the outcome wanted either way.
+                            established.uploadFromImage(16, 16, celtium$argbToRgba(pixels));
+                        }
                         if (celtium$lightmapFallbacks++ < 4) {
                             System.out.println("[Celtium] CELTIUM_LIGHTMAP_FALLBACK pixels="
                                     + (pixels == null ? "null" : String.valueOf(pixels.length))
-                                    + " uploaded=" + uploaded);
+                                    + " usable=" + usable);
                         }
-                        if (!uploaded) {
+                        if (!usable) {
                             throw captureMiss;
                         }
                     }
