@@ -30,7 +30,10 @@
   - **③ スループット制限** ✗ — PR 自身が「The recipe does not address the throughput limit, which is what stands between this pack and a P1 pass」と書いており、**Nether の keepalive と同じホスト側の制約**。
   - **正直な注記（PR より）**: RLCraft の leg で `nativeDeviceName=null` / `gpuRequirementMet=false` が出るのは **GPU の証拠ではない** — ワールドに到達していないので capability レポートが無い。
   - **#287 マージ後の再測が次の実測**（新 jar で leg1 相当を回し、①が消えて②③が残ることを確かめる）。
-- **未測定**: 復旧・monitor move。resize の受入マトリクス（外部: hoihky.dev「swapchain recreate」）は slow drag 30s／fast maximize／minimize 10s（スピン・`DEVICE_LOST` なし）／monitor move（`SUBOPTIMAL` のち安定）の4項目で、**我々はそのうち maximize 相当のみ**。
+- **p50 は Celeritas 以下・残るのは p99（2026-10-15 実測 ✓✓）**: ユーザー要求「p50 を Celeritas 以下に」は**既に満たされている** — warm **1.182 ms（Celtium）↔ 1.196 ms（Celeritas）** ✓✓、cold **3.595 ↔ 3.599 ms** ✓✓。**実質的な残件は p99 で 141.1 ↔ 140.8 ms（0.2% 遅い）** ✗✗ — **p50 の約 119 倍**で、体感を決めているのはここ。
+  - **同型の欠陥が wgpu に記録されている**: AMD + Vulkan で **acquire 経路の fence wait が p50 をほぼ変えずに p99 だけ 130 µs → 20,254 µs へ爆発させ、平均が p99 に引きずられる**（「every ~1 in 100 frames hits ~20 ms」）。我々の形（p50 正常・p99 だけ 141 ms）は同じ族。
+  - **修正の型（原典どおり）**: main loop で `vkDeviceWaitIdle`／`vkQueueWaitIdle` を使わない（GPU pipeline を空にして bubble を作る）・**fence ring で frame 完了を追う**・barrier の stage mask を `eAllCommands` にしない。**#286 で `destroyFramebuffer` に入れた `settleGpu` はこの族の呼び出し**だが、framebuffer 破棄の経路は稀なので p99 の説明にはならない — **141 ms の正体は別に計器で特定する**。
+  - **次の実装**: 141 ms のフレームを `SubmissionStatistics`／`FrameCoordinator`／`gpuStalled` の記録から特定し、fence ring 化で潰す。resize の受入マトリクス（外部: hoihky.dev「swapchain recreate」）は slow drag 30s／fast maximize／minimize 10s（スピン・`DEVICE_LOST` なし）／monitor move（`SUBOPTIMAL` のち安定）の4項目で、**我々はそのうち maximize 相当のみ**。
 - **既知の外部欠陥（同じ形）**: MC-307344（Vulkan のみ resize で性能が 30/60/160 fps と不定 ✓）・MC-167219（リロード8回で 2fps ✓）・MC-298898（リロード毎に VRAM +1.3GB ✓）・MC-98707（1.12.2 の `deleteTexture` がマップから消さない ✓）・MC-310176（**Mojang 自身の Vulkan レンダラがリソースパックメニューで `VUID-VkWriteDescriptorSet-descriptorType-02996`** ✓）。
 現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
 
