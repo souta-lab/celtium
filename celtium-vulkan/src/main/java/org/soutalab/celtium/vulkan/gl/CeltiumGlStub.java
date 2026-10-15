@@ -587,6 +587,38 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile float lineWidth = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
+    /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
+    private volatile int lastBoundTexture = -1;
+    /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
+    private volatile int compilingListMode;
+    /**
+     * The list {@code glCallList} is replaying right now, 0 outside a replay.
+     *
+     * <p>Separate from {@link #lastCalledList}, which stays at the last name for diagnostics. This one is the
+     * answer to "what is being drawn", which {@code GL_LIST_INDEX} cannot give: the query names the list being
+     * compiled and stays 0 while a list is executed.
+     */
+    private volatile int executingList;
+    /**
+     * The display lists this stub has compiled, keyed by list name.
+     *
+     * <p>A display list is not a draw: {@code glNewList(name, GL_COMPILE)} records the calls that follow and
+     * {@code glCallList(name)} replays them, and the spec is explicit that under GL_COMPILE the recorded commands are
+     * "merely compiled". Minecraft's model rendering depends on exactly that split - {@code ModelRenderer.render}
+     * compiles once through {@code compileDisplayList} and then draws with {@code glCallList(displayList)} - so a
+     * stub that answers glCallList with a no-op leaves every model in the game undrawn. {@code RenderGlobal}'s sky,
+     * stars and horizon plane are compiled the same way ({@code glSkyList}, {@code starGLCallList}, {@code glSkyList2}).
+     *
+     * <p>{@link #openList} is the list currently being recorded, or null when nothing is being compiled. The two are
+     * kept apart from {@link #compilingList} because that field already existed as the name only, and because a name
+     * of zero is not a list: recording under it would file calls where no glCallList can reach them.
+     */
+    private volatile List<Object[]> openList;
+    private final Map<Integer, List<Object[]>> displayLists = new java.util.concurrent.ConcurrentHashMap<>();
+    /** How deep a replay currently is. glCallList may appear inside a list; the spec puts the limit at 64 or more. */
+    private int replayDepth;
+    private static final int MAX_LIST_NESTING = 64;
+    private volatile long displayListsCompiled, displayListsReplayed, displayListsUnresolved;
     /**
      * The client-array pointer state: {@code glVertexPointer(size, type, stride, pointer)}. GL keeps exactly one of
      * these, and it is the only thing that says how the bound array buffer's bytes are to be read - the bytes alone
@@ -726,6 +758,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (FN_CENSUS) {
                     celtium$printAtExit("CELTIUM_FN_CENSUS " + fnCensusSummary());
                 }
+                // Display lists: printed only when one was compiled or replayed, so a run that never touches them
+                // stays silent rather than claiming a measurement it did not take. `replayed` is the number that
+                // matters for the reported defects - it is the count of glCallList calls that found a list and
+                // drew it, and `unresolved` is the count that found nothing, which the spec says is ignored.
+                if (installed != null && (installed.displayListsCompiled > 0 || installed.displayListsReplayed > 0
+                        || installed.displayListsUnresolved > 0)) {
+                    celtium$printAtExit("CELTIUM_DISPLAY_LISTS compiled=" + installed.displayListsCompiled
+                            + " replayed=" + installed.displayListsReplayed
+                            + " unresolved=" + installed.displayListsUnresolved
+                            + " held=" + installed.displayLists.size());
+                }
             }, "celtium-noop-census"));
         }
         return installed;
@@ -748,6 +791,92 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     public static boolean isInstalled() {
         return installed != null;
+    }
+
+    /**
+     * {@return the display list {@code glCallList} is currently executing, or 0 when none is}.
+     *
+     * <p>{@code GL_LIST_INDEX} answers a different question and the difference is the whole reason this accessor
+     * exists: the query names the list being <em>compiled</em>, and the spec keeps it at 0 while a list is being
+     * executed. Minecraft's model rendering compiles once and then draws with {@code glCallList(displayList)}, so
+     * during the draw the query answers 0 while a list is in fact executing - and the model capture, which asked
+     * only the query, refused every quad of every model with {@code reason=unknown-list list=0} and drew nothing.
+     * Answering {@code GL_LIST_INDEX} from the recording state fixed the compile side; this is the replay side.
+     */
+    public static int executingList() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.executingList;
+    }
+
+    /**
+     * {@return the display list {@code glNewList} is currently compiling, or 0 when none is}.
+     *
+     * <p>This is the same value {@code GL_LIST_INDEX} is supposed to answer, and the stub does answer that pname.
+     * The model capture nevertheless read 0 from the query: the leg's function census shows {@code glGetIntegerv}
+     * arriving four times with the capability pnames {@code 0x821B}..{@code 0x821E} and never with
+     * {@code 0x0B33}, so the capture's call does not reach this stub at all and LWJGL answers it - with 0, because
+     * there is no GL context under GL-less. Asking here is the same fix the replay side already needed, and it
+     * does not depend on which path LWJGL happens to take.
+     */
+    public static int compilingList() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.compilingList;
+    }
+
+    /**
+     * Records the display list {@code glNewList} opened, from the layer that sees the call.
+     *
+     * <p>Needed because the two layers are not the same one under GL-less: the game's display-list calls reach
+     * {@code CeltiumGllessNativeTransformer}, which rewrites them to {@code CeltiumGllessHint} and returns, so
+     * {@link #compilingList} - the field this stub sets from its own dispatch - is only written when a call travels
+     * the trampoline, which these do not. Measured on leg {@code gv-cohort-dl9}: the hint counted 37
+     * {@code glNewList} arrivals while every one of the 222 model quads was filed with {@code list=-1}, because the
+     * capture reads this field. Pushed rather than pulled so the reader stays one field read.
+     */
+    public static void celtium$noteListOpened(int list, int mode) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.compilingList = list;
+        stub.compilingListMode = mode;
+    }
+
+    /** Closes the list {@link #celtium$noteListOpened} opened, as {@code glEndList} does. */
+    public static void celtium$noteListClosed() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.compilingList = 0;
+        stub.compilingListMode = 0;
+    }
+
+    /**
+     * Records the name the game bound, from the layer that sees the bind.
+     *
+     * <p>{@code GL_TEXTURE_BINDING_2D} cannot answer this: there is no context under GL-less, and the stub's own
+     * {@code glBindTexture} case does not run either, because the bind goes through the transformer to
+     * {@code CeltiumGllessHint} first - measured, the stub's function census carries only the capability query.
+     *
+     * <p>Kept in a field of its own rather than in {@link #textureBindings}: that map is the attribution source for
+     * uploads ({@code uploadTargetName}), and it is deliberately empty under GL-less, where the upload path identifies
+     * its texture from the announcement instead. Writing binds into it was measured to black out the terrain - leg
+     * {@code gv-cohort-dl10} with the map written against {@code gv-cohort-dl10old}, the identical scene and flags
+     * with the previous jar, which passed - so this reader gets its own value and changes nothing else.
+     */
+    public static void celtium$noteBoundTexture(int texture) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.lastBoundTexture = texture;
+    }
+
+    /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
+    public static int celtium$boundTexture() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? -1 : stub.lastBoundTexture;
     }
 
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
@@ -1943,6 +2072,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (FN_CENSUS) {
             fn.calls++;
         }
+        // A list being compiled does not draw. GL_COMPILE means "merely compiled" - the commands are stored and the
+        // drawing happens when glCallList replays them - so while a list is open every call except the two that
+        // delimit it is appended to that list instead of being executed. glCallList itself is appended as a call
+        // rather than inlined, which is what the spec requires ("commands in the list or lists executed by glCallList
+        // or glCallLists are not included in the display list being created") and what keeps a hierarchical list
+        // correct when a child is replaced.
+        List<Object[]> open = this.openList;
+        if (open != null && fn.semantics != SEM_NEW_LIST && fn.semantics != SEM_END_LIST) {
+            open.add(new Object[] { fn, c.clone() });
+            return 0L;
+        }
         long a0 = fn.args.length > 0 ? c[0] : 0L;
         long a1 = fn.args.length > 1 ? c[1] : 0L;
         switch (fn.semantics) {
@@ -2233,21 +2373,49 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.currentProgram = (int) c[0];
                 return 0L;
             case SEM_NEW_LIST:
+                // A name of zero is not a list (the spec makes glNewList(0) GL_INVALID_VALUE), and recording under it
+                // would file calls where no glCallList can reach them - which is the state this stub started in.
                 this.compilingList = (int) c[0];
+                this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
+                this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
                 return 0L;
             case SEM_END_LIST:
+                // The spec replaces a name's contents only at glEndList, so the previous list stays callable until
+                // this point; putting the new one in here is that rule, not an optimisation.
+                List<Object[]> compiled = this.openList;
+                if (compiled != null) {
+                    this.displayLists.put(Integer.valueOf(this.compilingList), compiled);
+                    this.displayListsCompiled++;
+                }
+                this.openList = null;
                 this.compilingList = 0;
                 return 0L;
             case SEM_CALL_LIST:
-                // Only the name is recorded; nothing compiled inside the list is replayed, so under GL-less every
-                // glCallList draws nothing. That is a named gap rather than a silent one, and it is the reason the sky
-                // has two paths in RenderGlobal.renderSky: with `vboEnabled` (OpenGlHelper.useVbo(), true in this
-                // fixture, measured as the VBO branch of RenderGlobal.func_174976_a:1345/1442/1471 in the vertex-pointer
-                // census) the dome, the stars and the horizon plane arrive as glDrawArrays and are decoded below; with
-                // it false they arrive as glCallList(glSkyList/starGLCallList/glSkyList2) and are drawn by nobody here.
-                // Replaying a list would mean recording its calls per list id at glNewList..glEndList, which is a
-                // different piece of work from this decode and is not exercised by any run yet.
+                // The replay, and the reason this field exists at all. Minecraft compiles a model once
+                // (ModelRenderer.compileDisplayList, under GL_COMPILE) and draws it with glCallList(displayList);
+                // VulkanModelQuadCapture's hook sits inside that compilation, so it saw the recording and refused the
+                // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
+                // player, held items, the sky, the stars and the horizon plane all arrive here.
                 this.lastCalledList = (int) c[0];
+                List<Object[]> list = this.displayLists.get(Integer.valueOf(this.lastCalledList));
+                if (list == null) {
+                    // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible.
+                    this.displayListsUnresolved++;
+                } else if (this.replayDepth < MAX_LIST_NESTING) {
+                    this.replayDepth++;
+                    this.executingList = this.lastCalledList;
+                    try {
+                        for (int i = 0; i < list.size(); i++) {
+                            Object[] call = list.get(i);
+                            dispatchArgs((Fn) call[0], (long[]) call[1]);
+                        }
+                    } finally {
+                        this.replayDepth--;
+                        // Cleared on the way out so a quad drawn after the replay is not filed under the last list.
+                        this.executingList = this.replayDepth == 0 ? 0 : this.executingList;
+                    }
+                    this.displayListsReplayed++;
+                }
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
                 this.boundVertexArray = (int) c[0];
@@ -2800,8 +2968,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     private long generate(Fn fn, long[] c) {
         if (fn.ret == R_INT && fn.args.length <= 1 && lastPointerArg(fn) < 0) {
             // Scalar-return form (glCreateShader, glCreateProgram, glGenLists): the id is the return value.
-            int scalar = this.nextName.getAndIncrement();
-            this.liveNames.add(scalar);
+            // glGenLists is the one caller that asks for a *contiguous range*: it returns n such that n .. n+range-1
+            // are all free, and Minecraft relies on it - RenderGlobal holds starGLCallList = generateDisplayLists(3)
+            // and then uses starGLCallList + 1 and + 2 for glSkyList and glSkyList2. Advancing the counter by one for
+            // a range of three would hand those two names to the next caller instead.
+            int range = 1;
+            if ("glGenLists".equals(fn.name) && fn.args.length == 1) {
+                range = (int) c[0];
+                if (range <= 0) {
+                    return 0; // The spec: a range of zero (or less) generates nothing and returns 0.
+                }
+            }
+            int scalar = this.nextName.getAndAdd(range);
+            for (int i = 0; i < range; i++) {
+                this.liveNames.add(scalar + i);
+            }
             return scalar;
         }
         if (fn.ret == R_LONG) {
@@ -3097,6 +3278,16 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             case 0x8872: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
                 value = 32;
+                break;
+            case 0x0B33: // GL_LIST_INDEX - the list glNewList opened, 0 when none is open
+                // This is the answer the model capture reads to decide whether a quad belongs to a list. It asked the
+                // driver and got 0, refused the quad with `reason=unknown-list`, and nothing drew the model - so the
+                // recording side of display lists was never reached even after the lists were implemented. The stub
+                // already tracked the open list; it simply did not answer the question about it.
+                value = this.compilingList;
+                break;
+            case 0x0B30: // GL_LIST_MODE - GL_COMPILE (0x1300) or GL_COMPILE_AND_EXECUTE (0x1301); 0 when none is open
+                value = this.compilingList == 0 ? 0 : this.compilingListMode;
                 break;
             default:
                 value = getIntegerValue(pname);

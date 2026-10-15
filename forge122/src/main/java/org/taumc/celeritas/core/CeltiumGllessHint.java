@@ -188,11 +188,148 @@ public final class CeltiumGllessHint {
             case 0x821D: // GL_NUM_EXTENSIONS
                 value = 0;
                 break;
+            case 0x0B33: // GL_LIST_INDEX - the display list glNewList opened, 0 when none is
+                // This is the answer the model capture reads to decide whether a quad belongs to a list. The
+                // capture refuses a quad whose list is 0, and a model compiles its display list exactly once
+                // (ModelRenderer.render only calls compileDisplayList while `compiled` is false, and the quads
+                // only run inside it), so answering 0 here costs that model its only chance to be captured -
+                // which is what `captured=0` in the leg reports was.
+                value = listIndex;
+                break;
+            case 0x0B30: // GL_LIST_MODE - GL_COMPILE (0x1300) or GL_COMPILE_AND_EXECUTE (0x1301); 0 when none is open
+                value = listIndex == 0 ? 0 : listMode;
+                break;
             default:
                 value = 0;
                 break;
         }
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
+    }
+
+    /**
+     * The display list {@code glNewList} opened, or 0 when none is.
+     *
+     * <p>Tracked here rather than in {@code CeltiumGlStub} because this class is the layer the transformer actually
+     * delegates to: the stub's provider carries only the capability query (the function census from the leg shows
+     * four {@code glGetIntegerv} and two {@code glGetError} and nothing else), while every other native goes through
+     * {@code CeltiumGllessNativeTransformer} and lands in the methods here.
+     */
+    private static volatile int listIndex;
+    /** The mode {@link #listIndex} was opened with; only {@code GL_LIST_MODE} reads it. */
+    private static volatile int listMode;
+
+    /** {@return the list being compiled, for the capture that has to file a quad under it}. */
+    public static int listIndex() {
+        return listIndex;
+    }
+
+    /**
+     * Opens a display list, as {@code glNewList(int list, int mode)} does.
+     *
+     * <p>A name of zero is not a list - the spec makes {@code glNewList(0)} GL_INVALID_VALUE - and recording under it
+     * would file quads where no {@code glCallList} can reach them.
+     */
+    public static void glNewList(int list, int mode) {
+        noteDisplayListCall();
+        NEW_LIST_CALLS.incrementAndGet();
+        listIndex = list;
+        listMode = mode;
+        // Published to the stub as well, because that is where the model capture reads the open list from
+        // (CeltiumGlStub.compilingList). This class is the layer the transformer delegates to, so without this the
+        // stub's field stays 0 and every quad is filed under no list at all - measured on leg gv-cohort-dl9.
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteListOpened(list, mode);
+    }
+
+    /** Closes the open display list, as {@code glEndList()} does. */
+    public static void glEndList() {
+        noteDisplayListCall();
+        END_LIST_CALLS.incrementAndGet();
+        listIndex = 0;
+        listMode = 0;
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteListClosed();
+    }
+
+    /**
+     * Arrival counts for the three display-list calls.
+     *
+     * <p>The stub's {@code CELTIUM_FN_CENSUS} cannot answer whether these reach the transformer: it counts the
+     * stub's own trampoline, which by design carries only the capability query (four {@code glGetIntegerv} and two
+     * {@code glGetError} on every leg so far), while the display-list calls travel the transformer's path. Without
+     * a counter here a silent run cannot be told apart from a transformer that never saw the class - and that is
+     * exactly the open question, because a coremod's transformer only applies to classes loaded after it is
+     * registered, and {@code org.lwjgl.opengl.GL11} is loaded very early.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong NEW_LIST_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong END_LIST_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong CALL_LIST_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** {@return the display-list arrival counts, one line, for the stub's exit hook to print}. */
+    public static String displayListCensus() {
+        return "glNewList=" + NEW_LIST_CALLS.get() + " glEndList=" + END_LIST_CALLS.get()
+                + " glCallList=" + CALL_LIST_CALLS.get() + " listIndex=" + listIndex
+                + " lastCalled=" + lastCalledList;
+    }
+
+    /** {@return whether any display-list call reached the transformer}. */
+    public static boolean sawDisplayListCall() {
+        return NEW_LIST_CALLS.get() > 0L || END_LIST_CALLS.get() > 0L || CALL_LIST_CALLS.get() > 0L;
+    }
+
+    /** {@return whether a display list is currently open}. */
+    public static boolean isCompilingList() {
+        return listIndex != 0;
+    }
+
+    /**
+     * Executes a display list, as {@code glCallList(int list)} does.
+     *
+     * <p>Recorded rather than drawn here: the geometry of a compiled list was captured while it was compiled
+     * ({@code VulkanModelQuadCapture} files a quad under {@link #listIndex}), so what a replay has to do is hand
+     * that captured geometry to the renderer again. The name is kept so the renderer can ask which list is being
+     * drawn, and {@link #lastCalledList} is what the capture reads for that.
+     */
+    public static void glCallList(int list) {
+        noteDisplayListCall();
+        CALL_LIST_CALLS.incrementAndGet();
+        lastCalledList = list;
+    }
+
+    /** Registers the exit line once, on the first arrival. A run that never reaches these calls stays silent. */
+    private static void noteDisplayListCall() {
+        if (hooked) {
+            return;
+        }
+        synchronized (CeltiumGllessHint.class) {
+            if (hooked) {
+                return;
+            }
+            hooked = true;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                // FileDescriptor.out, not System.out: Forge routes System.out into Log4j and Log4j's own shutdown
+                // hook stops the appenders, so a line printed that way appears only when this hook wins the race.
+                // Measured on the stub's census: one run in three. FileDescriptor.out is the file the process was
+                // started with and stays writable through teardown.
+                try (java.io.PrintStream out = new java.io.PrintStream(
+                        new java.io.FileOutputStream(java.io.FileDescriptor.out), false)) {
+                    out.println("CELTIUM_HINT_DISPLAY_LISTS " + displayListCensus());
+                } catch (Throwable ignored) {
+                    // A census that cannot be printed must not take the process down on its way out.
+                }
+            }, "celtium-hint-census"));
+        }
+    }
+
+    private static volatile boolean hooked;
+
+    /** The last list {@code glCallList} named, 0 before any call. */
+    private static volatile int lastCalledList;
+
+    /** {@return the list {@code glCallList} last named}. */
+    public static int lastCalledList() {
+        return lastCalledList;
     }
 
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */

@@ -26,6 +26,8 @@ public final class VulkanModelQuadCapture {
 
     /** What a GL query that did not answer returns. Zero is a real answer, so it cannot mean "unknown". */
     private static final int UNKNOWN = Integer.MIN_VALUE;
+    /** The id a quad drawn outside any display list is filed under. Zero means "the read failed". */
+    private static final int NO_LIST = -1;
 
     /** Refusal reasons, in the order the counters are reported. */
     private static final int REFUSED_UNKNOWN_LIST = 0;
@@ -170,18 +172,40 @@ public final class VulkanModelQuadCapture {
             float nx, float ny, float nz) {
         celtium$noteSourceOnce();
         boolean glless = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
-        int listId = celtium$glInt(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+        int listId = glless
+                ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compilingList()
+                : celtium$glInt(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+        if (glless && listId <= 0) {
+            // GL_LIST_INDEX names the list under construction and the spec keeps it at 0 while one is being executed.
+            // A compiled model is drawn by glCallList, so its quads arrive with the query answering 0 while a list is
+            // in fact executing - which is how every model in the game came to be refused with `list=0`. The stub
+            // knows which list it is replaying; ask it, and keep the query's answer for the compile side.
+            listId = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.executingList();
+        }
         int texture = UNKNOWN;
         if (glless) {
             if (listId <= 0) {
-                // "No list is being compiled" is an answer, not an identity: a quad filed under list 0 is one no
-                // callList can ever reach, which is exactly the state this capture started in.
-                celtium$trace(listId, UNKNOWN, false);
-                celtium$refuse(REFUSED_UNKNOWN_LIST,
-                        "list=" + celtium$value(listId) + " " + celtium$textureDiagnostic(), count);
-                return;
+                // A quad drawn outside a display list is not an error and must not be refused. Measured on leg
+                // gv-cohort-dl8: the transformer's own census reports glNewList arriving (glEndList=49,
+                // glCallList=36040), while the capture ran exactly once in the whole run - before the first
+                // glNewList - and refused that one quad, so no model geometry was ever captured. GL_LIST_INDEX
+                // is 0 for a quad drawn immediately rather than compiled into a list, and 0 is a real answer.
+                // It is filed under a synthetic id so the census still separates the two cases.
+                listId = NO_LIST;
             }
-            texture = celtium$glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            // GlStateManager.bindTexture skips the GL call when its per-unit cache already holds the name, and under
+            // GL-less the call it does make is rewritten before any trampoline sees it, so GL_TEXTURE_BINDING_2D
+            // answers 0 for a texture that is bound. The name is recorded where the bind is visible
+            // (GlStateManagerMixin) and read back here; the queries stay as the fallback for a hybrid run, where a real
+            // context exists and its answer is the right one.
+            texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+            if (texture <= 0) {
+                texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(
+                        org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            }
+            if (texture <= 0) {
+                texture = celtium$glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            }
             if (texture <= 0) {
                 // A model quad is drawn with a texture bound (the arm above is compiled under the player's 64x64 skin),
                 // so a name of 0 here is the read failing, not a textureless draw.
@@ -617,6 +641,18 @@ public final class VulkanModelQuadCapture {
     public static synchronized int generationOf(int listId) {
         ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
         return geometry == null ? 0 : geometry.generation;
+    }
+
+    /**
+     * {@return a counter that moves whenever captured geometry changes}.
+     *
+     * <p>It is the global generation: one step per list compiled or recompiled. A reader that builds something from
+     * the whole table keys its own build on this, so a list captured after the build can be told apart from one that
+     * was already there - the model draw path uses it to ask for exactly one rebuild per new capture instead of one
+     * per frame or one per list.
+     */
+    public static synchronized int captureVersion() {
+        return generations;
     }
 
     /** {@return the display-list compile and delete counters, for the run summary}. */

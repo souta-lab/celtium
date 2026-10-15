@@ -41,6 +41,9 @@ public class CeltiumGlStub {
  static ByteBuffer memory=ByteBuffer.allocate(24).order(ByteOrder.nativeOrder());
  static class Fn {}
  int drawStateBoundaries;
+ // GL_LIST_INDEX is answered from these two by the extracted getInts, the same fields the production stub
+ // sets when the transformer publishes glNewList/glEndList to it.
+ int compilingList, compilingListMode;
  void noteDrawStateBoundary() {drawStateBoundaries++;}
  static void memPutInt(long p,int v) {memory.putInt((int)p,v);}
  int getIntegerValue(int pname) {return Integer.MIN_VALUE;}

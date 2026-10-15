@@ -68,11 +68,16 @@ public abstract class GlStateManagerMixin {
                     int activeUnit = -1;
                     try {
                         activeUnit = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x84E0);
-                        boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
+                        // The name the game last bound, which is the model's own: this hook runs at the replay, and
+                        // the GL query cannot answer it under GL-less (measured: it read 0 for every model list).
+                        boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+                        if (boundTexture <= 0) {
+                            boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
+                        }
                         if (activeUnit == Integer.MIN_VALUE) {
                             activeUnit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
                         }
-                        if (boundTexture == Integer.MIN_VALUE) {
+                        if (boundTexture <= 0) {
                             boundTexture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
                         }
                         if (!org.soutalab.celtium.vulkan.VulkanDisplayListCensus.textureLogged(list)) {
@@ -211,6 +216,16 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179144_i", at = @At("HEAD"), require = 0)
     private static void celtium$bindTexture(int glTextureId, CallbackInfo info) {
+        // The stub's own glBindTexture case does not run under GL-less: the call is rewritten to CeltiumGllessHint by
+        // the coremod transformer before any trampoline sees it (measured: the stub's function census carries only the
+        // capability query). So the name is recorded here, which is the layer that does see every bind, and the model
+        // capture reads it back through CeltiumGlStub. Recorded before the skip below: the skip is about this class's
+        // own mirror, and a value it already holds must not leave the stub's map empty for that unit.
+        try {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteBoundTexture(glTextureId);
+        } catch (RuntimeException | LinkageError ignored) {
+            // A mirror that fails is a model drawn untextured, not a frame lost.
+        }
         if (celtium$bindCallerLogs < 12) {
             celtium$bindCallerLogs++;
             StackTraceElement[] frames = Thread.currentThread().getStackTrace();
