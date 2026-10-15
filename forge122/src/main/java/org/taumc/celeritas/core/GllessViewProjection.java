@@ -1,6 +1,7 @@
 package org.taumc.celeritas.core;
 
 import net.minecraft.client.Minecraft;
+import org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -24,19 +25,24 @@ public final class GllessViewProjection {
     /** {@return the camera's look vector, or null when the player or the window is not ready} */
     public static Vector3f lookVector() {
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.player == null || mc.displayWidth <= 0 || mc.displayHeight <= 0) {
+        if (mc == null || mc.displayWidth <= 0 || mc.displayHeight <= 0) {
             return null;
         }
 
-        float yaw = mc.player.rotationYaw;
-        float pitch = mc.player.rotationPitch;
+        // The rotation fields rather than the player: they are the same angles (ActiveRenderInfo derives them
+        // from the entity's yaw and pitch) and they exist even when there is no player yet, which is the state the
+        // world is drawn in while it loads. Requiring mc.player left the model view unwritten there, and a zero
+        // model view sends every vertex to the origin: measured 2026-10-15 (leg gv-cohort-mat19) as
+        // CELTIUM_GROUP_DEPTH row1=0.0,0.0,-1.0,-0.05 (the projection, correct) against mvT=0.0,0.0,0.0.
+        float rotationX = ActiveRenderInfoAccessor.celtium$getRotationX();
+        float rotationZ = ActiveRenderInfoAccessor.celtium$getRotationZ();
+        float rotationXZ = ActiveRenderInfoAccessor.celtium$getRotationXZ();
+        float rotationXY = ActiveRenderInfoAccessor.celtium$getRotationXY();
 
-        double yawRadians = Math.toRadians(yaw);
-        double pitchRadians = Math.toRadians(pitch);
-        float rotationX = (float) Math.cos(yawRadians);
-        float rotationZ = (float) Math.sin(yawRadians);
-        float rotationXZ = (float) Math.cos(pitchRadians);
-        float rotationXY = rotationX * (float) Math.sin(pitchRadians);
+        if (rotationX == 0.0f && rotationZ == 0.0f && rotationXZ == 0.0f) {
+            // Nothing has written the fields yet; without them there is no camera to build.
+            return null;
+        }
 
         Vector3f look = new Vector3f(
                 -rotationZ * rotationXZ,
