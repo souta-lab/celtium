@@ -175,6 +175,31 @@ public class OcclusionCuller {
         return section == null ? -1L : section.getVisibilityData();
     }
 
+    /**
+     * {@return a one-word classification of the view-projection matrix}.
+     * <p>
+     * The frustum rejected a box at the camera itself, so the question is what the matrix looks like: absent, not a
+     * number, or finite. MC-306810 is the shape this is looking for - a zero window height making the projection
+     * matrix NaN, after which the frustum culls everything.
+     */
+    private String celtium$describeMatrix(org.joml.Matrix4fc matrix) {
+        if (matrix == null) {
+            return "null";
+        }
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                float value = matrix.get(column, row);
+                if (Float.isNaN(value)) {
+                    return "nan";
+                }
+                if (Float.isInfinite(value)) {
+                    return "infinite";
+                }
+            }
+        }
+        return "finite";
+    }
+
     public void findVisible(Visitor visitor,
                             Viewport viewport,
                             long[] visitState,
@@ -265,6 +290,7 @@ public class OcclusionCuller {
                         // If it is not, the frustum is degenerate rather than the neighbours being outside it - which
                         // is what MC-306810 describes, where a zero window height made the projection matrix NaN and
                         // the frustum culled everything.
+                        + " vp=" + this.celtium$describeMatrix(viewport.getVpMatrix())
                         + " cameraBoxVisible=" + viewport.isBoxVisible(
                                 viewport.getBlockCoord().x() - 1, viewport.getBlockCoord().y() - 1,
                                 viewport.getBlockCoord().z() - 1, viewport.getBlockCoord().x() + 1,
