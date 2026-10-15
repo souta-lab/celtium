@@ -90,10 +90,26 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         return useOcclusionCulling;
     }
 
+    /** Bounded report counter for the emptiness decision. */
+    private static int celtium$emptyReports;
+
     @Override
     protected boolean isSectionVisuallyEmpty(int x, int y, int z) {
         Chunk chunk = this.world.getChunk(x, z);
-        if (chunk.isEmpty()) {
+        boolean chunkEmpty = chunk.isEmpty();
+
+        if (!chunkEmpty && celtium$emptyReports < 12) {
+            celtium$emptyReports++;
+            var storage = chunk.getBlockStorageArray();
+            System.out.println("[Celtium] CELTIUM_EMPTY x=" + x + " y=" + y + " z=" + z
+                    + " chunkEmpty=" + chunkEmpty
+                    + " storageLength=" + storage.length
+                    + " slot=" + (y >= 0 && y < storage.length
+                            ? (storage[y] == Chunk.NULL_BLOCK_STORAGE ? "null" : (storage[y].isEmpty() ? "empty" : "hasBlocks"))
+                            : "outOfRange"));
+        }
+
+        if (chunkEmpty) {
             return true;
         }
         var array = chunk.getBlockStorageArray();
