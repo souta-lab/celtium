@@ -34,6 +34,18 @@ public final class CeltiumLightmapIdInstaller {
             return texture == null ? -1 : texture.getGlTextureId();
         });
 
+        // The block atlas, for the same reason again: the terrain pass asks GL for the texture bound on unit 0,
+        // which has no answer without a GL context, so the atlas was never mirrored and the pass was skipped.
+        // TextureMap extends AbstractTexture, so the atlas answers for itself.
+        LightmapIdSource.installAtlasId(() -> {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null || mc.getTextureMapBlocks() == null) {
+                return -1;
+            }
+
+            return mc.getTextureMapBlocks().getGlTextureId();
+        });
+
         // The pixels as well, for the same reason: the mirror cannot read them back from GL, and the
         // DynamicTexture that owns them always can.
         LightmapIdSource.installPixels(() -> {

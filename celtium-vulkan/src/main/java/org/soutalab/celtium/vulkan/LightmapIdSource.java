@@ -20,6 +20,7 @@ import java.util.function.IntSupplier;
 public final class LightmapIdSource {
     private static volatile IntSupplier source;
     private static volatile java.util.function.Supplier<int[]> pixelSource;
+    private static volatile IntSupplier atlasSource;
 
     private LightmapIdSource() {
     }
@@ -27,6 +28,32 @@ public final class LightmapIdSource {
     /** Installs the supplier the game side provides; the last installation wins. */
     public static void install(IntSupplier supplier) {
         source = supplier;
+    }
+
+    /** Installs the block atlas id supplier the game side provides; the last installation wins. */
+    public static void installAtlasId(IntSupplier supplier) {
+        atlasSource = supplier;
+    }
+
+    /**
+     * {@return the block atlas's GL texture name, or -1 when the game side has not installed a source}.
+     * <p>
+     * The terrain pass learns the atlas by asking GL for the texture bound on unit 0, which under the GL-less
+     * window has no true answer: measured 2026-10-15 (leg gv-cohort-dev10), atlasGlId stayed -1 across 100 reports,
+     * the pass was skipped for want of a descriptor, no native draw was recorded (draws=0) and 92% of the presented
+     * image was black while the GUI - which does not need the atlas - drew correctly. The atlas object owns its
+     * name, and TextureMap extends AbstractTexture, so getGlTextureId is the authoritative answer.
+     */
+    public static int atlasTextureId() {
+        IntSupplier current = atlasSource;
+        if (current == null) {
+            return -1;
+        }
+        try {
+            return current.getAsInt();
+        } catch (RuntimeException | LinkageError error) {
+            return -1;
+        }
     }
 
     /** Installs the pixel supplier the game side provides; the last installation wins. */

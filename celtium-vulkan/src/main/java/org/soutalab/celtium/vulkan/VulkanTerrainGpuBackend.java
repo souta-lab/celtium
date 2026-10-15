@@ -13286,6 +13286,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     private void refreshTextures() {
         int atlasId = boundTextureId(0);
+        if (atlasId <= 0) {
+            // The GL answer is not available without a GL context - the stub records bindings it is told about,
+            // and 1.12.2 binds the atlas through paths that skip the call. Measured on leg gv-cohort-dev10:
+            // atlasGlId stayed -1, the pass was skipped and draws stayed 0. The atlas object owns its name.
+            int fromGame = org.soutalab.celtium.vulkan.LightmapIdSource.atlasTextureId();
+            if (fromGame > 0) {
+                atlasId = fromGame;
+            }
+        }
         int lightmapId = boundTextureId(1);
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
