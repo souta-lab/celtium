@@ -590,6 +590,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
     private volatile int compilingListMode;
     /**
+     * The list {@code glCallList} is replaying right now, 0 outside a replay.
+     *
+     * <p>Separate from {@link #lastCalledList}, which stays at the last name for diagnostics. This one is the
+     * answer to "what is being drawn", which {@code GL_LIST_INDEX} cannot give: the query names the list being
+     * compiled and stays 0 while a list is executed.
+     */
+    private volatile int executingList;
+    /**
      * The display lists this stub has compiled, keyed by list name.
      *
      * <p>A display list is not a draw: {@code glNewList(name, GL_COMPILE)} records the calls that follow and
@@ -781,6 +789,21 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     public static boolean isInstalled() {
         return installed != null;
+    }
+
+    /**
+     * {@return the display list {@code glCallList} is currently executing, or 0 when none is}.
+     *
+     * <p>{@code GL_LIST_INDEX} answers a different question and the difference is the whole reason this accessor
+     * exists: the query names the list being <em>compiled</em>, and the spec keeps it at 0 while a list is being
+     * executed. Minecraft's model rendering compiles once and then draws with {@code glCallList(displayList)}, so
+     * during the draw the query answers 0 while a list is in fact executing - and the model capture, which asked
+     * only the query, refused every quad of every model with {@code reason=unknown-list list=0} and drew nothing.
+     * Answering {@code GL_LIST_INDEX} from the recording state fixed the compile side; this is the replay side.
+     */
+    public static int executingList() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.executingList;
     }
 
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
@@ -2307,6 +2330,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.displayListsUnresolved++;
                 } else if (this.replayDepth < MAX_LIST_NESTING) {
                     this.replayDepth++;
+                    this.executingList = this.lastCalledList;
                     try {
                         for (int i = 0; i < list.size(); i++) {
                             Object[] call = list.get(i);
@@ -2314,6 +2338,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                         }
                     } finally {
                         this.replayDepth--;
+                        // Cleared on the way out so a quad drawn after the replay is not filed under the last list.
+                        this.executingList = this.replayDepth == 0 ? 0 : this.executingList;
                     }
                     this.displayListsReplayed++;
                 }

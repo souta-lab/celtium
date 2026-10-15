@@ -171,6 +171,13 @@ public final class VulkanModelQuadCapture {
         celtium$noteSourceOnce();
         boolean glless = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
         int listId = celtium$glInt(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+        if (glless && listId <= 0) {
+            // GL_LIST_INDEX names the list under construction and the spec keeps it at 0 while one is being executed.
+            // A compiled model is drawn by glCallList, so its quads arrive with the query answering 0 while a list is
+            // in fact executing - which is how every model in the game came to be refused with `list=0`. The stub
+            // knows which list it is replaying; ask it, and keep the query's answer for the compile side.
+            listId = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.executingList();
+        }
         int texture = UNKNOWN;
         if (glless) {
             if (listId <= 0) {
