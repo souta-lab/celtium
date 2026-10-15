@@ -13407,6 +13407,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (texture == 0) {
             return new int[] { 0, 0 };
         }
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            // Native GL bind/query entry points may be replaced; the named allocation owns this texture's extent.
+            return new int[] {
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1000),
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1001) };
+        }
         int previous = org.lwjgl.opengl.GL11C.glGetInteger(org.lwjgl.opengl.GL11C.GL_TEXTURE_BINDING_2D);
         try {
             if (previous != texture) {

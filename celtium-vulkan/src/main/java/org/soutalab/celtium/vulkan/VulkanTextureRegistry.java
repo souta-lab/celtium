@@ -665,16 +665,22 @@ public final class VulkanTextureRegistry {
      * with no game pixels (an allocation that no upload ever wrote): a level the game did not write is not content, and
      * the sampler must not be allowed to reach it.
      *
-     * @return the levels found, always at least level 0 when the caller's own level-0 checks passed
+     * The caller already validated level 0, including the announced-write exception for an allocated surface. Keep
+     * that exact base snapshot instead of applying the draw-time game-pixel test to it a second time. Higher levels
+     * still need game pixels before the sampler can reach them.
+     *
+     * @return the levels found, always including the caller's validated level 0
      */
-    private static java.nio.ByteBuffer[] celtium$capturedLevels(int glTextureId, int baseWidth, int baseHeight) {
+    private static java.nio.ByteBuffer[] celtium$capturedLevels(int glTextureId, int baseWidth, int baseHeight,
+            java.nio.ByteBuffer base) {
         int maxLevels = 1;
         while ((baseWidth >> maxLevels) > 0 && (baseHeight >> maxLevels) > 0) {
             maxLevels++;
         }
         java.nio.ByteBuffer[] found = new java.nio.ByteBuffer[maxLevels];
-        int count = 0;
-        for (int level = 0; level < maxLevels; level++) {
+        found[0] = base;
+        int count = 1;
+        for (int level = 1; level < maxLevels; level++) {
             int expectedWidth = Math.max(1, baseWidth >> level);
             int expectedHeight = Math.max(1, baseHeight >> level);
             int[] extent = new int[2];
@@ -783,7 +789,7 @@ public final class VulkanTextureRegistry {
             // chain above it generated here by a whole-image blit) so the per-level content can be measured one flag
             // apart on one jar. The atlas is the texture this matters for; every other captured fill has one level.
             java.nio.ByteBuffer[] levels = MIRROR_CAPTURED_LEVELS
-                    ? celtium$capturedLevels(glTextureId, extent[0], extent[1])
+                    ? celtium$capturedLevels(glTextureId, extent[0], extent[1], rgba)
                     : new java.nio.ByteBuffer[] {rgba};
             int appliedLevels = entry.texture.uploadCapturedLevels(glTextureId, extent[0], extent[1], levels,
                     levels.length);

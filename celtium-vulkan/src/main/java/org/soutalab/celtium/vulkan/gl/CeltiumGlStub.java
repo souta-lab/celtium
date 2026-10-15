@@ -3437,13 +3437,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      * carries no game bytes, so it is counted apart from the full images.
      */
     private void undefinedLevel(int name, int level, int width, int height, int depth) {
-        long bytes = (long) width * (long) height * 4L;
-        if (depth > 1 || width <= 0 || height <= 0 || bytes > MAX_CAPTURE_BYTES) {
+        long pixels = (long) width * (long) height;
+        if (depth > 1 || width <= 0 || height <= 0 || pixels > MAX_CAPTURE_BYTES / 4L) {
             // No shape to lay a surface out from: a 2D record cannot describe depth, and this level is past the size
             // the stub will mirror at all. The extent stands, the pixels do not.
             this.unconvertedUploads.incrementAndGet();
             return;
         }
+        long bytes = pixels * 4L;
         ByteBuffer zeros = ByteBuffer.allocateDirect((int) bytes);
         // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small
         // buffer, and a garbage surface is exactly the silently wrong atlas this path exists to prevent.
@@ -3632,6 +3633,33 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code bytes} rounded up to a GL unpack alignment, which is always a power of two: 1, 2, 4 or 8. */
     private static int aligned(int bytes, int alignment) {
         return (bytes + alignment - 1) & ~(alignment - 1);
+    }
+
+    /**
+     * Records TextureUtil's named allocation after its delete/bind/allocate sequence. The dimensions describe
+     * storage, not uploaded content: an undefined surface becomes usable only when an actual write is announced.
+     * The mip argument is the maximum level, not a level count, just like TextureUtil.allocateTextureImpl.
+     */
+    public static void recordTextureAllocation(int name, int mipmapLevels, int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || name <= 0 || mipmapLevels < 0 || mipmapLevels > 31 || width < 0 || height < 0) {
+            return;
+        }
+        stub.forgetTexture(name);
+        for (int level = 0; level <= mipmapLevels; level++) {
+            int levelWidth = width >> level;
+            int levelHeight = height >> level;
+            stub.texLevels.put(texLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
+            stub.undefinedLevel(name, level, levelWidth, levelHeight, 1);
+        }
+    }
+
+    /** Deletes the named storage record too when native glDeleteTextures cannot reach callback dispatch. */
+    public static void forgetTextureAllocation(int name) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && name > 0) {
+            stub.forgetTexture(name);
+        }
     }
 
     /**
