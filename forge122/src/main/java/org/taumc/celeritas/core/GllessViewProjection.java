@@ -40,8 +40,12 @@ public final class GllessViewProjection {
         float rotationXY = ActiveRenderInfoAccessor.celtium$getRotationXY();
 
         if (rotationX == 0.0f && rotationZ == 0.0f && rotationXZ == 0.0f) {
-            // Nothing has written the fields yet; without them there is no camera to build.
-            return null;
+            // Nothing has written the fields yet. Returning null here is what left the terrain with a zero model
+            // view - a null is not a camera - so a level orientation is used instead: measured 2026-10-15 (leg
+            // gv-cohort-mat22) as CELTIUM_GROUP_DEPTH row1=0.0,0.0,-1.0,-1.0 mvT=0.0,0.0,0.0, a real projection
+            // against a zero model view. The angles are yaw 0, pitch 0, which is the same basis
+            // ActiveRenderInfo derives for an entity facing -Z, so the frame is oriented rather than degenerate.
+            return new Vector3f(0.0f, 0.0f, -1.0f);
         }
 
         Vector3f look = new Vector3f(
