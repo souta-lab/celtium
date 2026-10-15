@@ -291,10 +291,11 @@ public class OcclusionCuller {
                         // is what MC-306810 describes, where a zero window height made the projection matrix NaN and
                         // the frustum culled everything.
                         + " vp=" + this.celtium$describeMatrix(viewport.getVpMatrix())
-                        + " cameraBoxVisible=" + viewport.isBoxVisible(
-                                viewport.getBlockCoord().x() - 1, viewport.getBlockCoord().y() - 1,
-                                viewport.getBlockCoord().z() - 1, viewport.getBlockCoord().x() + 1,
-                                viewport.getBlockCoord().y() + 1, viewport.getBlockCoord().z() + 1));
+                        // Camera-relative, not absolute: this frustum is rotation-only and the culler tests boxes
+                        // relative to the camera, so asking it about a world-space box near a distant camera position
+                        // answers a different question - which is what the first version of this test did, and why it
+                        // read false while the matrix it was testing was finite and in use.
+                        + " cameraBoxVisible=" + viewport.isBoxVisible(-1, -1, -1, 1, 1, 1));
             }
         }
     }
