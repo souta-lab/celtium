@@ -10661,6 +10661,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private void destroyFramebuffer() {
+        // Every framebuffer this method releases is covered by one settle, because the callers are not all the
+        // same shape: ensureFramebuffer and ensureFrameTarget settle first and fail closed, while the pair
+        // framebuffers below are reached from paths that do not. The rule is the same for all three -
+        // vkDestroyFramebuffer() must not be called on a framebuffer that a submitted command buffer still
+        // refers to (VUID-vkDestroyFramebuffer-framebuffer-00892) - and it was measured on Intel, where the
+        // resize leg reported it twice (VkFramebuffer 0x8f000000008f and 0xd500000000d5) while the same leg on
+        // AMD reported nothing. Intel's driver gets far enough ahead for the in-flight command buffer to still
+        // be executing, which is why the guard has to be here rather than only at the callers.
+        if (!settleGpu("framebuffer release")) {
+            // Fail closed, exactly as the callers do: an unsettled GPU means these handles cannot be released yet.
+            // Leaking them until process exit is the safe direction, and the caller's own counter records it.
+            return;
+        }
         destroyOffTargetFramebuffer();
         destroyChainPairFramebuffer();
         if (this.framebuffer != 0) {
