@@ -142,10 +142,15 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
         // (attachedImage == frameImage), and 92% of the presented image was still black with a correct HUD.
         // See the Vulkan clip-space note in the Veldrid backend-differences table and the Mesa/NVIDIA report of
         // an OpenGL projection matrix making a globe vanish.
+        // Vulkan's clip space differs from OpenGL's in two ways and both have to be applied. The depth range is
+        // [0,1] rather than [-1,1] - zZeroToOne=true asks JOML for that form - and Vulkan does not invert Y the
+        // way OpenGL's window-space convention does, so the clip-space Y axis has to be flipped by hand or the
+        // world arrives upside-down. JOML's own Vulkan note states the flip does not change vertex winding order,
+        // so the cull mode is untouched.
         Matrix4f projection = new Matrix4f().perspective((float) Math.toRadians(fovDegrees), aspect, near, far, true);
         Matrix4f view = new Matrix4f().lookAlong(look, new Vector3f(0.0f, 1.0f, 0.0f), new Matrix4f());
 
-        Matrix4f vp = projection.mul(view);
+        Matrix4f vp = new Matrix4f().scale(1.0f, -1.0f, 1.0f).mul(projection).mul(view);
         return vp.isFinite() ? vp : null;
     }
 
