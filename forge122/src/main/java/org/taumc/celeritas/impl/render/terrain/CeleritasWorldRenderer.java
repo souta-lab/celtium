@@ -26,6 +26,9 @@ import java.util.*;
  * Provides an extension to vanilla's {@link net.minecraft.client.renderer.RenderGlobal}.
  */
 public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, VintageRenderSectionManager, BlockRenderLayer, TileEntity, CeleritasWorldRenderer.TileEntityRenderContext>  {
+
+    /** Bounded report countdown for the render lists. */
+    private int celtium$listReportCountdown;
     @Desugar
     public record TileEntityRenderContext(Map<Integer, DestroyBlockProgress> damagedBlocks, float partialTicks) {}
 
@@ -114,6 +117,34 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     @Override
     public void drawChunkLayer(BlockRenderLayer renderLayer, double x, double y, double z) {
         this.celtium$reportTrackerState();
+
+        // Measured 2026-10-15 (leg gv-cohort-fru7): visible=83 while no draw reached the backend, so the question
+        // is whether the render lists the backend iterates are empty. SectionCollector.visit adds a section to a
+        // render list only when its flags are non-zero, and flags are set from build results - so an empty list
+        // means the sections are visible but not built, which is a different next step from a culling one.
+        if (this.celtium$listReportCountdown-- <= 0) {
+            this.celtium$listReportCountdown = 40;
+            var manager = this.getRenderSectionManager();
+            if (manager != null) {
+                int lists = 0;
+                int sections = 0;
+                var listIterator = manager.getRenderLists().iterator();
+                while (listIterator.hasNext()) {
+                    var list = listIterator.next();
+                    lists++;
+                    var iterator = list.sectionsWithGeometryIterator();
+                    if (iterator != null) {
+                        while (iterator.hasNext()) {
+                            iterator.nextByteAsInt();
+                            sections++;
+                        }
+                    }
+                }
+                System.out.println("[Celtium] CELTIUM_RENDERLIST lists=" + lists + " sectionsWithGeometry=" + sections
+                        + " layer=" + renderLayer);
+            }
+        }
+
         super.drawChunkLayer(renderLayer, x, y, z);
 
         GlStateManager.resetColor();
