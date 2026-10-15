@@ -103,7 +103,7 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
                     + " visible=" + (this.getRenderSectionManager() != null
                             ? this.getRenderSectionManager().getVisibleChunkCount() : -1)
                     + " queueEmpty=" + (this.getRenderSectionManager() != null
-                            ? this.getRenderSectionManager().isBuildQueueEmpty() : true)
+                            ? this.getRenderSectionManager().getBuilder().isBuildQueueEmpty() : true)
                     + " dimension=" + world.provider.getDimension()
                     + " worldFrames=" + this.celtium$trackerReportCountdown);
         } catch (Throwable error) {
