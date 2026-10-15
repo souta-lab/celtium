@@ -102,6 +102,10 @@ public class VintageRenderSectionManager extends RenderSectionManager {
             celtium$emptyReports++;
             var storage = chunk.getBlockStorageArray();
             System.out.println("[Celtium] CELTIUM_EMPTY x=" + x + " y=" + y + " z=" + z
+                    // The class is the point: ChunkProviderClient.provideChunk returns its blankChunk - an EmptyChunk -
+                    // when the coordinates are not in its mapping, so an EmptyChunk here says the client never received
+                    // that chunk, while a real Chunk with an empty slot says the data arrived but the section is air.
+                    + " chunkClass=" + chunk.getClass().getSimpleName()
                     + " chunkEmpty=" + chunkEmpty
                     + " storageLength=" + storage.length
                     + " slot=" + (y >= 0 && y < storage.length
