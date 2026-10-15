@@ -44,11 +44,24 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
     @Unique
     private final FrustumIntersection celeritas$frustum = new FrustumIntersection();
 
+    /** Bounded report counter for the frustum build. */
+    @Unique
+    private static int celtium$frustumReports;
+
     @Inject(method = "init", at = @At("RETURN"))
     private void updateJoml(CallbackInfo ci) {
         Matrix4f vp = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
                 ? celtium$buildGllessViewProjection()
                 : celtium$fromVanillaBuffers();
+
+        // Bounded report: which branch ran, and whether the matrix it produced is finite. The first attempt at this
+        // fix changed the jar and left cameraBoxVisible false, so the next question is whether the computed matrix
+        // was used at all.
+        if (celtium$frustumReports++ < 6) {
+            System.out.println("[Celtium] CELTIUM_FRUSTUM glless=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                    + " source=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() ? "computed" : "vanilla")
+                    + " vp=" + (vp == null ? "null" : (vp.isFinite() ? "finite" : "notfinite")));
+        }
 
         if (vp == null) {
             // Permissive rather than empty: see the class comment.
