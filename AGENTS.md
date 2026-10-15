@@ -142,3 +142,26 @@ reachable by its own name plus the descriptor.
 A crashing frame is not a still frame: the process stays alive drawing the crash screen until the leg
 script's duration expires, so read the leg's own summary - `run-gv-<leg>` and the `.out` beside it -
 rather than treating a live `java` process as a running leg.
+
+## A round is a step, not a pull request
+
+Measured over the 2026-10-15 session: fourteen of fifteen consecutive merged PRs touched only
+`docs/plan.md`. The work looked continuous and the renderer did not move. The cause was reading "update
+`docs/plan.md` every round" and "commit and push every round" as "open a branch and a PR every round".
+
+So, as standing discipline:
+
+- **A round is one step of one implementation unit.** Carry the same branch, the same unfinished TODO and
+  the same ownership across as many rounds as the unit needs. Do not open a new branch per round.
+- **Open a PR when a reviewable unit is complete**: real source changes, plus the build, the tests and the
+  acceptance evidence that go with them. Check `git diff origin/main --name-only` immediately before
+  opening it - if the only path is `docs/plan.md`, there is no unit yet, and the round's findings belong in
+  a local note or on the existing PR or issue instead. The exceptions are documentation a user explicitly
+  asked for, and changes that are independently necessary for licensing, security or distribution.
+- **`docs/plan.md`'s header table is the current state**, updated when an implementation, a root cause or
+  an acceptance verdict changes meaning. It is not a per-round diary, and appending a row per round is not
+  an obligation.
+- **The output is the renderer**, not the number of PRs, rounds or documentation lines.
+
+The same session's tracker work is the example: one unit, four rounds on one branch, and the counts that
+matter moved - `known` 0 to 339, `ready` 0 to 244, `sections` 0 to 3904.
