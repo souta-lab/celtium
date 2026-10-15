@@ -106,6 +106,10 @@ public class VintageRenderSectionManager extends RenderSectionManager {
                     // when the coordinates are not in its mapping, so an EmptyChunk here says the client never received
                     // that chunk, while a real Chunk with an empty slot says the data arrived but the section is air.
                     + " chunkClass=" + chunk.getClass().getSimpleName()
+                    // Identity, not just class: if the manager holds a different WorldClient than the one the chunk
+                    // tracker is attached to, every lookup here returns the provider's blank EmptyChunk and nothing is
+                    // ever built - which looks identical to a world with no chunks from every other counter.
+                    + " world=" + System.identityHashCode(this.world)
                     + " chunkEmpty=" + chunkEmpty
                     + " storageLength=" + storage.length
                     + " slot=" + (y >= 0 && y < storage.length

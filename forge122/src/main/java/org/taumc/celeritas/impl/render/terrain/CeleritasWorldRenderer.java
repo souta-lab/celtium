@@ -152,7 +152,7 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
                     }
                 }
                 System.out.println("[Celtium] CELTIUM_RENDERLIST lists=" + lists + " sectionsWithGeometry=" + sections
-                        + " layer=" + renderLayer + queues);
+                        + " layer=" + renderLayer + " world=" + System.identityHashCode(this.world) + queues);
             }
         }
 
