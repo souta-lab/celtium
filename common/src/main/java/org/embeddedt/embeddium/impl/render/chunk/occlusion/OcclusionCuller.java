@@ -295,7 +295,11 @@ public class OcclusionCuller {
                         // relative to the camera, so asking it about a world-space box near a distant camera position
                         // answers a different question - which is what the first version of this test did, and why it
                         // read false while the matrix it was testing was finite and in use.
-                        + " cameraBoxVisible=" + viewport.isBoxVisible(-1, -1, -1, 1, 1, 1));
+                        + " cameraBoxVisible=" + viewport.isBoxVisible(-1, -1, -1, 1, 1, 1)
+                        // The same box asked of the viewport's own frustum, bypassing the viewport's transform. The
+                        // build site's self-test is true, so a false here means the culler holds a different frustum;
+                        // a true here means the viewport's transform is what turns the box away.
+                        + " frustumDirect=" + viewport.getFrustum().testAab(-1, -1, -1, 1, 1, 1));
             }
         }
     }
