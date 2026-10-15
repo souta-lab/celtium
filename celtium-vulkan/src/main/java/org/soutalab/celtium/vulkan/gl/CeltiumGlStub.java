@@ -587,6 +587,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile float lineWidth = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
+    /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
+    private volatile int compilingListMode;
     /**
      * The display lists this stub has compiled, keyed by list name.
      *
@@ -745,6 +747,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 if (FN_CENSUS) {
                     celtium$printAtExit("CELTIUM_FN_CENSUS " + fnCensusSummary());
+                }
+                // Display lists: printed only when one was compiled or replayed, so a run that never touches them
+                // stays silent rather than claiming a measurement it did not take. `replayed` is the number that
+                // matters for the reported defects - it is the count of glCallList calls that found a list and
+                // drew it, and `unresolved` is the count that found nothing, which the spec says is ignored.
+                if (installed != null && (installed.displayListsCompiled > 0 || installed.displayListsReplayed > 0
+                        || installed.displayListsUnresolved > 0)) {
+                    celtium$printAtExit("CELTIUM_DISPLAY_LISTS compiled=" + installed.displayListsCompiled
+                            + " replayed=" + installed.displayListsReplayed
+                            + " unresolved=" + installed.displayListsUnresolved
+                            + " held=" + installed.displayLists.size());
                 }
             }, "celtium-noop-census"));
         }
@@ -2267,6 +2280,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // A name of zero is not a list (the spec makes glNewList(0) GL_INVALID_VALUE), and recording under it
                 // would file calls where no glCallList can reach them - which is the state this stub started in.
                 this.compilingList = (int) c[0];
+                this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
                 this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
                 return 0L;
             case SEM_END_LIST:
@@ -3165,6 +3179,16 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             case 0x8872: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
                 value = 32;
+                break;
+            case 0x0B33: // GL_LIST_INDEX - the list glNewList opened, 0 when none is open
+                // This is the answer the model capture reads to decide whether a quad belongs to a list. It asked the
+                // driver and got 0, refused the quad with `reason=unknown-list`, and nothing drew the model - so the
+                // recording side of display lists was never reached even after the lists were implemented. The stub
+                // already tracked the open list; it simply did not answer the question about it.
+                value = this.compilingList;
+                break;
+            case 0x0B30: // GL_LIST_MODE - GL_COMPILE (0x1300) or GL_COMPILE_AND_EXECUTE (0x1301); 0 when none is open
+                value = this.compilingList == 0 ? 0 : this.compilingListMode;
                 break;
             default:
                 value = getIntegerValue(pname);
