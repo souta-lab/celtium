@@ -121,6 +121,75 @@ exit 143/time-limit, no world frames). Treat this as a **startup/fixture blocker
 not a Modpack PASS**. Focus next on world/validation flow and actual content
 rendering with Nothirium absent, not making two renderer cores coexist.
 
+### The substitution list, and the platform's own compatibility table (verified 2026-10-15)
+
+A substitution is a deviation from the pack's own configuration, so each one is recorded with the measurement that
+forced it and with what the platform says about the same component. Two sources are authoritative for the second
+half: the [Cleanroom end-user guide's compatibility table](https://github.com/CleanroomMC/cleanroom-website/blob/main/docs/wiki/end-user-guide/preparing-your-modpack.md)
+and the [Cleanroom Modpack Migration Notes](https://gist.github.com/Rongmario/90d02fe1a2cee5458ea4c74c3b30cecc).
+
+**What the platform names outright** (fetched from the end-user guide's
+[problematic-mods table](https://github.com/CleanroomMC/cleanroom-website/blob/main/docs/wiki/end-user-guide/preparing-your-modpack.md),
+2026-10-15):
+
+| component | platform's verdict | platform's replacement |
+|---|---|---|
+| **RandomPatches** | **"Known to cause crashes with certain mods."** | Universal Tweaks |
+| **FoamFix** | **"Outdated and prone to cause issues in Cleanroom Environment"** | VintageFix |
+| Phosphor | Incompatible | Alfheim Lighting Engine / Hesperus |
+| Clumps | Outdated | Fixeroo |
+| JustEnoughIDs / NotEnoughIDs | Outdated | RoughlyEnoughIDs (REID) |
+| BetterFPS | "Outdated and breaks core functionality" | — (remove) |
+| Farsight | "caches chunk indefinitely, which might impact RAM usage" | — (remove) |
+| AdvancedShader | "Binary patching, incompatible" | — (remove) |
+| Raw Input | already included in Cleanroom | — (remove) |
+
+Two of the rows above are components whose failure this project measured independently: **RandomPatches** (the
+GL-less cause, below) and **FoamFix** (the coremod that spliced a method into `TileEntity` in the RLCraft bisect).
+The platform's own words are recorded next to our measurement so a reader can see the two agree rather than having
+to take either on trust.
+
+**One correction to this project's own framing**: the same guide *recommends* **Celeritas** and **Nothirium** as
+optimization mods ("Celeritas and Nothirium do decrease ram usage and footprint"). So removing Nothirium from E2E is
+**not** a platform requirement — it is Celtium's own substitution, because Celtium replaces the terrain renderer and
+two of them cannot own the same classes. That distinction belongs in the table rather than being implied.
+
+That first row is the same component this project measured as the cause of the pack's GL-less failure: RandomPatches'
+tweak initialisation defines `org.lwjgl.opengl.Display` at 8.975 s, before the celtium mixin list exists at 9.837 s,
+so the GL-less stub was never installed and the window got a real GL 4.6 context (`docs/notes-glless-stub-in-pack-2026-10-15.md`).
+The E2Eu entry of the migration notes removes it as well (BetterFPS, Clumps, Hesperus, NotEnoughIDs, Old Java
+Warning, **RandomPatches**, Shadowfacts' Forgelin) and updates CensoredASM.
+
+**What third parties say about the Celeritas family** (which Celtium forks): the
+[1.12.2 optimization guide](https://github.com/Polytetrafluoroethylene-PTFE/MC-Optimization-Guide/blob/main/mods-n-stuff/1.12.2.md)
+lists Celeritas' current known incompatibilities as **Chunk Animator, LittleTiles, Nothirium, OptiFine, and
+Vintagium and its forks** (Relictium, Neonium). Two consequences for this project:
+
+- The **Nothirium exclusion in E2E is corroborated from the Celeritas side**, not only from "two terrain renderers
+  cannot own the same classes": it is a documented incompatibility of the renderer this project forks. The
+  distinction recorded above still stands - Cleanroom's own guide recommends Nothirium, so the exclusion remains
+  this project's substitution and not a platform requirement.
+- **One of the other names is in each pack** (corrected 2026-10-15, after the first version of this paragraph
+  claimed both were in RLCraft - the check had been run against the wrong staged directory):
+  - **RLCraft 2.9.3 contains `ChunkAnimator-1.12.2-1.2.1.jar`** (and not LittleTiles).
+  - **E2E 1.93a contains `LittleTiles_v1.5.87_mc1.12.2.jar`** (and not ChunkAnimator).
+  Neither has been measured in a Celtium run, so both are **predicted collisions to look for**, not findings: a
+  chunk-render animation in RLCraft, and a block model system in the pack whose 268-mod leg has already reached a
+  world and presented frames - which is why the E2E legs' block/model scenes are the place that prediction would
+  show up.
+
+**What this project has measured and must document as its own substitutions**:
+
+| pack | substituted | measured reason |
+|---|---|---|
+| E2E 1.93a | **Nothirium** removed | two terrain renderers owning the same classes; the pack is run with Celtium as the renderer |
+| RLCraft 2.9.3 | **RenderLib 1.2.8 → 1.4.5** | its coremod transformer rewrites `RenderGlobal.renderEntities`, where our injection then finds `Scanned 0 target(s)` and `RenderGlobal` never defines; the platform's RLCraft entry says to *update* RenderLib |
+| RLCraft 2.9.3 | **SereneSeasons** (removal under test) | its `EntityRendererTransformer` produces a `VerifyError` in `EntityRenderer.addRainParticles` under Cleanroom; the same method and version are reported in [Fugue#118](https://github.com/CleanroomMC/Fugue/issues/118), and upstream later removed that transformer. **Not on the platform's RLCraft list**, so this one is a Celtium-specific deviation that has to justify itself — leg 5 keeps it removed only to isolate the blocker |
+
+**The rule this table exists to enforce**: a pack leg starts from the platform's recipe, then from this project's
+measured substitutions, and any further deviation is named here with its measurement rather than applied quietly.
+A run that used a substitution is never reported as the pack's own configuration.
+
 ### RLCraft on Cleanroom: the platform's own migration recipe (verified 2026-10-15)
 
 Cleanroom publishes per-pack migration notes, and the RLCraft entry is the authoritative substitution set for this

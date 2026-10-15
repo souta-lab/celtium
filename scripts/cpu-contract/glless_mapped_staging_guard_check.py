@@ -9,7 +9,7 @@ staging = (root / 'common/src/main/java/org/embeddedt/embeddium/impl/gl/arena/st
 manager = (root / 'common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/RenderRegionManager.java').read_text()
 # The property this guard must agree with is defined by the GL-less entry points that survive: the Display mixin
 # that used to carry it was deleted (commit 508fe76cc) because it never registered - the mixin plugin's getMixins()
-# runs after RandomPatches defines org.lwjgl.opengl.Display, so the coremod transformer took over that job. The
+# runs after RandomPatches defines org.lwjgl.opengl.Display - so the coremod transformer took over that job. The
 # contract is unchanged, so it is read from the loader plugin, which installs the stub under the same property.
 display = (root / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text()
 

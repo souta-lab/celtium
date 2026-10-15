@@ -152,3 +152,143 @@ stub and renders GL-less, which is the same fact from the other side.
    GLFW_NO_API)` by reflection before any window exists), or a target class that is guaranteed to load after our
    mixins are registered. That is a design decision for the next unit, and it is worth doing even once RandomPatches
    is removed: "one mixin must win a race against every coremod" is the property that failed here.
+
+## What Mixin's own source says about the two registration lists (read 2026-10-15)
+
+The fix in PR #128 moves `core.LwjglxDisplayMixin` from the plugin's `getMixins()` list into
+`mixins.celeritas.json`'s `client` list. Whether that changes *when* the mixin is registered is a question about
+Mixin, and its source answers it - with a caveat that matters:
+
+```java
+// MixinConfig
+void prepare(Extensions extensions) {
+    ...
+    this.prepareMixins("mixins", this.mixinClasses, false, extensions);
+    switch (this.env.getSide()) {
+        case CLIENT: this.prepareMixins("client", this.mixinClassesClient, false, extensions); break;
+        ...
+    }
+}
+
+void postInitialise(Extensions extensions) {
+    if (this.plugin != null) {
+        List<String> pluginMixins = this.plugin.getMixins();
+        this.prepareMixins("companion plugin", pluginMixins, true, extensions);
+    }
+    ...
+}
+```
+
+Three facts follow, and they are quoted from [MixinConfig.java](https://github.com/SpongePowered/Mixin/blob/master/src/main/java/org/spongepowered/asm/mixin/transformer/MixinConfig.java):
+
+1. **The JSON `client` list is prepared before the plugin's list** - but both are prepared by the *same*
+   `prepareConfigs` pass, and the class javadoc says that pass is deferred: "we will invoke the initialisation on
+   the first call to either the `hasMixinsFor()` or `getMixinsFor()` methods". In the measured pack leg that pass is
+   where `Found 66 mixin classes` appears at **9.837 s** - *after* `Display` was defined at 8.975 s. So moving the
+   mixin from one list to the other may **not** change the timing at all, and PR #128's own claim is therefore
+   "plausible, unverified" until a leg says otherwise.
+2. **Plugin-supplied mixins are prepared with `ignorePlugin = true`** (`prepareMixins("companion plugin", …, true,
+   …)`), which confirms the earlier bytecode reading: `MixinInfo.shouldApplyMixin` only consults the plugin when
+   `ignorePlugin` is false, so this plugin's unconditional `false` never vetoed its own mixins.
+3. A target that is already loaded is a hard error for a `required` config
+   (`MixinTargetAlreadyLoadedException` from `MixinInfo.readDeclaredTargets`, seen in the wild as "target … was
+   loaded too early"), yet the pack leg neither errors nor logs. That asymmetry is itself evidence that the mixin is
+   dropped before that check - and it is the thing the next leg has to look at.
+
+**What the next leg must therefore distinguish**, for the pack with RandomPatches present:
+
+- the JSON route worked (any `LwjglxDisplayMixin` line appears, or the stub installs), or
+- it did not (still zero lines), in which case the fix has to be **independent of Mixin registration order
+  entirely** - a coremod/`IFMLLoadingPlugin` ASM transformer that edits `org.lwjgl.opengl.Display.create` in the
+  transformer chain, where the hint can be placed after `glfwInit` and before `glfwCreateWindow` regardless of when
+  any mixin config is prepared. The early `CeltiumGlStub.install()` from `onLoad` stays useful either way: it makes
+  the GL function surface resolve to the stub, but it cannot prevent the context from being created.
+
+## The second surface: LWJGL3's own GL bindings abort the JVM without a context (measured 2026-10-15)
+
+With RandomPatches removed the stub installs and the hint is set (leg `gv-e2e-268-no-randompatches`: the four
+GL-less lines are back, cleanmix shows `LwjglxDisplayMixin` three times), and the pack then dies at **38.75 s with
+SIGABRT**, not with a Java exception:
+
+```
+FATAL ERROR in native method: Thread[#3,Client thread,7,main]: No context is current or a function that is not
+available in the current context was called. The JVM will abort execution.
+    at org.lwjgl.opengl.ARBShaderObjects.glCreateShaderObjectARB(Native Method)
+    at thaumcraft.client.lib.ender.ShaderHelper.createShader(ShaderHelper.java:121)
+    at thaumcraft.client.lib.ender.ShaderHelper.initShaders(ShaderHelper.java:55)
+    at thaumcraft.proxies.ClientProxy.preInit(ClientProxy.java:31)
+    at thaumcraft.Thaumcraft.preInit(Thaumcraft.java:44)
+```
+
+Thaumcraft's `preInit` uses **LWJGL3's GL bindings**, not the LWJGL2-compatible surface the stub replaces. So the
+stub being installed is a necessary condition for the pack and not a sufficient one: the run gets past the window and
+dies in mod pre-initialisation.
+
+**Why the two surfaces are different, from the jars themselves** (`javap` on lwjgl-opengl-3.4.1.jar):
+
+- `ARBShaderObjects.glCreateShaderObjectARB(int)` is declared **`public static native`**, and the class's static
+  initialiser is `GL.initialize()`.
+- `org.lwjgl.opengl.GL` exposes `create(FunctionProvider)`, `getFunctionProvider()` and `createCapabilities()` - the
+  same shape as the LWJGL2 hook the stub already uses.
+
+So LWJGL3 binds its GL natives from the provider that is current when `GL.initialize()` runs. That gives a concrete
+design for the next unit, in order:
+
+1. **Install the stub into the LWJGL3 surface too** - call LWJGL3's `GL.create(provider)` - and do it **before any
+   GL class initialises**, which is exactly what the coremod/transformer path added in PR #128 is for (it runs at
+   7.1 s, before the window and before mod pre-init).
+2. **Check that the stub's provider answers for the LWJGL3 entry-point names.** The stub's table was built for the
+   LWJGL2 surface; `glCreateShaderObjectARB` and friends have to resolve to a stub address rather than 0, or the
+   native binding fails a different way.
+3. Only if that is not enough, skip or route the mod's shader initialisation when GL-less is on - the least
+   attractive option, because it puts a mod name into the renderer.
+
+Until this is done, **a pack that installs the stub can still abort in a mod's pre-init**, and the honest reading of
+a leg like this one is "the substitution fixed the window, and the pack then failed on the other GL surface".
+
+## The addresses come from the write-once ICD, not from the thread's capabilities (read 2026-10-15)
+
+LWJGL's own generator settles a question the legs could not:
+
+```kotlin
+// modules/lwjgl/opengl/src/templates/kotlin/opengl/GLBinding.kt
+override fun generateFunctionAddress(writer: PrintWriter, function: Func) {
+    writer.println("$t${t}long $FUNCTION_ADDRESS = GL.getICD().${function.name};")
+}
+```
+
+Every function address a `GLCapabilities` instance holds is read from **`GL.getICD()`**, and the default ICD
+implementation is write-once:
+
+```java
+// GL (mirrored from GLES.java)
+private static class ICDStatic implements ICD {
+    private static @Nullable GLCapabilities tempCaps;
+    public void set(@Nullable GLCapabilities caps) {
+        if (tempCaps == null) {
+            tempCaps = caps;                       // the first capabilities set wins
+        } else if (caps != null && caps != tempCaps
+                   && ThreadLocalUtil.areCapabilitiesDifferent(tempCaps.addresses, caps.addresses)) {
+            apiLog("[WARNING] Incompatible context detected. Falling back to thread-local lookup for GL contexts.");
+            icd = GL::getCapabilities;             // only now does the thread lookup take over
+        }
+    }
+    public GLCapabilities get() { return WriteOnce.caps; }
+}
+```
+
+Three consequences for this project's work:
+
+1. **The first capabilities object set in the process is the one whose addresses LWJGL uses**, for every thread, until
+   a *different* one is set and `areCapabilitiesDifferent` says so. Setting ours later is not enough by itself: it
+   either triggers the fallback (with that log line) or changes nothing.
+2. **No leg has produced the "Incompatible context detected" line** (checked in `gv-e2e-268-fix128g..k`), which means
+   the first capabilities set was either ours or one whose addresses LWJGL considered equivalent. Either way, the
+   fix cannot be "set capabilities later" - it has to be **first**, or it has to avoid the dispatch entirely.
+3. `ThreadLocalUtil.setCapabilities(addresses)` writes the thread's JNIEnv slot, and the generated *native* methods
+   dispatch through that slot, while the *capabilities class fields* come from the ICD - so the two paths can
+   disagree, which is exactly the state the legs keep landing in.
+
+The measurement that will decide between them is the one already queued: the
+`CELTIUM_GLLESS LWJGL3 dispatch on thread=… provider=… capabilities=…` line reports the provider's class and the
+capabilities identity with its address buffer, at the point where the window exists and mod pre-init has not run.

@@ -42,6 +42,7 @@ jobs:
           python3 scripts/cpu-contract/repeatable_screen_dismissal_check.py
           python3 scripts/cpu-contract/immediate_group_stack_scope_check.py
           python3 scripts/cpu-contract/live_terrain_backend_report_check.py
+          python3 scripts/cpu-contract/glless_mapped_staging_guard_check.py
           python3 scripts/cpu-contract/isolated_game_directory_check.py
           python3 scripts/cpu-contract/glless_early_install_check.py
           python3 scripts/cpu-contract/glless_transformer_injection_check.py
