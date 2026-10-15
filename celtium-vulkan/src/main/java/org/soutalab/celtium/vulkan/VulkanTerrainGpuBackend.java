@@ -7807,7 +7807,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // leg gv-cohort-lm5, where this threw on every attempt and the mirror stayed null. The
                         // DynamicTexture that owns the pixels answers instead - the same route the texture name took.
                         int[] pixels = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapPixels();
-                        if (pixels == null || pixels.length < 256 || !established.uploadFromImage(16, 16, celtium$argbToRgba(pixels))) {
+                        boolean uploaded = pixels != null && pixels.length >= 256
+                                && established.uploadFromImage(16, 16, celtium$argbToRgba(pixels));
+                        if (celtium$lightmapFallbacks++ < 4) {
+                            System.out.println("[Celtium] CELTIUM_LIGHTMAP_FALLBACK pixels="
+                                    + (pixels == null ? "null" : String.valueOf(pixels.length))
+                                    + " uploaded=" + uploaded);
+                        }
+                        if (!uploaded) {
                             throw captureMiss;
                         }
                     }
@@ -7865,6 +7872,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Bounded failure counter for the light map mirror. */
     private int celtium$lightmapFailures;
+
+    /** Bounded fallback counter for the light map mirror. */
+    private int celtium$lightmapFallbacks;
     private boolean supportedImmediateTarget() {
         // Every condition names itself. One shared message covered all five and could not say which one refused, which is
         // how 870 format-2 refusals in a run stayed unnamed (measured: the stage marker said this gate, and the tally
