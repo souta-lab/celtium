@@ -1,5 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk.occlusion;
 
+import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
 import grondag.bitraster.AbstractRasterizer;
 import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.render.chunk.LocalSectionIndex;
@@ -154,6 +155,22 @@ public class OcclusionCuller {
      * @param recordVisible whether to record the visible cells into the lattice's
      *                      {@code visibleCells} buffer for a subsequent shadow search
      */
+    /**
+     * {@return the search root's connectedness encoding, or -1 when there is no root}.
+     * <p>
+     * The walk only leaves a section through a face its visibility data allows, and that data is written when the
+     * section is built. A NULL encoding says the root was never built, which stops the walk at the root however many
+     * neighbours exist - which is the difference between "the graph is missing edges" and "there is nothing to
+     * traverse with".
+     */
+    private long celtium$rootVisibility() {
+        if (this.cameraSectionIndex < 0 || this.cameraSectionIndex >= this.lattice.installedCount) {
+            return -1L;
+        }
+        RenderSection section = this.lattice.sectionAt(this.cameraSectionIndex);
+        return section == null ? -1L : section.getVisibilityData();
+    }
+
     public void findVisible(Visitor visitor,
                             Viewport viewport,
                             long[] visitState,
@@ -228,7 +245,11 @@ public class OcclusionCuller {
                         + " cameraSection=" + this.cameraSectionIndex
                         + " unloadedSection=" + this.isCameraInUnloadedSection
                         + " multiRoot=" + this.isMultiRootSearch
-                        + " raster=" + this.rasterActive + " occlusion=" + useOcclusionCulling);
+                        + " raster=" + this.rasterActive + " occlusion=" + useOcclusionCulling
+                        // The walk only leaves a section through a face its visibility data allows, and that data is
+                        // written when the section is built. A NULL encoding here says the root was never built, which
+                        // stops the walk at the root no matter how many neighbours exist.
+                        + " rootVisibility=" + this.celtium$rootVisibility());
             }
         }
     }
