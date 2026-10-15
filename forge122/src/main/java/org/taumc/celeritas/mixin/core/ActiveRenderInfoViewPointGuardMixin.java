@@ -96,18 +96,12 @@ public abstract class ActiveRenderInfoViewPointGuardMixin {
             return;
         }
 
-        org.joml.Matrix4f projection = new org.joml.Matrix4f().perspective(
-                (float) Math.toRadians(70.0f), celtium$aspect(), 0.05f, 1024.0f, true);
-        org.joml.Matrix4f modelView = new org.joml.Matrix4f().lookAlong(
-                new org.joml.Vector3f(0.0f, 0.0f, -1.0f), new org.joml.Vector3f(0.0f, 1.0f, 0.0f),
-                new org.joml.Matrix4f());
-        // Vulkan does not invert Y the way OpenGL's window-space convention does, so clip-space Y is flipped here.
-        // JOML's Vulkan note records that this does not change vertex winding order.
-        org.joml.Matrix4f flipped = new org.joml.Matrix4f().scale(1.0f, -1.0f, 1.0f).mul(projection).mul(modelView);
-        if (!flipped.isFinite()) {
+        // The same builder the frustum uses, so the two cannot disagree about the camera.
+        org.joml.Matrix4f projection = org.taumc.celeritas.core.GllessViewProjection.projection();
+        org.joml.Matrix4f modelView = org.taumc.celeritas.core.GllessViewProjection.modelView();
+        if (projection == null || modelView == null) {
             return;
         }
-
         celtium$store(org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor.getProjectionMatrix(), projection);
         celtium$store(org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor.getModelViewMatrix(), modelView);
     }

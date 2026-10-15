@@ -98,60 +98,9 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
      */
     @Unique
     private Matrix4f celtium$buildGllessViewProjection() {
-        Minecraft mc = Minecraft.getMinecraft();
-
-        if (mc == null || mc.player == null || mc.displayWidth <= 0 || mc.displayHeight <= 0) {
-            return null;
-        }
-
-        float yaw = mc.player.rotationYaw;
-        float pitch = mc.player.rotationPitch;
-
-        // The same basis ActiveRenderInfo writes, from the same angles, so this agrees with the fields the rest of
-        // the renderer reads rather than introducing a second convention.
-        double yawRadians = Math.toRadians(yaw);
-        double pitchRadians = Math.toRadians(pitch);
-        float rotationX = (float) Math.cos(yawRadians);
-        float rotationZ = (float) Math.sin(yawRadians);
-        float rotationXZ = (float) Math.cos(pitchRadians);
-        float rotationXY = rotationX * (float) Math.sin(pitchRadians);
-
-        Vector3f look = new Vector3f(
-                -rotationZ * rotationXZ,
-                -rotationXY,
-                rotationX * rotationXZ);
-
-        if (!look.isFinite() || look.lengthSquared() < 1.0e-6f) {
-            return null;
-        }
-
-        float aspect = (float) mc.displayWidth / (float) mc.displayHeight;
-        if (!Float.isFinite(aspect) || aspect <= 0.0f) {
-            return null;
-        }
-
-        // Widened rather than narrowed, so the frustum never rejects something the camera can see.
-        float fovDegrees = Math.max(mc.gameSettings.fovSetting, 70.0f) + 20.0f;
-        float near = 0.05f;
-        float far = 1024.0f;
-
-        // zZeroToOne must be true: Vulkan clips at NDC z in [0,1] while OpenGL's convention is [-1,1]. With the
-        // OpenGL range the terrain falls entirely below zero and is clipped away, and the frame still looks
-        // plausible because the 2D path - which does not use depth - draws normally. Measured 2026-10-15 (leg
-        // gv-cohort-atlas11): 77711 native draws were recorded, the window draw was adopted into the frame image
-        // (attachedImage == frameImage), and 92% of the presented image was still black with a correct HUD.
-        // See the Vulkan clip-space note in the Veldrid backend-differences table and the Mesa/NVIDIA report of
-        // an OpenGL projection matrix making a globe vanish.
-        // Vulkan's clip space differs from OpenGL's in two ways and both have to be applied. The depth range is
-        // [0,1] rather than [-1,1] - zZeroToOne=true asks JOML for that form - and Vulkan does not invert Y the
-        // way OpenGL's window-space convention does, so the clip-space Y axis has to be flipped by hand or the
-        // world arrives upside-down. JOML's own Vulkan note states the flip does not change vertex winding order,
-        // so the cull mode is untouched.
-        Matrix4f projection = new Matrix4f().perspective((float) Math.toRadians(fovDegrees), aspect, near, far, true);
-        Matrix4f view = new Matrix4f().lookAlong(look, new Vector3f(0.0f, 1.0f, 0.0f), new Matrix4f());
-
-        Matrix4f vp = new Matrix4f().scale(1.0f, -1.0f, 1.0f).mul(projection).mul(view);
-        return vp.isFinite() ? vp : null;
+        // One source of truth: the same builder writes the terrain's MODELVIEW/PROJECTION buffers, so the frustum
+        // and the draws cannot disagree about the camera.
+        return org.taumc.celeritas.core.GllessViewProjection.viewProjection();
     }
 
     @Override
