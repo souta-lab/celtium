@@ -21,7 +21,7 @@
   - **Wayland では最小化状態が存在しない**: `xdg_toplevel::set_minimized` は「コンポジタが解釈する要求」で、「現在最小化されているかを知る方法も、解除する方法も無い」。Sway はこれを無視し得るので 0×0 の経路に入らない — 実測どおりサイズは変わらなかった。したがってこの leg が証明するのは「最小化を要求しても落ちず、validation も汚さない」ことで、0 サイズ経路そのものはコード側の clamp が受け持つ。GLFW も Wayland では `GLFW_ICONIFIED` が常に false で `glfwRestoreWindow` で戻せないため、この計器は一方通行で leg の最後に置いてある。
 - **RLCraft 2.9.3 の P1 は未完（PR #145 が唯一の実測 ✓）**: 5 leg の切り分けで阻害要因が3つに分かれ、**そのうち1つは #287 で解消済み**。
   - **① RenderLib 1.2.8 の coremod transformer が注入点を消す** → **#287 で解消 ✓✓✓**（`require = 0`）。leg3 で RenderLib 1.4.5 に上げると `RenderGlobal` の失敗は消えた。
-  - **② SereneSeasons の `VerifyError`（Cleanroom 環境・upstream 報告済み）** ✗ — transformer が bytecode を挿入して stack map frame を更新していない型の不具合で、Celtium 側ではない。leg5 は SereneSeasons を除外して回している。
+  - **② SereneSeasons の `VerifyError`（Cleanroom 環境）** ✗ — **正体が確定: CleanroomMC/Fugue #118 と同一**。Serene Seasons は `sereneseasons.asm.transformer.EntityRendererTransformer`（`SSLoadingPlugin`）で `EntityRenderer` に bytecode を挿入し、stack map frame を再計算していないため `VerifyError` になる（`EntityRenderer.func_78484_h` = `addRainParticles` で発生）。Fugue 側は **0.22.10 で解決済み**と報告されており、**Celtium 側の変更ではない**。修正の型は `ClassWriter.COMPUTE_FRAMES` を渡すこと（google/allocation-instrumenter #35 が同じ機構を解説）。leg5 は SereneSeasons を除外して回している。
   - **③ スループット制限** ✗ — PR 自身が「The recipe does not address the throughput limit, which is what stands between this pack and a P1 pass」と書いており、**Nether の keepalive と同じホスト側の制約**。
   - **正直な注記（PR より）**: RLCraft の leg で `nativeDeviceName=null` / `gpuRequirementMet=false` が出るのは **GPU の証拠ではない** — ワールドに到達していないので capability レポートが無い。
   - **#287 マージ後の再測が次の実測**（新 jar で leg1 相当を回し、①が消えて②③が残ることを確かめる）。
