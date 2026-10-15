@@ -63,6 +63,20 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     @Override
     protected ChunkRenderMatrices createChunkRenderMatrices() {
+        // Under the GL-less path the matrices come from the shared builder rather than from ActiveRenderInfo's
+        // buffers. ChunkRenderMatrices copies whatever the buffers hold at construction, and updateRenderInfo - the
+        // method that fills them - runs at a point in the frame that does not always precede this call, so the
+        // terrain could be handed zero matrices: measured 2026-10-15 (leg gv-cohort-late21) as
+        // CELTIUM_GROUP_DEPTH row1=0.0,0.0,-1.0,-0.05 mvT=0.0,0.0,0.0 - a real projection against a zero model
+        // view, with 179369 draw calls recorded and 92% of the presented image black.
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            org.joml.Matrix4f projection = org.taumc.celeritas.core.GllessViewProjection.projection();
+            org.joml.Matrix4f modelView = org.taumc.celeritas.core.GllessViewProjection.modelView();
+            if (projection != null && modelView != null) {
+                return new ChunkRenderMatrices(projection, modelView);
+            }
+        }
+
         return new ChunkRenderMatrices(ActiveRenderInfoAccessor.getProjectionMatrix(), ActiveRenderInfoAccessor.getModelViewMatrix());
     }
 
