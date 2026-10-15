@@ -140,8 +140,19 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
                         }
                     }
                 }
+                // The manager already reports the build queues - "Chunk Queues: U=.. (P0=.. | P1=.. | P2=..) S=..", where
+                // U is the results waiting to be processed and P2 is the INITIAL_BUILD queue that feeds first-time
+                // meshes. Reading it here rather than adding a counter of my own: the numbers that separate "no task
+                // was ever queued" from "tasks ran and produced nothing" already exist.
+                String queues = "";
+                for (String line : manager.getDebugStrings()) {
+                    if (line.startsWith("Chunk Queues:")) {
+                        queues = " " + line;
+                        break;
+                    }
+                }
                 System.out.println("[Celtium] CELTIUM_RENDERLIST lists=" + lists + " sectionsWithGeometry=" + sections
-                        + " layer=" + renderLayer);
+                        + " layer=" + renderLayer + queues);
             }
         }
 
