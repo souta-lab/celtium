@@ -13137,7 +13137,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static int[] currentViewport() {
         IntBuffer viewport = org.lwjgl.BufferUtils.createIntBuffer(4);
         org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
-        return new int[] { viewport.get(0), viewport.get(1), viewport.get(2), viewport.get(3) };
+
+        int width = viewport.get(2);
+        int height = viewport.get(3);
+
+        // GL's default viewport is the whole drawable, and under the GL-less window the stub answers this query with
+        // zeros, so a zero here means "never set" rather than "no area". Measured on leg gv-cohort-mesh1: the sections
+        // were built (sectionsWithGeometry=67) and the render lists were full, but CELTIUM_REFUSALS_BY_FORMAT read
+        // "target: the viewport 0,0 0x0 has no area" for 140+ draws per frame, so no draw reached the backend and the
+        // present had nothing to take. windowFramebufferSize() is the drawable the default would have described.
+        if (width <= 0 || height <= 0) {
+            int[] drawable = windowFramebufferSize();
+            if (drawable[0] > 0 && drawable[1] > 0) {
+                return new int[] { 0, 0, drawable[0], drawable[1] };
+            }
+        }
+
+        return new int[] { viewport.get(0), viewport.get(1), width, height };
     }
 
     /**
