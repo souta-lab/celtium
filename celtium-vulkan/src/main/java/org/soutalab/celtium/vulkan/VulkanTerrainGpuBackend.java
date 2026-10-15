@@ -1357,6 +1357,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
+
+    /** Bounded report counter for the light map mirror's decision. */
+    private int celtium$lightmapReports;
     private int animatedAnnounceDiagnostics;
     private int dynamicAnnounceDiagnostics;
     private String lastInvalidationOrigin = "unknown";
@@ -7761,27 +7764,124 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.lightmapGlId = bound;
                 }
             } catch (RuntimeException | LinkageError error) {
-                this.lastLightmapSupplyFailure = "asking the light map unit failed: " + error;
+                // A query that cannot run must not stop the frame; the source below answers either way.
+            }
+
+            if (this.lightmapGlId <= 0) {
+                // The GL answer is not always available even when the bind happened: GlStateManager.bindTexture skips
+                // the GL call when its own per-unit cache already holds the name, so the stub never sees the light
+                // map's bind and this query returns nothing. Measured on leg gv-cohort-vp1, where the refusal read
+                // "lightmapped batch with no lightmap texture mirrored (id=-1 unit=33985)" - the unit was right and
+                // the id was not. The DynamicTexture that owns the name is asked instead, through the source the game
+                // side installs; it is a supplier because the light map is reallocated on resource reloads.
+                int fromGame = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapTextureId();
+                if (fromGame > 0) {
+                    this.lightmapGlId = fromGame;
+                }
             }
         }
         if (this.lightmapGlId > 0) {
             try {
                 int[] size = textureSize(this.lightmapGlId);
+                // Bounded report of the decision this block makes. Leg gv-cohort-lm2 learned the id (18) and still
+                // left lightmapSuppliedOnDemand at zero with no failure recorded, which means one of the silent
+                // conditions here is the one that fires; the size and the id together say which.
+                if (celtium$lightmapReports++ < 8) {
+                    System.out.println("[Celtium] CELTIUM_LIGHTMAP id=" + this.lightmapGlId
+                            + " size=" + size[0] + "x" + size[1]
+                            + " texture=" + (this.lightmapTexture == null ? "null" : "set"));
+                }
                 if (size[0] > 0 && size[1] > 0) {
+                    // Bounded stage marker. Leg gv-cohort-lm3 showed valid inputs (id=18, size=256x256) and still left
+                    // the mirror null with no failure recorded, so the question is which of these four calls is where
+                    // it stops - the report's counters are a single early heartbeat and cannot say.
+                    celtium$lightmapStage("imageFor");
                     org.soutalab.celtium.vulkan.VulkanGlTexture established =
                             celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
-                    established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    celtium$lightmapStage("upload");
+                    try {
+                        established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    } catch (IllegalStateException captureMiss) {
+                        // The stub captured no upload for this level, because 1.12.2 uploads the light map through
+                        // GlStateManager, which skips the GL calls when its cache already holds the state. Measured on
+                        // leg gv-cohort-lm5, where this threw on every attempt and the mirror stayed null. The
+                        // DynamicTexture that owns the pixels answers instead - the same route the texture name took.
+                        int[] pixels = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapPixels();
+                        boolean usable = pixels != null && pixels.length >= 256;
+                        if (usable) {
+                            // false is not a failure here: uploadFromImage returns false when the image already holds
+                            // exactly these pixels (same hash, same size), which is the state a second call in the same
+                            // frame finds. Measured on leg gv-cohort-lm7, where the pixels were present (256 of them,
+                            // a 16x16 map) and the upload answered false, and this check rethrew on it - reading a
+                            // no-op as a failure. The image having the pixels is the outcome wanted either way.
+                            established.uploadFromImage(16, 16, celtium$argbToRgba(pixels));
+                        }
+                        if (celtium$lightmapFallbacks++ < 4) {
+                            System.out.println("[Celtium] CELTIUM_LIGHTMAP_FALLBACK pixels="
+                                    + (pixels == null ? "null" : String.valueOf(pixels.length))
+                                    + " usable=" + usable);
+                        }
+                        if (!usable) {
+                            throw captureMiss;
+                        }
+                    }
+                    celtium$lightmapStage("markInitialized");
                     celtium$registry().markFullyInitialized(this.lightmapGlId);
+                    celtium$lightmapStage("assigned");
                     this.lightmapTexture = established;
                     this.lightmapReestablished++;
                     this.lightmapSuppliedOnDemand++;
                 }
             } catch (RuntimeException | LinkageError error) {
                 this.lastLightmapSupplyFailure = String.valueOf(error);
+                // The failure was only ever readable through the heartbeat, which prints once, so leg gv-cohort-lm4
+                // showed the upload being entered and the loop restarting without ever naming the exception. Bounded,
+                // and at the moment it happens.
+                if (celtium$lightmapFailures++ < 4) {
+                    System.out.println("[Celtium] CELTIUM_LIGHTMAP_FAILURE id=" + this.lightmapGlId
+                            + " error=" + error);
+                    error.printStackTrace(System.out);
+                }
             }
         }
     }
 
+
+
+    /**
+     * {@return the game's ARGB light map pixels as the RGBA bytes the mirror's upload takes}.
+     * <p>
+     * 1.12.2's DynamicTexture keeps its pixels as ARGB ints, and every Vulkan upload here is RGBA8, so the two
+     * channels swap. The alpha byte is left as the game's own: the light map is opaque, and inventing an alpha
+     * would change what the shader multiplies.
+     */
+    private static java.nio.ByteBuffer celtium$argbToRgba(int[] pixels) {
+        java.nio.ByteBuffer buffer = org.lwjgl.BufferUtils.createByteBuffer(pixels.length * 4);
+        for (int pixel : pixels) {
+            buffer.put((byte) ((pixel >> 16) & 0xFF));
+            buffer.put((byte) ((pixel >> 8) & 0xFF));
+            buffer.put((byte) (pixel & 0xFF));
+            buffer.put((byte) ((pixel >>> 24) & 0xFF));
+        }
+        buffer.flip();
+        return buffer;
+    }
+    /** Bounded stage marker for the light map mirror's establishment. */
+    private void celtium$lightmapStage(String stage) {
+        if (celtium$lightmapStages++ < 12) {
+            System.out.println("[Celtium] CELTIUM_LIGHTMAP_STAGE stage=" + stage
+                    + " id=" + this.lightmapGlId + " count=" + celtium$lightmapStages);
+        }
+    }
+
+    /** Bounded stage counter for the light map mirror. */
+    private int celtium$lightmapStages;
+
+    /** Bounded failure counter for the light map mirror. */
+    private int celtium$lightmapFailures;
+
+    /** Bounded fallback counter for the light map mirror. */
+    private int celtium$lightmapFallbacks;
     private boolean supportedImmediateTarget() {
         // Every condition names itself. One shared message covered all five and could not say which one refused, which is
         // how 870 format-2 refusals in a run stayed unnamed (measured: the stage marker said this gate, and the tally

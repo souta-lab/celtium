@@ -304,6 +304,21 @@ public final class CeltiumGllessHint {
      * the rest of the queries a caller reads a number it does not divide by, and inventing values for those would be
      * the kind of lying the stub's comments elsewhere refuse.
      */
+    /**
+     * {@return the answer the int-returning form of the texture level query must give}.
+     * <p>
+     * LWJGL's {@code glGetTexLevelParameteri} returns the value directly and goes through its own native, so the
+     * buffer-writing fix below never saw it. Measured 2026-10-15 (leg gv-cohort-lm1): the light map mirror was never
+     * established - {@code lightmapSuppliedOnDemand=0} with {@code lightmapSupplyFailure=[none]} - because
+     * {@code textureSize()} asked this way, got zero for both dimensions, and skipped the upload silently. The
+     * lightmapped batches were then refused 553 times in a run that presented 563 frames.
+     * <p>
+     * The value is the same 256 the buffer form answers, for the same reason: the light map and Forge's cloud
+     * texture are 256 square, and the caller divides by these numbers rather than merely reading them.
+     */
+    public static int glGetTexLevelParameteri(int target, int level, int pname) {
+        return (pname == 0x1000 || pname == 0x1001) ? 256 : 0; // GL_TEXTURE_WIDTH / GL_TEXTURE_HEIGHT
+    }
     public static void glGetTexLevelParameteriv(int target, int level, int pname, long params) {
         int value = (pname == 0x1000 || pname == 0x1001) ? 256 : 0; // GL_TEXTURE_WIDTH / GL_TEXTURE_HEIGHT
         if (params == 0L) {
