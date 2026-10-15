@@ -230,14 +230,15 @@ public final class CeltiumGllessHint {
      * would file quads where no {@code glCallList} can reach them.
      */
     public static void glNewList(int list, int mode) {
-        newListCalls++;
+        noteDisplayListCall();
         listIndex = list;
         listMode = mode;
     }
 
     /** Closes the open display list, as {@code glEndList()} does. */
     public static void glEndList() {
-        endListCalls++;
+        noteDisplayListCall();
+        END_LIST_CALLS.incrementAndGet();
         listIndex = 0;
         listMode = 0;
     }
@@ -252,23 +253,23 @@ public final class CeltiumGllessHint {
      * exactly the open question, because a coremod's transformer only applies to classes loaded after it is
      * registered, and {@code org.lwjgl.opengl.GL11} is loaded very early.
      */
-    private static final java.util.concurrent.atomic.AtomicLong newListCalls =
+    private static final java.util.concurrent.atomic.AtomicLong NEW_LIST_CALLS =
             new java.util.concurrent.atomic.AtomicLong();
-    private static final java.util.concurrent.atomic.AtomicLong endListCalls =
+    private static final java.util.concurrent.atomic.AtomicLong END_LIST_CALLS =
             new java.util.concurrent.atomic.AtomicLong();
-    private static final java.util.concurrent.atomic.AtomicLong callListCalls =
+    private static final java.util.concurrent.atomic.AtomicLong CALL_LIST_CALLS =
             new java.util.concurrent.atomic.AtomicLong();
 
     /** {@return the display-list arrival counts, one line, for the stub's exit hook to print}. */
     public static String displayListCensus() {
-        return "glNewList=" + newListCalls.get() + " glEndList=" + endListCalls.get()
-                + " glCallList=" + callListCalls.get() + " listIndex=" + listIndex
+        return "glNewList=" + NEW_LIST_CALLS.get() + " glEndList=" + END_LIST_CALLS.get()
+                + " glCallList=" + CALL_LIST_CALLS.get() + " listIndex=" + listIndex
                 + " lastCalled=" + lastCalledList;
     }
 
     /** {@return whether any display-list call reached the transformer}. */
     public static boolean sawDisplayListCall() {
-        return newListCalls.get() > 0L || endListCalls.get() > 0L || callListCalls.get() > 0L;
+        return NEW_LIST_CALLS.get() > 0L || END_LIST_CALLS.get() > 0L || CALL_LIST_CALLS.get() > 0L;
     }
 
     /** {@return whether a display list is currently open}. */
@@ -285,9 +286,37 @@ public final class CeltiumGllessHint {
      * drawn, and {@link #lastCalledList} is what the capture reads for that.
      */
     public static void glCallList(int list) {
-        callListCalls++;
+        noteDisplayListCall();
+        CALL_LIST_CALLS.incrementAndGet();
         lastCalledList = list;
     }
+
+    /** Registers the exit line once, on the first arrival. A run that never reaches these calls stays silent. */
+    private static void noteDisplayListCall() {
+        if (hooked) {
+            return;
+        }
+        synchronized (CeltiumGllessHint.class) {
+            if (hooked) {
+                return;
+            }
+            hooked = true;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                // FileDescriptor.out, not System.out: Forge routes System.out into Log4j and Log4j's own shutdown
+                // hook stops the appenders, so a line printed that way appears only when this hook wins the race.
+                // Measured on the stub's census: one run in three. FileDescriptor.out is the file the process was
+                // started with and stays writable through teardown.
+                try (java.io.PrintStream out = new java.io.PrintStream(
+                        new java.io.FileOutputStream(java.io.FileDescriptor.out), false)) {
+                    out.println("CELTIUM_HINT_DISPLAY_LISTS " + displayListCensus());
+                } catch (Throwable ignored) {
+                    // A census that cannot be printed must not take the process down on its way out.
+                }
+            }, "celtium-hint-census"));
+        }
+    }
+
+    private static volatile boolean hooked;
 
     /** The last list {@code glCallList} named, 0 before any call. */
     private static volatile int lastCalledList;
