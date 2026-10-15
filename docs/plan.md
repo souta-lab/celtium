@@ -19,6 +19,12 @@
 - **minimize（2026-10-15 実測・AMD）**: **PASSED** ✓ — `gv-cohort-iconify1`（`-Dceltium.validation.iconifyAtTick=240`, 画像取得後）で `fixtureStatus=PASSED`・`validationClean=true`・`validationMessageCount=0`、`iconifyCall=glfwIconifyWindow` ✓・`iconifySizeBefore=1280x720` ✓・`iconifySizeAfter=1280x720` ✓。
   - **防御はコード側で確認済み**: `SwapchainCreateArguments.clampExtent` は `Math.max(1, ...)` で「never below the minimum and never zero」を明示しており、これは Blender が同じ問題に入れた修正（"Minimized windows have the resolution of 0,0 ... use a minimum resolution of 1,1"）と Win32/X11 の規則（swapchain image は 0 サイズ不可）に一致する。minimize で報告されている VUID は `VkSwapchainCreateInfoKHR-imageExtent-01689`／`VkFramebufferCreateInfo-width-00885`／`-height-00887` の3つで、前者を防げば後2つは従属する。
   - **Wayland では最小化状態が存在しない**: `xdg_toplevel::set_minimized` は「コンポジタが解釈する要求」で、「現在最小化されているかを知る方法も、解除する方法も無い」。Sway はこれを無視し得るので 0×0 の経路に入らない — 実測どおりサイズは変わらなかった。したがってこの leg が証明するのは「最小化を要求しても落ちず、validation も汚さない」ことで、0 サイズ経路そのものはコード側の clamp が受け持つ。GLFW も Wayland では `GLFW_ICONIFIED` が常に false で `glfwRestoreWindow` で戻せないため、この計器は一方通行で leg の最後に置いてある。
+- **RLCraft 2.9.3 の P1 は未完（PR #145 が唯一の実測 ✓）**: 5 leg の切り分けで阻害要因が3つに分かれ、**そのうち1つは #287 で解消済み**。
+  - **① RenderLib 1.2.8 の coremod transformer が注入点を消す** → **#287 で解消 ✓✓✓**（`require = 0`）。leg3 で RenderLib 1.4.5 に上げると `RenderGlobal` の失敗は消えた。
+  - **② SereneSeasons の `VerifyError`（Cleanroom 環境・upstream 報告済み）** ✗ — transformer が bytecode を挿入して stack map frame を更新していない型の不具合で、Celtium 側ではない。leg5 は SereneSeasons を除外して回している。
+  - **③ スループット制限** ✗ — PR 自身が「The recipe does not address the throughput limit, which is what stands between this pack and a P1 pass」と書いており、**Nether の keepalive と同じホスト側の制約**。
+  - **正直な注記（PR より）**: RLCraft の leg で `nativeDeviceName=null` / `gpuRequirementMet=false` が出るのは **GPU の証拠ではない** — ワールドに到達していないので capability レポートが無い。
+  - **#287 マージ後の再測が次の実測**（新 jar で leg1 相当を回し、①が消えて②③が残ることを確かめる）。
 - **未測定**: 復旧・monitor move。resize の受入マトリクス（外部: hoihky.dev「swapchain recreate」）は slow drag 30s／fast maximize／minimize 10s（スピン・`DEVICE_LOST` なし）／monitor move（`SUBOPTIMAL` のち安定）の4項目で、**我々はそのうち maximize 相当のみ**。
 - **既知の外部欠陥（同じ形）**: MC-307344（Vulkan のみ resize で性能が 30/60/160 fps と不定 ✓）・MC-167219（リロード8回で 2fps ✓）・MC-298898（リロード毎に VRAM +1.3GB ✓）・MC-98707（1.12.2 の `deleteTexture` がマップから消さない ✓）・MC-310176（**Mojang 自身の Vulkan レンダラがリソースパックメニューで `VUID-VkWriteDescriptorSet-descriptorType-02996`** ✓）。
 現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
