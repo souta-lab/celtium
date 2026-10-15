@@ -135,7 +135,14 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
         float near = 0.05f;
         float far = 1024.0f;
 
-        Matrix4f projection = new Matrix4f().perspective((float) Math.toRadians(fovDegrees), aspect, near, far, false);
+        // zZeroToOne must be true: Vulkan clips at NDC z in [0,1] while OpenGL's convention is [-1,1]. With the
+        // OpenGL range the terrain falls entirely below zero and is clipped away, and the frame still looks
+        // plausible because the 2D path - which does not use depth - draws normally. Measured 2026-10-15 (leg
+        // gv-cohort-atlas11): 77711 native draws were recorded, the window draw was adopted into the frame image
+        // (attachedImage == frameImage), and 92% of the presented image was still black with a correct HUD.
+        // See the Vulkan clip-space note in the Veldrid backend-differences table and the Mesa/NVIDIA report of
+        // an OpenGL projection matrix making a globe vanish.
+        Matrix4f projection = new Matrix4f().perspective((float) Math.toRadians(fovDegrees), aspect, near, far, true);
         Matrix4f view = new Matrix4f().lookAlong(look, new Vector3f(0.0f, 1.0f, 0.0f), new Matrix4f());
 
         Matrix4f vp = projection.mul(view);
