@@ -260,7 +260,15 @@ public class OcclusionCuller {
                         // The walk only leaves a section through a face its visibility data allows, and that data is
                         // written when the section is built. A NULL encoding here says the root was never built, which
                         // stops the walk at the root no matter how many neighbours exist.
-                        + " rootVisibility=" + this.celtium$rootVisibility());
+                        + " rootVisibility=" + this.celtium$rootVisibility()
+                        // The cleanest test of the frustum itself: a box at the camera's own position must be visible.
+                        // If it is not, the frustum is degenerate rather than the neighbours being outside it - which
+                        // is what MC-306810 describes, where a zero window height made the projection matrix NaN and
+                        // the frustum culled everything.
+                        + " cameraBoxVisible=" + viewport.isBoxVisible(
+                                viewport.getBlockCoord().x() - 1, viewport.getBlockCoord().y() - 1,
+                                viewport.getBlockCoord().z() - 1, viewport.getBlockCoord().x() + 1,
+                                viewport.getBlockCoord().y() + 1, viewport.getBlockCoord().z() + 1));
             }
         }
     }
