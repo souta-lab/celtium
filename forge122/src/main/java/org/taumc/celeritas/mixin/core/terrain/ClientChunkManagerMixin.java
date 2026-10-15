@@ -66,10 +66,16 @@ public abstract class ClientChunkManagerMixin {
         // Reported on change rather than for the first N adds: the first version spent its cap on twelve adds of the
         // same chunk (known=1, ready=0) and could not show whether either count ever moved. A line whenever the pair
         // changes says when chunks accumulate and when readiness follows, which is what sections are built from.
-        if (known != celtium$lastKnown || ready != celtium$lastReady) {
+        // Readiness is the count that matters, because sections are built from ready chunks and a centre needs all nine
+        // of its 3x3 neighbours: with eight known chunks ready is correctly zero, so a cap that stops at eight known
+        // cannot show whether the ninth ever arrives. Readiness changes are always reported; the known count is
+        // reported every sixty-four chunks as context.
+        boolean readyChanged = ready != celtium$lastReady;
+        boolean knownMilestone = known != celtium$lastKnown && known % 64 == 0;
+        if (readyChanged || knownMilestone) {
             celtium$lastKnown = known;
             celtium$lastReady = ready;
-            if (celtium$chunkAddLogs++ < 24) {
+            if (celtium$chunkAddLogs++ < 40) {
                 System.out.println("[Celtium] CELTIUM_CHUNK_ADD path=" + path + " known=" + known + " ready=" + ready);
             }
         }
