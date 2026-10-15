@@ -50,6 +50,16 @@ public abstract class ClientChunkManagerMixin {
 
     @Inject(method = "func_186025_d", at = @At("RETURN"), require = 0)
     private void afterProvideChunk(int x, int z, CallbackInfoReturnable<Chunk> cir) {
+        // Only a real chunk counts. ChunkProviderClient.provideChunk returns its blankChunk - an EmptyChunk - when the
+        // coordinates are not in its mapping, and this method is a query: it is called for chunks that were never
+        // received. Teaching the tracker about those is what made it report hundreds of known chunks while
+        // RenderSectionManager's isSectionVisuallyEmpty saw an EmptyChunk for every one of them, marked them all
+        // EMPTY_DATA, and left every build queue at zero - measured on leg gv-cohort-rl2, where all queues read
+        // P0=P1=P2=0 with sections=4096.
+        Chunk chunk = cir.getReturnValue();
+        if (chunk == null || chunk.isEmpty() || chunk instanceof net.minecraft.world.chunk.EmptyChunk) {
+            return;
+        }
         celtium$noteChunkAdded(x, z, "provideChunk");
     }
 
