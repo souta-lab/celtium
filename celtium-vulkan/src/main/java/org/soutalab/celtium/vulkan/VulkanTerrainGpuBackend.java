@@ -797,6 +797,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
 
         refreshTextures();
+        // In GL-less, terrain may be reached after the game has switched away from
+        // the lightmap unit. Recover its mirror from the unit announced by Minecraft
+        // before rejecting the terrain pass; a refused pass never reaches the queue.
+        if (this.lightmapTexture == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            ensureLightmapMirror();
+        }
         if (this.atlasTexture == null || this.lightmapTexture == null) {
             // Without both textures the descriptor set cannot be filled; the pass is skipped and the reason is
             // recorded instead of drawing with an unbound atlas.
