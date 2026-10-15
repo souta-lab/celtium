@@ -4,7 +4,16 @@
 
 ## 現在状態（2026-10-15）
 
-作業ブランチ: `fix/glless-section-visibility-20261015`（継続）。直近の実装基点 `322f0b5c0`、照合済み `origin/main=da8a934a4`。現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
+作業ブランチ: `fix/glless-section-visibility-20261015`（継続）。直近の統合基点 `b58b5d828`、照合済み `origin/main=b58b5d828`。
+
+**🎯🎯🎯 scene・resize・reload が AMD と Intel の両方で PASS（実測 ✓✓✓・2026-10-15）**
+- **AMD RX 6400（RADV NAVI24）**: 主要scene `gv-cohort-fix1` PASSED ✓／resize `gv-cohort-resize2`（`HEADLESS-1` を 800x600 → 1600x900 → 1280x720）PASSED・validation 0件 ✓・**提示画像が 1600x900**（アプリが swapchain を作り直した証拠 ✓）／reload `gv-cohort-reload2` PASSED・`resourceReloadRequestedAtTick=60` ✓・`resourceReloadElapsedMillis=11673` ✓・0件 ✓。
+- **Intel UHD 630（CFL GT2）**: 主要scene `gv-cohort-intel1` PASSED ✓／resize `gv-cohort-resize3` PASSED・0件 ✓（**修正前は `VUID-vkDestroyFramebuffer-framebuffer-00892` 2件** ✗ → `27d26cebf` で settle を破棄箇所へ移して 2→0 ✓✓）／reload `gv-cohort-reload3` PASSED・tick 60 発火 ✓・`resourceReloadElapsedMillis=10700` ✓・0件 ✓。
+- デバイス行で確定: 両 Intel leg の `CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"` ✓ と `gpuRequirementMet=true`（`gpuRequirementSource=nativeDeviceName`）✓。
+- **統合済み**: PR #285（間接コマンドバッファのページング → 地形が画面に出た ✓）・PR #286（framebuffer 破棄前の settle ✓）。`origin/main = b58b5d828` ✓。
+- **未測定**: world-switch・復旧・minimize・monitor move。resize の受入マトリクス（外部: hoihky.dev「swapchain recreate」）は slow drag 30s／fast maximize／minimize 10s（スピン・`DEVICE_LOST` なし）／monitor move（`SUBOPTIMAL` のち安定）の4項目で、**我々はそのうち maximize 相当のみ**。
+- **既知の外部欠陥（同じ形）**: MC-307344（Vulkan のみ resize で性能が 30/60/160 fps と不定 ✓）・MC-167219（リロード8回で 2fps ✓）・MC-298898（リロード毎に VRAM +1.3GB ✓）・MC-98707（1.12.2 の `deleteTexture` がマップから消さない ✓）・MC-310176（**Mojang 自身の Vulkan レンダラがリソースパックメニューで `VUID-VkWriteDescriptorSet-descriptorType-02996`** ✓）。
+現在のatlas修正候補は **0.0.4-alpha / JAR SHA256 `09e853792eeb88f2fef1aac529979ac9fc4944c113e32e2e2519ed58afe3ee45`**。下記の現状表が現在判定であり、coarse画像ゲートPASSをVanilla画質・全scene受入へ拡大しない。
 
 **🎯🎯🎯 GL-less の地形が画面に出た・AMD と Intel の両方で PASS（実測 ✓✓✓・2026-10-15）**
 - **根因**: 間接コマンドバッファのページング欠如。ページを「領域」ではなく「記録スロット」に属させ、そのスロットのフェンス完了まで別オフセットを保ち、延期した全アップロードを記録済み領域描画より前に投入する修正（`322f0b5c0`）で解消した。
