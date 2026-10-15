@@ -7761,7 +7761,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.lightmapGlId = bound;
                 }
             } catch (RuntimeException | LinkageError error) {
-                this.lastLightmapSupplyFailure = "asking the light map unit failed: " + error;
+                // A query that cannot run must not stop the frame; the source below answers either way.
+            }
+
+            if (this.lightmapGlId <= 0) {
+                // The GL answer is not always available even when the bind happened: GlStateManager.bindTexture skips
+                // the GL call when its own per-unit cache already holds the name, so the stub never sees the light
+                // map's bind and this query returns nothing. Measured on leg gv-cohort-vp1, where the refusal read
+                // "lightmapped batch with no lightmap texture mirrored (id=-1 unit=33985)" - the unit was right and
+                // the id was not. The DynamicTexture that owns the name is asked instead, through the source the game
+                // side installs; it is a supplier because the light map is reallocated on resource reloads.
+                int fromGame = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapTextureId();
+                if (fromGame > 0) {
+                    this.lightmapGlId = fromGame;
+                }
             }
         }
         if (this.lightmapGlId > 0) {
