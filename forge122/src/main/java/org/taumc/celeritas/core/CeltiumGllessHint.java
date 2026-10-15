@@ -230,14 +230,45 @@ public final class CeltiumGllessHint {
      * would file quads where no {@code glCallList} can reach them.
      */
     public static void glNewList(int list, int mode) {
+        newListCalls++;
         listIndex = list;
         listMode = mode;
     }
 
     /** Closes the open display list, as {@code glEndList()} does. */
     public static void glEndList() {
+        endListCalls++;
         listIndex = 0;
         listMode = 0;
+    }
+
+    /**
+     * Arrival counts for the three display-list calls.
+     *
+     * <p>The stub's {@code CELTIUM_FN_CENSUS} cannot answer whether these reach the transformer: it counts the
+     * stub's own trampoline, which by design carries only the capability query (four {@code glGetIntegerv} and two
+     * {@code glGetError} on every leg so far), while the display-list calls travel the transformer's path. Without
+     * a counter here a silent run cannot be told apart from a transformer that never saw the class - and that is
+     * exactly the open question, because a coremod's transformer only applies to classes loaded after it is
+     * registered, and {@code org.lwjgl.opengl.GL11} is loaded very early.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong newListCalls =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong endListCalls =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong callListCalls =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** {@return the display-list arrival counts, one line, for the stub's exit hook to print}. */
+    public static String displayListCensus() {
+        return "glNewList=" + newListCalls.get() + " glEndList=" + endListCalls.get()
+                + " glCallList=" + callListCalls.get() + " listIndex=" + listIndex
+                + " lastCalled=" + lastCalledList;
+    }
+
+    /** {@return whether any display-list call reached the transformer}. */
+    public static boolean sawDisplayListCall() {
+        return newListCalls.get() > 0L || endListCalls.get() > 0L || callListCalls.get() > 0L;
     }
 
     /** {@return whether a display list is currently open}. */
@@ -254,6 +285,7 @@ public final class CeltiumGllessHint {
      * drawn, and {@link #lastCalledList} is what the capture reads for that.
      */
     public static void glCallList(int list) {
+        callListCalls++;
         lastCalledList = list;
     }
 

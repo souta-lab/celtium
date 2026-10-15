@@ -767,6 +767,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                             + " unresolved=" + installed.displayListsUnresolved
                             + " held=" + installed.displayLists.size());
                 }
+                // The transformer's own display-list arrivals. The line above counts the stub's trampoline, which by
+                // design carries only the capability query, so it cannot say whether the transformer was ever offered
+                // org.lwjgl.opengl.GL11 at all - and that is the open question, because LWJGL classes sit in the
+                // class loader's default transformer exclusions. Printed only when one arrived, so a run that never
+                // reaches them stays silent rather than claiming a measurement it did not take.
+                if (org.taumc.celeritas.core.CeltiumGllessHint.sawDisplayListCall()) {
+                    celtium$printAtExit("CELTIUM_HINT_DISPLAY_LISTS "
+                            + org.taumc.celeritas.core.CeltiumGllessHint.displayListCensus());
+                }
             }, "celtium-noop-census"));
         }
         return installed;
