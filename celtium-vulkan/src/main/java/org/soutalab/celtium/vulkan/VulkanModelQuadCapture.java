@@ -193,7 +193,19 @@ public final class VulkanModelQuadCapture {
                 // It is filed under a synthetic id so the census still separates the two cases.
                 listId = NO_LIST;
             }
-            texture = celtium$glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            // GlStateManager.bindTexture skips the GL call when its per-unit cache already holds the name, and under
+            // GL-less the call it does make is rewritten before any trampoline sees it, so GL_TEXTURE_BINDING_2D
+            // answers 0 for a texture that is bound. The name is recorded where the bind is visible
+            // (GlStateManagerMixin) and read back here; the queries stay as the fallback for a hybrid run, where a real
+            // context exists and its answer is the right one.
+            texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+            if (texture <= 0) {
+                texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(
+                        org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            }
+            if (texture <= 0) {
+                texture = celtium$glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            }
             if (texture <= 0) {
                 // A model quad is drawn with a texture bound (the arm above is compiled under the player's 64x64 skin),
                 // so a name of 0 here is the read failing, not a textureless draw.

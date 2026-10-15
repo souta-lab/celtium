@@ -587,6 +587,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile float lineWidth = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
+    /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
+    private volatile int lastBoundTexture = -1;
     /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
     private volatile int compilingListMode;
     /**
@@ -819,6 +821,62 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static int compilingList() {
         CeltiumGlStub stub = installed;
         return stub == null ? 0 : stub.compilingList;
+    }
+
+    /**
+     * Records the display list {@code glNewList} opened, from the layer that sees the call.
+     *
+     * <p>Needed because the two layers are not the same one under GL-less: the game's display-list calls reach
+     * {@code CeltiumGllessNativeTransformer}, which rewrites them to {@code CeltiumGllessHint} and returns, so
+     * {@link #compilingList} - the field this stub sets from its own dispatch - is only written when a call travels
+     * the trampoline, which these do not. Measured on leg {@code gv-cohort-dl9}: the hint counted 37
+     * {@code glNewList} arrivals while every one of the 222 model quads was filed with {@code list=-1}, because the
+     * capture reads this field. Pushed rather than pulled so the reader stays one field read.
+     */
+    public static void celtium$noteListOpened(int list, int mode) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.compilingList = list;
+        stub.compilingListMode = mode;
+    }
+
+    /** Closes the list {@link #celtium$noteListOpened} opened, as {@code glEndList} does. */
+    public static void celtium$noteListClosed() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.compilingList = 0;
+        stub.compilingListMode = 0;
+    }
+
+    /**
+     * Records the name the game bound, from the layer that sees the bind.
+     *
+     * <p>{@code GL_TEXTURE_BINDING_2D} cannot answer this: there is no context under GL-less, and the stub's own
+     * {@code glBindTexture} case does not run either, because the bind goes through the transformer to
+     * {@code CeltiumGllessHint} first - measured, the stub's function census carries only the capability query.
+     *
+     * <p>Kept in a field of its own rather than in {@link #textureBindings}: that map is the attribution source for
+     * uploads ({@code uploadTargetName}), and it is deliberately empty under GL-less, where the upload path identifies
+     * its texture from the announcement instead. Writing binds into it was measured to black out the terrain - leg
+     * {@code gv-cohort-dl10} with the map written against {@code gv-cohort-dl10old}, the identical scene and flags
+     * with the previous jar, which passed - so this reader gets its own value and changes nothing else.
+     */
+    public static void celtium$noteBoundTexture(int texture) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.lastBoundTexture = texture;
+    }
+
+    /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
+    public static int celtium$boundTexture() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? -1 : stub.lastBoundTexture;
     }
 
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */

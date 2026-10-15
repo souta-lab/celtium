@@ -63,7 +63,12 @@ public class CeltiumGlStub {
  public float currentRed=.125f,currentGreen=.375f,currentBlue=.625f,currentAlpha=.875f,lineWidth=3.5f;
  public int viewportX=-17,viewportY=23,viewportW=1920,viewportH=1080;
  public int[] scissorBox={11,31,199,60};
- public int activeTexture=3,drawFbo=41,readFbo=43,compilingList=47,currentProgram=53,boundVertexArray=59;
+ public int activeTexture=3,drawFbo=41,readFbo=43,compilingList=47,compilingListMode=4864,currentProgram=53,boundVertexArray=59;
+ // The hint publishes the open list here (CeltiumGllessHint.glNewList/glEndList), so the shell carries the
+ // same two entry points the production stub does; GL_LIST_INDEX answers from the fields above.
+ public static void celtium$noteListOpened(int list,int mode){installed.compilingList=list;installed.compilingListMode=mode;}
+ public static void celtium$noteListClosed(){installed.compilingList=0;installed.compilingListMode=0;}
+ public static int celtium$boundTexture(){return -1;}
  static class Bindings {
   java.util.Map<Long,Integer> values=new java.util.HashMap<>();
   int get(long key){return values.getOrDefault(key,-1);}

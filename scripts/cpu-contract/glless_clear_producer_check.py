@@ -31,18 +31,30 @@ def field(source, name):
     pattern = (r"(?m)^\s*private\s+(?:(?:static|final|volatile)\s+)*"
                r"[\w.<>]+(?:\[\])?\s+" + re.escape(name) + r"(?=\s*[,=;])")
     match = re.search(pattern, source)
-    if not match:
-        raise ValueError("missing clear field: " + name)
-    return source[match.start():source.index(";", match.end()) + 1].strip()
+    if match:
+        return source[match.start():source.index(";", match.end()) + 1].strip()
+    # A field whose declaration starts with a different name (`private volatile int a, compilingList, b;`) is
+    # not matched above. The whole declaration is returned instead: it declares the requested field together
+    # with its neighbours, which in the reduced stub is exactly what the production file declares.
+    grouped = (r"(?m)^\s*private\s+(?:(?:static|final|volatile)\s+)*[\w.<>]+(?:\[\])?\s+"
+               r"[\w$]+(?:\s*,\s*[\w$]+)*(?:\s*=[^;]*)?;")
+    for declaration in re.finditer(grouped, source):
+        if name in re.findall(r"[,\s]([\w$]+)(?=\s*[,;=])", declaration.group()):
+            return declaration.group().strip()
+    raise ValueError("missing clear field: " + name)
 
 
 FIELDS = ["installed", "drawFbo", "clearRed", "clearDepth", "pendingClearDrawFbo",
-          "pendingClearIsMain", "drawFramebufferIsMain", "pendingClears"]
+          "pendingClearIsMain", "drawFramebufferIsMain", "pendingClears",
+          # The complete production hint publishes the open display list here, so the reduced stub has to
+          # carry the same two fields and entry points or the hint will not compile against it.
+          "compilingList", "compilingListMode"]
 METHODS = ["public static boolean isInstalled(", "public static void noteDrawFramebufferIsMain(",
            "public static boolean pendingClearIsMain(", "public static int pendingClearDrawFbo(",
            "public static int consumePendingClears(", "public static void clearColor(float[] out)",
            "public static double clearDepth(", "public static void celtium$clear(",
            "public static void celtium$clearColor(", "public static void celtium$clearDepth(",
+           "public static void celtium$noteListOpened(", "public static void celtium$noteListClosed(",
            "private void recordClear(", "private void recordClearColor(",
            "private void recordClearDepth(", "private void bindFramebuffer("]
 SEMANTICS = ["SEM_CLEAR", "SEM_CLEAR_COLOR", "SEM_CLEAR_DEPTH", "SEM_BIND_FRAMEBUFFER"]

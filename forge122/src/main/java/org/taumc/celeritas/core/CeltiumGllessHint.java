@@ -234,6 +234,10 @@ public final class CeltiumGllessHint {
         NEW_LIST_CALLS.incrementAndGet();
         listIndex = list;
         listMode = mode;
+        // Published to the stub as well, because that is where the model capture reads the open list from
+        // (CeltiumGlStub.compilingList). This class is the layer the transformer delegates to, so without this the
+        // stub's field stays 0 and every quad is filed under no list at all - measured on leg gv-cohort-dl9.
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteListOpened(list, mode);
     }
 
     /** Closes the open display list, as {@code glEndList()} does. */
@@ -242,6 +246,7 @@ public final class CeltiumGllessHint {
         END_LIST_CALLS.incrementAndGet();
         listIndex = 0;
         listMode = 0;
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteListClosed();
     }
 
     /**

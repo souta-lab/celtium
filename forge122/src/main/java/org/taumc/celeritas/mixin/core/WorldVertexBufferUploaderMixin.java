@@ -618,7 +618,12 @@ public abstract class WorldVertexBufferUploaderMixin {
                 return;
             }
             int unit = celtium$getInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-            int texture = celtium$getInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            // The model capture reads the same value from the same place, so the compile and replay halves of the
+            // census pair cannot disagree about which texture the list was built under.
+            int texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+            if (texture <= 0) {
+                texture = celtium$getInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            }
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTexture(listIndex, texture, unit);
         } catch (RuntimeException | LinkageError error) {
             // Record the failure rather than leaving the list to be retried on every batch, and rather than reporting a

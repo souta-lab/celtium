@@ -176,6 +176,19 @@ public final class VulkanDisplayListCensus {
         }
     }
 
+    /**
+     * {@return the texture the model path is drawing with, or {@link #UNKNOWN}}.
+     * <p>
+     * Asked of the stub first for the same reason the quad capture is: {@code GL_TEXTURE_BINDING_2D} has no context
+     * to answer from under GL-less, and the game only issues the GL bind when its own per-unit cache misses, so the
+     * name is recorded where the bind is visible. Without this the replay half of the compile/replay texture pair
+     * reads 0 while the compile half reads the real name.
+     */
+    private static int modelTexture() {
+        int recorded = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+        return recorded > 0 ? recorded : glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+    }
+
     /** {@return the recorded origin of a list, or null}. */
     public static synchronized String originOf(int list) {
         return ORIGINS.get(Integer.valueOf(list));
@@ -373,7 +386,7 @@ public final class VulkanDisplayListCensus {
             return;
         }
         int unit = glInt(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-        int texture = glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        int texture = modelTexture();
         if (texture > 0) {
             REPLAY_TEXTURES.put(Integer.valueOf(list), Integer.valueOf(texture));
             REPLAY_TEXTURE_UNITS.put(Integer.valueOf(list), Integer.valueOf(unit));
@@ -405,7 +418,7 @@ public final class VulkanDisplayListCensus {
             return;
         }
         replayTraces++;
-        int texture = glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        int texture = modelTexture();
         int captured = VulkanModelQuadCapture.quadsForList(list);
         int submitted = VulkanModelQuadCapture.submittedForList(list);
         System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_REPLAY list=" + list
