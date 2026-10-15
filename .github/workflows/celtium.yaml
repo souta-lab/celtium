@@ -48,6 +48,8 @@ jobs:
           python3 scripts/cpu-contract/glless_transformer_injection_check.py
           python3 scripts/cpu-contract/glless_lwjgl3_surface_check.py
           python3 scripts/cpu-contract/glless_matrix_queries_check.py
+          python3 scripts/cpu-contract/glless_clear_producer_check.py
+          python3 scripts/cpu-contract/glless_clear_consumer_check.py
           python3 scripts/cpu-contract/draw_state_provenance_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain

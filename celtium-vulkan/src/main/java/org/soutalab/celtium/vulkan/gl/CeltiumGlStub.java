@@ -1183,6 +1183,46 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub.pendingClears.get() == 0 ? -1 : stub.pendingClearDrawFbo;
     }
 
+    /** Records a clear through the same producer used by callback dispatch. */
+    public static void celtium$clear(int mask) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.recordClear(mask);
+        }
+    }
+
+    public static void celtium$clearColor(float red, float green, float blue, float alpha) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.recordClearColor(red, green, blue, alpha);
+        }
+    }
+
+    public static void celtium$clearDepth(double depth) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.recordClearDepth(depth);
+        }
+    }
+
+    private void recordClear(int mask) {
+        // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
+        this.pendingClearDrawFbo = this.drawFbo;
+        this.pendingClearIsMain = this.drawFramebufferIsMain;
+        this.pendingClears.getAndUpdate(previous -> previous | mask);
+    }
+
+    private void recordClearColor(float red, float green, float blue, float alpha) {
+        this.clearRed = red;
+        this.clearGreen = green;
+        this.clearBlue = blue;
+        this.clearAlpha = alpha;
+    }
+
+    private void recordClearDepth(double depth) {
+        this.clearDepth = Math.max(0.0D, Math.min(1.0D, depth));
+    }
+
     public static int consumePendingClears() {
         CeltiumGlStub stub = installed;
         return stub == null ? 0 : stub.pendingClears.getAndSet(0);
@@ -2173,23 +2213,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 bindFramebuffer((int) a0, (int) a1);
                 return 0L;
             case SEM_CLEAR:
-                this.pendingClears.getAndUpdate(mask -> mask | (int) a0);
-                // Which framebuffer this clear belongs to. A clear issued while one of the game's own framebuffers is
-                // bound names that image, not the delivered frame - and under GL-less every non-main identity shares
-                // the chain pair, so applying such a clear to the pair wipes whatever another identity had just drawn
-                // there (measured: the panorama's faces are cleared to white before the copy reads them).
-                this.pendingClearDrawFbo = this.drawFbo;
-                this.pendingClearIsMain = this.drawFramebufferIsMain;
+                this.recordClear((int) a0);
                 return 0L;
             case SEM_CLEAR_COLOR:
-                this.clearRed = Float.intBitsToFloat((int) c[0]);
-                this.clearGreen = Float.intBitsToFloat((int) c[1]);
-                this.clearBlue = Float.intBitsToFloat((int) c[2]);
-                this.clearAlpha = Float.intBitsToFloat((int) c[3]);
+                this.recordClearColor(Float.intBitsToFloat((int) c[0]), Float.intBitsToFloat((int) c[1]),
+                        Float.intBitsToFloat((int) c[2]), Float.intBitsToFloat((int) c[3]));
                 return 0L;
             case SEM_CLEAR_DEPTH:
-                this.clearDepth = "glClearDepth".equals(fn.name) ? Double.longBitsToDouble(c[0])
-                        : (double) Float.intBitsToFloat((int) c[0]);
+                this.recordClearDepth("glClearDepth".equals(fn.name) ? Double.longBitsToDouble(c[0])
+                        : (double) Float.intBitsToFloat((int) c[0]));
                 return 0L;
             case SEM_BUFFER_SUBDATA:
                 bufferSubData(fn, c);

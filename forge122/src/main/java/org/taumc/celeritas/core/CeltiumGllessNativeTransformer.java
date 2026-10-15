@@ -167,6 +167,39 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // These typed natives otherwise return without ever reaching the existing pending-clear producer.
+        if ("glClear".equals(name) && "(I)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClear", "(I)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glClearColor".equals(name) && "(FFFF)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.FLOAD, 0);
+            method.visitVarInsn(Opcodes.FLOAD, 1);
+            method.visitVarInsn(Opcodes.FLOAD, 2);
+            method.visitVarInsn(Opcodes.FLOAD, 3);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClearColor", "(FFFF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glClearDepth".equals(name) && "(D)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.DLOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClearDepth", "(D)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glClearDepthf".equals(name) && "(F)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.FLOAD, 0);
+            method.visitInsn(Opcodes.F2D);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClearDepth", "(D)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         if ("glViewport".equals(name) && "(IIII)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);

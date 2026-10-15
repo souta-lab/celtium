@@ -56,6 +56,10 @@ import org.lwjgl.system.MemoryUtil;
 import static org.lwjgl.system.MemoryUtil.memPutInt;
 public class CeltiumGlStub {
  public static CeltiumGlStub installed;
+ // Unrelated clear entry points are only needed to compile the complete hint class.
+ public static void celtium$clear(int mask){}
+ public static void celtium$clearColor(float r,float g,float b,float a){}
+ public static void celtium$clearDepth(double depth){}
  public float currentRed=.125f,currentGreen=.375f,currentBlue=.625f,currentAlpha=.875f,lineWidth=3.5f;
  public int viewportX=-17,viewportY=23,viewportW=1920,viewportH=1080;
  public int[] scissorBox={11,31,199,60};
@@ -224,7 +228,7 @@ import org.taumc.celeritas.core.CeltiumGllessHint;
 public class NativeEmitterCheck {
  interface Opcodes {
   int ACONST_NULL=1,ICONST_M1=2,ICONST_0=3,LCONST_0=9,FCONST_0=11,DCONST_0=14;
-  int ILOAD=21,LLOAD=22,IRETURN=172,LRETURN=173,FRETURN=174,DRETURN=175,ARETURN=176,RETURN=177,INVOKESTATIC=184;
+  int ILOAD=21,LLOAD=22,FLOAD=23,DLOAD=24,F2D=141,IRETURN=172,LRETURN=173,FRETURN=174,DRETURN=175,ARETURN=176,RETURN=177,INVOKESTATIC=184;
  }
  static class MethodVisitor {
   List<String> events=new ArrayList<>();
@@ -355,7 +359,7 @@ def main():
         "org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java": STUB_SHELL + "\n".join(method(stub, s) for s in signatures) + "\n}",
         "org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java": BACKEND,
         "org/embeddedt/embeddium/impl/render/chunk/backend/TerrainGpuBackend.java": """package org.embeddedt.embeddium.impl.render.chunk.backend;
-public interface TerrainGpuBackend {default void viewport(int x,int y,int w,int h){}}""",
+public interface TerrainGpuBackend {default void viewport(int x,int y,int w,int h){} default void flushBeforeClear(int mask){}}""",
         "org/embeddedt/embeddium/impl/render/chunk/backend/TerrainGpuBackends.java": """package org.embeddedt.embeddium.impl.render.chunk.backend;
 public class TerrainGpuBackends {public static TerrainGpuBackend backend;public static TerrainGpuBackend current(){return backend;}}""",
         "org/taumc/celeritas/core/CeltiumGllessHint.java": hint,

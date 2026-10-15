@@ -205,6 +205,24 @@ public final class CeltiumGllessHint {
         }
     }
 
+    /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    public static void glClear(int mask) {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) {
+            backend.flushBeforeClear(mask);
+        }
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clear(mask);
+    }
+
+    public static void glClearColor(float red, float green, float blue, float alpha) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearColor(red, green, blue, alpha);
+    }
+
+    public static void glClearDepth(double depth) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearDepth(depth);
+    }
+
     /** Returns the live mirrored state with the component count implied by pname, not one scalar zero. */
     public static void glGetFloatv(int pname, long params) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getFloats(pname, params, false);

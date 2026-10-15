@@ -764,6 +764,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private void applyGameClears(VkCommandBuffer command) {
         boolean first = this.neverCleared;
         boolean latched = this.gameClearLatched;
+        boolean initializeOnly = false;
         int clears;
         float latchedRed = 0.0F;
         float latchedGreen = 0.0F;
@@ -789,12 +790,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
                 this.gameClearsDroppedForeignTarget++;
                 this.lastDroppedClearOwner = owner;
-                if (clears == 0) {
+                if (!first) {
                     return;
                 }
-                return;
+                // Dropping another target's request must not leave our first attachment load undefined.
+                // Initialize this image with its own safe defaults, not the foreign target's live clear values.
+                initializeOnly = true;
+                clears = 0;
+            } else {
+                clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
             }
-            clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
         }
         if (clears == 0 && !first) {
             return;
@@ -806,14 +811,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.liveGameClears++;
         }
         // GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
-        boolean color = first || (clears & 0x4000) != 0 || (clears & 0x1000) != 0;
+        // The frame has color and D32 depth only; accum/stencil requests must not repaint its color image.
+        boolean color = first || (clears & 0x4000) != 0;
         boolean depth = first || (clears & 0x0100) != 0;
         try (MemoryStack stack = stackPush()) {
             org.lwjgl.vulkan.VkImageSubresourceRange range =
                     org.lwjgl.vulkan.VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
             if (color) {
                 float[] rgba = new float[4];
-                if (latched) {
+                if (latched || initializeOnly) {
                     rgba[0] = latchedRed;
                     rgba[1] = latchedGreen;
                     rgba[2] = latchedBlue;
@@ -840,7 +846,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         value, range);
             }
             if (depth) {
-                double depthValue = latched ? latchedDepth
+                double depthValue = latched || initializeOnly ? latchedDepth
                         : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
                 org.lwjgl.vulkan.VkClearDepthStencilValue value =
                         org.lwjgl.vulkan.VkClearDepthStencilValue.calloc(stack);
@@ -849,6 +855,40 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_RENDER_LAYOUT,
                         value, range);
             }
+            recordClearToAttachment(command, color, depth);
+        }
+    }
+
+    /** Transfer clears run after acquire; their writes must be visible to the following attachment loads. */
+    private void recordClearToAttachment(VkCommandBuffer command, boolean color, boolean depth) {
+        if (!color && !depth) {
+            return;
+        }
+        int queueFamily = this.context.queueFamilyIndex();
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc((color ? 1 : 0) + (depth ? 1 : 0), stack);
+            int index = 0;
+            if (color) {
+                VkImageMemoryBarrier barrier = barriers.get(index++);
+                barrier.sType$Default().image(this.colorImage)
+                        .oldLayout(COLOR_RENDER_LAYOUT).newLayout(COLOR_RENDER_LAYOUT)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            }
+            if (depth) {
+                VkImageMemoryBarrier barrier = barriers.get(index);
+                barrier.sType$Default().image(this.depthImage)
+                        .oldLayout(DEPTH_RENDER_LAYOUT).newLayout(DEPTH_RENDER_LAYOUT)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                                | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+                barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            }
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    0, null, null, barriers);
         }
     }
 
@@ -880,7 +920,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .newLayout(release ? VK_IMAGE_LAYOUT_GENERAL : COLOR_RENDER_LAYOUT)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                     .srcAccessMask(release && !(this.firstAcquire && !release) ? colorAccess : 0)
-                    .dstAccessMask(release ? 0 : colorAccess);
+                    // Acquire can be followed by a game transfer clear before the attachment pass.
+                    .dstAccessMask(release ? 0 : (colorAccess | VK_ACCESS_TRANSFER_WRITE_BIT));
             colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
             VkImageMemoryBarrier depthBarrier = barriers.get(1);
@@ -890,7 +931,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .newLayout(release ? VK_IMAGE_LAYOUT_GENERAL : DEPTH_RENDER_LAYOUT)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                     .srcAccessMask(release && !(this.firstAcquire && !release) ? depthAccess : 0)
-                    .dstAccessMask(release ? 0 : depthAccess);
+                    .dstAccessMask(release ? 0 : (depthAccess | VK_ACCESS_TRANSFER_WRITE_BIT));
             depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
             vkCmdPipelineBarrier(command,
