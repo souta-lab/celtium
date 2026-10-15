@@ -588,6 +588,26 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
     /**
+     * The display lists this stub has compiled, keyed by list name.
+     *
+     * <p>A display list is not a draw: {@code glNewList(name, GL_COMPILE)} records the calls that follow and
+     * {@code glCallList(name)} replays them, and the spec is explicit that under GL_COMPILE the recorded commands are
+     * "merely compiled". Minecraft's model rendering depends on exactly that split - {@code ModelRenderer.render}
+     * compiles once through {@code compileDisplayList} and then draws with {@code glCallList(displayList)} - so a
+     * stub that answers glCallList with a no-op leaves every model in the game undrawn. {@code RenderGlobal}'s sky,
+     * stars and horizon plane are compiled the same way ({@code glSkyList}, {@code starGLCallList}, {@code glSkyList2}).
+     *
+     * <p>{@link #openList} is the list currently being recorded, or null when nothing is being compiled. The two are
+     * kept apart from {@link #compilingList} because that field already existed as the name only, and because a name
+     * of zero is not a list: recording under it would file calls where no glCallList can reach them.
+     */
+    private volatile List<Object[]> openList;
+    private final Map<Integer, List<Object[]>> displayLists = new java.util.concurrent.ConcurrentHashMap<>();
+    /** How deep a replay currently is. glCallList may appear inside a list; the spec puts the limit at 64 or more. */
+    private int replayDepth;
+    private static final int MAX_LIST_NESTING = 64;
+    private volatile long displayListsCompiled, displayListsReplayed, displayListsUnresolved;
+    /**
      * The client-array pointer state: {@code glVertexPointer(size, type, stride, pointer)}. GL keeps exactly one of
      * these, and it is the only thing that says how the bound array buffer's bytes are to be read - the bytes alone
      * are anonymous. Recorded rather than no-opped for the same reason the buffer storage is mirrored: a draw that
@@ -1943,6 +1963,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (FN_CENSUS) {
             fn.calls++;
         }
+        // A list being compiled does not draw. GL_COMPILE means "merely compiled" - the commands are stored and the
+        // drawing happens when glCallList replays them - so while a list is open every call except the two that
+        // delimit it is appended to that list instead of being executed. glCallList itself is appended as a call
+        // rather than inlined, which is what the spec requires ("commands in the list or lists executed by glCallList
+        // or glCallLists are not included in the display list being created") and what keeps a hierarchical list
+        // correct when a child is replaced.
+        List<Object[]> open = this.openList;
+        if (open != null && fn.semantics != SEM_NEW_LIST && fn.semantics != SEM_END_LIST) {
+            open.add(new Object[] { fn, c.clone() });
+            return 0L;
+        }
         long a0 = fn.args.length > 0 ? c[0] : 0L;
         long a1 = fn.args.length > 1 ? c[1] : 0L;
         switch (fn.semantics) {
@@ -2233,21 +2264,45 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.currentProgram = (int) c[0];
                 return 0L;
             case SEM_NEW_LIST:
+                // A name of zero is not a list (the spec makes glNewList(0) GL_INVALID_VALUE), and recording under it
+                // would file calls where no glCallList can reach them - which is the state this stub started in.
                 this.compilingList = (int) c[0];
+                this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
                 return 0L;
             case SEM_END_LIST:
+                // The spec replaces a name's contents only at glEndList, so the previous list stays callable until
+                // this point; putting the new one in here is that rule, not an optimisation.
+                List<Object[]> compiled = this.openList;
+                if (compiled != null) {
+                    this.displayLists.put(Integer.valueOf(this.compilingList), compiled);
+                    this.displayListsCompiled++;
+                }
+                this.openList = null;
                 this.compilingList = 0;
                 return 0L;
             case SEM_CALL_LIST:
-                // Only the name is recorded; nothing compiled inside the list is replayed, so under GL-less every
-                // glCallList draws nothing. That is a named gap rather than a silent one, and it is the reason the sky
-                // has two paths in RenderGlobal.renderSky: with `vboEnabled` (OpenGlHelper.useVbo(), true in this
-                // fixture, measured as the VBO branch of RenderGlobal.func_174976_a:1345/1442/1471 in the vertex-pointer
-                // census) the dome, the stars and the horizon plane arrive as glDrawArrays and are decoded below; with
-                // it false they arrive as glCallList(glSkyList/starGLCallList/glSkyList2) and are drawn by nobody here.
-                // Replaying a list would mean recording its calls per list id at glNewList..glEndList, which is a
-                // different piece of work from this decode and is not exercised by any run yet.
+                // The replay, and the reason this field exists at all. Minecraft compiles a model once
+                // (ModelRenderer.compileDisplayList, under GL_COMPILE) and draws it with glCallList(displayList);
+                // VulkanModelQuadCapture's hook sits inside that compilation, so it saw the recording and refused the
+                // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
+                // player, held items, the sky, the stars and the horizon plane all arrive here.
                 this.lastCalledList = (int) c[0];
+                List<Object[]> list = this.displayLists.get(Integer.valueOf(this.lastCalledList));
+                if (list == null) {
+                    // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible.
+                    this.displayListsUnresolved++;
+                } else if (this.replayDepth < MAX_LIST_NESTING) {
+                    this.replayDepth++;
+                    try {
+                        for (int i = 0; i < list.size(); i++) {
+                            Object[] call = list.get(i);
+                            dispatchArgs((Fn) call[0], (long[]) call[1]);
+                        }
+                    } finally {
+                        this.replayDepth--;
+                    }
+                    this.displayListsReplayed++;
+                }
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
                 this.boundVertexArray = (int) c[0];
@@ -2800,8 +2855,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     private long generate(Fn fn, long[] c) {
         if (fn.ret == R_INT && fn.args.length <= 1 && lastPointerArg(fn) < 0) {
             // Scalar-return form (glCreateShader, glCreateProgram, glGenLists): the id is the return value.
-            int scalar = this.nextName.getAndIncrement();
-            this.liveNames.add(scalar);
+            // glGenLists is the one caller that asks for a *contiguous range*: it returns n such that n .. n+range-1
+            // are all free, and Minecraft relies on it - RenderGlobal holds starGLCallList = generateDisplayLists(3)
+            // and then uses starGLCallList + 1 and + 2 for glSkyList and glSkyList2. Advancing the counter by one for
+            // a range of three would hand those two names to the next caller instead.
+            int range = 1;
+            if ("glGenLists".equals(fn.name) && fn.args.length == 1) {
+                range = (int) c[0];
+                if (range <= 0) {
+                    return 0; // The spec: a range of zero (or less) generates nothing and returns 0.
+                }
+            }
+            int scalar = this.nextName.getAndAdd(range);
+            for (int i = 0; i < range; i++) {
+                this.liveNames.add(scalar + i);
+            }
             return scalar;
         }
         if (fn.ret == R_LONG) {
