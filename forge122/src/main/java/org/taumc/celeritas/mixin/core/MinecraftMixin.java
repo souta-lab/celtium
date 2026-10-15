@@ -353,6 +353,11 @@ public class MinecraftMixin {
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                     && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // The frame's pending work is flushed at GL draw and bind boundaries, and a GL-less frame crosses none
+                // of them - measured on legs gv-cohort-fix154/155, where submitCommands was never entered and every
+                // present skipped with "no completed frame waiting". This is the boundary both paths do reach, so the
+                // flush happens here, before the present that needs its result.
+                vulkan.celtium$flushPendingAtFrameBoundary();
                 vulkan.celtium$presentFrame();
             }
         } catch (RuntimeException | LinkageError ignored) {

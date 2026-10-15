@@ -7198,6 +7198,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The viewport key that means "the whole render target", packed the same way {@code viewport} packs it. */
 
 
+    /**
+     * Flushes the frame's pending work at the frame boundary, which the pure-native path never reaches otherwise.
+     * <p>
+     * Measured 2026-10-15 (legs {@code gv-cohort-fix154} and {@code gv-cohort-fix155}): the client loads a world and
+     * runs frames - {@code CELTIUM_SWAPPOINT calls=159900} at the game's own swap point - yet
+     * {@code FrameCoordinator.submitCommands} is never entered (its bounded entry probe printed nothing) and
+     * {@code setLastFrameReachedQueue(true)} is never called, so every present skips with "no completed frame
+     * waiting" and nothing is ever shown.
+     * <p>
+     * The reason is the trigger: the pending work is flushed by {@code flushPendingBeforeGlDraw}, which fires at GL
+     * draw and bind boundaries ({@code bindTexture} and friends) and from {@code applyDerivedProjection}. A GL-less
+     * frame crosses none of those, so its immediate work stays pending forever and no submission is ever made. The
+     * swap point is the boundary that <em>does</em> fire once per frame in both paths, so the flush is offered here
+     * for that caller.
+     */
+    public void celtium$flushPendingAtFrameBoundary() {
+        try {
+            flushPendingBeforeGlDraw();
+        } catch (RuntimeException | LinkageError error) {
+            // A failed flush must not stop the frame: the queued work keeps its owner and the next boundary retries.
+            record("frame-boundary flush failed: " + error);
+        }
+    }
+
     private void flushPendingBeforeGlDraw() {
         if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
