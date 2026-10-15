@@ -188,11 +188,61 @@ public final class CeltiumGllessHint {
             case 0x821D: // GL_NUM_EXTENSIONS
                 value = 0;
                 break;
+            case 0x0B33: // GL_LIST_INDEX - the display list glNewList opened, 0 when none is
+                // This is the answer the model capture reads to decide whether a quad belongs to a list. The
+                // capture refuses a quad whose list is 0, and a model compiles its display list exactly once
+                // (ModelRenderer.render only calls compileDisplayList while `compiled` is false, and the quads
+                // only run inside it), so answering 0 here costs that model its only chance to be captured -
+                // which is what `captured=0` in the leg reports was.
+                value = listIndex;
+                break;
+            case 0x0B30: // GL_LIST_MODE - GL_COMPILE (0x1300) or GL_COMPILE_AND_EXECUTE (0x1301); 0 when none is open
+                value = listIndex == 0 ? 0 : listMode;
+                break;
             default:
                 value = 0;
                 break;
         }
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
+    }
+
+    /**
+     * The display list {@code glNewList} opened, or 0 when none is.
+     *
+     * <p>Tracked here rather than in {@code CeltiumGlStub} because this class is the layer the transformer actually
+     * delegates to: the stub's provider carries only the capability query (the function census from the leg shows
+     * four {@code glGetIntegerv} and two {@code glGetError} and nothing else), while every other native goes through
+     * {@code CeltiumGllessNativeTransformer} and lands in the methods here.
+     */
+    private static volatile int listIndex;
+    /** The mode {@link #listIndex} was opened with; only {@code GL_LIST_MODE} reads it. */
+    private static volatile int listMode;
+
+    /** {@return the list being compiled, for the capture that has to file a quad under it}. */
+    public static int listIndex() {
+        return listIndex;
+    }
+
+    /**
+     * Opens a display list, as {@code glNewList(int list, int mode)} does.
+     *
+     * <p>A name of zero is not a list - the spec makes {@code glNewList(0)} GL_INVALID_VALUE - and recording under it
+     * would file quads where no {@code glCallList} can reach them.
+     */
+    public static void glNewList(int list, int mode) {
+        listIndex = list;
+        listMode = mode;
+    }
+
+    /** Closes the open display list, as {@code glEndList()} does. */
+    public static void glEndList() {
+        listIndex = 0;
+        listMode = 0;
+    }
+
+    /** {@return whether a display list is currently open}. */
+    public static boolean isCompilingList() {
+        return listIndex != 0;
     }
 
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
