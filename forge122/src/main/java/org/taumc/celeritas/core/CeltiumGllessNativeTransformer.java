@@ -343,6 +343,24 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            // Texture parameters. Vanilla sets them through GlStateManager
+            // (TextureUtil.glTexParameteri(3553, MIN/MAG_FILTER/MAX_LEVEL/WRAP, ...) - the sources' own lines 215-264),
+            // so without this case they land in the zero-writer below and the stub records none of them. That is
+            // measured in the picture: the registry asks textureParameterRecorded(texture, MIN/MAG_FILTER) and falls
+            // back to inferring the filter from the upload's shape, which answers LINEAR for the whole-image upload an
+            // item texture is - so a magnified GUI item is blurred, the user report's "item resolution is a little
+            // low". Both spellings, as for glGenLists above: LWJGL3 keeps glTexParameteri as a wrapper over
+            // nglTexParameteri, and whichever the transformer sees is the one rewritten.
+            if ("glTexParameteri".equals(name) || "nglTexParameteri".equals(name)) {
+                // (III)V - the natives are static, so the arguments are at slots 0, 1 and 2.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexParameteri", "(III)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
         }
         switch (returnType) {
             case "V":
