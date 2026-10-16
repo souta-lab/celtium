@@ -4650,6 +4650,56 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** {@return the framebuffer identity whose colour attachment carries this GL texture name}, or {@code MIN_VALUE}. */
+    /**
+     * Turns the stub's raw-framebuffer attachment record into the publication the vanilla path makes.
+     *
+     * <p>A mod that calls {@code glGenFramebuffers}/{@code glFramebufferTexture2D} itself has no {@code Framebuffer}
+     * object for the bind hook to report, so until this existed nothing connected the texture it samples to the image
+     * its draws went into, and every such batch was refused - a batch a refused batch is drawn by nobody. The identity
+     * is synthesized from the framebuffer's GL name (stable for that name's lifetime, which is what an identity has to
+     * be) and the extent comes from the attachment texture's own recorded level 0, falling back to the target's size.
+     *
+     * @return whether a record existed and was published
+     */
+    private boolean celtium$adoptRawFramebufferColorTexture(int glTextureName) {
+        int framebuffer = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .celtium$framebufferForColorTexture(glTextureName);
+        if (framebuffer == 0) {
+            return false;
+        }
+        long identity = RAW_FRAMEBUFFER_IDENTITY_BASE + framebuffer;
+        int width = 0;
+        int height = 0;
+        int[] size = textureSize(glTextureName);
+        if (size != null && size.length >= 2 && size[0] > 0 && size[1] > 0) {
+            width = size[0];
+            height = size[1];
+        } else {
+            width = this.targetWidth;
+            height = this.targetHeight;
+        }
+        if (width <= 0 || height <= 0) {
+            return false;
+        }
+        bindFramebufferColorTexture(identity, glTextureName, width, height);
+        if (this.rawFramebufferAdoptions < 8) {
+            this.rawFramebufferAdoptions++;
+            System.out.println("[Celtium] CELTIUM_RAW_FBO_ADOPTED framebuffer=" + framebuffer + " colorTexture="
+                    + glTextureName + " identity=0x" + Long.toHexString(identity) + " size=" + width + "x" + height
+                    + " extentFrom=" + (size != null && size.length >= 2 && size[0] > 0 ? "level0" : "target")
+                    + " (a raw framebuffer's colour texture now samples the image its draws went into)");
+        }
+        return true;
+    }
+
+    /** Bounded count for {@link #celtium$adoptRawFramebufferColorTexture}. */
+    private int rawFramebufferAdoptions;
+    /**
+     * The identity space for framebuffers created through raw GL. It sits below the main identity's own space and is
+     * only ever used as a map key, so any value that cannot collide with a framebuffer name works.
+     */
+    private static final long RAW_FRAMEBUFFER_IDENTITY_BASE = Long.MIN_VALUE / 4;
+
     private long celtium$framebufferIdentityForColorTexture(int glTextureName) {
         if (glTextureName == 0) {
             return Long.MIN_VALUE;
@@ -8035,6 +8085,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
             // into is what it stands for (see celtium$publishFramebufferColorTexture). Resolved here, where a bound
             // name becomes a descriptor, so every sampling path gets the same rule.
+            if (!celtium$publishFramebufferColorTexture(textureId)) {
+                // Not one of the framebuffers the vanilla hooks report. A mod's own render target is created with raw
+                // GL, so the stub records its colour attachment instead (CELTIUM_RAW_FBO) - and this is where that
+                // record becomes the same publication the vanilla path makes. Measured need: 62-89 batches per run in
+                // the 268-mod E2E pack read "texture=506 (no mirror for this GL id)".
+                celtium$adoptRawFramebufferColorTexture(textureId);
+            }
             if (celtium$publishFramebufferColorTexture(textureId)) {
                 texture = this.textureRegistry.get(textureId);
             }

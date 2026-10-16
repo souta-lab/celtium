@@ -75,6 +75,13 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+**🎉🎉🎉 R16: E2E 1.93a（268 mod）の world 画像ゲートが**両GPU PASSED** ✓✓✓（2026-10-16）— goal の第1ターゲット受入**
+- **AMD ✓✓✓（`gv-e2e-268-r16-fbo`・jar `1ba86cb9`・e2e mode = 270 jar/268 mod ✓）**: `fixtureStatus=PASSED` ✓・**`presentedImageVerdict=PASSED`** ✓・`validationClean=true` ✓・`gpuRequirementMet=true` ✓・**`worldFrameBlackFraction=0.005081`**（床 ≤0.05 ✓・R11 の 0.307 ✗ から激減 ✓）・`distinctColours=2313` ✓・`nonBg=0.732070` ✓・`verticalBands=720` ✓・`worldFrames=82` ✓・**`sceneCalibrationKeyMatches=true` ＋ `sceneGateFloorsEnforced=true`** ✓（＝較正済みゲートの PASSED ✓✓）。
+- **Intel ✓✓✓（`gv-e2e-268-r16-intel`・同一 jar ✓）**: `CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"` ✓・`gpuRequirementMet=true` ✓・**`PASSED`** ✓・`validationClean=true` ✓・`blackFraction=0.003777` ✓・`colours=2393` ✓・`bands=720` ✓・`nonBg=0.613428` ✓。
+- **帰属 ✓（正直に）**: この PASSED をもたらしたのは R12 の **texture upload route（テクスチャ供給）** ✓ で、今回はじめて **world 段キャプチャが時間窓に間に合った** ✓（R12/R13 は tick200 止まり ✗）。本 round 追加分（raw FBO の解決配線 ✓）は**この leg では発火していない** ✓（`CELTIUM_RAW_FBO_ADOPTED` 行なし ✓）＝ **効果は未測定** ✓ として記録する ✓。
+- **残る拒否 ✓**: `no mirror for this GL id` は 89 → 44 ✓（run 間変動を含む ✓）。`texture=506` は依然として記録済み attachment のどれでもない ✗ ⇒ 生成経路（renderbuffer 添付 ✓・`glTexStorage2D` ✓・非 vanilla Framebuffer ✓）を次の計器で名指しする ✓。
+- ⇒ **goal の両ターゲットが両GPUで受入済み** ✓✓: **E2E 1.93a（268 mod）PASSED（AMD/Intel）** ✓ ＋ **RLCraft 2.9.3（165 mod）PASSED（AMD/Intel）** ✓。
+
 **🔧 R15: raw FBO（mod が直接作る framebuffer）の colour attachment を記録できるようにした ✓（2026-10-16）**
 - **背景 ✓**: vanilla の `Framebuffer` は `FramebufferMixin` が bind ごとに `(identity, framebufferTexture)` を報告する ✓ が、**mod が `glGenFramebuffers`/`glFramebufferTexture2D` で自作する FBO は誰も見ていない** ✗ ⇒ その texture をサンプルする batch は mirror が無く refuse ✓（E2E の 62-89 件/leg が `texture=506 (no mirror for this GL id)` ✓・`the bound texture could not be mirrored=3` ✓）。
 - **実装 ✓**: transformer が `glBindFramebuffer`/`nglBindFramebuffer`（(II)V ✓）と `glFramebufferTexture2D`/`nglFramebufferTexture2D`（(IIIII)V ✓）を route ✓、stub が `framebufferColorTextures`（colour attachment のみ ✓・level 0 ✓）を記録し bounded に `CELTIUM_RAW_FBO framebuffer=… colorTexture=… colorAttachments=N` を出す ✓。解決側（`celtium$publishFramebufferColorTexture` ✓）は既存 ✓ なので、**次の round でこの記録をそこへ繋ぐ** ✓。
