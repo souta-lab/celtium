@@ -299,6 +299,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             long batchCallStarted = System.nanoTime();
             long batchCallCpuStarted = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
             try {
+                celtium$noteProbedTextureSite();
                 accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
                 if (!accepted) {
                     // Why a batch was not taken, by format. The refusals were recorded in the backend, but only some families
@@ -612,6 +613,71 @@ public abstract class WorldVertexBufferUploaderMixin {
      * in the {@code callList} hook pairs with. Read once per list - a batch arriving inside {@code glNewList} is the
      * moment the geometry is compiled, and the texture does not change between the batches of one part.
      */
+    /**
+     * Names the game-side call site of batches that sample one texture, behind {@code -Dceltium.probe.texture=<glid>}.
+     *
+     * <p>Written for the videoSettings scene's background: the frame there is vanilla {@code GuiVideoSettings} over the
+     * OPTIONS_BACKGROUND texture, and a poison A/B proved the background quad really samples that texture (GL 37,
+     * flat-magenta arm turned the pixels from (16.7,12.4,8.2) to (32,0,32)). What the frame cannot say is which caller
+     * drew it: {@code GuiScreen.drawWorldBackground}'s no-world branch and {@code GuiDownloadTerrain.drawScreen} both
+     * reach {@code drawBackground(0)}, and the two need different fixes. This prints the caller's own frames, bounded.
+     */
+    private static final int celtium$PROBE_TEXTURE =
+            Integer.getInteger("celtium.probe.texture", -1).intValue();
+    /** One line per distinct caller (screen + site), so a per-frame quad cannot fill the budget by itself. */
+    private static final java.util.Set<String> celtium$probeTextureSites =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+    private static final int celtium$PROBE_TEXTURE_LIMIT =
+            Integer.getInteger("celtium.probe.textureLines", 8).intValue();
+
+    private static void celtium$noteProbedTextureSite() {
+        if (celtium$PROBE_TEXTURE < 0 || celtium$probeTextureSites.size() >= celtium$PROBE_TEXTURE_LIMIT) {
+            return;
+        }
+        try {
+            int texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+            if (texture != celtium$PROBE_TEXTURE) {
+                return;
+            }
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            String screen = mc == null || mc.currentScreen == null ? "none"
+                    : mc.currentScreen.getClass().getSimpleName();
+            String site = celtium$probeSite();
+            if (!celtium$probeTextureSites.add(screen + "|" + site)) {
+                return;
+            }
+            System.out.println("[Celtium] CELTIUM_TEXTURE_SITE texture=" + texture + " #" + celtium$probeTextureSites.size()
+                    + " tick=" + (mc == null || mc.world == null ? -1L : mc.world.getTotalWorldTime())
+                    + " world=" + (mc != null && mc.world != null)
+                    + " screen=" + screen
+                    + " loadingScreen=" + (mc == null || mc.loadingScreen == null ? "null"
+                            : mc.loadingScreen.getClass().getSimpleName())
+                    + " site=[" + site + "]");
+        } catch (RuntimeException | LinkageError error) {
+            celtium$probeTextureSites.add("error");
+        }
+    }
+
+    /** {@return the first game frames above this mixin, so a caller can be read without a debugger}. */
+    private static String celtium$probeSite() {
+        StackTraceElement[] trace = new Throwable().getStackTrace();
+        StringBuilder text = new StringBuilder();
+        for (int i = 1; i < Math.min(trace.length, 16); i++) {
+            String name = trace[i].getClassName();
+            if (name.startsWith("org.taumc.celeritas.mixin") || name.startsWith("org.spongepowered")) {
+                continue;
+            }
+            if (text.length() > 0) {
+                text.append(" <- ");
+            }
+            text.append(name).append('.').append(trace[i].getMethodName()).append(':').append(trace[i].getLineNumber());
+            if (text.length() > 420) {
+                break;
+            }
+        }
+        return text.length() == 0 ? "none" : text.toString();
+    }
+
     private static void celtium$noteCompileTexture(int listIndex) {
         try {
             if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTextureKnown(listIndex)) {
