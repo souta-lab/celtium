@@ -300,6 +300,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             long batchCallCpuStarted = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
             try {
                 celtium$noteProbedTextureSite();
+                celtium$noteProbedFormatSite(formatId);
                 accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
                 if (!accepted) {
                     // Why a batch was not taken, by format. The refusals were recorded in the backend, but only some families
@@ -624,11 +625,47 @@ public abstract class WorldVertexBufferUploaderMixin {
      */
     private static final int celtium$PROBE_TEXTURE =
             Integer.getInteger("celtium.probe.texture", -1).intValue();
+    /**
+     * The same caller record for one layout: {@code -Dceltium.probe.format=<id>}.
+     *
+     * <p>Written for the user's correction about the Sodium-style screen: the option description's translucent
+     * backdrop is missing (their words: "the slightly grey transparent background under the text"), and vanilla's
+     * {@code Gui.drawRect} - which that backdrop goes through - uses {@code DefaultVertexFormats.POSITION}, whose
+     * colour travels in the current-colour state rather than in the vertices. So the question is not whether the
+     * format arrives (the census shows format 7 accepted thousands of times) but whether the caller that draws the
+     * backdrop is among them at all.
+     */
+    private static final int celtium$PROBE_FORMAT =
+            Integer.getInteger("celtium.probe.format", -1).intValue();
+    private static final java.util.Set<String> celtium$probeFormatSites =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
     /** One line per distinct caller (screen + site), so a per-frame quad cannot fill the budget by itself. */
     private static final java.util.Set<String> celtium$probeTextureSites =
             java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
     private static final int celtium$PROBE_TEXTURE_LIMIT =
             Integer.getInteger("celtium.probe.textureLines", 8).intValue();
+
+    /** {@return the caller record for one format, or null when that format is not the probed one}. */
+    private static void celtium$noteProbedFormatSite(int formatId) {
+        if (celtium$PROBE_FORMAT < 0 || formatId != celtium$PROBE_FORMAT
+                || celtium$probeFormatSites.size() >= celtium$PROBE_TEXTURE_LIMIT) {
+            return;
+        }
+        try {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            String screen = mc == null || mc.currentScreen == null ? "none"
+                    : mc.currentScreen.getClass().getSimpleName();
+            String site = celtium$probeSite();
+            if (!celtium$probeFormatSites.add(screen + "|" + site)) {
+                return;
+            }
+            System.out.println("[Celtium] CELTIUM_FORMAT_SITE fmt=" + formatId + " #"
+                    + celtium$probeFormatSites.size() + " world=" + (mc != null && mc.world != null) + " screen="
+                    + screen + " site=[" + site + "]");
+        } catch (RuntimeException | LinkageError error) {
+            celtium$probeFormatSites.add("error");
+        }
+    }
 
     private static void celtium$noteProbedTextureSite() {
         if (celtium$PROBE_TEXTURE < 0 || celtium$probeTextureSites.size() >= celtium$PROBE_TEXTURE_LIMIT) {
