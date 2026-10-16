@@ -75,6 +75,16 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+[R32: **🎯 p99 スパイクの内訳を計器で確定 ✓✓✓ — 遅いフレームの時間はレンダラの外にあった（利用者 #6 の帰属）**]
+**新しい計器 ✓**: `FramePassTimings.lastFrameSummary()`（直前に終わったフレームの pass 別 ms ✓・ring の `written-1` ✓）と `worstFrameSummary()`（ring 内の最悪フレーム ✓・両方 public ✓）を追加し、fixture の slow-frame 記録に `passes[…]` として載せた ✓（既存の ring（`frameTotals`/`topLevel`/`inside`/`residuals` ✓・`CAPACITY=512` ✓）をそのまま読む ✓＝新しい会計は増やしていない ✓）。
+**実測 ✓✓✓（`gv-cohort-r32-psplit2`・AMD・`PASSED` ✓）**: fixture が保持する 12 の遅いフレームの `passes[…]` は
+  - 952 ms のフレーム → **`frame=18.5`** ✗✓✓（world 16.5 ✓）
+  - 498 ms → **`frame=15.6`** ✗✓✓
+  - 466 ms → `frame=33.2` ✓／459 ms → `frame=31.2` ✓
+  - 1049 ms（tick 0・ロード中）→ `frame=385.5`（**world 346.7 ✓・clouds 70.6 ✓・gui 38.5 ✓**）✓
+  ⇒ **遅いフレームの支配項はレンダーブラケットの外**（＝client tick ＋ **fixture 自身のキャプチャ/ダンプ** ✓）である ✓✓✓ — これは R17 の「leg には fixture 税が乗る ✓」と一致 ✓。
+**⇒ 利用者 #6（FPS）の帰属 ✓**: この scene のレンダラ自身の per-frame コストは**定常 15〜40 ms**（menu/GUI ✓）と**ロード中 ~350 ms**（world 主体 ✓）であって、500〜1000 ms の間隔は**ゲームの描画ではない** ✗✓ ⇒ **ユーザーの実 instance の FPS 低下を帰属するには fixture 税を外した leg（`presentedDumpEvery=0` ✓・R17 で実証済みの手法 ✓）で測るのが次の一手** ✓✓。
+**次の一手 ✓**: (1) `presentedDumpEvery=0` で menu/cohort の frame interval を取り、レンダラ側の p50/p99 を確定 ✓、(2) ロード中フレームの **world 346.7 ms の内訳**（world の括弧のうち terrain/flush 以外＝`setupTerrain` 相当 ✓）を名指しする ✓。
 **🗣️ 利用者フィードバック（2026-10-16・スクリーンショット6枚つき）— 現行 main に対する未解決項目（次 round 以降の最優先）**
 1. **ロード画面**: 表示されるようになった ✓ が **ロゴのみ** ✗（進捗バー/テキスト無し ✓）・**ウィンドウをリサイズしても追従しない** ✗。
 2. **パノラマ**: 正常に出るようになった ✓✓ が **とてもラグい** ✗・**blur が強すぎる気がする** ✗。

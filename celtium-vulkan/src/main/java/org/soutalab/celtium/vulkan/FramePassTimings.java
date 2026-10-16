@@ -203,6 +203,50 @@ public final class FramePassTimings {
     }
 
     /**
+     * {@return the pass split of the <em>worst single frame</em> in the ring, in milliseconds}.
+     *
+     * <p>Written for the frame-time work: the fixture keeps a bounded record of the slowest frames, and a summary of
+     * percentiles over the ring cannot say which pass produced one of them. The worst frame can be read directly,
+     * because its leave-behind is a single frame that did happen - {@code terrain} at 470 ms and {@code present} at
+     * 3 ms is a statement about one frame, where "the p95 of terrain minus the p95 of the frame" is not.
+     */
+    /**
+     * {@return the pass split of the frame that ended most recently, in milliseconds}.
+     *
+     * <p>Per-entry fidelity for the fixture's slow-frame record: {@link #worstFrameSummary()} answers "which pass
+     * produced the worst frame so far", which is one frame repeated for every entry, while a slow frame is recorded
+     * right after it ends and wants its own split. Both exist because they are different questions - the worst frame
+     * is the headline, and the entry beside a slow frame has to describe that frame.
+     */
+    public static String lastFrameSummary() {
+        if (!enabled() || written == 0) return "pass split not measured";
+        return frameSummary((written - 1) % CAPACITY);
+    }
+
+    /** {@return one frame's pass split, from the ring slot that holds it}. */
+    private static String frameSummary(int slot) {
+        StringBuilder text = new StringBuilder("frame=").append(ms(frameTotals[slot]));
+        for (int i = 0; i < TOP_LEVEL.length; i++) {
+            text.append(' ').append(TOP_LEVEL[i]).append('=').append(ms(topLevel[i][slot]));
+        }
+        for (int i = 0; i < INSIDE.length; i++) {
+            text.append(' ').append(INSIDE[i]).append('=').append(ms(inside[i][slot]));
+        }
+        text.append(" residual=").append(ms(residuals[slot]));
+        return text.toString();
+    }
+
+    public static String worstFrameSummary() {
+        if (!enabled() || written == 0) return "pass split not measured";
+        int n = Math.min(written, CAPACITY);
+        int slot = 0;
+        for (int i = 1; i < n; i++) {
+            if (frameTotals[i] > frameTotals[slot]) slot = i;
+        }
+        return frameSummary(slot);
+    }
+
+    /**
      * {@return the per-pass split of the frames measured so far}, as p50/p95/worst milliseconds plus the residual.
      * <p>
      * The residual is per frame ({@code frame - union(named brackets)}) and then summarised, not a difference of
