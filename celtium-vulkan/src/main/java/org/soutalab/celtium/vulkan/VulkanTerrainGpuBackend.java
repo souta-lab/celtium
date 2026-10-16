@@ -6207,7 +6207,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.currentGroupTextureImage = celtium$registry().get(boundTexture);
                 this.currentGroupLightmapImage = this.lightmapTexture;
             }
-            if (this.textureRegistry.get(boundTexture) == null) {
+            // Only a layout that samples a texture needs its bound name to have a mirror. Asked without that, this
+            // refused every POSITION and POSITION_NORMAL batch that happened to be offered while a stale texture was
+            // bound - measured on leg gv-vset-r30-site2, where the Sodium-style tooltip's own box (stride 12, four
+            // vertices, POSITION) was refused with "the bound texture could not be mirrored" although it samples
+            // nothing, and the option description therefore had no backdrop while its text (the font's own path)
+            // drew normally.
+            if (VulkanImmediateFormats.samplesTexture(formatId) && this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
                 this.textureStats.noteTextureRefusalBeforeAccept();
                 this.immediateStatistics.noteRefusedBeforeAppend();
