@@ -150,6 +150,23 @@ public final class TextureCopyService {
      */
     private static final boolean NATIVE_TEXTURE_COPY = !"false".equalsIgnoreCase(
         System.getProperty("celtium.vulkan.nativeTextureCopy", "true"));
+    /**
+     * Whether a copy whose source is the window may take the blit route, which cannot force the alpha GL reads back.
+     *
+     * <p>Measured on the title screen (leg gv-ab-menu-new, jar fba1c9f2): the panorama's copies read the window, every
+     * one of them declined the blit for the alpha reason, and the host route cost
+     * {@code textureCopyReadbacks=324} and {@code textureCopyReadbackMillis=7440} in one 200-tick menu leg - about
+     * 23 ms per copy, which is the whole frame, because the arm flushes and waits for the device. That is the
+     * user-reported "the panorama is very laggy", and it is a stall rather than work: the same pixels are already on
+     * the GPU.
+     *
+     * <p>Off by default, so the verified picture stays the one the host route produces. On, the copy is a blit and the
+     * destination carries the draws' own alpha where GL would have written 1 - a difference this switch exists to
+     * measure rather than to assume: the two arms are compared on the copy counters, the frame time and the picture
+     * before it can become the default.
+     */
+    private static final boolean WINDOW_COPY_BLIT =
+        Boolean.getBoolean("celtium.vulkan.windowCopyBlit");
 
     /** Bounded lines for the copy's read resolution (see {@link #ownedReadImage}). */
     private static final int READ_RESOLVE_LOG_LIMIT =
@@ -414,7 +431,7 @@ public final class TextureCopyService {
         if (NATIVE_TEXTURE_COPY) {
             String blitRefusal = this.host.registry().blitRefusal(destName, image, this.host.targetWidth(),
                     this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
-            if (blitRefusal == null && windowAlphaSource(readFbo, image)) {
+            if (blitRefusal == null && !WINDOW_COPY_BLIT && windowAlphaSource(readFbo, image)) {
                 // A blit cannot force the alpha the window's GL read owes the game (see windowAlphaSource), and
                 // `blitInto` has no channel mask. Declining is the honest choice: the host route below applies the
                 // rule and is the arm this project verifies. Counted, so "the blit was used and the picture is still

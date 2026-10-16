@@ -8849,6 +8849,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + round3(projection[6]) + "," + round3(projection[10]) + "," + round3(projection[14])
                         + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
                         + " fmt=" + this.currentGroupFormatId + " texture=" + this.currentGroupTexture
+                        // The group's own tint is NOT printed here: measured, this line runs before
+                        // currentGroupColor is captured (NPE on the first leg that tried), so the draw-moment line
+                        // CELTIUM_DRAW_SITE carries it instead - there the colour is the one the draw uses.
                         + " batches=" + this.currentGroupBatches
                         + " target=" + this.currentGroupTarget
                         + " mirrored=" + (this.textureRegistry != null && this.currentGroupTexture != 0
@@ -14247,6 +14250,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.lastDrawnFrame = this.frameId;
                     this.lastDrawnEpoch = VulkanContext.completedEpoch();
                     System.out.println("[Celtium] CELTIUM_DRAW_SITE #" + this.immediateStatistics.immediateDrawSiteLogged()
+                        + " colour=" + (this.currentGroupColor == null ? "none"
+                                : round3(this.currentGroupColor[0]) + "," + round3(this.currentGroupColor[1]) + ","
+                                        + round3(this.currentGroupColor[2]) + "," + round3(this.currentGroupColor[3]))
                             + " frame=" + this.frameId + " fmt=" + group.formatId
                             + " site=" + this.immediateDrawSite
                             + " target=" + group.target + " onMain=" + (group.target == this.targetRegistry.mainIdentity())
