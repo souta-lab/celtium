@@ -63,6 +63,9 @@ SHELL = r"""
  // The complete production hint calls this (glTexParameteri is one of the calls the transformer
  // rewrites). This contract is about the clear path, so the shell answers it with a no-op.
  public static void celtium$texParameteri(int target,int pname,int value){}
+ // Same for the two copy entry points the complete production hint now calls.
+ public static void celtium$copyTexSubImage2D(int target,int level,int xo,int yo,int x,int y,int w,int h){}
+ public static void celtium$copyTexImage2D(int target,int level,int internal,int x,int y,int w,int h){}
  public static void fresh(){installed=new CeltiumGlStub();}
  public static void uninstall(){installed=null;}
  public static int peekMask(){return installed==null?0:installed.pendingClears.get();}

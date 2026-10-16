@@ -344,6 +344,26 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameteri(target, pname, value);
     }
 
+    /**
+     * Serves a texture copy, as {@code glCopyTexSubImage2D(target, level, xoffset, yoffset, x, y, width, height)} does.
+     *
+     * <p>The main menu's panorama is built this way: {@code GuiMainMenu.renderSkybox} unbinds the framebuffer, draws its
+     * cube faces, then copies the result into a 256x256 texture five times to blur it. The stub's copy case is what
+     * turns that into a mirror patch through the frame target, and the transformer used to drop the call before it
+     * arrived - the panorama texture was then rejected as having no game pixels.
+     */
+    public static void glCopyTexSubImage2D(int target, int level, int xoffset, int yoffset, int x, int y, int width,
+            int height) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyTexSubImage2D(target, level, xoffset, yoffset, x, y,
+                width, height);
+    }
+
+    /** Serves a copy, as {@code glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border)} does. */
+    public static void glCopyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyTexImage2D(target, level, internalFormat, x, y, width,
+                height);
+    }
+
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
     public static void glViewport(int x, int y, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);

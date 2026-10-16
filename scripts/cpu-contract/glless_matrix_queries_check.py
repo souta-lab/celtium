@@ -72,6 +72,10 @@ public class CeltiumGlStub {
  // The complete hint records texture parameters here (glTexParameteri is one of the calls the
  // transformer rewrites), so the shell carries the entry point as well.
  public static void celtium$texParameteri(int target,int pname,int value){}
+ // The complete hint also serves texture copies (glCopyTexSubImage2D/glCopyTexImage2D are calls the
+ // transformer rewrites); this contract is about the query paths, so no-ops are enough.
+ public static void celtium$copyTexSubImage2D(int target,int level,int xo,int yo,int x,int y,int w,int h){}
+ public static void celtium$copyTexImage2D(int target,int level,int internal,int x,int y,int w,int h){}
  public int lastBoundTexture=-1;
  static class Bindings {
   java.util.Map<Long,Integer> values=new java.util.HashMap<>();

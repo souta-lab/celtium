@@ -888,6 +888,31 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.celtium$setTextureParameterBound(target, pname, value, "transformer");
     }
 
+    /**
+     * Serves a {@code glCopyTexSubImage2D}, from the transformer's route.
+     *
+     * <p>Same producer the stub's own dispatch calls, so the two spellings cannot diverge; this is the call the main
+     * menu's panorama needs (see {@link #celtium$noteTextureCopy}).
+     */
+    public static void celtium$copyTexSubImage2D(int target, int level, int xoffset, int yoffset, int x, int y,
+            int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$noteTextureCopy("glCopyTexSubImage2D", target, level, xoffset, yoffset, x, y, width, height);
+    }
+
+    /** Serves a {@code glCopyTexImage2D}, from the transformer's route; the internal format is not part of the copy. */
+    public static void celtium$copyTexImage2D(int target, int level, int internalFormat, int x, int y, int width,
+            int height) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$noteTextureCopy("glCopyTexImage2D", target, level, 0, 0, x, y, width, height);
+    }
+
     /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
     public static int celtium$boundTexture() {
         CeltiumGlStub stub = installed;
@@ -4444,6 +4469,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                                           int x, int y, int width, int height) {
         this.textureCopyRequests++;
         int dest = this.textureBindings.get(texBindKey(target));
+        if (dest < 0) {
+            // The per-unit map is empty under GL-less by design (the bind is rewritten before any trampoline sees it),
+            // so the destination is asked for the name the manager last bound - the same fallback the texture
+            // parameters use. Without it the copy was filed against texture 0 and the panorama stayed content-less.
+            dest = this.lastBoundTexture;
+        }
         int destName = dest < 0 ? 0 : dest;
         // The source side lives with the frame target, which owns the image the read framebuffer names: ask it for the
         // rectangle, and only a "served" answer skips the refusal below. Both copy entry points funnel through here, so
