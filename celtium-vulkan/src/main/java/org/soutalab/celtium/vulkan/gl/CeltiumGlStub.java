@@ -965,6 +965,32 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * The texture upload family, from the transformer's route.
+     *
+     * <p>These two calls are how every texture gets its pixels, and under GL-less they were rewritten to no-ops: the
+     * stub's capture never saw an upload, so the registry answered {@code CELTIUM_CAPTURE_MISS ... the stub captured no
+     * upload for this texture level} and the mirror stayed content-less. The block atlas is the measured case - the
+     * 268-mod E2E pack's 8192x8192 atlas is GL texture 353, its mirror never became full, the terrain pass refused
+     * every batch, and the lower half of the frame was drawn by nobody.
+     */
+    public static void celtium$texImage2D(int target, int level, int internal, int width, int height, int border,
+            int format, int type, long pixels) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.texImagePixels("glTexImage2D", target, level, internal, width, height, border, format, type, pixels);
+        }
+    }
+
+    /** Sub-image writes, the same producer the dispatch case uses. */
+    public static void celtium$texSubImage2D(int target, int level, int xOffset, int yOffset, int width, int height,
+            int format, int type, long pixels) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.texSubImage(target, level, xOffset, yOffset, width, height, format, type, pixels);
+        }
+    }
+
     /** Mirrors an array buffer's bytes, as the stub's own {@code glBufferData} case does. */
     public static void celtium$bufferData(int target, long size, long address, int usage) {
         CeltiumGlStub stub = installed;
@@ -3566,6 +3592,17 @@ public final class CeltiumGlStub implements FunctionProvider {
             return -target;
         }
         int bound = this.textureBindings.get(texBindKey(target));
+        if (bound < 0) {
+            // The per-unit map is empty under GL-less, by design: GlStateManager.bindTexture skips the GL call when its
+            // own cache already holds the binding, so no glBindTexture arrives for the unit a texture was first bound
+            // on. The texture parameters and the texture copies already fall back to the last binding the state manager
+            // named; an upload has the same need, and it is what gives the block atlas its pixels. Measured on the
+            // 268-mod E2E pack: the 8192x8192 atlas is GL texture 353 and the registry logged
+            // CELTIUM_CAPTURE_MISS glTexture=353 level=0 "the stub captured no upload for this texture level" while
+            // nglTexSubImage2D was called 41199 times in a single cohort run - the uploads went nowhere because the
+            // unit map had no entry to file them under.
+            bound = lastBoundTexture;
+        }
         return bound < 0 ? 0 : bound;
     }
 
@@ -3686,26 +3723,39 @@ public final class CeltiumGlStub implements FunctionProvider {
      * see {@link #undefinedLevel}, because the game fills levels exactly that way.
      */
     private void texImagePixels(Fn fn, long[] c) {
-        boolean oneD = "glTexImage1D".equals(fn.name);
-        boolean threeD = "glTexImage3D".equals(fn.name);
-        int target = (int) c[0];
-        int level = (int) c[1];
-        int internal = (int) c[2];
-        int width = (int) c[3];
-        int height = oneD ? 1 : (int) c[4];
-        int depth = threeD ? (int) c[5] : 1;
-        // The format slot follows the extent, which differs per form: 1D has no height, 3D carries depth.
-        int formatIndex = oneD ? 5 : threeD ? 7 : 6;
-        int format = (int) c[formatIndex];
-        int type = (int) c[formatIndex + 1];
-        long pixels = c[formatIndex + 2];
-        recordExtent(target, level, internal, width, height);
-        int name = uploadTargetName(target);
-        if (isProxyTarget(target) || name == 0) {
+        texImagePixels(fn.name, c);
+    }
+
+    private void texImagePixels(String name, long[] c) {
+        texImagePixels(name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6],
+                (int) c[7], c[8]);
+    }
+
+    /**
+     * The one tex-image producer: the dispatch case and the transformer's route both land here.
+     *
+     * <p>Routing {@code glTexImage2D}/{@code glTexSubImage2D} matters because the stub's capture is what gives a
+     * texture its pixels under GL-less. Measured on the 268-mod E2E pack: the block atlas (GL name 353) never reached
+     * the mirror and the registry logged {@code CELTIUM_CAPTURE_MISS glTexture=353 level=0 ... the stub captured no
+     * upload for this texture level}, so the atlas stayed incomplete, the terrain pass refused its batches, and the
+     * lower half of the frame was drawn by nobody. The census counted the calls that were dropped all along:
+     * {@code nglTexSubImage2D=41199} in one cohort run.
+     */
+    private void texImagePixels(String name, int target, int level, int internal, int width, int height, int border,
+            int format, int type, long pixels) {
+        boolean oneD = "glTexImage1D".equals(name);
+        boolean threeD = "glTexImage3D".equals(name);
+        int extentHeight = oneD ? 1 : height;
+        int depth = threeD ? height : 1;
+        // The format slot follows the extent, which differs per form: 1D has no height, 3D carries depth. The
+        // transformer's route only carries the 2D form, whose slots are the ones this method's parameters name.
+        recordExtent(target, level, internal, width, extentHeight);
+        int targetName = uploadTargetName(target);
+        if (isProxyTarget(target) || targetName == 0) {
             return;
         }
         if (pixels == 0L) {
-            undefinedLevel(name, level, width, height, depth);
+            undefinedLevel(targetName, level, width, extentHeight, depth);
             return;
         }
         if (depth > 1) {
@@ -3720,8 +3770,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         // Publishing a new record instead of rewriting the old one, so a reader polling the level sees one whole image.
-        this.texCaptures.put(texLevelKey(name, level),
-                new TexCapture(width, height, rgba, true, this.texUploadSerial.incrementAndGet()));
+        this.texCaptures.put(texLevelKey(targetName, level),
+                new TexCapture(width, extentHeight, rgba, true, this.texUploadSerial.incrementAndGet()));
         this.fullCaptures.incrementAndGet();
     }
 
@@ -3761,18 +3811,18 @@ public final class CeltiumGlStub implements FunctionProvider {
      * GL raises GL_INVALID_VALUE and leaves the level alone; a partly written image would be worse than none.
      */
     private void texSubImage(long[] c) {
-        int target = (int) c[0];
+        texSubImage((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6], (int) c[7],
+                c[8]);
+    }
+
+    /** The one tex-sub-image producer: the dispatch case and the transformer's route both land here. */
+    private void texSubImage(int target, int level, int xOffset, int yOffset, int width, int height, int format,
+            int type, long pixels) {
         if (isProxyTarget(target)) {
             return;
         }
-        int level = (int) c[1];
-        int x = (int) c[2];
-        int y = (int) c[3];
-        int width = (int) c[4];
-        int height = (int) c[5];
-        int format = (int) c[6];
-        int type = (int) c[7];
-        long pixels = c[8];
+        int x = xOffset;
+        int y = yOffset;
         int name = uploadTargetName(target);
         if (name == 0 || pixels == 0L || width <= 0 || height <= 0) {
             return;

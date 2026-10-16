@@ -438,6 +438,24 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexPointer(size, type, stride, pointer);
     }
 
+    /**
+     * The texture upload family: every texture's pixels arrive through these two, and under GL-less they were dropped.
+     * The measured case is the 268-mod E2E pack's block atlas (GL 353): the stub captured no upload, the mirror never
+     * became full, the terrain pass refused its batches, and the frame's lower half was drawn by nobody.
+     */
+    public static void glTexImage2D(int target, int level, int internal, int width, int height, int border, int format,
+            int type, long pixels) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texImage2D(target, level, internal, width, height, border,
+                format, type, pixels);
+    }
+
+    /** Sub-image writes, the other half of the same family. */
+    public static void glTexSubImage2D(int target, int level, int xOffset, int yOffset, int width, int height,
+            int format, int type, long pixels) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texSubImage2D(target, level, xOffset, yOffset, width,
+                height, format, type, pixels);
+    }
+
     /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */
     public static void glBufferData(int target, long size, long data, int usage) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferData(target, size, data, usage);

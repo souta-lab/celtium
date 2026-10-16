@@ -44,7 +44,7 @@ def annotated(source, signature):
     return source[annotation:start] + body
 
 
-STUB_FIELDS = ["installed", "textureBindings", "activeTexture", "texLevels", "texCaptures",
+STUB_FIELDS = ["installed", "lastBoundTexture", "textureBindings", "activeTexture", "texLevels", "texCaptures",
                "texUploadSerial", "undefinedExtents", "unconvertedUploads", "subCaptures",
                "identicalPatches", "unpackAlignment", "unpackRowLength", "unpackSkipPixels",
                "MAX_CAPTURE_BYTES", "GL_RGBA", "GL_RGB", "GL_BGRA", "GL_UNSIGNED_BYTE",
@@ -60,6 +60,8 @@ STUB_METHODS = ["public static boolean isInstalled(", "public static void record
                 "public static long textureUploadSerial(", "public static boolean textureLevelHasGamePixels(",
                 "private static boolean isProxyTarget(", "private long texBindKey(",
                 "private int uploadTargetName(", "private void texSubImage(",
+                # The argument-taking overload the transformer's route calls; the long[] form delegates to it.
+                "private void texSubImage(int target, ",
                 "private ByteBuffer uploadToRgba8(", "private static int aligned(",
                 "private static long texParamKey(", "private static int textureParameterValue(",
                 "public static int recordedTextureParameter(", "public static int textureParameter(",
