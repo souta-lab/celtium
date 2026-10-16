@@ -1,6 +1,6 @@
 # Celtium 現状表（現在状態・優先順・受入）
 
-**0.0.4-alpha** — 次期リリースの開発ベース版。公開済み最新版は v0.0.3-alpha。
+**0.0.4-alpha** — 開発ベース版（`build-1122/build.gradle.kts` の既定値 ✓・`-Pceltium_release_version` で上書き ✓・実測で確認 ✓）。**公開済み最新版は v0.0.5-alpha（pre-release・2026-10-15 ✓）**、非pre-releaseでは v0.0.3-alpha が最新 ✓（`gh release list` で確認 ✓）。
 
 ## 現在状態（2026-10-15）
 
