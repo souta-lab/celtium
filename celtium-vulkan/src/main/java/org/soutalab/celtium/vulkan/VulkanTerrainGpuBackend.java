@@ -3677,6 +3677,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         this.immediateGroups.add(group);
         this.immediateStatistics.noteImmediateGroupsClosed();
+        if (GROUP_BOUNDS_DIAGNOSTICS) {
+            // The model path creates its own group, so the bounds report has to be asked for here too: measured on leg
+            // gv-cohort-dl16-bounds, a run filtered to format 4 spent its whole budget on the GUI groups (three per
+            // frame) and never reported this one - the group the question was about. The line carries the projected
+            // NDC bounds, which is what separates "outside the viewport" from "drawn and invisible".
+            reportGroupBounds(group);
+        }
         if (target != this.targetRegistry.mainIdentity()) {
             // Off-target model batches are drawn in the pass that is open for their target, not carried in the queue.
             // The immediate window draws the groups of `currentRenderTarget` only (`flushImmediateWindow`: "others remain
