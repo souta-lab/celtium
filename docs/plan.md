@@ -75,6 +75,13 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+**🔎 E2E 地形欠落の切り分け（2026-10-16・計器を1つ追加）: 世界は空ではなく、chunk mesh が stale/部分 ✗**
+- **追加した計器 ✓**: fixture の report に **`worldContent`**（キャプチャ時に player 周辺 3x3 chunk・y0-39 を 4 ブロック間隔でサンプルし、非空気数を数え、`worldType` と `generatorOptions` と dimension を併記 ✓）。既存 counter では「cull された」と「世界が空」を区別できなかったため ✓。
+- **実測 ✓（`gv-e2e-268-r8-wc`・AMD）**: **`worldContent = samples=5760 nonAir=1463 air=4297 worldType=flat generatorOptions="" dimension=0`** ⇒ **世界は空ではない ✓**（25% が非空気 ✓）。ただし **fixture が `settings.setGeneratorOptions(celtium$worldLayers)` で入れた層が world に届いていない** ✗（`generatorOptions=""` ✓）＝ pack 側の world 生成フックとの相互作用 ✓（次 unit 候補 ✓）。
+- **画像の実体 ✓✓（zoom 実測）**: 提示フレームのブロックは**立方体として描かれているが、黒地の上に疎に並ぶ** ✗ ⇒ **大半の chunk の geometry がフレームに無い** ✓。一方で terrain pass は描かれている（`drawnPasses` 586 ✓・`ATLAS_DESCRIPTOR staleAtDraw=0` ✓・`lightmapFull=true` ✓・`colorOffset=12 colorFormat=0x25` は cohort と同一 ✓）⇒ **build/可視の問題** ✓。
+- **rebuild の A/B ✓✓（同一 jar・`reloadAtTick` のみ差）**: `gv-e2e-268-r8-reload`（`reloadAtTick=200`）は **tick200 フレームの黒 0.4%**（対照 `gv-e2e-268-r8-wc` は 39.2% ✗）・world フレームは **45.6% → 31.9%** 黒 ✓＝ **初回 build の mesh が stale/部分** ✗ で、再構築で大きく変わる ✓。`captureListedSections` も 4-5 ↔ cohort 28-31 ✓。
+- ⇒ **次 unit**: chunk mesh の build/upload と draw の世代を突き合わせる（いつ build され、いつ描かれるか ✓・`known/ready` は両 pack で同じ挙動 ✓ なので *mesh が保持されない* 側を疑う ✓）。
+
 **🔴 E2E 268-mod の初回実走（2026-10-16・pack 270 jar が揃った状態）: 画像ゲートは「地形が出ない」で FAILED ✗✗（記録・次unit）**
 - **leg `gv-e2e-268-r7`（AMD・jar `a47d89e3…`・`e2e` mode・270 jar＝268 mod ✓）**: exit 0 ✓・world 到達 ✓・提示ダンプあり ✓・`presentedImageVerdict=FAILED_PRESENTED_IMAGE` ✗・`worldFrameDistinctColours=1326` ✓・`worldFrameNonBackgroundFraction=0.674632` ✓。
 - **失敗した床は watchdog ではなく実体 ✓（`holdUntilTick=1100` の再走 `gv-e2e-268-r7-hold` で確定）**: `pictureVerdict=judged on the frame after the capture` ✓・**`worldFrameBlackFraction=0.482054`**（床は ≤0.05 ✗✗）・`distinctColours=934` ✓・`nonBackground=0.517946` ✓・`VerticalBands=687` ✓。
