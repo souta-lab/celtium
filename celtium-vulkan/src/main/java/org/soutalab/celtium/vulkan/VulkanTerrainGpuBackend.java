@@ -3608,6 +3608,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean celtium$enqueueModelMesh(VulkanDynamicMesh mesh, int texture, int[] state, long key,
             float[] projection, float[] modelView, int quads, float[] combineColor) {
         if (mesh == null || mesh.isEmpty()) {
+            // Named, because the caller reports every false return with one message: "could not queue list N" merged
+            // "the mesh is empty", "prepareImmediate found no pass/mirror/descriptor" and "the cached pipeline is
+            // null", and the fix differs for each.
+            this.modelQueueRefusal = mesh == null ? "mesh absent" : "mesh empty";
             return false;
         }
         // ITEM, because that is the format whose pipeline evaluates the fixed-function lighting: its lit variant reads
@@ -3616,6 +3620,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // bytes the check at the top of prepareImmediate compares against, so the mesh built above is what it wants.
         PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.ITEM, texture, key, state);
         if (prepared == null || prepared.pipeline == null) {
+            this.modelQueueRefusal = prepared == null
+                    ? "prepareImmediate null (" + this.lastPrepareFailure + ")"
+                    : "pipeline null for format " + VulkanImmediateFormats.ITEM + " key=0x" + Long.toHexString(key)
+                            + " texture=" + texture;
             return false;
         }
         long target = this.targetRegistry.currentIdentity();
@@ -11121,6 +11129,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean splashPairAfterCompositeArmed;
     private boolean splashPairAfterCompositeDone;
     private String lastGroupDepthRow = "";
+    /** Why the last model enqueue returned false; see {@link #celtium$enqueueModelMesh}. Reported with the refusal. */
+    private String modelQueueRefusal = "none";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
     /** Lines of {@code CELTIUM_MODEL_MATRIX} written this run; see {@link VulkanDiagnostics}. */
@@ -11301,10 +11311,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + round3(projectionNow[10]) + ")");
             }
 
+            // A model is drawn through the lit ITEM pipeline, whose descriptor set needs the light map; with no mirror
+            // the descriptor is 0 and the enqueue refuses. The terrain pass recovers the mirror before it gives up
+            // (ensureLightmapMirror), and the model path has to do the same: the first-person arm is drawn before the
+            // frame's first terrain pass and was the one refusal per plain leg - measured reason, leg gv-cohort-dl15:
+            // "could not queue list 109 (prepareImmediate null (format=4 texture=108 (mirror has full content:
+            // descriptor creation failed) pipeline=present))". The recovery is idempotent and does nothing once the
+            // mirror exists, so this costs one null check per model draw in the steady state.
+            if (this.lightmapTexture == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                ensureLightmapMirror();
+            }
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
                     mesh.indexCount() / 6, celtium$envCombineColor())) {
                 this.modelDrawRefusals++;
-                this.modelLastRefusal = "could not queue list " + listId;
+                this.modelLastRefusal = "could not queue list " + listId + " (" + this.modelQueueRefusal + ")";
                 return false;
             }
             // Queued, not drawn: the draw happens in the window's pass, and the group counters (submitted/completed) are
