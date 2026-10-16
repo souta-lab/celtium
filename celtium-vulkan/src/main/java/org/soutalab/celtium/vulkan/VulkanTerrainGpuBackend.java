@@ -1847,6 +1847,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** First frame {@code CELTIUM_DRAW_SITE} reports, so a world-frame draw site is reachable with a bounded line count. */
     private static final long DRAW_SITE_MIN_FRAME =
             Long.getLong("celtium.vulkan.drawSiteMinFrame", 0L).longValue();
+    /**
+     * Whether {@code CELTIUM_DRAW_SITE} is on, from {@code -Dceltium.vulkan.drawSite=true}.
+     *
+     * <p>It used to be reachable only through the enqueue switches ({@code enqAll} plus {@code enqFormat}), which
+     * made it awkward to use for exactly the question it answers: {@code enqFormat} filters the enqueue line too, so
+     * asking for one format's draws also silenced every other format's enqueue. Measured this round - with
+     * {@code enqFormat=7} the log held only the eight first-8 enqueue lines and no draw sites at all. Its own switch
+     * and its own format filter leave the enqueue lines alone and change no default.
+     */
+    private static final boolean DRAW_SITE_ENABLED =
+            Boolean.getBoolean("celtium.vulkan.drawSite");
+    /** One layout's draws, from {@code -Dceltium.vulkan.drawSiteFormat=<id>}; negative means every layout. */
+    private static final int DRAW_SITE_FORMAT =
+            Integer.getInteger("celtium.vulkan.drawSiteFormat", -1).intValue();
     /** Lines of {@code CELTIUM_WINDOW_DRAW}, the identity -> image line. */
     private static final int WINDOW_DRAW_LIMIT =
             Integer.getInteger("celtium.vulkan.windowDrawLines", 6).intValue();
@@ -14236,7 +14250,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // by the hundred. The unit is stated once and the two rows are subtracted by whoever reads them.
                     this.drawnByFormat[group.formatId] += batches;
                 }
-                if (ENQ_ALL_GROUPS && (ENQ_FORMAT < 0 || ENQ_FORMAT == group.formatId)
+                if ((DRAW_SITE_ENABLED || ENQ_ALL_GROUPS) && (ENQ_FORMAT < 0 || ENQ_FORMAT == group.formatId)
+                        && (DRAW_SITE_FORMAT < 0 || DRAW_SITE_FORMAT == group.formatId)
                         && this.frameId >= DRAW_SITE_MIN_FRAME
                         && this.immediateStatistics.immediateDrawSiteLogged() < DRAW_SITE_LIMIT) {
                     // Where this group was drawn, not only that it was: the three sites test against different depth
