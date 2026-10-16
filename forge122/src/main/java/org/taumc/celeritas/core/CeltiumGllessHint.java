@@ -456,6 +456,22 @@ public final class CeltiumGllessHint {
                 height, format, type, pixels);
     }
 
+    /**
+     * A raw framebuffer's colour attachment. The vanilla path is already linked by {@code FramebufferMixin}; a mod
+     * that creates its own framebuffer with raw GL has no such object, so without this route nothing knows which image
+     * its draws went into and every batch sampling it is refused - the 268-mod E2E pack measures 62 such batches per
+     * run for texture 506.
+     */
+    public static void glFramebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferTexture2D(target, attachment, textarget,
+                texture, level);
+    }
+
+    /** Which framebuffer is bound; the attachment record above is filed under it. */
+    public static void glBindFramebuffer(int target, int framebuffer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindFramebuffer(target, framebuffer);
+    }
+
     /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */
     public static void glBufferData(int target, long size, long data, int usage) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferData(target, size, data, usage);

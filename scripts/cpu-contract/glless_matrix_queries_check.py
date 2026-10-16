@@ -87,6 +87,10 @@ public class CeltiumGlStub {
  // stub entry points it calls, no-ops here because this contract is about other paths.
  public static void celtium$texImage2D(int target,int level,int internal,int w,int h,int border,int format,int type,long pixels){}
  public static void celtium$texSubImage2D(int target,int level,int x,int y,int w,int h,int format,int type,long pixels){}
+ // The complete hint routes the raw-framebuffer pair (glBindFramebuffer/glFramebufferTexture2D); these are
+ // the stub entry points it calls, no-ops here because this contract is about other paths.
+ public static void celtium$bindFramebuffer(int target,int name){}
+ public static void celtium$framebufferTexture2D(int target,int attachment,int textarget,int texture,int level){}
  public int lastBoundTexture=-1;
  static class Bindings {
   java.util.Map<Long,Integer> values=new java.util.HashMap<>();

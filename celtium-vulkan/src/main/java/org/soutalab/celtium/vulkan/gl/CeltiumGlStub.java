@@ -991,6 +991,22 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** Records a raw framebuffer's colour attachment, so the renderer can resolve it as it resolves a vanilla one. */
+    public static void celtium$framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.framebufferTexture2D(target, attachment, textarget, texture, level);
+        }
+    }
+
+    /** Records which framebuffer is bound, which is the pair {@code glFramebufferTexture2D} files its record under. */
+    public static void celtium$bindFramebuffer(int target, int name) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.bindFramebuffer(target, name);
+        }
+    }
+
     /** Mirrors an array buffer's bytes, as the stub's own {@code glBufferData} case does. */
     public static void celtium$bufferData(int target, long size, long address, int usage) {
         CeltiumGlStub stub = installed;
@@ -3539,6 +3555,67 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (target == 0x8D40 || target == 0x8CA8) {
             this.readFbo = name;
         }
+    }
+
+    /**
+     * Colour attachments of framebuffers created through raw GL, which is how a mod's own render target is built.
+     *
+     * <p>The vanilla path is already linked: {@code FramebufferMixin} reports {@code (identity, framebufferTexture)} on
+     * every bind. A mod that calls {@code glGenFramebuffers}/{@code glFramebufferTexture2D} itself has no such object,
+     * so nothing said which texture its draws go into - and the 268-mod E2E pack's refusals are exactly that shape:
+     * 62 batches per run reading {@code texture=506 (no mirror for this GL id)} with
+     * {@code the bound texture could not be mirrored=3} beside it. Routing the pair here is what makes that
+     * association exist at all; the resolution itself stays where it already is
+     * ({@code celtium$publishFramebufferColorTexture}).
+     */
+    private final java.util.Map<Integer, Integer> framebufferColorTextures =
+            new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
+
+    /** The attachment record {@code glFramebufferTexture2D} writes and the backend reads. */
+    private void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
+        int framebuffer = target == 0x8CA9 ? this.readFbo : this.drawFbo;
+        if (framebuffer == 0 || texture == 0 || level != 0) {
+            return;
+        }
+        // Only the colour attachment: depth and stencil attachments are not sampled as colour, and GL_COLOR_ATTACHMENT0
+        // is 0x8CE0 - the attachment a render target's pixels come from.
+        if ((attachment & 0xFFFF) != 0x8CE0) {
+            return;
+        }
+        this.framebufferColorTextures.put(Integer.valueOf(framebuffer), Integer.valueOf(texture));
+        if (framebufferAttachmentLogs < 8) {
+            framebufferAttachmentLogs++;
+            System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " colorTexture=" + texture
+                    + " textarget=0x" + Integer.toHexString(textarget) + " level=" + level
+                    + " colorAttachments=" + this.framebufferColorTextures.size());
+        }
+    }
+
+    /** Bounded, so a mod that rebuilds its framebuffer every frame cannot flood the log. */
+    private static int framebufferAttachmentLogs;
+
+    /** {@return the colour texture of a raw framebuffer, or 0 when none was recorded}. */
+    public static int celtium$framebufferColorTexture(int glFramebufferName) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || glFramebufferName == 0) {
+            return 0;
+        }
+        Integer texture = stub.framebufferColorTextures.get(Integer.valueOf(glFramebufferName));
+        return texture == null ? 0 : texture.intValue();
+    }
+
+    /** {@return the framebuffer a colour texture belongs to, or 0 when the texture is not a raw attachment}. */
+    public static int celtium$framebufferForColorTexture(int glTextureName) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || glTextureName == 0) {
+            return 0;
+        }
+        for (java.util.Map.Entry<Integer, Integer> entry : stub.framebufferColorTextures.entrySet()) {
+            if (entry.getValue().intValue() == glTextureName) {
+                return entry.getKey().intValue();
+            }
+        }
+        return 0;
     }
 
     /**
