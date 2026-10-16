@@ -4512,6 +4512,47 @@ public final class ValidationClient {
      * The build state as one report-ready string: the listed sections, the rebuild queue's three depths and the
      * geometry the backend holds. Written under both capture conditions, so a tick-captured run says what it caught.
      */
+    /**
+     * Counts the blocks the client world holds around the player and names the generator that produced them.
+     *
+     * <p>Written for the 268-mod E2E pack, whose frame is sky, HUD and entities with no terrain: mapped sections exist
+     * (169 known, 121 ready) and terrain passes are drawn (586), so "the geometry is culled" and "the world is empty"
+     * look the same from the counters. This separates them, and the generator options and world type beside the counts
+     * say which party chose the world, in case the answer is the fixture's own flat stack.
+     */
+    private String celtium$worldContent() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        if (mc == null || mc.world == null || mc.player == null) {
+            return "no world";
+        }
+        int nonAir = 0;
+        int air = 0;
+        net.minecraft.util.math.BlockPos.MutableBlockPos cursor = new net.minecraft.util.math.BlockPos.MutableBlockPos();
+        int cx = net.minecraft.util.math.MathHelper.floor(mc.player.posX) >> 4;
+        int cz = net.minecraft.util.math.MathHelper.floor(mc.player.posZ) >> 4;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int y = 0; y < 40; y++) {
+                    for (int x = 0; x < 16; x += 4) {
+                        for (int z = 0; z < 16; z += 4) {
+                            cursor.setPos(((cx + dx) << 4) + x, y, ((cz + dz) << 4) + z);
+                            if (mc.world.isAirBlock(cursor)) {
+                                air++;
+                            } else {
+                                nonAir++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        net.minecraft.world.storage.WorldInfo info = mc.world.getWorldInfo();
+        return "samples=" + (air + nonAir) + " nonAir=" + nonAir + " air=" + air
+                + " worldType=" + (info == null ? "?" : String.valueOf(mc.world.getWorldType().getName()))
+                + " generatorOptions=" + (info == null ? "?" : "\"" + info.getGeneratorOptions() + "\"")
+                + " dimension=" + mc.world.provider.getDimension();
+    }
+
     private static String celtium$buildState(java.util.List<String> lines) {
         if (lines == null) {
             return "unread: no world renderer debug strings";
@@ -5423,6 +5464,12 @@ public final class ValidationClient {
             report.addProperty("captureSectionsTarget", Integer.valueOf(CAPTURE_SECTIONS));
             report.addProperty("captureMinWorldFrames", Integer.valueOf(CAPTURE_MIN_WORLD_FRAMES));
             report.addProperty("captureListedSections", Integer.valueOf(celtium$listedSections(captureLines)));
+            // What the world the fixture asked for actually contains. The 268-mod E2E pack renders sky, HUD and
+            // entities with the terrain absent (worldFrameBlackFraction 0.482) while its sections exist and its
+            // terrain passes are drawn - and the only explanation the existing counters cannot separate is "the
+            // sections have no blocks in them". This counts them, and prints the generator settings and world type
+            // the running server actually used, so a pack that replaces the flat generator says so itself.
+            report.addProperty("worldContent", celtium$worldContent());
             report.addProperty("captureBuildState", celtium$buildState(captureLines));
             // The pinned path needs PIN_SECTIONS_STABLE_FRAMES consecutive frames at or below PIN_SECTIONS,
             // and until now the report did not say how far it got. Measured 2026-10-13: the JEI variant runs 406
