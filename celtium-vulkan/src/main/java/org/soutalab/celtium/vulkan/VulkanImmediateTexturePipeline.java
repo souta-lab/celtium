@@ -303,8 +303,15 @@ public final class VulkanImmediateTexturePipeline {
             return;
         }
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
+        // Only when there is one: the colourless variants of this class (the position-only and position-no-texture
+        // ones) declare the set in their layout but their shaders never read it, and their callers pass 0. Binding
+        // "set 0 = VK_NULL_HANDLE" is invalid - the validation layer said so itself on leg gv-cohort-r30-box,
+        // "VUID-vkCmdBindDescriptorSets-pDescriptorSets-06563: pDescriptorSets[0] (VkDescriptorSet 0x0) is not a
+        // valid VkDescriptorSet", ten times - and leaving a statically unused set unbound is legal.
+        if (descriptorSetToBind != 0L) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
+        }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
         ByteBuffer clamped = pushConstants.duplicate();
