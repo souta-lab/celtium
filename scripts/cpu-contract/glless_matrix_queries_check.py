@@ -69,6 +69,10 @@ public class CeltiumGlStub {
  public static void celtium$noteListOpened(int list,int mode){installed.compilingList=list;installed.compilingListMode=mode;}
  public static void celtium$noteListClosed(){installed.compilingList=0;installed.compilingListMode=0;}
  public static int celtium$boundTexture(){return -1;}
+ // The complete hint records texture parameters here (glTexParameteri is one of the calls the
+ // transformer rewrites), so the shell carries the entry point as well.
+ public static void celtium$texParameteri(int target,int pname,int value){}
+ public int lastBoundTexture=-1;
  static class Bindings {
   java.util.Map<Long,Integer> values=new java.util.HashMap<>();
   int get(long key){return values.getOrDefault(key,-1);}
