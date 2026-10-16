@@ -230,6 +230,10 @@ def build_sources(backend, stub):
     stub_java += "static CeltiumGlStub installed;\n" + "\n".join(field(stub, n) for n in STUB_FIELDS)
     stub_java += "\n" + "\n".join(getters)
     stub_java += "\n" + method(stub, "private static boolean isDrawStateCapability(")
+    # The capability record has one producer since the clouds' fix: glEnable/glDisable and the client-state
+    # spellings all land in setCapability, so the reduced stub has to carry it (the SEM_ENABLE/SEM_DISABLE cases
+    # call it).
+    stub_java += "\n" + method(stub, "private void setCapability(")
     stub_java += "\nvoid noteDrawStateBoundary() {}\n"
     stub_java += "\n".join("public static final int %s=%d;" % (name, i)
                            for i, name in enumerate(SEMANTICS))
