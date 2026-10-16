@@ -66,6 +66,16 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     MethodVisitor method = super.visitMethod(access & ~Opcodes.ACC_NATIVE, methodName, descriptor,
                             signature, exceptions);
                     method.visitCode();
+                    if (REWRITE_CENSUS) {
+                        // Opt-in (celtium.glless.census=true): a per-call census of the natives this transformer
+                        // rewrites, so the calls that are dropped can be named instead of inferred. The stub's own
+                        // no-op census cannot answer it - measured on leg gv-cohort-cloud1, whose log has no
+                        // CELTIUM_NOOP_CENSUS line at all, because under GL-less these calls never reach the stub.
+                        // Off by default: one map increment per GL call is not free in a renderer's steady state.
+                        method.visitLdcInsn(methodName);
+                        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                                "noteRewritten", "(Ljava/lang/String;)V", false);
+                    }
                     emitDefaultReturn(method, methodName, descriptor);
                     method.visitMaxs(2, argumentSlots(access, descriptor));
                     method.visitEnd();
@@ -84,6 +94,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return basicClass;
         }
     }
+
+    /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
+    private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
 
     private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
         String returnType = descriptor.substring(descriptor.indexOf(')') + 1);
@@ -373,6 +386,61 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 }
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glCopyTexImage2D", "(IIIIIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            // The client-array/VBO draw family. VertexBuffer.bindBuffer/glVertexPointer/glDrawArrays is how the sky
+            // dome, the stars, the horizon plane and Forge's CloudRenderer draw; the stub decodes that shape, and
+            // without this route the calls were no-ops (leg gv-cohort-cloud2's census: glDrawArrays=6220,
+            // nglVertexPointer=5332, glEnableClientState=7117, glBindBuffer=12474 - and no cloud pixel in the frame).
+            if ("glDrawArrays".equals(name) || "nglDrawArrays".equals(name)) {
+                // (III)V
+                for (int slot = 0; slot < 3; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDrawArrays", "(III)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glBindBuffer".equals(name) || "nglBindBuffer".equals(name)) {
+                // (II)V
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindBuffer", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glEnableClientState".equals(name) || "nglEnableClientState".equals(name)
+                    || "glDisableClientState".equals(name) || "nglDisableClientState".equals(name)) {
+                // (I)V
+                boolean enable = name.startsWith("glEnable") || name.startsWith("nglEnable");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        enable ? "glEnableClientState" : "glDisableClientState", "(I)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("nglVertexPointer".equals(name) || "glVertexPointer".equals(name)) {
+                // (IIIJ)V - the last argument is the pointer or the VBO offset, a 64-bit value.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glVertexPointer", "(IIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("nglBufferData".equals(name) || "glBufferData".equals(name)) {
+                // (IJJI)V - target, size, data address, usage.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.ILOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBufferData", "(IJJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }

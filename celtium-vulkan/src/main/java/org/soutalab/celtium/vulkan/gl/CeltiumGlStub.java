@@ -913,6 +913,63 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.celtium$noteTextureCopy("glCopyTexImage2D", target, level, 0, 0, x, y, width, height);
     }
 
+    /**
+     * The client-array/VBO draw family, from the transformer's route.
+     *
+     * <p>These are the natives behind {@code VertexBuffer}: {@code bindBuffer -> glEnableClientState/glVertexPointer
+     * -> glDrawArrays}. The stub already decodes exactly this call shape in {@link #drawArrays(int, int, int)} - the
+     * sky dome, the stars, the horizon plane and Forge's own {@code CloudRenderer} all draw through it - but under
+     * GL-less the transformer rewrote the natives to no-ops before the stub could see them, which is why those four
+     * were missing from every picture while no counter named them (leg gv-cohort-cloud2's CELTIUM_TRANSFORM_CENSUS:
+     * {@code glDrawArrays=6220 nglVertexPointer=5332 glEnableClientState=7117 glBindBuffer=12474}).
+     */
+    public static void celtium$drawArrays(int mode, int first, int count) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.drawArrays(mode, first, count);
+        }
+    }
+
+    /** Records the array-buffer binding, as the stub's own {@code glBindBuffer} case does. */
+    public static void celtium$bindBuffer(int target, int name) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && target >= 0 && target < stub.bufferBindings.length) {
+            stub.bufferBindings[target] = name;
+        }
+    }
+
+    /**
+     * Records one client-state enable/disable. Only the capability bit: client states are not the draw-state
+     * capabilities the dispatch case brackets, so the enable record is the whole of their semantics here.
+     */
+    public static void celtium$clientState(int capability, boolean enabled) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && capability >= 0 && capability < stub.enables.length) {
+            stub.enables[capability] = (byte) (enabled ? 1 : 0);
+        }
+    }
+
+    /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
+    public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.vertexPointerSize = size;
+            stub.vertexPointerType = type;
+            stub.vertexPointerStride = stride;
+            stub.vertexPointerOffset = pointer;
+        }
+    }
+
+    /** Mirrors an array buffer's bytes, as the stub's own {@code glBufferData} case does. */
+    public static void celtium$bufferData(int target, long size, long address, int usage) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        int name = target >= 0 && target < stub.bufferBindings.length ? stub.bufferBindings[target] : 0;
+        stub.bufferDataFor(name, size, address);
+    }
+
     /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
     public static int celtium$boundTexture() {
         CeltiumGlStub stub = installed;
@@ -3966,9 +4023,11 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void bufferData(Fn fn, long[] c) {
-        int name = bufferFor(fn, c);
-        long size = c[1];
-        long data = c[2];
+        bufferDataFor(bufferFor(fn, c), c[1], c[2]);
+    }
+
+    /** The one buffer-data producer: the dispatch case and the transformer's route both land here. */
+    private void bufferDataFor(int name, long size, long data) {
         if (name == 0 || size <= 0 || size > Integer.MAX_VALUE) {
             return;
         }

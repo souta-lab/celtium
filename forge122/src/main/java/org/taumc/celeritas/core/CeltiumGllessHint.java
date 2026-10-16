@@ -297,6 +297,45 @@ public final class CeltiumGllessHint {
         lastCalledList = list;
     }
 
+    /**
+     * Calls of each native the transformer rewrote, when {@code -Dceltium.glless.census=true} made it count them.
+     *
+     * <p>The question this answers is "which vanilla or mod drawing still goes nowhere", and no existing counter could:
+     * the stub's no-op census only sees the calls that reach the stub's trampoline, and under GL-less the transformer
+     * rewrites the natives first (measured on leg gv-cohort-cloud1: the log carries no CELTIUM_NOOP_CENSUS line at all).
+     * The cloud and sky paths are the measured example - Forge's CloudRenderer draws its VBO through
+     * {@code VertexBuffer.drawArrays -> glDrawArrays}, and the sky dome, the stars and the horizon plane take the same
+     * route - so this names them and their neighbours instead of leaving the hole to be found one call site at a time.
+     */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> REWRITTEN_CALLS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    /** Records one call of a native the transformer rewrote. Emitted only when the census switch is on. */
+    public static void noteRewritten(String name) {
+        java.util.concurrent.atomic.AtomicLong count = REWRITTEN_CALLS.get(name);
+        if (count == null) {
+            count = REWRITTEN_CALLS.computeIfAbsent(name, key -> new java.util.concurrent.atomic.AtomicLong());
+        }
+        count.incrementAndGet();
+        noteDisplayListCall();
+    }
+
+    /** {@return the rewritten-native census, largest first, for the exit line}. */
+    public static String rewriteCensus() {
+        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
+                new java.util.ArrayList<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>>(
+                        REWRITTEN_CALLS.entrySet());
+        entries.sort((a, b) -> Long.compare(b.getValue().get(), a.getValue().get()));
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < entries.size() && i < 40; i++) {
+            if (i > 0) {
+                line.append(' ');
+            }
+            line.append(entries.get(i).getKey()).append('=').append(entries.get(i).getValue().get());
+        }
+        return "names=" + entries.size() + " [" + line + "]";
+    }
+
     /** Registers the exit line once, on the first arrival. A run that never reaches these calls stays silent. */
     private static void noteDisplayListCall() {
         if (hooked) {
@@ -315,6 +354,9 @@ public final class CeltiumGllessHint {
                 try (java.io.PrintStream out = new java.io.PrintStream(
                         new java.io.FileOutputStream(java.io.FileDescriptor.out), false)) {
                     out.println("CELTIUM_HINT_DISPLAY_LISTS " + displayListCensus());
+                    if (!REWRITTEN_CALLS.isEmpty()) {
+                        out.println("CELTIUM_TRANSFORM_CENSUS " + rewriteCensus());
+                    }
                 } catch (Throwable ignored) {
                     // A census that cannot be printed must not take the process down on its way out.
                 }
@@ -362,6 +404,43 @@ public final class CeltiumGllessHint {
     public static void glCopyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyTexImage2D(target, level, internalFormat, x, y, width,
                 height);
+    }
+
+    /**
+     * The client-array/VBO draw family, as {@code VertexBuffer} issues it.
+     *
+     * <p>{@code bindBuffer -> glEnableClientState/glVertexPointer -> glDrawArrays} is how the sky dome, the stars, the
+     * horizon plane and Forge's {@code CloudRenderer} draw; the stub decodes that call shape, and the transformer used
+     * to drop the calls before it. The cloud leg's census names the size of the hole: {@code glDrawArrays=6220},
+     * {@code nglVertexPointer=5332}, {@code glEnableClientState=7117}, {@code glBindBuffer=12474}.
+     */
+    public static void glDrawArrays(int mode, int first, int count) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawArrays(mode, first, count);
+    }
+
+    /** Binds an array buffer, as {@code glBindBuffer(target, name)} does. */
+    public static void glBindBuffer(int target, int name) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBuffer(target, name);
+    }
+
+    /** Enables a client array, as {@code glEnableClientState(capability)} does. */
+    public static void glEnableClientState(int capability) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, true);
+    }
+
+    /** Disables a client array, as {@code glDisableClientState(capability)} does. */
+    public static void glDisableClientState(int capability) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, false);
+    }
+
+    /** Sets the client vertex-array pointer, as {@code glVertexPointer(size, type, stride, pointer)} does. */
+    public static void glVertexPointer(int size, int type, int stride, long pointer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexPointer(size, type, stride, pointer);
+    }
+
+    /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */
+    public static void glBufferData(int target, long size, long data, int usage) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferData(target, size, data, usage);
     }
 
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
