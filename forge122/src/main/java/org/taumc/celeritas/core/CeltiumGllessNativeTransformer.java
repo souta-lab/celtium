@@ -351,6 +351,31 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // item texture is - so a magnified GUI item is blurred, the user report's "item resolution is a little
             // low". Both spellings, as for glGenLists above: LWJGL3 keeps glTexParameteri as a wrapper over
             // nglTexParameteri, and whichever the transformer sees is the one rewritten.
+            // Texture copies. The main menu's panorama is built by copying the framebuffer into its own 256x256
+            // texture and blurring it (GuiMainMenu.renderSkybox -> rotateAndBlurSkybox -> glCopyTexSubImage2D), and the
+            // stub's SEM_COPY_TEX_* case is what serves that copy through the frame target. Without this route the call
+            // lands in the zero-writer below and the copy never happens: measured on leg gv-cohort-gui-menu
+            // (-Dceltium.validation.menuHoldTicks=200), no CELTIUM_TEX_COPY_SERVED line, textureCopiesServed=0, and the
+            // panorama's own 256x256 texture rejected as "no game pixels, nothing announced a write into it".
+            if ("glCopyTexSubImage2D".equals(name) || "nglCopyTexSubImage2D".equals(name)) {
+                // (IIIIIIII)V - the natives are static, so the eight arguments are at slots 0..7.
+                for (int slot = 0; slot < 8; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glCopyTexSubImage2D", "(IIIIIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glCopyTexImage2D".equals(name) || "nglCopyTexImage2D".equals(name)) {
+                for (int slot = 0; slot < 8; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glCopyTexImage2D", "(IIIIIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("glTexParameteri".equals(name) || "nglTexParameteri".equals(name)) {
                 // (III)V - the natives are static, so the arguments are at slots 0, 1 and 2.
                 method.visitVarInsn(Opcodes.ILOAD, 0);
