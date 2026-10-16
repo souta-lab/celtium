@@ -8207,7 +8207,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
         }
         if (BATCH_TIMINGS) this.immediateStatistics.addPrepBranchNanos(System.nanoTime() - prepBranchStart);
-        if (format != 1 && descriptor == 0) {
+        if (VulkanImmediateFormats.samplesTexture(format) && descriptor == 0) {
             // "pipeline or descriptor preflight failed" merged three different causes into one line and a decision could
             // not be made from it: no mirror, a mirror that never received its full content, or a descriptor that could
             // not be built for an image that does exist. The three are told apart here because the fix differs.
