@@ -75,6 +75,12 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+**🔎 続き（2026-10-16・R10）: アトラスの供給経路とサイズ不一致を計器で名指し ✓（修正は次 round）**
+- **追加した計器 ✓**: (1) `CELTIUM_MIRROR_COVERAGE_PROGRESS`（tile 被覆率を 20% 刻みで bounded 出力 ✓）、(2) `CELTIUM_DIRECT_SUPPLY what=atlas|lightmap arm=announcement-skip|readback mirror=WxH full=?`（`celtium$establishAtlasImage` の**どちらの腕**を通ったかを名指し ✓）。
+- **実測 ✓**: E2E では **`CELTIUM_DIRECT_SUPPLY` 行が 0** ✗ ＝ **`establishAtlasImage` が一度も呼ばれていない** ✓✗。`-Dceltium.vulkan.textureDiagnostics=true` の `CELTIUM_TEXTURE_DIAG` は **`atlas=353 levels=16 maxLevel=0 minFilter=0 magFilter=0 atlasSize=256x256`** ✗（stub が答える値 ✓）一方、descriptor は **`size=8192x8192`** ✓ ⇒ **backend が教えられているサイズ（256x256）と mirror の実サイズ（8192x8192）が食い違う** ✓✗。`atlasFull=false` は変わらず ✓ ⇒ terrain batch は **refuse**（＝誰も描かない ✓）で下半分が黒 ✓。
+- **次の一手（記録 ✓）**: atlas mirror を **stub の `textureSize` の答えではなく announcement/実画像のサイズ**から作り直す ✓（＝mip/filter も実測から ✓）。あわせて `atlasFull` を「mirror が宣言サイズで埋まったか」で決める ✓。
+- **既存計器の再利用 ✓**: 画像は既存の `vertexColourSamples` で正しさを確認済み（`meanRGBA=172,181,166,255` ✓）。
+
 **🎯 E2E 地形黒の根因に到達 ✓✓: 8192x8192 のブロックアトラスが「分割アップロード」で、mirror が full にならない ✗（2026-10-16・修正 ✓・残課題あり）**
 - **既存計器で頂点データを検査 ✓**: `-Dceltium.vulkan.vertexColourSamples=8`（既存 ✓）で E2E の terrain mesh は **`meanRGBA=172,181,166,255`・`alphaRange=255..255`・`vertices=11276`（solid）** ✓ ＝ **mesh は正しい** ✓（cohort は 191,201,186,255 ✓ と同型 ✓）。
 - **決定打 ✓✓（atlas）**: `CELTIUM_ATLAS_DESCRIPTOR phase=write` を両 pack で比べると — **E2E は `size=8192x8192 full=false`** ✗／**cohort は `size=2048x2048 full=true`** ✓。8192² は pack の resource pack＋268 mod のテクスチャで、**画像全体を1回で上げず分割（tile）で上がる** ✗ ⇒ `fullContentArrived` の判定が **1パッチで全体を覆う場合しか真にしない**（`x == 0 && y == 0 && w >= width && h >= height`）✗ ため、mirror は「未完成」のまま ✓ ⇒ 地形のサンプルが未書き込み領域に落ちて**黒** ✗✓。

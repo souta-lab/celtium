@@ -1588,7 +1588,7 @@ public final class VulkanGlTexture {
             // A patch smaller than the image still contributes to it: count the tiles it wrote, and treat the image as
             // fully initialized once every tile has been written at least once. This is what the pack's tiled 8192x8192
             // atlas needs, and it does not weaken the one-patch case, which stays the fast path below.
-            wholeImage = noteLevel0Coverage(x, y, pixelWidth, pixelHeight);
+            wholeImage = noteLevel0Coverage(glTextureId, x, y, pixelWidth, pixelHeight);
         }
         if (wholeImage) {
             // A "patch" that covers level 0 of the image is a full initialization for the level-0 content: the light
@@ -1671,6 +1671,9 @@ public final class VulkanGlTexture {
     /** {@return how many writes a level has received}, for the mirror dump's provenance line. */
     /** Bounded, so a per-tile upload cannot flood the log. */
     private static int coverageLogs;
+    /** The next coverage percentage that prints a progress line, and the bounded count of them. */
+    private int coverageNextPercent = 20;
+    private static int coverageProgressLogs;
 
     /**
      * Marks the tiles this patch wrote and answers whether level 0 is now fully covered.
@@ -1678,7 +1681,7 @@ public final class VulkanGlTexture {
      * <p>{@return true once every tile of the current image has been written}. A patch that lies outside the image, or
      * an image with no size yet, contributes nothing.
      */
-    private boolean noteLevel0Coverage(int x, int y, int patchWidth, int patchHeight) {
+    private boolean noteLevel0Coverage(int glTextureId, int x, int y, int patchWidth, int patchHeight) {
         if (this.width <= 0 || this.height <= 0 || patchWidth <= 0 || patchHeight <= 0) {
             return false;
         }
@@ -1697,7 +1700,21 @@ public final class VulkanGlTexture {
         for (int ty = y0; ty < y1; ty++) {
             this.level0Coverage.set(ty * tilesX + x0, ty * tilesX + x1);
         }
-        return this.level0Coverage.cardinality() >= tilesX * tilesY;
+        int covered = this.level0Coverage.cardinality();
+        int total = tilesX * tilesY;
+        int percent = total == 0 ? 100 : (int) ((100L * covered) / total);
+        if (!this.fullContentArrived && percent >= this.coverageNextPercent && coverageProgressLogs < 8) {
+            // Bounded progress, in 20% steps: whether a tiled image is completed by a few large patches or ends up with
+            // holes the producer never wrote is a question about the *pattern*, and one line per step answers it. The
+            // 8192x8192 E2E atlas is the case this was written for: it stayed below 100% while its coverage kept rising,
+            // which distinguishes "some tiles never arrive" from "our patching drops them".
+            this.coverageNextPercent = Math.min(100, percent - (percent % 20) + 20);
+            coverageProgressLogs++;
+            System.out.println("[Celtium] CELTIUM_MIRROR_COVERAGE_PROGRESS glTexture=" + glTextureId + " level0="
+                    + this.width + "x" + this.height + " patch=" + patchWidth + "x" + patchHeight + " at=" + x + ","
+                    + y + " tiles=" + covered + "/" + total + " (" + percent + "%)");
+        }
+        return covered >= total;
     }
 
     private long levelWrites(int level) {
