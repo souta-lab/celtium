@@ -3341,13 +3341,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.textureRegistry.consumeReadback(glTextureId);
             this.textureStats.noteDirectMirrorFromAnnouncement();
             this.readbackSkippedAfterAnnouncement++;
+            celtium$noteDirectSupply(what, glTextureId, image, "announcement-skip");
             return;
         }
         image.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
         if (this.textureRegistry != null) {
             this.textureRegistry.markFullyInitialized(glTextureId);
         }
+        // Which of the two paths the atlas actually took, and what the mirror holds afterwards: the 268-mod E2E pack
+        // reports atlasFull=false while its atlas descriptor shows 8192x8192 writes, and the two supply arms above are
+        // the only candidates. One bounded line per path answers it instead of another round of reading.
+        celtium$noteDirectSupply(what, glTextureId, image, "readback");
     }
+
+    /** Names a directly sampled texture's supply arm and the mirror's state afterwards, bounded to a few lines each. */
+    private void celtium$noteDirectSupply(String what, int glTextureId, VulkanGlTexture image, String arm) {
+        if (this.directSupplyLogs >= 8) {
+            return;
+        }
+        this.directSupplyLogs++;
+        System.out.println("[Celtium] CELTIUM_DIRECT_SUPPLY what=" + what + " glTexture=" + glTextureId
+                + " arm=" + arm + " mirror=" + (image == null ? "none" : image.width() + "x" + image.height())
+                + " full=" + (image != null && image.hasFullContent())
+                + " readbackSkips=" + this.readbackSkippedAfterAnnouncement);
+    }
+
+    /** Bounded count for {@link #celtium$noteDirectSupply}. */
+    private int directSupplyLogs;
 
     /**
      * Handles a GL texture id being fully (re)allocated: a resource reload, a re-stitch, or an id that came back for
