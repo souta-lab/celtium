@@ -4362,6 +4362,11 @@ public final class ValidationClient {
      */
     private void celtium$recordSlowFrame(double intervalMs, long uploadThisFrameMillis) {
         String entry = "worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms "
+                // Which pass produced this frame, from the renderer's own per-frame ring. The viewport and draw
+                // counters below say what the frame looked like; this says where its time went, and the two were
+                // read together once already: the 12 slowest frames of gv-cohort-r30-box2 were 11 frames of 24-25
+                // terrain sections under a 0.50x13.60x0.45 viewport.
+                + "passes[" + org.soutalab.celtium.vulkan.FramePassTimings.lastFrameSummary() + "] "
                 + celtium$phaseEvidence(celtium$rendererDebugLines())
                 + " upload[thisFrameMs=" + uploadThisFrameMillis
                 + " submitWaitMillis=" + celtium$uploadWaitSampledMillis
