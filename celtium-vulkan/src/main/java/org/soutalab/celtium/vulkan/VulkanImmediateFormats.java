@@ -138,6 +138,11 @@ public final class VulkanImmediateFormats {
      */
     public static final int POSITION_TEX_NORMAL = 9;
     /**
+     * Position, texture and a float3 normal, 32 bytes. A mod layout, not one of vanilla's: the shaders read neither
+     * normal, so the only thing that separates it from {@code POSITION_TEX} is the stride it arrives with.
+     */
+    public static final int POSITION_TEX_NORMAL_FLOAT = 11;
+    /**
      * Position, a normal and a padding byte: 16 bytes, no colour and no texture.
      * <p>
      * {@code DefaultVertexFormats.POSITION_NORMAL}. Its one user is {@code Render.renderOffsetAABB}, the white box drawn
@@ -147,10 +152,15 @@ public final class VulkanImmediateFormats {
     public static final int POSITION_NORMAL = 10;
 
     /** One past the highest id, for every array, mask and range check that has to cover them all. */
-    public static final int COUNT = POSITION_NORMAL + 1;
+    /** Ids are dense and allocated in order, so the arrays the census keeps are sized from the highest one. */
+    public static final int COUNT = POSITION_TEX_NORMAL_FLOAT + 1;
 
     /** Ids the acceptance mask admits by default: every layout this class names. */
-    public static final String DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9,10";
+    /**
+     * The formats the immediate path accepts by default. Id 11 joined the list with the layout itself: a mapped but
+     * unaccepted format is still refused, and the 268-mod E2E pack draws 24,143 batches in it.
+     */
+    public static final String DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9,10,11";
 
     /**
      * {@return the id whose element list is exactly the given one at the given width, or 0 when no known layout matches}.
@@ -190,6 +200,14 @@ public final class VulkanImmediateFormats {
             "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte";
     public static final String LAYOUT_POSITION_TEX_NORMAL =
             "3,Position,Float 2,UV,Float 3,Normal,Byte 1,Padding,Byte";
+    /**
+     * The 32-byte mod layout measured in the 268-mod E2E pack: {@code pos3f + uv2f + normal3f}, a <b>float</b> normal
+     * rather than vanilla's packed {@code nrm3b + pad1b}, so it is not {@code POSITION_TEX_NORMAL} at another width and
+     * the table answered it with id 0 and refused the geometry ({@code CELTIUM_UNMAPPED_LAYOUT arrivals=... width=32
+     * elements=[3,Position,Float 2,UV,Float 3,Normal,Float]}).
+     */
+    public static final String LAYOUT_POSITION_TEX_NORMAL_FLOAT =
+            "3,Position,Float 2,UV,Float 3,Normal,Float";
     public static final String LAYOUT_POSITION_TEX_COLOR_NORMAL =
             "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 3,Normal,Byte 1,Padding,Byte";
     public static final String LAYOUT_BLOCK =
@@ -219,6 +237,9 @@ public final class VulkanImmediateFormats {
         if (elements.equals(LAYOUT_POSITION_TEX_NORMAL) && size == 24 && count == 4) return POSITION_TEX_NORMAL;
         // 16 bytes: 12 of position, 3 of normal and 1 of padding. No colour and no texture, so it is its own pipeline.
         if (elements.equals(LAYOUT_POSITION_NORMAL) && size == 16 && count == 3) return POSITION_NORMAL;
+        if (elements.equals(LAYOUT_POSITION_TEX_NORMAL_FLOAT) && size == 32 && count == 3) {
+            return POSITION_TEX_NORMAL_FLOAT;
+        }
         return 0;
     }
 
@@ -241,6 +262,7 @@ public final class VulkanImmediateFormats {
             case POSITION_TEX_COLOR_NORMAL: return "POSITION_TEX_COLOR_NORMAL";
             case POSITION_TEX_NORMAL: return "POSITION_TEX_NORMAL/OLDMODEL_POSITION_TEX_NORMAL";
             case POSITION_NORMAL: return "POSITION_NORMAL";
+            case POSITION_TEX_NORMAL_FLOAT: return "POSITION_TEX_NORMAL_FLOAT";
             default: return id == 0 ? "unmapped" : "unknown id " + id;
         }
     }

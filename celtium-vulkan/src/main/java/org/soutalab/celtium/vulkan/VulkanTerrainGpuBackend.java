@@ -5396,7 +5396,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.lightCoordLogged = 4;
             }
         }
-        int expectedStride = formatId == 10 ? VulkanImmediateTexturePipeline.POSITION_NORMAL_BYTES
+        int expectedStride = formatId == 11 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_FLOAT_BYTES
+                : formatId == 10 ? VulkanImmediateTexturePipeline.POSITION_NORMAL_BYTES
                 : formatId == 9 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES
                 : formatId == 8 ? VulkanImmediateTexturePipeline.POSITION_TEX_COLOR_NORMAL_BYTES
                 : formatId == 7 ? VulkanImmediateTexturePipeline.POSITION_BYTES
@@ -5606,7 +5607,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return false;
         }
         celtium$offerStage(6);
-        if (formatId < 1 || formatId > VulkanImmediateFormats.POSITION_NORMAL) {
+        // COUNT is the range the formats class declares; the previous bound was POSITION_NORMAL, which stopped
+        // being the highest id once the 32-byte mod layout (id 11) existed - mapped, in the acceptance mask, and
+        // refused here as "no such layout" (measured: CELTIUM_REFUSALS_BY_FORMAT {11 no pipeline yet for a
+        // 32-byte vertex (id 11, no such layout)=3}).
+        if (formatId < 1 || formatId >= VulkanImmediateFormats.COUNT) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
             // bound was 5, written before id 6 existed: position-plus-texture - the sky, the clouds, the water surface -
@@ -8080,7 +8085,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // reach the image at all". Default on, so the shipped behaviour is unchanged.
                 boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
                 VulkanColorBlendState colorBlend = celtium$blendState(state);
-                value = format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
+                value = format == 11 ? VulkanImmediateTexturePipeline.createForPositionTexNormalFloat(this.context,
+                        pass, colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        : format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
                         colorBlend, positionNormalDepthTest, state[4] != 0, state[5] != 0, compareOp)
                         : format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
                         colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
