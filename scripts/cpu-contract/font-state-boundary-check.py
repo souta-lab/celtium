@@ -68,8 +68,8 @@ STUB_SITES = [
 
 
 def method_body(text, name):
-    """Return the body of `public void name(...)` ... } by brace matching, or None."""
-    match = re.search(r'public void ' + re.escape(name), text)
+    """Return the body of `[modifier] void name(...)` ... } by brace matching, or None."""
+    match = re.search(r'(?:public|private|protected) void ' + re.escape(name), text)
     if not match:
         return None
     start = text.index('{', match.end() - 1)
@@ -106,6 +106,10 @@ def check_backend(text, failures):
 
 
 def check_stub(text, failures):
+    # Since the clouds' fix the two capability cases write through one producer (`setCapability`), which is also where
+    # the boundary fires. The contract follows the write rather than the case: what it must keep saying is that the
+    # boundary precedes the record change.
+    producer = method_body(text, 'setCapability')
     for case, write in STUB_SITES:
         match = re.search(r'case ' + re.escape(case), text)
         if not match:
@@ -114,6 +118,14 @@ def check_stub(text, failures):
         # The case body runs to the next 'case ' label.
         nxt = text.find('case SEM_', match.end())
         body = text[match.end():nxt if nxt > 0 else len(text)]
+        if write not in body and 'setCapability(' in body:
+            if producer is None:
+                failures.append('stub: %s writes through setCapability, which the contract cannot find' % case)
+            elif 'noteDrawStateBoundary()' not in producer:
+                failures.append('stub: %s writes through setCapability, which fires no boundary' % case)
+            elif producer.index('noteDrawStateBoundary()') > producer.index('enables[capability] = next'):
+                failures.append('stub: %s boundary fires AFTER the write in setCapability' % case)
+            continue
         if 'noteDrawStateBoundary()' not in body:
             failures.append('stub: %s record changes without the boundary' % case)
         elif write in body and body.index('noteDrawStateBoundary()') > body.index(write):

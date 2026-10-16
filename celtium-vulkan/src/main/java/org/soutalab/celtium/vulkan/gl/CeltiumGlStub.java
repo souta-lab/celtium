@@ -939,13 +939,18 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * Records one client-state enable/disable. Only the capability bit: client states are not the draw-state
-     * capabilities the dispatch case brackets, so the enable record is the whole of their semantics here.
+     * Records one capability enable/disable, from the transformer's route.
+     *
+     * <p>The client-state spellings ({@code glEnableClientState}/{@code glDisableClientState}) and the plain
+     * {@code glEnable}/{@code glDisable} both land here, so the record the draw path reads is the game's own state
+     * whichever spelling the caller used. Leaving {@code glEnable}/{@code glDisable} out is what drew the clouds
+     * untextured: measured on leg gv-cohort-cloud9, {@code texture2dEnabled=false} at the cloud VBO's draw while its
+     * UVs decoded correctly.
      */
     public static void celtium$clientState(int capability, boolean enabled) {
         CeltiumGlStub stub = installed;
-        if (stub != null && capability >= 0 && capability < stub.enables.length) {
-            stub.enables[capability] = (byte) (enabled ? 1 : 0);
+        if (stub != null) {
+            stub.setCapability(capability, enabled);
         }
     }
 
@@ -2211,28 +2216,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_IS_ENABLED:
                 return ((int) a0 >= 0 && (int) a0 < this.enables.length && this.enables[(int) a0] != 0) ? 1L : 0L;
             case SEM_ENABLE:
-                if ((int) a0 == GL_SCISSOR_TEST) {
-                    this.scissorToggleCount++;
-                }
-                if ((int) a0 >= 0 && (int) a0 < this.enables.length) {
-                    if (this.enables[(int) a0] == 0 && isDrawStateCapability((int) a0)) {
-                        noteDrawStateBoundary();
-                    }
-                    this.enables[(int) a0] = 1;
-                    this.capabilityObserved[(int) a0] = true;
-                }
+                setCapability((int) a0, true);
                 return 0L;
             case SEM_DISABLE:
-                if ((int) a0 == GL_SCISSOR_TEST) {
-                    this.scissorToggleCount++;
-                }
-                if ((int) a0 >= 0 && (int) a0 < this.enables.length) {
-                    if (this.enables[(int) a0] != 0 && isDrawStateCapability((int) a0)) {
-                        noteDrawStateBoundary();
-                    }
-                    this.enables[(int) a0] = 0;
-                    this.capabilityObserved[(int) a0] = true;
-                }
+                setCapability((int) a0, false);
                 return 0L;
             case SEM_CULL_FACE:
                 if (this.cullFaceValue != (int) a0) {
@@ -3528,6 +3515,30 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * The one capability producer: {@code glEnable}/{@code glDisable} and their client-state spellings all land here.
+     *
+     * <p>Vanilla sets {@code GL_TEXTURE_2D} this way before it draws, and the stub's draw path reads the record to
+     * decide whether the batch samples a texture at all. Routing {@code glEnable}/{@code glDisable} through here is
+     * what fixed the clouds: measured on leg gv-cohort-cloud9, the cloud VBO draw carried
+     * {@code texture2dEnabled=false} while its own attribution line showed the correct UVs, so the plane was drawn
+     * untextured - uniform slabs at the cloud colour instead of white clouds.
+     */
+    private void setCapability(int capability, boolean enabled) {
+        if (capability == GL_SCISSOR_TEST) {
+            this.scissorToggleCount++;
+        }
+        if (capability < 0 || capability >= this.enables.length) {
+            return;
+        }
+        byte next = (byte) (enabled ? 1 : 0);
+        if (this.enables[capability] != next && isDrawStateCapability(capability)) {
+            noteDrawStateBoundary();
+        }
+        this.enables[capability] = next;
+        this.capabilityObserved[capability] = true;
+    }
+
     private static boolean isProxyTarget(int target) {
         // GL_PROXY_TEXTURE_1D/2D/3D/CUBE_MAP - uploads to these carry no pixels and bind to nothing.
         return target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B;
@@ -4796,8 +4807,20 @@ public final class CeltiumGlStub implements FunctionProvider {
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 4))).append(',')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 8))).append(')');
                         }
+                        // The UVs beside the positions, because a plane that samples one texel everywhere looks exactly
+                        // like a plane whose texture is faint: measuring the cloud batch's decoded UVs is what separates
+                        // "the decode reads the right attribute" from "every fragment samples the same texel". Read at
+                        // the same offsets the layout table gives (POSITION_TEX_COLOR: pos 0..11, uv 12..19, colour 20..23).
+                        StringBuilder uvs = new StringBuilder();
+                        for (int i = 0; i < 4 && i < count; i++) {
+                            long at = address + (long) i * this.vertexPointerStride;
+                            uvs.append(i == 0 ? "" : " ").append('(')
+                                    .append(celtium$round3(MemoryUtil.memGetFloat(at + 12))).append(',')
+                                    .append(celtium$round3(MemoryUtil.memGetFloat(at + 16))).append(')');
+                        }
                         System.out.println("[Celtium] CELTIUM_DRAWARRAY_LAYOUT first=" + first + " count=" + count
                                 + " stride=" + this.vertexPointerStride + " format=" + formatId + " mode=" + mode
+                                + " uv0..uv3=[" + uvs + "]"
                                 + " buffer=" + buffer + " clientMemory=" + clientMemory + " pointerOffset=" + offset
                                 + " pointerSize=" + this.vertexPointerSize + " pointerType=0x"
                                 + Integer.toHexString(this.vertexPointerType) + " pointerStride="

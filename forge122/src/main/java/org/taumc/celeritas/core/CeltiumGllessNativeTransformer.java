@@ -412,7 +412,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
-            if ("glEnableClientState".equals(name) || "nglEnableClientState".equals(name)
+            if ("glEnable".equals(name) || "nglEnable".equals(name)
+                    || "glDisable".equals(name) || "nglDisable".equals(name)
+                    || "glEnableClientState".equals(name) || "nglEnableClientState".equals(name)
                     || "glDisableClientState".equals(name) || "nglDisableClientState".equals(name)) {
                 // (I)V
                 boolean enable = name.startsWith("glEnable") || name.startsWith("nglEnable");
