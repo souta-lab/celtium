@@ -211,6 +211,29 @@ public final class VulkanImmediateTexturePipeline {
         return pipeline.build();
     }
 
+    /**
+     * The 32-byte mod layout's stride ({@code pos3f + uv2f + normal3f}). The normal is not read - no immediate shader
+     * lights anything - so the variant is {@code POSITION_TEX} at this stride, which is the whole of what the geometry
+     * needed to stop being refused.
+     */
+    public static final int POSITION_TEX_NORMAL_FLOAT_BYTES = 32;
+
+    /**
+     * Creates the float-normal variant: the colourless {@code POSITION_TEX} shaders at 32 bytes, with the normal
+     * element as the trailing stride they skip. Measured need: the 268-mod E2E pack draws geometry in this layout and
+     * the table refused it with id 0 ({@code CELTIUM_UNMAPPED_REFUSED layout=[3,Position,Float 2,UV,Float
+     * 3,Normal,Float]}).
+     */
+    public static VulkanImmediateTexturePipeline createForPositionTexNormalFloat(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+            int depthCompareOp) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp);
+        pipeline.positionOnly = true;
+        pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_FLOAT_BYTES;
+        return pipeline.build();
+    }
+
     /** Creates the {@code POSITION_TEX_NORMAL} variant, 24 bytes: colourless shaders, wider stride than the 20-byte one. */
     public static VulkanImmediateTexturePipeline createForPositionTexNormal(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
