@@ -287,6 +287,24 @@ public final class VulkanGlTexture {
      */
     private long[] levelWrites = new long[0];
     private long[] levelLastWrite = new long[0];
+    /**
+     * Which tiles of level 0 have been written, so a tiled upload counts as a full initialization.
+     *
+     * <p>Measured in the 268-mod E2E pack: its block atlas is 8192x8192 (the pack's resource pack plus every mod's
+     * textures) and arrives as a sequence of {@code glTexSubImage2D} patches, each smaller than the image - so the
+     * single-patch test below ("x == 0 &amp;&amp; y == 0 &amp;&amp; the patch covers the image") never held, the mirror stayed
+     * marked incomplete, and the terrain rendered black because the tiles that did arrive were mixed with ones the
+     * renderer would not sample. The cohort's 2048x2048 atlas arrives whole, which is why this never showed there.
+     *
+     * <p>A tile is {@link #COVERAGE_TILE} texels square and the bitmap costs one bit per tile: 16 KB for 8192x8192 at
+     * the 64-texel tile below, against the 256 MB the image itself occupies. Reset whenever the image is recreated, so
+     * a resize cannot inherit another size's coverage.
+     */
+    private java.util.BitSet level0Coverage;
+    private int coverageWidth;
+    private int coverageHeight;
+    /** Texels per coverage tile. Coarse on purpose: the question is "was every region written", not how often. */
+    private static final int COVERAGE_TILE = 64;
     private long levelZeroWriteSerial;
     private long writeSerial;
 
@@ -1566,11 +1584,26 @@ public final class VulkanGlTexture {
         }
         recordPatchWrite(depth, producerDepth, mirrorLevels, Math.max(0, producerDepth - mirrorLevels));
         boolean wholeImage = x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height;
+        if (!wholeImage) {
+            // A patch smaller than the image still contributes to it: count the tiles it wrote, and treat the image as
+            // fully initialized once every tile has been written at least once. This is what the pack's tiled 8192x8192
+            // atlas needs, and it does not weaken the one-patch case, which stays the fast path below.
+            wholeImage = noteLevel0Coverage(x, y, pixelWidth, pixelHeight);
+        }
         if (wholeImage) {
             // A "patch" that covers level 0 of the image is a full initialization for the level-0 content: the light
             // map arrives this way. Levels above it are still exactly what this patch wrote (the producer's own data
             // where supplied, the previous content elsewhere), which the census above counts.
-            this.fullContentArrived = true;
+            if (!this.fullContentArrived) {
+                this.fullContentArrived = true;
+                if (coverageLogs < 4) {
+                    coverageLogs++;
+                    System.out.println("[Celtium] CELTIUM_MIRROR_COVERAGE glTexture=" + glTextureId + " level0="
+                            + this.width + "x" + this.height + " tile=" + COVERAGE_TILE + " tiles="
+                            + (this.coverageWidth * this.coverageHeight) + " full=true (the uploads together cover the"
+                            + " image, which the single-patch test cannot see)");
+                }
+            }
         }
         // The dump is the measurement that says which levels this patch actually reached: each level's write count is
         // printed next to whether it is behind level 0, so a patch that covered only level 0 is visible as a number
@@ -1636,6 +1669,37 @@ public final class VulkanGlTexture {
     private static int patchBeyondMirrorLogs;
 
     /** {@return how many writes a level has received}, for the mirror dump's provenance line. */
+    /** Bounded, so a per-tile upload cannot flood the log. */
+    private static int coverageLogs;
+
+    /**
+     * Marks the tiles this patch wrote and answers whether level 0 is now fully covered.
+     *
+     * <p>{@return true once every tile of the current image has been written}. A patch that lies outside the image, or
+     * an image with no size yet, contributes nothing.
+     */
+    private boolean noteLevel0Coverage(int x, int y, int patchWidth, int patchHeight) {
+        if (this.width <= 0 || this.height <= 0 || patchWidth <= 0 || patchHeight <= 0) {
+            return false;
+        }
+        if (this.level0Coverage == null || this.coverageWidth != this.width || this.coverageHeight != this.height) {
+            this.coverageWidth = this.width;
+            this.coverageHeight = this.height;
+            this.level0Coverage = new java.util.BitSet(
+                    ((this.width + COVERAGE_TILE - 1) / COVERAGE_TILE) * ((this.height + COVERAGE_TILE - 1) / COVERAGE_TILE));
+        }
+        int tilesX = (this.width + COVERAGE_TILE - 1) / COVERAGE_TILE;
+        int tilesY = (this.height + COVERAGE_TILE - 1) / COVERAGE_TILE;
+        int x0 = Math.max(0, x / COVERAGE_TILE);
+        int y0 = Math.max(0, y / COVERAGE_TILE);
+        int x1 = Math.min(tilesX, (x + patchWidth + COVERAGE_TILE - 1) / COVERAGE_TILE);
+        int y1 = Math.min(tilesY, (y + patchHeight + COVERAGE_TILE - 1) / COVERAGE_TILE);
+        for (int ty = y0; ty < y1; ty++) {
+            this.level0Coverage.set(ty * tilesX + x0, ty * tilesX + x1);
+        }
+        return this.level0Coverage.cardinality() >= tilesX * tilesY;
+    }
+
     private long levelWrites(int level) {
         return level >= 0 && level < this.levelWrites.length ? this.levelWrites[level] : 0L;
     }
@@ -2342,6 +2406,9 @@ public final class VulkanGlTexture {
         // The new image is empty: any content fact from the image it replaces is gone with it.
         this.levelWrites = new long[this.mipLevels];
         this.levelLastWrite = new long[this.mipLevels];
+        // Same for the coverage bitmap: a recreated image has no tiles written yet, and inheriting the old bitmap
+        // would call a partially uploaded replacement complete on its first patch.
+        this.level0Coverage = null;
         // Make the resting layout true for a brand new image too, so a descriptor bound before the first upload is
         // already valid. The contents stay undefined until the first upload, which is correct for a fresh mirror.
         transitionToShaderRead();

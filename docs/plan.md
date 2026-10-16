@@ -75,6 +75,13 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+**🎯 E2E 地形黒の根因に到達 ✓✓: 8192x8192 のブロックアトラスが「分割アップロード」で、mirror が full にならない ✗（2026-10-16・修正 ✓・残課題あり）**
+- **既存計器で頂点データを検査 ✓**: `-Dceltium.vulkan.vertexColourSamples=8`（既存 ✓）で E2E の terrain mesh は **`meanRGBA=172,181,166,255`・`alphaRange=255..255`・`vertices=11276`（solid）** ✓ ＝ **mesh は正しい** ✓（cohort は 191,201,186,255 ✓ と同型 ✓）。
+- **決定打 ✓✓（atlas）**: `CELTIUM_ATLAS_DESCRIPTOR phase=write` を両 pack で比べると — **E2E は `size=8192x8192 full=false`** ✗／**cohort は `size=2048x2048 full=true`** ✓。8192² は pack の resource pack＋268 mod のテクスチャで、**画像全体を1回で上げず分割（tile）で上がる** ✗ ⇒ `fullContentArrived` の判定が **1パッチで全体を覆う場合しか真にしない**（`x == 0 && y == 0 && w >= width && h >= height`）✗ ため、mirror は「未完成」のまま ✓ ⇒ 地形のサンプルが未書き込み領域に落ちて**黒** ✗✓。
+- **修正 ✓**: level 0 の**カバレッジ bitmap**（64 texel tile ✓・8192² で 16 KB ✓）を追加し、**パッチの和集合が画像全体を覆った時点で full=true** ✓＋`CELTIUM_MIRROR_COVERAGE … full=true (the uploads together cover the image, which the single-patch test cannot see)` を bounded 出力 ✓・画像再作成時に bitmap を reset ✓。
+- **実測 ✓（同一 jar 前後・E2E・AMD）**: `worldFrameBlackFraction` **0.456 → 0.245** ✓（黒がほぼ半減 ✓）・画像は空/HUD は同じで黒領域が減少 ✓。`gv-cohort-r9-cov`（AMD）= `PASSED`・validation 0 ✓（回帰なし ✓）。
+- **残る ✗（次 unit）**: 8192² では `full=false` が**依然として続く** ✓ ＝ **実際に一部の tile が届いていない** ✗（`CELTIUM_MIRROR_COVERAGE` 行は出ない ✓）。次は coverage の**進捗率**（covered/total tiles ✓）を bounded で出し、どの領域/level が欠けるかを名指しする ✓。
+
 **🔎 E2E 地形欠落の切り分け（2026-10-16・計器を1つ追加）: 世界は空ではなく、chunk mesh が stale/部分 ✗**
 - **追加した計器 ✓**: fixture の report に **`worldContent`**（キャプチャ時に player 周辺 3x3 chunk・y0-39 を 4 ブロック間隔でサンプルし、非空気数を数え、`worldType` と `generatorOptions` と dimension を併記 ✓）。既存 counter では「cull された」と「世界が空」を区別できなかったため ✓。
 - **実測 ✓（`gv-e2e-268-r8-wc`・AMD）**: **`worldContent = samples=5760 nonAir=1463 air=4297 worldType=flat generatorOptions="" dimension=0`** ⇒ **世界は空ではない ✓**（25% が非空気 ✓）。ただし **fixture が `settings.setGeneratorOptions(celtium$worldLayers)` で入れた層が world に届いていない** ✗（`generatorOptions=""` ✓）＝ pack 側の world 生成フックとの相互作用 ✓（次 unit 候補 ✓）。
