@@ -8112,7 +8112,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         if (BATCH_TIMINGS) this.immediateStatistics.addPrepRegistryNanos(System.nanoTime() - prepRegistryStart);
         if (BATCH_TIMINGS) this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
-        if (format != 1 && texture == null) {
+        if (VulkanImmediateFormats.samplesTexture(format) && texture == null) {
             this.prepareDescriptorFailures++;
             this.lastPrepareFailure = "format=" + format + " texture=" + textureId
                     + " (no mirror for this GL id; registry=" + (this.textureRegistry == null ? "absent" : "present") + ")";
@@ -8218,7 +8218,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " pipeline=" + (pipeline == null ? "null" : "present");
             return null;
         }
-        return format == 1 || descriptor != 0
+        // A layout that samples no texture needs no descriptor: its pipeline is the untextured one and its colour
+        // arrives in the push block. This asked "format 1 or a descriptor", which refused POSITION_NORMAL as well as
+        // POSITION - measured on leg gv-vset-r27-fix, where the first half of this fix moved the refusal from the
+        // preflight to here and the census read "7 preflight: format=7 texture=103 (no mirror) pipeline=present".
+        return !VulkanImmediateFormats.samplesTexture(format) || descriptor != 0
                 ? new PreparedImmediate(pipeline, descriptor, texture == null ? 0L : texture.key())
                 : null;
     }

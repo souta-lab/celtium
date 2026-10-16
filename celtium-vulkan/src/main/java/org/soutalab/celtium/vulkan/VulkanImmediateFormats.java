@@ -127,6 +127,28 @@ public final class VulkanImmediateFormats {
     public static final int POSITION_TEX = 6;
     /** Position only: twelve bytes, with the colour the game had current passed in the push block. */
     public static final int POSITION = 7;
+
+    /**
+     * {@return whether a layout samples a texture at all}.
+     *
+     * <p>One place, because the preflight asked it with {@code format != 1} and that answer was wrong for every
+     * colourless layout: {@code POSITION} (7) and {@code POSITION_NORMAL} (10) carry no texture element either, so a
+     * batch in one of them that happened to be offered while some texture was bound was refused for having no mirror
+     * for it. Measured on the videoSettings scene (leg gv-vset-r27-site): {@code drawnByFormat=[... 7:0 ...]} with
+     * {@code REFUSALS_BY_FORMAT {7 preflight: format=7 texture=104 (no mirror for this GL id)}} - and that refusal is
+     * the Sodium-style screen's missing translucent backdrop, because {@code Gui.drawRect} (which the option
+     * description's box goes through) draws in {@code POSITION}.
+     */
+    public static boolean samplesTexture(int id) {
+        switch (id) {
+            case POSITION_COLOR:      // 1
+            case POSITION:            // 7
+            case POSITION_NORMAL:     // 10
+                return false;
+            default:
+                return id > 0;
+        }
+    }
     /** Position, texture, colour and a normal: 28 bytes, the widest of the standard formats. */
     public static final int POSITION_TEX_COLOR_NORMAL = 8;
     /**
