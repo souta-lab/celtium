@@ -435,6 +435,25 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("glFramebufferTexture2D".equals(name) || "nglFramebufferTexture2D".equals(name)) {
+                // (IIIII)V - target, attachment, textarget, texture, level.
+                for (int slot = 0; slot < 5; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glFramebufferTexture2D", "(IIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glBindFramebuffer".equals(name) || "nglBindFramebuffer".equals(name)) {
+                // (II)V - target, framebuffer.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindFramebuffer", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("nglTexImage2D".equals(name) || "glTexImage2D".equals(name)) {
                 // (IIIIIIIIJ)V - target, level, internal, width, height, border, format, type, pixels.
                 for (int slot = 0; slot < 8; slot++) {
