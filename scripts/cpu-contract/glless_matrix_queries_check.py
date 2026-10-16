@@ -76,6 +76,13 @@ public class CeltiumGlStub {
  // transformer rewrites); this contract is about the query paths, so no-ops are enough.
  public static void celtium$copyTexSubImage2D(int target,int level,int xo,int yo,int x,int y,int w,int h){}
  public static void celtium$copyTexImage2D(int target,int level,int internal,int x,int y,int w,int h){}
+ // The complete hint routes the client-array/VBO draw family (VertexBuffer): these are the
+ // stub entry points it calls, no-ops here because this contract is about other paths.
+ public static void celtium$drawArrays(int mode,int first,int count){}
+ public static void celtium$bindBuffer(int target,int name){}
+ public static void celtium$clientState(int cap,boolean enabled){}
+ public static void celtium$vertexPointer(int size,int type,int stride,long pointer){}
+ public static void celtium$bufferData(int target,long size,long address,int usage){}
  public int lastBoundTexture=-1;
  static class Bindings {
   java.util.Map<Long,Integer> values=new java.util.HashMap<>();
