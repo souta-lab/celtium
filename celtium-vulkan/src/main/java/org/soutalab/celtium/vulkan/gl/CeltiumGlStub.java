@@ -873,6 +873,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.lastBoundTexture = texture;
     }
 
+    /**
+     * Records a texture parameter against the texture it applies to, from the transformer's route.
+     *
+     * <p>{@code glTexParameteri} is one of the calls the transformer rewrites, so it has to be handed back here or
+     * nothing records it (the terrain path's own comment on the display-list family). Same target/pname/value trip the
+     * stub's own dispatch would record, through the shared producer.
+     */
+    public static void celtium$texParameteri(int target, int pname, int value) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$setTextureParameterBound(target, pname, value, "transformer");
+    }
+
     /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
     public static int celtium$boundTexture() {
         CeltiumGlStub stub = installed;
@@ -4206,6 +4221,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         int bound = this.textureBindings.get(texBindKey(target));
+        if (bound < 0) {
+            // Under GL-less the per-unit map is empty by design: the bind is rewritten before any trampoline sees it
+            // (see celtium$noteBoundTexture), so the record is asked for the name the manager last bound. Without this
+            // the parameter was filed against texture 0 and the registry never saw a filter - measured as the blurred
+            // item: it falls back to inferring LINEAR from the upload's shape when nothing is recorded.
+            bound = this.lastBoundTexture;
+        }
         celtium$setTextureParameter(bound < 0 ? 0 : bound, pname, value, site);
     }
 

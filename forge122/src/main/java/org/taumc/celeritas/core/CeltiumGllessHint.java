@@ -332,6 +332,18 @@ public final class CeltiumGllessHint {
         return lastCalledList;
     }
 
+    /**
+     * Records a texture parameter, as {@code glTexParameteri(target, pname, value)} does.
+     *
+     * <p>Vanilla sets the filters this way ({@code TextureUtil}'s own {@code GlStateManager.glTexParameteri} calls), and
+     * the registry's sampler asks the stub for what was recorded before it falls back to inferring the filter from the
+     * upload's shape. Nothing was recorded under GL-less - the calls were rewritten to a no-op - so a magnified item
+     * texture was sampled LINEAR and the item looked blurred. The stub resolves which texture the parameter belongs to.
+     */
+    public static void glTexParameteri(int target, int pname, int value) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameteri(target, pname, value);
+    }
+
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
     public static void glViewport(int x, int y, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);

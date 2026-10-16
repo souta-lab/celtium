@@ -48,7 +48,7 @@ FIELDS = ["installed", "drawFbo", "clearRed", "clearDepth", "pendingClearDrawFbo
           "pendingClearIsMain", "drawFramebufferIsMain", "pendingClears",
           # The complete production hint publishes the open display list here, so the reduced stub has to
           # carry the same two fields and entry points or the hint will not compile against it.
-          "compilingList", "compilingListMode"]
+          "compilingList", "compilingListMode", "lastBoundTexture"]
 METHODS = ["public static boolean isInstalled(", "public static void noteDrawFramebufferIsMain(",
            "public static boolean pendingClearIsMain(", "public static int pendingClearDrawFbo(",
            "public static int consumePendingClears(", "public static void clearColor(float[] out)",
@@ -60,6 +60,9 @@ METHODS = ["public static boolean isInstalled(", "public static void noteDrawFra
 SEMANTICS = ["SEM_CLEAR", "SEM_CLEAR_COLOR", "SEM_CLEAR_DEPTH", "SEM_BIND_FRAMEBUFFER"]
 
 SHELL = r"""
+ // The complete production hint calls this (glTexParameteri is one of the calls the transformer
+ // rewrites). This contract is about the clear path, so the shell answers it with a no-op.
+ public static void celtium$texParameteri(int target,int pname,int value){}
  public static void fresh(){installed=new CeltiumGlStub();}
  public static void uninstall(){installed=null;}
  public static int peekMask(){return installed==null?0:installed.pendingClears.get();}
