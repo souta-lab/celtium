@@ -73,6 +73,10 @@ SHELL = r"""
  public static void celtium$clientState(int cap,boolean enabled){}
  public static void celtium$vertexPointer(int size,int type,int stride,long pointer){}
  public static void celtium$bufferData(int target,long size,long address,int usage){}
+ // The complete hint routes the texture upload family (glTexImage2D/glTexSubImage2D); these are the
+ // stub entry points it calls, no-ops here because this contract is about other paths.
+ public static void celtium$texImage2D(int target,int level,int internal,int w,int h,int border,int format,int type,long pixels){}
+ public static void celtium$texSubImage2D(int target,int level,int x,int y,int w,int h,int format,int type,long pixels){}
  public static void fresh(){installed=new CeltiumGlStub();}
  public static void uninstall(){installed=null;}
  public static int peekMask(){return installed==null?0:installed.pendingClears.get();}

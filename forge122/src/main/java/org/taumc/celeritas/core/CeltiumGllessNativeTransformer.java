@@ -435,6 +435,28 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("nglTexImage2D".equals(name) || "glTexImage2D".equals(name)) {
+                // (IIIIIIIIJ)V - target, level, internal, width, height, border, format, type, pixels.
+                for (int slot = 0; slot < 8; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.LLOAD, 8);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexImage2D", "(IIIIIIIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("nglTexSubImage2D".equals(name) || "glTexSubImage2D".equals(name)) {
+                // (IIIIIIIIJ)V - target, level, xoffset, yoffset, width, height, format, type, pixels.
+                for (int slot = 0; slot < 8; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.LLOAD, 8);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexSubImage2D", "(IIIIIIIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("nglBufferData".equals(name) || "glBufferData".equals(name)) {
                 // (IJJI)V - target, size, data address, usage.
                 method.visitVarInsn(Opcodes.ILOAD, 0);

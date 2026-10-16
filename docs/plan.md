@@ -75,6 +75,13 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+**🎯🎯 E2E 地形黒の根因を修正 ✓✓✓（2026-10-16・R11/R12）: 「テクスチャ upload 系が no-op」＋「unit 対応表が空」**
+- **根因 ✓✓**: stub の capture が texture の upload を見ていなかった ✓。census は `nglTexSubImage2D=41199`（1 leg ✓）を数えており **全て no-op** ✗、registry は **`CELTIUM_CAPTURE_MISS glTexture=353 level=0 reason=the stub captured no upload for this texture level`**（353＝ブロックアトラス ✓）を出していた ✓。⇒ アトラスの mirror が content を持てず `atlasFull=false` ✓ ⇒ **terrain pass の batch は refuse（＝誰も描かない）** ✓ ⇒ 下半分が黒 ✓✓。
+- **修正 ✓（2箇所）**: (1) transformer が `glTexImage2D`/`nglTexImage2D`・`glTexSubImage2D`/`nglTexSubImage2D`（(IIIIIIIIJ)V ✓）を hint 経由で stub の既存 producer へ route ✓（per-call の配列確保をしないよう producer を明示引数版へ分割 ✓）。(2) `uploadTargetName` が **unit 対応表（GL-less では設計上空 ✓）に無いとき `lastBoundTexture` へ fallback** ✓（#1 の texture parameter・#4 の copy と同じ穴 ✓）。
+- **実測 ✓✓（E2E・AMD・jar `6b4a3537`）**: **`atlasFull=true lightmapFull=true`** ✓（修正前 `atlasFull=false` ✗）・`CELTIUM_CAPTURE_MISS glTexture=353` 消失 ✓・**tick200 フレームの黒 0.4%** ✓（対照 `gv-e2e-268-r11-tex` は 39.2% ✗）で**地形が描かれている** ✓✓（空・horizon・HUD ✓）。
+- **回帰なし ✓✓**: `gv-cohort-r12-tex2` = `PASSED`・validation 0 ✓（この変更は 41k+/leg の呼び出しを route するため必須の確認 ✓）・E2E の frame time は**変化なし** ✓（warm p50 222.5 → 223.7 ms ✓ ＝ 遅さは pack 側 ✓）。
+- **残る ✗**: E2E の **world 段キャプチャが今回の leg では発生しなかった** ✓（pack が ~4.5 FPS ✓ のため fixture の時間窓に間に合わず ✓）。次は leg の hold/時間窓を伸ばして world 段のゲートを読む ✓（描画側の修正は tick200 で実証済み ✓）。
+
 **🔎 続き（2026-10-16・R10）: アトラスの供給経路とサイズ不一致を計器で名指し ✓（修正は次 round）**
 - **追加した計器 ✓**: (1) `CELTIUM_MIRROR_COVERAGE_PROGRESS`（tile 被覆率を 20% 刻みで bounded 出力 ✓）、(2) `CELTIUM_DIRECT_SUPPLY what=atlas|lightmap arm=announcement-skip|readback mirror=WxH full=?`（`celtium$establishAtlasImage` の**どちらの腕**を通ったかを名指し ✓）。
 - **実測 ✓**: E2E では **`CELTIUM_DIRECT_SUPPLY` 行が 0** ✗ ＝ **`establishAtlasImage` が一度も呼ばれていない** ✓✗。`-Dceltium.vulkan.textureDiagnostics=true` の `CELTIUM_TEXTURE_DIAG` は **`atlas=353 levels=16 maxLevel=0 minFilter=0 magFilter=0 atlasSize=256x256`** ✗（stub が答える値 ✓）一方、descriptor は **`size=8192x8192`** ✓ ⇒ **backend が教えられているサイズ（256x256）と mirror の実サイズ（8192x8192）が食い違う** ✓✗。`atlasFull=false` は変わらず ✓ ⇒ terrain batch は **refuse**（＝誰も描かない ✓）で下半分が黒 ✓。
