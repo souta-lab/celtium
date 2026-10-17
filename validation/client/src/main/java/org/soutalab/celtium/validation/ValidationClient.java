@@ -6628,7 +6628,7 @@ public final class ValidationClient {
      * world ticks, {@code dumpPresentedMenuTick} needs {@code GuiMainMenu} and a client tick, and the loading phase runs
      * inside {@code Minecraft.startGame} before the first client tick
      * ({@code Minecraft.java:517} -> {@code SplashProgress.drawVanillaScreen} -> {@code drawSplashScreen}). Called
-     * reflectively from the mixin on {@code drawSplashScreen}'s RETURN, because the fixture is a separate mod jar.
+     * reflectively from the mixin on {@code drawSplashScreen}'s HEAD, because the fixture is a separate mod jar.
      * Off unless {@code -Dceltium.validation.dumpPresentedImage=true}, and once per run.
      */
     public static void requestLoadingDump() {

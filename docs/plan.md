@@ -1,8 +1,8 @@
 # Celtium 現状表（唯一の現在状態表）
 
 開発ベース **0.0.4-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
-2026-10-17更新。再監査基点 `c46474aee`、resize追試ソース `f0e02f8a3`（artifactは下記証拠を参照）。
-resize行のみ新規の実機結果。他の行は従来の記録であり、一括再受入ではない。
+2026-10-17更新。再監査基点 `c46474aee`、resize追試ソース `f0e02f8a3`、loading追試ソース `438266524`（artifactは各証拠を参照）。
+resize / loading行のみ新規の実機結果。他の行は従来の記録であり、一括再受入ではない。
 以下は特記なき限り**各leg当時のartifactでの記録**であり、最新HEAD全体の再受入ではない。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
@@ -23,7 +23,7 @@ resize行のみ新規の実機結果。他の行は従来の記録であり、�
 | minimize / restore | 実装済み・受入未完 | 成功（記録） | **未検証** | `gv-cohort-iconify1`はAMDのみ。Intel相当leg未提示 |
 | display list / model | 実装済み（既存報告） | 既存画像報告・本監査未再評価 | 同左 | PR #288系。terrain gateを全entity/TESR画質の保証にしない |
 | Sodium風メニューの半透明下敷き（利用者#3） | 修正実装済み | 既存報告・本監査未再評価 | 同左 | PR #307・[before/after画像](<evidence/sodium-tooltip-backdrop-2026-10-16.png>)。文字重なりまで独立に検証したと広げない |
-| **P0 loadingの進捗/文字/resize（#1/#5）** | **未完・未測定** | 未検証 | 未検証 | world生成後の`early/loading`画像では不足。再開時は本当のloading frameを捕捉する最小手段を選ぶ |
+| **P0 loadingの進捗/文字/resize（#1/#5）** | **未完・文字/制御バーは局所確認** | 局所確認（同一JAR） | 局所確認（同一JAR） | [producer境界の証拠](<evidence/loading-producer-2026-10-17.json>)。world起動中の文字と明示的50%バーを提示PNGで確認（未較正）。自然なworld起動は`progress=-1`で数値バーを要求しない。swapchain再生成時のcapture消失は修正、各GPU 8/8 frame束縛・validation 0件。**loading中resize / Forge起動進捗は未検証**。terrain主gateのPASSEDをloading全体の受入にしない |
 | **P1 FPS / p99（#6）** | **未完・原因の断定を撤回** | 診断値あり | 同条件比較なし | 旧「fixture税なし」flagは無効だった。下記観測を参照し、計測負荷と区間を揃え直す |
 | P1 terrain CPU record / setupTerrain / particles | 計器実装済み・最適化未完 | 診断値あり | 未検証 | `recordRenderPass`内訳は候補。CPU p50と非同期GPUスナップショットだけで律速を確定しない |
 | P1 panorama cost / blur（#2） | 未完 | 交絡あり | 未検証 | `panoramaTimer`の位相差を除く対照が不足。修正効果は未確定 |

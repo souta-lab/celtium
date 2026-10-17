@@ -1,0 +1,1582 @@
+{
+  "schemaVersion": 1,
+  "scope": "LoadingScreenRenderer producer capture and pending-request handover; local visual observations, not a calibrated full loading-screen acceptance gate",
+  "sourceRevision": "43826652431bc70d51682e8be97a7ea4552fde0c",
+  "camera": "N/A: all selected loading captures have worldPresent=false and worldTick=0",
+  "measurementWindow": "clientTick=1, worldTick=0; producer swaps with presentedFrame=2..9, not post-world client ticks",
+  "limitations": [
+    "No loading-time resize test here",
+    "No native Forge startup/mod-loading progress proof",
+    "World fixture PASSED is separate from loading visual observations",
+    "No performance or general cross-GPU pixel-parity claim"
+  ],
+  "findings": [
+    "The client-tick world-load dump cannot observe the synchronous launchIntegratedServer loop.",
+    "Actual LoadingScreenRenderer swaps draw Loading world text; normal world startup passes progress=-1, which requests no numeric bar.",
+    "An explicitly controlled progress=50 case draws both strings and a green 150x6-pixel bar (50x2 logical units at scale 3).",
+    "The pre-handover AMD leg requested eight producer captures but lost the first on VSync-driven wrapper replacement. The candidate preserves all eight on both GPUs.",
+    "currentScreen remains GuiMainMenu during these producer calls; that field alone does not identify the active draw producer."
+  ],
+  "worldGateVsLoading": "The harness process/result PASSED verdicts below apply to the separate calibrated terrain picture, not to a calibrated loading gate.",
+  "legs": [
+    {
+      "leg": "loading-producer1-amd",
+      "gpu": "amd",
+      "source": {
+        "head": "53134b9055c5c21b6f0ffbf445d1e341eaa1e406",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-producer-probe1/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "d81e08692dd8405c841d03cba7f087abb165289e33c8c4dab924f244ae48d684"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-producer-probe1/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "df7053d39896bb96768378972899b6d612fb24d401dbd3d3952f68f024061913"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "5dc25550a7b840abcbd7284bd1426e03256b49dda4c03a4216b30bebb74bed4d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-loading-producer1-amd/framedump",
+        "-Dceltium.validation.dumpLoadingProgress=true",
+        "-Dceltium.validation.probeLoadingProgress=true",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": null,
+        "MESA_VK_DEVICE_SELECT": null
+      },
+      "nativeDeviceLine": "[17:18:24] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.VulkanContext:matchPhysicalDevice:1816]: [Celtium] CELTIUM_NATIVE_DEVICE name=\"AMD Radeon RX 6400 (RADV NAVI24)\" uuid=00000000030000000000000000000000 matchedOpenGl=false",
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 94.82988460900015,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-loading-producer1-amd/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1cf23e17e62d-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "wrapperWorldResult": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "d81e08692dd8405c841d03cba7f087abb165289e33c8c4dab924f244ae48d684"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "df7053d39896bb96768378972899b6d612fb24d401dbd3d3952f68f024061913"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1cf23e17e62d-66d3c617-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 95.68704180499844,
+        "leg": "loading-producer1-amd"
+      },
+      "worldGate": {
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true
+      },
+      "requestedProducerFrames": 8,
+      "fulfilledProducerFrames": 7,
+      "missingProducerFrames": [
+        "loading-progress-1"
+      ],
+      "captures": [
+        {
+          "stage": "loading-progress-1",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": true,
+            "progress": -1,
+            "title": "Celtium loading probe",
+            "message": "Controlled renderer probe (not world progress)",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 1
+          },
+          "fulfilled": false
+        },
+        {
+          "stage": "loading-progress-2",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": true,
+            "progress": 50,
+            "title": "Celtium loading probe",
+            "message": "Controlled renderer probe (not world progress)",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 2
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1cf23e17e62d-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-2",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-2-run-1cf23e17e62d-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-2-run-1cf23e17e62d-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-2-run-1cf23e17e62d-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 3,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -319238568,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 2,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225142308
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-producer1-amd/screenshots/celtium-presented-loading-progress-2-run-1cf23e17e62d-66d3c617-kept.png",
+            "sha256": "20845994faa469e1c7838ea08d22f12d58ff3a0e3d8fa1e934d6a9f471c1b146"
+          }
+        },
+        {
+          "stage": "loading-progress-3",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 3
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1cf23e17e62d-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-3",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-3-run-1cf23e17e62d-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-3-run-1cf23e17e62d-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-3-run-1cf23e17e62d-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 4,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 500995935,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 3,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225142367
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-producer1-amd/screenshots/celtium-presented-loading-progress-3-run-1cf23e17e62d-66d3c617-kept.png",
+            "sha256": "7da1ed0ff3781680ae95cacaaaab0fe8c9e5f31e858777f57900a2f9e53605af"
+          }
+        },
+        {
+          "stage": "loading-progress-4",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 4
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1cf23e17e62d-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-4",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-4-run-1cf23e17e62d-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-4-run-1cf23e17e62d-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-4-run-1cf23e17e62d-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 5,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 4,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225142426
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-producer1-amd/screenshots/celtium-presented-loading-progress-4-run-1cf23e17e62d-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-5",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 5
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1cf23e17e62d-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-5",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-5-run-1cf23e17e62d-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-5-run-1cf23e17e62d-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-5-run-1cf23e17e62d-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 6,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 5,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225142485
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-producer1-amd/screenshots/celtium-presented-loading-progress-5-run-1cf23e17e62d-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-6",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 6
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1cf23e17e62d-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-6",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-6-run-1cf23e17e62d-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-6-run-1cf23e17e62d-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-6-run-1cf23e17e62d-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 7,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 6,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225142543
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-producer1-amd/screenshots/celtium-presented-loading-progress-6-run-1cf23e17e62d-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-7",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 7
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1cf23e17e62d-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-7",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-7-run-1cf23e17e62d-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-7-run-1cf23e17e62d-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-7-run-1cf23e17e62d-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 8,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 7,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225142604
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-producer1-amd/screenshots/celtium-presented-loading-progress-7-run-1cf23e17e62d-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-8",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 8
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1cf23e17e62d-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-8",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-8-run-1cf23e17e62d-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-8-run-1cf23e17e62d-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-8-run-1cf23e17e62d-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 9,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 8,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225142663
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-producer1-amd/screenshots/celtium-presented-loading-progress-8-run-1cf23e17e62d-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        }
+      ],
+      "rawEvidence": [
+        {
+          "path": ".gv-verify/loading-producer1-amd-manifest.json",
+          "sha256": "477c5d0fd22778bce6987378da4c9aaf9dc745cbbe90efe2bbb128b73b0558a3"
+        },
+        {
+          "path": ".gv-verify/loading-producer1-amd-lock.json",
+          "sha256": "3312f4df14fea261ec7de611f97498d9733d5fea6ba8cc2a524d5d8248b5f950"
+        },
+        {
+          "path": ".gv-verify/loading-producer1-amd-result.json",
+          "sha256": "46472336c40f473f780cb4e01ab6b1d6cb95417450c8814ea466ae9525d4fa8f"
+        },
+        {
+          "path": ".gv-verify/run-loading-producer1-amd/validation-process.json",
+          "sha256": "29f5e73f18bee8653e3b12ba5f35365435a9dcc1fa1d3029ad8a279fc81cb9b2"
+        },
+        {
+          "path": ".gv-verify/run-loading-producer1-amd/logs/celtium-validation.json",
+          "sha256": "08c4dd510e8dc440a1b55bdd046b2d09dabfe8938c9cfae07f2f01abd3eec64b"
+        },
+        {
+          "path": ".gv-verify/run-loading-producer1-amd/validation-console.log",
+          "sha256": "9cbc17bb560841cdf6a1680567c2b0338e5b2c8f278261662755539f2700d349"
+        }
+      ]
+    },
+    {
+      "leg": "loading-handover2-amd",
+      "gpu": "amd",
+      "source": {
+        "head": "43826652431bc70d51682e8be97a7ea4552fde0c",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-producer-handover2/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "fb991fdaac80a92063f35709cc87c624d62eec5a925ef537646339a848ac3bdc"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-producer-handover2/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "3e5dd6e4eb97915b2294c584b7cdb001aa8f3c846faf8e78725cf5f12ed5a654"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "5dc25550a7b840abcbd7284bd1426e03256b49dda4c03a4216b30bebb74bed4d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-loading-handover2-amd/framedump",
+        "-Dceltium.validation.dumpLoadingProgress=true",
+        "-Dceltium.validation.probeLoadingProgress=true",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": null,
+        "MESA_VK_DEVICE_SELECT": null
+      },
+      "nativeDeviceLine": "[17:26:28] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.VulkanContext:matchPhysicalDevice:1816]: [Celtium] CELTIUM_NATIVE_DEVICE name=\"AMD Radeon RX 6400 (RADV NAVI24)\" uuid=00000000030000000000000000000000 matchedOpenGl=false",
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 94.43585586500194,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-loading-handover2-amd/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1d62cc2a930a-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "wrapperWorldResult": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "fb991fdaac80a92063f35709cc87c624d62eec5a925ef537646339a848ac3bdc"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "3e5dd6e4eb97915b2294c584b7cdb001aa8f3c846faf8e78725cf5f12ed5a654"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1d62cc2a930a-66d3c617-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 95.16666821899707,
+        "leg": "loading-handover2-amd"
+      },
+      "worldGate": {
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true
+      },
+      "requestedProducerFrames": 8,
+      "fulfilledProducerFrames": 8,
+      "missingProducerFrames": [],
+      "captures": [
+        {
+          "stage": "loading-progress-1",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": true,
+            "progress": -1,
+            "title": "Celtium loading probe",
+            "message": "Controlled renderer probe (not world progress)",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 1
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-1",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-1-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-1-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-1-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 2,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1356514888,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 1,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225626717
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-1-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "bf4f66a23e0bba0d6a94d768aefa51d6e7c346fa43e28448b4aecfdbc0b07f65"
+          },
+          "colourObservation": {
+            "notACalibratedGate": true,
+            "greenDefinition": "g>200, g-r>45, g-b>45, abs(r-b)<=3",
+            "greenPixelCount": 0,
+            "greenBoundingBoxExclusive": null
+          },
+          "preservedImage": "docs/evidence/loading-controlled-indeterminate-2026-10-17.png"
+        },
+        {
+          "stage": "loading-progress-2",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": true,
+            "progress": 50,
+            "title": "Celtium loading probe",
+            "message": "Controlled renderer probe (not world progress)",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 2
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-2",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-2-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-2-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-2-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 3,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -319238568,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 2,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225626772
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-2-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "20845994faa469e1c7838ea08d22f12d58ff3a0e3d8fa1e934d6a9f471c1b146"
+          },
+          "colourObservation": {
+            "notACalibratedGate": true,
+            "greenDefinition": "g>200, g-r>45, g-b>45, abs(r-b)<=3",
+            "greenPixelCount": 900,
+            "greenBoundingBoxExclusive": [
+              489,
+              408,
+              639,
+              414
+            ]
+          },
+          "preservedImage": "docs/evidence/loading-controlled-50-2026-10-17.png"
+        },
+        {
+          "stage": "loading-progress-3",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 3
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-3",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-3-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-3-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-3-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 4,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 500995935,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 3,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225626825
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-3-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "7da1ed0ff3781680ae95cacaaaab0fe8c9e5f31e858777f57900a2f9e53605af"
+          }
+        },
+        {
+          "stage": "loading-progress-4",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 4
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-4",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-4-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-4-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-4-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 5,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 4,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225626878
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-4-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          },
+          "colourObservation": {
+            "notACalibratedGate": true,
+            "greenDefinition": "g>200, g-r>45, g-b>45, abs(r-b)<=3",
+            "greenPixelCount": 0,
+            "greenBoundingBoxExclusive": null
+          },
+          "preservedImage": "docs/evidence/loading-native-world-2026-10-17.png"
+        },
+        {
+          "stage": "loading-progress-5",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 5
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-5",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-5-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-5-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-5-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 6,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 5,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225626932
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-5-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-6",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 6
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-6",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-6-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-6-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-6-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 7,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 6,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225626984
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-6-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-7",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 7
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-7",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-7-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-7-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-7-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 8,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 7,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225627036
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-7-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-8",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 8
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d62cc2a930a-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-8",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-8-run-1d62cc2a930a-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-8-run-1d62cc2a930a-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-8-run-1d62cc2a930a-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 9,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 8,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225627088
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-amd/screenshots/celtium-presented-loading-progress-8-run-1d62cc2a930a-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        }
+      ],
+      "rawEvidence": [
+        {
+          "path": ".gv-verify/loading-handover2-amd-manifest.json",
+          "sha256": "1ebac84ab36c79d605bbed63c05133ffc51a79a1088bfa631ebfca670359d7f0"
+        },
+        {
+          "path": ".gv-verify/loading-handover2-amd-lock.json",
+          "sha256": "32444140b1ca8f041b9592da9c321f77bc1b0554eb71b18d13fc7f2b7f94fe92"
+        },
+        {
+          "path": ".gv-verify/loading-handover2-amd-result.json",
+          "sha256": "c37f387291e2d81fb04fb8361da29837941e4daeefe8ee5f64d20de271541712"
+        },
+        {
+          "path": ".gv-verify/run-loading-handover2-amd/validation-process.json",
+          "sha256": "3bafe8862d83413d8ba408e15577c01a61f0f758ad6d76c240d09b51dc6e09c2"
+        },
+        {
+          "path": ".gv-verify/run-loading-handover2-amd/logs/celtium-validation.json",
+          "sha256": "73cbad4e5ca614cb1ed1ebbda128c531aae0f1996161b404ccb91d8b0b412e1d"
+        },
+        {
+          "path": ".gv-verify/run-loading-handover2-amd/validation-console.log",
+          "sha256": "a28ce0bc0f9c3a42d655100cfb5e3feb0c8344ad33170ac009048471c9f75039"
+        }
+      ]
+    },
+    {
+      "leg": "loading-handover2-intel",
+      "gpu": "intel",
+      "source": {
+        "head": "43826652431bc70d51682e8be97a7ea4552fde0c",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-producer-handover2/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "fb991fdaac80a92063f35709cc87c624d62eec5a925ef537646339a848ac3bdc"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-producer-handover2/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "3e5dd6e4eb97915b2294c584b7cdb001aa8f3c846faf8e78725cf5f12ed5a654"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "5dc25550a7b840abcbd7284bd1426e03256b49dda4c03a4216b30bebb74bed4d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-loading-handover2-intel/framedump",
+        "-Dceltium.validation.dumpLoadingProgress=true",
+        "-Dceltium.validation.probeLoadingProgress=true",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": "pci-0000_00_02_0!",
+        "MESA_VK_DEVICE_SELECT": null
+      },
+      "nativeDeviceLine": "[17:28:03] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.VulkanContext:matchPhysicalDevice:1816]: [Celtium] CELTIUM_NATIVE_DEVICE name=\"Intel(R) UHD Graphics 630 (CFL GT2)\" uuid=8680923e000000000002000000000000 matchedOpenGl=false",
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 92.77289552100046,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-loading-handover2-intel/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1d7906597bb6-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "nativeDeviceUuid": "8680923e000000000002000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 1,
+          "name": "Intel(R) UHD Graphics 630 (CFL GT2)",
+          "apiVersion": "1.4.354",
+          "deviceType": 1
+        }
+      },
+      "wrapperWorldResult": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "fb991fdaac80a92063f35709cc87c624d62eec5a925ef537646339a848ac3bdc"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "3e5dd6e4eb97915b2294c584b7cdb001aa8f3c846faf8e78725cf5f12ed5a654"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1d7906597bb6-66d3c617-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 93.51658709600088,
+        "leg": "loading-handover2-intel"
+      },
+      "worldGate": {
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true
+      },
+      "requestedProducerFrames": 8,
+      "fulfilledProducerFrames": 8,
+      "missingProducerFrames": [],
+      "captures": [
+        {
+          "stage": "loading-progress-1",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": true,
+            "progress": -1,
+            "title": "Celtium loading probe",
+            "message": "Controlled renderer probe (not world progress)",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 1
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-1",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-1-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-1-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-1-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 2,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1356514888,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 1,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225720584
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-1-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "bf4f66a23e0bba0d6a94d768aefa51d6e7c346fa43e28448b4aecfdbc0b07f65"
+          },
+          "colourObservation": {
+            "notACalibratedGate": true,
+            "greenDefinition": "g>200, g-r>45, g-b>45, abs(r-b)<=3",
+            "greenPixelCount": 0,
+            "greenBoundingBoxExclusive": null
+          },
+          "preservedImage": "docs/evidence/loading-controlled-indeterminate-2026-10-17.png"
+        },
+        {
+          "stage": "loading-progress-2",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": true,
+            "progress": 50,
+            "title": "Celtium loading probe",
+            "message": "Controlled renderer probe (not world progress)",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 2
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-2",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-2-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-2-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-2-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 3,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -319238568,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 2,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225720680
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-2-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "20845994faa469e1c7838ea08d22f12d58ff3a0e3d8fa1e934d6a9f471c1b146"
+          },
+          "colourObservation": {
+            "notACalibratedGate": true,
+            "greenDefinition": "g>200, g-r>45, g-b>45, abs(r-b)<=3",
+            "greenPixelCount": 900,
+            "greenBoundingBoxExclusive": [
+              489,
+              408,
+              639,
+              414
+            ]
+          },
+          "preservedImage": "docs/evidence/loading-controlled-50-2026-10-17.png"
+        },
+        {
+          "stage": "loading-progress-3",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 3
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-3",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-3-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-3-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-3-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 4,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 500995935,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 3,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225720747
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-3-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "7da1ed0ff3781680ae95cacaaaab0fe8c9e5f31e858777f57900a2f9e53605af"
+          }
+        },
+        {
+          "stage": "loading-progress-4",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 4
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-4",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-4-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-4-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-4-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 5,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 4,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225720816
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-4-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          },
+          "colourObservation": {
+            "notACalibratedGate": true,
+            "greenDefinition": "g>200, g-r>45, g-b>45, abs(r-b)<=3",
+            "greenPixelCount": 0,
+            "greenBoundingBoxExclusive": null
+          },
+          "preservedImage": "docs/evidence/loading-native-world-2026-10-17.png"
+        },
+        {
+          "stage": "loading-progress-5",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 5
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-5",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-5-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-5-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-5-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 6,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 5,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225720879
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-5-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-6",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 6
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-6",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-6-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-6-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-6-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 7,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 6,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225720937
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-6-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-7",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 7
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-7",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-7-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-7-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-7-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 8,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 7,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225721010
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-7-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        },
+        {
+          "stage": "loading-progress-8",
+          "producer": {
+            "producer": "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay",
+            "controlledProbe": false,
+            "progress": -1,
+            "title": "Loading world",
+            "message": "",
+            "clientTick": 1,
+            "worldTick": 0,
+            "worldPresent": false,
+            "windowSize": "1280x720",
+            "screen": "net.minecraft.client.gui.GuiMainMenu",
+            "presentedFramesAtRequest": 8
+          },
+          "fulfilled": true,
+          "identity": {
+            "runId": "run-1d7906597bb6-66d3c617",
+            "scene": "terrain",
+            "stage": "loading-progress-8",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-loading-progress-8-run-1d7906597bb6-66d3c617-kept.png",
+            "requestedImage": "screenshots/celtium-presented-loading-progress-8-run-1d7906597bb6-66d3c617.png",
+            "keptFrom": "screenshots/celtium-presented-loading-progress-8-run-1d7906597bb6-66d3c617.png",
+            "worldTick": 0,
+            "worldFrames": 0,
+            "presentedFrame": 9,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 1404381377,
+            "requestedAtTick": 0,
+            "requestedWorldFrames": 0,
+            "requestedPresentedFrame": 8,
+            "completedAtTick": 0,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792225721075
+          },
+          "image": {
+            "path": ".gv-verify/run-loading-handover2-intel/screenshots/celtium-presented-loading-progress-8-run-1d7906597bb6-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          }
+        }
+      ],
+      "rawEvidence": [
+        {
+          "path": ".gv-verify/loading-handover2-intel-manifest.json",
+          "sha256": "dc01bc304bf8311d419c8738d93514eed3090fb5af4d4f67ea6597dff7c6c127"
+        },
+        {
+          "path": ".gv-verify/loading-handover2-intel-lock.json",
+          "sha256": "defea64e23b44b922b7844cac237aba71b2c075f3cb79e603cb2ea94ce4387ba"
+        },
+        {
+          "path": ".gv-verify/loading-handover2-intel-result.json",
+          "sha256": "84796a8c395d59d05ef140d8da120027afb4fb7308511f5484f1669ae5c5968d"
+        },
+        {
+          "path": ".gv-verify/run-loading-handover2-intel/validation-process.json",
+          "sha256": "700e80612e384ef070c947d0c685e75bb39c320e7922d59a7f26d8de74084c13"
+        },
+        {
+          "path": ".gv-verify/run-loading-handover2-intel/logs/celtium-validation.json",
+          "sha256": "060fb4a517a855c4fd81d13fedd7253c4f4c9030c6fc4f9c2e649e4e916d5e2d"
+        },
+        {
+          "path": ".gv-verify/run-loading-handover2-intel/validation-console.log",
+          "sha256": "493900872ab15ab042aaf46fa617e21213a9391fa017427d1d9e5004df31404e"
+        }
+      ]
+    }
+  ],
+  "fixturePayloadControl": {
+    "allClassPayloadsIdenticalAcrossBaselineAndCandidate": true,
+    "classCount": 18,
+    "classCensusSha256": "190cdd6823b7cd294e5614b2a649f683eceeb591e68bda0efbe40b297eb4ae4b",
+    "note": "Archive hashes differ; comparison verifies every class payload, not only source text."
+  },
+  "preservedImages": [
+    {
+      "path": "docs/evidence/loading-controlled-indeterminate-2026-10-17.png",
+      "sha256": "bf4f66a23e0bba0d6a94d768aefa51d6e7c346fa43e28448b4aecfdbc0b07f65",
+      "note": "Selected AMD and Intel PNG payloads byte-identical; one copy preserves both observations."
+    },
+    {
+      "path": "docs/evidence/loading-controlled-50-2026-10-17.png",
+      "sha256": "20845994faa469e1c7838ea08d22f12d58ff3a0e3d8fa1e934d6a9f471c1b146",
+      "note": "Selected AMD and Intel PNG payloads byte-identical; one copy preserves both observations."
+    },
+    {
+      "path": "docs/evidence/loading-native-world-2026-10-17.png",
+      "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546",
+      "note": "Selected AMD and Intel PNG payloads byte-identical; one copy preserves both observations."
+    }
+  ]
+}

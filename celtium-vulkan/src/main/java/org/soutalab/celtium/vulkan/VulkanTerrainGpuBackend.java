@@ -12631,10 +12631,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
-     * Writes the frame the swapchain last received to a PNG.
+     * Requests a PNG of the next acquired/presented image, not the last-presented image.
      * <p>
-     * The GL-independent image: the game's screenshot reads OpenGL's default framebuffer, which is why the GL composite
-     * cannot be removed while that is the only picture available. Written at the capture so it belongs to the same frame.
+     * Readback and frame attribution belong to the present path. Requests survive lazy creation and wrapper replacement;
+     * accepting one does not mean its PNG has been written. Never read a swapchain image after presentation released it.
      */
     public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
         if (path == null) {
