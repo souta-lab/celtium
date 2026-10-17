@@ -319,6 +319,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glTexEnviv", R_VOID, SEM_TEX_ENV_I, A_INT, A_INT, A_PTR);
         fn("glTexEnvf", R_VOID, SEM_TEX_ENV_F, A_INT, A_INT, A_FLOAT);
         fn("glTexEnvfv", R_VOID, SEM_TEX_ENV_FV, A_INT, A_INT, A_PTR);
+        // LWJGL2's GlStateManager.glTexEnv(int,int,FloatBuffer) arrives under the bare name, which is the fv variant:
+        // RenderLivingBase.setBrightness writes the hurt/team env colour through exactly this call, and while it sat
+        // in the noop list texEnvColor stayed zero - the combine fired but the mix factor was black at 0.
+        fn("glTexEnv", R_VOID, SEM_TEX_ENV_FV, A_INT, A_INT, A_PTR);
         fn("glGetTexEnvi", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
         fn("glGetTexEnviv", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
         fn("glGetTexEnvfv", R_VOID, SEM_GET_TEX_ENV_FV, A_INT, A_INT, A_PTR);
@@ -467,7 +471,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glCopyBufferSubData", "glFlushMappedBufferRange", "glGetBufferSubData",
                 "glTexCoordPointer", "glColorPointer", "glNormalPointer", "glIndexPointer", "glEdgeFlagPointer",
                 "glSecondaryColorPointer", "glFogCoordPointer", "glInterleavedArrays", "glArrayElement",
-                "glDrawBuffer", "glRects", "glClipPlane", "glTexEnv", "glSecondaryColor3fv", "glColor4fv",
+                "glDrawBuffer", "glRects", "glClipPlane", "glSecondaryColor3fv", "glColor4fv",
                 "glDepthBoundsEXT", "glMultiDrawArraysIndirect", "glMultiDrawElementsIndirect", "glDrawArraysIndirect",
                 "glDrawElementsIndirect", "glDispatchCompute", "glMemoryBarrier", "glTextureBarrier",
                 "glFramebufferParameteri", "glNamedFramebufferTexture",
@@ -866,6 +870,75 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         stub.compilingList = 0;
         stub.compilingListMode = 0;
+    }
+
+    /**
+     * The texture-env int write, reached from the transformer layer: lwjglx delegates the public GL11 form to the
+     * real LWJGL3 {@code org.lwjgl.opengl.GL11}, whose {@code ngl*} natives the GL-less native transformer replaces
+     * - without an entry point here the writes die in the replaced body and hurt-tint's COMBINE env never lands
+     * (measured on legs plain-hurt3/4: zero CELTIUM_ENV_WRITE despite the hurt zombie rendering).
+     */
+    public static void celtium$glTexEnvi(int target, int pname, int param) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$setTexEnvInt(target, pname, param);
+    }
+
+    /** The float form of the same write, for {@code nglTexEnvf}; enum-valued pnames round, as GL does. */
+    public static void celtium$glTexEnvf(int target, int pname, float param) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$setTexEnvInt(target, pname, Math.round(param));
+    }
+
+    /** The pointer forms, {@code nglTexEnvfv}/{@code nglTexEnviv}: a float colour or a first-element enum. */
+    public static void celtium$glTexEnvPtr(int target, int pname, long values) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$setTexEnvFloats(target, pname, values);
+    }
+
+    /** The int read-back forms, {@code nglGetTexEnvi}/{@code nglGetTexEnviv}: one int through the out pointer. */
+    public static void celtium$glGetTexEnvInt(int target, int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$getTexEnvInt(target, pname, out);
+    }
+
+    /** The float read-back form, {@code nglGetTexEnvfv}: four floats through the out pointer. */
+    public static void celtium$glGetTexEnvFloats(int target, int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.celtium$getTexEnvFloats(target, pname, out);
+    }
+
+    /** {@code nglGetTexEnvi}'s int-returning form: the recorded int on the active unit, 0 when no stub is installed. */
+    public static int celtium$glGetTexEnvI(int target, int pname) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return 0;
+        }
+        int unit = stub.celtium$texUnit();
+        if (pname == GL_COMBINE_RGB) {
+            return stub.texEnvCombineRgb[unit];
+        }
+        if (pname == GL_COMBINE_ALPHA) {
+            return stub.texEnvCombineAlpha[unit];
+        }
+        if (pname == GL_TEXTURE_ENV_MODE) {
+            return stub.texEnvMode[unit] == 0 ? GL_MODULATE : stub.texEnvMode[unit];
+        }
+        return 0;
     }
 
     /**
@@ -4556,12 +4629,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_TEXTURE_ENV = 0x2300;
     private static final int GL_TEXTURE_ENV_MODE = 0x2200;
     private static final int GL_COMBINE_RGB = 0x8571;
+    private static final int GL_INTERPOLATE = 0x8575;
     private static final int GL_COMBINE_ALPHA = 0x8572;
     private static final int GL_TEXTURE_ENV_COLOR = 0x2201;
     private static final int GL_MODULATE = 0x2100;
     /** One mode per unit; the default is the fixed pipeline's MODULATE. */
     private final int[] texEnvMode = new int[32];
     private final int[] texEnvCombineRgb = new int[32];
+    private int texEnvWriteLogged;
     private final int[] texEnvCombineAlpha = new int[32];
     /** RGBA environment colour per unit; the default is transparent black, as GL's is. */
     private final float[][] texEnvColor = new float[32][4];
@@ -4581,6 +4656,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 break;
             case GL_COMBINE_RGB:
                 this.texEnvCombineRgb[unit] = param;
+                // The hurt-tint write is COMBINE_RGB=INTERPOLATE; if this line never appears in a leg that rendered
+                // a hurt entity, the env write never reached the stub and the read side is blameless.
+                if (param == GL_INTERPOLATE && this.texEnvWriteLogged < 6) {
+                    this.texEnvWriteLogged++;
+                    System.out.println("[Celtium] CELTIUM_ENV_WRITE unit=" + unit
+                            + " pname=COMBINE_RGB value=INTERPOLATE");
+                }
                 break;
             case GL_COMBINE_ALPHA:
                 this.texEnvCombineAlpha[unit] = param;

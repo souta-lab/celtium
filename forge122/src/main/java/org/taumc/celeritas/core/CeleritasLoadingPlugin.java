@@ -46,7 +46,10 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
 
         return new String[] {"org.taumc.celeritas.core.CeltiumGllessWindowTransformer",
                 "org.taumc.celeritas.core.CeltiumGllessNativeTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessSplashTransformer"};
+                "org.taumc.celeritas.core.CeltiumGllessSplashTransformer",
+                // ProgressManager is defined by mod discovery before any mixin pass can register, so the loading
+                // overlay's pulses are injected here rather than through a mixin that could never apply.
+                "org.taumc.celeritas.core.CeltiumProgressTransformer"};
     }
 
     @Override

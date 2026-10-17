@@ -1869,6 +1869,9 @@ public final class ValidationClient {
     private int celtium$transferSpawnDeferrals;
     /** The renderer-less entity of {@code celtium.validation.rendererlessEntities}, spawned once at tick 60. */
     private boolean celtium$rendererlessSpawned;
+    /** The pinned slime the hurt probe keeps in "just hit" state; null when the probe is off. */
+    private net.minecraft.entity.EntityLivingBase celtium$hurtSlime;
+    private boolean celtium$hurtSpawned;
     private boolean celtium$wallBuilt;
     private boolean celtium$heldItemSet;
     private boolean celtium$jeiClosed;
@@ -3666,6 +3669,41 @@ public final class ValidationClient {
                         net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
+            }
+            if (worldTicks >= 60 && (!celtium$hurtSpawned || celtium$hurtSlime != null && celtium$hurtSlime.isDead)
+                    && Boolean.getBoolean("celtium.validation.hurtEntity")) {
+                boolean respawn = celtium$hurtSpawned;
+                celtium$hurtSpawned = true;
+                // A zombie pinned mid-frame and kept permanently "just hit": RenderLivingBase.setBrightness drives
+                // the fixed-function env-combine path every frame, so a leg measures the hurt tint instead of
+                // hoping an unscripted mob got hit inside the capture window. The pose is the run's own look ray,
+                // not a fixed offset: the earlier fixed-offset spawn sat outside the frustum in the pack world, the
+                // ray hits the look-at block at ~1.6 m so the ray itself suffocates a spawn (slimes also died on
+                // their first tick regardless - respawned every tick in plain-hurt1), while a zombie under the same
+                // pinning survives - the keepEntities cohort spawned this way does - and still exercises the same
+                // RenderLivingBase env-combine path.
+                net.minecraft.util.math.Vec3d eyes = mc.player.getPositionEyes(1.0F);
+                net.minecraft.util.math.Vec3d look = mc.player.getLook(1.0F);
+                net.minecraft.entity.monster.EntityZombie zombie =
+                        new net.minecraft.entity.monster.EntityZombie(mc.world);
+                zombie.setPosition(eyes.x + look.x * 1.5D, eyes.y + look.y * 1.5D - 0.6D,
+                        eyes.z + look.z * 1.5D);
+                zombie.motionX = 0.0D;
+                zombie.motionY = 0.0D;
+                zombie.motionZ = 0.0D;
+                zombie.setNoGravity(true);
+                zombie.setNoAI(true);
+                zombie.enablePersistence();
+                boolean added = mc.world.spawnEntity(zombie);
+                celtium$hurtSlime = zombie;
+                System.out.println("[Celtium] CELTIUM_HURT_SPAWNED tick=" + worldTicks + (respawn ? " respawn" : "")
+                        + " added=" + added
+                        + " pos=" + (int) zombie.posX + "," + (int) zombie.posY + "," + (int) zombie.posZ);
+            }
+            if (celtium$hurtSlime != null && !celtium$hurtSlime.isDead) {
+                // Vanilla counts hurtTime down once per tick; holding it just above zero keeps the overlay on for
+                // the whole scene instead of for the ten ticks a real hit gives.
+                celtium$hurtSlime.hurtTime = 9;
             }
             if (worldTicks >= 60 && !celtium$rendererlessSpawned
                     && Boolean.getBoolean("celtium.validation.rendererlessEntities")) {
@@ -6946,6 +6984,35 @@ public final class ValidationClient {
             // A dump that cannot be requested is a measurement lost, never a frame lost.
         }
     }
+
+    /**
+     * Latches a presented-frame dump for the GL-less mod-loading overlay.
+     * <p>
+     * The {@code loading} stage is requested at {@code drawSplashScreen}'s head, so it always lands on the first
+     * presented frame - which is vanilla's own logo-only blit. The progress overlay the renderer draws from
+     * {@code ProgressManager} steps presents later frames, and this request captures one of those: called
+     * reflectively from the overlay after a frame that drew bars, so the picture it produces carries the progress
+     * view rather than the static logo. Once per run; off unless
+     * {@code -Dceltium.validation.dumpPresentedImage=true}.
+     */
+    public static void requestModLoadingDump() {
+        ValidationClient active = instance;
+        if (celtium$modLoadingDumpRequested || active == null
+                || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            return;
+        }
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null) {
+                return;
+            }
+            celtium$modLoadingDumpRequested = true;
+            active.celtium$requestPresentedDump(mc, "mod-loading");
+        } catch (Throwable error) {
+            // A dump that cannot be requested is a measurement lost, never a frame lost.
+        }
+    }
+    private static boolean celtium$modLoadingDumpRequested;
 
     /** Keep one non-empty native title as the pre-resize control; attempt the transition exactly once. */
     private boolean celtium$resizeLoadingFrame(String title) {

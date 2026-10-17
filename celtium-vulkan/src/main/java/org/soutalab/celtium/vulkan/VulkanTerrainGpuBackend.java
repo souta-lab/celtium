@@ -1641,6 +1641,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int injectedDeviceLosses;
     /** Caps the env-combine report so a hurt mob does not log every frame. */
     private int envCombineLogged;
+    private int envCombineSeenLogged;
+    private final int[] envCombineSeen = new int[4];
     /** The texture matrix the currently open group was accepted under; {@code null} for identity. */
     private float[] currentGroupTexMatrix;
     /** Groups drawn under a non-identity texture matrix - the glint and the renderer's own transforms. */
@@ -3637,24 +3639,43 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private float[] celtium$envCombineColor() {
         try {
             int active = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-            org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE1);
-            int combine = org.lwjgl.opengl.GL11.glGetTexEnvi(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
-                    org.lwjgl.opengl.GL13.GL_COMBINE_RGB);
-            float[] color = null;
-            if (combine == org.lwjgl.opengl.GL13.GL_INTERPOLATE) {
-                java.nio.FloatBuffer env = org.lwjgl.BufferUtils.createFloatBuffer(4);
-                org.lwjgl.opengl.GL11.glGetTexEnvfv(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
-                        org.lwjgl.opengl.GL11.GL_TEXTURE_ENV_COLOR, env);
-                color = new float[] { env.get(0), env.get(1), env.get(2), env.get(3) };
-                if (this.envCombineLogged < 6) {
-                    this.envCombineLogged++;
-                    System.out.println("[Celtium] CELTIUM_ENV_COMBINE rgba="
-                            + round3(color[0]) + "," + round3(color[1]) + "," + round3(color[2])
-                            + "," + round3(color[3]));
+            // Scan the units, not only the lightmap unit the vanilla code intends: GlStateManager.setActiveTexture
+            // short-circuits on its own cached unit while direct OpenGlHelper.setActiveTexture calls move the real
+            // state under it, so setBrightness's unit-1 texenv writes can land on unit 0 instead - measured, a hurt
+            // entity produced COMBINE_RGB=INTERPOLATE on unit 0 and never on unit 1. The fixed pipeline evaluates
+            // whatever the writes actually configured; unit 0 is in the chain too and still tints. The colour comes
+            // from the unit that carries the combine, because the env-colour write follows the same active unit.
+            // A bounded histogram of what the units actually carry at model-list replay, so "the hurt entity
+            // rendered but did not tint" separates "setBrightness wrote nothing" (all reads 0) from "INTERPOLATE
+            // landed on a unit the scan missed" (present on unit n) without another leg.
+            int[] seen = this.envCombineSeen;
+            for (int unit = 0; unit < 4; unit++) {
+                org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE0 + unit);
+                int combine = org.lwjgl.opengl.GL11.glGetTexEnvi(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
+                        org.lwjgl.opengl.GL13.GL_COMBINE_RGB);
+                seen[unit] = combine;
+                if (combine == org.lwjgl.opengl.GL13.GL_INTERPOLATE) {
+                    java.nio.FloatBuffer env = org.lwjgl.BufferUtils.createFloatBuffer(4);
+                    org.lwjgl.opengl.GL11.glGetTexEnvfv(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
+                            org.lwjgl.opengl.GL11.GL_TEXTURE_ENV_COLOR, env);
+                    float[] color = new float[] { env.get(0), env.get(1), env.get(2), env.get(3) };
+                    if (this.envCombineLogged < 6) {
+                        this.envCombineLogged++;
+                        System.out.println("[Celtium] CELTIUM_ENV_COMBINE unit=" + unit + " rgba="
+                                + round3(color[0]) + "," + round3(color[1]) + "," + round3(color[2])
+                                + "," + round3(color[3]));
+                    }
+                    org.lwjgl.opengl.GL13.glActiveTexture(active);
+                    return color;
                 }
             }
+            if (this.envCombineSeenLogged < 20 && (seen[0] != 0 || seen[1] != 0 || seen[2] != 0 || seen[3] != 0)) {
+                this.envCombineSeenLogged++;
+                System.out.println("[Celtium] CELTIUM_ENV_SEEN u0=" + seen[0] + " u1=" + seen[1]
+                        + " u2=" + seen[2] + " u3=" + seen[3]);
+            }
             org.lwjgl.opengl.GL13.glActiveTexture(active);
-            return color;
+            return null;
         } catch (RuntimeException | LinkageError error) {
             return null;
         }

@@ -293,6 +293,55 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // The texture-env family, both directions. RenderLivingBase.setBrightness writes the hurt overlay through
+        // GlStateManager.glTexEnv*, lwjglx delegates those to these natives, and the generic rewrite below would drop
+        // them - measured on legs plain-hurt3/plain-hurt4: a hurt zombie rendered untinted while the stub recorded
+        // zero COMBINE writes. Routed to the stub's per-unit state instead.
+        if ("glTexEnvi".equals(name) && "(III)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.ILOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glTexEnvi", "(III)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glTexEnvf".equals(name) && "(IIF)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.FLOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glTexEnvf", "(IIF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (("nglTexEnviv".equals(name) || "nglTexEnvfv".equals(name)) && "(IIJ)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glTexEnvPtr", "(IIJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("nglGetTexEnviv".equals(name) && "(IIJ)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetTexEnvInt", "(IIJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("nglGetTexEnvfv".equals(name) && "(IIJ)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetTexEnvFloats", "(IIJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         // The remaining single-value get functions: the caller reads its own buffer, so a no-op would leave
         // uninitialised memory there. Only the ones whose element count is exactly one are handled, because the
         // signature does not say how many bytes the caller allocated and writing more would corrupt the heap.

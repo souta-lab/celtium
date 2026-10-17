@@ -298,6 +298,42 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * The texture-env writes, routed to the stub's per-unit state. {@code RenderLivingBase.setBrightness} writes the
+     * hurt overlay through {@code GlStateManager.glTexEnv*}, which under lwjglx delegates to the real
+     * {@code org.lwjgl.opengl.GL11} natives - the ones this transformer replaces. Without these the write dies in
+     * the replaced body: measured on legs {@code plain-hurt3}/{@code plain-hurt4}, where the hurt zombie rendered
+     * untinted and the stub recorded zero COMBINE writes.
+     */
+    public static void glTexEnvi(int target, int pname, int param) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glTexEnvi(target, pname, param);
+    }
+
+    /** {@code nglTexEnvf}: the float form of the same write. */
+    public static void glTexEnvf(int target, int pname, float param) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glTexEnvf(target, pname, param);
+    }
+
+    /** {@code nglTexEnviv}/{@code nglTexEnvfv}: the pointer forms of the same write. */
+    public static void glTexEnvPtr(int target, int pname, long values) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glTexEnvPtr(target, pname, values);
+    }
+
+    /** {@code nglGetTexEnvi(II)I}: the int-returning form of the same read. */
+    public static int glGetTexEnvI(int target, int pname) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glGetTexEnvI(target, pname);
+    }
+
+    /** {@code nglGetTexEnvi}/{@code nglGetTexEnviv}: the int read-back, through the out pointer. */
+    public static void glGetTexEnvInt(int target, int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glGetTexEnvInt(target, pname, out);
+    }
+
+    /** {@code nglGetTexEnvfv}: the float read-back, four floats through the out pointer. */
+    public static void glGetTexEnvFloats(int target, int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glGetTexEnvFloats(target, pname, out);
+    }
+
+    /**
      * Calls of each native the transformer rewrote, when {@code -Dceltium.glless.census=true} made it count them.
      *
      * <p>The question this answers is "which vanilla or mod drawing still goes nowhere", and no existing counter could:
