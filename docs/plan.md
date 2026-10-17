@@ -75,6 +75,16 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+[R36: **🎯🎯🎯 地形 CPU の内訳を確定 ✓✓✓ — `terrainRecord` が 6.5 ms（worst 88.3 ms）／submit は 0.5 ms**] **追加 ✓**: 地形 pass の3フェーズ（`terrainHandoff`／`terrainRecord`／`terrainSubmit`）を**既存の `FramePassTimings` だけ**で括った ✓（`INSIDE` に名前を追加 ✓・入れ子の inside ブラケットは報告のみで residual からは引かれない ✓）。
+**実測 ✓✓✓（`gv-notax-r36-phase`・AMD・税なし ✓・512 frames ✓・`validationClean=true` ✓・`PASSED` ✓）**: `frame[p50=21.7]`／`world[p50=17.2]`／`terrain[p50=9.5 p95=19.5 worst=90.1]` の内訳:
+  - **`terrainRecord` p50=6.5 ms ✗・p95=16.5・worst=88.3 ms** ✗✗（＝セクション走査と draw 構築 ✓）
+  - `terrainSubmit` p50=0.5 ms ✓（worst 5.0 ✓）/ `terrainHandoff` p50=0.0 ms ✓
+  併せて `flush` p50=4.4（worst 30.7 ✓）/ `particles` 1.3 ✓ / `setupTerrain` 1.8 ✓ / `sky` 1.1（worst 28.5 ✓）
+**⇒ 最適化対象が一点に確定 ✓✓**: **`recordRenderPass`（6.5 ms p50・88 ms worst）** ✓ — submit でも GPU でもない ✓。次の実装 ✓: `recordRenderPass` の内側（セクションプールの走査 ✓・multi-draw パラメータ/indirect buffer の書き込み ✓・描画順ソート ✓）を同じ手法で切り分けて潰す ✓。
+[R35: **🎯🎯 地形 8.2 ms は CPU 側と確定 ✓✓✓（GPU は既存計器で 2.6 ms ＝ 残り 5.6 ms が record+submit）**] **既存計器を読むだけで決着 ✓✓（AGENTS.md: 既存 counter を先に読む ✓）**: GPU timestamp は **既に実装済み** ✓（`TIMESTAMP_SLOTS=16` ✓・`vkCmdWriteTimestamp` ✓・`vkWriteTimestamp`→`passTimings` ✓）で、その消費先も **既存** ✓ — F3/debug 行（`RenderSectionManager:1306` → `rendererDebug` ✓）⇒ fixture のレポートに**そのまま入っている** ✓✓。
+**実測 ✓✓✓（`gv-notax-r34-brack` の同じ leg ✓）**: `rendererDebug` に **`translucent - 31 sections, 115.7 us`** ✓・**`cutout_mipped - 31 sections, 1.381 ms`** ✓・**`solid - 31 sections, 1.141 ms`** ✓ ⇒ **GPU の地形合計 ≈ 2.64 ms** ✓✓ に対し **CPU ブラケット `terrain` は p50 8.2 ms** ✗✓✓ ⇒ **差分 ≈5.6 ms は CPU（コマンド record ＋ submit）** ✓✓。
+**⇒ 利用者 #6 の答え ✓✓**: warm interval 34.5 ms ＝ render 15.9（うち **terrain 8.2 の大半が CPU 5.6** ✓・flush 3.2 ✓・gui 1.6 ✓）＋ tick ~13（cohort mod ✓）＋ present/その他 ✓ ⇒ **最大の単一 CPU コストは地形 pass の record+submit** ✓✓（GPU ではない ✓）。
+**次の実装 ✓**: 既存の `-Dceltium.vulkan.batchTimings=true`（`prepTerrainPipelineMillis` 等 ✓）で 5.6 ms の内訳を名指しする ✓（本 round 実行中 ✓）。
 [R34: **🎯 レンダーブラケットの内訳を確定 ✓✓✓（利用者 #6 の実装単位を名指し）**] **追加したブラケット ✓**: `RenderGlobal.func_174970_a`（`setupTerrain` ＝ chunk 可視性トラバーサル ✓・**descriptor 明記** ✓）と `RenderGlobal.func_174976_a(FI)V`（`sky` ✓・**同名2オーバーロードのため descriptor 必須** ✓・AGENTS.md の規則 ✓）を `FramePassTimings` に配線 ✓（`INSIDE` へ2名追加 ✓・既存の begin/end インフラのみ ✓）。
 **実測 ✓✓✓（`gv-notax-r34-brack`・AMD・税なし ✓・512 frames ✓・`validationClean=true` ✓・`PASSED` ✓）**:
   `frame[p50=15.9 p95=22.3 worst=31.7]` / `world[p50=13.9 p95=19.7 worst=26.0]`

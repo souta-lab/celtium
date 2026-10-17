@@ -35,7 +35,7 @@ public final class FramePassTimings {
      * two brackets name it.
      */
     private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload",
-            "setupTerrain", "sky"};
+            "setupTerrain", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit"};
 
     private static final int CAPACITY = 512;
 
