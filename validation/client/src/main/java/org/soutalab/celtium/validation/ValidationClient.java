@@ -799,6 +799,21 @@ public final class ValidationClient {
      * target dimension again is not waited for at all.
      */
     private final int celtium$dimensionWaitUntilTick = Integer.getInteger("celtium.validation.dimensionWaitUntilTick", 240).intValue();
+    /**
+     * How many world frames after the arrival in the target dimension the capture has to come, so that a scene whose
+     * renderer has not finished meshing is reported as such instead of failing the picture gate.
+     * <p>
+     * The reason this exists: a Celeritas-family renderer merges chunk readiness across the 3x3 neighbourhood, so an
+     * absent neighbour keeps an otherwise complete chunk out of the renderer (Sodium's own wording in
+     * {@code PR #3713}; vanilla hides the same gap with a 24-block rule, {@code issue #2232}). A dimension change is
+     * exactly that case, and the RLCraft nether leg captured at {@code dimensionAtTick=80} with
+     * {@code firstPresentedWorldFrame=2} - inside the empty window - and was then read as a rendering failure. The
+     * right gate is "loading activity has stopped" rather than a frame count, but a count is what this fixture can
+     * measure today, and naming the problem is the point: with this set, a capture taken too soon says so.
+     * <p>
+     * Zero (the default) keeps the previous behaviour, so no existing calibration key changes.
+     */
+    private final int celtium$dimensionSettleFrames = Integer.getInteger("celtium.validation.dimensionSettleFrames", 0).intValue();
 
     // ---------------------------------------------------------------------------------------------------------------
     // Window resize transition (task-28). The harness cannot resize the window - it only sets the initial size - so
@@ -3091,6 +3106,15 @@ public final class ValidationClient {
                 launched = true;
                 report.addProperty("scope", "fixed flat world startup, commands and GL framebuffer observation");
                 
+                // The instance ships pauseOnLostFocus:true (measured in the cleanroom-0.6.13-alpha instance's
+                // options.txt), and in a headless or compositor-captured window focus is easy to lose - at which
+                // point the game pauses, world ticks stop, and every wait this fixture has (dimensionAtTick,
+                // dimensionWaitUntilTick, minDimensionFrames, the settle gate) waits for something that will never
+                // come. That is the shape of the legs that ran to their duration limit with no capture. HeadlessMc's
+                // own launch notes list pauseOnLostFocus alongside the accessibility screen as settings to turn off
+                // for automated runs. The fixture forces it off so the measurement does not depend on who has focus.
+                mc.gameSettings.pauseOnLostFocus = false;
+                report.addProperty("pauseOnLostFocusForcedOff", Boolean.TRUE);
                 mc.gameSettings.renderDistanceChunks = 8;
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
                 mc.gameSettings.limitFramerate = 260;
@@ -5365,6 +5389,7 @@ public final class ValidationClient {
             report.addProperty("dimensionTarget", Integer.valueOf(celtium$dimension));
             report.addProperty("dimensionFramesInTarget", Integer.valueOf(celtium$framesInTargetDimension));
             report.addProperty("dimensionMinFrames", Integer.valueOf(celtium$minDimensionFrames));
+            report.addProperty("dimensionSettleFrames", Integer.valueOf(celtium$dimensionSettleFrames));
             report.addProperty("dimensionFramesSinceArrival",
                     Integer.valueOf(celtium$arrivedFrames < 0 ? -1 : worldFrames - celtium$arrivedFrames));
             report.addProperty("dimensionWorldFramesAtCapture", Integer.valueOf(worldFrames));
@@ -6753,6 +6778,14 @@ public final class ValidationClient {
         }
         if (serverDimensionAtCapture != celtium$dimension) {
             failures.add("the server has this player in dimension " + serverDimensionAtCapture + ", not " + celtium$dimension);
+        }
+        if (celtium$dimensionSettleFrames > 0 && celtium$arrivedFrames >= 0
+                && worldFrames - celtium$arrivedFrames < celtium$dimensionSettleFrames) {
+            failures.add("the capture came " + (worldFrames - celtium$arrivedFrames)
+                    + " world frames after the arrival in dimension " + celtium$dimension + ", before the scene had"
+                    + " settled (" + celtium$dimensionSettleFrames + " required): a renderer that merges chunk"
+                    + " readiness across the 3x3 neighbourhood draws nothing until the neighbours are present, so a"
+                    + " frame from this window says nothing about the renderer");
         }
         if (celtium$framesInTargetDimension < celtium$minDimensionFrames) {
             failures.add("world frames drawn in dimension " + celtium$dimension + " with no screen over them: "
