@@ -4945,8 +4945,38 @@ public final class CeltiumGlStub implements FunctionProvider {
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 12))).append(',')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 16))).append(')');
                         }
+                        // The colour bytes beside the UVs, from the same four vertices. The cloud batch's layout line
+                        // already reports stride 24 (POSITION_TEX_COLOR) and otherArrays=GL_COLOR_ARRAY, so the shape
+                        // is right; what it could not say is what the colour array holds. Vanilla draws the clouds
+                        // with color(f, f1, f2, 0.8F) and the fragment multiplies texture x v_Color, so a colour of
+                        // alpha 0xCC here with faint clouds in the frame means the loss is downstream, and a colour of
+                        // alpha 0x00 means the array is not being read at all. Measured 2026-10-16: the white-poison
+                        // arm (texture 35 forced to opaque white) is pixel-identical to the magenta-poison arm, which
+                        // is why the question is now the colour and the blend rather than the texture.
+                        StringBuilder colours = new StringBuilder();
+                        int colourOffset = this.vertexPointerStride >= 24 ? 20 : 16;
+                        for (int i = 0; i < 4 && i < count; i++) {
+                            long at = address + (long) i * this.vertexPointerStride + colourOffset;
+                            colours.append(i == 0 ? "" : " ").append(String.format("%02x%02x%02x%02x",
+                                    MemoryUtil.memGetByte(at + 0), MemoryUtil.memGetByte(at + 1),
+                                    MemoryUtil.memGetByte(at + 2), MemoryUtil.memGetByte(at + 3)));
+                        }
+                        // The last vertex's UV beside the first four. The cloud batch's first quad spans 0.016 in u and
+                        // v, which is exactly the 32-block cell vanilla advances, but four vertices cannot say whether
+                        // the whole batch tiles the texture or samples one cell everywhere - and a plane that samples
+                        // one 4x4-texel patch is a plane that is 80% "gap" by the texture's own alpha histogram
+                        // (52,180 of 65,536 texels are alpha 1). This is the number that separates those two.
+                        StringBuilder tailUv = new StringBuilder("none");
+                        if (count > 4) {
+                            long at = address + (long) (count - 1) * this.vertexPointerStride;
+                            tailUv.setLength(0);
+                            tailUv.append('(').append(celtium$round3(MemoryUtil.memGetFloat(at + 12))).append(',')
+                                    .append(celtium$round3(MemoryUtil.memGetFloat(at + 16))).append(')');
+                        }
                         System.out.println("[Celtium] CELTIUM_DRAWARRAY_LAYOUT first=" + first + " count=" + count
+                                + " uvLast=" + tailUv
                                 + " stride=" + this.vertexPointerStride + " format=" + formatId + " mode=" + mode
+                                + " col0..col3=[" + colours + "]"
                                 + " uv0..uv3=[" + uvs + "]"
                                 + " buffer=" + buffer + " clientMemory=" + clientMemory + " pointerOffset=" + offset
                                 + " pointerSize=" + this.vertexPointerSize + " pointerType=0x"
