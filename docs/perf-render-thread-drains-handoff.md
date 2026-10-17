@@ -1,7 +1,7 @@
 # perf/render-thread-drains — レンダースレッド直列化の排除 引き継ぎ
 
 ブランチ: `perf/render-thread-drains` (rebased onto `b4d3f5279`、commit `8b2bcd412`+`53871c9b1`)
-worktree: `/home/s0u7a/projects/celtium-drains` — 主担当のcheckout `/home/s0u7a/projects/celtium` とは別。
+**2026-10-18 統合**: branch/worktree `celtium-drains` は単一 `main` への統合で消去。未mergeの commit `8b2bcd412`/`53871c9b1` は `/home/s0u7a/celtium-archive-20261018.bundle` に保全（`git bundle unbundle` で復元可）。
 **証拠範囲の訂正（2026-10-12 追記）**: この文書が証明するのは「記録した fixture 区間で、記録対象の待ちカウンタが 0 になった」ことまで。baseline の `frameFenceWaitMillis` は全 run 合計 40ms で、この drain だけではユーザープロファイルの `gameRenderer` 無名残差 ~246ms/frame・p99≈326ms の主因を説明しない。残差 spike の原因は**未帰属**（GC/atlas/section rebuild/pipeline compile/計器未覆域は候補であり、外部知見だけで断定しない）。帰属は性能 goal の次の作業。
 
 ## 根因（測定 + コードから確定）

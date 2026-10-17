@@ -72,7 +72,7 @@ Run Gradle with JDK 25. The build also uses the JDK 21 compilation toolchain and
 The packaged jar is written under a directory named after the version, which the build takes from `build-1122/build.gradle.kts` unless `-Pceltium_release_version` overrides it:
 
 ```text
-build-1122/build/libs/0.0.4-alpha/celtium-forge-mc1.12.2-0.0.4-alpha.jar
+build-1122/build/libs/0.0.6-alpha/celtium-forge-mc1.12.2-0.0.6-alpha.jar
 ```
 
 Use a separate Cleanroom test instance, install the packaged Celtium jar instead of Celeritas, and add `-Dceltium.vulkan.glless=true` to the instance's JVM arguments. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.

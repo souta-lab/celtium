@@ -1,6 +1,6 @@
 # Celtium 現状表（唯一の現在状態表）
 
-開発ベース **0.0.4-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
+開発ベース **0.0.6-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
 2026-10-17更新。再監査基点 `c46474aee`、resize追試ソース `f0e02f8a3`、loading追試ソース `438266524`（artifactは各証拠を参照）。
 resize / loading行のみ新規の実機結果。他の行は従来の記録であり、一括再受入ではない。
 以下は特記なき限り**各leg当時のartifactでの記録**であり、最新HEAD全体の再受入ではない。
