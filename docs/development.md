@@ -105,6 +105,7 @@ wrapperのexit 0は、当該legについて実装された受入条件をすべ�
   `currentScreen=GuiMainMenu`や`loadingScreen != null`だけでは、どのproducerが描画しているか分からない。
 - これらは**追加の診断画像**で、terrain主gateのPASSEDとは別に評価する。loading中resizeやForge起動進捗の受入まで広げない。
 
+
 ## 6. 性能測定は画像受入と区別する
 
 周期presented dumpを止めるキーは **`-Dceltium.vulkan.presentedDumpEvery=0`**。
