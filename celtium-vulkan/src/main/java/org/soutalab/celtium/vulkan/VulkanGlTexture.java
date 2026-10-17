@@ -1306,31 +1306,104 @@ public final class VulkanGlTexture {
         if (fromCapture && uploadSerial != Long.MIN_VALUE && uploadSerial == this.lastUploadSerial) {
             return;
         }
-        GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
+        // Under the stub a level's writes may live in the backlog rather than in one level-sized capture - the
+        // over-budget case - so the "is there anything to read" question is the capture OR the backlog, and the
+        // capture-miss exception is only honest when neither answers.
+        GlLevel level = null;
+        boolean stubCaptureMissing = fromCapture
+                && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, 0, null) == null;
+        java.util.List<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch> pendingPatches =
+                fromCapture && stubCaptureMissing
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePendingPatches(glTextureId, 0)
+                        : java.util.Collections.<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch>emptyList();
+        if (stubCaptureMissing && pendingPatches.isEmpty()) {
+            level = readGlLevel0(glTextureId, glTextureTarget); // throws the honest capture-miss
+        } else {
+            level = stubCaptureMissing ? null : readGlLevel0(glTextureId, glTextureTarget);
+        }
         try {
             if (fromCapture) {
                 // A captured record may be a patch into a level the stub sized but could not hold at full extent
-                // (the capture budget): the image belongs at the recorded extent, and the record writes into it
+                // (the capture budget): the image belongs at the recorded extent, and every record writes into it
                 // as a region - the case that built the E2E atlas's mirror at the first sprite's 1125x1125 and
-                // refused every later patch "outside the mirror".
+                // refused every later patch "outside the mirror", and the backlog case where 37,713 sprite
+                // uploads covered only the announced fraction of the level.
                 int extentW = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
                         GL_TEXTURE_WIDTH);
                 int extentH = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
                         GL_TEXTURE_HEIGHT);
-                if (extentW > 0 && extentH > 0 && (level.width != extentW || level.height != extentH)) {
-                    int[] offset = new int[2];
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
+                if (extentW > 0 && extentH > 0
+                        && (level == null || level.width != extentW || level.height != extentH)) {
                     if (extentW != this.width || extentH != this.height) {
                         recreateImageResources(extentW, extentH);
                     }
-                    uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
-                            new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
+                    if (level != null) {
+                        int[] offset = new int[2];
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
+                        uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
+                                new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
+                    }
+                    long applied = this.lastAppliedPatchSerial;
+                    java.util.List<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch> pending =
+                            pendingPatches.isEmpty()
+                                    ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePendingPatches(
+                                            glTextureId, 0)
+                                    : pendingPatches;
+                    for (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch patch : pending) {
+                        if (patch.serial <= applied) {
+                            continue;
+                        }
+                        uploadPatchedLevels(patch.width, patch.height, patch.x, patch.y,
+                                new java.nio.ByteBuffer[] { patch.pixels }, 1, glTextureId);
+                        applied = Math.max(applied, patch.serial);
+                    }
+                    if (applied != this.lastAppliedPatchSerial) {
+                        this.lastAppliedPatchSerial = applied;
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePatchesConsumed(glTextureId, 0,
+                                applied);
+                    }
+                    // The mip chain: the game's own per-level surfaces - the atlas's levels are uploaded level by
+                    // level and each fits the capture budget even when level 0 does not - but the level-0 backlog
+                    // path above is the only code that ever ran for this texture, so those captures never reached
+                    // the image. A mirror whose mips stay zero renders its far field black; the reload leg showed
+                    // exactly that band. Serial tracking keeps a burst of level-0 patches from re-uploading the
+                    // whole chain each time.
+                    if (this.appliedMipSerials == null) {
+                        this.appliedMipSerials = new long[32];
+                        java.util.Arrays.fill(this.appliedMipSerials, Long.MIN_VALUE);
+                    }
+                    for (int lvl = 1; lvl < this.appliedMipSerials.length
+                            && (extentW >> lvl) > 0 && (extentH >> lvl) > 0; lvl++) {
+                        long mipSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                                .textureUploadSerial(glTextureId, lvl);
+                        if (mipSerial == Long.MIN_VALUE || mipSerial == this.appliedMipSerials[lvl]) {
+                            continue;
+                        }
+                        int[] mipExtent = new int[2];
+                        java.nio.ByteBuffer mipSurface =
+                                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, lvl,
+                                        mipExtent);
+                        if (mipSurface == null
+                                || mipExtent[0] != Math.max(1, extentW >> lvl)
+                                || mipExtent[1] != Math.max(1, extentH >> lvl)
+                                || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                                        .textureLevelHasGamePixels(glTextureId, lvl)) {
+                            break;
+                        }
+                        copyToImage(mipSurface, mipExtent[0], mipExtent[1], lvl, 0, 0);
+                        this.appliedMipSerials[lvl] = mipSerial;
+                    }
                     this.lastUploadSerial = uploadSerial;
-                    if (!level.owned) {
+                    if (level != null && !level.owned) {
                         recordCapturedFill(glTextureId, level);
                     }
                     return;
                 }
+            }
+            if (level == null) {
+                // Backlog patches exist for a level whose extent the stub never recorded: without the extent the
+                // image cannot be sized, so this is the same honest miss as an absent capture.
+                throw captureMiss(glTextureId, 0, "backlog patches exist but the level's extent was never recorded");
             }
             long hash = 1469598103934665603L;
             for (int i = 0; i < level.width * level.height * BYTES_PER_PIXEL; i++) {
@@ -1691,6 +1764,11 @@ public final class VulkanGlTexture {
     }
 
     private static int patchBeyondMirrorLogs;
+
+    /** The backlog serial this image has already written into itself; see {@link #uploadFromGlTexture}. */
+    private long lastAppliedPatchSerial;
+    /** Per-level write serials already copied into this image; index = mip level. */
+    private long[] appliedMipSerials;
 
     /** {@return how many writes a level has received}, for the mirror dump's provenance line. */
     /** Bounded, so a per-tile upload cannot flood the log. */

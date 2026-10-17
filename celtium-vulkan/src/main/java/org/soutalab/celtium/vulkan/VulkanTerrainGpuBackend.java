@@ -3310,13 +3310,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
             try {
                 // The announcement first: if the write that triggered this invalidation handed its pixels over, the mirror can
-                // be filled from them and the readback is unnecessary - which is the whole stream this path was.
-                if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
+                // be filled from them and the readback is unnecessary - which is the whole stream this path was. The backlog
+                // check is what keeps an over-budget texture from starving here: while any glTexSubImage2D patch waits
+                // unapplied, skipping the re-read would leave those writes on the floor forever - the case that held the
+                // E2E atlas's mirror at the announced 40% while 37,143 captured patches sat pending.
+                if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)
+                        && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureHasPendingPatches(glTextureId, 0)) {
                     // The write that invalidated this mirror handed its pixels over, and they went into this image.
                     this.textureRegistry.consumeReadback(glTextureId);
                     this.textureStats.noteDirectMirrorFromAnnouncement();
                     this.readbackSkippedAfterAnnouncement++;
                 } else if (this.textureRegistry != null
+                        && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureHasPendingPatches(glTextureId, 0)
                         && this.textureRegistry.applyAnnouncedTo(this.atlasTexture, glTextureId)) {
                     this.textureStats.noteDirectMirrorFromAnnouncement();
                 } else {
@@ -3364,7 +3369,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * skips are the stream that used to run once per animation frame.
      */
     private void celtium$establishAtlasImage(int glTextureId, VulkanGlTexture image, String what) {
-        if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
+        if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)
+                && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureHasPendingPatches(glTextureId, 0)) {
+            // Pending backlog patches are real un-applied writes: skipping the re-read while they wait would
+            // leave the mirror at the announced fraction forever.
             this.textureRegistry.consumeReadback(glTextureId);
             this.textureStats.noteDirectMirrorFromAnnouncement();
             this.readbackSkippedAfterAnnouncement++;
@@ -13602,7 +13610,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
         if (atlasId != 0 && (this.atlasTexture == null || atlasId != this.atlasGlId || this.atlasRefreshCountdown <= 0)) {
             try {
-                if (this.atlasTexture == null) {
+                if (this.atlasTexture == null || atlasId != this.atlasGlId) {
+                    // A name change is a reallocation: the registry entry for the old name was retired with it, so
+                    // binding the kept object samples a dead image - measured as a fully black terrain after the
+                    // reload re-stitched the atlas under a new GL name while this field still held the old mirror.
                     int[] size = textureSize(atlasId);
                     if (size[0] <= 0 || size[1] <= 0) {
                         // No storage to mirror yet. Creating an image of an unknown size is what produced a 1x1
@@ -13630,7 +13641,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
         if (lightmapId != 0 && (this.lightmapTexture == null || lightmapId != this.lightmapGlId || this.lightmapRefreshCountdown <= 0)) {
             try {
-                if (this.lightmapTexture == null) {
+                if (this.lightmapTexture == null || lightmapId != this.lightmapGlId) {
+                    // Same reallocation rule as the atlas above: a new name owns a new registry entry, and the old
+                    // one was retired with the name.
                     int[] size = textureSize(lightmapId);
                     this.lightmapTexture = celtium$registry().imageFor(lightmapId, size[0], size[1], false);
                 }
