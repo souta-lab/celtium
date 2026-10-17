@@ -870,17 +870,15 @@ public final class ValidationClient {
     /**
      * Client ticks after the world launch to dump a frame at, and whether that dump has been requested.
      * <p>
-     * A third dump window, because the other two cannot reach it: the world-gated dump is measured in world ticks and
-     * cannot fire while the world is still loading, and the menu dump requires the title screen. This is the window
-     * {@code LoadingScreenRenderer} draws its progress bar in - {@code Minecraft.java:2512/2526/2530/2610} call
-     * {@code displaySavingString}/{@code displayLoadingString}/{@code resetProgressAndMessage} during a world load, and
-     * {@code LoadingScreenRenderer.displayString} draws it with ortho and immediate quads, creating no framebuffer
-     * (docs/plan.md §0.380), so the splash's defect cannot explain a missing progress bar. Off unless
-     * {@code -Dceltium.validation.dumpPresentedWorldLoadTick} is set.
+     * Legacy post-launch client-tick observation, NOT evidence from inside synchronous world loading.
+     * launchIntegratedServer blocks this handler while LoadingScreenRenderer presents. Actual producer-bound captures
+     * use dumpLoadingProgress and LoadingScreenRendererMixin; this old switch remains for report compatibility.
      */
     private final int celtium$worldLoadDumpTick =
             Integer.getInteger("celtium.validation.dumpPresentedWorldLoadTick", 0).intValue();
     private boolean celtium$worldLoadDumpRequested;
+    private int celtium$loadingProgressCaptures;
+    private boolean celtium$controlledLoadingProbe;
     /**
      * Whether a screen that is not the title screen has already been cleared on the way to the world. A mod can
      * put its own screen up first; without this the launch condition never held and the leg never entered a world.
@@ -3001,10 +2999,8 @@ public final class ValidationClient {
             report.addProperty("menuDumpRenderPartialTicks", Float.toString(mc.getRenderPartialTicks()));
             celtium$requestPresentedDump(mc, "menu");
         }
-        // The world-load window: the progress bar LoadingScreenRenderer draws while a world loads. `launched` is the
-        // fixture's own "the world launch was requested" flag, which is exactly the start of that window; the first
-        // attempt also required worldTicks == 0 and never fired, because the world object exists and ticks during the
-        // terrain download (measured: no worldLoadDump* field in the report, fixtureStatus PASSED).
+        // Legacy post-launch sample. This handler resumes after the synchronous server-start loop;
+        // launched/loadingScreen != null do not establish that LoadingScreenRenderer is drawing now.
         if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$worldLoadDumpRequested
                 && celtium$worldLoadDumpTick > 0 && launched
                 && celtium$clientTicks >= celtium$worldLoadDumpTick) {
@@ -3096,6 +3092,18 @@ public final class ValidationClient {
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
                 settings.setGeneratorOptions(celtium$worldLayers);
+                if (Boolean.getBoolean("celtium.validation.probeLoadingProgress")) {
+                    // Controlled API case, not a claim that native world generation supplies a numeric bar.
+                    // displayLoadingString resets the producer's throttle, so the following numeric frame is drawn.
+                    celtium$controlledLoadingProbe = true;
+                    try {
+                        mc.loadingScreen.resetProgressAndMessage("Celtium loading probe");
+                        mc.loadingScreen.displayLoadingString("Controlled renderer probe (not world progress)");
+                        mc.loadingScreen.setLoadingProgress(50);
+                    } finally {
+                        celtium$controlledLoadingProbe = false;
+                    }
+                }
                 if (celtium$saveSlot != null && !celtium$saveSlot.isEmpty()) {
                     // An existing save instead of the generated flat world: the directory the runner copies the
                     // instance's saves into, loaded the way the game's own selection screen loads it - the real
@@ -6643,6 +6651,36 @@ public final class ValidationClient {
         } catch (Throwable error) {
             // A dump that cannot be requested is a measurement lost, never a frame lost.
         }
+    }
+
+    /** Called immediately before a real LoadingScreenRenderer swap; no tick can substitute for this boundary. */
+    public static void requestLoadingProgressDump(int progress, String title, String message) {
+        ValidationClient active = instance;
+        if (active == null || !active.enabled || !active.launched || active.finished || active.celtium$loadingProgressCaptures >= 8
+                || !Boolean.getBoolean("celtium.validation.dumpLoadingProgress")
+                || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            return;
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        int number = ++active.celtium$loadingProgressCaptures;
+        String stage = "loading-progress-" + number;
+        JsonObject frame = new JsonObject();
+        frame.addProperty("producer", "LoadingScreenRenderer.setLoadingProgress/before-updateDisplay");
+        frame.addProperty("controlledProbe", Boolean.valueOf(active.celtium$controlledLoadingProbe));
+        frame.addProperty("progress", Integer.valueOf(progress));
+        frame.addProperty("title", title);
+        frame.addProperty("message", message);
+        frame.addProperty("clientTick", Integer.valueOf(active.celtium$clientTicks));
+        frame.addProperty("worldTick", Integer.valueOf(active.worldTicks));
+        frame.addProperty("worldPresent", Boolean.valueOf(mc.world != null));
+        frame.addProperty("windowSize", mc.displayWidth + "x" + mc.displayHeight);
+        frame.addProperty("screen", mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
+        PictureEvidence picture = active.celtium$requestPresentedDump(mc, stage);
+        frame.addProperty("presentedFramesAtRequest", Integer.valueOf(picture.presentedFramesAtRequest));
+        active.report.add(stage, frame);
+        System.out.println("[Celtium] CELTIUM_LOADING_PROGRESS_CAPTURE stage=" + stage + " progress=" + progress
+                + " controlled=" + active.celtium$controlledLoadingProbe + " clientTick=" + active.celtium$clientTicks
+                + " worldTick=" + active.worldTicks + " title=" + title + " message=" + message);
     }
 
     private PictureEvidence celtium$requestPresentedDump(Minecraft mc, String stage) {
