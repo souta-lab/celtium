@@ -98,6 +98,9 @@ wrapperのexit 0は、当該legについて実装された受入条件をすべ�
   `loading-progress-N`のproducer値と`pictureIdentity_loading-progress-N`のPNG・frame束縛・completionErrorを読む。要求だけで欠測を成功にしない。
 - `-Dceltium.validation.probeLoadingProgress=true`を併用すると、world起動の直前に**制御された50%バー**も描く。
   `controlledProbe=true`の画像は自然なworld生成の数値進捗ではない。通常の起動は`progress=-1`でバーを要求しない。
+- 前述captureを有効にして`-Dceltium.validation.resizeDuringLoading=true`を併用すると、自然な非空タイトルの最初のframeを対照として残し、2回目に一度だけresizeを要求する。
+  サイズとcompositorへの要求は既存の`resizeTo` / `resizeViaCompositor`を使う。MC・GLFWサイズ、GUI scale、loadingScreenのidentity、実PNGを合わせて読む。
+  成功した最終terrain画像だけで、途中のloading画像やresize過渡frameまで成功にしない。
 - `dumpPresentedWorldLoadTick`は旧来の起動後client-tick sample。同期的world起動の内部はそのhandlerから観測できない。
   `currentScreen=GuiMainMenu`や`loadingScreen != null`だけでは、どのproducerが描画しているか分からない。
 - これらは**追加の診断画像**で、terrain主gateのPASSEDとは別に評価する。loading中resizeやForge起動進捗の受入まで広げない。

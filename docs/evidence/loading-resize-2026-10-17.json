@@ -1,0 +1,963 @@
+{
+  "schemaVersion": 1,
+  "scope": "Resize during real LoadingScreenRenderer world-load frames: baseline defect, production fix, both GPUs. Local bounded evidence, not a general resize acceptance gate.",
+  "sourceRevision": "6055ea937",
+  "camera": "N/A: loading captures have worldPresent=false, worldTick=0",
+  "measurementWindow": "clientTick-bound producer swaps; resize requested once at the second non-empty native title, before its present",
+  "limitations": [
+    "Only 1280x720->1280x800 under Sway forced-x11",
+    "No loading during Forge startup phase",
+    "No minimize/iconify during loading",
+    "Terrain picture PASSED is separate from loading visual observation"
+  ],
+  "defect": "Minecraft.resize replaces loadingScreen with a fresh LoadingScreenRenderer, discarding currentlyDisplayedText/message. Baseline loading-resize-base1-amd (probe-only build 3d8f5e7cc): post-replacement stages 6-8 show title=\"\" while size tracked correctly.",
+  "fix": "Resize-scoped handover in MinecraftMixin redirects the loadingScreen PUTFIELD inside resize only; LoadingScreenRenderer copies title/message/loadingSuccess via LoadingProgressState while keeping its own freshly sized resolution/FBO. Constructor injection superseded (would touch unrelated progress renderers).",
+  "legs": [
+    {
+      "leg": "loading-resize-base1-amd",
+      "gpu": "amd",
+      "source": {
+        "head": "3d8f5e7ccb0d69d59b7069c7aad21a15a8d263f4",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-resize-base1/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "fb991fdaac80a92063f35709cc87c624d62eec5a925ef537646339a848ac3bdc"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-resize-base1/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "b8ad92841b94c64442849fc2a9bf588c61eb6381a42ccfd38ba8f2fb94967b1f"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "5dc25550a7b840abcbd7284bd1426e03256b49dda4c03a4216b30bebb74bed4d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-loading-resize-base1-amd/framedump",
+        "-Dceltium.validation.dumpLoadingProgress=true",
+        "-Dceltium.validation.probeLoadingProgress=true",
+        "-Dceltium.validation.resizeDuringLoading=true",
+        "-Dceltium.validation.resizeTo=1280x800",
+        "-Dceltium.validation.resizeViaCompositor=true",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": null,
+        "MESA_VK_DEVICE_SELECT": null
+      },
+      "nativeDeviceLine": "[17:45:18] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.VulkanContext:matchPhysicalDevice:1816]: [Celtium] CELTIUM_NATIVE_DEVICE name=\"AMD Radeon RX 6400 (RADV NAVI24)\" uuid=00000000030000000000000000000000 matchedOpenGl=false",
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 94.59367220699642,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-loading-resize-base1-amd/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1e69fbe78196-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "wrapperResult": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "fb991fdaac80a92063f35709cc87c624d62eec5a925ef537646339a848ac3bdc"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "b8ad92841b94c64442849fc2a9bf588c61eb6381a42ccfd38ba8f2fb94967b1f"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1e69fbe78196-66d3c617-kept.png",
+          "size": [
+            1280,
+            800
+          ]
+        },
+        "elapsedSeconds": 95.4743022670009,
+        "leg": "loading-resize-base1-amd"
+      },
+      "resizeReport": {
+        "resizeWindowSizeBefore": "1280x720",
+        "resizeWindowResizable": "true",
+        "resizeRequestedAtTick": 0,
+        "resizeReason": "loading",
+        "resizeWindowFrom": "1280x720",
+        "resizeWindowTo": "1280x800",
+        "resizeCompositorResult": "mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]",
+        "resizeTrace": "CELTIUM_RESIZE_COMPOSITOR tick=0 mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]\nCELTIUM_RESIZE_REQUEST tick=0 why=loading window=140032739624320 from=1280x720 to=1280x800\nCELTIUM_WINDOW_SIZE_CHANGED tick=0 from=1280x720 to=1280x800 gameFramebuffer=1280x800\nCELTIUM_RESIZE_OBSERVED tick=0 from=1280x720 to=1280x800",
+        "resizeObservedAtTick": 0,
+        "resizeObservedFrom": "1280x720",
+        "resizeObservedTo": "1280x800"
+      },
+      "stages": {
+        "loading-progress-1": {
+          "title": "Celtium loading probe",
+          "message": "Controlled renderer probe (not world progress)",
+          "loadingScreenIdentity": 1918878104,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-1-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "bf4f66a23e0bba0d6a94d768aefa51d6e7c346fa43e28448b4aecfdbc0b07f65"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 2
+        },
+        "loading-progress-2": {
+          "title": "Celtium loading probe",
+          "message": "Controlled renderer probe (not world progress)",
+          "loadingScreenIdentity": 1918878104,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-2-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "20845994faa469e1c7838ea08d22f12d58ff3a0e3d8fa1e934d6a9f471c1b146"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 3
+        },
+        "loading-progress-3": {
+          "title": "",
+          "message": "",
+          "loadingScreenIdentity": 1918878104,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-3-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "7da1ed0ff3781680ae95cacaaaab0fe8c9e5f31e858777f57900a2f9e53605af"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 4
+        },
+        "loading-progress-4": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 1918878104,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-4-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 5
+        },
+        "loading-progress-5": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 1918878104,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": true,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-5-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "6fab4cfe4fd8f36fd538715b5b995da4a6997f248fe7798643a0f73421b560f7"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 6
+        },
+        "loading-progress-6": {
+          "title": "",
+          "message": "",
+          "loadingScreenIdentity": 64127411,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-6-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "0b839c88386340ca695b08f2ad75a033ffbe6c64f6fd2cad8144e1c534321564"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 7
+        },
+        "loading-progress-7": {
+          "title": "",
+          "message": "",
+          "loadingScreenIdentity": 64127411,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-7-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "0b839c88386340ca695b08f2ad75a033ffbe6c64f6fd2cad8144e1c534321564"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 8
+        },
+        "loading-progress-8": {
+          "title": "",
+          "message": "Building terrain",
+          "loadingScreenIdentity": 64127411,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-base1-amd/screenshots/celtium-presented-loading-progress-8-run-1e69fbe78196-66d3c617-kept.png",
+            "sha256": "27d978a3a4754a4c104209e865fb9f49bd29618f0b1dd808e4d1f285850573ee"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 9
+        }
+      },
+      "rawEvidence": [
+        {
+          "path": ".gv-verify/loading-resize-base1-amd-manifest.json",
+          "sha256": "45983e7b12036230beb741d22406e3b1556ed517d0d83dc7937d31f2ddef412e"
+        },
+        {
+          "path": ".gv-verify/loading-resize-base1-amd-lock.json",
+          "sha256": "7022a0bf262a4da6ec97f51ab49260699e011e8e71340676ef863bd79666b14b"
+        },
+        {
+          "path": ".gv-verify/loading-resize-base1-amd-result.json",
+          "sha256": "ffa975ed32570ec34f2370ddeaa6196160997d939ee7486baa5f6348ce8f6833"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-base1-amd/validation-process.json",
+          "sha256": "09e995acca692c6b51c5ba2972cafb80560945077c7f9b4d6a6c4c68b884aae2"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-base1-amd/logs/celtium-validation.json",
+          "sha256": "771cebc63273bb954325db07dff5be9eeac127d7d2fbdcd91671e8ffb87d3d95"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-base1-amd/validation-console.log",
+          "sha256": "fc6ce452849f00e79979e9c5a959c9e42cc3b4891817d5d97010f9b3d202dcf8"
+        }
+      ]
+    },
+    {
+      "leg": "loading-resize-state2-amd",
+      "gpu": "amd",
+      "source": {
+        "head": "6055ea937f3d7570a4a9c006a1c3d080e43e33fa",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-resize-state2/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "c0fe5be2709ce916c7784dfe40c448e6e65598d0e4799d2270068f2c8daf10c5"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-resize-state2/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "b8ad92841b94c64442849fc2a9bf588c61eb6381a42ccfd38ba8f2fb94967b1f"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "5dc25550a7b840abcbd7284bd1426e03256b49dda4c03a4216b30bebb74bed4d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-loading-resize-state2-amd/framedump",
+        "-Dceltium.validation.dumpLoadingProgress=true",
+        "-Dceltium.validation.probeLoadingProgress=true",
+        "-Dceltium.validation.resizeDuringLoading=true",
+        "-Dceltium.validation.resizeTo=1280x800",
+        "-Dceltium.validation.resizeViaCompositor=true",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": null,
+        "MESA_VK_DEVICE_SELECT": null
+      },
+      "nativeDeviceLine": "[17:56:38] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.VulkanContext:matchPhysicalDevice:1816]: [Celtium] CELTIUM_NATIVE_DEVICE name=\"AMD Radeon RX 6400 (RADV NAVI24)\" uuid=00000000030000000000000000000000 matchedOpenGl=false",
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 100.09746086299856,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-loading-resize-state2-amd/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1f084af42ed7-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "wrapperResult": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "c0fe5be2709ce916c7784dfe40c448e6e65598d0e4799d2270068f2c8daf10c5"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "b8ad92841b94c64442849fc2a9bf588c61eb6381a42ccfd38ba8f2fb94967b1f"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1f084af42ed7-66d3c617-kept.png",
+          "size": [
+            1280,
+            800
+          ]
+        },
+        "elapsedSeconds": 100.93280578099802,
+        "leg": "loading-resize-state2-amd"
+      },
+      "resizeReport": {
+        "resizeWindowSizeBefore": "1280x720",
+        "resizeWindowResizable": "true",
+        "resizeRequestedAtTick": 0,
+        "resizeReason": "loading",
+        "resizeWindowFrom": "1280x720",
+        "resizeWindowTo": "1280x800",
+        "resizeCompositorResult": "mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]",
+        "resizeTrace": "CELTIUM_RESIZE_COMPOSITOR tick=0 mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]\nCELTIUM_RESIZE_REQUEST tick=0 why=loading window=140611148958288 from=1280x720 to=1280x800\nCELTIUM_WINDOW_SIZE_CHANGED tick=0 from=1280x720 to=1280x800 gameFramebuffer=1280x800\nCELTIUM_RESIZE_OBSERVED tick=0 from=1280x720 to=1280x800",
+        "resizeObservedAtTick": 0,
+        "resizeObservedFrom": "1280x720",
+        "resizeObservedTo": "1280x800"
+      },
+      "stages": {
+        "loading-progress-1": {
+          "title": "Celtium loading probe",
+          "message": "Controlled renderer probe (not world progress)",
+          "loadingScreenIdentity": 1026353819,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-1-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "bf4f66a23e0bba0d6a94d768aefa51d6e7c346fa43e28448b4aecfdbc0b07f65"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 2
+        },
+        "loading-progress-2": {
+          "title": "Celtium loading probe",
+          "message": "Controlled renderer probe (not world progress)",
+          "loadingScreenIdentity": 1026353819,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-2-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "20845994faa469e1c7838ea08d22f12d58ff3a0e3d8fa1e934d6a9f471c1b146"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 3
+        },
+        "loading-progress-3": {
+          "title": "",
+          "message": "",
+          "loadingScreenIdentity": 1026353819,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-3-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "7da1ed0ff3781680ae95cacaaaab0fe8c9e5f31e858777f57900a2f9e53605af"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 4
+        },
+        "loading-progress-4": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 1026353819,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-4-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 5
+        },
+        "loading-progress-5": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 1026353819,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": true,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-5-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "6fab4cfe4fd8f36fd538715b5b995da4a6997f248fe7798643a0f73421b560f7"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 6
+        },
+        "loading-progress-6": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 953715877,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-6-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "eb9e17b490704db48e05874c43d8d88eb196fe9c29894f89e5c6db6dbf3c5744"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 7
+        },
+        "loading-progress-7": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 953715877,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-7-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "eb9e17b490704db48e05874c43d8d88eb196fe9c29894f89e5c6db6dbf3c5744"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 8
+        },
+        "loading-progress-8": {
+          "title": "Loading world",
+          "message": "Building terrain",
+          "loadingScreenIdentity": 953715877,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-amd/screenshots/celtium-presented-loading-progress-8-run-1f084af42ed7-66d3c617-kept.png",
+            "sha256": "37b4fa2e1775419f8371064ad356c57af8be4585a6f250519a031c71bf7bb37a"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 9
+        }
+      },
+      "rawEvidence": [
+        {
+          "path": ".gv-verify/loading-resize-state2-amd-manifest.json",
+          "sha256": "c18ba54dfa0f5b48feb9559c2ce1ebe76364163c767c7897a4fbdb8cc2bc4632"
+        },
+        {
+          "path": ".gv-verify/loading-resize-state2-amd-lock.json",
+          "sha256": "23ae939b58205d021d9d5b68fa5ecfb242a76e50bc079885f3069b31477a311f"
+        },
+        {
+          "path": ".gv-verify/loading-resize-state2-amd-result.json",
+          "sha256": "17927094e36e309182555118b803d933926d1eb6f6faf4bf37d6da3bc141132f"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-state2-amd/validation-process.json",
+          "sha256": "c1a329440e12f6b40ed7b573c6acf3ac7477bd5b1abd9ddb546ec656ad39fa38"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-state2-amd/logs/celtium-validation.json",
+          "sha256": "e2389b71180e6fe3922c490e1a71a2fb85e2d837ffd822c41a1080ceb3fb1c9c"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-state2-amd/validation-console.log",
+          "sha256": "4132e07855534be89ac27d10beeca8d9bffccb1f3daf1908a9d1a97f15f24133"
+        }
+      ]
+    },
+    {
+      "leg": "loading-resize-state2-intel",
+      "gpu": "intel",
+      "source": {
+        "head": "6055ea937f3d7570a4a9c006a1c3d080e43e33fa",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-resize-state2/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "c0fe5be2709ce916c7784dfe40c448e6e65598d0e4799d2270068f2c8daf10c5"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/loading-resize-state2/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "b8ad92841b94c64442849fc2a9bf588c61eb6381a42ccfd38ba8f2fb94967b1f"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "5dc25550a7b840abcbd7284bd1426e03256b49dda4c03a4216b30bebb74bed4d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-loading-resize-state2-intel/framedump",
+        "-Dceltium.validation.dumpLoadingProgress=true",
+        "-Dceltium.validation.probeLoadingProgress=true",
+        "-Dceltium.validation.resizeDuringLoading=true",
+        "-Dceltium.validation.resizeTo=1280x800",
+        "-Dceltium.validation.resizeViaCompositor=true",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": "pci-0000_00_02_0!",
+        "MESA_VK_DEVICE_SELECT": null
+      },
+      "nativeDeviceLine": "[17:58:18] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.VulkanContext:matchPhysicalDevice:1816]: [Celtium] CELTIUM_NATIVE_DEVICE name=\"Intel(R) UHD Graphics 630 (CFL GT2)\" uuid=8680923e000000000002000000000000 matchedOpenGl=false",
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 96.95095098400634,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-loading-resize-state2-intel/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1f1f9e5b7a32-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "nativeDeviceUuid": "8680923e000000000002000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 1,
+          "name": "Intel(R) UHD Graphics 630 (CFL GT2)",
+          "apiVersion": "1.4.354",
+          "deviceType": 1
+        }
+      },
+      "wrapperResult": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "c0fe5be2709ce916c7784dfe40c448e6e65598d0e4799d2270068f2c8daf10c5"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "b8ad92841b94c64442849fc2a9bf588c61eb6381a42ccfd38ba8f2fb94967b1f"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1f1f9e5b7a32-66d3c617-kept.png",
+          "size": [
+            1280,
+            800
+          ]
+        },
+        "elapsedSeconds": 97.71655784100585,
+        "leg": "loading-resize-state2-intel"
+      },
+      "resizeReport": {
+        "resizeWindowSizeBefore": "1280x720",
+        "resizeWindowResizable": "true",
+        "resizeRequestedAtTick": 0,
+        "resizeReason": "loading",
+        "resizeWindowFrom": "1280x720",
+        "resizeWindowTo": "1280x800",
+        "resizeCompositorResult": "mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]",
+        "resizeTrace": "CELTIUM_RESIZE_COMPOSITOR tick=0 mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]\nCELTIUM_RESIZE_REQUEST tick=0 why=loading window=140109375799296 from=1280x720 to=1280x800\nCELTIUM_WINDOW_SIZE_CHANGED tick=0 from=1280x720 to=1280x800 gameFramebuffer=1280x800\nCELTIUM_RESIZE_OBSERVED tick=0 from=1280x720 to=1280x800",
+        "resizeObservedAtTick": 0,
+        "resizeObservedFrom": "1280x720",
+        "resizeObservedTo": "1280x800"
+      },
+      "stages": {
+        "loading-progress-1": {
+          "title": "Celtium loading probe",
+          "message": "Controlled renderer probe (not world progress)",
+          "loadingScreenIdentity": 273297348,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-1-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "bf4f66a23e0bba0d6a94d768aefa51d6e7c346fa43e28448b4aecfdbc0b07f65"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 2
+        },
+        "loading-progress-2": {
+          "title": "Celtium loading probe",
+          "message": "Controlled renderer probe (not world progress)",
+          "loadingScreenIdentity": 273297348,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-2-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "20845994faa469e1c7838ea08d22f12d58ff3a0e3d8fa1e934d6a9f471c1b146"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 3
+        },
+        "loading-progress-3": {
+          "title": "",
+          "message": "",
+          "loadingScreenIdentity": 273297348,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-3-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "7da1ed0ff3781680ae95cacaaaab0fe8c9e5f31e858777f57900a2f9e53605af"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 4
+        },
+        "loading-progress-4": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 273297348,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x720",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-4-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "513e0df683c347fd360b5e9dfad355ca17e420c6ed8111fa08accdeb6bc58546"
+          },
+          "imageSize": [
+            1280,
+            720
+          ],
+          "completionError": "none",
+          "presentedFrame": 5
+        },
+        "loading-progress-5": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 273297348,
+          "mcSize": "1280x720",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": true,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-5-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "6fab4cfe4fd8f36fd538715b5b995da4a6997f248fe7798643a0f73421b560f7"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 6
+        },
+        "loading-progress-6": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 2001233319,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-6-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "eb9e17b490704db48e05874c43d8d88eb196fe9c29894f89e5c6db6dbf3c5744"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 7
+        },
+        "loading-progress-7": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 2001233319,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-7-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "eb9e17b490704db48e05874c43d8d88eb196fe9c29894f89e5c6db6dbf3c5744"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 8
+        },
+        "loading-progress-8": {
+          "title": "Loading world",
+          "message": "",
+          "loadingScreenIdentity": 2001233319,
+          "mcSize": "1280x800",
+          "glfwFramebufferSize": "1280x800",
+          "guiScale": 3,
+          "resizeRequestedThisSwap": false,
+          "image": {
+            "path": ".gv-verify/run-loading-resize-state2-intel/screenshots/celtium-presented-loading-progress-8-run-1f1f9e5b7a32-66d3c617-kept.png",
+            "sha256": "eb9e17b490704db48e05874c43d8d88eb196fe9c29894f89e5c6db6dbf3c5744"
+          },
+          "imageSize": [
+            1280,
+            800
+          ],
+          "completionError": "none",
+          "presentedFrame": 9
+        }
+      },
+      "rawEvidence": [
+        {
+          "path": ".gv-verify/loading-resize-state2-intel-manifest.json",
+          "sha256": "f4e73b5ac8c453c48cc569caded93629fce4199fa813582377d1751e3b66fef6"
+        },
+        {
+          "path": ".gv-verify/loading-resize-state2-intel-lock.json",
+          "sha256": "9b17584813e11a83a038cb7185f4e9f9ab4e902a5829e90e616a05c5dd84133b"
+        },
+        {
+          "path": ".gv-verify/loading-resize-state2-intel-result.json",
+          "sha256": "ebc4ad11a7b40f328ab7b1bff8de12c9d85f912a45dace875b9f3282c34e3b8c"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-state2-intel/validation-process.json",
+          "sha256": "d9c3621af03c615f990f1f9a8ce772d4c7b475fe26f3ad3a1f7adbc8721d7294"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-state2-intel/logs/celtium-validation.json",
+          "sha256": "3d2599ed7a4eacbdb1879a020ead337a23d8be4ce49a499edcf7e96b83fbf9b8"
+        },
+        {
+          "path": ".gv-verify/run-loading-resize-state2-intel/validation-console.log",
+          "sha256": "07b86f7afa79a860ecfdf07d44c9551b8aade6c57ff51078fb21c79877b27fad"
+        }
+      ]
+    }
+  ],
+  "images": {
+    "loading-resize-before-blank-2026-10-17.png": {
+      "sha256": "0b839c88386340ca695b08f2ad75a033ffbe6c64f6fd2cad8144e1c534321564",
+      "leg": "loading-resize-base1-amd",
+      "stage": "loading-progress-6"
+    },
+    "loading-resize-after-preserved-2026-10-17.png": {
+      "sha256": "eb9e17b490704db48e05874c43d8d88eb196fe9c29894f89e5c6db6dbf3c5744",
+      "leg": "loading-resize-state2-amd",
+      "stage": "loading-progress-6"
+    }
+  },
+  "notes": "Intel progress-8 message empty because the run ended before \"Building terrain\" arrived; title preservation is the measured criterion and held on both. Post-resize titled PNG is byte-identical AMD/Intel; one copy preserves both."
+}

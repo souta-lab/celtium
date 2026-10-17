@@ -23,7 +23,7 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 | minimize / restore | 実装済み・受入未完 | 成功（記録） | **未検証** | `gv-cohort-iconify1`はAMDのみ。Intel相当leg未提示 |
 | display list / model | 実装済み（既存報告） | 既存画像報告・本監査未再評価 | 同左 | PR #288系。terrain gateを全entity/TESR画質の保証にしない |
 | Sodium風メニューの半透明下敷き（利用者#3） | 修正実装済み | 既存報告・本監査未再評価 | 同左 | PR #307・[before/after画像](<evidence/sodium-tooltip-backdrop-2026-10-16.png>)。文字重なりまで独立に検証したと広げない |
-| **P0 loadingの進捗/文字/resize（#1/#5）** | **未完・文字/制御バーは局所確認** | 局所確認（同一JAR） | 局所確認（同一JAR） | [producer境界の証拠](<evidence/loading-producer-2026-10-17.json>)。world起動中の文字と明示的50%バーを提示PNGで確認（未較正）。自然なworld起動は`progress=-1`で数値バーを要求しない。swapchain再生成時のcapture消失は修正、各GPU 8/8 frame束縛・validation 0件。**loading中resize / Forge起動進捗は未検証**。terrain主gateのPASSEDをloading全体の受入にしない |
+| **P0 loadingの進捗/文字/resize（#1/#5）** | **未完・文字/制御バーとloading中resizeは局所確認** | 局所確認（同一JAR） | 局所確認（同一JAR） | [producer境界](<evidence/loading-producer-2026-10-17.json>)：world起動中の文字と明示的50%バーを提示PNGで確認（未較正）。自然なworld起動は`progress=-1`で数値バーを要求しない。capture消失は修正、各GPU 8/8 frame束縛・validation 0件。[resize証拠](<evidence/loading-resize-2026-10-17.json>)：baselineはresizeでloading文字を消失（`loadingScreen`再生成がtask stateを捨てる）→resize代入点限定のhandoverで保持、AMD/Intelともpost-resize titled PNGがbyte一致・validation 0件。**Forge起動進捗・他サイズ・loading中minimizeは未検証**。terrain主gateのPASSEDをloading全体の受入にしない |
 | **P1 FPS / p99（#6）** | **未完・原因の断定を撤回** | 診断値あり | 同条件比較なし | 旧「fixture税なし」flagは無効だった。下記観測を参照し、計測負荷と区間を揃え直す |
 | P1 terrain CPU record / setupTerrain / particles | 計器実装済み・最適化未完 | 診断値あり | 未検証 | `recordRenderPass`内訳は候補。CPU p50と非同期GPUスナップショットだけで律速を確定しない |
 | P1 panorama cost / blur（#2） | 未完 | 交絡あり | 未検証 | `panoramaTimer`の位相差を除く対照が不足。修正効果は未確定 |
