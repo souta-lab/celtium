@@ -31,6 +31,12 @@ MARKER = re.compile(r'"(CELTIUM_[A-Z0-9_]+)')
 
 
 def java_files():
+    """走査対象を**決定的な順序**で返す。
+
+    なぜ: `os.walk` の順序はファイルシステム依存で、CI と手元で「同じスイッチの代表位置」が
+    変わり `--check` が偽陽性で落ちた（2026-10-17、PR #314 の CI で実測）。
+    """
+    found = []
     for base in SCAN_DIRS:
         top = os.path.join(ROOT, base)
         if not os.path.isdir(top):
@@ -38,10 +44,11 @@ def java_files():
         for dirpath, dirnames, filenames in os.walk(top):
             if any(part in dirpath for part in SKIP_PARTS):
                 continue
-            dirnames[:] = [d for d in dirnames if d not in ("build", ".gradle")]
+            dirnames[:] = sorted(d for d in dirnames if d not in ("build", ".gradle"))
             for name in filenames:
                 if name.endswith(".java"):
-                    yield os.path.join(dirpath, name)
+                    found.append(os.path.join(dirpath, name))
+    return sorted(found)
 
 
 def collect():
@@ -71,6 +78,10 @@ def collect():
                 props[name].append((rel, number, default, ""))
             for match in MARKER.finditer(line):
                 markers[match.group(1)].append((rel, number))
+    for entries in props.values():
+        entries.sort(key=lambda e: (e[0], e[1]))
+    for entries in markers.values():
+        entries.sort()
     return props, markers
 
 
@@ -159,6 +170,15 @@ def main() -> int:
         current = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
         if current != text:
             print("docs/instruments.md が古い。python3 scripts/instrument-index.py を実行する。", file=sys.stderr)
+            # CI で落ちたとき、どの行がずれたか分からないと手元で再現できない（実際に1往復溶かした）。
+            old_lines, new_lines = current.split("\n"), text.split("\n")
+            for index in range(max(len(old_lines), len(new_lines))):
+                a = old_lines[index] if index < len(old_lines) else "<なし>"
+                b = new_lines[index] if index < len(new_lines) else "<なし>"
+                if a != b:
+                    print(f"  最初の差分 {index + 1} 行目:\n    いま: {a[:160]}\n    生成: {b[:160]}", file=sys.stderr)
+                    break
+            print(f"  行数: いま {len(old_lines)} / 生成 {len(new_lines)}", file=sys.stderr)
             return 1
         print("docs/instruments.md は最新。")
         return 0
