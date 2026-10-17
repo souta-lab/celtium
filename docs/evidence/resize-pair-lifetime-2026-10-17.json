@@ -1,0 +1,546 @@
+{
+  "scope": "Pair-framebuffer lifetime regression and native resize smoke test. No performance or image-equivalence claim. Existing calibrated terrain gate is a coarse image check, not complete visual parity.",
+  "sourceCommit": "f0e02f8a3fe7f0af8229a8b4f41a33550160ec49",
+  "rendererSource": {
+    "file": "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+    "sha256": "7610396d6a50bebd4718a93c4d77160ac4dfcf0a48bff3c39c0906640539891e"
+  },
+  "regression": {
+    "before": "Production pair replacement executed against a pending-work mock: AssertionError framebuffer freed before GPU completion.",
+    "after": "10 cases passed for both pair caches: empty/cache-hit/replacement/failed-wait/retry-idempotent-release; stalled-target fallback source guard passed.",
+    "kind": "extracted production methods with mocked native boundaries, not a driver test"
+  },
+  "cpuChecks": {
+    "vulkanJUnit": 37,
+    "processTests": 51,
+    "postFactoryFaultCases": 92
+  },
+  "limitations": [
+    "Old Intel resize3 VUID failure remains a historical failure. The new baseline did not reproduce it; do not attribute that old failure uniquely to this patch.",
+    "Baseline 1024x640 used GUI scale 2 and is UNCALIBRATED, not passed. Candidate tests resize to 1280x800 preserving the existing GUI-scale-3 calibration key; no floor was changed.",
+    "Image gate reference runs were at 1280x720; this does not establish pixel equivalence at all resolutions. Minimize, loading resize, all other sizes and all modpacks remain separate."
+  ],
+  "legs": [
+    {
+      "leg": "resize-base-intel-486a",
+      "sourceEvidence": {
+        "process": {
+          "file": ".gv-verify/run-resize-base-intel-486a/validation-process.json",
+          "sha256": "b207cf9c916c8c9b603437e6bfb094e6d4dfbf99d5ca42c82a7ede25b095b416"
+        },
+        "fixture": {
+          "file": ".gv-verify/run-resize-base-intel-486a/logs/celtium-validation.json",
+          "sha256": "bf478bffba1f5a6d119e603f41d02ae0cbbe2d4dfb8d09fc4f11ed25760c5957"
+        },
+        "lock": {
+          "file": ".gv-verify/resize-base-intel-486a-lock.json",
+          "sha256": "658e0e0068fc71f72edb7fdf0b90263b625e5acf62784af2c1de1733d32158f4"
+        },
+        "manifest": {
+          "file": ".gv-verify/resize-base-intel-486a-manifest.json",
+          "sha256": "97bb820844278a70fe90b40768ec10e7f62d1c1d933497be095a8bdf1d58d055"
+        },
+        "result": {
+          "file": ".gv-verify/resize-base-intel-486a-result.json",
+          "sha256": "ccc815bb77557eca1351dcc5d925d2c957c39305de7170e9068249a2467c2ea0"
+        },
+        "console": {
+          "file": ".gv-verify/run-resize-base-intel-486a/validation-console.log",
+          "sha256": "0ec7affff592c20f448db521e2d03bff5f82d70e7d7568756c097aa6e0c0f064"
+        }
+      },
+      "git": {
+        "head": "486a7678a99984f52760d035750e212980d6934e",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/resize-lifetime-base-486a7678a/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "b3d8197d5f38cda56539276bfaa0b5b84b4a7f3ad82683f215531fe18272b6da"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/resize-lifetime-base-486a7678a/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "91867f7f28dcec37953f31679ed7d485fc6e8d0b1ba2241dd530b85a39ab64f5"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-resize-base-intel-486a/framedump",
+        "-Dceltium.validation.resizeAtTick=140",
+        "-Dceltium.validation.resizeTo=1024x640",
+        "-Dceltium.validation.resizeViaCompositor=true",
+        "-Dceltium.validation.screenshotAtTick=240",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 103.39813807600149,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-resize-base-intel-486a/headless/session.json",
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1bc037f9565c-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "nativeDeviceUuid": "8680923e000000000002000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": true,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 2,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 1,
+          "name": "Intel(R) UHD Graphics 630 (CFL GT2)",
+          "apiVersion": "1.4.354",
+          "deviceType": 1
+        }
+      },
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "b3d8197d5f38cda56539276bfaa0b5b84b4a7f3ad82683f215531fe18272b6da"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "91867f7f28dcec37953f31679ed7d485fc6e8d0b1ba2241dd530b85a39ab64f5"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1bc037f9565c-66d3c617-kept.png",
+          "size": [
+            1024,
+            640
+          ]
+        },
+        "elapsedSeconds": 105.6810593980008,
+        "leg": "resize-base-intel-486a"
+      },
+      "fixture": {
+        "framebufferSizeAtEnd": "1024x640",
+        "scene": "terrain",
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "sceneGateReferenceRuns": "gl-bridge scene-ref-terrain (2026-10-11 01:15, .celtium-work/runtime/scene-ref-terrain) and gl-bridge scene-floors/terrain-a (.celtium-work/runtime/scene-floors/terrain-a), both scene=terrain at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, 1280x720, picture=screenshots/celtium-validation.png (the GL bridge's own screenshot)",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": false,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=2",
+        "sceneCalibrationKeyMatches": false,
+        "resizeWindowSizeBefore": "1280x720",
+        "resizeWindowResizable": "true",
+        "resizeRequestedAtTick": 140,
+        "resizeReason": "world",
+        "resizeWindowFrom": "1280x720",
+        "resizeWindowTo": "1024x640",
+        "resizeCompositorResult": "mode=1024x640@60Hz exit=0 out=[ { \"success\": true } ]",
+        "resizeTrace": "CELTIUM_RESIZE_COMPOSITOR tick=140 mode=1024x640@60Hz exit=0 out=[ { \"success\": true } ]\nCELTIUM_RESIZE_REQUEST tick=140 why=world window=140670208813824 from=1280x720 to=1024x640\nCELTIUM_WINDOW_SIZE_CHANGED tick=141 from=1280x720 to=1024x640 gameFramebuffer=1280x720\nCELTIUM_RESIZE_OBSERVED tick=145 from=1280x720 to=1024x640",
+        "resizeObservedAtTick": 145,
+        "resizeObservedFrom": "1280x720",
+        "resizeObservedTo": "1024x640",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "cameraPoseSource": "fixture pose: server-side teleport at tick 25 (server-side teleport at tick 25 to x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000), re-applied on the client every tick (811 times, last at tick 835), the renderer's view entity was the player entity on every tick",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "cameraHeld": true,
+        "worldFrameBlackFraction": 0.006433,
+        "presentedImageVerdict": "UNCALIBRATED_PRESENTED_IMAGE",
+        "status": "UNCALIBRATED_PRESENTED_IMAGE"
+      },
+      "picture": {
+        "file": ".gv-verify/run-resize-base-intel-486a/screenshots/celtium-presented-world-run-1bc037f9565c-66d3c617-kept.png",
+        "sha256": "519f3fb16d0d438228468df73daf507e101afbfc08430193020681f6cd798846",
+        "dimensions": [
+          1024,
+          640
+        ]
+      }
+    },
+    {
+      "leg": "resize-pair-fix1-intel",
+      "sourceEvidence": {
+        "process": {
+          "file": ".gv-verify/run-resize-pair-fix1-intel/validation-process.json",
+          "sha256": "81174eed4906615955dfc0761b1632dec8c517aa962fdb1d448dbf51325cb621"
+        },
+        "fixture": {
+          "file": ".gv-verify/run-resize-pair-fix1-intel/logs/celtium-validation.json",
+          "sha256": "c205b3fe3a3c84b6f4e68fbd52d5aad1929b4c058a7ca3074e1adaa56fc472fb"
+        },
+        "lock": {
+          "file": ".gv-verify/resize-pair-fix1-intel-lock.json",
+          "sha256": "f2e39f24e6a47982c624c86c77e61565e7c1ea7181fc6ebc7b19054e98529017"
+        },
+        "manifest": {
+          "file": ".gv-verify/resize-pair-fix1-intel-manifest.json",
+          "sha256": "2f5c966f7840cc6e52a350cd89506c62bead467cb52aa1e4f495f3b9f4107c98"
+        },
+        "result": {
+          "file": ".gv-verify/resize-pair-fix1-intel-result.json",
+          "sha256": "06e126ff8eabd96159a2c37774af87055532e8d090ed5d4783c00a673f0b8133"
+        },
+        "console": {
+          "file": ".gv-verify/run-resize-pair-fix1-intel/validation-console.log",
+          "sha256": "692c2b88ee90bdf727c4ea0b34109b24b92e3d8540657e883900ff9223e2b341"
+        }
+      },
+      "git": {
+        "head": "f0e02f8a3fe7f0af8229a8b4f41a33550160ec49",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/resize-lifetime-pair-fix1/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "d800d2f7bce47871447b371a52f8dace111aaa6216e11759374de7bbf41d2bb2"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/resize-lifetime-pair-fix1/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "7f6f2ebfa79c848b2e308beda0353a3fa184c5defb5e9fad19a490d9c19d09e5"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-resize-pair-fix1-intel/framedump",
+        "-Dceltium.validation.resizeAtTick=140",
+        "-Dceltium.validation.resizeTo=1280x800",
+        "-Dceltium.validation.resizeViaCompositor=true",
+        "-Dceltium.validation.screenshotAtTick=240",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 105.57890601199688,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-resize-pair-fix1-intel/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1bf39bbf4e3f-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "nativeDeviceUuid": "8680923e000000000002000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 1,
+          "name": "Intel(R) UHD Graphics 630 (CFL GT2)",
+          "apiVersion": "1.4.354",
+          "deviceType": 1
+        }
+      },
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "d800d2f7bce47871447b371a52f8dace111aaa6216e11759374de7bbf41d2bb2"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "7f6f2ebfa79c848b2e308beda0353a3fa184c5defb5e9fad19a490d9c19d09e5"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1bf39bbf4e3f-66d3c617-kept.png",
+          "size": [
+            1280,
+            800
+          ]
+        },
+        "elapsedSeconds": 106.66381865600124,
+        "leg": "resize-pair-fix1-intel"
+      },
+      "fixture": {
+        "framebufferSizeAtEnd": "1280x800",
+        "scene": "terrain",
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "sceneGateReferenceRuns": "gl-bridge scene-ref-terrain (2026-10-11 01:15, .celtium-work/runtime/scene-ref-terrain) and gl-bridge scene-floors/terrain-a (.celtium-work/runtime/scene-floors/terrain-a), both scene=terrain at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, 1280x720, picture=screenshots/celtium-validation.png (the GL bridge's own screenshot)",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "sceneCalibrationKeyMatches": true,
+        "resizeWindowSizeBefore": "1280x720",
+        "resizeWindowResizable": "true",
+        "resizeRequestedAtTick": 140,
+        "resizeReason": "world",
+        "resizeWindowFrom": "1280x720",
+        "resizeWindowTo": "1280x800",
+        "resizeCompositorResult": "mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]",
+        "resizeTrace": "CELTIUM_RESIZE_COMPOSITOR tick=140 mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]\nCELTIUM_RESIZE_REQUEST tick=140 why=world window=139968581880080 from=1280x720 to=1280x800\nCELTIUM_WINDOW_SIZE_CHANGED tick=141 from=1280x720 to=1280x800 gameFramebuffer=1280x720\nCELTIUM_RESIZE_OBSERVED tick=142 from=1280x720 to=1280x800",
+        "resizeObservedAtTick": 142,
+        "resizeObservedFrom": "1280x720",
+        "resizeObservedTo": "1280x800",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "cameraPoseSource": "fixture pose: server-side teleport at tick 25 (server-side teleport at tick 25 to x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000), re-applied on the client every tick (814 times, last at tick 838), the renderer's view entity was the player entity on every tick",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "cameraHeld": true,
+        "worldFrameBlackFraction": 0.008637,
+        "presentedImageVerdict": "PASSED",
+        "status": "PASSED"
+      },
+      "picture": {
+        "file": ".gv-verify/run-resize-pair-fix1-intel/screenshots/celtium-presented-world-run-1bf39bbf4e3f-66d3c617-kept.png",
+        "sha256": "224434fa6a95ab418df8044b31edeaeff73f5baccbc71caa7c36ca9843e49770",
+        "dimensions": [
+          1280,
+          800
+        ],
+        "trackedCopy": {
+          "file": "docs/evidence/resize-pair-fix1-intel-2026-10-17.png",
+          "sha256": "224434fa6a95ab418df8044b31edeaeff73f5baccbc71caa7c36ca9843e49770"
+        }
+      }
+    },
+    {
+      "leg": "resize-pair-fix1-amd",
+      "sourceEvidence": {
+        "process": {
+          "file": ".gv-verify/run-resize-pair-fix1-amd/validation-process.json",
+          "sha256": "ee776bedf1fc67fbab038900642d5c9b60637f4f68580866b5479e1c7bb9df0f"
+        },
+        "fixture": {
+          "file": ".gv-verify/run-resize-pair-fix1-amd/logs/celtium-validation.json",
+          "sha256": "a9ab32fbca912902a122a0eb09776ca05dd8b4ec3abd78d4bcdba2e6f3d3770a"
+        },
+        "lock": {
+          "file": ".gv-verify/resize-pair-fix1-amd-lock.json",
+          "sha256": "27d2e1154db98ef7abd90d8e4b4ea4de9b847693deac86796cad9d1b2fd33ef4"
+        },
+        "manifest": {
+          "file": ".gv-verify/resize-pair-fix1-amd-manifest.json",
+          "sha256": "1f8e36e59b68f84f3147576f0e50b2a06df6b156cbf2c3a106e3f8f133c3223f"
+        },
+        "result": {
+          "file": ".gv-verify/resize-pair-fix1-amd-result.json",
+          "sha256": "eeffe77c41815b9f501f6baffd9402d78adba016a48c697047cadadc7b71e4b8"
+        },
+        "console": {
+          "file": ".gv-verify/run-resize-pair-fix1-amd/validation-console.log",
+          "sha256": "5623da63afa2cefaf6e1fd226e169bbe55cb0367749608b92ff97b08a4868952"
+        }
+      },
+      "git": {
+        "head": "f0e02f8a3fe7f0af8229a8b4f41a33550160ec49",
+        "dirty": false,
+        "dirtyFiles": []
+      },
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/resize-lifetime-pair-fix1/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+          "sha256": "d800d2f7bce47871447b371a52f8dace111aaa6216e11759374de7bbf41d2bb2"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/resize-lifetime-pair-fix1/celtium-validation-client-0.0.4-alpha.jar",
+          "sha256": "7f6f2ebfa79c848b2e308beda0353a3fa184c5defb5e9fad19a490d9c19d09e5"
+        }
+      },
+      "effectiveJvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-resize-pair-fix1-amd/framedump",
+        "-Dceltium.validation.resizeAtTick=140",
+        "-Dceltium.validation.resizeTo=1280x800",
+        "-Dceltium.validation.resizeViaCompositor=true",
+        "-Dceltium.validation.screenshotAtTick=240",
+        "-Dceltium.vulkan.presentedDumpEvery=0",
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 85.4909243889997,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-resize-pair-fix1-amd/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-1c0b729cf99c-66d3c617-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.1+2",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.4-alpha.jar",
+            "sha256": "d800d2f7bce47871447b371a52f8dace111aaa6216e11759374de7bbf41d2bb2"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.4-alpha.jar",
+            "sha256": "7f6f2ebfa79c848b2e308beda0353a3fa184c5defb5e9fad19a490d9c19d09e5"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-1c0b729cf99c-66d3c617-kept.png",
+          "size": [
+            1280,
+            800
+          ]
+        },
+        "elapsedSeconds": 86.27776508500028,
+        "leg": "resize-pair-fix1-amd"
+      },
+      "fixture": {
+        "framebufferSizeAtEnd": "1280x800",
+        "scene": "terrain",
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "sceneGateReferenceRuns": "gl-bridge scene-ref-terrain (2026-10-11 01:15, .celtium-work/runtime/scene-ref-terrain) and gl-bridge scene-floors/terrain-a (.celtium-work/runtime/scene-floors/terrain-a), both scene=terrain at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, 1280x720, picture=screenshots/celtium-validation.png (the GL bridge's own screenshot)",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "sceneCalibrationKeyMatches": true,
+        "resizeWindowSizeBefore": "1280x720",
+        "resizeWindowResizable": "true",
+        "resizeRequestedAtTick": 140,
+        "resizeReason": "world",
+        "resizeWindowFrom": "1280x720",
+        "resizeWindowTo": "1280x800",
+        "resizeCompositorResult": "mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]",
+        "resizeTrace": "CELTIUM_RESIZE_COMPOSITOR tick=140 mode=1280x800@60Hz exit=0 out=[ { \"success\": true } ]\nCELTIUM_RESIZE_REQUEST tick=140 why=world window=140413781416832 from=1280x720 to=1280x800\nCELTIUM_WINDOW_SIZE_CHANGED tick=141 from=1280x720 to=1280x800 gameFramebuffer=1280x800\nCELTIUM_RESIZE_OBSERVED tick=141 from=1280x720 to=1280x800",
+        "resizeObservedAtTick": 141,
+        "resizeObservedFrom": "1280x720",
+        "resizeObservedTo": "1280x800",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "cameraPoseSource": "fixture pose: server-side teleport at tick 25 (server-side teleport at tick 25 to x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000), re-applied on the client every tick (730 times, last at tick 754), the renderer's view entity was the player entity on every tick",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "cameraHeld": true,
+        "worldFrameBlackFraction": 0.008715,
+        "presentedImageVerdict": "PASSED",
+        "status": "PASSED"
+      },
+      "picture": {
+        "file": ".gv-verify/run-resize-pair-fix1-amd/screenshots/celtium-presented-world-run-1c0b729cf99c-66d3c617-kept.png",
+        "sha256": "7ed8866c64d5b2bee829b110e5ab71a8a646dfa9ca77b1ad373d174e67213d10",
+        "dimensions": [
+          1280,
+          800
+        ],
+        "trackedCopy": {
+          "file": "docs/evidence/resize-pair-fix1-amd-2026-10-17.png",
+          "sha256": "7ed8866c64d5b2bee829b110e5ab71a8a646dfa9ca77b1ad373d174e67213d10"
+        }
+      }
+    }
+  ]
+}

@@ -8643,6 +8643,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.passAttachedColorImage = offTarget.offTargetColorImage();
                 }
             } catch (RuntimeException | LinkageError error) {
+                if (this.gpuStalled) {
+                    // Failed completion is not a target-routing failure. No pass may be
+                    // recorded against either the retained pair or the main frame image.
+                    throw error;
+                }
                 this.offTargetPassFailures++;
                 this.lastOffTargetFailure = describe(error);
                 record("off-target pass refused, drawing into the frame image instead: " + describe(error));
@@ -10749,17 +10754,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private void destroyOffTargetFramebuffer() {
-        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR) != 0) {
-            vkDestroyFramebuffer(this.context.device(), this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR), null);
-            this.targetRegistry.clearPairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
-        }
+        destroyPairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
     }
 
     private void destroyChainPairFramebuffer() {
-        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) != 0) {
-            vkDestroyFramebuffer(this.context.device(), this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR), null);
-            this.targetRegistry.clearPairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
+        destroyPairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
+    }
+
+    /** Pair replacement also bypasses destroyFramebuffer(), so it must establish completion itself. */
+    private void destroyPairFramebuffer(RenderTargetRegistry.ImageSlot slot) {
+        long handle = this.targetRegistry.pairFramebuffer(slot);
+        if (handle == 0L) {
+            return;
         }
+        if (!settleGpu(slot.label() + " framebuffer release")) {
+            this.framebufferSettleFailures++;
+            // Leave both the handle and its render-pass key intact. The ensure caller must
+            // stop here, rather than overwrite the cache with a replacement or use a different target.
+            throw new IllegalStateException("GPU did not settle for " + slot.label() + " framebuffer release");
+        }
+        vkDestroyFramebuffer(this.context.device(), handle, null);
+        this.targetRegistry.clearPairFramebuffer(slot);
     }
 
     private long ensureFramebuffer(long renderPass, long colorView, long depthView) {
@@ -10798,14 +10813,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private void destroyFramebuffer() {
-        // Every framebuffer this method releases is covered by one settle, because the callers are not all the
-        // same shape: ensureFramebuffer and ensureFrameTarget settle first and fail closed, while the pair
-        // framebuffers below are reached from paths that do not. The rule is the same for all three -
-        // vkDestroyFramebuffer() must not be called on a framebuffer that a submitted command buffer still
-        // refers to (VUID-vkDestroyFramebuffer-framebuffer-00892) - and it was measured on Intel, where the
-        // resize leg reported it twice (VkFramebuffer 0x8f000000008f and 0xd500000000d5) while the same leg on
-        // AMD reported nothing. Intel's driver gets far enough ahead for the in-flight command buffer to still
-        // be executing, which is why the guard has to be here rather than only at the callers.
+        // Full target teardown settles before releasing its caches. The pair helpers also
+        // establish completion for direct replacements from ensure*PairFramebuffer(), which
+        // bypass this method. VUID-vkDestroyFramebuffer-framebuffer-00892 applies to both routes.
         if (!settleGpu("framebuffer release")) {
             // Fail closed, exactly as the callers do: an unsettled GPU means these handles cannot be released yet.
             // Leaking them until process exit is the safe direction, and the caller's own counter records it.
@@ -14701,8 +14711,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * leaves evidence and every later path that must not reset, re-record or free in-use resources already refuses on
      * that flag. The call itself still returns when the driver returns; nothing here can interrupt it.
      * <p>
-     * The callers are the three non-per-frame paths - region eviction, backend deletion and frame-target recreation -
-     * so a stall here costs a teardown, not a frame.
+     * Used for resource release/replacement, including a pair framebuffer's render-pass change.
+     * Cache hits and initial pair-framebuffer creation do not call this wait.
      */
     private boolean settleGpu(String reason) {
         celtium$watchDeviceWait(reason);
