@@ -832,10 +832,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         try {
             long handoffStart = System.nanoTime();
             this.frameSubmitReachedQueue = false;
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainHandoff");
             this.frameTarget.beginFrame();
             this.windowOpen = true;
             this.frameOpens++;
             recordHandoff(System.nanoTime() - handoffStart);
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainHandoff");
         } catch (RuntimeException | LinkageError error) {
             this.terrainStatistics.notePassErrors();
             record("frame begin failed: " + describe(error));
@@ -845,11 +847,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         boolean submitted = false;
         try {
             beginCommands();
+            // The pass's own phases, timed inside the terrain bracket. Its 8.2 ms p50 is larger than the GPU's
+            // 2.6 ms for the same passes (the rendererDebug lines carry the GPU timestamps, measured 2026-10-16) and
+            // the internal counters that existed - pipeline prepare 2-6 ms, group clone 0-1 ms - are too small to
+            // account for the difference. Nested inside-brackets are informational: FramePassTimings reports them
+            // without subtracting them from the frame's residual.
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainRecord");
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 recordRenderPass(stack, pipeline, matrices, renderLists, pass, occlusionCamera, camera,
                         useBlockFaceCulling, primitiveType);
             }
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainRecord");
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainSubmit");
             this.frameCoordinator.submitCommands();
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSubmit");
             submitted = true;
             this.terrainStatistics.notePassSubmissions();
             if (this.readbackPending) {
