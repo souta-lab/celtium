@@ -156,17 +156,57 @@ public class SectionRenderDataStorage {
         return this.storageStrategy.getSliceMask(this.pMeshDataArray, sectionIndex);
     }
 
+    /**
+     * Hits, misses and stores of this two-slot batch cache, counted because the terrain pass's own recording
+     * measured 6.5 ms p50 and rebuilding a batch - with the GPU buffer it allocates - is the largest thing inside it.
+     * <p>
+     * Measured 2026-10-16 (leg gv-notax-r37-bcache): {@code lookups=6000 hits=1431 misses=4569}, a 24% hit rate. The
+     * first reading of that was "two slots, three render passes per frame, so each pass displaces the other"; the
+     * A/B on the same jar refused it - {@code -Dceltium.terrain.batchCacheSlots=4} moved the rate to 27% and the
+     * terrain bracket to 9.6 ms p50 against the two-slot arm's 8.7 ms. So the entries are displaced by a changing
+     * key, not by a shortage of slots, and the next question is which field of {@link BatchCacheParams} changes every
+     * frame. The counter stays because that is the number any fix has to move.
+     * <p>
+     * Printed by the storage itself, bounded, because the fixture cannot reach this class.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCacheHits =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCacheMisses =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCacheStores =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCachePrints =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    private static void celtium$noteBatchCache(boolean hit) {
+        if (hit) {
+            celtium$batchCacheHits.incrementAndGet();
+        } else {
+            celtium$batchCacheMisses.incrementAndGet();
+        }
+        long total = celtium$batchCacheHits.get() + celtium$batchCacheMisses.get();
+        if (total > 0 && total % 2000 == 0 && celtium$batchCachePrints.getAndIncrement() < 12) {
+            System.out.println("[Celtium] CELTIUM_BATCH_CACHE lookups=" + total
+                    + " hits=" + celtium$batchCacheHits.get() + " misses=" + celtium$batchCacheMisses.get()
+                    + " stores=" + celtium$batchCacheStores.get());
+        }
+    }
+
     public @Nullable CachedBatch getCachedMultiDrawBatch(BatchCacheParams params) {
         if (params.equals(firstBatchParams)) {
+            celtium$noteBatchCache(true);
             return firstCachedBatch;
         } else if (params.equals(secondBatchParams)) {
+            celtium$noteBatchCache(true);
             return secondCachedBatch;
         } else {
+            celtium$noteBatchCache(false);
             return null;
         }
     }
 
     public void storeCachedMultiDrawBatch(BatchCacheParams params, CachedBatch batch) {
+        celtium$batchCacheStores.incrementAndGet();
         if (params.equals(firstBatchParams) || firstBatchParams == null) {
             if (firstCachedBatch != null) {
                 firstCachedBatch.delete();
