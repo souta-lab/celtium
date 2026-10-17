@@ -1,6 +1,9 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.LoadingScreenRenderer;
+import org.objectweb.asm.Opcodes;
+import org.taumc.celeritas.interfaces.LoadingProgressState;
 import org.embeddedt.embeddium.impl.render.frame.RenderAheadManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -22,6 +25,18 @@ public class MinecraftMixin {
     @Inject(method = "runTick", at = @At("RETURN"))
     private void postRender(CallbackInfo ci) {
         celeritas$renderAheadManager.endFrame();
+    }
+
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "resize(II)V",
+            at = @At(value = "FIELD", opcode = Opcodes.PUTFIELD,
+                    target = "Lnet/minecraft/client/Minecraft;loadingScreen:Lnet/minecraft/client/LoadingScreenRenderer;"))
+    private void celtium$replaceLoadingScreen(Minecraft mc, LoadingScreenRenderer replacement) {
+        // Scope the handover to resize, not arbitrary progress-renderer construction by other mods.
+        if (Boolean.getBoolean("celtium.vulkan.glless") && mc.loadingScreen instanceof LoadingProgressState
+                && replacement instanceof LoadingProgressState) {
+            ((LoadingProgressState) replacement).celtium$copyLoadingTask((LoadingProgressState) mc.loadingScreen);
+        }
+        mc.loadingScreen = replacement;
     }
 
     /**
