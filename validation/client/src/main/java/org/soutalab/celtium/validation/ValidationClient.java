@@ -838,6 +838,16 @@ public final class ValidationClient {
     private final int celtium$resizeAtTick = Integer.getInteger("celtium.validation.resizeAtTick", 0).intValue();
     private final String celtium$resizeTo = System.getProperty("celtium.validation.resizeTo", "1024x640");
     /**
+     * A sequence of resizes instead of one: {@code -Dceltium.validation.resizeSchedule=400:1024x640,440:800x600,480:1280x720}
+     * fires each request at its world tick through the same path {@link #celtium$resizeAtTick} uses (the compositor
+     * when {@link #celtium$resizeViaCompositor} is on, the window request always). Each entry becomes a JSON object in
+     * the {@code resizeSchedule} report field; the framebuffer-change sampler attributes the next observed transition
+     * to the earliest request still unobserved, so a request that never took effect shows up as a mismatch between
+     * {@code to} and {@code observedTo} rather than silence. Off when the property is unset or unparsable.
+     */
+    private final com.google.gson.JsonArray celtium$resizeScheduleEvents = celtium$parseResizeSchedule();
+    private int celtium$resizeScheduleCursor;
+    /**
      * Resize while the title screen is up, before the fixture launches its world, and hold the menu for
      * {@link #celtium$resizeMenuHoldTicks} ticks so those frames are drawn at the new size.
      */
@@ -3474,6 +3484,15 @@ public final class ValidationClient {
             // drawn after the transition.
             if (celtium$resizeAtTick > 0 && !celtium$resizeRequested && worldTicks >= celtium$resizeAtTick) {
                 celtium$requestResize(mc, "world");
+            }
+            // The multi-size schedule: each entry fires once, at its own tick, through the same request path.
+            if (celtium$resizeScheduleEvents != null && celtium$resizeScheduleCursor < celtium$resizeScheduleEvents.size()
+                    && celtium$resizeScheduleEvents.get(celtium$resizeScheduleCursor).getAsJsonObject()
+                            .get("atTick").getAsInt() <= worldTicks) {
+                com.google.gson.JsonObject entry =
+                        celtium$resizeScheduleEvents.get(celtium$resizeScheduleCursor).getAsJsonObject();
+                celtium$resizeScheduleCursor++;
+                celtium$requestResizeTo(mc, "schedule", entry);
             }
             // The world-phase reload, the sibling of the resize above and driven the same way: once, at the
             // requested tick, with a world loaded. The capture tick is chosen later than this, so the frame the
@@ -6352,20 +6371,46 @@ public final class ValidationClient {
      */
     private boolean celtium$requestResize(Minecraft mc, String why) {
         int[] size = celtium$parseWindowSize(celtium$resizeTo);
+        return celtium$requestResizeSize(mc, why, size, null);
+    }
+
+    /**
+     * One schedule entry's resize: the size comes from the entry's {@code to} field, and the entry receives the
+     * request's own fields ({@code requestedAtTick}, {@code compositorResult}) so each request in the schedule keeps
+     * its own facts.
+     */
+    private boolean celtium$requestResizeTo(Minecraft mc, String why, com.google.gson.JsonObject entry) {
+        int[] size = celtium$parseWindowSize(entry.get("to").getAsString());
+        return celtium$requestResizeSize(mc, why, size, entry);
+    }
+
+    private boolean celtium$requestResizeSize(Minecraft mc, String why, int[] size,
+            com.google.gson.JsonObject entry) {
         long window = celtium$windowHandle();
         if (size == null || window == 0L) {
-            report.addProperty("resizeFailed", "why=" + why + " size=" + (size == null ? "unparsable:" + celtium$resizeTo
-                    : size[0] + "x" + size[1]) + " window=" + window);
-            celtium$resizeTrace("CELTIUM_RESIZE_FAILED why=" + why + " size=" + celtium$resizeTo + " window=" + window);
+            String failure = "why=" + why + " size=" + (size == null ? "unparsable" : size[0] + "x" + size[1])
+                    + " window=" + window;
+            if (entry != null) {
+                entry.addProperty("requestFailed", failure);
+            } else {
+                report.addProperty("resizeFailed", failure);
+            }
+            celtium$resizeTrace("CELTIUM_RESIZE_FAILED " + failure);
             return false;
         }
         int beforeWidth = mc.displayWidth;
         int beforeHeight = mc.displayHeight;
         int[] windowBefore = celtium$glfwWindowSize(window);
         Boolean resizable = celtium$glfwWindowResizable(window);
-        report.addProperty("resizeWindowSizeBefore", windowBefore == null ? "unreadable"
-                : windowBefore[0] + "x" + windowBefore[1]);
-        report.addProperty("resizeWindowResizable", resizable == null ? "unreadable" : resizable.toString());
+        if (entry == null) {
+            report.addProperty("resizeWindowSizeBefore", windowBefore == null ? "unreadable"
+                    : windowBefore[0] + "x" + windowBefore[1]);
+            report.addProperty("resizeWindowResizable", resizable == null ? "unreadable" : resizable.toString());
+        } else {
+            entry.addProperty("windowSizeBefore", windowBefore == null ? "unreadable"
+                    : windowBefore[0] + "x" + windowBefore[1]);
+            entry.addProperty("windowResizable", resizable == null ? "unreadable" : resizable.toString());
+        }
         try {
             Class<?> glfw = Class.forName("org.lwjgl.glfw.GLFW");
             // A window the game created non-resizable would ignore the size request, and "the window never resized" and
@@ -6378,22 +6423,36 @@ public final class ValidationClient {
             glfw.getMethod("glfwSetWindowSize", long.class, int.class, int.class)
                     .invoke(null, Long.valueOf(window), Integer.valueOf(size[0]), Integer.valueOf(size[1]));
         } catch (ReflectiveOperationException | LinkageError error) {
-            report.addProperty("resizeFailed", "why=" + why + " error=" + error);
-            celtium$resizeTrace("CELTIUM_RESIZE_FAILED why=" + why + " error=" + error);
+            String failure = "why=" + why + " error=" + error;
+            if (entry != null) {
+                entry.addProperty("requestFailed", failure);
+            } else {
+                report.addProperty("resizeFailed", failure);
+            }
+            celtium$resizeTrace("CELTIUM_RESIZE_FAILED " + failure);
             return false;
         }
         celtium$resizeRequested = true;
         celtium$resizeRequestedAtTick = worldTicks;
-        report.addProperty("resizeRequestedAtTick", Integer.valueOf(worldTicks));
-        report.addProperty("resizeReason", why);
-        report.addProperty("resizeWindowFrom", beforeWidth + "x" + beforeHeight);
-        report.addProperty("resizeWindowTo", size[0] + "x" + size[1]);
+        if (entry != null) {
+            entry.addProperty("requestedAtTick", Integer.valueOf(worldTicks));
+            entry.addProperty("from", beforeWidth + "x" + beforeHeight);
+        } else {
+            report.addProperty("resizeRequestedAtTick", Integer.valueOf(worldTicks));
+            report.addProperty("resizeReason", why);
+            report.addProperty("resizeWindowFrom", beforeWidth + "x" + beforeHeight);
+            report.addProperty("resizeWindowTo", size[0] + "x" + size[1]);
+        }
         // The client's request is a request: on this rig the tiling compositor decides, so the same tick asks the
         // compositor as well. The two are recorded separately because "GLFW was told" and "the window is now that size"
         // are the two halves the earlier run could not tell apart.
         if (celtium$resizeViaCompositor) {
             String result = celtium$resizeCompositorOutput(size[0], size[1]);
-            report.addProperty("resizeCompositorResult", result);
+            if (entry != null) {
+                entry.addProperty("compositorResult", result);
+            } else {
+                report.addProperty("resizeCompositorResult", result);
+            }
             celtium$resizeTrace("CELTIUM_RESIZE_COMPOSITOR tick=" + worldTicks + " " + result);
             System.out.println("[Celtium] CELTIUM_RESIZE_COMPOSITOR tick=" + worldTicks + " why=" + why + " " + result);
         }
@@ -6481,6 +6540,22 @@ public final class ValidationClient {
                 report.addProperty("resizeObservedFrom", celtium$lastFramebufferWidth + "x" + celtium$lastFramebufferHeight);
                 report.addProperty("resizeObservedTo", width + "x" + height);
             }
+            // Attribute each framebuffer transition to the earliest schedule entry still unobserved. FIFO is the only
+            // safe pairing when a compositor decides whether and when a request takes effect; an entry left without
+            // observedTo at the end is itself the finding that its request never took effect.
+            if (celtium$resizeScheduleEvents != null) {
+                for (int i = 0; i < celtium$resizeScheduleEvents.size(); i++) {
+                    com.google.gson.JsonObject entry = celtium$resizeScheduleEvents.get(i).getAsJsonObject();
+                    if (!entry.has("requestedAtTick") || entry.has("observedAtTick")
+                            || worldTicks < entry.get("requestedAtTick").getAsInt()) {
+                        continue;
+                    }
+                    entry.addProperty("observedAtTick", Integer.valueOf(worldTicks));
+                    entry.addProperty("observedFrom", celtium$lastFramebufferWidth + "x" + celtium$lastFramebufferHeight);
+                    entry.addProperty("observedTo", width + "x" + height);
+                    break;
+                }
+            }
             String line = "CELTIUM_RESIZE_OBSERVED tick=" + worldTicks + " from=" + celtium$lastFramebufferWidth + "x"
                     + celtium$lastFramebufferHeight + " to=" + width + "x" + height;
             celtium$resizeTrace(line);
@@ -6489,6 +6564,35 @@ public final class ValidationClient {
         celtium$lastFramebufferWidth = width;
         celtium$lastFramebufferHeight = height;
         report.addProperty("framebufferSizeAtEnd", width + "x" + height);
+    }
+
+    /**
+     * Parses {@code celtium.validation.resizeSchedule} into the live report array: {@code tick:WxH} pairs separated by
+     * commas. The array is added to the report immediately so later entry mutations (request results, observed sizes)
+     * serialize with the final state at finish time.
+     */
+    private com.google.gson.JsonArray celtium$parseResizeSchedule() {
+        String spec = System.getProperty("celtium.validation.resizeSchedule", "");
+        if (spec.trim().isEmpty()) {
+            return null;
+        }
+        com.google.gson.JsonArray entries = new com.google.gson.JsonArray();
+        for (String item : spec.split(",")) {
+            String trimmed = item.trim();
+            int colon = trimmed.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            com.google.gson.JsonObject entry = new com.google.gson.JsonObject();
+            entry.addProperty("atTick", Integer.valueOf(trimmed.substring(0, colon).trim()));
+            entry.addProperty("to", trimmed.substring(colon + 1).trim());
+            entries.add(entry);
+        }
+        if (entries.size() == 0) {
+            return null;
+        }
+        report.add("resizeSchedule", entries);
+        return entries;
     }
 
     private synchronized void celtium$resizeTrace(String line) {
