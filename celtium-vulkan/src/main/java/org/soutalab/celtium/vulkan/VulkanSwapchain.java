@@ -301,6 +301,13 @@ public final class VulkanSwapchain {
     }
 
 
+    /** Transfers unfulfilled requests before this wrapper is replaced; completed dumps are not replayed. */
+    public java.util.List<java.nio.file.Path> takePendingPresentedImageDumps() {
+        java.util.List<java.nio.file.Path> pending = new java.util.ArrayList<>(this.pendingDumpPaths);
+        this.pendingDumpPaths.clear();
+        return pending;
+    }
+
     /** Writes the image the present just handed over, while it is still ours to read. */
     private boolean writePresentedImage(java.nio.file.Path path, long image) {
         // The window can be resized between the last present and this read: the fields below are written when the

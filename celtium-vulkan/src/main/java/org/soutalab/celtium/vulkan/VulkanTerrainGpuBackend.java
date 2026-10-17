@@ -1127,7 +1127,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** How many times the present-time drain of pending immediate work failed, bounded for reporting. */
     private int presentFlushFailures;
     /**
-     * A presented-image dump asked for before the swapchain existed.
+     * Presented-image dumps held before swapchain creation or across a wrapper replacement.
      * <p>
      * The loading phase is the caller: {@code Minecraft.startGame} reaches {@code drawSplashScreen}
      * ({@code Minecraft.java:517}) before the first present, and the swapchain is created lazily on the present path -
@@ -1136,7 +1136,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * lost the frame. Held instead, and forwarded the moment the swapchain is created; if the creation fails the path
      * stays here and is named in the report rather than dropped silently.
      */
-    private java.nio.file.Path pendingPresentedDumpBeforeSwapchain;
+    private final java.util.List<java.nio.file.Path> pendingPresentedDumps = new java.util.ArrayList<>();
     /** How many bound-pipeline/descriptor lines have been recorded; bounded so a run cannot flood. */
     private int boundHandleLogs;
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
@@ -5646,8 +5646,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // before that wait, or that frees anything the frame's command buffer can still name, breaks
                         // the contract and needs the idle wait instead.
                         record("the swapchain is out of date with the surface, rebuilding it for the next present");
-                        this.swapchain.delete();
-                        this.swapchain = null;
+                        releaseSwapchainForRebuild();
                     }
                     this.immediatePresentedFrames++;
                     if (this.immediatePresentedFrames == 1) {
@@ -10899,6 +10898,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     /** Swapchains dropped because the VSync option changed (task-56), so the rebuild is a number, not a claim. */
 
+    /** A request is owned by the window, not the replaceable swapchain wrapper. */
+    private void releaseSwapchainForRebuild() {
+        this.pendingPresentedDumps.addAll(this.swapchain.takePendingPresentedImageDumps());
+        this.swapchain.delete();
+        this.swapchain = null;
+        // Write serials are local to the old wrapper. Retain completed frame bindings,
+        // but do not mistake the new wrapper's serial 1 for an already observed write.
+        this.seenDumpWriteSerialByName.clear();
+    }
+
+    private void forwardPendingPresentedDumps() {
+        if (this.swapchain == null) {
+            return;
+        }
+        java.util.Iterator<java.nio.file.Path> requests = this.pendingPresentedDumps.iterator();
+        while (requests.hasNext()) {
+            java.nio.file.Path held = requests.next();
+            this.swapchain.requestPresentedImageDump(held);
+            this.presentedDumpPath = held;
+            requests.remove();
+            System.out.println("[Celtium] CELTIUM_PRESENTED_DUMP_HELD path=" + held
+                    + " (forwarded after swapchain creation/rebuild)");
+        }
+    }
+
     private boolean ensureSwapchain() {
         // The VSync option changed since this swapchain was built (task-56): the present mode is a creation parameter,
         // so the only way to honour it is a new swapchain. Dropping it here routes the rebuild through exactly the
@@ -10909,8 +10933,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             record("the VSync option changed: dropping the swapchain so the present mode is rebuilt"
                     + " requested=" + org.soutalab.celtium.vulkan.VulkanSwapchain.vsyncRequested()
                     + " previous=[" + this.swapchain.presentModeSummary() + "]");
-            this.swapchain.delete();
-            this.swapchain = null;
+            releaseSwapchainForRebuild();
             this.submissionStatistics.notePresentModeRebuilds();
         }
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
@@ -10955,31 +10978,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 record("the surface extent no longer matches the " + this.swapchain.width() + "x"
                         + this.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
                         + "x" + framebufferHeight + "), rebuilding it");
-                this.swapchain.delete();
-                this.swapchain = null;
+                releaseSwapchainForRebuild();
             }
             if (this.swapchain != null) {
+                forwardPendingPresentedDumps();
                 return true;
             }
         }
         java.util.List<String> reasons = new java.util.ArrayList<String>();
         this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons);
-        if (this.swapchain != null && this.pendingPresentedDumpBeforeSwapchain != null) {
-            // The dump the loading phase asked for before there was a swapchain: it is the frame the first present
-            // writes, so the request goes in now and the path is cleared only once it is handed over.
-            java.nio.file.Path held = this.pendingPresentedDumpBeforeSwapchain;
-            this.pendingPresentedDumpBeforeSwapchain = null;
-            this.presentedDumpPath = held;
-            this.swapchain.requestPresentedImageDump(held);
-            System.out.println("[Celtium] CELTIUM_PRESENTED_DUMP_HELD path=" + held
-                    + " (requested before the swapchain existed; forwarded at creation)");
-        }
+        forwardPendingPresentedDumps();
         if (this.swapchain == null) {
-            if (this.pendingPresentedDumpBeforeSwapchain != null) {
+            if (!this.pendingPresentedDumps.isEmpty()) {
                 // Not dropped: the request stays held and is named, so the next creation attempt can still serve it and
                 // a leg can tell "no frame was presented" from "the request was thrown away".
                 record("presented-image dump held across a failed swapchain creation: "
-                        + this.pendingPresentedDumpBeforeSwapchain + " (" + reasons + ")");
+                        + this.pendingPresentedDumps + " (" + reasons + ")");
             }
             record("swapchain unavailable at surface and swapchain creation: " + reasons);
             // BH-19 evidence: this list is what names *why* the swapchain was refused - the present-support contract,
@@ -12623,12 +12637,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * cannot be removed while that is the only picture available. Written at the capture so it belongs to the same frame.
      */
     public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
+        if (path == null) {
+            return false;
+        }
         if (this.swapchain == null) {
             // The loading phase's request: accepted and held, because the swapchain is created on the present path and
             // the splash's own last updateDisplay() is this run's first present. Returning false here made the fixture
             // record "could not be requested" for a frame that was about to be presented - the request was possible,
             // it just had no object to write through yet.
-            this.pendingPresentedDumpBeforeSwapchain = path;
+            this.pendingPresentedDumps.add(path);
             this.presentedImageDumpRequested = true;
             return true;
         }
