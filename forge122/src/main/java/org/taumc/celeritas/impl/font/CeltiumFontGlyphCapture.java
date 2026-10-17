@@ -627,6 +627,114 @@ public final class CeltiumFontGlyphCapture {
         return (f1 - f) / 2.0F + 1.0F;
     }
 
+    private static final float[] ATLAS_UV = new float[4];
+
+    /**
+     * The whole-atlas glyph path: one texture for every character, so the quad's UVs address the baked sheet instead
+     * of a per-page texture. {@code unicodePath} is {@code renderUnicodeChar}'s caller (unicode flag on - every char,
+     * ASCII included, measures its width on {@code glyphWidth}); otherwise the caller is {@code renderDefaultChar}
+     * and {@code ch} is the 0-255 sheet index whose width comes from {@code charWidth}.
+     * <p>
+     * The emitted vertices are vanilla's geometry exactly, in the capture's own buffered segment, so the run, its
+     * strip separators and the one draw per string are unchanged - only the texture (the atlas) and the UVs differ.
+     *
+     * @return the advance vanilla would return, 0 for a glyph vanilla skips, or -1 to take the window path
+     */
+    public static float fastAtlasGlyph(byte[] glyphWidth, int[] charWidth, float posX, float posY, char ch,
+            boolean italic, boolean unicodePath) {
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend == null || !CeltiumFontAtlas.active()) {
+            return -1.0F;
+        }
+        float x0, y0, x1, x2, x3, u0, v0, u1, v1, advance;
+        if (unicodePath) {
+            if (glyphWidth == null) {
+                return -1.0F;
+            }
+            int i = glyphWidth[ch] & 255;
+            if (i == 0) {
+                return 0.0F;
+            }
+            CeltiumFontAtlas.unicodeUV(ch, glyphWidth, ATLAS_UV);
+            float f4 = ((i & 15) + 1 - (i >>> 4)) - 0.02F;
+            float f5 = italic ? 1.0F : 0.0F;
+            x0 = posX + f5;
+            y0 = posY;
+            x1 = posX - f5;
+            x2 = posX + f4 / 2.0F + f5;
+            x3 = posX + f4 / 2.0F - f5;
+            u0 = ATLAS_UV[0];
+            v0 = ATLAS_UV[1];
+            u1 = ATLAS_UV[2];
+            v1 = ATLAS_UV[3];
+            advance = CeltiumFontAtlas.unicodeAdvance(glyphWidth, ch);
+        } else {
+            int index = ch & 0xFFFF;
+            if (charWidth == null || index >= charWidth.length) {
+                return -1.0F;
+            }
+            int width = charWidth[index];
+            float k = italic ? 1.0F : 0.0F;
+            float f = (float) width - 0.01F;
+            CeltiumFontAtlas.asciiUV(index, width, ATLAS_UV);
+            x0 = posX + k;
+            y0 = posY;
+            x1 = posX - k;
+            x2 = posX + f - 1.0F + k;
+            x3 = posX + f - 1.0F - k;
+            u0 = ATLAS_UV[0];
+            v0 = ATLAS_UV[1];
+            u1 = ATLAS_UV[2];
+            v1 = ATLAS_UV[3];
+            advance = (float) width;
+        }
+        windows++;
+        fastGlyphs++;
+        armed = true;
+        windowUnicode = unicodePath;
+        mode = GL_TRIANGLE_STRIP;
+        vertexCount = MAX_VERTICES;
+        texCoordCount = MAX_VERTICES;
+        int packed = byteValue(colorRed) | (byteValue(colorGreen) << 8) | (byteValue(colorBlue) << 16)
+                | (byteValue(colorAlpha) << 24);
+        if (bufferedOpen && packed != bufferedColour) {
+            flushBufferedQuads(backend);
+        }
+        if (bufferQuad(backend, packed,
+                x0, y0, u0, v0, x1, y0 + 7.99F, u0, v1, x2, y0, u1, v0, x3, y0 + 7.99F, u1, v1)) {
+            submitted++;
+            MODE_COUNTS[GL_TRIANGLE_STRIP]++;
+            armed = false;
+            reset();
+            return advance;
+        }
+        // The segment would not grow: fall back to the capture's own four-float path.
+        positionX[0] = x0;
+        positionY[0] = y0;
+        positionZ[0] = 0.0F;
+        textureU[0] = u0;
+        textureV[0] = v0;
+        positionX[1] = x1;
+        positionY[1] = y0 + 7.99F;
+        positionZ[1] = 0.0F;
+        textureU[1] = u0;
+        textureV[1] = v1;
+        positionX[2] = x2;
+        positionY[2] = y0;
+        positionZ[2] = 0.0F;
+        textureU[2] = u1;
+        textureV[2] = v0;
+        positionX[3] = x3;
+        positionY[3] = y0 + 7.99F;
+        positionZ[3] = 0.0F;
+        textureU[3] = u1;
+        textureV[3] = v1;
+        submit();
+        armed = false;
+        reset();
+        return advance;
+    }
+
     /** Opens the vanilla glyph method's own bracket. Called from the mixin's HEAD injection. */
     public static void beginGlyph() {
         glyphStartNanos = System.nanoTime();

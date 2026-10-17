@@ -67,6 +67,32 @@ public abstract class FontRendererMixin {
      */
     private int celtium$unicodeTextureName;
 
+    /** The GL name the font atlas is bound under, cached like {@link #celtium$fontTextureName}; 0 until resolved. */
+    private int celtium$atlasTextureName;
+
+    /**
+     * Binds the whole-font atlas when the unit no longer holds it, mirroring the cached-bind pattern the sheet paths
+     * use. {@return false} only while the atlas is not built, which sends the caller down the per-page path.
+     */
+    /** The vanilla {@code ascii.png} sheet - the atlas only holds it, so a custom-sheet FontRenderer keeps its own. */
+    private static final ResourceLocation VANILLA_ASCII = new ResourceLocation("textures/font/ascii.png");
+
+    private boolean celtium$bindAtlas() {
+        // Only a vanilla-sheet renderer may draw from the atlas: a mod's own FontRenderer (the enchanting table's
+        // standard-galactic sheet, a custom font mod) resolves its glyphs out of its own locationFontTexture, and
+        // routing those through the atlas would draw ascii.png's glyphs where the custom sheet's belong.
+        if (!VANILLA_ASCII.equals(this.locationFontTexture)
+                || !org.taumc.celeritas.impl.font.CeltiumFontAtlas.active()) {
+            return false;
+        }
+        if (celtium$atlasTextureName == 0 || celtium$boundTexture2D() != celtium$atlasTextureName) {
+            bindTexture(org.taumc.celeritas.impl.font.CeltiumFontAtlas.location());
+            celtium$atlasTextureName = celtium$boundTexture2D();
+            CeltiumFontGlyphCapture.noteFontTextureRebind();
+        }
+        return celtium$atlasTextureName != 0;
+    }
+
     /**
      * The default-page glyph: vanilla's body, or the Celtium path that writes the same quad straight into the capture.
      * <p>
@@ -92,6 +118,14 @@ public abstract class FontRendererMixin {
     @Inject(method = "func_78266_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$openDefaultGlyph(int ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.beginGlyph();
+        if (CeltiumFontGlyphCapture.fastPathAvailable() && celtium$bindAtlas()) {
+            float atlasAdvance = CeltiumFontGlyphCapture.fastAtlasGlyph(this.glyphWidth, this.charWidth,
+                    this.posX, this.posY, (char) ch, italic, false);
+            if (atlasAdvance >= 0.0F) {
+                info.setReturnValue(Float.valueOf(atlasAdvance));
+                return;
+            }
+        }
         if (CeltiumFontGlyphCapture.fastPathAvailable()) {
             if (celtium$fontTextureName == 0 || celtium$boundTexture2D() != celtium$fontTextureName) {
                 bindTexture(this.locationFontTexture);
@@ -116,6 +150,14 @@ public abstract class FontRendererMixin {
     @Inject(method = "func_78277_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$openUnicodeGlyph(char ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.beginGlyph();
+        if (CeltiumFontGlyphCapture.fastPathAvailable() && celtium$bindAtlas()) {
+            float atlasAdvance = CeltiumFontGlyphCapture.fastAtlasGlyph(this.glyphWidth, this.charWidth,
+                    this.posX, this.posY, ch, italic, true);
+            if (atlasAdvance >= 0.0F) {
+                info.setReturnValue(Float.valueOf(atlasAdvance));
+                return;
+            }
+        }
         if (CeltiumFontGlyphCapture.fastPathAvailable() && ch < 256) {
             // unicodeFlag sends every ASCII char through here too; page 0 is the sheet the fast path needs.
             if (celtium$unicodeTextureName == 0 || celtium$boundTexture2D() != celtium$unicodeTextureName) {
