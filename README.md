@@ -4,12 +4,12 @@
 
 An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, built from Celeritas.
 
-> **Vulkan-only rendering works and the two primary modpacks pass on both test GPUs, but frame-time spikes remain.**
-> The measured p50 is at or below the Celeritas reference in the calibrated fixtures, while **p99 is still about 119x the p50** — the spikes, not the average, are what a player feels. Rendering and mod compatibility are incomplete, real-instance FPS work is ongoing, and this is a development project, not a finished performance mod.
+> **Experimental Vulkan-only renderer, not a finished performance mod.**
+> Scoped terrain fixtures for E2E and RLCraft have passed on both test GPUs. That is not complete modpack compatibility, all-scene correctness, or proof of a gameplay performance improvement.
 >
-> **Vulkanのみで描画・表示でき、主要2 Modpack は両GPUで受入済みですが、フレーム時間のスパイク（p99）が残っています。p50 は較正済み fixture で Celeritas 以下、体感を決めているのはスパイク側です。描画とmod互換性は開発中で、通常プレイ向けの完成版ではありません。**
+> **native Vulkanで描画・提示する実装がありますが、描画・互換性・性能の受入は未完です。** 最新の判定と未解決項目は [現在表](<docs/plan.md>)だけで管理します。
 
-Status updated: **2026-10-16**.
+Status reviewed: **2026-10-17** (existing evidence re-audited; no new GPU runs).
 
 ## Current status
 
@@ -23,23 +23,11 @@ It creates a window without an OpenGL context (`GLFW_NO_API`), renders into Vulk
 
 Terrain, entities, items, particles, sky/clouds and GUI have native rendering paths. **Having a native path does not mean every scene or feature is correct.** Unsupported or incomplete paths can still produce missing or incorrect output.
 
-Vulkan-only startup and presentation have been exercised on **AMD Radeon RX 6400 (RADV NAVI24) and Intel UHD Graphics 630 (CFL GT2) under Linux/Mesa**, with passing fixtures and zero validation messages. Physical display scanout has not been measured.
+Vulkan-only startup and presentation have been exercised on **AMD Radeon RX 6400 (RADV NAVI24) and Intel UHD Graphics 630 (CFL GT2) under Linux/Mesa**. Physical display scanout has not been measured.
 
-**Accepted on both GPUs** (each line is a recorded leg with its jar hash, device line and verdict; see [docs/plan.md](docs/plan.md) for the run names):
+See [the single current status table](<docs/plan.md>) for per-GPU verdicts, artifact scope and outstanding defects, and [the process re-audit](<docs/audit-2026-10-17-sol-review.md>) for corrected claims. In particular, the earlier blanket “resize/reload/minimize passed on both GPUs” claim was incorrect: a recorded Intel resize run failed Vulkan validation, and the named minimize run was AMD-only. Cloud input observations also did not establish complete image parity.
 
-- **E2E 1.93a (268 mods) world image gate: PASSED on AMD and Intel** — Celtium replaces Nothirium in that pack. `worldFrameBlackFraction` 0.0051 (AMD) / 0.0038 (Intel) against a 0.05 floor, with the calibration key matched and the floors enforced.
-- **RLCraft 2.9.3 (165 mods) terrain: PASSED on AMD and Intel** — p50 30.6 ms (AMD) in the recipe profile.
-- **scene / resize / reload / minimize: PASSED on both GPUs**, with `validationMessageCount=0`. Resize is proven by the presented image actually changing size; reload by a resource reload firing mid-run.
-- **Display-list semantics are implemented**: `glNewList`/`glCallList` model geometry is captured and drawn natively, and the entities around the camera and the player model appear (verified by picture on both GPUs — the same scene without the fix had none of them).
-
-**Not accepted, and the current work**:
-
-- Frame-time spikes: p99 is ~119x p50, and the largest recorded per-frame cost is client tick, not the renderer. The 141 ms frames are being localised with the submission/fence instrumentation.
-- The defects a user reported against 0.0.5-alpha — recorded with screenshots in [docs/reports/0.0.5-user-reported-defects.md](docs/reports/0.0.5-user-reported-defects.md). The missing translucent backdrop in the Sodium-style options screen was fixed on 2026-10-16 (before/after in [docs/evidence/sodium-tooltip-backdrop-2026-10-16.png](docs/evidence/sodium-tooltip-backdrop-2026-10-16.png)). Still open: loading-screen progress bar/text and resize follow, panorama cost and blur, the option description overlapping the setting it describes, and faint clouds.
-- Framebuffer/post-process ownership, resource lifetime and recovery are still being finished.
-- Ordinary Forge mod compatibility and real gameplay verification continue; the calibrated verdicts above are scoped fixtures, not every scene.
-
-See [the current status and priorities](docs/plan.md), [the performance plan](docs/performance_plan.md), and [mod compatibility](docs/mod-compatibility.md). Historical measurements in `docs/history/` are evidence for their specific builds, not current completion claims.
+[User reports](<docs/reports/0.0.5-user-reported-defects.md>), [the performance design](<docs/performance_plan.md>) and [mod compatibility](<docs/mod-compatibility.md>) provide supporting detail, not independent current-state registers. [Historical records](<docs/history/>) describe their particular builds, not latest-HEAD acceptance.
 
 ## Scope and compatibility
 
@@ -89,15 +77,13 @@ build-1122/build/libs/0.0.4-alpha/celtium-forge-mc1.12.2-0.0.4-alpha.jar
 
 Use a separate Cleanroom test instance, install the packaged Celtium jar instead of Celeritas, and add `-Dceltium.vulkan.glless=true` to the instance's JVM arguments. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
 
-For reproducible validation and development, see [runtime validation](docs/runtime-validation.md), [AGENTS.md](AGENTS.md), [the objective](docs/goal.md) and [the performance plan](docs/performance_plan.md). Shader work has its own [follow-up plan](docs/shader-plan.md).
+For reproducible validation and development, use [the current development procedure](<docs/development.md>) and the tracked [leg runner](<scripts/gv-leg.sh>). [AGENTS.md](<AGENTS.md>) contains working rules, [the objective](<docs/goal.md>) defines completion, and [the shader plan](<docs/shader-plan.md>) covers follow-up work. The [verification skill](<.agents/skills/celtium-verify/SKILL.md>) is versioned with this checkout; it is not permission to start GPU work.
 
 ## Performance
 
-**The average frame is now at or below the Celeritas reference; the spikes are not.** In the calibrated fixtures measured against Celeritas `989ebf2e` on the same GPU, world and camera: warm p50 **1.182 ms (Celtium) vs 1.196 ms (Celeritas)**, cold p50 3.595 vs 3.599 ms, and RLCraft's recipe profile at 30.6 ms (down from 39.5 ms). What is left is p99: **141.1 ms vs 140.8 ms**, about 119x the p50, and the per-frame budget in the menu fixture splits as ~18 ms client tick, ~29 ms render and 3.2 ms present — the tick cost belongs to the fixture, not to a normal instance.
+**General gameplay performance relative to Celeritas is not yet accepted.** Earlier README figures mixed different fixture windows and were not a statement of ordinary-instance FPS. The process audit also found a misspelled dump-control property in runs described as “tax-free”; their raw observations remain records, but that explanation was unsupported.
 
-Earlier rounds chased one candidate for the spurious stalls — the per-copy host readback on the title screen, measured at ~23 ms per copy and 7.4 s in total — and an A/B with `-Dceltium.vulkan.windowCopyBlit=true` removed it (readbacks 324 to 0) **without moving the p50** (52.3 vs 56.1 ms). So that stall was real but not the dominant term, which is why the remaining p99 work is instrumentation-led: fence rings, no `vkDeviceWaitIdle`/`vkQueueWaitIdle` in the main loop, and no `eAllCommands` stage masks, following the same family of defect that wgpu records for Vulkan on AMD.
-
-Performance acceptance requires matched Celeritas/Celtium scenes, raw frame times including p95/p99, CPU/GPU work, memory usage, latency and correct images on both test GPUs. Lower draw-call counts or isolated fast fixtures are not enough. See [performance_plan.md](docs/performance_plan.md).
+The [current table](<docs/plan.md>) preserves scoped observations and limitations. [Measurement instructions](<docs/development.md>) distinguish capture/validation overhead, whole-frame intervals, render brackets and CPU/GPU timing. Acceptance requires matched Celeritas/Celtium scenes, p50/p95/p99 and correct images on both GPUs; isolated fast fixtures or lower draw counts are insufficient. See [the performance plan](<docs/performance_plan.md>) for design work.
 
 ## License and attribution
 

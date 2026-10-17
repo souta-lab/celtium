@@ -50,3 +50,6 @@ local/**
 
 /.celtium-work/
 __pycache__/
+
+### 検証ハーネスの作業ディレクトリ（run 成果物・jar ステージ・13GB 級）
+.gv-verify/

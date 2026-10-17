@@ -570,10 +570,9 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
                 outcome["gpuRequirementMet"] = args.require_gpu.lower() in fixture.get("glRenderer", "").lower()
             if not outcome["gpuRequirementMet"] and code == 0:
                 code = 1
-        # UNCALIBRATED is not a pass, but it is also not a defect: the scene has no reference at this pose/variant, so
-        # the picture gate refused to judge it. It is reported as its own outcome instead of being folded into either
-        # the failure path or the pass path - an uncalibrated scene that exits 0 and an uncalibrated scene that exits 1
-        # would both be wrong in the same way, by pretending the refusal was a verdict.
+        # Exit zero is reserved for an accepted fixture. Uncalibrated means the
+        # picture gate did not judge the scene, not that rendering is defective:
+        # report the distinct inconclusive code 2, preserving any prior failure.
         outcome["fixtureUncalibrated"] = outcome["fixtureStatus"] == "UNCALIBRATED_PRESENTED_IMAGE"
         if outcome["fixtureUncalibrated"]:
             print("note: the picture gate did not judge this scene (no reference at this pose/variant) - "
@@ -629,6 +628,10 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
             outcome["validationFirstMessages"] = messages[:3]
             if code == 0:
                 code = 1
+    # Give real failures precedence over the inconclusive status (for example,
+    # an uncalibrated picture together with a Vulkan validation error is failed).
+    if outcome.get("fixtureUncalibrated") and code == 0:
+        code = 2
     # The reported codes have to carry the verdict: a validation message is a failed run, not a note in the JSON.
     outcome["validationExitCode"] = code if ended_by == "process-exit" else 124
     if outcome.get("validationClean") is False:
