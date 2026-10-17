@@ -423,6 +423,25 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBuffer(target, name);
     }
 
+    /**
+     * Binds a texture, as {@code glBindTexture(target, name)} does. The call used to be dropped whole by the no-op
+     * trampoline, so a mod's raw {@code GL11.glBindTexture} left no record anywhere: the upload that followed was
+     * filed under whatever texture the game last bound, and the name was later refused "no mirror".
+     */
+    public static void glBindTexture(int target, int texture) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(target, texture);
+    }
+
+    /** Selects the active texture unit, as {@code glActiveTexture(unit)} does. */
+    public static void glActiveTexture(int unit) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glActiveTexture(unit);
+    }
+
+    /** Deletes texture names, as {@code glDeleteTextures(count, namesPointer)} does. */
+    public static void glDeleteTextures(int count, long names) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glDeleteTextures(count, names);
+    }
+
     /** Enables a client array, as {@code glEnableClientState(capability)} does. */
     public static void glEnableClientState(int capability) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, true);

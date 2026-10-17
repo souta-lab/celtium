@@ -526,6 +526,22 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private int activeTexture;
+    /**
+     * First caller each texture name was bound through, either route - a bound-but-never-uploaded name cannot have
+     * its producer reconstructed from the upload records (there are none), which is exactly the state the "no mirror
+     * for this GL id" refusal reports. Bounded so a mod that churns names cannot grow it; texture name 506 in the
+     * E2E pack was bound and never uploaded, and without this there was nothing to name the caller.
+     */
+    private final java.util.Map<Integer, String> firstBindSites = new java.util.HashMap<Integer, String>();
+    private static final int MAX_BIND_SITES = 4096;
+    /**
+     * A shared ordinal every bind takes, whichever route carried it. The direct-route bind ({@code glBindTexture}
+     * rewritten to a stub call) records the ordinal it took in {@link #directBindOrdinal}; when that equals the shared
+     * clock no bind has superseded it, which is the question the immediate path asks before it applies a direct bind
+     * to the state model - a {@code GlStateManager.bindTexture} after the direct one must not be overwritten.
+     */
+    private int bindSerial;
+    private int directBindOrdinal;
     /** Recorded image extents: key {@code (textureName << 16) | level}, proxy targets key on a name of -target. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
@@ -871,6 +887,88 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         stub.lastBoundTexture = texture;
+        stub.noteBindSite(texture);
+        stub.bindSerial++;
+    }
+
+    /**
+     * Records a {@code glBindTexture} the transformer's route carries, the same record the dispatch case makes.
+     *
+     * <p>Before the route existed the rewritten native was a no-op: a mod's raw {@code GL11.glBindTexture} - and this
+     * project's own {@code whiteTextureId()} - bound nothing the stub could see, so the upload that followed was
+     * filed under whatever {@link #lastBoundTexture} still named. Measured consequence on the E2E pack: the white
+     * 1x1 pixel landed on the atlas's capture record, the synthetic texture got name 506 with no extent and no
+     * pixels, and every texturing-off batch was refused "no mirror for this GL id" forever.
+     */
+    public static void celtium$glBindTexture(int target, int texture) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.textureBindings.put(stub.texBindKey(target), texture);
+        stub.lastBoundTexture = texture;
+        stub.noteBindSite(texture);
+        stub.directBindOrdinal = ++stub.bindSerial;
+    }
+
+    /** Records a {@code glActiveTexture} the transformer's route carries, the same record the dispatch case makes. */
+    public static void celtium$glActiveTexture(int unit) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.activeTexture = Math.max(0, unit - 0x84C0);
+    }
+
+    /**
+     * Serves {@code glDeleteTextures} the transformer's route carries, the same retire-the-records work the dispatch
+     * case does; without the route a deleted texture kept its stale capture, which a reallocated name then read as
+     * its own.
+     */
+    public static void celtium$glDeleteTextures(int count, long names) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || names == 0L) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            int name = memGetInt(names + (long) i * 4L);
+            stub.liveNames.remove(name);
+            stub.forgetTexture(name);
+        }
+    }
+
+    /** {@return the shared ordinal of the most recent bind through any route}, for the supersede check. */
+    public static int bindSerial() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.bindSerial;
+    }
+
+    /** {@return the ordinal the most recent direct-route {@code glBindTexture} took}, or 0 when none ran. */
+    public static int directBindOrdinal() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.directBindOrdinal;
+    }
+
+    /**
+     * Remembers the first caller that bound each texture name. A stack walk is paid once per name (the map lookup
+     * keeps repeat binds cheap), so the common hot binds cost a contains-key and nothing else.
+     */
+    private void noteBindSite(int texture) {
+        if (texture == 0 || this.firstBindSites.containsKey(Integer.valueOf(texture))
+                || this.firstBindSites.size() >= MAX_BIND_SITES) {
+            return;
+        }
+        this.firstBindSites.put(Integer.valueOf(texture), celtium$callSite() + " unit=" + this.activeTexture);
+    }
+
+    /**
+     * {@return the caller that first bound this texture name, or {@code "none"} when no bind was ever seen}. The
+     * answer for the "no mirror" refusal's texture is the producer nobody could otherwise name.
+     */
+    public static String firstBindSite(int textureName) {
+        CeltiumGlStub stub = installed;
+        String site = stub == null ? null : stub.firstBindSites.get(Integer.valueOf(textureName));
+        return site == null ? "none" : site;
     }
 
     /**
@@ -1555,6 +1653,28 @@ public final class CeltiumGlStub implements FunctionProvider {
         ByteBuffer view = capture.data.duplicate();
         view.clear();
         return view.asReadOnlyBuffer();
+    }
+
+    /**
+     * {@return the texel offset the level's captured record covers inside its level}, (0,0) for a record that fills
+     * the level from the origin. A capture that is a {@code glTexSubImage2D} patch into a level too big for the
+     * capture budget is kept at patch size and carries the position the patch belongs at, so the mirror path writes
+     * it into the extent-sized image as a region rather than posing the patch as the whole level - the case that
+     * built the E2E atlas's mirror at 1125x1125. Returns false when no record exists.
+     */
+    public static boolean textureUploadOffset(int textureName, int level, int[] outXY) {
+        CeltiumGlStub stub = installed;
+        TexCapture capture = stub == null
+                ? null
+                : stub.texCaptures.get(texLevelKey(textureName, level));
+        if (capture == null) {
+            return false;
+        }
+        if (outXY != null && outXY.length >= 2) {
+            outXY[0] = capture.x;
+            outXY[1] = capture.y;
+        }
+        return true;
     }
 
     /**
@@ -2396,6 +2516,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_BIND_TEXTURE:
                 this.textureBindings.put(texBindKey((int) a0), (int) a1);
+                noteBindSite((int) a1);
                 return 0L;
             case SEM_ACTIVE_TEXTURE:
                 // The unit index, not the raw enum: the getter adds the GL_TEXTURE0 base back, and a stored enum made
@@ -3784,13 +3905,27 @@ public final class CeltiumGlStub implements FunctionProvider {
          * Volatile for the same reason {@link #gamePixels} is.
          */
         volatile long serial;
+        /**
+         * The texel offset this record covers inside its level, for a capture that is a {@code glTexSubImage2D}
+         * patch rather than the whole level. Zero on every record that fills its level from the origin; the patch
+         * case exists because a level too large for the capture budget keeps its patch at patch size instead of an
+         * extent-sized surface - the mirror path writes it at this position, not at 0,0.
+         */
+        final int x;
+        final int y;
 
         TexCapture(int width, int height, ByteBuffer data, boolean gamePixels, long serial) {
+            this(width, height, data, gamePixels, serial, 0, 0);
+        }
+
+        TexCapture(int width, int height, ByteBuffer data, boolean gamePixels, long serial, int x, int y) {
             this.width = width;
             this.height = height;
             this.data = data;
             this.gamePixels = gamePixels;
             this.serial = serial;
+            this.x = x;
+            this.y = y;
         }
     }
 
@@ -3912,12 +4047,42 @@ public final class CeltiumGlStub implements FunctionProvider {
         long key = texLevelKey(name, level);
         TexCapture existing = this.texCaptures.get(key);
         if (existing == null) {
+            // A patch into a level whose size is already recorded: filed at patch size it would pose as the whole
+            // level - measured on the E2E pack: the 8192x8192 atlas (GL 353) got a 1125x1125 capture from its first
+            // animated sprite, the mirror was created at that size, and every later sprite was refused "outside the
+            // mirror". Lay an extent-sized undefined surface (same rule as undefinedLevel) and let the normal patch
+            // path write inside it; over the capture budget the patch is dropped and the mirror comes from the
+            // announcement path, exactly as before the route existed.
+            int[] extent = this.texLevels.get(key);
+            if (extent != null && extent[0] > 0 && extent[1] > 0
+                    && (x != 0 || y != 0 || width != extent[0] || height != extent[1])) {
+                long pixels2 = (long) extent[0] * extent[1];
+                if (pixels2 > MAX_CAPTURE_BYTES / 4L) {
+                    this.unconvertedUploads.incrementAndGet();
+                    return;
+                }
+                ByteBuffer surface = ByteBuffer.allocateDirect((int) (pixels2 * 4L));
+                MemoryUtil.memSet(memAddress(surface), 0, pixels2 * 4L);
+                existing = new TexCapture(extent[0], extent[1], surface, false,
+                        this.texUploadSerial.incrementAndGet());
+                this.texCaptures.put(key, existing);
+                this.undefinedExtents.incrementAndGet();
+            }
+        }
+        if (existing == null) {
+            // Over the capture budget, or no extent recorded at all: keep the patch as a patch-sized capture with
+            // its offset, so the mirror path can write it into the extent-sized image as a region instead of
+            // treating the patch as the whole level.
             this.texCaptures.put(key,
-                    new TexCapture(width, height, patch, true, this.texUploadSerial.incrementAndGet()));
+                    new TexCapture(width, height, patch, true, this.texUploadSerial.incrementAndGet(), x, y));
             this.subCaptures.incrementAndGet();
             return;
         }
-        if (x < 0 || y < 0 || x + width > existing.width || y + height > existing.height) {
+        // A capture may itself be a patch at an offset (the over-budget path above files one at its own x,y), so
+        // the position this patch writes inside the record is the level position minus the record's origin.
+        int dstX = x - existing.x;
+        int dstY = y - existing.y;
+        if (dstX < 0 || dstY < 0 || dstX + width > existing.width || dstY + height > existing.height) {
             this.unconvertedUploads.incrementAndGet();
             return;
         }
@@ -3931,7 +4096,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // and the flag/serial are what downstream readers use to tell the surface is defined.
         boolean identical = existing.gamePixels;
         for (int row = 0; identical && row < height; row++) {
-            int dst = (y + row) * destinationStride + x * 4;
+            int dst = (dstY + row) * destinationStride + dstX * 4;
             int src = row * sourceStride;
             for (int i = 0; i < sourceStride; i++) {
                 if (existing.data.get(dst + i) != patch.get(src + i)) {
@@ -3946,7 +4111,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         for (int row = 0; row < height; row++) {
             // Absolute and whole-row, so the record's own position never moves under a concurrent reader.
-            existing.data.put((y + row) * destinationStride + x * 4, patch, row * sourceStride, sourceStride);
+            existing.data.put((dstY + row) * destinationStride + dstX * 4, patch, row * sourceStride,
+                    sourceStride);
         }
         // The surface now holds game bytes even when it started as an undefined allocation: the level is what GL has
         // (undefined elsewhere, this patch here), so a mirror may be built from it. Set after the copy, so a reader

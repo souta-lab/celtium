@@ -522,6 +522,14 @@ public final class VulkanTextureRegistry {
         this.announcedGeneration.put(id, Integer.valueOf(this.announceCounter = this.announceCounter + 1));
         if (wholeTexture) {
             this.fullyInitialized.add(id);
+            return;
+        }
+        Entry entry = this.entries.get(id);
+        if (entry != null && entry.texture.hasFullContent()) {
+            // A patch that completed the tile coverage holds the image's whole content the same way a whole
+            // write does - this is the fact the gate above asks, and without it every later patch was refused
+            // "before initialization" even as the image stood complete.
+            this.fullyInitialized.add(id);
         }
     }
 
@@ -1004,18 +1012,28 @@ public final class VulkanTextureRegistry {
         }
         boolean wholeTexture = x == 0 && y == 0 && entry.width == width && entry.height == height;
         if (!wholeTexture && !this.fullyInitialized.contains(Integer.valueOf(glTextureId))) {
-            // A partial patch into an image that has never been filled whole would sit next to undefined texels. The draw
-            // path already refuses such a mirror (hasFullContent), so applying it would only make the state dishonest:
-            // the pixels are not sampled, and the bookkeeping would claim the image is up to date. Refusing here keeps
-            // the readback as the one way such a texture gets established - and under the stub, where there is no
-            // readback, the captured surface above is the way that image gets established instead.
-            this.patchesBeforeInitialization++;
-            this.rejectPatch("partial patch " + width + "x" + height + " at " + x + "," + y
-                    + " before the image for GL texture " + glTextureId + " was initialized");
-            if (CeltiumGlStub.isInstalled()) {
-                this.readbacksSkippedWithoutContent++;
+            // Under the stub a level whose extent the game already allocated is defined GL state - allocated with
+            // undefined content, modelled as zeros - and a patch into it is a legal write, not a guess at an image
+            // nobody sized. Accepting it is also the only way the coverage rule above can ever reach "full" for an
+            // atlas that is uploaded one sprite at a time and never announced whole: refusing here deadlocked the
+            // 8192x8192 block atlas at 35,389 refused patches and a 43%-black frame.
+            boolean extentRecorded = CeltiumGlStub.isInstalled()
+                    && CeltiumGlStub.textureLevelParameter(glTextureId, 0,
+                            org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0;
+            if (!extentRecorded) {
+                // A partial patch into an image that has never been filled whole would sit next to undefined texels. The draw
+                // path already refuses such a mirror (hasFullContent), so applying it would only make the state dishonest:
+                // the pixels are not sampled, and the bookkeeping would claim the image is up to date. Refusing here keeps
+                // the readback as the one way such a texture gets established - and under the stub, where there is no
+                // readback, the captured surface above is the way that image gets established instead.
+                this.patchesBeforeInitialization++;
+                this.rejectPatch("partial patch " + width + "x" + height + " at " + x + "," + y
+                        + " before the image for GL texture " + glTextureId + " was initialized");
+                if (CeltiumGlStub.isInstalled()) {
+                    this.readbacksSkippedWithoutContent++;
+                }
+                return false;
             }
-            return false;
         }
         if (!wholeTexture && (x < 0 || y < 0 || x + width > entry.width || y + height > entry.height)) {
             this.rejectPatch("region " + width + "x" + height + " at " + x + "," + y + " outside the mirror "

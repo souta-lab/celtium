@@ -72,6 +72,15 @@ public final class VulkanGlState {
     private float colorAlpha = 1.0f;
     private long boundTexture;
     private int activeTextureUnit;
+    /**
+     * The first caller this state model saw each texture name bound through. The stub's bind-site map covers the two
+     * routes its own records know (the {@code GlStateManager.bindTexture} hook and the function-table dispatch), but
+     * the state model is also written through {@code immediateState.bindTexture} directly - the E2E pack's texture
+     * 506 reached the "no mirror" refusal with no bind site anywhere, and this map is the layer that cannot be
+     * bypassed. One stack walk per new name; repeat binds cost a map lookup.
+     */
+    private final java.util.Map<Integer, String> firstBindSites = new java.util.HashMap<Integer, String>();
+    private static final int MAX_BIND_SITES = 4096;
 
     /** Matrix mode identifiers, matching the values Minecraft passes around. */
     public static final int MATRIX_MODE_MODELVIEW = 0;
@@ -653,6 +662,45 @@ public final class VulkanGlState {
         if (this.activeTextureUnit == 0) {
             this.boundTextureName = glTextureId;
         }
+        if (glTextureId != 0 && !this.firstBindSites.containsKey(Integer.valueOf(glTextureId))
+                && this.firstBindSites.size() < MAX_BIND_SITES) {
+            this.firstBindSites.put(Integer.valueOf(glTextureId), bindSite());
+        }
+    }
+
+    /**
+     * {@return the caller that first bound this texture name through the state model, or {@code "none"} when it never
+     * saw one}. Read by the "no mirror" refusal's {@code stateBoundBy} - the producer for a name the stub's own bind
+     * records never saw.
+     */
+    public String firstBindSite(int glTextureId) {
+        String site = this.firstBindSites.get(Integer.valueOf(glTextureId));
+        return site == null ? "none" : site;
+    }
+
+    /** {@return how many distinct texture names the state model has seen bound} - a full map explains a "none". */
+    public int bindSiteCount() {
+        return this.firstBindSites.size();
+    }
+
+    /** {@return the first few frames above the state-model writer}, so the bind's producer is named. */
+    private static String bindSite() {
+        StackTraceElement[] stack = new Throwable().getStackTrace();
+        StringBuilder frames = new StringBuilder();
+        int shown = 0;
+        for (int i = 2; i < stack.length && shown < 5; i++) {
+            String className = stack[i].getClassName();
+            // The state model's own frames and the backend's forwarding say nothing about the game/mod caller.
+            if (className.startsWith("org.soutalab.celtium.vulkan.")) {
+                continue;
+            }
+            if (shown++ > 0) {
+                frames.append(" <- ");
+            }
+            frames.append(className).append('.').append(stack[i].getMethodName())
+                    .append(':').append(stack[i].getLineNumber());
+        }
+        return frames.length() == 0 ? "(no frame above the state model)" : frames.toString();
     }
 
     /** {@return the GL name bound on {@code unit}}, or 0 when nothing is bound there. */

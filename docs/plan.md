@@ -28,7 +28,7 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 | P1 terrain CPU record / setupTerrain / particles | 計器実装済み・最適化未完 | 診断値あり | 未検証 | `recordRenderPass`内訳は候補。CPU p50と非同期GPUスナップショットだけで律速を確定しない |
 | P1 panorama cost / blur（#2） | 未完 | 交絡あり | 未検証 | `panoramaTimer`の位相差を除く対照が不足。修正効果は未確定 |
 | P2 雲の隙間（#4） | **画質同等は未検証** | 入力の部分観測 | 未検証 | 透明texel由来という説明は整合するが「欠陥なし確定」を撤回。producer・全形状・同条件画像一致は未証明 |
-| P2 texture=506のmirror拒否 | 未完 | 既存拒否記録 | 未検証 | producer未特定。GL-lessでは拒否されたbatchにfallbackなし |
+| P2 texture=506のmirror拒否 | 修正実装済み・拒否0（#321） | 成功（局所） | 未検証 | 根因確定：506=renderer自身の`whiteTextureId()`。transformerが`glBindTexture`/`glActiveTexture`/`glDeleteTextures`をrouteせず完全no-op → 直接GL11 bindが記録されずuploadが`lastBoundTexture`に誤帰属（extent=0x0・serial=MIN・全site map none）。route追加+state modelへのdirect-bind反映で解消。連鎖修正：atlas 353のpatch-captureがlone patchでmirrorを1125x1125に歪めた問題→captureに(x,y)offset保持+extent surface(`MAX_CAPTURE_BYTES`内)+`uploadFromGlTexture`をregion書込みに。registryのbeforeInit deadlock(35,389件)もextent記録済みpartialを合法化+coverage完了→`fullyInitialized`で解消。`e2e-tex506h-amd` PASSED、`MIRROR_COVERAGE 8192x8192`進行、no-mirror拒否0、beforeInit=0。残課題：Intel leg・reload再割当て（`glDeleteTextures`経路は未実測） |
 | P2 Nether world-switch | 未完 | 制限付き記録 | 制限付き記録 | keepalive/生成制約の旧報告。レンダラ全体GREENとはしない |
 | P3 Cleanroom 0.7.x | 未検証 | 未検証 | 未検証 | 基準は0.6.13-alphaのまま。移行は別単位 |
 | 影 / Shaderpack・配布・残り互換 | 未完 | 未完 | 未完 | 完成仕様は [goal.md](<goal.md>)。実験モジュール存在を製品受入としない |

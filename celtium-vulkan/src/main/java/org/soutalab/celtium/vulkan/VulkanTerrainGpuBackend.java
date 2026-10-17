@@ -1322,6 +1322,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     private int lazyMirrorSupplies;
     private int lazyMirrorFailures;
+    /** The direct-route bind ordinal already folded into the state model; see the sync in submitImmediateBatch. */
+    private int lastDirectBindApplied;
     /**
      * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
      * that failed. A texture the game allocated empty (a framebuffer attachment, say) carries no pixels for the supply
@@ -3874,6 +3876,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " atlasGlId=" + this.atlasSourceGlId + " lightmapGlId=" + this.lightmapSourceGlId
                 + " lazySupply=" + this.lazyMirrorSupplies + "/" + this.lazyMirrorFailures
                 + "/" + this.lazyMirrorRetrySkips
+                + " lastLazyFailure=[" + this.lastLazyMirrorFailure + "]"
                 + " partialRefusals=" + this.immediateStatistics.partialMirrorRefusals() + " partialCompleted=" + this.immediateStatistics.partialMirrorsCompleted()
                 + (this.textureRegistry == null ? " registry=none"
                         : " retainedAnnouncements=" + this.textureRegistry.retainedAnnouncements()
@@ -5782,6 +5785,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 compareMirroredAndLiveMatrices();
             }
             int boundTexture = this.immediateState.boundTextureName();
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // A mod that binds with raw GL11.glBindTexture changes the binding the same way a GlStateManager
+                // call does, but it never passes the mixin - until the transformer route existed the call was a
+                // no-op, which is what left texture 506's upload filed under the game's last bind. The route records
+                // the bind; the shared ordinal answers whether anything superseded it since, so a GlStateManager
+                // bind after the direct one is not overwritten.
+                int directOrdinal = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.directBindOrdinal();
+                if (directOrdinal != 0 && directOrdinal == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.bindSerial()
+                        && directOrdinal != this.lastDirectBindApplied) {
+                    this.lastDirectBindApplied = directOrdinal;
+                    int direct = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                            .celtium$getInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                    if (direct != Integer.MIN_VALUE && direct != boundTexture) {
+                        this.immediateState.bindTexture(direct);
+                        boundTexture = direct;
+                    }
+                }
+            }
             this.currentImmediateTexture = boundTexture;
             if (boundTexture != 0 && VulkanTextureFault.shouldFail("immediate")) {
                 this.textureUploadFailures++;
@@ -8130,8 +8151,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (BATCH_TIMINGS) this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
         if (VulkanImmediateFormats.samplesTexture(format) && texture == null) {
             this.prepareDescriptorFailures++;
+            // The two facts the "no mirror" line cannot say without: whether the stub recorded an extent for the
+            // name (an upload happened at all) and whether the level-0 capture has game pixels (lazy supply could
+            // have built a mirror from it). texture=506 on the E2E pack stayed mysterious through a whole leg
+            // because the refusal could not tell "never uploaded" from "uploaded, supply failed once".
+            int[] extent = this.textureRegistry == null ? new int[] { -1, -1 }
+                    : new int[] {
+                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(textureId, 0, 0x1000),
+                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(textureId, 0, 0x1001) };
             this.lastPrepareFailure = "format=" + format + " texture=" + textureId
-                    + " (no mirror for this GL id; registry=" + (this.textureRegistry == null ? "absent" : "present") + ")";
+                    + " (no mirror for this GL id; registry=" + (this.textureRegistry == null ? "absent" : "present")
+                    + " extent=" + extent[0] + "x" + extent[1]
+                    + " uploadSerial=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(textureId, 0)
+                    + " lazyFailure=" + this.lastLazyMirrorFailure
+                    + " firstBoundBy=[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.firstBindSite(textureId) + "]"
+                    + " stateBoundBy=[" + this.immediateState.firstBindSite(textureId)
+                    + " sites=" + this.immediateState.bindSiteCount()
+                    + " unit0=" + this.immediateState.boundTextureName() + "])";
             return null;
         }
         long pass = terrain != null ? terrain.renderPass() : uiRenderPass();

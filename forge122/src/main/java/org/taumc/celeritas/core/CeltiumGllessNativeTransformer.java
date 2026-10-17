@@ -497,6 +497,36 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("glBindTexture".equals(name) || "nglBindTexture".equals(name)) {
+                // (II)V - target, name. Dropped entirely before the route existed: a mod's raw GL11.glBindTexture
+                // left no record anywhere, so its upload was filed under the game's last binding and the name it
+                // meant was refused "no mirror" - the E2E pack's texture=506 case (the renderer's own white
+                // texture is created with the same direct call).
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindTexture", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glActiveTexture".equals(name) || "nglActiveTexture".equals(name)) {
+                // (I)V - the unit enum; the stub records it so the unit-keyed binding map answers the right slot.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glActiveTexture", "(I)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("nglDeleteTextures".equals(name) || "glDeleteTextures".equals(name)) {
+                // (IJ)V - count, names pointer; deleting without the route left stale captures a reallocated name
+                // would read as its own pixels.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDeleteTextures", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
         }
         switch (returnType) {
             case "V":

@@ -1308,6 +1308,30 @@ public final class VulkanGlTexture {
         }
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
+            if (fromCapture) {
+                // A captured record may be a patch into a level the stub sized but could not hold at full extent
+                // (the capture budget): the image belongs at the recorded extent, and the record writes into it
+                // as a region - the case that built the E2E atlas's mirror at the first sprite's 1125x1125 and
+                // refused every later patch "outside the mirror".
+                int extentW = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
+                        GL_TEXTURE_WIDTH);
+                int extentH = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
+                        GL_TEXTURE_HEIGHT);
+                if (extentW > 0 && extentH > 0 && (level.width != extentW || level.height != extentH)) {
+                    int[] offset = new int[2];
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
+                    if (extentW != this.width || extentH != this.height) {
+                        recreateImageResources(extentW, extentH);
+                    }
+                    uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
+                            new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
+                    this.lastUploadSerial = uploadSerial;
+                    if (!level.owned) {
+                        recordCapturedFill(glTextureId, level);
+                    }
+                    return;
+                }
+            }
             long hash = 1469598103934665603L;
             for (int i = 0; i < level.width * level.height * BYTES_PER_PIXEL; i++) {
                 hash = (hash ^ (level.pixels.get(i) & 0xFF)) * 1099511628211L;
