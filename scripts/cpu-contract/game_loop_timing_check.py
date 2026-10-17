@@ -31,8 +31,16 @@ class GameLoopTimingCheck {
             busy(300_000);
             GameLoopTiming.displayUpdateEnded();
             GameLoopTiming.displayUpdateEnded();
+            GameLoopTiming.blitStarted(); busy(100_000); GameLoopTiming.blitEnded();
+            GameLoopTiming.syncStarted(); busy(50_000); GameLoopTiming.syncEnded();
             GameLoopTiming.loopEnded();
         }
+        long blitBefore=GameLoopTiming.blitTotalMillis(), syncBefore=GameLoopTiming.syncTotalMillis();
+        // The blit and sync calls outside a loop are not counted.
+        GameLoopTiming.blitStarted(); busy(100_000); GameLoopTiming.blitEnded();
+        GameLoopTiming.syncStarted(); busy(100_000); GameLoopTiming.syncEnded();
+        check(GameLoopTiming.blitTotalMillis()==blitBefore && GameLoopTiming.syncTotalMillis()==syncBefore,
+              "blit/sync outside a loop was counted");
         check(GameLoopTiming.loops()==3,"loops miscounted: "+GameLoopTiming.loops());
         check(GameLoopTiming.ticks()==6,"ticks miscounted: "+GameLoopTiming.ticks());
         long display=GameLoopTiming.displayUpdateTotalMillis();

@@ -39,20 +39,32 @@ public final class GameLoopTiming {
             new java.util.concurrent.atomic.AtomicLong();
     private static final java.util.concurrent.atomic.AtomicLong displayUpdateNanos =
             new java.util.concurrent.atomic.AtomicLong();
+    /** The framebuffer blit ({@code framebufferRender}) and the fps-limit sync, both inside the loop. */
+    private static final java.util.concurrent.atomic.AtomicLong blitNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong syncNanos =
+            new java.util.concurrent.atomic.AtomicLong();
     /** The start of the tick currently executing, or 0 when none is. */
     private static volatile long openNanos;
     /** The start of the loop currently executing, or 0 when none is. */
     private static volatile long openLoopNanos;
     /** The start of the updateDisplay currently executing inside a loop, or 0 when none is. */
     private static volatile long openDisplayNanos;
+    /** The start of the blit / fps-sync currently executing inside a loop, or 0 when none is. */
+    private static volatile long openBlitNanos, openSyncNanos;
     /** updateDisplay re-entry depth: resize() calls it again from checkWindowResize inside the outer call. */
     private static int displayDepth;
     /** updateDisplay time accumulated inside the open loop, in nanoseconds. */
     private static long displayInsideLoop;
+    /** framebufferRender time accumulated inside the open loop, in nanoseconds. */
+    private static long blitInsideLoop;
+    /** Display.sync time accumulated inside the open loop, in nanoseconds. */
+    private static long syncInsideLoop;
     /** Tick time accumulated inside the open loop, in nanoseconds. */
     private static long tickInsideLoop;
     /** Snapshots of the most recently closed loop, for the fixture's per-slow-frame entry. */
     private static volatile long lastLoopNanos, lastLoopTickNanos, lastLoopDisplayNanos;
+    private static volatile long lastLoopBlitNanos, lastLoopSyncNanos;
 
     private GameLoopTiming() {
     }
@@ -88,6 +100,8 @@ public final class GameLoopTiming {
     public static void loopStarted() {
         openLoopNanos = System.nanoTime();
         displayInsideLoop = 0L;
+        blitInsideLoop = 0L;
+        syncInsideLoop = 0L;
         tickInsideLoop = 0L;
     }
 
@@ -105,11 +119,17 @@ public final class GameLoopTiming {
         loopNanos.addAndGet(elapsed);
         loopCount.incrementAndGet();
         worstLoopNanos.accumulateAndGet(elapsed, Math::max);
-        displayUpdateNanos.addAndGet(displayInsideLoop);
         lastLoopNanos = elapsed;
         lastLoopTickNanos = tickInsideLoop;
         lastLoopDisplayNanos = displayInsideLoop;
+        lastLoopBlitNanos = blitInsideLoop;
+        lastLoopSyncNanos = syncInsideLoop;
+        displayUpdateNanos.addAndGet(displayInsideLoop);
+        blitNanos.addAndGet(blitInsideLoop);
+        syncNanos.addAndGet(syncInsideLoop);
         displayInsideLoop = 0L;
+        blitInsideLoop = 0L;
+        syncInsideLoop = 0L;
         tickInsideLoop = 0L;
     }
 
@@ -135,6 +155,39 @@ public final class GameLoopTiming {
         }
         openDisplayNanos = 0L;
         displayInsideLoop += System.nanoTime() - started;
+    }
+
+    /**
+     * Called around the framebuffer blit. The call sites are {@code @Redirect} wrappers inside {@code runGameLoop},
+     * so the span is inside a loop by construction; the loop-open check keeps a hand-placed call from being counted.
+     */
+    public static void blitStarted() {
+        openBlitNanos = openLoopNanos != 0L ? System.nanoTime() : 0L;
+    }
+
+    /** Called at the return of the framebuffer blit. */
+    public static void blitEnded() {
+        long started = openBlitNanos;
+        if (started == 0L) {
+            return;
+        }
+        openBlitNanos = 0L;
+        blitInsideLoop += System.nanoTime() - started;
+    }
+
+    /** Called at the head of the fps-limit {@code Display.sync}. */
+    public static void syncStarted() {
+        openSyncNanos = openLoopNanos != 0L ? System.nanoTime() : 0L;
+    }
+
+    /** Called at the return of the fps-limit {@code Display.sync}. */
+    public static void syncEnded() {
+        long started = openSyncNanos;
+        if (started == 0L) {
+            return;
+        }
+        openSyncNanos = 0L;
+        syncInsideLoop += System.nanoTime() - started;
     }
 
     /** {@return how many client ticks were timed}. */
@@ -172,6 +225,16 @@ public final class GameLoopTiming {
         return displayUpdateNanos.get() / 1_000_000L;
     }
 
+    /** {@return the total time spent inside the framebuffer blit while a loop was open, in milliseconds}. */
+    public static long blitTotalMillis() {
+        return blitNanos.get() / 1_000_000L;
+    }
+
+    /** {@return the total time spent inside the fps-limit sync while a loop was open, in milliseconds}. */
+    public static long syncTotalMillis() {
+        return syncNanos.get() / 1_000_000L;
+    }
+
     /** {@return the span of the most recently closed loop, in milliseconds}. */
     public static long lastLoopMillis() {
         return lastLoopNanos / 1_000_000L;
@@ -187,6 +250,16 @@ public final class GameLoopTiming {
         return lastLoopDisplayNanos / 1_000_000L;
     }
 
+    /** {@return the blit time inside the most recently closed loop, in milliseconds}. */
+    public static long lastLoopBlitMillis() {
+        return lastLoopBlitNanos / 1_000_000L;
+    }
+
+    /** {@return the fps-sync time inside the most recently closed loop, in milliseconds}. */
+    public static long lastLoopSyncMillis() {
+        return lastLoopSyncNanos / 1_000_000L;
+    }
+
     /** {@return one line for the fixture report: counts, totals, means and worsts for tick, loop and present}. */
     public static String summary() {
         long count = tickCount.get();
@@ -197,10 +270,16 @@ public final class GameLoopTiming {
         long loopMean = loops == 0L ? 0L : loopTotal / loops;
         long displayTotal = displayUpdateTotalMillis();
         long displayMean = loops == 0L ? 0L : displayTotal / loops;
+        long blitTotal = blitTotalMillis();
+        long blitMean = loops == 0L ? 0L : blitTotal / loops;
+        long syncTotal = syncTotalMillis();
+        long syncMean = loops == 0L ? 0L : syncTotal / loops;
         return "ticks=" + count + " tickMillisTotal=" + total + " tickMillisMean=" + mean
                 + " tickMillisWorst=" + worstMillis()
                 + " loops=" + loops + " loopMillisTotal=" + loopTotal + " loopMillisMean=" + loopMean
                 + " loopMillisWorst=" + worstLoopMillis()
-                + " displayUpdateMillisTotal=" + displayTotal + " displayUpdateMillisMean=" + displayMean;
+                + " displayUpdateMillisTotal=" + displayTotal + " displayUpdateMillisMean=" + displayMean
+                + " blitMillisTotal=" + blitTotal + " blitMillisMean=" + blitMean
+                + " syncMillisTotal=" + syncTotal + " syncMillisMean=" + syncMean;
     }
 }

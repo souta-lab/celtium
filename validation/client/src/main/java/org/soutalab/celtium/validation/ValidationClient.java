@@ -4415,7 +4415,10 @@ public final class ValidationClient {
             long loop = ((Number) timing.getMethod("lastLoopMillis").invoke(null)).longValue();
             long tick = ((Number) timing.getMethod("lastLoopTickMillis").invoke(null)).longValue();
             long display = ((Number) timing.getMethod("lastLoopDisplayMillis").invoke(null)).longValue();
-            return " loop[loopMs=" + loop + " tickMs=" + tick + " displayUpdateMs=" + display + "]";
+            long blit = ((Number) timing.getMethod("lastLoopBlitMillis").invoke(null)).longValue();
+            long sync = ((Number) timing.getMethod("lastLoopSyncMillis").invoke(null)).longValue();
+            return " loop[loopMs=" + loop + " tickMs=" + tick + " displayUpdateMs=" + display
+                    + " blitMs=" + blit + " syncMs=" + sync + "]";
         } catch (Throwable absent) {
             return "";
         }
@@ -9770,6 +9773,12 @@ public final class ValidationClient {
                     Long.valueOf(((Number) timing.getMethod("worstLoopMillis").invoke(null)).longValue()));
             report.addProperty("displayUpdateMillisTotal", Long.valueOf(displayTotalMillis));
             report.addProperty("displayUpdateMillisPerLoop", Long.valueOf(loops == 0L ? 0L : displayTotalMillis / loops));
+            long blitTotalMillis = ((Number) timing.getMethod("blitTotalMillis").invoke(null)).longValue();
+            long syncTotalMillis = ((Number) timing.getMethod("syncTotalMillis").invoke(null)).longValue();
+            report.addProperty("frameBlitMillisTotal", Long.valueOf(blitTotalMillis));
+            report.addProperty("frameBlitMillisPerLoop", Long.valueOf(loops == 0L ? 0L : blitTotalMillis / loops));
+            report.addProperty("fpsSyncMillisTotal", Long.valueOf(syncTotalMillis));
+            report.addProperty("fpsSyncMillisPerLoop", Long.valueOf(loops == 0L ? 0L : syncTotalMillis / loops));
             if (worldFrames > 0) {
                 report.addProperty("gameLoopMillisPerFrame", Long.valueOf(loopTotalMillis / worldFrames));
             }

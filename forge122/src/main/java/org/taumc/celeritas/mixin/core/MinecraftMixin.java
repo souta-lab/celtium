@@ -66,6 +66,36 @@ public class MinecraftMixin {
         GameLoopTiming.displayUpdateEnded();
     }
 
+    /*
+     * The remaining named loop segments, timed the same way: the framebuffer blit draws the offscreen target to the
+     * screen through the immediate path (its submit cost is real and was part of the ~26 ms/loop residual measured
+     * on leg perf-attrib1-amd), and the fps-limit Display.sync is where a capped loop spends its tail. Both run only
+     * inside runGameLoop, so the loop-open gate inside GameLoopTiming is belt-and-braces.
+     */
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/shader/Framebuffer;framebufferRender(II)V"), require = 0)
+    private void celtium$timedFramebufferRender(net.minecraft.client.shader.Framebuffer fb,
+            int width, int height) {
+        GameLoopTiming.blitStarted();
+        try {
+            fb.framebufferRender(width, height);
+        } finally {
+            GameLoopTiming.blitEnded();
+        }
+    }
+
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/Display;sync(I)V"), require = 0)
+    private void celtium$timedFpsSync(int fps) {
+        GameLoopTiming.syncStarted();
+        try {
+            org.lwjgl.opengl.Display.sync(fps);
+        } finally {
+            GameLoopTiming.syncEnded();
+        }
+    }
+
     /**
      * Creates the renderer at window creation under the GL-less window, so the menu and the loading screens have
      * someone to draw and present them.
