@@ -1,7 +1,8 @@
 # Celtium 現状表（唯一の現在状態表）
 
 開発ベース **0.0.4-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
-2026-10-17の再監査。ソース基点 `c46474aee`。**今回はレンダラ未変更・GPU再実行なし**。
+2026-10-17更新。再監査基点 `c46474aee`、resize追試ソース `f0e02f8a3`（変更ブランチ、未統合）。
+resize行のみ新規の実機結果。他の行は従来の記録であり、一括再受入ではない。
 以下は特記なき限り**各leg当時のartifactでの記録**であり、最新HEAD全体の再受入ではない。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
@@ -18,7 +19,7 @@
 | E2E 1.93a terrain画像gate | 実装済み・両GPU成功（当該legs） | 成功 | 成功 | `gv-e2e-268-r16-fbo` / `gv-e2e-268-r16-intel`。black fraction 0.005081 / 0.003777、較正gate・validation clean。**完全pack互換は未完** |
 | RLCraft 2.9.3 recipe terrain画像gate | 実装済み・両GPU成功（当該legs） | 成功 | 成功 | `gv-recipe-r14` / `gv-recipe-r14-intel`。**全modded scene・保存再読込・完全pack内容の受入は別**。旧runnerの補足contentコピー漏れも再開時に確認 |
 | reload | 実装済み・両GPU成功（当該legs） | 成功（記録） | 成功（記録） | `gv-cohort-reload2` / `gv-cohort-reload3` |
-| **P0 resize寿命** | **未完** | 成功（記録） | **FAILED** | `gv-cohort-resize2` / `resize3`。Intelはfixture PASSEDでも **validationExitCode=1・VUID-00892が2件**。旧「両GPU成功」を撤回 |
+| resize寿命（限定受入） | pair直接置換の待機漏れ修正・**当該条件は両GPU成功** | 成功 | 成功 | [resize証拠](<evidence/resize-pair-lifetime-2026-10-17.json>)。同一JARで`1280x720→1280x800`、較正キー一致・validation 0件。`resize-pair-fix1-amd/intel`。旧`resize3`のIntel FAILEDは履歴として保全。`1024x640`基準runはGUI scale差で未較正。全サイズ・minimize・loadingは別 |
 | minimize / restore | 実装済み・受入未完 | 成功（記録） | **未検証** | `gv-cohort-iconify1`はAMDのみ。Intel相当leg未提示 |
 | display list / model | 実装済み（既存報告） | 既存画像報告・本監査未再評価 | 同左 | PR #288系。terrain gateを全entity/TESR画質の保証にしない |
 | Sodium風メニューの半透明下敷き（利用者#3） | 修正実装済み | 既存報告・本監査未再評価 | 同左 | PR #307・[before/after画像](<evidence/sodium-tooltip-backdrop-2026-10-16.png>)。文字重なりまで独立に検証したと広げない |
