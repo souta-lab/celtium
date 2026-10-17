@@ -28,7 +28,7 @@ def main():
     assert 'shift =' not in hook, "request must precede the producer's present, not follow it"
     assert 'Boolean.getBoolean("celtium.validation.dumpLoadingProgress")' in hook
     assert '.getMethod("requestLoadingProgressDump", int.class, String.class, String.class)' in hook
-    body = method(source, "public static void requestLoadingProgressDump(")
+    body = method(source, "private boolean celtium$resizeLoadingFrame(") + "\n" + method(source, "public static void requestLoadingProgressDump(")
     code = r'''
 import java.util.*;
 class ValidationClient {
@@ -39,7 +39,7 @@ class ValidationClient {
     }
     static class Minecraft {
         static final Minecraft MC = new Minecraft();
-        Object world = null, currentScreen = null;
+        Object world = null, currentScreen = null, loadingScreen = new Object();
         int displayWidth = 1280, displayHeight = 720;
         static Minecraft getMinecraft() { return MC; }
     }
@@ -47,10 +47,20 @@ class ValidationClient {
     static ValidationClient instance;
     boolean enabled, launched, finished, celtium$controlledLoadingProbe;
     int celtium$loadingProgressCaptures, celtium$clientTicks = 7, worldTicks = 0, requests;
+    int celtium$loadingResizeTitleFrames, resizeCalls;
+    boolean celtium$resizeRequested;
+    final List<String> events = new ArrayList<>();
+    static int celtium$guiScale() { return 3; }
+    static long celtium$windowHandle() { return 1L; }
+    static int[] celtium$glfwSize(long window,String query) { return new int[]{1280,720}; }
+    boolean celtium$requestResize(Minecraft mc,String reason) {
+        check(reason.equals("loading"),"not a loading transition");
+        resizeCalls++; events.add("resize"); celtium$resizeRequested = true; return true;
+    }
     JsonObject report = new JsonObject();
     PictureEvidence celtium$requestPresentedDump(Minecraft mc,String stage) {
         check(stage.equals("loading-progress-"+(requests+1)),"wrong request stage");
-        requests++; return new PictureEvidence();
+        requests++; events.add("capture"); return new PictureEvidence();
     }
 ''' + body + r'''
     static void check(boolean yes,String label) { if (!yes) throw new AssertionError(label); }
@@ -91,7 +101,24 @@ class ValidationClient {
         check(instance.requests==8 && instance.celtium$loadingProgressCaptures==8 && instance.report.data.size()==8,
               "producer capture limit not enforced");
         check(instance.celtium$clientTicks==7 && instance.worldTicks==0,"capture changed simulation time");
-        System.out.println("Loading producer capture: guards, constant ticks, native/controlled identity and bound PASS");
+        check(controlled.data.get("guiScaleFactor").equals(3)
+              && controlled.data.get("glfwFramebufferSize").equals("1280x720"),"loading environment absent");
+        check(instance.resizeCalls==0,"default capture resized a window");
+        System.setProperty("celtium.validation.resizeDuringLoading","true");
+        ValidationClient policy = new ValidationClient();
+        policy.celtium$controlledLoadingProbe = true;
+        check(!policy.celtium$resizeLoadingFrame("Loading world"),"controlled frame triggered native resize");
+        policy.celtium$controlledLoadingProbe = false;
+        check(!policy.celtium$resizeLoadingFrame("") && !policy.celtium$resizeLoadingFrame(null),"blank title triggered resize");
+        check(!policy.celtium$resizeLoadingFrame("Loading world"),"lost the pre-resize title control");
+        check(policy.celtium$resizeLoadingFrame("Loading world"),"second native title did not trigger resize");
+        for(int i=0;i<20;i++) check(!policy.celtium$resizeLoadingFrame("Loading world"),"repeat resize attempt");
+        instance = new ValidationClient(); instance.enabled = true; instance.launched = true;
+        capture(); capture(); capture();
+        check(instance.resizeCalls==1 && instance.events.equals(Arrays.asList("capture","capture","resize","capture")),
+              "resize not requested exactly once after capturing its input frame");
+        check(instance.celtium$clientTicks==7 && instance.worldTicks==0,"resize required a progressing tick");
+        System.out.println("Loading producer capture: guards, frozen ticks, frame identity, bound and one-shot resize PASS");
     }
 }
 '''

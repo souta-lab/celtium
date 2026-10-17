@@ -879,6 +879,7 @@ public final class ValidationClient {
     private boolean celtium$worldLoadDumpRequested;
     private int celtium$loadingProgressCaptures;
     private boolean celtium$controlledLoadingProbe;
+    private int celtium$loadingResizeTitleFrames;
     /**
      * Whether a screen that is not the title screen has already been cleared on the way to the world. A mod can
      * put its own screen up first; without this the launch condition never held and the leg never entered a world.
@@ -6267,6 +6268,10 @@ public final class ValidationClient {
 
     /** {@return the window's own size as {width, height}, or null} - what GLFW thinks, not what the game uses. */
     private static int[] celtium$glfwWindowSize(long window) {
+        return celtium$glfwSize(window, "glfwGetWindowSize");
+    }
+
+    private static int[] celtium$glfwSize(long window, String query) {
         if (window == 0L) {
             return null;
         }
@@ -6274,7 +6279,7 @@ public final class ValidationClient {
             Class<?> glfw = Class.forName("org.lwjgl.glfw.GLFW");
             int[] width = new int[1];
             int[] height = new int[1];
-            glfw.getMethod("glfwGetWindowSize", long.class, int[].class, int[].class)
+            glfw.getMethod(query, long.class, int[].class, int[].class)
                     .invoke(null, Long.valueOf(window), width, height);
             return new int[] {width[0], height[0]};
         } catch (ReflectiveOperationException | LinkageError error) {
@@ -6653,6 +6658,15 @@ public final class ValidationClient {
         }
     }
 
+    /** Keep one non-empty native title as the pre-resize control; attempt the transition exactly once. */
+    private boolean celtium$resizeLoadingFrame(String title) {
+        if (!Boolean.getBoolean("celtium.validation.resizeDuringLoading") || celtium$controlledLoadingProbe
+                || celtium$resizeRequested || title == null || title.isEmpty()) {
+            return false;
+        }
+        return ++celtium$loadingResizeTitleFrames == 2;
+    }
+
     /** Called immediately before a real LoadingScreenRenderer swap; no tick can substitute for this boundary. */
     public static void requestLoadingProgressDump(int progress, String title, String message) {
         ValidationClient active = instance;
@@ -6675,8 +6689,18 @@ public final class ValidationClient {
         frame.addProperty("worldPresent", Boolean.valueOf(mc.world != null));
         frame.addProperty("windowSize", mc.displayWidth + "x" + mc.displayHeight);
         frame.addProperty("screen", mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
+        frame.addProperty("currentLoadingScreenIdentity", Integer.valueOf(System.identityHashCode(mc.loadingScreen)));
+        frame.addProperty("guiScaleFactor", Integer.valueOf(celtium$guiScale()));
         PictureEvidence picture = active.celtium$requestPresentedDump(mc, stage);
         frame.addProperty("presentedFramesAtRequest", Integer.valueOf(picture.presentedFramesAtRequest));
+        if (active.celtium$resizeLoadingFrame(title)) {
+            frame.addProperty("resizeRequestedThisSwap", Boolean.valueOf(active.celtium$requestResize(mc, "loading")));
+        }
+        long window = celtium$windowHandle();
+        int[] windowSize = celtium$glfwSize(window, "glfwGetWindowSize");
+        int[] framebufferSize = celtium$glfwSize(window, "glfwGetFramebufferSize");
+        frame.addProperty("glfwWindowSize", windowSize == null ? "unreadable" : windowSize[0] + "x" + windowSize[1]);
+        frame.addProperty("glfwFramebufferSize", framebufferSize == null ? "unreadable" : framebufferSize[0] + "x" + framebufferSize[1]);
         active.report.add(stage, frame);
         System.out.println("[Celtium] CELTIUM_LOADING_PROGRESS_CAPTURE stage=" + stage + " progress=" + progress
                 + " controlled=" + active.celtium$controlledLoadingProbe + " clientTick=" + active.celtium$clientTicks
