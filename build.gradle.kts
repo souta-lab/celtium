@@ -9,7 +9,7 @@ plugins {
 }
 
 project.version = tau.versioning.version(rootProject.findProperty("project_base_version").toString(), rootProject.findProperty("release_channel"))
-println("Celeritas: ${tau.versioning.version}")
+println("Celtium: ${tau.versioning.version}")
 
 //project(":forge1710")
 
