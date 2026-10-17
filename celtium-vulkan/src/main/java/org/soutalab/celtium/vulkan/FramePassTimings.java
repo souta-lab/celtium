@@ -37,11 +37,15 @@ public final class FramePassTimings {
      * {@code recordPrepare} and {@code recordBatch} nest inside {@code terrainRecord}: a 779 ms record stall on Intel
      * (leg {@code loading-resize-state2-intel}, worldTick 473, 25 sections) did not scale with section count, so the
      * pass's fixed prepare work (uniform capacity, descriptors, barriers, framebuffer, render-pass begin) and its
-     * per-region cached-batch rebuilds needed separate names before a cause could be claimed.
+     * per-region cached-batch rebuilds needed separate names before a cause could be claimed. The prepare split adds
+     * {@code prepDescriptors} (uniform capacity + descriptor writes through {@code bindTextures}),
+     * {@code prepBarriers} (acquire barriers + published-texture transitions) and {@code prepBegin} (render-pass
+     * begin through pipeline bind) - recordPrepare ran ~70-85% of record on both GPUs, and these three names say
+     * which of its driver-visible calls owns that.
      */
     private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload",
             "setupTerrain", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
-            "recordBatch"};
+            "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin"};
 
     private static final int CAPACITY = 512;
 
@@ -68,6 +72,27 @@ public final class FramePassTimings {
         return VulkanDiagnostics.enabled() || Boolean.getBoolean("celtium.vulkan.passSplit");
     }
 
+    /**
+     * The clock the brackets read.
+     * <p>
+     * {@code -Dceltium.vulkan.passSplitCpu=true} switches every bracket to the render thread's own CPU time, which
+     * subtracts scheduler preemption and GC stop-the-world pauses from what the frame wall clock counts. The need is
+     * the same one the immediate path's {@code getCurrentThreadCpuTime} split already serves (OPT-01): leg
+     * perf-prep1 measured {@code prepBarriers} at ~95% of recordPrepare (5 ms AMD, 10.4 ms Intel p50) for what is
+     * only a handful of {@code vkCmd*} recording calls, which are microseconds of CPU each - that gap is either real
+     * driver work or preemption counted as work, and only a CPU clock separates them. Default stays wall time, so
+     * every measured number before this flag keeps its meaning.
+     */
+    private static final boolean CPU_CLOCK = Boolean.getBoolean("celtium.vulkan.passSplitCpu");
+    private static final java.lang.management.ThreadMXBean THREAD_BEAN =
+            java.lang.management.ManagementFactory.getThreadMXBean();
+    private static final boolean THREAD_CPU_SUPPORTED = THREAD_BEAN.isCurrentThreadCpuTimeSupported();
+
+    /** {@return the timestamp the brackets compare, in nanoseconds under the selected clock}. */
+    private static long clockNanos() {
+        return CPU_CLOCK && THREAD_CPU_SUPPORTED ? THREAD_BEAN.getCurrentThreadCpuTime() : System.nanoTime();
+    }
+
     /** Brackets the frame itself. */
     public static void beginFrame() {
         if (!enabled()) return;
@@ -76,13 +101,13 @@ public final class FramePassTimings {
         Arrays.fill(insideDepth, 0);
         Arrays.fill(currentTopLevel, 0L);
         Arrays.fill(currentInside, 0L);
-        frameStart = System.nanoTime();
+        frameStart = clockNanos();
     }
 
     /** Closes the frame bracket and files the frame's record. */
     public static void endFrame() {
         if (!enabled() || frameStart == 0L) return;
-        long frameEnd = System.nanoTime();
+        long frameEnd = clockNanos();
         currentFrameTotal = frameEnd - frameStart;
         frameStart = 0L;
         long residual = currentFrameTotal - coverage.coveredNanos(frameEnd);
@@ -152,7 +177,7 @@ public final class FramePassTimings {
         if (counted == GUI_INDEX) guiActive = true;
         if (!enabled() || frameStart == 0L || counted < 0) return;
         int i = counted;
-        long now = System.nanoTime();
+        long now = clockNanos();
         boolean outermost = i < TOP_LEVEL.length ? coverage.begin(i, now)
                 : insideDepth[i - TOP_LEVEL.length]++ == 0;
         if (outermost) starts[i] = now;
@@ -164,7 +189,7 @@ public final class FramePassTimings {
         if (!enabled() || frameStart == 0L) return;
         int i = indexOf(pass);
         if (i < 0 || starts[i] == 0L) return;
-        long now = System.nanoTime();
+        long now = clockNanos();
         boolean outermost;
         if (i < TOP_LEVEL.length) {
             outermost = coverage.end(i, now);
@@ -262,7 +287,8 @@ public final class FramePassTimings {
     public static String summary() {
         if (written == 0) return "frames=0 (the instrument did not measure; enabled=" + enabled() + ")";
         int n = Math.min(written, CAPACITY);
-        StringBuilder text = new StringBuilder("frames=").append(n);
+        StringBuilder text = new StringBuilder("clock=").append(CPU_CLOCK && THREAD_CPU_SUPPORTED ? "cpu" : "wall")
+                .append(" frames=").append(n);
         text.append(" frame[p50=").append(ms(percentile(frameTotals, n, 0.50)))
                 .append(" p95=").append(ms(percentile(frameTotals, n, 0.95)))
                 .append(" worst=").append(ms(worst(frameTotals, n))).append(']');

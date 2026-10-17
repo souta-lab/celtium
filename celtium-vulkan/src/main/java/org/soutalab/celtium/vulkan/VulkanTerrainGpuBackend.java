@@ -10232,6 +10232,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         int timestampSlot = -1;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepDescriptors");
+        try {
         // Before anything this pass records: the model meshes are built once, from geometry captured while Minecraft
         // compiled its display lists. Guarded by a lab switch, so the default path is untouched until the draw lands.
         celtium$buildModelMeshes();
@@ -10260,11 +10262,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " atlas=" + this.atlasTexture.width() + "x" + this.atlasTexture.height());
         }
         pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size());
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
+        }
 
+        // The begin info lives past the barriers bracket: the render pass opens inside prepBegin.
+        VkRenderPassBeginInfo begin = null;
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBarriers");
+        try {
         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
 
         long renderPass = pipeline.renderPass();
-        VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
+        begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
                 .renderPass(renderPass)
                 .framebuffer(ensureFramebuffer(renderPass));
         begin.renderArea().offset().set(0, 0);
@@ -10289,6 +10298,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // exactly the VUID-vkCmdDraw-None-09600 the vsync leg reported on three distinct images at vkQueueSubmit. The
         // transition is recorded outside the pass, before the draw, like the outline's.
         celtium$transitionPublishedFrameTextures(false);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepBarriers");
+        }
+
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBegin");
+        try {
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
         this.commandState.beginPass(this.activeImmediateTarget);
@@ -10296,6 +10311,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
         setViewportAndScissor(stack);
         pipeline.bindPipeline(this.commandBuffer);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepBegin");
+        }
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("recordPrepare");
         }
