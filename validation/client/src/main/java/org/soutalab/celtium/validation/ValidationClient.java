@@ -667,6 +667,23 @@ public final class ValidationClient {
     /** Dimension travel: which dimension to move to and at which world tick (both from properties, 0 disables). */
     private final int celtium$dimensionAtTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
     private final int celtium$dimension = Integer.getInteger("celtium.validation.dimension", -1).intValue();
+    /**
+     * The optional second half of a round trip: at this world tick the same server transfer sends the player back to
+     * the dimension {@code dimensionReturn} names (the Overworld by default), reusing every rule the outbound leg
+     * measured - teleporter, settle placement, portal cooldown, client position push and chunk-reload notice.
+     */
+    private final int celtium$dimensionBackAtTick =
+            Integer.getInteger("celtium.validation.dimensionBackAtTick", 0).intValue();
+    private final int celtium$dimensionReturn =
+            Integer.getInteger("celtium.validation.dimensionReturn", 0).intValue();
+    private boolean celtium$changedDimensionBack;
+    private int celtium$arrivedBackAtTick = -1;
+    private int celtium$arrivedBackFrames = -1;
+    private boolean celtium$loadingScreenClosedBack;
+    /** World passes drawn after the return trip, in the return dimension with no screen over them. */
+    private int celtium$framesInReturnDimension;
+    private int celtium$presentedFramesAtBackArrival = -1;
+    private volatile TransferSnapshot celtium$transferBack = new TransferSnapshot("not attempted", -1, "unknown");
     private boolean celtium$changedDimension;
     /** Whether the fixture closed the transfer's loading screen, and which screen it was. */
     private boolean celtium$loadingScreenClosed;
@@ -697,6 +714,7 @@ public final class ValidationClient {
     /** Where the fixture's own teleporter put the player, and what it had to do about the arrival portal. */
     private volatile String celtium$arrivalPlacement = "not attempted";
     private int celtium$portalCooldownAfterTransfer = -1;
+    private int celtium$portalCooldownAfterBack = -1;
     private int celtium$portalReentries;
     private int celtium$portalEscapes;
     /** A verified portal-free spot beside the arrival, used if the player is pushed back into a portal. */
@@ -3133,149 +3151,27 @@ public final class ValidationClient {
                 report.addProperty("dimensionChangeAtTick", Integer.valueOf(worldTicks));
                 report.addProperty("dimensionTarget", Integer.valueOf(celtium$dimension));
                 try {
-                    // The transfer has to be driven by the server: the client player's own changeDimension only moves the
-                    // entity locally, and the first attempt measured dimensionAfter=0 - the player stayed in the
-                    // Overworld because the server never sent it anywhere. The integrated server owns the transfer, the
-                    // client follows, and the run's later frames are then the new dimension's terrain.
-                    final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
-                    final java.util.UUID playerId = mc.player.getUniqueID();
-                    if (server == null) {
-                        celtium$transfer = new TransferSnapshot("no integrated server", worldTicks, "unknown");
-                    } else {
-                        // The transfer runs as a scheduled server task rather than inline from the client tick: the
-                        // first attempt called it from the tick hook and vanilla's transfer path dereferenced a look
-                        // vector that is only set up during the server's own player tick, which is the NPE that ended
-                        // that run. addScheduledTask runs it at the server's next safe point.
-                        // worlds is a plain array indexed 0..n, not by dimension id: indexing it with -1 threw
-                        // ArrayIndexOutOfBoundsException and the transfer never happened. getWorld maps the id properly.
-                        {
-                            server.addScheduledTask(new Runnable() {
-                                @Override
-                                public void run() {
-                                    // Everything that touches the server - resolving the player, resolving the target
-                                    // world, the transfer itself - happens here. Resolving the world on the client
-                                    // thread was what the run log showed as "[Client thread] Loading dimension -1".
-                                    net.minecraft.entity.player.EntityPlayerMP player = server.getPlayerList()
-                                            .getPlayerByUUID(playerId);
-                                    if (player == null) {
-                                        celtium$transfer = new TransferSnapshot("no server player", worldTicks, "unknown");
-                                        return;
-                                    }
-                                    if (player.dimension == celtium$dimension) {
-                                        celtium$transfer = new TransferSnapshot("already there", worldTicks, "unknown");
-                                        return;
-                                    }
-                                    net.minecraft.world.WorldServer target = server.getWorld(celtium$dimension);
-                                    if (target == null) {
-                                        celtium$transfer = new TransferSnapshot("no world for dimension " + celtium$dimension, worldTicks, "unknown");
-                                        return;
-                                    }
-                                    // Minecraft's getVectorForRotation returns null - and getLook then dereferences it - when the
-                                    // pitch is not a number, and the transfer path asks for the look vector. The values are
-                                    // recorded before they are replaced, because "the rotation was NaN" is the finding here,
-                                    // not something to paper over silently.
-                                    final String rotation = "pitch=" + player.rotationPitch + " yaw=" + player.rotationYaw;
-                                    if (Float.isNaN(player.rotationPitch) || Float.isInfinite(player.rotationPitch)) {
-                                        player.rotationPitch = 0.0F;
-                                    }
-                                    if (Float.isNaN(player.prevRotationPitch) || Float.isInfinite(player.prevRotationPitch)) {
-                                        player.prevRotationPitch = 0.0F;
-                                    }
-                                    if (Float.isNaN(player.rotationYaw) || Float.isInfinite(player.rotationYaw)) {
-                                        player.rotationYaw = 0.0F;
-                                    }
-                                    if (Float.isNaN(player.prevRotationYaw) || Float.isInfinite(player.prevRotationYaw)) {
-                                        player.prevRotationYaw = 0.0F;
-                                    }
-                                    if (Float.isNaN(player.rotationYawHead) || Float.isInfinite(player.rotationYawHead)) {
-                                        player.rotationYawHead = 0.0F;
-                                    }
-                                    // Teleporter.placeInExistingPortal reads entity.getLastPortalVec(), which is filled in by
-                                    // Entity.setPortal when an entity stands in a portal block. A transfer made without
-                                    // touching a portal leaves it null and the vanilla teleporter throws on it (the trace
-                                    // named Teleporter.func_180620_b, line 143). The player is marked as being in a portal
-                                    // at their own position, which is what the teleporter needs - and it will then build or
-                                    // find a portal at the destination, exactly as a real trip would.
-                                    player.setPortal(new net.minecraft.util.math.BlockPos(player));
-                                    try {
-                                        // The vanilla transfer lands the player inside the portal it finds or builds, and
-                                        // the game's own portal rule in Entity.onEntityUpdate then sends any entity whose
-                                        // bounding box is inside a portal block from -1 straight back to 0 - after
-                                        // getMaxInPortalTime() ticks of contact, which is one for a player who cannot take
-                                        // damage, as in this creative world. That is the return trip the Nether runs
-                                        // measured (dimension -1 at tick 82, back at 0 by tick 148), and it is why they
-                                        // ended with no capture.
-                                        //
-                                        // A real trip leaves the player beside the destination portal and with the portal
-                                        // cooldown set. The fixture drives the same server transfer, so it uses a Teleporter
-                                        // that runs the vanilla placement first and then steps the player to a verified,
-                                        // portal-free spot next to it - the step a player would take themselves. What was
-                                        // chosen is recorded and reported; nothing is silently moved.
-                                        net.minecraft.world.Teleporter teleporter = new net.minecraft.world.Teleporter(target) {
-                                            @Override
-                                            public void placeInPortal(net.minecraft.entity.Entity entityIn, float rotationYawIn) {
-                                                super.placeInPortal(entityIn, rotationYawIn);
-                                                celtium$settleArrival(this.world, entityIn, rotationYawIn);
-                                            }
-                                        };
-                                        server.getPlayerList().transferPlayerToDimension(player, celtium$dimension,
-                                                teleporter);
-                                        // Entity.onEntityUpdate sets exactly this immediately before changeDimension, so a
-                                        // player who came through a portal cannot be sent back for 300 ticks. The fixture
-                                        // used to zero it, which re-armed the return trip instead.
-                                        player.timeUntilPortal = player.getPortalCooldown();
-                                        celtium$portalCooldownAfterTransfer = player.timeUntilPortal;
-                                        // The client's copy of the position: setLocationAndAngles inside the teleporter
-                                        // never told it, and a client that is not where the server put it never
-                                        // finishes the loading screen. Reported either way, so a run where the
-                                        // push did not happen cannot be read as one where it did.
-                                        net.minecraft.util.math.BlockPos settled = celtium$settledArrival;
-                                        if (settled == null) {
-                                            report.addProperty("dimensionClientPositionPush", "none-settled");
-                                        } else {
-                                            player.setPositionAndUpdate(settled.getX() + 0.5D, settled.getY(),
-                                                    settled.getZ() + 0.5D);
-                                            report.addProperty("dimensionClientPositionPush",
-                                                    "setPositionAndUpdate " + (settled.getX() + 0.5D) + "," + settled.getY()
-                                                            + "," + (settled.getZ() + 0.5D));
-                                        }
-                                        // The second half of the same handshake, and the one the position alone did not
-                                        // supply: a client that is waiting in GuiDownloadTerrain does not close it on a
-                                        // position packet, it closes it when the world chunks are sent again. Measured on
-                                        // gv-cohort-switch2: with only the position pushed the client reached the Nether
-                                        // and presented 477 frames (98 before the push), then the server pulled it back
-                                        // to dimension 0 at tick 259 with screen=GuiDownloadTerrain still up. The
-                                        // notification is a game-state packet; 13 is the level-chunks-load-start state,
-                                        // which is what the protocol names and what a server sends to make the client
-                                        // rebuild its chunk view after a respawn.
-                                        try {
-                                            player.connection.sendPacket(new net.minecraft.network.play.server
-                                                    .SPacketChangeGameState(13, 0.0F));
-                                            report.addProperty("dimensionChunkReloadNotice", "SPacketChangeGameState 13");
-                                        } catch (Throwable error) {
-                                            report.addProperty("dimensionChunkReloadNotice",
-                                                    "failed: " + error.getClass().getName() + ": " + error.getMessage());
-                                        }
-                                        celtium$transfer = new TransferSnapshot("transferred", worldTicks, rotation);
-                                    } catch (Throwable error) {
-                                        celtium$transfer = new TransferSnapshot("error: " + error, worldTicks, rotation);
-                                        // The frames are collected into the same field: a message naming a Forge/SRG
-                                        // symbol is not enough to find the call that failed.
-                                        StringBuilder trace = new StringBuilder();
-                                        StackTraceElement[] frames = error.getStackTrace();
-                                        for (int i = 0; i < frames.length && i < 6; i++) {
-                                            trace.append(frames[i].toString()).append(" | ");
-                                        }
-                                        celtium$transfer = new TransferSnapshot("error: " + error + " || " + trace, worldTicks, rotation);
-                                    }
-                                }
-                            });
-                        }
-                    }
+                    celtium$scheduleTransfer(mc, celtium$dimension, worldTicks, false);
                     report.addProperty("dimensionAfter", Integer.valueOf(mc.player.dimension));
                 } catch (Throwable error) {
                     report.addProperty("dimensionError", String.valueOf(error));
                 }
+            }
+            // The return half of a round trip, enabled only when the run asks for one: the same server-driven
+            // transfer the outbound leg measured, pointed back at dimensionReturn, with its own arrival, screen
+            // and frame evidence kept beside the outbound leg's rather than merged into it.
+            if (celtium$dimensionBackAtTick > 0 && worldTicks == celtium$dimensionBackAtTick
+                    && !celtium$changedDimensionBack) {
+                celtium$changedDimensionBack = true;
+                report.addProperty("dimensionBackChangeAtTick", Integer.valueOf(worldTicks));
+                report.addProperty("dimensionBackTarget", Integer.valueOf(celtium$dimensionReturn));
+                try {
+                    celtium$scheduleTransfer(mc, celtium$dimensionReturn, worldTicks, true);
+                    report.addProperty("dimensionBackAfter", Integer.valueOf(mc.player.dimension));
+                } catch (Throwable error) {
+                    report.addProperty("dimensionBackError", String.valueOf(error));
+                }
+                celtium$reportBackLeg(mc, worldTicks, worldFrames);
             }
             // The arrival is observed on the client, which is the side that has to be in the new dimension for the
             // capture to mean anything: a scheduled server task is not evidence that the client followed it.
@@ -3316,6 +3212,31 @@ public final class ValidationClient {
                         + " presentedHighWater=" + celtium$presentedHighWaterBeforeArrival
                         + " clientWorldId=" + Integer.toHexString(System.identityHashCode(mc.world))
                         + " placement=[" + celtium$arrivalPlacement + "]");
+            }
+            // The return arrival, kept under its own fields: a run that never came back leaves
+            // dimensionBackArrivedAtTick absent rather than borrowing the outbound arrival.
+            if (celtium$dimensionBackAtTick > 0 && celtium$changedDimensionBack && celtium$arrivedBackAtTick < 0
+                    && mc.player != null && mc.world != null
+                    && mc.player.dimension == celtium$dimensionReturn
+                    && mc.world.provider.getDimension() == celtium$dimensionReturn) {
+                celtium$arrivedBackAtTick = worldTicks;
+                celtium$arrivedBackFrames = worldFrames;
+                celtium$presentedFramesAtBackArrival = celtium$presentedFrameCount();
+                report.addProperty("dimensionBackArrivedAtTick", Integer.valueOf(worldTicks));
+                celtium$dimensionTrace("CELTIUM_DIM_BACK_ARRIVED tick=" + worldTicks + " client=" + mc.player.dimension
+                        + " world=" + mc.world.provider.getDimension() + " screen=" + celtium$screenName(mc)
+                        + " worldFrames=" + worldFrames + " presentedFrames=" + celtium$presentedFramesAtBackArrival
+                        + " clientWorldId=" + Integer.toHexString(System.identityHashCode(mc.world))
+                        + " placement=[" + celtium$arrivalPlacement + "]");
+                celtium$reportBackLeg(mc, worldTicks, worldFrames);
+            }
+            if (celtium$dimensionBackAtTick > 0 && celtium$changedDimensionBack && celtium$arrivedBackAtTick > 0
+                    && !celtium$loadingScreenClosedBack && mc.currentScreen != null) {
+                celtium$loadingScreenClosedBack = true;
+                report.addProperty("dimensionBackLoadingScreenClosedAtTick", Integer.valueOf(worldTicks));
+                report.addProperty("dimensionBackLoadingScreenWas",
+                        mc.currentScreen.getClass().getSimpleName());
+                mc.displayGuiScreen(null);
             }
             // The entity set of a dimension scene, spawned where the player actually is once the client is in the
             // target dimension. The tick-60 set is spawned in the overworld and the transfer leaves it there: the
@@ -3911,6 +3832,16 @@ public final class ValidationClient {
                     && mc.world.provider.getDimension() == celtium$dimension
                     && mc.currentScreen == null) {
                 celtium$framesInTargetDimension++;
+            }
+            // The return leg's own frame count, counted only after the client is really back in the return
+            // dimension with nothing over the world - the same rule the outbound leg counts by.
+            if (celtium$dimensionBackAtTick > 0 && celtium$arrivedBackAtTick >= 0
+                    && mc.world != null && mc.player != null
+                    && mc.player.dimension == celtium$dimensionReturn
+                    && mc.world.provider.getDimension() == celtium$dimensionReturn
+                    && mc.currentScreen == null) {
+                celtium$framesInReturnDimension++;
+                celtium$reportBackLeg(mc, worldTicks, worldFrames);
             }
             if (worldTicks == 120 || !report.has("framebuffer")) {
                 report.addProperty("glVendor", GL11C.glGetString(GL11C.GL_VENDOR));
@@ -5412,7 +5343,12 @@ public final class ValidationClient {
         // The capture condition, not one exact tick: `tick` keeps the "first frame at or after 200" every stored
         // reference was taken under, `built` waits for the listed-section count to settle. See CAPTURE_CONDITION.
         if (!celtium$captureDue()) return;
-        if (celtium$dimensionAtTick > 0) {
+        // The gate is fail-closed before the capture: a run that asked for another dimension and never got there
+        // must not pass. It is not re-judged afterwards - on a round-trip run the return leg deliberately leaves the
+        // target dimension once the capture's own evidence is locked, and re-evaluating then would fail a finished
+        // capture for a leg that is supposed to exist. Measured: the return transfer at tick 370 moved the server
+        // player to 0, and the re-run gate at 371 reported "server has this player in dimension 0, not -1".
+        if (celtium$dimensionAtTick > 0 && !celtium$captureStarted) {
             // Fail closed: a run that asked for another dimension and did not get there must not report PASSED. The
             // previous acceptance did exactly that - dimensionAfter stayed 0 while the report said PASSED - because
             // the value it read was taken before the scheduled transfer could run.
@@ -6141,6 +6077,196 @@ public final class ValidationClient {
      * and the destination block are reported either way, so a placement the fixture guessed is visible in the report
      * rather than implied by the player's later position.
      */
+    /**
+     * The return leg's own evidence block, written as the leg progresses rather than at the capture: a round-trip
+     * run captures its picture while still in the target dimension, so freezing these numbers there would report a
+     * leg that had not happened yet. Written at the back-trigger, at the back-arrival and once per counted return
+     * frame; the last write stands.
+     */
+    private void celtium$reportBackLeg(Minecraft mc, int worldTicks, int worldFrames) {
+        TransferSnapshot transferBack = celtium$transferBack;
+        int presentedNow = celtium$presentedFrameCount();
+        report.addProperty("dimensionBackRequestedAtTick", Integer.valueOf(celtium$dimensionBackAtTick));
+        report.addProperty("dimensionBackServerResult", transferBack.state);
+        report.addProperty("dimensionBackServerTaskAtTick", Integer.valueOf(transferBack.completedAtTick));
+        report.addProperty("dimensionBackRotationBefore", transferBack.rotationBefore);
+        report.addProperty("dimensionBackTarget", Integer.valueOf(celtium$dimensionReturn));
+        report.addProperty("dimensionBackArrivedAtTick", Integer.valueOf(celtium$arrivedBackAtTick));
+        report.addProperty("dimensionBackArrivedFrames", Integer.valueOf(celtium$arrivedBackFrames));
+        report.addProperty("dimensionBackFramesInReturn", Integer.valueOf(celtium$framesInReturnDimension));
+        report.addProperty("dimensionBackPortalCooldownAfterTransfer",
+                Integer.valueOf(celtium$portalCooldownAfterBack));
+        report.addProperty("dimensionBackPresentedFramesAtArrival",
+                Integer.valueOf(celtium$presentedFramesAtBackArrival));
+        report.addProperty("dimensionBackPresentedFramesAtLast", Integer.valueOf(presentedNow));
+        report.addProperty("dimensionBackPresentedFramesDrawn", Integer.valueOf(
+                celtium$presentedFramesAtBackArrival < 0 || presentedNow < 0 ? -1
+                        : presentedNow - celtium$presentedFramesAtBackArrival));
+        report.addProperty("dimensionBackClientAtLast", Integer.valueOf(
+                mc == null || mc.player == null ? Integer.MIN_VALUE : mc.player.dimension));
+        report.addProperty("dimensionBackReportedAtTick", Integer.valueOf(worldTicks));
+        report.addProperty("dimensionBackReportedAtFrame", Integer.valueOf(worldFrames));
+    }
+
+    /** Publishes one leg's transfer outcome into its own snapshot, so the two legs of a round trip do not overwrite each other. */
+    private void celtium$recordTransfer(boolean back, TransferSnapshot snapshot) {
+        if (back) {
+            this.celtium$transferBack = snapshot;
+        } else {
+            this.celtium$transfer = snapshot;
+        }
+    }
+
+    /**
+     * Drives one dimension transfer the same way the outbound leg did: as a scheduled server task, through
+     * {@code transferPlayerToDimension} with the fixture's settle-beside-portal teleporter, portal cooldown, client
+     * position push and chunk-reload notice. {@code back} only chooses which snapshot and which report-property
+     * prefix the leg records under; the transfer itself is identical either way.
+     * <p>
+     * The transfer has to be driven by the server: the client player's own changeDimension only moves the entity
+     * locally, and the first attempt measured dimensionAfter=0 - the player stayed in the Overworld because the
+     * server never sent it anywhere. The task runs scheduled rather than inline from the client tick because the
+     * inline attempt dereferenced a look vector that is only set up during the server's own player tick; the
+     * worlds array is plain 0..n, so {@code getWorld} maps the dimension id properly.
+     */
+    private void celtium$scheduleTransfer(Minecraft mc, final int dimension, final int worldTicks,
+            final boolean back) {
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        final java.util.UUID playerId = mc.player.getUniqueID();
+        final String prefix = back ? "dimensionBack" : "dimension";
+        if (server == null) {
+            celtium$recordTransfer(back, new TransferSnapshot("no integrated server", worldTicks, "unknown"));
+            return;
+        }
+        server.addScheduledTask(new Runnable() {
+            @Override
+            public void run() {
+                // Everything that touches the server - resolving the player, resolving the target
+                // world, the transfer itself - happens here. Resolving the world on the client
+                // thread was what the run log showed as "[Client thread] Loading dimension -1".
+                net.minecraft.entity.player.EntityPlayerMP player = server.getPlayerList()
+                        .getPlayerByUUID(playerId);
+                if (player == null) {
+                    celtium$recordTransfer(back, new TransferSnapshot("no server player", worldTicks, "unknown"));
+                    return;
+                }
+                if (player.dimension == dimension) {
+                    celtium$recordTransfer(back, new TransferSnapshot("already there", worldTicks, "unknown"));
+                    return;
+                }
+                net.minecraft.world.WorldServer target = server.getWorld(dimension);
+                if (target == null) {
+                    celtium$recordTransfer(back,
+                            new TransferSnapshot("no world for dimension " + dimension, worldTicks, "unknown"));
+                    return;
+                }
+                // Minecraft's getVectorForRotation returns null - and getLook then dereferences it - when the
+                // pitch is not a number, and the transfer path asks for the look vector. The values are
+                // recorded before they are replaced, because "the rotation was NaN" is the finding here,
+                // not something to paper over silently.
+                final String rotation = "pitch=" + player.rotationPitch + " yaw=" + player.rotationYaw;
+                if (Float.isNaN(player.rotationPitch) || Float.isInfinite(player.rotationPitch)) {
+                    player.rotationPitch = 0.0F;
+                }
+                if (Float.isNaN(player.prevRotationPitch) || Float.isInfinite(player.prevRotationPitch)) {
+                    player.prevRotationPitch = 0.0F;
+                }
+                if (Float.isNaN(player.rotationYaw) || Float.isInfinite(player.rotationYaw)) {
+                    player.rotationYaw = 0.0F;
+                }
+                if (Float.isNaN(player.prevRotationYaw) || Float.isInfinite(player.prevRotationYaw)) {
+                    player.prevRotationYaw = 0.0F;
+                }
+                if (Float.isNaN(player.rotationYawHead) || Float.isInfinite(player.rotationYawHead)) {
+                    player.rotationYawHead = 0.0F;
+                }
+                // Teleporter.placeInExistingPortal reads entity.getLastPortalVec(), which is filled in by
+                // Entity.setPortal when an entity stands in a portal block. A transfer made without
+                // touching a portal leaves it null and the vanilla teleporter throws on it (the trace
+                // named Teleporter.func_180620_b, line 143). The player is marked as being in a portal
+                // at their own position, which is what the teleporter needs - and it will then build or
+                // find a portal at the destination, exactly as a real trip would.
+                player.setPortal(new net.minecraft.util.math.BlockPos(player));
+                try {
+                    // The vanilla transfer lands the player inside the portal it finds or builds, and
+                    // the game's own portal rule in Entity.onEntityUpdate then sends any entity whose
+                    // bounding box is inside a portal block from -1 straight back to 0 - after
+                    // getMaxInPortalTime() ticks of contact, which is one for a player who cannot take
+                    // damage, as in this creative world. That is the return trip the Nether runs
+                    // measured (dimension -1 at tick 82, back at 0 by tick 148), and it is why they
+                    // ended with no capture.
+                    //
+                    // A real trip leaves the player beside the destination portal and with the portal
+                    // cooldown set. The fixture drives the same server transfer, so it uses a Teleporter
+                    // that runs the vanilla placement first and then steps the player to a verified,
+                    // portal-free spot next to it - the step a player would take themselves. What was
+                    // chosen is recorded and reported; nothing is silently moved.
+                    net.minecraft.world.Teleporter teleporter = new net.minecraft.world.Teleporter(target) {
+                        @Override
+                        public void placeInPortal(net.minecraft.entity.Entity entityIn, float rotationYawIn) {
+                            super.placeInPortal(entityIn, rotationYawIn);
+                            celtium$settleArrival(this.world, entityIn, rotationYawIn);
+                        }
+                    };
+                    server.getPlayerList().transferPlayerToDimension(player, dimension,
+                            teleporter);
+                    // Entity.onEntityUpdate sets exactly this immediately before changeDimension, so a
+                    // player who came through a portal cannot be sent back for 300 ticks. The fixture
+                    // used to zero it, which re-armed the return trip instead.
+                    player.timeUntilPortal = player.getPortalCooldown();
+                    if (back) {
+                        celtium$portalCooldownAfterBack = player.timeUntilPortal;
+                    } else {
+                        celtium$portalCooldownAfterTransfer = player.timeUntilPortal;
+                    }
+                    // The client's copy of the position: setLocationAndAngles inside the teleporter
+                    // never told it, and a client that is not where the server put it never
+                    // finishes the loading screen. Reported either way, so a run where the
+                    // push did not happen cannot be read as one where it did.
+                    net.minecraft.util.math.BlockPos settled = celtium$settledArrival;
+                    if (settled == null) {
+                        report.addProperty(prefix + "ClientPositionPush", "none-settled");
+                    } else {
+                        player.setPositionAndUpdate(settled.getX() + 0.5D, settled.getY(),
+                                settled.getZ() + 0.5D);
+                        report.addProperty(prefix + "ClientPositionPush",
+                                "setPositionAndUpdate " + (settled.getX() + 0.5D) + "," + settled.getY()
+                                        + "," + (settled.getZ() + 0.5D));
+                    }
+                    // The second half of the same handshake, and the one the position alone did not
+                    // supply: a client that is waiting in GuiDownloadTerrain does not close it on a
+                    // position packet, it closes it when the world chunks are sent again. Measured on
+                    // gv-cohort-switch2: with only the position pushed the client reached the Nether
+                    // and presented 477 frames (98 before the push), then the server pulled it back
+                    // to dimension 0 at tick 259 with screen=GuiDownloadTerrain still up. The
+                    // notification is a game-state packet; 13 is the level-chunks-load-start state,
+                    // which is what the protocol names and what a server sends to make the client
+                    // rebuild its chunk view after a respawn.
+                    try {
+                        player.connection.sendPacket(new net.minecraft.network.play.server
+                                .SPacketChangeGameState(13, 0.0F));
+                        report.addProperty(prefix + "ChunkReloadNotice", "SPacketChangeGameState 13");
+                    } catch (Throwable error) {
+                        report.addProperty(prefix + "ChunkReloadNotice",
+                                "failed: " + error.getClass().getName() + ": " + error.getMessage());
+                    }
+                    celtium$recordTransfer(back, new TransferSnapshot("transferred", worldTicks, rotation));
+                } catch (Throwable error) {
+                    celtium$recordTransfer(back, new TransferSnapshot("error: " + error, worldTicks, rotation));
+                    // The frames are collected into the same field: a message naming a Forge/SRG
+                    // symbol is not enough to find the call that failed.
+                    StringBuilder trace = new StringBuilder();
+                    StackTraceElement[] frames = error.getStackTrace();
+                    for (int i = 0; i < frames.length && i < 6; i++) {
+                        trace.append(frames[i].toString()).append(" | ");
+                    }
+                    celtium$recordTransfer(back,
+                            new TransferSnapshot("error: " + error + " || " + trace, worldTicks, rotation));
+                }
+            }
+        });
+    }
+
     /** The position celtium$settleArrival chose, or null when it chose none. */
     private net.minecraft.util.math.BlockPos celtium$settledArrival;
 
