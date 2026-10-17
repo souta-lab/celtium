@@ -1,0 +1,145 @@
+{
+  "schema": 1,
+  "source": "Cleanroom Modpack Migration Notes, RLCraft section (gist.github.com/Rongmario/90d02fe1a2ce5458ea4c74c3b30cecc)",
+  "status": "MEASURED - leg rlcraft-p1-leg7-recipe applied this recipe (plus RenderLib 1.4.5 and RecurrentComplex 1.4.8.7) and reached fixtureStatus PASSED, exit 0, 131.6s on AMD",
+  "remove": [
+    {
+      "pattern": "AttributeFix",
+      "matchedInProfile": "AttributeFix-Forge-1.12.2-1.0.12.jar"
+    },
+    {
+      "pattern": "Born In A Barn",
+      "matchedInProfile": "Born In A Barn V1.8-1.12-1.1.jar"
+    },
+    {
+      "pattern": "BedBreakBegone",
+      "matchedInProfile": "BedBreakBegone-1.0.2.jar"
+    },
+    {
+      "pattern": "BlockOverlayFix",
+      "matchedInProfile": "BlockOverlayFix-1.12.2-1.0.0.jar"
+    },
+    {
+      "pattern": "EntityCulling",
+      "matchedInProfile": "EntityCulling-1.12.2-6.3.1.jar"
+    },
+    {
+      "pattern": "foamfix",
+      "matchedInProfile": "foamfix-0.10.15-1.12.2.jar"
+    },
+    {
+      "pattern": "framevoidpatch",
+      "matchedInProfile": "framevoidpatch-1.0.0.jar"
+    },
+    {
+      "pattern": "HelpFixer",
+      "matchedInProfile": "HelpFixer-1.12.1-1.5.18.jar"
+    },
+    {
+      "pattern": "jei_",
+      "matchedInProfile": "jei_1.12.2-4.16.1.302.jar"
+    },
+    {
+      "pattern": "librarianlib-1",
+      "matchedInProfile": "librarianlib-1.12.2-4.22.jar"
+    },
+    {
+      "pattern": "_MixinBootstrap",
+      "matchedInProfile": "_MixinBootstrap-1.1.0.jar"
+    },
+    {
+      "pattern": "MixinCompat",
+      "matchedInProfile": "[___MixinCompat-0.8___].jar"
+    },
+    {
+      "pattern": "Quark-r1.6-179",
+      "matchedInProfile": "Quark-r1.6-179.jar"
+    },
+    {
+      "pattern": "phosphor",
+      "matchedInProfile": "phosphor-1.12.2-0.2.6+build50-universal.jar"
+    },
+    {
+      "pattern": "PortalDupeBegone",
+      "matchedInProfile": "PortalDupeBegone-1.0.0.jar"
+    },
+    {
+      "pattern": "Forgelin-1",
+      "matchedInProfile": "Forgelin-1.8.4.jar"
+    },
+    {
+      "pattern": "spark-forge",
+      "matchedInProfile": "spark-forge.jar"
+    },
+    {
+      "pattern": "Surge-",
+      "matchedInProfile": "Surge-1.12.2-2.0.79.jar"
+    },
+    {
+      "pattern": "Toast Control",
+      "matchedInProfile": "Toast Control-1.12.2-1.8.1.jar"
+    }
+  ],
+  "add": [
+    {
+      "mod": "Fugue",
+      "file": "+Fugue-0.23.7.jar",
+      "bytes": 311828,
+      "sha256": "358e565b9b655840b52a79b7808eecd9c9b611030783180d68fa5bff3b7cc615"
+    },
+    {
+      "mod": "Scalar Legacy",
+      "file": "Scalar Legacy-1.0.1.jar",
+      "bytes": 25464431,
+      "sha256": "350d1c378f3b0ac8e7b3df0432482bbb5341c79d07df843c747be1d5fdc23cfe"
+    },
+    {
+      "mod": "Had Enough Items",
+      "file": "HadEnoughItems_1.12.2-4.35.0.jar",
+      "bytes": 980126,
+      "sha256": "c39b0062ff5e72d6af7b624371909826a1c4420a9be8cfa343bcecd542fba489"
+    },
+    {
+      "mod": "Forgelin-Continuous",
+      "file": "Forgelin-Continuous-2.4.20.0.jar",
+      "bytes": 8020330,
+      "sha256": "9898d49661eb8f52e8b8ec0d4d8e8fd6ab09c3a068be9425b55260215406794d"
+    },
+    {
+      "mod": "Quark: RotN Edition",
+      "file": "QuarkRotN-r1.6-192.jar",
+      "bytes": 3999983,
+      "sha256": "6cab5bd38b428cd9fd014861dfe75788faccc215344b3df5254076cfa0e9b97c"
+    },
+    {
+      "mod": "LibrarianLib-Continuous",
+      "file": "LibrarianLib-Continuous-1.12.2-4.22-2.0-3.jar",
+      "bytes": 5526394,
+      "sha256": "27cef30297b6551f96b3ed41980582de3b5836f459915ae9f5e9c4d2cccf6d13"
+    }
+  ],
+  "update": [
+    {
+      "mod": "RenderLib",
+      "from": "RenderLib-1.12.2-1.2.8.jar",
+      "fromSha256": "4c27f9e965f4613ec3840855b30cccbe51e3fe08dfd0ecdc18ed6012d3836d28",
+      "to": "RenderLib-1.12.2-1.4.5.jar",
+      "toSha256": "eeca6dc4ef5acf3069e4b8747e4dbfa253323cc44cd90c8ddb6d70587fe0d35f"
+    },
+    {
+      "mod": "Recurrent Complex",
+      "from": "RecurrentComplex-1.4.8.4.jar",
+      "note": "recipe says delete and re-fetch"
+    },
+    {
+      "mod": "RLTweaker",
+      "from": "RLTweaker-1.12.2-0.5.12.jar",
+      "note": "recipe says update"
+    }
+  ],
+  "sereneseasons": {
+    "profile": "SereneSeasons-1.12.2-1.2.18-universal.jar",
+    "recipeListsIt": false,
+    "plan": "restore it in the recipe leg; it is excluded only because of the independently-reported addRainParticles VerifyError"
+  }
+}
