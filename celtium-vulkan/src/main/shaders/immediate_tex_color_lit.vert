@@ -13,6 +13,8 @@ layout(push_constant) uniform PushConstants {
     mat4 u_ProjectionMatrix;
     vec4 u_TexA;
     vec4 u_TexB;
+    // x: the current glColor's alpha - the CPU writes it into every group's slot 96, the other pipelines' u_ColorA.
+    // y: the alpha-func selector (GL enum as float, 0 = disabled). z/w: unused pad.
     vec4 u_TexPad;
     layout(offset = 112) float u_AlphaRef;
     layout(offset = 116) float u_ColorR;
@@ -60,6 +62,13 @@ void main() {
     // texel (0.5/16 = 8/256), not on its corner. Dividing without the +8 bias sampled half a texel off, which on a
     // 16x16 light map is the neighbouring texel at the boundaries.
     vec3 lightmap = texture(u_Lightmap, (celtium.u_LightCoord + 8.0) / 256.0).rgb;
-    v_Color = vec4(a_Color.rgb * lit * lightmap, a_Color.a);
+    // The current glColor, which fixed-function multiplies into the vertex colour: the hurt flash's red
+    // (glColor(1,0,0,0.3)) and the slime gel's translucent white (glColor(1,1,1,0.25)) both arrive this way, and a
+    // drop leaves the gel opaque white and the flash invisible - the two operator reports this line exists for. The
+    // combine case is excluded: under a negative alpha reference the colour slots carry the combine constant, which
+    // the fragment stage mixes in itself, and multiplying it in here would tint twice.
+    vec4 groupColour = celtium.u_AlphaRef < 0.0 ? vec4(1.0)
+            : vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, celtium.u_TexPad.x);
+    v_Color = vec4(a_Color.rgb * lit * lightmap * groupColour.rgb, a_Color.a * groupColour.a);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

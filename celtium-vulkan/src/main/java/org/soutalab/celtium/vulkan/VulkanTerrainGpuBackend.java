@@ -3708,6 +3708,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 VulkanImmediateFormats.ITEM, texture, key, state, target);
         group.prepared = prepared;
         group.combineColor = combineColor;
+        // The current glColor, which the fixed pipeline multiplies into the vertex colour: the immediate path carries
+        // it as the group colour for formats 6/7/9, and the ITEM replay needs the same feed - LayerSlimeGel's
+        // glColor(1,1,1,0.25) was dropped here and drew the gel opaque white, and the hurt red never reached the model
+        // vertices either. The lit vertex shader multiplies this into v_Color (skipped while a combine owns the
+        // colour slots, so the red flash constant cannot tint twice).
+        group.color = this.colorMirrorHasValue
+                ? new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
+                        this.immediateState.colorBlue(), this.immediateState.colorAlpha()}
+                : null;
         group.texMatrix = celtium$textureAffine();
         group.lightParams = celtium$lightParams(state, modelView);
         // The same rule as the immediate path, and it is the light-map unit's enable state that decides it - not the
@@ -6066,7 +6075,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // a glColor change used to be drawn with the previous colour. Compared only for the formats that
                     // take the colour from the mirror and only when the mirror has a value, which is exactly when the
                     // capture below reads it.
-                    || (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9)
+                    || (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
                             && this.colorMirrorHasValue && this.celtium$colourDiffers())
                     // BH-04, the other two halves: the texture affine and the fog are per-draw state as well, and both
                     // are captured once when the group opens. A batch offered after either changed used to be appended
@@ -6200,13 +6209,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // be drawn opaque". The four elements reach the shaders at offset 96 (the block's spare vec4, which
                 // nothing reads today): writing the alpha is only half the fix, the two colourless vertex shaders
                 // have to read it.
-                if ((formatId == 7 || formatId == 6 || formatId == 9) && this.colorMirrorHasValue) {
+                if ((formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4) && this.colorMirrorHasValue) {
                     // No GL query: the colour the game last set, from the same state mirror everything else uses.
                     this.textureStats.noteColorMirrorUse();
                     this.currentGroupColor = new float[] {this.immediateState.colorRed(),
                             this.immediateState.colorGreen(), this.immediateState.colorBlue(),
                             this.immediateState.colorAlpha()};
-                } else if (formatId == 7 || formatId == 6 || formatId == 9) {
+                } else if (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4) {
                     // The colour read needs only a four-float scratch: one native buffer reused across groups rather
                     // than an alloc/free pair per group.
                     java.nio.FloatBuffer colour = this.colourScratch;
@@ -6797,7 +6806,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return false;
         }
         // BH-04: the current colour is group state for the colourless layouts (and for 9, the same rule as the slow path).
-        if (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9)
+        if (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
                 && this.colorMirrorHasValue && this.celtium$colourDiffers()) {
             return false;
         }
