@@ -10228,6 +10228,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
         this.terrainStatistics.noteTerrainPasses();
+        // The slot lives past the prepare bracket: the end-of-pass timestamp is recorded after the draw loop.
+        int timestampSlot = -1;
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
+        try {
         // Before anything this pass records: the model meshes are built once, from geometry captured while Minecraft
         // compiled its display lists. Guarded by a lab switch, so the default path is untouched until the draw lands.
         celtium$buildModelMeshes();
@@ -10265,7 +10269,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 .framebuffer(ensureFramebuffer(renderPass));
         begin.renderArea().offset().set(0, 0);
         begin.renderArea().extent().set(this.targetWidth, this.targetHeight);
-        int timestampSlot = this.timestampsUsable && this.timestampSlots < (TIMESTAMP_SLOTS / 2)
+        timestampSlot = this.timestampsUsable && this.timestampSlots < (TIMESTAMP_SLOTS / 2)
                 ? this.timestampSlots : -1;
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
@@ -10292,6 +10296,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
         setViewportAndScissor(stack);
         pipeline.bindPipeline(this.commandBuffer);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("recordPrepare");
+        }
 
         Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
         SectionRenderDataStorage.BatchCacheParams cacheParams =
@@ -10308,13 +10315,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 continue;
             }
 
-            CachedBatch cached = storage.getCachedMultiDrawBatch(cacheParams);
-            if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
-                    renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
-                    occlusionCamera.intZ)) {
-                cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
-                        useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
-                storage.storeCachedMultiDrawBatch(cacheParams, cached);
+            CachedBatch cached;
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("recordBatch");
+            try {
+                cached = storage.getCachedMultiDrawBatch(cacheParams);
+                if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
+                        renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
+                        occlusionCamera.intZ)) {
+                    cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
+                            useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
+                    storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                }
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("recordBatch");
             }
 
             if (!(cached.getBatch() instanceof VulkanMultiDrawBatch) || cached.getBatch().isEmpty()) {

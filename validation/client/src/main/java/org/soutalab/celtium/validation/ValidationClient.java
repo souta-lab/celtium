@@ -4380,7 +4380,8 @@ public final class ValidationClient {
                 + " upload[thisFrameMs=" + uploadThisFrameMillis
                 + " submitWaitMillis=" + celtium$uploadWaitSampledMillis
                 + " submitWaits=" + celtium$uploadWaitSampledWaits
-                + " queueWaitMillis=" + celtium$uploadWaitSampledQueueMillis + "]";
+                + " queueWaitMillis=" + celtium$uploadWaitSampledQueueMillis + "]"
+                + celtium$loopTimingSnapshot();
         if (celtium$slowFrames.size() < SLOW_FRAME_MAX) {
             celtium$slowFrames.add(entry);
             celtium$slowFrameMillis.add(Double.valueOf(intervalMs));
@@ -4395,6 +4396,28 @@ public final class ValidationClient {
         if (intervalMs > celtium$slowFrameMillis.get(fastest).doubleValue()) {
             celtium$slowFrames.set(fastest, entry);
             celtium$slowFrameMillis.set(fastest, Double.valueOf(intervalMs));
+        }
+    }
+
+    /**
+     * {@return the most recent game-loop span, its tick share and its present share}, for the slow-frame entry.
+     * <p>
+     * The frame interval and the frame bracket do not meet: the interval also holds the tick batch, the present path
+     * (updateDisplay, where the acquire/vsync wait lives), the framebuffer blit, the fps-limit sync and loop
+     * overhead. This hook runs at the render-tick end, inside the open loop, so the snapshot names the loop that just
+     * closed: its displayUpdate time sits inside the interval being recorded (updateDisplay runs after this event in
+     * the loop), and its tick time is the tick batch that preceded this frame. Reflective for the same reason the
+     * report reads it reflectively: the fixture must load without the Celtium jar.
+     */
+    private static String celtium$loopTimingSnapshot() {
+        try {
+            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
+            long loop = ((Number) timing.getMethod("lastLoopMillis").invoke(null)).longValue();
+            long tick = ((Number) timing.getMethod("lastLoopTickMillis").invoke(null)).longValue();
+            long display = ((Number) timing.getMethod("lastLoopDisplayMillis").invoke(null)).longValue();
+            return " loop[loopMs=" + loop + " tickMs=" + tick + " displayUpdateMs=" + display + "]";
+        } catch (Throwable absent) {
+            return "";
         }
     }
 
@@ -9734,6 +9757,21 @@ public final class ValidationClient {
                 report.addProperty("gameTickMillisPerFrame", Long.valueOf(totalMillis / worldFrames));
             } else {
                 report.addProperty("gameTickMillisPerFrame", "no frames");
+            }
+            // The loop and the present path inside it, same accumulators. loopMillisTotal/worldFrames is the
+            // interval's own mean from inside the loop; displayUpdateMillisTotal/loops is the present path's share -
+            // the two residuals (loop - tick - frame - displayUpdate) name what the frame brackets cannot.
+            long loops = ((Number) timing.getMethod("loops").invoke(null)).longValue();
+            long loopTotalMillis = ((Number) timing.getMethod("loopTotalMillis").invoke(null)).longValue();
+            long displayTotalMillis = ((Number) timing.getMethod("displayUpdateTotalMillis").invoke(null)).longValue();
+            report.addProperty("gameLoopCount", Long.valueOf(loops));
+            report.addProperty("gameLoopMillisTotal", Long.valueOf(loopTotalMillis));
+            report.addProperty("gameLoopMillisWorst",
+                    Long.valueOf(((Number) timing.getMethod("worstLoopMillis").invoke(null)).longValue()));
+            report.addProperty("displayUpdateMillisTotal", Long.valueOf(displayTotalMillis));
+            report.addProperty("displayUpdateMillisPerLoop", Long.valueOf(loops == 0L ? 0L : displayTotalMillis / loops));
+            if (worldFrames > 0) {
+                report.addProperty("gameLoopMillisPerFrame", Long.valueOf(loopTotalMillis / worldFrames));
             }
         } catch (Throwable absent) {
             report.addProperty("gameTickSummary", "not installed: " + absent);

@@ -11,9 +11,18 @@ package org.taumc.celeritas.impl.profile;
  * the fixture reports the total, the count and the worst beside its own frame count, so "renderer vs tick" can be
  * split in one leg.
  * <p>
+ * The loop brackets extend the same idea one level up. {@code runTick} does not render:
+ * {@code Minecraft.runGameLoop} runs the tick batch, then the render section (which the frame brackets cover) and
+ * {@code updateDisplay} (the present path, where the swapchain's acquire/vsync wait lives), then the fps-limit sync -
+ * and none of that loop span was measured. Measured 2026-10-17 (legs {@code loading-resize-state2-*}): the
+ * warm-window interval ran about 3x the frame bracket (AMD 54.5 ms interval vs 18.0 ms frame) and the difference was
+ * unmeasured. {@code updateDisplay} is counted only while a loop is open, so the loading phase's own
+ * {@code updateDisplay} calls ({@code drawSplashScreen}, {@code Minecraft.resize}) cannot join the per-frame mean.
+ * <p>
  * Units are milliseconds in the summary and nanoseconds in the accumulators. The limitation to state when quoting it:
- * this is the <em>client</em> tick as {@code Minecraft.runTick} executes it, so the integrated server's own thread is
- * not included; a tick that spends its time waiting for the server shows up here as tick time, not as renderer time.
+ * this is the <em>client</em> side as {@code runTick}/{@code runGameLoop} execute it, so the integrated server's own
+ * thread is not included; a tick that spends its time waiting for the server shows up here as tick time, not as
+ * renderer time.
  */
 public final class GameLoopTiming {
     private static final java.util.concurrent.atomic.AtomicLong tickNanos =
@@ -22,8 +31,28 @@ public final class GameLoopTiming {
             new java.util.concurrent.atomic.AtomicLong();
     private static final java.util.concurrent.atomic.AtomicLong worstTickNanos =
             new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong loopNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong loopCount =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong worstLoopNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong displayUpdateNanos =
+            new java.util.concurrent.atomic.AtomicLong();
     /** The start of the tick currently executing, or 0 when none is. */
     private static volatile long openNanos;
+    /** The start of the loop currently executing, or 0 when none is. */
+    private static volatile long openLoopNanos;
+    /** The start of the updateDisplay currently executing inside a loop, or 0 when none is. */
+    private static volatile long openDisplayNanos;
+    /** updateDisplay re-entry depth: resize() calls it again from checkWindowResize inside the outer call. */
+    private static int displayDepth;
+    /** updateDisplay time accumulated inside the open loop, in nanoseconds. */
+    private static long displayInsideLoop;
+    /** Tick time accumulated inside the open loop, in nanoseconds. */
+    private static long tickInsideLoop;
+    /** Snapshots of the most recently closed loop, for the fixture's per-slow-frame entry. */
+    private static volatile long lastLoopNanos, lastLoopTickNanos, lastLoopDisplayNanos;
 
     private GameLoopTiming() {
     }
@@ -47,6 +76,65 @@ public final class GameLoopTiming {
         tickNanos.addAndGet(elapsed);
         tickCount.incrementAndGet();
         worstTickNanos.accumulateAndGet(elapsed, Math::max);
+        if (openLoopNanos != 0L) {
+            tickInsideLoop += elapsed;
+        }
+    }
+
+    /**
+     * Called at the head of the game loop. Resets the loop-local accumulators, so an updateDisplay or tick inside this
+     * loop is attributed to this loop's span.
+     */
+    public static void loopStarted() {
+        openLoopNanos = System.nanoTime();
+        displayInsideLoop = 0L;
+        tickInsideLoop = 0L;
+    }
+
+    /**
+     * Called at the return of the game loop. The same unpaired-start rule as {@link #tickEnded()} applies: a loop that
+     * never returns records nothing.
+     */
+    public static void loopEnded() {
+        long started = openLoopNanos;
+        if (started == 0L) {
+            return;
+        }
+        openLoopNanos = 0L;
+        long elapsed = System.nanoTime() - started;
+        loopNanos.addAndGet(elapsed);
+        loopCount.incrementAndGet();
+        worstLoopNanos.accumulateAndGet(elapsed, Math::max);
+        displayUpdateNanos.addAndGet(displayInsideLoop);
+        lastLoopNanos = elapsed;
+        lastLoopTickNanos = tickInsideLoop;
+        lastLoopDisplayNanos = displayInsideLoop;
+        displayInsideLoop = 0L;
+        tickInsideLoop = 0L;
+    }
+
+    /**
+     * Called at the head of {@code Minecraft.updateDisplay}; only counted while a loop is open, and only the outermost
+     * call is timed - {@code checkWindowResize} inside it can re-enter through {@code Minecraft.resize}, so a re-entry
+     * is depth-counted rather than allowed to cut the outer span short.
+     */
+    public static void displayUpdateStarted() {
+        if (openLoopNanos != 0L && displayDepth++ == 0) {
+            openDisplayNanos = System.nanoTime();
+        }
+    }
+
+    /** Called at the return of {@code Minecraft.updateDisplay}. */
+    public static void displayUpdateEnded() {
+        if (displayDepth > 0) {
+            displayDepth--;
+        }
+        long started = openDisplayNanos;
+        if (started == 0L || displayDepth != 0) {
+            return;
+        }
+        openDisplayNanos = 0L;
+        displayInsideLoop += System.nanoTime() - started;
     }
 
     /** {@return how many client ticks were timed}. */
@@ -64,12 +152,55 @@ public final class GameLoopTiming {
         return worstTickNanos.get() / 1_000_000L;
     }
 
-    /** {@return one line for the fixture report: the count, the total and the mean and worst per tick}. */
+    /** {@return how many game loops were timed}. */
+    public static long loops() {
+        return loopCount.get();
+    }
+
+    /** {@return the total time spent inside the game loop, in milliseconds}. */
+    public static long loopTotalMillis() {
+        return loopNanos.get() / 1_000_000L;
+    }
+
+    /** {@return the worst single game loop, in milliseconds}. */
+    public static long worstLoopMillis() {
+        return worstLoopNanos.get() / 1_000_000L;
+    }
+
+    /** {@return the total time spent inside updateDisplay while a loop was open, in milliseconds}. */
+    public static long displayUpdateTotalMillis() {
+        return displayUpdateNanos.get() / 1_000_000L;
+    }
+
+    /** {@return the span of the most recently closed loop, in milliseconds}. */
+    public static long lastLoopMillis() {
+        return lastLoopNanos / 1_000_000L;
+    }
+
+    /** {@return the tick time inside the most recently closed loop, in milliseconds}. */
+    public static long lastLoopTickMillis() {
+        return lastLoopTickNanos / 1_000_000L;
+    }
+
+    /** {@return the updateDisplay time inside the most recently closed loop, in milliseconds}. */
+    public static long lastLoopDisplayMillis() {
+        return lastLoopDisplayNanos / 1_000_000L;
+    }
+
+    /** {@return one line for the fixture report: counts, totals, means and worsts for tick, loop and present}. */
     public static String summary() {
         long count = tickCount.get();
         long total = totalMillis();
         long mean = count == 0L ? 0L : total / count;
+        long loops = loopCount.get();
+        long loopTotal = loopTotalMillis();
+        long loopMean = loops == 0L ? 0L : loopTotal / loops;
+        long displayTotal = displayUpdateTotalMillis();
+        long displayMean = loops == 0L ? 0L : displayTotal / loops;
         return "ticks=" + count + " tickMillisTotal=" + total + " tickMillisMean=" + mean
-                + " tickMillisWorst=" + worstMillis();
+                + " tickMillisWorst=" + worstMillis()
+                + " loops=" + loops + " loopMillisTotal=" + loopTotal + " loopMillisMean=" + loopMean
+                + " loopMillisWorst=" + worstLoopMillis()
+                + " displayUpdateMillisTotal=" + displayTotal + " displayUpdateMillisMean=" + displayMean;
     }
 }

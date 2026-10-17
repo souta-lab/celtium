@@ -3,6 +3,7 @@ package org.taumc.celeritas.mixin.core;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.LoadingScreenRenderer;
 import org.objectweb.asm.Opcodes;
+import org.taumc.celeritas.impl.profile.GameLoopTiming;
 import org.taumc.celeritas.interfaces.LoadingProgressState;
 import org.embeddedt.embeddium.impl.render.frame.RenderAheadManager;
 import org.spongepowered.asm.mixin.Mixin;
@@ -37,6 +38,32 @@ public class MinecraftMixin {
             ((LoadingProgressState) replacement).celtium$copyLoadingTask((LoadingProgressState) mc.loadingScreen);
         }
         mc.loadingScreen = replacement;
+    }
+
+    /*
+     * The game loop and the present path inside it, timed for the frame-time work (P1 #6): the frame brackets cover
+     * only updateCameraAndRender, so the interval minus the frame was unattributed - tick is measured separately by
+     * MinecraftTickTimingMixin, and updateDisplay carries the swapchain's acquire/vsync wait. require = 0 for the
+     * same reason the tick hooks carry it.
+     */
+    @Inject(method = "runGameLoop", at = @At("HEAD"), require = 0)
+    private void celtium$loopStarted(CallbackInfo ci) {
+        GameLoopTiming.loopStarted();
+    }
+
+    @Inject(method = "runGameLoop", at = @At("RETURN"), require = 0)
+    private void celtium$loopEnded(CallbackInfo ci) {
+        GameLoopTiming.loopEnded();
+    }
+
+    @Inject(method = "updateDisplay", at = @At("HEAD"), require = 0)
+    private void celtium$displayUpdateStarted(CallbackInfo ci) {
+        GameLoopTiming.displayUpdateStarted();
+    }
+
+    @Inject(method = "updateDisplay", at = @At("RETURN"), require = 0)
+    private void celtium$displayUpdateEnded(CallbackInfo ci) {
+        GameLoopTiming.displayUpdateEnded();
     }
 
     /**

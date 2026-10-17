@@ -30,6 +30,7 @@ jobs:
           python3 scripts/cpu-contract/framebuffer_release_check.py
           python3 scripts/cpu-contract/loading_capture_boundary_check.py
           python3 scripts/cpu-contract/loading_resize_state_check.py
+          python3 scripts/cpu-contract/game_loop_timing_check.py
           python3 scripts/cpu-contract/presented_dump_handover_check.py
           python3 scripts/cpu-contract/immediate_group_pool_check.py
           python3 scripts/cpu-contract/gl_rectangle_queries_check.py

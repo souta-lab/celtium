@@ -33,9 +33,15 @@ public final class FramePassTimings {
      * holds the whole spike (fixture: 367.9 ms of a 411.5 ms frame) and the profiler cannot say which part of that
      * pass is the renderer's own present/composite/window-flush chain against the game's renderWorldPass work. These
      * two brackets name it.
+     * <p>
+     * {@code recordPrepare} and {@code recordBatch} nest inside {@code terrainRecord}: a 779 ms record stall on Intel
+     * (leg {@code loading-resize-state2-intel}, worldTick 473, 25 sections) did not scale with section count, so the
+     * pass's fixed prepare work (uniform capacity, descriptors, barriers, framebuffer, render-pass begin) and its
+     * per-region cached-batch rebuilds needed separate names before a cause could be claimed.
      */
     private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload",
-            "setupTerrain", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit"};
+            "setupTerrain", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
+            "recordBatch"};
 
     private static final int CAPACITY = 512;
 
