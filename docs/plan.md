@@ -75,6 +75,17 @@
 - **回帰なし ✓✓（両GPU）**: この変更は全 immediate batch の記録に触れるため、較正済み terrain scene を両GPUで回した — `gv-cohort-cloud10-plain`（AMD）= `PASSED`・validation 0 ✓／`gv-cohort-cloud10-plain-intel` = `Intel(R) UHD Graphics 630 (CFL GT2)`・`gpuRequirementMet=true`・`PASSED`・validation 0 ✓。
 - **残る ✗（次）**: UV・mirror（画素完全一致 ✓）・blend・depth・texture=35 がすべて正しいのに雲は依然**淡い平板** ✗ ⇒ 次は配列経路の batch が実際にそのテクスチャで**サンプルされているか**（`submitImmediateBatch` は texture 引数を取らない ✓）と、sky と雲の**描画順**を切り分ける ✓。
 
+[R34: **🎯 レンダーブラケットの内訳を確定 ✓✓✓（利用者 #6 の実装単位を名指し）**] **追加したブラケット ✓**: `RenderGlobal.func_174970_a`（`setupTerrain` ＝ chunk 可視性トラバーサル ✓・**descriptor 明記** ✓）と `RenderGlobal.func_174976_a(FI)V`（`sky` ✓・**同名2オーバーロードのため descriptor 必須** ✓・AGENTS.md の規則 ✓）を `FramePassTimings` に配線 ✓（`INSIDE` へ2名追加 ✓・既存の begin/end インフラのみ ✓）。
+**実測 ✓✓✓（`gv-notax-r34-brack`・AMD・税なし ✓・512 frames ✓・`validationClean=true` ✓・`PASSED` ✓）**:
+  `frame[p50=15.9 p95=22.3 worst=31.7]` / `world[p50=13.9 p95=19.7 worst=26.0]`
+  内訳: **`terrain` p50=8.2**（worst 17.8 ✓）/ `flush` 3.2 / `particles` 1.1 / **`setupTerrain` 1.4**（worst 6.3）/ `sky` 1.0 / `chunkUpload` 0.7 / `entities` 0.0（inside）＋ `gui` 1.6 / `hand` 0.5 / `clouds` 0.7（top-level）
+  ⇒ **レンダラの定常コストは ~16 ms/frame** ✓✓（従来「render 29 ms」✗ と記録していた値の内訳が判明 ✓）＝ 34.5 ms の warm interval のうち render 15.9 ＋ tick ~13（cohort mod ✓）＋ present/その他 ✓。
+**外れ値の正体（フレーム単位 ✓）**: tick=14 の 116.9 ms フレームは **`setupTerrain`=39.7 ms** ✗ ＋ `particles`=32.9 ✗ ＋ `gui`=26.5 ✓、ロード中の 346.1 ms フレームは `sky`=47.2 ＋ `hand`=34.7 ＋ `gui`=45.6 ＋ `world`=300.2 ✓。
+**次の実装（名指し ✓）**: (1) 定常の **`terrain` 8.2 ms**（p95 11.9）を潰す ✓ — 地形ドローそのもの ✓（draw call 統合・buffer 再利用 ✓）、(2) 外れ値の **`setupTerrain` 39.7 ms**（＝可視性トラバーサル ✓）と **`particles` 32.9 ms** ✓。
+[R33: **fixture 税を外した実測 ✓✓（利用者 #6 の一次データ）／利用者 #3 は完全解消 ✓✓**] **税なし leg（`-Dceltium.validation.presentedDumpEvery=0` ✓・R17 の手法 ✓）**: cohort（in-world）**warm p50 34.2 ms（≈29 fps ✗）**・p95 58.1・p99 428 ✗／videoSettings **warm p50 47.7 ms（≈21 fps ✗）**・p95 101.8・p99 517 ✗（両 leg `PASSED` ✓）。
+**tick の一次データ ✓**: `gameTickCount=887`・`gameTickMillisTotal=11419` ⇒ **12.9 ms/tick** ✗（`gameTickMillisPerFrame=12` ✓）＋ `gameTickMillisWorst=7000` ✗✗（7秒の tick ＝起動/ロード時 ✓）。**backend に per-tick フックは無い** ✓（`tick()`/`onTick` 無し ✓）・fixture の `worldContent` はレポート時に1回だけ ✓（per-tick ではない ✓）⇒ **12 ms/tick は cohort の mod 群（Mekanism・IE・Quark 等 14 mod ✓）の実コスト** ✓ であって Celtium の per-tick 実装ではない ✓。
+**⇒ 帰属 ✓**: この scene の frame interval は **render ブラケット 15〜40 ms ＋ tick ~13 ms** ✓ で、500〜1000 ms の外れ値は render ブラケット外（R32 ✓）。**ユーザーの 16-mod instance に当てるには、同じ instance で Celeritas と Celtium を同一条件で測る leg が要る** ✗ — 現状 `.celtium-work/` にあるのは *instance lock*（`vs-celeritas-lock.json` ✓）だけで、**動かせる参照 jar/leg は無い** ✗ ⇒ **次の実装単位** ✓（fixture の Celtium 依存 probe を通さない計測経路 ✓ が必要 ✓）。
+**利用者 #3 は完全解消 ✓✓**: 「ボタン/説明テキストの重なり」✗ の正体は **下敷き欠落の副作用** ✓✓ — `OptionPageFrame.renderOptionTooltip` は Sodium 自身の設計どおり **`boxY = dim.getLimitY()`**（hover 中 element の下 ✓・はみ出す時だけ反転 ✓）に箱を置く ✓ ⇒ 行に重なるのは**仕様** ✓ で、R30 の下敷き修正により**文字が読める**ようになった ✓✓（証拠画像 ✓）。
 [R32: **🎯 p99 スパイクの内訳を計器で確定 ✓✓✓ — 遅いフレームの時間はレンダラの外にあった（利用者 #6 の帰属）**]
 **新しい計器 ✓**: `FramePassTimings.lastFrameSummary()`（直前に終わったフレームの pass 別 ms ✓・ring の `written-1` ✓）と `worstFrameSummary()`（ring 内の最悪フレーム ✓・両方 public ✓）を追加し、fixture の slow-frame 記録に `passes[…]` として載せた ✓（既存の ring（`frameTotals`/`topLevel`/`inside`/`residuals` ✓・`CAPACITY=512` ✓）をそのまま読む ✓＝新しい会計は増やしていない ✓）。
 **実測 ✓✓✓（`gv-cohort-r32-psplit2`・AMD・`PASSED` ✓）**: fixture が保持する 12 の遅いフレームの `passes[…]` は

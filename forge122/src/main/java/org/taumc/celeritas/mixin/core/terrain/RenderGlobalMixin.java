@@ -96,6 +96,43 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         org.soutalab.celtium.vulkan.FramePassTimings.end("entities");
     }
 
+    /**
+     * The chunk-visibility traversal, and the sky, timed for the frame's pass split.
+     *
+     * <p>Both are the largest parts of the {@code world} bracket that had no bracket of their own: the tax-free legs
+     * (round 33) put the render bracket at 15-40 ms while {@code terrain} and {@code flush} inside it were single
+     * digits, so the remainder - which is this traversal plus the sky - had to be named before anything could be
+     * optimised. The descriptors are spelled because {@code renderSky} has two overloads and an overloaded target
+     * without one aborts the class define (AGENTS.md).
+     */
+    @Inject(method = "func_174970_a(Lnet/minecraft/entity/Entity;DLnet/minecraft/client/renderer/culling/ICamera;IZ)V",
+            at = @At("HEAD"), require = 0)
+    private void celtium$setupTerrainTimedBegin(net.minecraft.entity.Entity viewEntity, double partialTicks,
+            net.minecraft.client.renderer.culling.ICamera camera, int frameCount, boolean playerSpectator,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("setupTerrain");
+    }
+
+    @Inject(method = "func_174970_a(Lnet/minecraft/entity/Entity;DLnet/minecraft/client/renderer/culling/ICamera;IZ)V",
+            at = @At("RETURN"), require = 0)
+    private void celtium$setupTerrainTimedEnd(net.minecraft.entity.Entity viewEntity, double partialTicks,
+            net.minecraft.client.renderer.culling.ICamera camera, int frameCount, boolean playerSpectator,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("setupTerrain");
+    }
+
+    @Inject(method = "func_174976_a(FI)V", at = @At("HEAD"), require = 0)
+    private void celtium$skyTimedBegin(float partialTicks, int pass,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("sky");
+    }
+
+    @Inject(method = "func_174976_a(FI)V", at = @At("RETURN"), require = 0)
+    private void celtium$skyTimedEnd(float partialTicks, int pass,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("sky");
+    }
+
     @Inject(method = "<init>", at = @At("RETURN"))
     private void init(Minecraft minecraft, CallbackInfo ci) {
         this.renderer = new CeleritasWorldRenderer();
