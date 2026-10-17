@@ -15,11 +15,11 @@
 - さらに 0 行 → `drawSiteMinFrame=800` に対し、その leg の frame 番号は最大 **774** だった（tick と frame は別物）。
 - `celtium.probe.texture=37` の 8 行上限が **main menu 中に消費**され、目当ての videoSettings 段が出なかった（caller で dedup して解決）。
 
-**規約**: 0 行を見たら、①その計器の有効条件（switch・format・frame/tick の下限・行数上限）をソースで読み、②上限を上げるか別 switch で回し、③それでも 0 なら「来ていない」と結論する。**「0 行＝無い」と書かない。**
+**規約**: 0行なら有効条件（switch・format・frame/tick下限・行数上限・出力先）を読み、計器が有効な陽性対照を確認する。上限を変えても0だった、だけで呼出し不存在を証明したことにはならない。不足が残れば「未観測」と書く。
 
 ---
 
-## 2. A/B は同一 run 内に対照を置く（別 run 比較は交絡する）
+## 2. A/Bの固定条件と交絡を明示する
 
 **症状**: 2 つの leg を比べて「A が原因」と結論する。
 
@@ -28,7 +28,7 @@
 - パノラマ: `GuiMainMenu` の回転は `panoramaTimer += partialTicks` で進むため、leg ごとに角度が違う。画素比較は**同一角度でなければ無意味**。
 - tooltip: 「説明文が出た leg」と「出ていない leg」を比べて「修正で文字が出るようになった」と誤って結論（R27）。実際は**tooltip が出るかどうかの差**だった（R29 で訂正）。
 
-**規約**: 対照は**同じ leg の中**に置く（switch 1つ違い・同じ jar・同じ tick）。それが作れないなら、**位相を固定する fixture ノブを先に作る**。別 run の画像比較は、時間依存が無いと**証明できた**ときだけ使う。
+**規約**: 同一run内対照が可能なら優先する。別JARを比べる場合は別runでよいが、scene・camera・時間/天候・panorama位相・GUI/tooltip・解像度等を揃え、残る交絡とノイズを明示する。「必ずfixtureノブを増設」ではなく、既存の固定条件・反復・記録で判別可能かを先に調べる。
 
 ---
 
@@ -46,9 +46,9 @@
 
 **症状**: 「magenta 画素 0」で「サンプルしていない」と結論。
 
-**実例**: 雲は `getCloudColour` と alpha 0.8 で**混色**されるため、`R>150 & G<110 & B>150` の判定では 1 画素も拾えない。R39 では **near-white 率の変化（1.064% → 0.334%）** でサンプルを証明できた。
+**過去記録**: 雲は色・alphaで混色され、`R>150 & G<110 & B>150`では拾えなかった。R39にはnear-white率1.064%→0.334%という記録がある。ただし領域統計の変化だけでは、samplingや最終画像一致を単独で証明しない。
 
-**規約**: 単色判定ではなく、**同じ領域の統計（平均・特定クラスの画素率）の変化**で判定する。
+**規約**: 単色判定に加え、適用dump・対応draw・固定した領域の差・対照を確認する。変化があることと、その原因の特定を区別する。
 
 ---
 
@@ -56,9 +56,9 @@
 
 **症状**: frame interval が 500〜1000 ms あるので「レンダラが遅い」と結論。
 
-**実例**: 952 ms の frame interval でも **render ブラケットは 18.5 ms** だった（残りは client tick と **fixture 自身のダンプ/キャプチャ**）。`-Dceltium.validation.presentedDumpEvery=0` で外すと p50 34.2 ms（cohort）。
+**訂正**: 旧手順の`celtium.validation.presentedDumpEvery=0`は存在しないキーだった。旧`gv-notax-*`のeffective argsにも誤指定があり、p50 34.2msを「dump税除去後」とする説明は撤回する。生の観測値まで偽だったという意味ではない。
 
-**規約**: 性能の主張は `presentedDumpEvery=0` の leg で取り、**`passes[...]`（`CELTIUM_DRAW_SITE` / slow-frame 記録）でレンダーブラケットと外側を分けて**書く。
+**規約**: 周期dump停止は **`-Dceltium.vulkan.presentedDumpEvery=0`**、frameDumpDir経路は別の **`-Dceltium.vulkan.frameDumpEvery=0`**。要求capture/readback/validation等はなお残る。全frame intervalとrender bracketの測定区間を揃え、外側を自動的に「mods/fixture由来」と帰属させない。手順は [development.md](<development.md>)。
 
 ---
 
@@ -76,14 +76,14 @@
 
 | 症状 | 実例 | 規約 |
 |---|---|---|
-| build が落ちる | `ClosedFileSystemException` が散発（remap タスク） | **同じコマンドを再実行**。1回の失敗で設計を疑わない |
+| buildが落ちる | remapで`ClosedFileSystemException`の旧記録 | 同じ一過性例外を確認した場合だけ1回再試行。反復/別例外ならログを保全し調べる |
 | 編集が反映されない | python で一括編集 → `assert` 失敗時は**最後の write に到達せず**ファイル未変更 | 編集後は必ず `grep` で確認してから build |
-| 自分の shell が死ぬ | `pgrep`/`pkill` のパターンが**自分のコマンドラインに一致**（2回踏んだ） | kill は**スクリプトファイル経由**（`/tmp/killgame.py` 等）。パターン文字列をコマンドラインに置かない |
-| 古い jar で leg を回す | build 失敗の直後に leg を起動 → 前の jar を検証 | leg 前に **sha256 を記録**し、jar 名だけで判断しない |
+| 自分のshellが死ぬ | `pgrep`/`pkill`のパターンが自分にも一致した旧記録 | 管理job/PIDと所有process groupを使う。スクリプト経由でも無差別killは安全にならない |
+| 古いjarで検証 | build失敗後に旧jarが残る | build成功・今回の出力・full SHA256を紐づける。hashだけでもHEADからのbuildは証明しない |
 | leg が沈黙 | 二重の celtium jar（`celtium-*pre-stub-changes.jar`）が instance mods に残っていた | leg 前に `<run>/mods/` の celtium jar を数える |
 | mixin が効かない | overloaded target は descriptor 必須／plugin の `shouldApplyMixin` は常に false（走査で登録） | 原典で descriptor を確認。config 経由の登録は当てにしない |
 | `git checkout main` が失敗 | worktree が main を使用中 | `git diff origin/main --name-only` / detached で比較 |
-| 環境の取り残し | java プロセス・`.celtium-work/gpu.lock` | round 終了時に確認して残さない |
+| 環境の取り残し | java/lockを所有者不明のまま削除 | 自分のjobを回収・停止し、その終了を確認する。他人のjavaやgame-slot所有者を消さない |
 
 ---
 
@@ -94,4 +94,6 @@
   `gpuRequirementMet=true` の**両方**で確定（render node だけでは選ばれない。`DRI_PRIME=pci-0000_00_02_0!`）。
 - `validationClean=true` は成功ではない。**verdict の欠落は成功ではない。**
 - 較正済み scene の床を割ったら**それは証拠**。上書きする前に仮説を分離する実験を取る。
-- 棄却した仮説は「棄却」と書いて残す（再探索の防止）。**再探索しない一覧は `docs/plan.md` にある。**
+- 棄却仮説には対象artifact・scene・前提と、再調査が必要になる条件を残す。過去の局所否定を永久の探索禁止にしない。
+- 指示・観測・推論を混ぜない。歴史資料にある「最終指示」「現在」「確定」を現行の命令/受入へ昇格させない。
+- 同じ失敗の再試行が続いたら、成功条件・不足証拠・次の判別条件を短く残す。印や自己評価の反復ではなく、検証可能な次の操作を選ぶ。

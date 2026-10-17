@@ -1,0 +1,1135 @@
+{
+  "scope": "Excerpts of pre-existing local evidence reviewed 2026-10-17; no new GPU runs, no latest-HEAD acceptance. Missing original files remain missing.",
+  "reviewed_source_base": "c46474aee",
+  "legs": [
+    {
+      "leg": "gv-cohort-r30-box2",
+      "processSource": {
+        "file": ".gv-verify/run-gv-cohort-r30-box2/validation-process.json",
+        "sha256": "0e14a91a4421af83c7d18c692c01a16327441b1b9f48d560428c83b63c4794af"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-cohort-r30-box2-lock.json",
+        "sha256": "2bf17c16be273c0e9fd20750bb37fcc9b50a89947092db990bb7ef9edec310e3"
+      },
+      "gitHead": "211d38456c3e466fd10f27310eadbea54d0b7e3f",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "d4eac2aec606d9f84ccf2b155f3d16adf614c93479295318f75bc0362ea95b49"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "ebd30c8c52955ef65d0ea5066cc63f1167e9750071c70a5d8fc427f4c4f7291c"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-cohort-r30-box2/framedump"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-cohort-r30-box2/logs/celtium-validation.json",
+        "sha256": "a185fd7582287019696065c60cc0ae99d10d123d958293623270bc96accc3056"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.010189,
+        "gameTickSummary": "ticks=840 tickMillisTotal=10617 tickMillisMean=12 tickMillisWorst=6638",
+        "gameTickMillisTotal": 10617,
+        "gameTickMillisWorst": 6638,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 60,
+        "frameIntervalP50Ms": 49.862034,
+        "frameIntervalP95Ms": 76.416195,
+        "frameIntervalP99Ms": 708.925511,
+        "frameIntervalWarmSampleCount": 131,
+        "frameIntervalWarmP50Ms": 52.734125,
+        "frameIntervalWarmP95Ms": 161.445599,
+        "frameIntervalWarmP99Ms": 544.268869,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-cohort-r13-tex2-intel",
+      "processSource": {
+        "file": ".gv-verify/run-gv-cohort-r13-tex2-intel/validation-process.json",
+        "sha256": "fd65ac00b0f2fa6eeed670831692fc5aa88919efe881220bac17aa799f80318f"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-cohort-r13-tex2-intel-lock.json",
+        "sha256": "ce80e71e87ca075976bb51b280385e4e199000f444843888c18d016be468d88a"
+      },
+      "gitHead": "06c0b4ed52a76dda74e71da10ccea3959bc54936",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "6b4a3537006d1b7f3a3fb81fb27434d1c96ef0435df44d6fcdea05a13f219301"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "031fd3163ed88a20f873ebfa5de9ac8372b6f0ebe3d012b00188f1a45eb2498e"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-cohort-r13-tex2-intel/framedump"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-cohort-r13-tex2-intel/logs/celtium-validation.json",
+        "sha256": "d12a2413098f701a77709605e9a8cc3ee54e8a4fac9dce392d025014fc2374a2"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.010576,
+        "gameTickSummary": "ticks=914 tickMillisTotal=11980 tickMillisMean=13 tickMillisWorst=6804",
+        "gameTickMillisTotal": 11980,
+        "gameTickMillisWorst": 6804,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 71,
+        "frameIntervalP50Ms": 49.746265,
+        "frameIntervalP95Ms": 78.211373,
+        "frameIntervalP99Ms": 232.994296,
+        "frameIntervalWarmSampleCount": 147,
+        "frameIntervalWarmP50Ms": 61.19972,
+        "frameIntervalWarmP95Ms": 97.745371,
+        "frameIntervalWarmP99Ms": 165.845251,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-e2e-268-r16-fbo",
+      "processSource": {
+        "file": ".gv-verify/run-gv-e2e-268-r16-fbo/validation-process.json",
+        "sha256": "56cfbb21330894cb1131e94baadfc03507d21cabe9aba7a2c0d3b606dea1c42e"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-e2e-268-r16-fbo-lock.json",
+        "sha256": "8a438c199e5774d827f9d2b82da20f5f7ae5d9b266e847638f6ae5d23ea59e6a"
+      },
+      "gitHead": "b71b5bee54099e860696f3da750d1a5beb2048f5",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "1ba86cb979368630f72cfe8150b7524e91837b370f9a8e8cb712c3506c54838f"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "1b8716ed0c9a5cd6f827248d56482ae86b98637350a0824853bf931c1dd5e135"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Xmx5g",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-e2e-268-r16-fbo/framedump",
+        "-Dceltium.validation.holdUntilTick=1100"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-e2e-268-r16-fbo/logs/celtium-validation.json",
+        "sha256": "9873c3346bdb4a22a42e599ff585928e0d51bdb758834ec1c178ec0cfa12b8bc"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.005081,
+        "gameTickSummary": "ticks=1141 tickMillisTotal=34023 tickMillisMean=29 tickMillisWorst=9557",
+        "gameTickMillisTotal": 34023,
+        "gameTickMillisWorst": 9557,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 38,
+        "frameIntervalP50Ms": 88.815554,
+        "frameIntervalP95Ms": 123.657818,
+        "frameIntervalP99Ms": 516.345299,
+        "frameIntervalWarmSampleCount": 58,
+        "frameIntervalWarmP50Ms": 151.085805,
+        "frameIntervalWarmP95Ms": 278.09375,
+        "frameIntervalWarmP99Ms": 770.76095,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-e2e-268-r16-intel",
+      "processSource": {
+        "file": ".gv-verify/run-gv-e2e-268-r16-intel/validation-process.json",
+        "sha256": "b8deaf93e2a3103b454a073c6f726d31f178e67f9a448fbc22408b5debf838d7"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-e2e-268-r16-intel-lock.json",
+        "sha256": "6a01155b439b607794d9d1bcafb33bbd1b4202e4a82874a5800ef67f9b5b42cd"
+      },
+      "gitHead": "b71b5bee54099e860696f3da750d1a5beb2048f5",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "1ba86cb979368630f72cfe8150b7524e91837b370f9a8e8cb712c3506c54838f"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "1b8716ed0c9a5cd6f827248d56482ae86b98637350a0824853bf931c1dd5e135"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Xmx5g",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-e2e-268-r16-intel/framedump",
+        "-Dceltium.validation.holdUntilTick=1100"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-e2e-268-r16-intel/logs/celtium-validation.json",
+        "sha256": "04bf247ee7f5e162d30bc69b1174a62570436ec8b6eaac85caf15380db10e9f4"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.003777,
+        "gameTickSummary": "ticks=1138 tickMillisTotal=30977 tickMillisMean=27 tickMillisWorst=8785",
+        "gameTickMillisTotal": 30977,
+        "gameTickMillisWorst": 8785,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 34,
+        "frameIntervalP50Ms": 109.468531,
+        "frameIntervalP95Ms": 163.07665,
+        "frameIntervalP99Ms": 234.670084,
+        "frameIntervalWarmSampleCount": 44,
+        "frameIntervalWarmP50Ms": 221.741217,
+        "frameIntervalWarmP95Ms": 318.121595,
+        "frameIntervalWarmP99Ms": 354.177265,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-recipe-r14",
+      "processSource": {
+        "file": ".gv-verify/run-gv-recipe-r14/validation-process.json",
+        "sha256": "4d47e8e86a2dc669a2721da9532599cab40b0e571157fa6dbcc5b2504e98067a"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-recipe-r14-lock.json",
+        "sha256": "e51afa5c3998112d0b6d1cf7a7a8db05faa0ff054de8328501a17827ab15877b"
+      },
+      "gitHead": "06c0b4ed52a76dda74e71da10ccea3959bc54936",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "6b4a3537006d1b7f3a3fb81fb27434d1c96ef0435df44d6fcdea05a13f219301"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "031fd3163ed88a20f873ebfa5de9ac8372b6f0ebe3d012b00188f1a45eb2498e"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Xmx5g",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-recipe-r14/framedump"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-recipe-r14/logs/celtium-validation.json",
+        "sha256": "1bb0c53e791c1d5fa51aa7ba6594fd9964c622a456c86f4ce2539ffcaa97b2ba"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.007786,
+        "gameTickSummary": "ticks=612 tickMillisTotal=17095 tickMillisMean=27 tickMillisWorst=11481",
+        "gameTickMillisTotal": 17095,
+        "gameTickMillisWorst": 11481,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 88,
+        "frameIntervalP50Ms": 30.551341,
+        "frameIntervalP95Ms": 75.814469,
+        "frameIntervalP99Ms": 419.868133,
+        "frameIntervalWarmSampleCount": 232,
+        "frameIntervalWarmP50Ms": 26.674473,
+        "frameIntervalWarmP95Ms": 71.130954,
+        "frameIntervalWarmP99Ms": 433.301493,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-recipe-r14-intel",
+      "processSource": {
+        "file": ".gv-verify/run-gv-recipe-r14-intel/validation-process.json",
+        "sha256": "777bbc08e2fe4e8b3c7b3369ff4b9257e3fb0ba5cf33dcdce7758edf6c0abc23"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-recipe-r14-intel-lock.json",
+        "sha256": "81c509fdca90f700b08dba129ad95ae11ebbf7c4ba6a279948c06a85ad1eeb11"
+      },
+      "gitHead": "06c0b4ed52a76dda74e71da10ccea3959bc54936",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "6b4a3537006d1b7f3a3fb81fb27434d1c96ef0435df44d6fcdea05a13f219301"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "031fd3163ed88a20f873ebfa5de9ac8372b6f0ebe3d012b00188f1a45eb2498e"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Xmx5g",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-recipe-r14-intel/framedump"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-recipe-r14-intel/logs/celtium-validation.json",
+        "sha256": "51728edc6627acd6b3f6f50f964b412b4d1ee3d2b8770f3a4b5314a808f2b5c8"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.007786,
+        "gameTickSummary": "ticks=890 tickMillisTotal=19418 tickMillisMean=21 tickMillisWorst=11643",
+        "gameTickMillisTotal": 19418,
+        "gameTickMillisWorst": 11643,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 62,
+        "frameIntervalP50Ms": 46.341677,
+        "frameIntervalP95Ms": 125.789802,
+        "frameIntervalP99Ms": 271.43425,
+        "frameIntervalWarmSampleCount": 143,
+        "frameIntervalWarmP50Ms": 63.460324,
+        "frameIntervalWarmP95Ms": 104.75431,
+        "frameIntervalWarmP99Ms": 155.011212,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-cohort-resize2",
+      "processSource": {
+        "file": ".gv-verify/gv-cohort-resize2.out",
+        "sha256": "f9246afe0a12fe588bb28baa9021a22bcd9286a495d40f3c40001b4eee8a3f58",
+        "note": "Surviving stdout summary; original run JSON is absent."
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-cohort-resize2-lock.json",
+        "sha256": "5ab1caa315e78d2eec091f1c8af8b3c5d8f5c6a2770658c43545eed22e62c98e"
+      },
+      "gitHead": "d746101c1cfe9935fd35fb6b6fe5d1c5c0c88722",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "f79b602dfbb64528b31153d3f198e3508c4e2d4a18fdd4c65d24b971152d2db7"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "e5639ce91940d9c08eea95f257f22b09ea405ea3f3ec36ea1fae4becad6fb084"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-cohort-resize2/framedump"
+      ]
+    },
+    {
+      "leg": "gv-cohort-resize3",
+      "processSource": {
+        "file": ".gv-verify/gv-cohort-resize3.out",
+        "sha256": "d920ba2aec389861d532dc37f26144535694634e9cdf07898e070dd192f3c450",
+        "note": "Surviving stdout summary; original run JSON is absent."
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 1,
+        "validationClean": false,
+        "validationMessageCount": 2,
+        "validationFirstMessages": [
+          "severity=ERROR vkDestroyFramebuffer(): can't be called on VkFramebuffer 0x8f000000008f that is currently in use by VkCommandBuffer 0x7f5f79c7b560 The Vulkan spec states: All submitted commands that refer to framebuffer must have completed execution (https://docs.vulkan.org/spec/latest/chapters/renderpass.html#VUID-vkDestroyFramebuffer-framebuffer-00892)",
+          "severity=ERROR vkDestroyFramebuffer(): can't be called on VkFramebuffer 0xd500000000d5 that is currently in use by VkCommandBuffer 0x7f5f79c2c6b0 The Vulkan spec states: All submitted commands that refer to framebuffer must have completed execution (https://docs.vulkan.org/spec/latest/chapters/renderpass.html#VUID-vkDestroyFramebuffer-framebuffer-00892)"
+        ],
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-cohort-resize3-lock.json",
+        "sha256": "58ed0d617ef4c406ae6f52dc2cc2ea9598b131dac203a31ad6112f3f4f2f8719"
+      },
+      "gitHead": "d746101c1cfe9935fd35fb6b6fe5d1c5c0c88722",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "f79b602dfbb64528b31153d3f198e3508c4e2d4a18fdd4c65d24b971152d2db7"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "e5639ce91940d9c08eea95f257f22b09ea405ea3f3ec36ea1fae4becad6fb084"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-cohort-resize3/framedump"
+      ]
+    },
+    {
+      "leg": "gv-cohort-reload2",
+      "processSource": {
+        "file": ".gv-verify/gv-cohort-reload2.out",
+        "sha256": "93d9c1a0632133a04ff4ab529c20c80f4997375c0aec062bd8b8e5b191893eba",
+        "note": "Surviving stdout summary; original run JSON is absent."
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-cohort-reload2-lock.json",
+        "sha256": "71f8213b4a20b1e06c0a5b20070117936c17abecf0a3576c0d766c1398c83886"
+      },
+      "gitHead": "b58b5d828d66692e25f05c5a0b5d0cfae63f6912",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "fa5ec0c7c96cb7c024cfc294c66046c21b4932413680821af301422076bc4cff"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "afd3bd82375ece7c85eab23ef768dc545b7910a90961554cbdf705184e14e2f8"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-cohort-reload2/framedump",
+        "-Dceltium.validation.resourceReloadAtTick=60"
+      ]
+    },
+    {
+      "leg": "gv-cohort-reload3",
+      "processSource": {
+        "file": ".gv-verify/gv-cohort-reload3.out",
+        "sha256": "95c30cffa347110f76228ce06081a66aa455089cef8ece080124d5a559f55ce4",
+        "note": "Surviving stdout summary; original run JSON is absent."
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-cohort-reload3-lock.json",
+        "sha256": "98b791b4ecb65f7d072f415ef31eb87c00edb098f1bd90f8ccd49f43c5879eea"
+      },
+      "gitHead": "b58b5d828d66692e25f05c5a0b5d0cfae63f6912",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "fa5ec0c7c96cb7c024cfc294c66046c21b4932413680821af301422076bc4cff"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "afd3bd82375ece7c85eab23ef768dc545b7910a90961554cbdf705184e14e2f8"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-cohort-reload3/framedump",
+        "-Dceltium.validation.resourceReloadAtTick=60"
+      ]
+    },
+    {
+      "leg": "gv-cohort-iconify1",
+      "processSource": {
+        "file": ".gv-verify/gv-cohort-iconify1.out",
+        "sha256": "0035c5430a0106f6d017fa71d558100d3c760b361ae73b87747da92427f7bb0d",
+        "note": "Surviving stdout summary; original run JSON is absent."
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-cohort-iconify1-lock.json",
+        "sha256": "e8bfc8779b542f1520f3aff0f0bfca1c9cf0a3bec5357379969ac250ff08fac0"
+      },
+      "gitHead": "9a4c35b76525f88b5d61991530561b5e89af7652",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "fa5ec0c7c96cb7c024cfc294c66046c21b4932413680821af301422076bc4cff"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "ad762200b23243b34801932a6c6a2f00bd4de60528579517940c1351bfdf1203"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-cohort-iconify1/framedump",
+        "-Dceltium.validation.iconifyAtTick=240"
+      ]
+    },
+    {
+      "leg": "gv-notax-r33-cohort",
+      "processSource": {
+        "file": ".gv-verify/run-gv-notax-r33-cohort/validation-process.json",
+        "sha256": "b6aade0fcfee2359921018fe57e2d21296f3c9d39e3e530185b00c86407c350b"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-notax-r33-cohort-lock.json",
+        "sha256": "a92ae17c551066a9e8e7880dfc83155e807802286cce49b17ac7f7a1c7fd40ef"
+      },
+      "gitHead": "faf6a16a59ba6407da535e275080823aed614679",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "f297a871d8518ef266dc0e893d0d4a05d93f3cdd4d4940ec3caa3f4139d85dd4"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "39860177b3914f52bc0f1d02bc8a33785b59e7d78d6e32749a0444a409ec857d"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-notax-r33-cohort/framedump",
+        "-Dceltium.validation.presentedDumpEvery=0"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-notax-r33-cohort/logs/celtium-validation.json",
+        "sha256": "3ff2ef54d3cdf3daa10c806419b2459f0827b56f041049cce4cb7e29034289b9"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.010189,
+        "gameTickSummary": "ticks=887 tickMillisTotal=11419 tickMillisMean=12 tickMillisWorst=7000",
+        "gameTickMillisTotal": 11419,
+        "gameTickMillisWorst": 7000,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 77,
+        "frameIntervalP50Ms": 40.816541,
+        "frameIntervalP95Ms": 60.253882,
+        "frameIntervalP99Ms": 713.791155,
+        "frameIntervalWarmSampleCount": 226,
+        "frameIntervalWarmP50Ms": 34.231743,
+        "frameIntervalWarmP95Ms": 58.076122,
+        "frameIntervalWarmP99Ms": 428.005598,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-notax-r33-menu",
+      "processSource": {
+        "file": ".gv-verify/run-gv-notax-r33-menu/validation-process.json",
+        "sha256": "8a555909f0345947570a9f8351add95d025970cabd4892f600c7bf91eda6467a"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-notax-r33-menu-lock.json",
+        "sha256": "5ee99f2fe68bfc9bb6431b9534b0b2b756ea6ff5644ffa1355f438ad5a72c395"
+      },
+      "gitHead": "faf6a16a59ba6407da535e275080823aed614679",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "f297a871d8518ef266dc0e893d0d4a05d93f3cdd4d4940ec3caa3f4139d85dd4"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "39860177b3914f52bc0f1d02bc8a33785b59e7d78d6e32749a0444a409ec857d"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-notax-r33-menu/framedump",
+        "-Dceltium.validation.scene=videoSettings",
+        "-Dceltium.validation.presentedDumpEvery=0"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-notax-r33-menu/logs/celtium-validation.json",
+        "sha256": "ab659473367191b66b369506065874d5bfdaed6d61aa3855edca7f787af4942c"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "videoSettings",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=videoSettings pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.010189,
+        "gameTickSummary": "ticks=890 tickMillisTotal=10735 tickMillisMean=12 tickMillisWorst=6580",
+        "gameTickMillisTotal": 10735,
+        "gameTickMillisWorst": 6580,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 75,
+        "frameIntervalP50Ms": 36.366753,
+        "frameIntervalP95Ms": 71.451816,
+        "frameIntervalP99Ms": 743.891451,
+        "frameIntervalWarmSampleCount": 161,
+        "frameIntervalWarmP50Ms": 47.738187,
+        "frameIntervalWarmP95Ms": 101.795244,
+        "frameIntervalWarmP99Ms": 517.397081,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-notax-r34-brack",
+      "processSource": {
+        "file": ".gv-verify/run-gv-notax-r34-brack/validation-process.json",
+        "sha256": "afe3be69f63f186cc113b0769a78534bd83ee60d52fb19b201d074326f31a868"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-notax-r34-brack-lock.json",
+        "sha256": "7efcc461744de47c862ac566f4c83173fdfdb297280616034fe882fe90b700bb"
+      },
+      "gitHead": "faf6a16a59ba6407da535e275080823aed614679",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "95de5f5b30232568c25928a0b341ba54736e7e039ed41873890be29d184ee5ad"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "a3104cc17e6a9f23d274061c4cbc9af1426029e80dbc009e9e43207d7145071a"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-notax-r34-brack/framedump",
+        "-Dceltium.validation.presentedDumpEvery=0"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-notax-r34-brack/logs/celtium-validation.json",
+        "sha256": "a3c12c23707612a08cc2486acfda49b50c712f3f8e6f50f88593327f06a2f40c"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.010191,
+        "gameTickSummary": "ticks=857 tickMillisTotal=12602 tickMillisMean=14 tickMillisWorst=8471",
+        "gameTickMillisTotal": 12602,
+        "gameTickMillisWorst": 8471,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 72,
+        "frameIntervalP50Ms": 43.011676,
+        "frameIntervalP95Ms": 55.113619,
+        "frameIntervalP99Ms": 725.370704,
+        "frameIntervalWarmSampleCount": 230,
+        "frameIntervalWarmP50Ms": 34.489919,
+        "frameIntervalWarmP95Ms": 60.092087,
+        "frameIntervalWarmP99Ms": 429.322447,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    },
+    {
+      "leg": "gv-notax-r36-phase",
+      "processSource": {
+        "file": ".gv-verify/run-gv-notax-r36-phase/validation-process.json",
+        "sha256": "e24eeadbad10c443d077a90711699da4596470548a64de380b9a5a60e7b9b14e"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "validationExitCode": 0,
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "pictureEvidenceSource": "presented-dump",
+        "picturePresent": true
+      },
+      "lockSource": {
+        "file": ".gv-verify/gv-notax-r36-phase-lock.json",
+        "sha256": "8085f22d485827d431fe5ba8afa8b95fde0f431728108d5e690a1b1332dbe782"
+      },
+      "gitHead": "b39fada52470c301f1db96f32a0684256a4df599",
+      "artifacts": [
+        {
+          "file": "celtium-forge-mc1.12.2-2.5.0-dev.jar",
+          "sha256": "aa05236acc7e97ddc014bc486870f612d8c46326653bd6da700c723d47047a2d"
+        },
+        {
+          "file": "celtium-validation-client-2.5.0-dev.jar",
+          "sha256": "a6ae375f0d33f501be13e0d242594221657ad0cfbe51af7b2bf542acb3045531"
+        }
+      ],
+      "jvmArgs": [
+        "-Dfile.encoding=UTF-8",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-gv-notax-r36-phase/framedump",
+        "-Dceltium.validation.presentedDumpEvery=0"
+      ],
+      "fixtureSource": {
+        "file": ".gv-verify/run-gv-notax-r36-phase/logs/celtium-validation.json",
+        "sha256": "f2d2a21fb3eb6511d2d856e21ee354184d3d4bee45307a35478272e79e389776"
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "terrain",
+        "sceneGateCalibrated": true,
+        "sceneGateFloorsEnforced": true,
+        "sceneCalibrationKeyMatches": true,
+        "sceneCalibrationKey": "scene=terrain pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "cameraAtVerdict": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "presentedImageVerdict": "PASSED",
+        "worldFrameBlackFraction": 0.010189,
+        "gameTickSummary": "ticks=881 tickMillisTotal=11156 tickMillisMean=12 tickMillisWorst=6761",
+        "gameTickMillisTotal": 11156,
+        "gameTickMillisWorst": 6761,
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "frameIntervalSampleCount": 72,
+        "frameIntervalP50Ms": 42.493878,
+        "frameIntervalP95Ms": 57.765904,
+        "frameIntervalP99Ms": 725.193569,
+        "frameIntervalWarmSampleCount": 160,
+        "frameIntervalWarmP50Ms": 48.120312,
+        "frameIntervalWarmP95Ms": 93.718545,
+        "frameIntervalWarmP99Ms": 473.436103,
+        "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..600 (after the world is built; compare this one with a warmed benchmark, never the cold one)",
+        "timingScope": "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark; the cold window is the chunk-build window, the warm window is the steady state"
+      }
+    }
+  ]
+}

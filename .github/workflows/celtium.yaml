@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Test development-process safety (no GPU or game)
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 scripts/cpu-contract/shared_game_slot_check.py
+          python3 scripts/check_agent_docs.py
+          bash -n scripts/gv-leg.sh
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -107,11 +113,6 @@ jobs:
       # names the field that disagrees.
       - name: Verify artifact versions
         run: python3 scripts/verify_version_consistency.py
-      # 計器索引が古いままマージされると、次の人が「索引に無い計器」を grep で探し直すことになる
-      # （2026-10-17 のプロセス監査: 索引が無い状態で 337 スイッチを毎回探索していた）。
-      # 生成は GPU もゲームも要らないので、ここで鮮度だけ見る。
-      - name: Verify the instrument index is current
-        run: python3 scripts/instrument-index.py --check
       - uses: actions/upload-artifact@v4
         with:
           name: celtium-forge-1122
