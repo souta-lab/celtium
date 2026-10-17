@@ -1,167 +1,91 @@
 # Celtium — how to work in this repository
 
-This file is for anyone (person or agent) about to change something here. It exists
-because a specific, expensive mistake was made repeatedly, and a rule that lives only
-in someone's memory is not a rule.
+このファイルは、ここを変更する人（人間・エージェント）向けの**規則集**。規則だけを置く。
+長い実例・失敗談は `docs/verification-traps.md` にあり、各規則から参照する。
 
-## Read the original before you decide anything
+## まず読む順序（これで迷子を防ぐ）
 
-The build produces the **decompiled Minecraft and Forge sources**, and the SRG name
-tables, as a normal part of building. They sat unread for weeks while signatures, draw
-modes, vertex formats and call order were guessed at and argued about across several
-rounds. Do not repeat that.
+| 目的 | 読む場所 |
+|---|---|
+| **現在の状態・優先順・受入**（唯一の状態表） | `docs/plan.md`（短い。ここが現在判定） |
+| 計器（`-Dceltium.*`）を探す | `docs/instruments.md`（`grep <名前>` で実装位置へ） |
+| 検証の罠・失敗例 | `docs/verification-traps.md` |
+| 経過・棄却した仮説・途中の計測 | `docs/history/plan-diary.md`（追記専用） |
+| 過去の監査・受入 | `docs/history/`, `docs/audit-*.md`（**当時の記録。現在判定ではない**） |
+| 目的 | `docs/goal.md` ／ 配布・対応 | `README.md`, `docs/mod-compatibility.md` |
+
+**`docs/plan.md` を太らせない。** round の経過は diary へ書く。plan.md は「実装・根因・受入の意味が
+変わったとき」だけ更新する。2026-10-17 より前、plan.md は 886 KB の日記になり状態表として読めなくなっていた。
+
+## 決める前に原典を読む
+
+build は**デコンパイル済みの Minecraft/Forge ソース**と SRG 表を生成する。署名・描画モード・
+vertex format・呼び出し順を推測で議論しない。
 
 ```sh
-scripts/mc-sources.sh                     # paths to the sources and the name tables
-scripts/mc-sources.sh --grep 'begin(7, DefaultVertexFormats'   # search them
-scripts/mc-sources.sh --srg func_181679_a # deobf <-> SRG name, both directions
+scripts/mc-sources.sh                       # ソースと名前表のパス
+scripts/mc-sources.sh --grep 'begin(7, DefaultVertexFormats'   # 検索
+scripts/mc-sources.sh --srg func_181679_a   # deobf <-> SRG の双方向
 ```
 
-Before writing a mixin target, a format id, a draw-mode assumption, a shader input or
-an ordering argument, look it up there. `javap` on a jar is a fallback for when the
-sources do not cover a class, not the first move.
+mixin のターゲット、format id、描画モード、shader 入力、順序の主張は**先にそこを見る**。
+`javap` はソースで覆えないクラスの fallback。**同じ規則はこの repo 自身の計器にも適用**:
+既存の counter / dump / report を先に読み（`docs/instruments.md`）、足したら索引を更新する。
 
-The same rule applies to this project's own instruments: if a counter, dump or report
-already exists, read it instead of adding another one, and if you add one, name it in
-the report you write.
+## 失敗したゲートは証拠
 
-## A failing gate is evidence
+較正済み scene の床を割った verdict は、測定が誤りだと言うまで**証拠**。説明を書き換えて隠さない。
+ゲートが誤動作していると思うなら、**競合仮説を分離する実験**（同じ fixture と同じカメラで jar 2つ、
+または同じ jar でカメラ 2つ）を取ってから上書きする。どの説明が棄却されたかを書く。
 
-The picture gate reported `presentedImageVerdict=FAILED_PRESENTED_IMAGE` with
-`sceneGateFloorsEnforced=true` and a matching calibration key for every GL-less run
-after 09:33 on 2026-10-11. It was right: the terrain had stopped contributing pixels.
-It stayed hidden for hours because the verdict was re-described as "the pinned scene's
-normal state" and readers were told to look at the counters instead.
+## 「検証済み」の定義
 
-Do not do that. A failing gate is evidence until a measurement says it is wrong. If
-you believe a gate is misfiring, take an experiment that separates the competing
-explanations - the same fixture, the same camera and two jars, or the same jar and two
-cameras - before you override it, and write down which explanation the experiment
-ruled out.
-
-## What "verified" means here
-
-- A GPU run is evidence only with its jar hash, GPU, scene, camera and flags recorded.
-- `validationClean=true` and a missing verdict are not success. A refusal is not a
-  fallback: under the GL-less window a refused batch is drawn by nobody.
-- A missing counter is not a missing draw, and a missing control is not a matching one.
-  Both of those were learned by getting them wrong.
-- Acceptance is taken on a real Cleanroom 0.6.13-alpha instance through
-  `scripts/prism_validation.py`. `runClient` is a stock-Forge dev client: useful for
-  exploration, never for acceptance.
-- One game instance at a time:
+- GPU の主張には **jar hash・GPU・scene・camera・flags** を添える。
+- `validationClean=true` は成功ではない。**verdict の欠落は成功ではない。**
+- **拒否は fallback ではない**: GL-less では拒否された batch は誰も描かない。
+- **counter が無いことは draw が無いことではない。対照が無いことは一致ではない。**
+- 受入は実 Cleanroom 0.6.13-alpha instance を `scripts/prism_validation.py` で通す。
+  `runClient` は stock-Forge の開発クライアントで、探索用。**受入には使わない。**
+- ゲーム instance は同時に 1 つ:
   `for p in $(pgrep -x java); do tr '\0' '\n' < /proc/$p/cmdline | grep -q foundation.boot.Foundation && echo busy; done`
 
-## Where things are
+## 計器の読み方（この4つは毎回効く）
 
-- `docs/audit-2026-10-12-maximum.md` — audit entry point; section 2a reconciles all legacy BH IDs with the new findings. Do not treat historical audits as independent pending queues.
-- `docs/plan.md` — the single place the current state, priorities and acceptance live,
-  including a header table that is kept current. Corrections are made in place.
-- `docs/goal.md` — the objective, in sync with the goal the session runs under.
-- `docs/history/` — past evidence and stage records. Not the current verdict.
-- `docs/handoff-2026-10-10-next-model.md` — environment, run procedure, instruments,
-  rejected hypotheses and the traps that have already been stepped in.
-- `AGENTS.md` (this file) — the rules that are cheaper to read than to rediscover.
+1. **0 行を結論にしない。** まず計器のゲート（switch・format・frame/tick 下限・行数上限）を疑う。
+2. **A/B は同一 run 内に対照を置く。** 別 run の画像比較は、時間依存が無いと証明できたときだけ。
+3. **poison の色は AARRGGBB。** 張ったら同じ leg の `mirrorDump` で適用を確認してから解釈する。
+4. **性能は fixture 税を外してから**（`-Dceltium.validation.presentedDumpEvery=0`）。
+   レンダーブラケットとその外側を分けて書く（`passes[...]`）。
 
-## An Intel leg is confirmed by the device line, not by the flag
+## Intel の leg は device 行で確定する
 
-A run given `--render-node /dev/dri/by-path/pci-0000:00:02.0-render --require-gpu Intel` is **not** an Intel run
-until its log says so. Measured on 2026-10-12: two such legs reported
-`CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400 (RADV NAVI24)"`, and a claim of "accepted on both GPUs" was written
-from them before anyone read that line. The harness does catch it (`gpuRequirementMet=false`, non-zero
-`validationExitCode`) when its summary is inspected, but a leg run through a wrapper (`compositor_capture.py`) does
-not surface that summary.
+`--require-gpu` を付けても Intel とは限らない。**`CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"`
+と `gpuRequirementMet=true` の両方**を読む。render node は compositor の GPU を選ぶだけなので、
+Mesa の device 選択を使う（`DRI_PRIME=pci-0000_00_02_0!`）。**AMD の成功は Intel の成功ではない。**
 
-So: before calling anything Intel, read `CELTIUM_NATIVE_DEVICE name="…"` in the leg's log **and** the harness's
-`gpuRequirementMet`. The requirement string must be the renderer the driver actually reports, e.g.
-`--require-gpu 'UHD Graphics 630'`, not the vendor word. AMD success is never Intel success.
+## 画像の無い leg は、あなたの build を走らせたとは限らない
 
-**And the render node alone does not select the device** - it selects the compositor's GPU. Measured on
-2026-10-12: with the Intel render node and the right requirement string, the game still enumerated AMD
-(`nativeDeviceName="AMD Radeon RX 6400 (RADV NAVI24)"`, `gpuRequirementMet=false`), while Sway itself was on
-Intel. The working recipe is Mesa's device selection, which the harness passes through because the headless
-environment is `os.environ.copy()`:
+instance の `minecraft/mods/` に別の celtium jar があると、**その leg は2つの celtium で走る**。
+読む前に `<run>/mods/` の celtium jar を数え、テスト対象でないものは `--exclude-instance-mod` で外す。
 
-```sh
-export DRI_PRIME=pci-0000_00_02_0!        # Intel UHD 630 (8086:3e92); the '!' exposes only that GPU
-# or: export MESA_VK_DEVICE_SELECT=8086:3e92!
-```
+## overloaded な mixin ターゲットは descriptor を書く
 
-With that, the same leg reports `nativeDeviceName="Intel(R) UHD Graphics 630 (CFL GT2)"` and
-`gpuRequirementMet=true`. `DRI_PRIME` also steers the compositor, which is why both ends then agree.
+同名が2つあるメソッドに `@Inject(method = "updateRenderInfo")` を書くと `InvalidInjectionException` になり、
+**ターゲットクラスの定義ごと落ちて** `NoClassDefFoundError` で死ぬ。`require = 0` も `remap = false` も効かない。
+descriptor を綴る: `@Inject(method = "updateRenderInfo(Lnet/minecraft/entity/Entity;Z)V", ...)`。
+runtime jar（`forge122/build/rfg/recompiled_minecraft-1.12.2.jar`）は **MCP 名**なので、
+「runtime でこの名前か」はその jar への `javap` で答える。
 
-## A leg with no picture has not necessarily run your build
+## round は step であって PR ではない
 
-Measured on 2026-10-12 (round 212): the instance's `minecraft/mods/` held a second celtium jar,
-`celtium-6794b0df2-pre-stub-changes.jar`, carrying the same modid (`celeritas`). The harness copies
-the instance's mods into every run, so **every leg from that moment ran with two celtium jars**, and
-the validation fixture went silent: `fixtureStatus=MISSING_REPORT`, no presented dump, and not one
-`ValidationClient` line in the log - only the mod's own `CELTIUM_SPLASH_HOOK drawSplashScreen=true`.
-The same leg with `--exclude-instance-mod 'celtium-*pre-stub-changes.jar'` wrote its dumps and
-returned a report immediately.
+- **1 round = 1 実装単位の1歩。** 同じ branch・同じ未完 TODO・同じ担当を必要なだけ持ち越す。round ごとに branch を切らない。
+- **PR はレビュー可能な単位がまとまったとき**だけ開く。直前に `git diff origin/main --name-only` を見て、
+  `docs/plan.md` しか無ければ単位はまだ無い。findings は diary か既存 PR/Issue に書く。
+  例外は**利用者が明示的に依頼した文書**と、ライセンス・安全・配布のために独立して必要な変更。
+- 成果は**レンダラ**であって、PR 数・round 数・docs の行数ではない。
 
-So before reading a silent leg as a renderer finding, list `<run>/mods/` and count the celtium jars,
-and pass `--exclude-instance-mod` for anything the run is not testing. A duplicate jar is a
-*different artefact*, not a stale copy of the one you built: the results belong to nobody.
+## 環境の後始末
 
-## An overloaded mixin target needs its descriptor, or the class never defines
-
-Measured on 2026-10-15, legs `gv-cohort-fix133` and `gv-cohort-fix135`: an `@Inject` naming
-`ActiveRenderInfo.updateRenderInfo` - a class with **two** overloads of that name - failed with
-
-```
-InvalidInjectionException: Invalid descriptor on mixins.celeritas.json:core.ActiveRenderInfoViewPointGuardMixin
-    at ...CallbackInjector.inject(CallbackInjector.java:564)
-MixinTransformerError: An unexpected critical error was encountered
-```
-
-and that failure aborts the definition of the target class, so the run dies a few frames later with
-`NoClassDefFoundError: net/minecraft/client/renderer/ActiveRenderInfo` at whatever touched it first
-(`EntityRenderer.func_175068_a:1361`). **`require = 0` does not help**: it governs whether a *missing*
-target is an error, not whether a *mismatched* one aborts the define. **`remap = false` does not help
-either** - both attempts failed identically, so the flag was not the cause.
-
-Spell the descriptor when the name is overloaded:
-
-```java
-@Inject(method = "updateRenderInfo(Lnet/minecraft/entity/Entity;Z)V", at = @At("HEAD"), ...)
-```
-
-Three things worth knowing before writing the next one.
-
-The **runtime** jar (`forge122/build/rfg/recompiled_minecraft-1.12.2.jar`) carries **source (MCP)
-names**: `javap` on it shows `updateRenderInfo(Entity, boolean)`, `projectViewFromEntity`,
-`getBlockStateAtEntityViewpoint`. Crash reports and the SRG tables speak in `func_`/`field_` names.
-So "is this name right at runtime" is answered by `javap` on that jar, not by the sources under
-`.celtium-work/mc-sources`.
-
-Mixin maps `func_` targets to those source names for us - that is why the `func_`-named guards in the
-same mixin applied - so both spellings reach a vanilla member, and one with **no SRG entry** is still
-reachable by its own name plus the descriptor.
-
-A crashing frame is not a still frame: the process stays alive drawing the crash screen until the leg
-script's duration expires, so read the leg's own summary - `run-gv-<leg>` and the `.out` beside it -
-rather than treating a live `java` process as a running leg.
-
-## A round is a step, not a pull request
-
-Measured over the 2026-10-15 session: fourteen of fifteen consecutive merged PRs touched only
-`docs/plan.md`. The work looked continuous and the renderer did not move. The cause was reading "update
-`docs/plan.md` every round" and "commit and push every round" as "open a branch and a PR every round".
-
-So, as standing discipline:
-
-- **A round is one step of one implementation unit.** Carry the same branch, the same unfinished TODO and
-  the same ownership across as many rounds as the unit needs. Do not open a new branch per round.
-- **Open a PR when a reviewable unit is complete**: real source changes, plus the build, the tests and the
-  acceptance evidence that go with them. Check `git diff origin/main --name-only` immediately before
-  opening it - if the only path is `docs/plan.md`, there is no unit yet, and the round's findings belong in
-  a local note or on the existing PR or issue instead. The exceptions are documentation a user explicitly
-  asked for, and changes that are independently necessary for licensing, security or distribution.
-- **`docs/plan.md`'s header table is the current state**, updated when an implementation, a root cause or
-  an acceptance verdict changes meaning. It is not a per-round diary, and appending a row per round is not
-  an obligation.
-- **The output is the renderer**, not the number of PRs, rounds or documentation lines.
-
-The same session's tracker work is the example: one unit, four rounds on one branch, and the counts that
-matter moved - `known` 0 to 339, `ready` 0 to 244, `sections` 0 to 3904.
+round の終わりに java プロセスと `.celtium-work/gpu.lock` を残さない。
+leg の成果物は `.gv-verify/run-<leg>/`（`validation-process.json`・`validation-console.log`・`screenshots/`）。
+leg の回し方は `docs/instruments.md` の末尾、または `scripts/gv-leg.sh --help` 相当のコメント。

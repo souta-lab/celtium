@@ -142,7 +142,7 @@ Vanillaの正確な描画、安定性、FPS・frame time、既存Forge Mod互換
 このファイルは goal の objective と同期する。status・優先順・受入の現状表は `docs/plan.md`（単一の管理場所）、
 証拠と経緯は `docs/history/`、監査起点は `docs/audit-2026-10-09-third.md` と `docs/history/2026-10-11-full-audit-0903.md`。
 
-**現状（plan.md §0.175〜§0.177 が最新）**: GL context なしで通常起動のメインメニューが
+**現状（2026-10-17 時点の現在状態は `docs/plan.md`。当時の § 番号の記録は `docs/history/` にある）**: GL context なしで通常起動のメインメニューが
 **compositor 出力から撮れる**ところまで到達（`.celtium-work/ww-menu-caps/compositor-0018.png`）。
 ユーザー自身の起動が真っ白だった真因は **instance に `org.lwjgl.vulkan` が無いこと**で、instance へ
 `org.lwjgl:lwjgl-vulkan:3.4.1` を追加して解消（instance のライブラリだけで renderer が作られることを実測）。
@@ -175,7 +175,7 @@ mod cohort、Intel の残り場面。
 - このプロジェクト自身の計器（counter・dump・report）にも同じ規則: 既にあるものを読む。新しく足したら報告に名前を書く。
   担当を起動する時は原典のパスと `scripts/mc-sources.sh` を必ず渡す。
 - 規則は `AGENTS.md`（新規参加者と担当が最初に読むファイル）に置く。
-- 原典で確定した事実は plan §0.129（バニラの (mode, format) 全表・`POSITION_NORMAL` が未対応・font glyph の契約）。
+- 原典で確定した事実は `docs/handoff-2026-10-10-next-model.md` の § 群と `docs/history/`（バニラの (mode, format) 全表・`POSITION_NORMAL` が未対応・font glyph の契約）。
 
 ## 失敗しているゲートは証拠（必須・2026-10-11 追加）
 - 画像ゲートは 09:33 以降の全 GL-less run で `sceneGateFloorsEnforced=true`・`sceneCalibrationKeyMatches=true`・
@@ -198,7 +198,7 @@ mod cohort、Intel の残り場面。
 mean がビット一致＝カメラは同一 → **renderer の退行**。フックは culling が読む射影スタックに掛かり、world を cull で消していた。
 **代償**: mirror が `gluPerspective` を見ないギャップは戻る（空 fan・太陽/月・雲）。次は **`lastDraw/lastSections` を測りながら**設計する。
 
-## 現在の到達点（2026-10-11 実測・詳細は plan §0.100〜§0.126）
+## 現在の到達点（2026-10-11 実測・当時の § は `docs/handoff-2026-10-10-next-model.md` と `docs/history/`）
 - **GL context なしの window が実 scene を描いて提示する**。AMD/Intel とも bridge/GL-less 両 leg が PASSED・clean・VUID 0。
   標準 GL-less allBlocks は offers 5000 / accepted 4705（94.1%）、粒子修正後の run は**拒否 census が空**。
 - **条件 (c) 充足**: `grim` で compositor 出力を連番 capture し、presented frame と **0/921600 画素差**で束縛。
