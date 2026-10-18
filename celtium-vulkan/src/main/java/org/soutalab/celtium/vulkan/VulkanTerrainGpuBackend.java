@@ -386,6 +386,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private PreparedImmediate currentPreparedImmediate;
 
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
+    /**
+     * {@return whether this frame's recordings are being coalesced into one open frame buffer}.
+     * <p>
+     * With {@code celtium.vulkan.batchFrameSubmits} on, an immediate window's groups are recorded into the open
+     * unified buffer and the submission happens at the frame boundary, so the execution counters cannot advance at a
+     * bind the way they do on the direct path. A validation client has to read this to assert the right contract in
+     * both modes instead of encoding one mode's timing as the rule.
+     */
+    public boolean celtium$unifiedFrameBuffer() {
+        return BATCH_FRAME_SUBMITS && !this.gpuStalled
+                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
+    }
+
     public long[] immediateExecutionCounters() {
         long pending = this.currentGroupUsed ? this.currentGroupBatches : 0;
         for (ImmediateGroup group : this.immediateGroups) pending += group.batches;
@@ -14651,8 +14664,15 @@ this.frameBufferOpen = false;
      * instead of one per recording. Cleared at the frame's boundary submit and at every mid-frame reset path.
      */
     private boolean frameBufferOpen;
+    /**
+     * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
+     * boundary. Default on since the flush measurement: with it the flush wall time fell from 3.82 to 2.35-2.41 ms
+     * per frame (4.55 flushes/frame, AMD RX 6400) because a window's records no longer each end in their own
+     * vkQueueSubmit; queue submissions per frame fell 12.7 -> 4.9. Opt-out for A/B:
+     * {@code -Dceltium.vulkan.batchFrameSubmits=false}.
+     */
     private static final boolean BATCH_FRAME_SUBMITS =
-            Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
                     && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
     /**
      * Mid-frame clear ordering for a framebuffer whose draws the S10 flush already submitted: on, the clear is

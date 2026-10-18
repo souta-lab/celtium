@@ -35,8 +35,15 @@ public final class FrameCoordinator {
      * {@code celtium.vulkan.batchedSubmits} (the deferred machinery's own switch); off by default until a leg
      * measures it.
      */
+    /**
+     * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
+     * boundary. Default on since the flush measurement: with it the flush wall time fell from 3.82 to 2.35-2.41 ms
+     * per frame (4.55 flushes/frame, AMD RX 6400) because a window's records no longer each end in their own
+     * vkQueueSubmit; queue submissions per frame fell 12.7 -> 4.9. Opt-out for A/B:
+     * {@code -Dceltium.vulkan.batchFrameSubmits=false}.
+     */
     private static final boolean BATCH_FRAME_SUBMITS =
-            Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
                     && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
 
     /** What the coordinator needs from the renderer that owns the frame. */

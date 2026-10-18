@@ -2348,6 +2348,19 @@ public final class ValidationClient {
             if (backend == null) throw new IllegalStateException("No live backend for required format-2 target test");
             java.lang.reflect.Method counters = backend.getClass().getMethod("immediateExecutionCounters");
             result.addProperty("backendClass", backend.getClass().getName());
+            // Which submission contract this renderer runs decides what a bind boundary can be asserted to do. On the
+            // direct path a window's records end in their own submission, so the execution counters advance at the
+            // bind; with the unified frame buffer the records stay in the open buffer until the frame boundary, and the
+            // fixture's own readback - which waits - is what forces the submission. Read from the renderer rather than
+            // assumed, so the same fixture asserts the right contract in both modes.
+            boolean unifiedSubmits = false;
+            try {
+                Object value = backend.getClass().getMethod("celtium$unifiedFrameBuffer").invoke(backend);
+                unifiedSubmits = Boolean.TRUE.equals(value);
+            } catch (ReflectiveOperationException | LinkageError ignored) {
+                // Not a Celtium backend, or an older one: keep the direct-path contract.
+            }
+            result.addProperty("unifiedFrameSubmits", unifiedSubmits);
             saved = new CommandBufferFixtureState();
             // Construction also binds through OpenGlHelper directly, before its Framebuffer.bind hook. Drain HUD work now.
             GlStateManager.clear(0);
@@ -2453,23 +2466,48 @@ public final class ValidationClient {
             pixels.addProperty("mainUntouchedChangedPixels", mainBackgroundWrong);
             pixels.addProperty("secondaryUntouchedMismatchPixels", secondaryBackgroundWrong);
             result.add("pixels", pixels);
+            // Under the unified buffer unrelated windows can submit between two reads, so "submitted did not move"
+            // is not a property of the quad being pending - "recorded did not move" is. The submitted equality stays
+            // on the direct path, where the reads are not separated by a deferred submission.
             boolean mainWasPending = mainPending[0] - before[0] == 1 && mainPending[4] == 1
-                    && mainPending[1] == before[1] && mainPending[2] == before[2] && mainPending[3] >= before[3];
+                    && mainPending[1] == before[1] && mainPending[3] >= before[3]
+                    && (unifiedSubmits || mainPending[2] == before[2]);
             // The completion counters confirm lazily - a poll lands several earlier submissions at once, so a delta
             // overshoots the submissions it covers rather than matching them (measured: submitted+1, completed+4 in
             // one bind flush). The contract is direction, not count: the new submissions must be confirmed, which is
             // completions covering submissions, while recorded and submitted keep their exact counts.
+            // Unified: the boundary drained the group into the open buffer (recorded advances, pending reaches 0) and
+            // deliberately does not submit; the frame boundary does. The submit delta is asserted below on the
+            // counters read after the fixture's own readback, which waits and therefore forces that submission.
             boolean mainFlushedBeforeSecondary = mainFlushed[4] == 0 && mainFlushed[1] - before[1] == 1
-                    && mainFlushed[2] - before[2] == 1;
+                    && (unifiedSubmits ? mainFlushed[2] == mainPending[2] : mainFlushed[2] - before[2] == 1);
             boolean secondaryWasPending = secondaryPending[4] == 2 && secondaryPending[6] - before[6] == 2;
             // Completion at this instant is a fence the poll has not necessarily seen - measured: the submit lands
             // (offTargetRecorded +2) while offTargetCompleted still reads the pre-submit count, and the `after`
             // snapshot confirms it a moment later. The flush contract is drained+recorded; the completion side is
             // what executionPassed checks on the settled `delta`.
             boolean secondaryFlushedBeforeMain = secondaryFlushed[4] == 0 && secondaryFlushed[7] - before[7] == 2;
-            boolean executionPassed = delta[0] == 4 && delta[1] == 4 && delta[2] == 4 && delta[3] >= 4
-                    && after[4] == 0 && before[5] == 0 && after[5] == 0
-                    && delta[6] == 2 && delta[7] == 2 && delta[8] >= 2;
+            long[] settled = commandBufferCounters(backend, counters);
+            result.add("settled", commandBufferCounterJson(settled));
+            // The readback above waits, and under the unified buffer that wait is what submits the frame's open
+            // buffer (submitOpenFrameBuffer), so `settled` is where the deferred submission is visible. On the direct
+            // path it equals `after` for these counters.
+            boolean executionPassed;
+            if (unifiedSubmits) {
+                // The deferred submission flushes the whole open buffer, so exact submit counts belong to unrelated
+                // windows too; the contract this asserts is direction: all four batches were accepted and recorded,
+                // and after the wait every recorded batch had been submitted and every submitted one completed.
+                // Off-target *completion* is completion-lag territory on this path (the fixture already documents
+                // that for the direct path) and is reported, not required.
+                executionPassed = settled[0] - before[0] == 4 && settled[1] - before[1] == 4
+                        && settled[2] >= settled[1] && settled[3] >= settled[2]
+                        && after[4] == 0 && settled[4] == 0 && before[5] == 0 && settled[5] == 0
+                        && settled[6] - before[6] == 2 && settled[7] - before[7] == 2;
+            } else {
+                executionPassed = delta[0] == 4 && delta[1] == 4 && delta[2] == 4 && delta[3] >= 4
+                        && after[4] == 0 && before[5] == 0 && after[5] == 0
+                        && delta[6] == 2 && delta[7] == 2 && delta[8] >= 2;
+            }
             boolean pixelsPassed = blueWrong == 0 && yellowWrong == 0 && redWrong == 0 && greenWrong == 0
                     && mainBackgroundWrong == 0 && secondaryBackgroundWrong == 0;
             boolean retryRequired = Integer.getInteger("celtium.vulkan.failImmediateSubmits", 0).intValue() > 0;
@@ -2515,8 +2553,12 @@ public final class ValidationClient {
             result.addProperty("blueAfterClearMismatchPixels", blueAfterClearWrong);
             result.addProperty("clearedBackgroundMismatchPixels", clearedBackgroundWrong);
             boolean pendingBeforeClearObserved = pendingBeforeClear[4] - beforeClear[4] == 1;
+            long[] settledClear = commandBufferCounters(backend, counters);
+            result.add("settledClear", commandBufferCounterJson(settledClear));
             boolean clearedAfterDrawing = afterClear[4] == 0 && afterClear[0] - beforeClear[0] == 1
-                    && afterClear[1] - beforeClear[1] == 1 && afterClear[2] - beforeClear[2] == 1;
+                    && afterClear[1] - beforeClear[1] == 1
+                    && (unifiedSubmits ? settledClear[2] - beforeClear[2] == 1
+                            : afterClear[2] - beforeClear[2] == 1);
             // The batch is gone from the picture: every pixel is the clear colour, including where it was drawn.
             boolean clearOrderPassed = pendingBeforeClearObserved && clearedAfterDrawing
                     && blueAfterClearWrong == 0 && clearedBackgroundWrong == 0;
@@ -2591,8 +2633,12 @@ public final class ValidationClient {
             result.addProperty("centerPixelAfterDepth", Integer.toHexString(depthImage.getRGB(128, 128) & 0xFFFFFF));
             result.addProperty("nearRectangleMismatchPixels", nearKeptWrong);
             result.addProperty("farLeakedPixels", farLeakedPixels);
+            long[] settledDepth = commandBufferCounters(backend, counters);
+            result.add("settledDepth", commandBufferCounterJson(settledDepth));
             boolean depthCountersAdvanced = afterDepth[0] - afterClear[0] == 2 && afterDepth[1] - afterClear[1] == 2
-                    && afterDepth[2] - afterClear[2] == 2 && afterDepth[4] == 0;
+                    && (unifiedSubmits ? settledDepth[2] - settledClear[2] == 2
+                            : afterDepth[2] - afterClear[2] == 2)
+                    && afterDepth[4] == 0;
             // The near colour fills the rectangle and not one pixel of the far colour survived.
             boolean depthOrderPassed = depthCountersAdvanced && nearKeptWrong == 0 && farLeakedPixels == 0;
             result.addProperty("depthCountersAdvanced", depthCountersAdvanced);
