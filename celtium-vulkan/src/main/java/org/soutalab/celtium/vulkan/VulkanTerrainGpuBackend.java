@@ -14666,13 +14666,17 @@ this.frameBufferOpen = false;
     private boolean frameBufferOpen;
     /**
      * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
-     * boundary. Default on since the flush measurement: with it the flush wall time fell from 3.82 to 2.35-2.41 ms
-     * per frame (4.55 flushes/frame, AMD RX 6400) because a window's records no longer each end in their own
-     * vkQueueSubmit; queue submissions per frame fell 12.7 -> 4.9. Opt-out for A/B:
-     * {@code -Dceltium.vulkan.batchFrameSubmits=false}.
+     * boundary. OFF by default: with it the flush wall time falls from 3.82 to 2.35-2.41 ms per frame (AMD RX 6400,
+     * 4.55 flushes/frame) and queue submissions per frame from 12.7 to 4.6, but the E2E 1.93a pack produces
+     * command-buffer state validation errors under it (leg unife2e1, 8 VUIDs of the vkCmd*-commandBuffer-recording
+     * family from vkCmdPipelineBarrier/vkCmdSetViewport/vkCmdBeginRenderPass/vkCmdClearDepthStencilImage among
+     * others, then the process ended with no report) - the unified buffer is recorded across segments that the
+     * pack's own framebuffer and post-chain paths expect to begin with a fresh buffer. Take the win only once those
+     * paths are made segment-safe: {@code -Dceltium.vulkan.batchFrameSubmits=true} (opt-out stays
+     * {@code =false}) is the measured A/B for that work.
      */
     private static final boolean BATCH_FRAME_SUBMITS =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
+            Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
                     && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
     /**
      * Mid-frame clear ordering for a framebuffer whose draws the S10 flush already submitted: on, the clear is
