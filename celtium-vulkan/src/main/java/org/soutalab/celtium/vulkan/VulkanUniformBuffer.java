@@ -83,8 +83,11 @@ final class VulkanUniformBuffer {
         this.growths++;
 
         vkUnmapMemory(this.context.device(), previousMemory);
-        vkDestroyBuffer(this.context.device(), previousBuffer, null);
-        vkFreeMemory(this.context.device(), previousMemory, null);
+        // Not destroyed here: "blocks written earlier in the frame are still referenced by recorded draws" is exactly
+        // why the old buffer has to outlive the recording that names it (the unified frame buffer keeps that recording
+        // open across the growth, and destroying a bound buffer invalidates it - the E2E 1.93a VUIDs). The context
+        // frees it once no recording can name it; a mapped-then-unmapped memory stays valid until then.
+        this.context.celtium$retireBuffer(previousBuffer, previousMemory);
     }
 
     /** Successful growths, so a run says whether the replacement path was taken at all. */

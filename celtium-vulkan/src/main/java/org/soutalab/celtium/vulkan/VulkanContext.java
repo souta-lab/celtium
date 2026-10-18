@@ -2775,6 +2775,62 @@ public final class VulkanContext {
     }
 
     /** Submits every pending copy and waits for it and every other outstanding deferred submission to complete. */
+    /**
+     * Buffers whose replacement has already been created but that a recording may still reference.
+     * <p>
+     * A buffer that grows while a frame recording is open cannot be destroyed yet: the open command buffer holds the
+     * old handle, and the driver invalidates the whole recording when a bound buffer dies (measured on the E2E 1.93a
+     * pack with the unified frame buffer: "VkCommandBuffer ... is now in an invalid state ... VkBuffer ... was
+     * destroyed, VkDescriptorSet ... was destroyed or updated without UPDATE_AFTER_BIND"). The growth path hands the
+     * old objects here instead of destroying them, and {@link #celtium$destroyRetiredBuffers()} frees them at a point
+     * where no recording can name them any more.
+     */
+    private final java.util.ArrayList<long[]> retiredBuffers = new java.util.ArrayList<long[]>();
+    private int retiredBuffersDestroyed;
+    private int retiredBuffersOutstanding;
+
+    /** Hands a replaced buffer to the deferred list instead of destroying it while a recording may hold it. */
+    public void celtium$retireBuffer(long handle, long memory) {
+        if (handle == VK_NULL_HANDLE) {
+            return;
+        }
+        this.retiredBuffers.add(new long[] {handle, memory});
+        this.retiredBuffersOutstanding = this.retiredBuffers.size();
+    }
+
+    /**
+     * Destroys every deferred buffer. Only called where nothing can be recording: a recording that still names one of
+     * these would be invalidated by the destruction, which is the bug this list exists to avoid.
+     *
+     * @return how many buffers were freed
+     */
+    public int celtium$destroyRetiredBuffers() {
+        if (this.retiredBuffers.isEmpty()) {
+            return 0;
+        }
+        VkDevice device = this.device;
+        int freed = 0;
+        for (int i = 0; i < this.retiredBuffers.size(); i++) {
+            long[] entry = this.retiredBuffers.get(i);
+            if (device != null) {
+                vkDestroyBuffer(device, entry[0], null);
+                if (entry[1] != VK_NULL_HANDLE) {
+                    vkFreeMemory(device, entry[1], null);
+                }
+            }
+            freed++;
+        }
+        this.retiredBuffers.clear();
+        this.retiredBuffersDestroyed += freed;
+        this.retiredBuffersOutstanding = 0;
+        return freed;
+    }
+
+    /** {@return how many deferred buffers are waiting to be freed, and how many have been freed so far}. */
+    public int[] celtium$retiredBufferCounts() {
+        return new int[] {this.retiredBuffersOutstanding, this.retiredBuffersDestroyed};
+    }
+
     public void settleUploads() {
         flushUploads();
         celtium$settleDeferredSubmits();

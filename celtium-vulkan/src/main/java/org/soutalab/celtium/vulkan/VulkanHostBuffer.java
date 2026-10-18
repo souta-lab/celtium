@@ -124,7 +124,18 @@ public final class VulkanHostBuffer {
         VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, requiredBytes, this.usageFlags,
                 this.arenaOwned);
         MemoryUtil.memCopy(this.mapped, replacement.mapped, this.size);
-        delete();
+        // Growth keeps the old handles alive until no recording can name them, instead of deleting into a possibly
+        // open recording (same lifetime rule as the arena and the uniform buffer).
+        long oldHandle = this.handle;
+        long oldMemory = this.memory;
+        if (this.mapped != 0L) {
+            vkUnmapMemory(this.context.device(), oldMemory);
+            this.mapped = 0L;
+        }
+        this.handle = VK_NULL_HANDLE;
+        this.memory = VK_NULL_HANDLE;
+        noteDeleted();
+        this.context.celtium$retireBuffer(oldHandle, oldMemory);
         this.handle = replacement.handle;
         this.memory = replacement.memory;
         this.mapped = replacement.mapped;

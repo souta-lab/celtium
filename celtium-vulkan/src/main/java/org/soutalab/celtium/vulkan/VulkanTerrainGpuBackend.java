@@ -16115,6 +16115,13 @@ this.frameBufferOpen = false;
         if (this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
             this.submissionPending = false;
         }
+        // Deferred buffer retirement (OPT-07): the queue is idle and, when no recording is open, nothing can still
+        // name these buffers - so this is the point that may free them. Freeing them while a recording exists is
+        // exactly the invalidation the list was added to avoid, hence the explicit emptiness check rather than an
+        // unconditional drain.
+        if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
+            this.context.celtium$destroyRetiredBuffers();
+        }
         return true;
     }
 

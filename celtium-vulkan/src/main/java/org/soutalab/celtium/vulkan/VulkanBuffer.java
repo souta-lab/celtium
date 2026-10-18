@@ -207,9 +207,12 @@ public final class VulkanBuffer {
             this.size = oldSize;
             throw error;
         }
-        // endCommands waited for the queue to go idle, so the GPU no longer reads the old objects.
-        vkDestroyBuffer(this.context.device(), oldHandle, null);
-        vkFreeMemory(this.context.device(), oldMemory, null);
+        // endCommands waited for the queue to go idle, so the GPU no longer reads the old objects - but a *recording*
+        // can still name the old handle: under the unified frame buffer the frame's command buffer stays open across
+        // the growth, and destroying a bound buffer invalidates that whole recording (the E2E 1.93a VUIDs). The growth
+        // therefore hands the old objects to the context's deferred list, which frees them at the next point where no
+        // recording exists.
+        this.context.celtium$retireBuffer(oldHandle, oldMemory);
     }
 
     /**
