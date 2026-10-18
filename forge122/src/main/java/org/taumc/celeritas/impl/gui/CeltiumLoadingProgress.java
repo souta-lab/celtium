@@ -40,6 +40,9 @@ public final class CeltiumLoadingProgress {
     /** Cached across frames: vanilla's method re-uploads the logo every call, which is the only upload it needed. */
     private static DynamicTexture logoTexture;
     private static ResourceLocation logoLocation;
+    private static DynamicTexture dirtTexture;
+    private static ResourceLocation dirtLocation;
+    private static long dirtRetryAfterNanos;
     /** Back-off for the logo fetch while the default pack is not registered yet. */
     private static long logoRetryAfterNanos;
     /** The framebuffer bounce, kept across frames so a progress tick does not allocate a target every time. */
@@ -101,6 +104,7 @@ public final class CeltiumLoadingProgress {
         // cheap: during loadMods the resource manager exists but the default pack is not in it, which is exactly
         // the window the overlay was built for - those frames draw the flat background instead.
         boolean haveLogo = false;
+        boolean haveDirt = false;
         if (haveTextures) {
             if (logoLocation == null && logoRetryAfterNanos < System.nanoTime()) {
                 // The classpath copy: vanilla's splash reads the default resource pack directly, and during
@@ -120,6 +124,23 @@ public final class CeltiumLoadingProgress {
                 }
             }
             haveLogo = logoLocation != null;
+            if (dirtLocation == null && dirtRetryAfterNanos < System.nanoTime()) {
+                // The splash's tiled background: the dirt texture under Minecraft.drawScaledCustomSizeModalRect,
+                // loaded the same classpath way the logo is, for the same reason (no pack in the manager yet).
+                try (InputStream stream = CeltiumLoadingProgress.class
+                        .getResourceAsStream("/assets/minecraft/textures/gui/options_background.png")) {
+                    if (stream == null) {
+                        throw new IOException("options_background.png not on the classpath");
+                    }
+                    BufferedImage image = ImageIO.read(stream);
+                    dirtTexture = new DynamicTexture(image);
+                    dirtLocation = mc.getTextureManager().getDynamicTextureLocation("celtium_dirt",
+                            dirtTexture);
+                } catch (IOException missing) {
+                    dirtRetryAfterNanos = System.nanoTime() + 1_000_000_000L;
+                }
+            }
+            haveDirt = dirtLocation != null;
         }
         if (splashTarget == null || splashWidth != width || splashHeight != height) {
             if (splashTarget != null) {
@@ -150,24 +171,26 @@ public final class CeltiumLoadingProgress {
             GlStateManager.enableBlend();
             GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
 
-            if (haveLogo) {
-                mc.getTextureManager().bindTexture(logoLocation);
-
+            if (haveDirt) {
+                // The tiled dirt the vanilla splash lays first: options_background at 32 px tiles, half-bright, so
+                // the logo and bars sit on the same backdrop every Forge splash shows.
+                mc.getTextureManager().bindTexture(dirtLocation);
                 Tessellator tessellator = Tessellator.getInstance();
                 net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
                 buffer.begin(7, DefaultVertexFormats.POSITION_TEX_COLOR);
-                buffer.pos(0.0D, mc.displayHeight, 0.0D).tex(0.0D, 0.0D).color(255, 255, 255, 255).endVertex();
-                buffer.pos(mc.displayWidth, mc.displayHeight, 0.0D).tex(0.0D, 0.0D).color(255, 255, 255, 255).endVertex();
-                buffer.pos(mc.displayWidth, 0.0D, 0.0D).tex(0.0D, 0.0D).color(255, 255, 255, 255).endVertex();
-                buffer.pos(0.0D, 0.0D, 0.0D).tex(0.0D, 0.0D).color(255, 255, 255, 255).endVertex();
+                buffer.pos(0.0D, height, 0.0D).tex(0.0D, height / 32.0F).color(64, 64, 64, 255).endVertex();
+                buffer.pos(width, height, 0.0D).tex(width / 32.0F, height / 32.0F).color(64, 64, 64, 255).endVertex();
+                buffer.pos(width, 0.0D, 0.0D).tex(width / 32.0F, 0.0D).color(64, 64, 64, 255).endVertex();
+                buffer.pos(0.0D, 0.0D, 0.0D).tex(0.0D, 0.0D).color(64, 64, 64, 255).endVertex();
                 tessellator.draw();
                 GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+            } else {
+                net.minecraft.client.gui.Gui.drawRect(0, 0, width, height, 0xFF151515);
+            }
+            if (haveLogo) {
+                mc.getTextureManager().bindTexture(logoLocation);
                 // The centered logo, as Minecraft.draw itself would blit it.
                 drawLogo(width, height);
-            } else {
-                // Before the texture manager exists there is no logo to bind: a flat dark background stands in, the
-                // same colour family the Mojang screen uses, and the bars still draw over it.
-                net.minecraft.client.gui.Gui.drawRect(0, 0, width, height, 0xFF151515);
             }
 
             drewBars = drawBars(mc, width, height, haveText);
