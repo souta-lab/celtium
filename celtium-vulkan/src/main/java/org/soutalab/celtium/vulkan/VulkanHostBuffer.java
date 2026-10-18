@@ -147,6 +147,14 @@ public final class VulkanHostBuffer {
             vkUnmapMemory(this.context.device(), this.memory);
             this.mapped = 0L;
         }
+        if (this.context.celtium$recordingOpen()) {
+            // An open recording may name this buffer; defer the free to the context's list.
+            this.context.celtium$retireBuffer(this.handle, this.memory, "hostBuffer.delete");
+            this.handle = VK_NULL_HANDLE;
+            this.memory = VK_NULL_HANDLE;
+            noteDeleted();
+            return;
+        }
         if (this.handle != VK_NULL_HANDLE) {
             vkDestroyBuffer(this.context.device(), this.handle, null);
             this.handle = VK_NULL_HANDLE;

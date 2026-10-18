@@ -202,6 +202,14 @@ final class VulkanUniformBuffer {
             vkUnmapMemory(this.context.device(), this.memory);
             this.mappedAddress = 0;
         }
+        if (this.context.celtium$recordingOpen()) {
+            // Same lifetime rule as growth: an open recording may name this buffer, so defer the free.
+            this.context.celtium$retireBuffer(this.buffer, this.memory, "uniformBuffer.delete");
+            this.buffer = 0;
+            this.memory = 0;
+            this.size = 0;
+            return;
+        }
         if (this.buffer != 0) {
             vkDestroyBuffer(this.context.device(), this.buffer, null);
             this.buffer = 0;

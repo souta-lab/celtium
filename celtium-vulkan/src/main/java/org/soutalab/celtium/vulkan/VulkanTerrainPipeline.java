@@ -893,7 +893,8 @@ public final class VulkanTerrainPipeline {
         }
         if (descriptorPool != 0L) {
             // Destroying the pool also frees the descriptor set allocated from it.
-            vkDestroyDescriptorPool(device, descriptorPool, null);
+            this.context.celtium$noteDescriptorDestroy("terrain.delete");
+vkDestroyDescriptorPool(device, descriptorPool, null);
             descriptorPool = 0L;
             descriptorSet = 0L;
         }

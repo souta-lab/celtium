@@ -3622,6 +3622,15 @@ public final class VulkanGlTexture {
             vkUnmapMemory(device, stagingMemory);
             stagingAddress = 0L;
         }
+        if (context.celtium$recordingOpen()) {
+            // A copy recorded into the still-open frame buffer may name this staging buffer: defer the free.
+            context.celtium$retireBuffer(stagingBuffer, stagingMemory, "texture.staging");
+            stagingBuffer = 0L;
+            stagingMemory = 0L;
+            stagingCapacity = 0L;
+            stagingCoherent = false;
+            return;
+        }
         if (stagingBuffer != 0L) {
             vkDestroyBuffer(device, stagingBuffer, null);
             stagingBuffer = 0L;

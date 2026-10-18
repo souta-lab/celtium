@@ -225,7 +225,8 @@ public final class VulkanImmediateBlockPipeline {
         }
         this.setsByTextureView.clear();
         if (this.descriptorPool != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
+            this.context.celtium$noteDescriptorDestroy("block.delete");
+vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
             this.descriptorPool = VK_NULL_HANDLE;
             this.descriptorSet = VK_NULL_HANDLE;
         }

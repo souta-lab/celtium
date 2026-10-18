@@ -450,6 +450,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                    RenderRegionManager regionManager,
                                    FogService fogService) {
         this.context = context;
+        // OPT-07 lifetime rule: a deleter asks whether an open recording could still name its resource. The backend is
+        // the only place that knows - the unified frame buffer, an open window recording, or a recording in progress -
+        // so it installs the probe here, before any resource can be deleted.
+        context.celtium$setRecordingOpenProbe(() -> this.frameBufferOpen || this.immediateWindowBusy
+                || this.commandState.recording());
         this.configuration = configuration;
         this.regionManager = regionManager;
         this.fogService = fogService;
@@ -16121,6 +16126,8 @@ this.frameBufferOpen = false;
         // unconditional drain.
         if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
             this.context.celtium$destroyRetiredBuffers();
+            // Deferred pipeline/pool teardowns run at the same point and for the same reason: nothing can name them.
+            this.context.celtium$runRetiredCleanups();
         }
         return true;
     }

@@ -2789,13 +2789,127 @@ public final class VulkanContext {
     private int retiredBuffersDestroyed;
     private int retiredBuffersOutstanding;
 
+    /** Whether the renderer currently holds an open recording that could name a buffer or descriptor set. */
+    private java.util.function.BooleanSupplier recordingOpenProbe;
+
+    /** Installs the probe a deleter consults before destroying anything (the backend knows its recording state). */
+    public void celtium$setRecordingOpenProbe(java.util.function.BooleanSupplier probe) {
+        this.recordingOpenProbe = probe;
+    }
+
+    private int descriptorDestroyLogs;
+    private int descriptorDestroysWhileRecording;
+    /**
+     * Records that a descriptor pool is about to be destroyed while a recording may name its sets.
+     * <p>
+     * This is the second half of OPT-07 and the reason the unified frame buffer is still opt-in: the E2E 1.93a
+     * validation text after the buffer retirement work names only "VkDescriptorSet ... was destroyed or updated
+     * without UPDATE_AFTER_BIND" (legs uniE5). Destroying a pool whose sets an open recording bound invalidates that
+     * recording, so this counter and its bounded lines name the site doing it instead of guessing.
+     */
+    public void celtium$noteDescriptorDestroy(String site) {
+        if (!celtium$recordingOpen()) {
+            return;
+        }
+        this.descriptorDestroysWhileRecording++;
+        if (this.descriptorDestroyLogs < 8) {
+            this.descriptorDestroyLogs++;
+            System.out.println("[Celtium] CELTIUM_DESC_POOL_DESTROYED_WHILE_RECORDING site=" + site
+                    + " count=" + this.descriptorDestroysWhileRecording);
+        }
+    }
+
+    /** Deferred destroy actions for resources an open recording may still name. */
+    private final java.util.ArrayList<Runnable> retiredCleanups = new java.util.ArrayList<Runnable>();
+    private int retiredCleanupsRan;
+
+    /**
+     * Defers a destroy action until no recording can name the resource.
+     * <p>
+     * The measured case is a pipeline being rebuilt (the HUD/texture pipeline is deleted and recreated when the
+     * texture set changes): the old descriptor pools are destroyed while the unified frame buffer still holds the
+     * recording that bound their sets, which the driver reports as "VkDescriptorSet ... was destroyed or updated
+     * without UPDATE_AFTER_BIND" and which invalidates the whole recording (legs uniE5/uniE6). Running the destroy
+     * later, at a point where no recording exists, keeps both the old and the new pipeline valid in between.
+     */
+    public void celtium$retireCleanup(String site, Runnable destroy) {
+        this.retiredCleanups.add(destroy);
+        if (this.retiredCleanupLogs < 8) {
+            this.retiredCleanupLogs++;
+            System.out.println("[Celtium] CELTIUM_CLEANUP_RETIRED site=" + site + " outstanding="
+                    + this.retiredCleanups.size());
+        }
+    }
+
+    private int retiredCleanupLogs;
+    private int retiredCleanupFailures;
+
+    /** Runs the deferred destroys. Only called where no recording can name their resources. */
+    public int celtium$runRetiredCleanups() {
+        if (this.retiredCleanups.isEmpty()) {
+            return 0;
+        }
+        java.util.ArrayList<Runnable> pending = new java.util.ArrayList<Runnable>(this.retiredCleanups);
+        this.retiredCleanups.clear();
+        for (int i = 0; i < pending.size(); i++) {
+            try {
+                pending.get(i).run();
+                this.retiredCleanupsRan++;
+            } catch (RuntimeException | LinkageError failure) {
+                this.retiredCleanupFailures++;
+            }
+        }
+        return pending.size();
+    }
+
+    /** {@return how many deferred destroys ran and how many failed}. */
+    public int[] celtium$retiredCleanupCounts() {
+        return new int[] {this.retiredCleanupsRan, this.retiredCleanupFailures};
+    }
+
+    /** {@return how many descriptor pools were destroyed while a recording could name them}. */
+    public int celtium$descriptorDestroysWhileRecording() {
+        return this.descriptorDestroysWhileRecording;
+    }
+
+    /** {@return whether an open recording could still name a resource, so destruction has to be deferred}. */
+    public boolean celtium$recordingOpen() {
+        java.util.function.BooleanSupplier probe = this.recordingOpenProbe;
+        if (probe == null) {
+            return false;
+        }
+        try {
+            return probe.getAsBoolean();
+        } catch (RuntimeException | LinkageError failure) {
+            // A probe that cannot answer must not leak: prefer the deferred path (it only delays the free).
+            return true;
+        }
+    }
+
+    /** The site tags of the deferrals, and their count, so a leg can say which path needed the list. */
+    private final java.util.ArrayList<String> retiredBufferSites = new java.util.ArrayList<String>();
+
     /** Hands a replaced buffer to the deferred list instead of destroying it while a recording may hold it. */
     public void celtium$retireBuffer(long handle, long memory) {
+        celtium$retireBuffer(handle, memory, "growth");
+    }
+
+    /**
+     * Hands a resource to the deferred list instead of destroying it while a recording may hold it.
+     *
+     * @param site who deferred it, for the bounded log line
+     */
+    public void celtium$retireBuffer(long handle, long memory, String site) {
         if (handle == VK_NULL_HANDLE) {
             return;
         }
         this.retiredBuffers.add(new long[] {handle, memory});
         this.retiredBuffersOutstanding = this.retiredBuffers.size();
+        if (this.retiredBufferSites.size() < 8) {
+            this.retiredBufferSites.add(site);
+            System.out.println("[Celtium] CELTIUM_BUFFER_RETIRED site=" + site + " outstanding="
+                    + this.retiredBuffersOutstanding + " total=" + (this.retiredBuffersDestroyed + this.retiredBuffers.size()));
+        }
     }
 
     /**

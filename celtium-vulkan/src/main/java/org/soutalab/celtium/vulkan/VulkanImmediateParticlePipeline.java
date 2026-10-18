@@ -233,10 +233,18 @@ public final class VulkanImmediateParticlePipeline {
             this.pipeline = VK_NULL_HANDLE;
         }
         this.setsByTextureView.clear();
-        if (this.descriptorPool != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
-            this.descriptorPool = VK_NULL_HANDLE;
-            this.descriptorSet = VK_NULL_HANDLE;
+        long poolToDestroy = this.descriptorPool;
+        this.descriptorPool = VK_NULL_HANDLE;
+        this.descriptorSet = VK_NULL_HANDLE;
+        if (poolToDestroy != VK_NULL_HANDLE) {
+            if (this.context.celtium$recordingOpen()) {
+                this.context.celtium$retireCleanup("particle.delete.pools", () -> {
+                    this.context.celtium$noteDescriptorDestroy("particle.delete.deferred");
+                    vkDestroyDescriptorPool(this.context.device(), poolToDestroy, null);
+                });
+            } else {
+                vkDestroyDescriptorPool(this.context.device(), poolToDestroy, null);
+            }
         }
         if (this.descriptorSetLayout != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);

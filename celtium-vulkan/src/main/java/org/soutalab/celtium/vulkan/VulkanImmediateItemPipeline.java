@@ -397,10 +397,21 @@ public final class VulkanImmediateItemPipeline {
             this.pipeline = VK_NULL_HANDLE;
         }
         this.setsByTextureView.clear();
-        for (int i = 0; i < this.descriptorPools.size(); i++) {
-            vkDestroyDescriptorPool(this.context.device(), this.descriptorPools.get(i).longValue(), null);
-        }
+        java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
         this.descriptorPools.clear();
+        if (this.context.celtium$recordingOpen()) {
+            // A pool whose set an open recording bound must outlive that recording (same rule as texture.delete).
+            this.context.celtium$retireCleanup("item.delete.pools", () -> {
+                for (int i = 0; i < poolsToDestroy.size(); i++) {
+                    this.context.celtium$noteDescriptorDestroy("item.delete.deferred");
+                    vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+                }
+            });
+        } else {
+            for (int i = 0; i < poolsToDestroy.size(); i++) {
+                vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+            }
+        }
         this.descriptorSet = VK_NULL_HANDLE;
         if (this.descriptorSetLayout != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);

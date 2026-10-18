@@ -230,6 +230,14 @@ public final class VulkanBuffer {
             this.memory = VK_NULL_HANDLE;
             return;
         }
+        if (this.context.celtium$recordingOpen()) {
+            // An open recording may name this buffer (the unified frame buffer keeps one open across evictions and
+            // reloads). Defer instead of invalidating it; the context frees it once nothing can record.
+            this.context.celtium$retireBuffer(this.handle, this.memory, "buffer.delete");
+            this.handle = VK_NULL_HANDLE;
+            this.memory = VK_NULL_HANDLE;
+            return;
+        }
         if (this.handle != VK_NULL_HANDLE) {
             vkDestroyBuffer(device, this.handle, null);
             this.handle = VK_NULL_HANDLE;

@@ -657,10 +657,24 @@ public final class VulkanImmediateTexturePipeline {
         this.retiredSets.clear();
         // Every pool this pipeline grew, not only the first: a set is alive in whichever pool allocated it, and a pool
         // cannot be destroyed while one of its sets is in use, which is why they share the pipeline's lifetime.
-        for (int i = 0; i < this.descriptorPools.size(); i++) {
-            vkDestroyDescriptorPool(this.context.device(), this.descriptorPools.get(i).longValue(), null);
-        }
+        // "In use" includes an open recording under the unified frame buffer: destroying a pool whose set that
+        // recording bound invalidates the whole recording (VUID-vkCmd*-commandBuffer-recording, measured on the E2E
+        // pack with texture.delete as the site). The pools are detached and freed once nothing can record; the
+        // pipeline and layouts stay on their immediate path, because deferring those measured worse.
+        java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
         this.descriptorPools.clear();
+        if (this.context.celtium$recordingOpen()) {
+            this.context.celtium$retireCleanup("texture.delete.pools", () -> {
+                for (int i = 0; i < poolsToDestroy.size(); i++) {
+                    this.context.celtium$noteDescriptorDestroy("texture.delete.deferred");
+                    vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+                }
+            });
+        } else {
+            for (int i = 0; i < poolsToDestroy.size(); i++) {
+                vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+            }
+        }
         this.descriptorSet = VK_NULL_HANDLE;
         if (this.descriptorSetLayout != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);
