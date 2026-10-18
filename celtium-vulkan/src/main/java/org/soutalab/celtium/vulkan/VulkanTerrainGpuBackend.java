@@ -2276,7 +2276,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int IMMEDIATE_WINDOWS_PER_FRAME =
             Integer.getInteger("celtium.vulkan.immediateWindowsPerFrame", 16).intValue();
 
-    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 512);
+    /**
+     * Indices one mid-frame window may hold before it is flushed automatically. Raised from 512 by measurement on the
+     * world path (AMD RX 6400, settled world at the same absolute tick, unified path, same fixture):
+     * <pre>
+     *   512  interval p50 34.89 / 33.67 ms, p95 56.90 / 58.00  (two legs)
+     *  8192  interval p50 31.09 / 31.40 ms, p95 50.68 / 50.69  (two legs)
+     * </pre>
+     * The window count per frame barely moves (5.10 -> 4.95) and the flush count does not drop either, so the saving is
+     * not "fewer windows": a larger window keeps each window's batch set contiguous instead of splitting it at a
+     * 512-index boundary, which is where the per-window draw-record and submit bookkeeping is paid. The window count
+     * itself is capped by {@link #IMMEDIATE_WINDOWS_PER_FRAME}. Correctness checked before the default moved: plain
+     * calibrated legs PASSED on AMD and Intel, and the format-2 fixture's clear-order / pixel / depth contracts still
+     * pass (leg wino2).
+     */
+    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 8192);
     /**
      * Per-call isolation/inspection switches, read once at class init: each of these was re-queried through
      * {@code Boolean.getBoolean}/{@code Integer.getInteger} on every call it gated - the format-refusal check ran
