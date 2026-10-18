@@ -176,16 +176,26 @@ public final class VulkanBuffer {
             this.size = oldSize;
             throw error;
         }
-        VkCommandBuffer commandBuffer = this.context.beginCommands();
+        // beginCommands() belongs inside the rollback scope: when it threw outside it (audit #345), the object kept
+        // the replacement buffer - which never received the copy - while the old handles were orphaned and leaked.
+        // endCommands owns the command buffer on every path once called, so only a begun-but-unended buffer is
+        // abandoned here.
+        VkCommandBuffer commandBuffer = null;
+        boolean endCommandsOwns = false;
         try {
+            commandBuffer = this.context.beginCommands();
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 // Both sizes are multiples of 4, which is what a Vulkan buffer copy requires.
                 VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
                 copy.get(0).srcOffset(0L).dstOffset(0L).size(oldSize);
                 vkCmdCopyBuffer(commandBuffer, oldHandle, this.handle, copy);
             }
+            endCommandsOwns = true;
             this.context.endCommands(commandBuffer, "buffer-readback");
         } catch (RuntimeException | Error error) {
+            if (!endCommandsOwns && commandBuffer != null) {
+                this.context.celtium$abandonCommands(commandBuffer);
+            }
             // The contents were not copied, so the new buffer is undefined: drop it and stay on the intact one.
             // The old buffer may still be referenced by commands submitted in an earlier frame, so the queue is
             // drained before it is destroyed; validation reports the alternative as a buffer destroyed while in use.

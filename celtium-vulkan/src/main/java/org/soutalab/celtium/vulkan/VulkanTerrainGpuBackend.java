@@ -15225,14 +15225,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         ByteBuffer data = MemoryUtil.memAlloc(bytes);
         try {
             primitiveType.generateSimpleIndexBuffer(data, capacity);
-            VulkanBuffer previous = this.sharedIndexBuffers.remove(primitiveType);
-            if (previous != null) {
-                previous.delete();
-            }
+            // The old buffer stays published while the replacement is built and uploaded: a creation or upload
+            // failure used to leave the map empty *and* the previous buffer already destroyed, so the next draw had
+            // no indices at all (audit #346). On success the previous buffer is retired, not deleted in place - a
+            // command buffer from an earlier, still-in-flight slot can name it until the drain confirms the device
+            // is done.
             VulkanBuffer buffer = new VulkanBuffer(this.context, bytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-            buffer.write(0, MemoryUtil.memAddress(data), bytes);
-            this.sharedIndexBuffers.put(primitiveType, buffer);
+            try {
+                buffer.write(0, MemoryUtil.memAddress(data), bytes);
+            } catch (RuntimeException | Error error) {
+                buffer.delete();
+                throw error;
+            }
+            VulkanBuffer previous = this.sharedIndexBuffers.put(primitiveType, buffer);
             this.sharedIndexPrimitives.put(primitiveType, capacity);
+            if (previous != null) {
+                VulkanRetireQueue.retire(previous::delete);
+            }
         } finally {
             MemoryUtil.memFree(data);
         }
