@@ -7853,9 +7853,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // discarded before it reaches the queue must put that state back, or the re-record skips the
                         // transition and the clear it already consumed (BH-26).
                         try {
+                            org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
+                            org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
                             recordImmediateOnlyPass(stack, terrain);
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("winRecord");
+                            org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                         } catch (RuntimeException | LinkageError recordError) {
                             if (gllessTarget != null) {
                                 gllessTarget.rollbackRecording(recordingSnapshot);
@@ -7863,14 +7869,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                             throw recordError;
                         }
                     }
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("winSubmit");
                     this.frameCoordinator.submitCommands();
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("winSubmit");
                     // No drain here: the submission is queued and its semaphore contract is complete, so endFrame
                     // does not need the GPU to have finished - the wait used to be bookkeeping, and the poll keeps
                     // that bookkeeping without paying a queue-wide wait for it. Whatever is confirmed frees what its
                     // sequence covers; this window's own confirmation arrives at the next poll or at the bounded
                     // wait the next reuse of its slot pays.
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("winEnd");
                     celtium$pollCompletedSlots();
                     this.frameTarget.endFrame();
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("winEnd");
                     opened = false;
                     this.terrainStatistics.notePassSubmissions();
                     this.immediateStatistics.noteImmediateWindows();
