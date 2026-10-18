@@ -136,6 +136,7 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
                              @Deprecated(forRemoval = true) int frame,
                              boolean spectator,
                              boolean updateChunksImmediately) {
+        this.celtium$scheduledSections.clear();
         TerrainPhaseTiming.begin("stReclaim");
         NativeBuffer.reclaim(false);
         TerrainPhaseTiming.end("stReclaim");
@@ -469,7 +470,50 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     /**
      * Schedules chunk rebuilds for all chunks in the specified block region.
      */
+    private static int celtium$blockAreaStacks;
+
     public void scheduleRebuildForBlockArea(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, boolean important) {
+        // Who calls this twelve thousand times a frame in a still scene? The stack names the caller instead of the
+        // next round guessing between block updates, light updates and a renderer loop.
+        // Classified sampling, not per-call stacks: one stack capture per 2000 calls is free and still says which
+        // vanilla path owns the storm (light updates, block placement, chunk data, chunk light init).
+        long areaCalls = ++org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaCalls;
+        if (Boolean.getBoolean("celtium.debug.buildFlow") && areaCalls % 2000 == 0) {
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            boolean light = false, setBlock = false, chunkData = false, chunkLightInit = false;
+            for (int i = 2; i < stack.length; i++) {
+                String method = stack[i].getMethodName();
+                if (method.equals("func_72975_g") || method.equals("checkLightFor") || method.equals("func_147458_c")
+                        || method.equals("markBlockRangeForRenderUpdate")) {
+                    light = true;
+                } else if (method.equals("func_180501_a") || method.equals("setBlockState")
+                        || method.equals("markAndNotifyBlock")) {
+                    setBlock = true;
+                } else if (method.equals("func_147263_a") || method.equals("handleChunkData")) {
+                    chunkData = true;
+                } else if (method.equals("func_76615_h") || method.equals("generateSkylightMap")) {
+                    chunkLightInit = true;
+                }
+            }
+            if (chunkData) {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaFromChunkData++;
+            } else if (chunkLightInit) {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaFromChunkLightInit++;
+            } else if (setBlock) {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaFromSetBlock++;
+            } else if (light) {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaFromLight++;
+            } else {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaFromOther++;
+                if (org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaFromOther <= 3) {
+                    StringBuilder line = new StringBuilder("[Celtium] CELTIUM_BLOCK_AREA other");
+                    for (int i = 2; i < Math.min(stack.length, 9); i++) {
+                        line.append(" <- ").append(stack[i].getClassName()).append('.').append(stack[i].getMethodName());
+                    }
+                    System.out.println(line);
+                }
+            }
+        }
         this.scheduleRebuildForChunks(minX >> 4, minY >> 4, minZ >> 4, maxX >> 4, maxY >> 4, maxZ >> 4, important);
     }
 
@@ -489,7 +533,30 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     /**
      * Schedules a chunk rebuild for the render belonging to the given chunk section position.
      */
+    /**
+     * Sections already scheduled for a rebuild this frame.
+     * <p>
+     * Vanilla's per-frame {@code RenderGlobal.updateClouds()} drains its light-update set and asks for a rebuild around
+     * every position, one {@code markBlocksForUpdate(pos-1 .. pos+1)} each. A dense light-update storm therefore sends
+     * the same sections over and over within one frame - measured 8.6 thousand area calls and 12 thousand section
+     * schedules per frame in a still scene. A section already scheduled only needs the one rebuild (the rebuild reads
+     * the world as it is when the task runs), so repeated requests inside the same frame are dropped; the
+     * pending-update merge in {@code scheduleRebuild} would have collapsed them anyway, this skips the work.
+     */
+    private final java.util.HashSet<Long> celtium$scheduledSections = new java.util.HashSet<Long>();
+
     public void scheduleRebuildForChunk(int x, int y, int z, boolean important) {
+        // Only the unimportant requests are collapsed: those are the light-update storm's shape (a position that had a
+        // light change, marked so the section is re-meshed). An important request - a block placement or break, which
+        // vanilla and Forge mark important - always goes through, so a real edit is never merged away by an earlier
+        // light request in the same frame.
+        if (!important) {
+            long key = ((long) (x & 0x3FFFFF) << 42) | ((long) (z & 0x3FFFFF) << 20) | (y & 0xFFFFF);
+            if (!this.celtium$scheduledSections.add(Long.valueOf(key))) {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.scheduleDeduped++;
+                return;
+            }
+        }
         this.renderSectionManager.scheduleRebuild(x, y, z, important);
     }
 

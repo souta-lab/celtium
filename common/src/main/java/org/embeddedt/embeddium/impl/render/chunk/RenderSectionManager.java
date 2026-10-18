@@ -64,6 +64,10 @@ public abstract class RenderSectionManager {
      */
     protected static final boolean CONTINUOUSLY_REMESH_WORLD = false;
 
+    /** Whether to print the build-flow line, which says who fills the queues and how fast they drain. */
+    private static final boolean BUILD_FLOW_LOG = Boolean.getBoolean("celtium.debug.buildFlow");
+    private static int buildFlowLines;
+
     /**
      * How many frames' worth of dispatch the BFS may collect into the initial-build list. The list only needs to
      * outlast the interval between graph updates, and an overflow re-marks the graph dirty as soon as results are
@@ -356,6 +360,7 @@ public abstract class RenderSectionManager {
                     continue;
                 }
 
+                BuildFlowCounters.scheduledSorts++;
                 ChunkUpdateType update = ChunkUpdateType.getPromotionUpdateType(section.getPendingUpdate(), (allowImportant && this.shouldPrioritizeRebuild(section)) ? ChunkUpdateType.IMPORTANT_SORT : ChunkUpdateType.SORT);
 
                 if (update == null) {
@@ -679,8 +684,16 @@ public abstract class RenderSectionManager {
     }
 
     public void updateChunks(boolean updateImmediately) {
+        BuildFlowCounters.updateFrames++;
         this.terrainBackend.updateRegions();
         this.jobMetricsTracker.tick();
+        if (BUILD_FLOW_LOG && BuildFlowCounters.updateFrames % 120 == 0 && buildFlowLines++ < 12) {
+            StringBuilder queues = new StringBuilder();
+            this.getCurrentRenderListManager().getRebuildLists().byUpdateType().forEach((type, queue) ->
+                    queues.append(queues.length() == 0 ? "" : ",").append(type.name()).append('=').append(queue.size()));
+            System.out.println("[Celtium] CELTIUM_BUILD_FLOW frame=" + BuildFlowCounters.updateFrames
+                    + " " + BuildFlowCounters.snapshot() + " rebuildLists=[" + queues + "]");
+        }
 
         // The render list's own size over time, so a single captured frame can be told from a settled one. The
         // reference's list holds 41 sections and ours 34 at the same pose and tick; if ours reaches 41 on other
@@ -1099,10 +1112,12 @@ public abstract class RenderSectionManager {
     }
 
     private void scheduleRebuildOffThread(int x, int y, int z, boolean important) {
+        BuildFlowCounters.scheduledRebuildAsync++;
         scheduleAsyncTask(() -> this.scheduleSectionForRebuild(x, y, z, important));
     }
 
     public final void scheduleRebuild(int x, int y, int z, boolean important) {
+        BuildFlowCounters.scheduledRebuild++;
         if (Thread.currentThread() != renderThread) {
             this.scheduleRebuildOffThread(x, y, z, important);
             return;
@@ -1145,6 +1160,7 @@ public abstract class RenderSectionManager {
     }
 
     public void scheduleRebuildAll() {
+        BuildFlowCounters.scheduledRebuildAll++;
         for (var section : this.sectionByPosition.values()) {
             if (!this.isSectionVisuallyEmpty(section.getChunkX(), section.getChunkY(), section.getChunkZ())) {
                 this.invalidateCachedSectionData(section);

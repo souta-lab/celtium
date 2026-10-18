@@ -949,6 +949,7 @@ public final class TerrainRenderer {
 
         for (ChunkTaskOutput output : outputs) {
             if (output instanceof ChunkBuildOutput) {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.buildOutputs++;
                 ChunkBuildOutput build = (ChunkBuildOutput) output;
                 region.removeMeshes(build.render.getSectionIndex());
                 for (Reference2ReferenceMap.Entry<TerrainRenderPass, BuiltSectionMeshParts> meshEntry
@@ -962,6 +963,7 @@ public final class TerrainRenderer {
                             meshResources.sectionFirstColor, meshResources));
                 }
             } else if (output instanceof ChunkSortOutput) {
+                org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.sortOutputs++;
                 ChunkSortOutput sort = (ChunkSortOutput) output;
                 needIndexBuffer = true;
                 for (Reference2ReferenceMap.Entry<TerrainRenderPass, ChunkSortOutput.SortedMesh> meshEntry
