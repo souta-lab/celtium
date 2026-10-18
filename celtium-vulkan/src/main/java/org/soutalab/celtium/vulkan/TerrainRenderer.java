@@ -302,13 +302,16 @@ public final class TerrainRenderer {
     private static final int INDIRECT_PAGE_BYTES = 64 * 1024;
     // Pages belong to a recording slot, not a region. Earlier regions' packets stay at distinct offsets until the
     // slot's own fence completes; all deferred uploads are submitted before any of the recorded region draws.
-    private final List<List<VulkanBuffer>> indirectSlotPages = new ArrayList<>();
+    // Host-visible persistently-mapped pages (HOST_COHERENT): the packet ints are written straight into the memory
+    // the draw reads, so no staging snapshot, vkCmdCopyBuffer or deferred upload exists per batch. HOST_COHERENT plus
+    // the vkQueueSubmit host-ordering guarantee makes the record-time writes visible to the submission - the contract
+    // VulkanHostBuffer documents for exactly this data.
+    private final List<List<VulkanHostBuffer>> indirectSlotPages = new ArrayList<>();
     private int indirectRecordingSlot = -1;
     private int indirectPageIndex;
     private long indirectWriteCursor;
     private long indirectBatchOffset;
-    private VulkanBuffer indirectBuffer;
-    private ByteBuffer indirectPackets;
+    private VulkanHostBuffer indirectBuffer;
     private long indirectGrowths;
     private String lastTerrainIndirectFallback = "none";
 
@@ -446,22 +449,24 @@ public final class TerrainRenderer {
             this.terrainIndirectFallbacks++;
             return false;
         }
-        ByteBuffer packets = this.indirectPackets(needed);
-        if (packets == null) {
-            this.terrainIndirectFallbacks++;
-            return false;
-        }
         this.bindIndexBuffer(commandBuffer, regionIndex ? resources.indexArena.buffer()
                 : sharedIndexBuffers.get(primitiveType));
+        // Write the packets directly into the mapped page at the draw's offset: the HOST_COHERENT memory needs no
+        // flush, and vkQueueSubmit's host-side ordering guarantee publishes these record-time writes to the
+        // submission that carries the draw. The per-batch staging snapshot + vkCmdCopyBuffer + deferred upload this
+        // replaces was the dominating cost of the indirect path (measured: recDraw ~3 ms/frame while the draw call
+        // itself is ~1 vkCmd).
+        long packets = this.indirectBuffer.mappedAddress() + this.indirectBatchOffset;
         for (int i = 0; i < size; i++) {
             long byteOffset = batch.indexByteOffset(i);
-            packets.putInt(i * INDIRECT_COMMAND_BYTES, batch.elementCount(i));
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 4, 1);
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 8, regionIndex ? (int) (byteOffset / 4) : 0);
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 12, batch.baseVertex(i));
+            long packet = packets + (long) i * INDIRECT_COMMAND_BYTES;
+            MemoryUtil.memPutInt(packet, batch.elementCount(i));
+            MemoryUtil.memPutInt(packet + 4, 1);
+            MemoryUtil.memPutInt(packet + 8, regionIndex ? (int) (byteOffset / 4) : 0);
+            MemoryUtil.memPutInt(packet + 12, batch.baseVertex(i));
             // firstInstance stays 0: drawIndirectFirstInstance is enabled only when the device reported it, and this
             // path never needs anything but 0.
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 16, 0);
+            MemoryUtil.memPutInt(packet + 16, 0);
         }
         if (TERRAIN_INDIRECT_COMPARE) {
             // Compare the encoded CPU packet with the direct enumeration, not the same CPU values twice. This is
@@ -469,26 +474,24 @@ public final class TerrainRenderer {
             for (int i = 0; i < size; i++) {
                 long byteOffset = batch.indexByteOffset(i);
                 long directFirstIndex = regionIndex ? (byteOffset / 4) : 0L;
+                long packet = packets + (long) i * INDIRECT_COMMAND_BYTES;
                 this.terrainDirectEquivalentDraws++;
                 this.terrainDirectEquivalentChecksum = commandHash(this.terrainDirectEquivalentChecksum,
                         batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
                 this.terrainIndirectCommandDraws++;
                 this.terrainIndirectCommandChecksum = commandHash(this.terrainIndirectCommandChecksum,
-                        packets.getInt(i * INDIRECT_COMMAND_BYTES),
-                        Integer.toUnsignedLong(packets.getInt(i * INDIRECT_COMMAND_BYTES + 8)),
-                        packets.getInt(i * INDIRECT_COMMAND_BYTES + 12));
+                        MemoryUtil.memGetInt(packet),
+                        Integer.toUnsignedLong(MemoryUtil.memGetInt(packet + 8)),
+                        MemoryUtil.memGetInt(packet + 12));
             }
         }
-        long address = MemoryUtil.memAddress(packets);
         int first = 0;
         while (first < size) {
             int count = (int) Math.min(maxDraws, (long) (size - first));
             if (count != size - first) {
                 this.terrainIndirectClampEvents++;
             }
-            long sourceOffset = (long) first * INDIRECT_COMMAND_BYTES;
-            long offsetBytes = this.indirectBatchOffset + sourceOffset;
-            this.indirectBuffer.write(offsetBytes, address + sourceOffset, count * INDIRECT_COMMAND_BYTES);
+            long offsetBytes = this.indirectBatchOffset + (long) first * INDIRECT_COMMAND_BYTES;
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
             this.terrainIndirectCalls++;
@@ -520,9 +523,9 @@ public final class TerrainRenderer {
             return false;
         }
         try {
-            List<VulkanBuffer> pages = this.indirectSlotPages.get(this.indirectRecordingSlot);
+            List<VulkanHostBuffer> pages = this.indirectSlotPages.get(this.indirectRecordingSlot);
             int pageIndex = this.indirectPageIndex;
-            VulkanBuffer page = this.indirectBuffer;
+            VulkanHostBuffer page = this.indirectBuffer;
             long offset = this.indirectWriteCursor;
             if (page == null || offset > page.size() - bytes) {
                 if (page != null) {
@@ -530,7 +533,8 @@ public final class TerrainRenderer {
                 }
                 page = pageIndex < pages.size() ? pages.get(pageIndex) : null;
                 if (page == null || page.size() < bytes) {
-                    VulkanBuffer replacement = new VulkanBuffer(context, Math.max((long) bytes, INDIRECT_PAGE_BYTES),
+                    VulkanHostBuffer replacement = new VulkanHostBuffer(context,
+                            Math.max((long) bytes, INDIRECT_PAGE_BYTES),
                             org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
                     // This page has not been used in this recording. The selected slot's previous use is fenced;
                     // unlike growing the active page, replacing it cannot destroy a handle in recorded draws.
@@ -556,28 +560,10 @@ public final class TerrainRenderer {
         }
     }
 
-    private ByteBuffer indirectPackets(int bytes) {
-        try {
-            if (this.indirectPackets == null || this.indirectPackets.capacity() < bytes) {
-                ByteBuffer replacement = MemoryUtil.memAlloc(Math.max(bytes, INDIRECT_PAGE_BYTES));
-                // VulkanBuffer.write snapshots source bytes into Context's staging ring before returning, so no GPU
-                // command retains this CPU scratch buffer. Reuse avoids per-region allocation and stack overflow.
-                if (this.indirectPackets != null) {
-                    MemoryUtil.memFree(this.indirectPackets);
-                }
-                this.indirectPackets = replacement;
-            }
-            return this.indirectPackets;
-        } catch (RuntimeException | LinkageError | OutOfMemoryError error) {
-            this.lastTerrainIndirectFallback = "indirect packet scratch: " + describe(error);
-            return null;
-        }
-    }
-
     /** Releases all packet pages only after the backend drained their command slots and outstanding uploads. */
     void releaseIndirectBuffers() {
-        for (List<VulkanBuffer> pages : this.indirectSlotPages) {
-            for (VulkanBuffer page : pages) {
+        for (List<VulkanHostBuffer> pages : this.indirectSlotPages) {
+            for (VulkanHostBuffer page : pages) {
                 page.delete();
             }
         }
@@ -587,10 +573,6 @@ public final class TerrainRenderer {
         this.indirectPageIndex = 0;
         this.indirectWriteCursor = 0;
         this.indirectBatchOffset = 0;
-        if (this.indirectPackets != null) {
-            MemoryUtil.memFree(this.indirectPackets);
-            this.indirectPackets = null;
-        }
     }
 
 

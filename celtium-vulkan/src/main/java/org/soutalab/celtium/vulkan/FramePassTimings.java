@@ -45,7 +45,8 @@ public final class FramePassTimings {
      */
     private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload",
             "setupTerrain", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
-            "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin"};
+            "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin",
+            "recBind", "recDraw", "recLoop"};
 
     private static final int CAPACITY = 512;
 

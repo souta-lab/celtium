@@ -10467,31 +10467,38 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
         while (iterator.hasNext()) {
             ChunkRenderList renderList = iterator.next();
-            RenderRegion region = renderList.getRegion();
-            TerrainRenderer.RegionResources resources = this.terrain.resourcesIfPresent(region);
-            SectionRenderDataStorage storage = region.getStorage(pass);
-
-            if (resources == null || storage == null) {
-                continue;
-            }
-
+            RenderRegion region;
+            TerrainRenderer.RegionResources resources;
             CachedBatch cached;
-            org.soutalab.celtium.vulkan.FramePassTimings.begin("recordBatch");
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("recLoop");
             try {
-                cached = storage.getCachedMultiDrawBatch(cacheParams);
-                if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
-                        renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
-                        occlusionCamera.intZ)) {
-                    cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
-                            useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
-                    storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                region = renderList.getRegion();
+                resources = this.terrain.resourcesIfPresent(region);
+                SectionRenderDataStorage storage = region.getStorage(pass);
+
+                if (resources == null || storage == null) {
+                    continue;
+                }
+
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("recordBatch");
+                try {
+                    cached = storage.getCachedMultiDrawBatch(cacheParams);
+                    if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
+                            renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
+                            occlusionCamera.intZ)) {
+                        cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
+                                useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
+                        storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                    }
+                } finally {
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("recordBatch");
+                }
+
+                if (!(cached.getBatch() instanceof VulkanMultiDrawBatch) || cached.getBatch().isEmpty()) {
+                    continue;
                 }
             } finally {
-                org.soutalab.celtium.vulkan.FramePassTimings.end("recordBatch");
-            }
-
-            if (!(cached.getBatch() instanceof VulkanMultiDrawBatch) || cached.getBatch().isEmpty()) {
-                continue;
+                org.soutalab.celtium.vulkan.FramePassTimings.end("recLoop");
             }
 
             VulkanMultiDrawBatch batch = (VulkanMultiDrawBatch) cached.getBatch();
@@ -10503,6 +10510,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.readbackOffset = (long) batch.baseVertex(0) * this.commonVertexStride;
                 this.readbackRegion = resources;
             }
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
             long uniformOffset = this.terrain.writeUniforms(region, pass, camera);
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
             if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
@@ -10582,6 +10590,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // geometry with the unsorted quad pattern; whether it happened depended on whether a positive-offset command
             // had preceded it, which is why it was invisible most of the time. The shared quad index remains the index
             // source for every unsorted pass, whose offsets are 0 by construction.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("recBind");
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("recDraw");
             boolean sortedPass = pass.isSorted();
             // OPT-09/BH-36: the batch's commands as one indirect call when the device can carry it. The index source
             // has to be uniform across the whole batch for that to be legal - one indirect call binds one index buffer -
@@ -10661,6 +10671,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // The next region may use the shared index buffer again.
                 this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
             }
+            org.soutalab.celtium.vulkan.FramePassTimings.end("recDraw");
         }
 
         if (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty()) {
