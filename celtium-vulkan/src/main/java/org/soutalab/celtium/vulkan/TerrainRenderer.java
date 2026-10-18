@@ -73,14 +73,18 @@ public final class TerrainRenderer {
         final BuiltSectionMeshParts parts;
         final ChunkSortOutput.SortedMesh sorted;
         final int[] sectionFirstColor;
+        /** The region resources the diagnostic head belongs to, so logFirstVertex can fill it without a lookup. */
+        final TerrainRenderer.RegionResources firstVertexOwner;
 
         PendingMesh(int sectionIndex, TerrainRenderPass pass, BuiltSectionMeshParts parts,
-                    ChunkSortOutput.SortedMesh sorted, int[] sectionFirstColor) {
+                    ChunkSortOutput.SortedMesh sorted, int[] sectionFirstColor,
+                    TerrainRenderer.RegionResources firstVertexOwner) {
             this.sectionIndex = sectionIndex;
             this.pass = pass;
             this.parts = parts;
             this.sorted = sorted;
             this.sectionFirstColor = sectionFirstColor;
+            this.firstVertexOwner = firstVertexOwner;
         }
     }
 
@@ -846,6 +850,20 @@ public final class TerrainRenderer {
                 continue;
             }
             vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            // The 32-byte head that used to be copied for every mesh now exists only for the meshes that get logged;
+            // the vertex buffer is still alive here, which is what makes that possible.
+            if (mesh.sectionFirstColor != null) {
+                TerrainRenderer.RegionResources owner = null;
+                byte[] head = new byte[Math.min(32, vertices.capacity())];
+                for (int b = 0; b < head.length; b++) {
+                    head[b] = vertices.get(b);
+                }
+                // The array belongs to the region's resources; only fill it when the caller can still find them.
+                owner = mesh.firstVertexOwner;
+                if (owner != null) {
+                    owner.sectionFirstVertex[mesh.sectionIndex] = head;
+                }
+            }
             StringBuilder line = new StringBuilder("vertex0 stride=").append(stride);
             if (stride == 32) {
                 line.append(" pos=(").append(vertices.getFloat(0)).append(',').append(vertices.getFloat(4))
@@ -912,9 +930,22 @@ public final class TerrainRenderer {
         return this.lastUploadedBytes;
     }
 
+    private SectionRenderDataStorage storageForPass(RenderRegion region, TerrainRenderPass pass,
+            java.util.Map<TerrainRenderPass, SectionRenderDataStorage> cache) {
+        SectionRenderDataStorage existing = cache.get(pass);
+        if (existing != null) {
+            return existing;
+        }
+        SectionRenderDataStorage created = region.createStorage(pass, configuration);
+        cache.put(pass, created);
+        return created;
+    }
+
     void uploadRegion(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable graphUpdateTrigger) {
         List<TerrainRenderer.PendingMesh> pending = new ArrayList<>();
         boolean needIndexBuffer = false;
+        // Resolved once for the whole upload: it used to be looked up again for every mesh.
+        TerrainRenderer.RegionResources meshResources = resourcesFor(this.context, region, vertexStride());
 
         for (ChunkTaskOutput output : outputs) {
             if (output instanceof ChunkBuildOutput) {
@@ -928,7 +959,7 @@ public final class TerrainRenderer {
                     }
                     needIndexBuffer |= mesh.indexBuffer() != null;
                     pending.add(new TerrainRenderer.PendingMesh(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
-                    resourcesFor(this.context, region, vertexStride()).sectionFirstColor));
+                            meshResources.sectionFirstColor, meshResources));
                 }
             } else if (output instanceof ChunkSortOutput) {
                 ChunkSortOutput sort = (ChunkSortOutput) output;
@@ -940,7 +971,7 @@ public final class TerrainRenderer {
                         storage.removeIndexBuffer(sort.render.getSectionIndex());
                     }
                     pending.add(new TerrainRenderer.PendingMesh(sort.render.getSectionIndex(), meshEntry.getKey(), null,
-                            meshEntry.getValue(), null));
+                            meshEntry.getValue(), null, null));
                 }
             } else {
                 throw new IllegalStateException("Unexpected result type: " + output.getClass().getName());
@@ -951,7 +982,10 @@ public final class TerrainRenderer {
             return;
         }
 
-        TerrainRenderer.RegionResources resources = resourcesFor(this.context, region, vertexStride());
+        TerrainRenderer.RegionResources resources = meshResources;
+        // One map lookup per render pass rather than one per mesh: a build output carries several meshes per section
+        // and every one of them asked the region for the same storage.
+        java.util.Map<TerrainRenderPass, SectionRenderDataStorage> storageByPass = new java.util.HashMap<>();
         long uploaded = 0;
 
         for (TerrainRenderer.PendingMesh mesh : pending) {
@@ -959,17 +993,11 @@ public final class TerrainRenderer {
                 ByteBuffer vertices = mesh.parts.vertexBuffer().getDirectBuffer();
                 int vertexBytes = mesh.parts.vertexBuffer().getLength();
                 if (mesh.sectionFirstColor != null) {
+                    // One int per mesh: it feeds the colour census in logFirstVertex. The 32-byte head that used to be
+                    // copied here (with an order save/restore and a new byte[32] per mesh) only ever fed a bounded
+                    // diagnostic line; it is now built there, for the few meshes that are logged, from the same vertex
+                    // buffer - which is still alive at that point.
                     mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
-                    TerrainRenderer.RegionResources owner = resourcesFor(this.context, region, vertexStride());
-                    byte[] head = new byte[32];
-                    java.nio.ByteOrder headOrder = vertices.order();
-                    try {
-                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        for (int b = 0; b < 32 && b < vertices.capacity(); b++) head[b] = vertices.get(b);
-                    } finally {
-                        vertices.order(headOrder);
-                    }
-                    owner.sectionFirstVertex[mesh.sectionIndex] = head;
                 }
                 if (TERRAIN_VERTEX_COLOUR_SAMPLES > 0 && colourSamples < TERRAIN_VERTEX_COLOUR_SAMPLES) {
                     colourSamples++;
@@ -1048,12 +1076,12 @@ public final class TerrainRenderer {
                             + " uv=" + u0 + "," + v0 + " vertices=" + count
                             + " distinctColours=" + histogram.size() + " top=" + top);
                 }
-                int beforeColour = firstVertexColor(vertices);
                 long beforeAddress = MemoryUtil.memAddress(vertices);
                 VulkanArena.Segment vertexSegment = resources.vertexArena.allocate(vertexBytes);
                 resources.vertexArena.write(vertexSegment.byteOffset(), MemoryUtil.memAddress(vertices), vertexBytes);
                 if (beforeAfterLogged < 4) {
                     beforeAfterLogged++;
+                    int beforeColour = firstVertexColor(vertices);
                     int mid = Math.max(0, (vertexBytes / 2 / 32) * 32);
                     int midColour = firstVertexColor(vertices, mid);
                     record("copy check: before=0x" + Integer.toHexString(beforeColour)
@@ -1068,12 +1096,13 @@ public final class TerrainRenderer {
                 if (mesh.parts.indexBuffer() != null) {
                     ByteBuffer indices = mesh.parts.indexBuffer().getDirectBuffer();
                     int indexBytes = mesh.parts.indexBuffer().getLength();
-                    indexSegment = indexArena(this.context, resources).allocate(indexBytes);
-                    indexArena(this.context, resources).write(indexSegment.byteOffset(), MemoryUtil.memAddress(indices), indexBytes);
+                    VulkanArena indicesArena = indexArena(this.context, resources);
+                    indexSegment = indicesArena.allocate(indexBytes);
+                    indicesArena.write(indexSegment.byteOffset(), MemoryUtil.memAddress(indices), indexBytes);
                     uploaded += indexBytes;
                 }
 
-                SectionRenderDataStorage storage = region.createStorage(mesh.pass, configuration);
+                SectionRenderDataStorage storage = storageForPass(region, mesh.pass, storageByPass);
                 storage.setMeshes(mesh.sectionIndex, vertexSegment, indexSegment, mesh.parts.ranges());
             } else if (mesh.sorted != null) {
                 ByteBuffer indices = mesh.sorted.indexData().getDirectBuffer();
@@ -1082,7 +1111,7 @@ public final class TerrainRenderer {
                 indexArena(this.context, resources).write(indexSegment.byteOffset(), MemoryUtil.memAddress(indices), indexBytes);
                 uploaded += indexBytes;
 
-                SectionRenderDataStorage storage = region.createStorage(mesh.pass, configuration);
+                SectionRenderDataStorage storage = storageForPass(region, mesh.pass, storageByPass);
                 storage.replaceIndexBuffer(mesh.sectionIndex, indexSegment);
             }
         }
