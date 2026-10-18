@@ -219,6 +219,27 @@ public final class VulkanSwapchain {
     private float lastPresentedMean = -1.0f;
     /** {@code -Dceltium.vulkan.presentReadback=true} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
+    /**
+     * Per-stage wall nanos inside {@link #presentImage}: the acquire, the diagnostic readback (whose own submit waits
+     * on a fence) and the queue present. The present runs between updateRenderer and the swap, outside every frame
+     * bracket, so a frame-interval gap needs these to say which stage the renderer's wait actually lives in.
+     */
+    private static long presentAcquireNanos;
+    private static long presentReadbackNanos;
+    private static long presentQueueNanos;
+    private static long presentStageCalls;
+    private static long presentCapsNanos;
+    private static long presentSubmitNanos;
+
+    /** {@return the accumulated per-stage present costs, as {@code acquire/readback/queue} milliseconds} */
+    public static String presentStageSummary() {
+        return "acquireMs=" + (presentAcquireNanos / 1000000L)
+                + " readbackMs=" + (presentReadbackNanos / 1000000L)
+                + " queueMs=" + (presentQueueNanos / 1000000L)
+                + " capsMs=" + (presentCapsNanos / 1000000L)
+                + " submitMs=" + (presentSubmitNanos / 1000000L)
+                + " calls=" + presentStageCalls;
+    }
     /** Bisection switch: present without recording anything, to separate the recording from the semaphores. */
     private static final boolean PRESENT_NO_RECORD = Boolean.getBoolean("celtium.vulkan.presentNoRecord");
     /** Experiment: a fresh semaphore pair per present, to test whether reuse is what validation objects to. */
@@ -923,10 +944,13 @@ public final class VulkanSwapchain {
             // it presents then disagrees with the window (measured: a 1280x720 image out of a 1024x640 window). Ask
             // the surface for its size now and mark the swapchain out of date; the caller's existing rebuild handles it.
             try (org.lwjgl.system.MemoryStack capStack = org.lwjgl.system.MemoryStack.stackPush()) {
+                long capsStartedNanos = System.nanoTime();
                 org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR current =
                         org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR.calloc(capStack);
-                if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(this.context.physicalDevice(), this.surface, current)
-                        == VK_SUCCESS) {
+                int capsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(this.context.physicalDevice(),
+                        this.surface, current);
+                presentCapsNanos += System.nanoTime() - capsStartedNanos;
+                if (capsResult == VK_SUCCESS) {
                     int currentWidth = current.currentExtent().width();
                     int currentHeight = current.currentExtent().height();
                     if (currentWidth > 0 && currentHeight > 0
@@ -936,8 +960,10 @@ public final class VulkanSwapchain {
                     }
                 }
             }
+            long acquireStartedNanos = System.nanoTime();
             int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                     VK_NULL_HANDLE, index);
+            presentAcquireNanos += System.nanoTime() - acquireStartedNanos;
             if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
                 if (result == VK_ERROR_OUT_OF_DATE_KHR) {
                     // The image the acquire handed back cannot be used, so nothing is submitted and nothing is
@@ -993,9 +1019,11 @@ public final class VulkanSwapchain {
             // acquire and the bridge, signals renderFinished and the bridge's done semaphore per image.
             long bridgeDone = this.bridgeTarget != null
                     ? this.bridgeTarget.presentDoneSemaphore(index.get(0)) : bridgeDoneSemaphore;
+            long submitStartedNanos = System.nanoTime();
             String submitError = submitPreRecorded(stack, recorded,
                     new long[] {acquire, bridgeWaitSemaphore},
                     new long[] {renderFinished, bridgeDone});
+            presentSubmitNanos += System.nanoTime() - submitStartedNanos;
             if (submitError != null) {
                 return submitError;
             }
@@ -1046,7 +1074,9 @@ public final class VulkanSwapchain {
             }
             if (PRESENT_READBACK && this.presentReadbacks < 100000) {
                 this.presentReadbacks++;
+                long readbackStartedNanos = System.nanoTime();
                 this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
+                presentReadbackNanos += System.nanoTime() - readbackStartedNanos;
                 if (!this.pendingDumpPaths.isEmpty()) {
                     java.util.List<java.nio.file.Path> paths =
                             new java.util.ArrayList<>(this.pendingDumpPaths);
@@ -1087,7 +1117,10 @@ public final class VulkanSwapchain {
                         + Long.toHexString(renderFinished) + " acquireCursor=" + this.acquireSemaphoreCursor
                         + " renderCursor=" + this.renderFinishedCursor);
             }
+            long queueStartedNanos = System.nanoTime();
             int presented = vkQueuePresentKHR(this.context.queue(), present);
+            presentQueueNanos += System.nanoTime() - queueStartedNanos;
+            presentStageCalls++;
             if (presented == VK_SUBOPTIMAL_KHR || presented == VK_ERROR_OUT_OF_DATE_KHR) {
                 this.outOfDate = true;
             }

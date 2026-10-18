@@ -4407,8 +4407,10 @@ public final class ValidationClient {
                 // Which pass produced this frame, from the renderer's own per-frame ring. The viewport and draw
                 // counters below say what the frame looked like; this says where its time went, and the two were
                 // read together once already: the 12 slowest frames of gv-cohort-r30-box2 were 11 frames of 24-25
-                // terrain sections under a 0.50x13.60x0.45 viewport.
-                + "passes[" + org.soutalab.celtium.vulkan.FramePassTimings.lastFrameSummary() + "] "
+                // terrain sections under a 0.50x13.60x0.45 viewport. Read reflectively: a GL-baseline run carries no
+                // renderer classes at all (the fixture is renderer-agnostic for frame-interval comparison), and the
+                // first direct reference crashed that leg before a single slow frame was retained.
+                + "passes[" + celtium$rendererPassSummary() + "] "
                 + celtium$phaseEvidence(celtium$rendererDebugLines())
                 + " upload[thisFrameMs=" + uploadThisFrameMillis
                 + " submitWaitMillis=" + celtium$uploadWaitSampledMillis
@@ -4429,6 +4431,38 @@ public final class ValidationClient {
         if (intervalMs > celtium$slowFrameMillis.get(fastest).doubleValue()) {
             celtium$slowFrames.set(fastest, entry);
             celtium$slowFrameMillis.set(fastest, Double.valueOf(intervalMs));
+        }
+    }
+
+    /**
+     * The renderer's per-frame pass summary, or a marker when no renderer classes are on the classpath.
+     * <p>
+     * A Celeritas-GL baseline leg ships no celtium-vulkan classes, so the direct {@code FramePassTimings}
+     * reference that used to sit in {@link #celtium$recordSlowFrame} failed verification linkage the first time a
+     * frame qualified. The method is resolved once and kept, so a present renderer pays one reflective call per slow
+     * frame and an absent one pays none.
+     */
+    private static java.lang.reflect.Method celtium$passSummaryMethod;
+    private static boolean celtium$passSummaryResolved;
+    private static String celtium$rendererPassSummary() {
+        if (!celtium$passSummaryResolved) {
+            celtium$passSummaryResolved = true;
+            try {
+                celtium$passSummaryMethod = Class.forName("org.soutalab.celtium.vulkan.FramePassTimings")
+                        .getDeclaredMethod("lastFrameSummary");
+                celtium$passSummaryMethod.setAccessible(true);
+            } catch (Throwable absent) {
+                celtium$passSummaryMethod = null;
+            }
+        }
+        if (celtium$passSummaryMethod == null) {
+            return "no-renderer";
+        }
+        try {
+            Object summary = celtium$passSummaryMethod.invoke(null);
+            return summary == null ? "empty" : summary.toString();
+        } catch (Throwable error) {
+            return "unreadable:" + error.getClass().getSimpleName();
         }
     }
 

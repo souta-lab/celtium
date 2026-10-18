@@ -1112,6 +1112,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     private int presentHookCalls;
+    /**
+     * Swap-point wall-clock accounting, in nanos: {@code celtium$presentFrame} runs between updateRenderer's end and
+     * the window swap, outside every {@code FramePassTimings} bracket. A frame-interval gap that survives the bracket
+     * split needs these to say whether the present (acquire, blit submit, queue present) or the boundary flush owns
+     * the time.
+     */
+    private long swapPointNanos;
+    private long swapPointFlushNanos;
+    private long swapPointWorstNanos;
+    private long swapPointCalls;
+    /** The three blocks inside a present call that are not the swapchain stages themselves. */
+    private long swapPointImageNanos;
+    private long swapPointDumpNanos;
+    private long swapPointPollNanos;
     /** Bounded probe counter for the frame-queued setter. */
     private int celtium$lastFrameReachedQueueLogs;
     /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
@@ -7436,11 +7450,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * for that caller.
      */
     public void celtium$flushPendingAtFrameBoundary() {
+        long flushStartedNanos = System.nanoTime();
         try {
             flushPendingBeforeGlDraw();
         } catch (RuntimeException | LinkageError error) {
             // A failed flush must not stop the frame: the queued work keeps its owner and the next boundary retries.
             record("frame-boundary flush failed: " + error);
+        } finally {
+            this.swapPointFlushNanos += System.nanoTime() - flushStartedNanos;
         }
     }
 
@@ -9415,6 +9432,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // which without a log. Surfaced here and not in diagnostics(): that list is not part of the report.
                 + " gameClearLatch=" + (celtium$gameClearLatchEnabled() ? "on" : "off")
                 + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
+                + " swapPointCalls=" + this.swapPointCalls
+                + " swapPointMillis=" + (this.swapPointNanos / 1000000L)
+                + " swapPointFlushMillis=" + (this.swapPointFlushNanos / 1000000L)
+                + " swapPointWorstMs=" + (this.swapPointWorstNanos / 1000000L)
+                + " presentStages[" + (this.swapchain != null
+                        ? org.soutalab.celtium.vulkan.VulkanSwapchain.presentStageSummary() : "none") + "]"
+                + " swapPointImageMillis=" + (this.swapPointImageNanos / 1000000L)
+                + " swapPointDumpMillis=" + (this.swapPointDumpNanos / 1000000L)
+                + " swapPointPollMillis=" + (this.swapPointPollNanos / 1000000L)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
                 + " boundTextureSamples=" + this.textureStats.boundTextureComparisons()
@@ -12516,6 +12542,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     public boolean celtium$presentFrame() {
+        long presentStartedNanos = System.nanoTime();
+        try {
+            return celtium$presentFrameImpl();
+        } finally {
+            // Swap-point accounting: this call and the boundary flush before it are the renderer's work between the
+            // end of updateRenderer and the window swap - outside every FramePassTimings bracket, so a leg's
+            // wall-vs-CPU gap cannot attribute them without a dedicated counter.
+            long spentNanos = System.nanoTime() - presentStartedNanos;
+            this.swapPointNanos += spentNanos;
+            this.swapPointCalls++;
+            if (spentNanos > this.swapPointWorstNanos) {
+                this.swapPointWorstNanos = spentNanos;
+            }
+        }
+    }
+
+    private boolean celtium$presentFrameImpl() {
         celtium$dropSplashCanvasesAtSplashEnd();
         // Fourth trigger for the counter summary, and the one a screen-open leg needs: frameId advances on the world
         // render path, which a GUI screen skips, so a leg that opens a screen never reached the frame-120 print and
@@ -12664,9 +12707,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 System.out.println("[Celtium] " + presentLine);
                 record(presentLine);
             }
+            long presentImageStartedNanos = System.nanoTime();
             this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
                     presentSourceLayout, this.targetWidth, this.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
                     org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+            this.swapPointImageNanos += System.nanoTime() - presentImageStartedNanos;
             this.presentAttempts++;
             this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();
@@ -12688,11 +12733,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         }
                     }
                 }
+                long dumpStartedNanos = System.nanoTime();
                 dumpFrameIfRequested(this.framePresentedFromVulkan);
+                this.swapPointDumpNanos += System.nanoTime() - dumpStartedNanos;
                 // The caller skips the game's own Display.update when this returns true, and that call is also what polls
                 // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
                 // this module because the GLFW classes are on its classpath and not on the game module's.
+                long pollStartedNanos = System.nanoTime();
                 celtium$pollEvents();
+                this.swapPointPollNanos += System.nanoTime() - pollStartedNanos;
                 // The game's own Display.update runs after this and would swap through GL as well. The frame that swap
                 // would show is the one just presented, so it is skipped once, at the swap point itself.
                 this.swapPendingFromVulkan = true;
