@@ -1615,6 +1615,12 @@ public final class VulkanTextureRegistry {
         return null;
     }
 
+    /** {@return the mirror dims for this GL name, or {@code none}} - the box-glyph hunt needs this cheap. */
+    public String celtium$entryDims(int glTextureId) {
+        Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+        return entry == null ? "none" : entry.width + "x" + entry.height;
+    }
+
     /** {@return how many copies took the native route, and how many were refused with the last reason}. */
     public String blitSummary() {
         return "textureCopyBlits=" + this.blitsInto + " textureCopyBlitRefusals=" + this.blitRefusals

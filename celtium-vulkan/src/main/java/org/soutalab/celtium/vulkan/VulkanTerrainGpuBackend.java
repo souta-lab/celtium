@@ -3554,7 +3554,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return !java.util.Arrays.equals(now, captured);
     }
 
+    private static final boolean FORCE_IDENTITY_TEXMAT = Boolean.getBoolean("celtium.forceIdentityTexmat");
+
     private float[] celtium$textureAffine() {
+        if (FORCE_IDENTITY_TEXMAT) {
+            return null;
+        }
         try {            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
             // and reading the shared stack would return whichever unit was last active.
             float[] matrix = this.immediateState.peekTextureMatrix(0);
@@ -5234,9 +5239,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         float savedAlphaRef = this.immediateState.alphaFuncReference();
         float[] savedProjection = this.glProjection.clone();
         float[] savedModelView = this.glModelView.clone();
+        int savedUnit = this.immediateState.activeTextureUnit();
         try {
+            // The run's texture must land on unit 0 - the sampler the group's shader reads and the unit
+            // boundTextureName() reports. bindTexture writes the ACTIVE unit, and a flush that happens while the
+            // game had unit 1 selected (the light map unit OpenGlHelper binds) would leave unit 0 holding the last
+            // page the game bound - measured as ja_jp text rendered from whatever page texture unit 0 still named:
+            // カ drew page_00's «, 語 drew page_30's glyphs, while the run itself carried the right page.
+            this.immediateState.activeTextureUnit(0);
             this.immediateState.texture2dEnabled(true);
             this.immediateState.bindTexture(run.texture);
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // The run's texture is also bound through the direct-GL route: submitImmediateBatch supersedes
+                // boundTexture with the live glBindTexture whenever the latest bind came through that route, and a
+                // state-model write alone is invisible to it. Without this the last page the game bound for the NEXT
+                // glyph overrode the run's texture at flush - measured as ja_jp text drawn from the wrong page at the
+                // right cell: カ rendered page_00's «, 漢 rendered page_5b's glyph.
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(
+                        org.lwjgl.opengl.GL11.GL_TEXTURE_2D, run.texture);
+            }
             this.immediateState.alphaTestEnabled(run.alphaTest);
             this.immediateState.alphaFuncReference(run.alphaRef);
             System.arraycopy(run.projection, 0, this.glProjection, 0, 16);
@@ -5247,8 +5268,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateLastRefusal = "the coalesced font run could not be submitted: " + error;
             return false;
         } finally {
+            this.immediateState.activeTextureUnit(0);
             this.immediateState.texture2dEnabled(savedTexture2d);
             this.immediateState.bindTexture(savedTexture);
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // Restore through the same direct route so the GL-binding record matches the state model again.
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(
+                        org.lwjgl.opengl.GL11.GL_TEXTURE_2D, savedTexture);
+            }
+            this.immediateState.activeTextureUnit(savedUnit);
             this.immediateState.alphaTestEnabled(savedAlphaTest);
             this.immediateState.alphaFuncReference(savedAlphaRef);
             System.arraycopy(savedProjection, 0, this.glProjection, 0, 16);
@@ -13432,6 +13460,63 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * backend samples to differ from the image the announcements patch - the split this change removes. Creation stays lazy
      * because the first texture registration happens before any world draw.
      */
+    /** Static probe for the font-glyph diagnostic: the mirror dims for a bound GL name, or "none"/"nobackend". */
+    public static String celtium$mirrorDims(int glTextureId) {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+            return vulkan.celtium$registry().celtium$entryDims(glTextureId);
+        }
+        return "nobackend";
+    }
+
+    /** The box-glyph hunt: the mirror's own pixels, read back, so "the GPU image holds the rasterised sheet" is
+     *  measured and not assumed. {@code -Dceltium.mirrorDump=<name>:<path>} dumps the whole level-0 rect once. */
+    public static String celtium$mirrorProbe(int glTextureId) {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (!(backend instanceof VulkanTerrainGpuBackend vulkan)) {
+            return "nobackend";
+        }
+        String spec = System.getProperty("celtium.mirrorDump");
+        String dumpPath = null;
+        if (spec != null) {
+            // Comma-separated <name>:<path> pairs so one leg can dump several mirrors; a path prefix without a
+            // name ("all=/tmp/m-") dumps every texture the probe touches, named by its GL id.
+            for (String pair : spec.split(",")) {
+                int colon = pair.indexOf(':');
+                if (colon > 0) {
+                    if ("all".equals(pair.substring(0, colon))) {
+                        dumpPath = pair.substring(colon + 1) + glTextureId + ".png";
+                        break;
+                    }
+                    if (pair.substring(0, colon).equals(Integer.toString(glTextureId))) {
+                        dumpPath = pair.substring(colon + 1);
+                        break;
+                    }
+                }
+            }
+        }
+        if (dumpPath == null) {
+            return "skip";
+        }
+        org.soutalab.celtium.vulkan.VulkanGlTexture texture = vulkan.celtium$registry().get(glTextureId);
+        if (texture == null) {
+            return "nomirror";
+        }
+        int w = texture.width(), h = texture.height();
+        int[] pixels = vulkan.textureCopyService.readImageRectangle(texture.image(), 0, 0, Math.min(w, 1024), h);
+        try {
+            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(Math.min(w, 1024), h,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            out.setRGB(0, 0, Math.min(w, 1024), h, pixels, 0, Math.min(w, 1024));
+            javax.imageio.ImageIO.write(out, "png", new java.io.File(dumpPath));
+            return "dumped";
+        } catch (Throwable t) {
+            return "fail:" + t;
+        }
+    }
+
     private VulkanTextureRegistry celtium$registry() {
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);

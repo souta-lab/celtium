@@ -907,6 +907,27 @@ public final class ValidationClient {
     private int celtium$clientTicks;
     /** One-shot flag for the unicode-font reproduction leg; the setter only has to run once. */
     private boolean unicodeFontApplied;
+
+    /**
+     * The user's bug: ja_jp menu text as boxes. The leg instance runs en_us, so nothing on its menu exercises a
+     * page-0x30+ glyph - this probe draws one. {@code -Dceltium.validation.jaProbe} paints hiragana, katakana and
+     * kanji over the held title screen through the same renderUnicodeChar path the menu uses, and the screenshot
+     * then shows whether those cells of the font sheet reach the frame.
+     */
+    @SubscribeEvent
+    public void celtium$drawJaProbe(net.minecraftforge.client.event.GuiScreenEvent.DrawScreenEvent.Post event) {
+        if (!Boolean.getBoolean("celtium.validation.jaProbe")) {
+            return;
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc == null || mc.fontRenderer == null) {
+            return;
+        }
+        mc.fontRenderer.drawString("日本語テスト・あいうえお・漢字カタカナ・シングルプレイ・マルチプレイ", 20, 40,
+                0xFFFFFF);
+        mc.fontRenderer.drawString("Minecraft 1.12.2 ABCDEFG abcdefg 0123456789", 20, 55, 0xFFFFFF);
+        mc.fontRenderer.drawString("オプション 設定 言語 終了 世界を生成", 20, 70, 0xFFFFFF);
+    }
     private final int celtium$menuDumpTick =
             Integer.getInteger("celtium.validation.dumpPresentedMenuTick", 0).intValue();
     private boolean celtium$menuDumpRequested;

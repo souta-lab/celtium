@@ -2066,6 +2066,11 @@ public final class VulkanGlTexture {
         return view;
     }
 
+    /** {@return the mirror image handle} - diagnostics read the pixels behind the descriptor. */
+    public long image() {
+        return image;
+    }
+
     /**
      * Reports a mirror whose view or sampler is null at the moment a descriptor reads it.
      * <p>

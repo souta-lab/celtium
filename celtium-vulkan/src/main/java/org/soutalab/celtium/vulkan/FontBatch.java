@@ -246,6 +246,8 @@ public final class FontBatch {
     private int pendingDrawMode;
     /** The cheap state witnesses a run was started with: a change in any of them flushes it through the normal path. */
     private int pendingTexture = -1;
+    private static final boolean APPEND_DEBUG = Boolean.getBoolean("celtium.fontAppend.debug");
+    private int appendLogged;
     private long pendingColorBits;
     private boolean pendingAlphaTest;
     private float pendingAlphaRef;
@@ -354,6 +356,12 @@ public final class FontBatch {
                 return false;
             }
             int texture = view.texture2dEnabled() ? view.boundTextureName() : view.whiteTextureId();
+            if (APPEND_DEBUG && appendLogged < 80) {
+                appendLogged++;
+                System.out.println("[Celtium] CELTIUM_FONTAPPEND tex=" + texture + " mode=" + drawMode
+                        + " verts=" + vertexCount + " pendingTex=" + this.pendingTexture
+                        + " pendingVerts=" + this.pendingVertexCount);
+            }
             long colourBits = celtium$fontColourBits(view);
             boolean alphaTest = view.alphaTestEnabled();
             float alphaRef = view.alphaFuncReference();

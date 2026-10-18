@@ -184,6 +184,15 @@ public final class CeltiumFontAtlas {
         }
         g.dispose();
         atlasImage = image;
+        // Diagnostics: write the rasterised sheet where a probe asks for it, so "the atlas cell a glyph samples
+        // holds what the resource manager served" is a picture and not an assumption.
+        String dump = System.getProperty("celtium.fontAtlas.dump");
+        if (dump != null && !dump.isEmpty()) {
+            try {
+                ImageIO.write(image, "png", new java.io.File(dump));
+            } catch (java.io.IOException ignored) {
+            }
+        }
         TextureManager tm = mc.getTextureManager();
         if (tm == null) {
             buildFailed = true;
