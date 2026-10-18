@@ -40,8 +40,19 @@ public final class SpirvStageCompiler {
         if (!version.find()) {
             throw new CompileFailure("missing GLSL #version; S2 requires explicit Vulkan GLSL 450+");
         }
-        if (Integer.parseInt(version.group(1)) < 450) {
-            throw new CompileFailure("GLSL " + version.group(1)
+        int versionNumber;
+        try {
+            // The regex accepts any digit run, so the parse can overflow - a 19+ digit field used to leak
+            // NumberFormatException past the CompileFailure contract (audit #350). The raw field is capped for the
+            // diagnostic instead of echoed whole.
+            versionNumber = Integer.parseInt(version.group(1));
+        } catch (NumberFormatException overflow) {
+            String field = version.group(1);
+            throw new CompileFailure("GLSL #version field is not a readable version (" + field.length()
+                    + " digits" + (field.length() > 12 ? ", truncated" : ": '" + field + "'") + ")");
+        }
+        if (versionNumber < 450) {
+            throw new CompileFailure("GLSL " + versionNumber
                     + " is legacy OptiFine syntax; needs explicit S2 lowering before Vulkan compilation");
         }
         if (!Files.isRegularFile(glslangValidator) || !Files.isExecutable(glslangValidator)) {

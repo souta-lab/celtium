@@ -72,6 +72,43 @@ class SpirvStageCompilerTest {
                 () -> SpirvStageCompiler.compile(missingCompiler, Stage.VERTEX, "#version 450\n" + "x".repeat(1024*1024)));
     }
 
+    @Test void versionFieldOverflowsToCompileFailureNotJvmFault() {
+        // Audit #350: an arbitrary-length #version digit run overflowed Integer.parseInt and escaped as
+        // NumberFormatException before the executable check, past the declared CompileFailure contract.
+        Path missingCompiler = temp.resolve("does-not-exist");
+        // Too large for int, and far longer than any sane version field.
+        SpirvStageCompiler.CompileFailure overflow = assertThrows(SpirvStageCompiler.CompileFailure.class,
+                () -> SpirvStageCompiler.compile(missingCompiler, Stage.VERTEX,
+                        "#version 2147483648\nvoid main(){}"));
+        assertTrue(overflow.getMessage().contains("version"));
+        SpirvStageCompiler.CompileFailure huge = assertThrows(SpirvStageCompiler.CompileFailure.class,
+                () -> SpirvStageCompiler.compile(missingCompiler, Stage.VERTEX,
+                        "#version " + "9".repeat(40) + "\nvoid main(){}"));
+        assertTrue(huge.getMessage().contains("digits"));
+        // The bounded diagnostic does not echo the whole oversized field.
+        assertFalse(huge.getMessage().contains("9".repeat(40)));
+    }
+
+    @Test void versionTable() throws Exception {
+        Path fake = fakeCompiler(fixtureSpv(0), 0);
+        // Missing, legacy, boundary-low are CompileFailure before the tool runs.
+        assertThrows(SpirvStageCompiler.CompileFailure.class,
+                () -> SpirvStageCompiler.compile(temp.resolve("x"), Stage.VERTEX, "void main(){}"));
+        assertThrows(SpirvStageCompiler.CompileFailure.class,
+                () -> SpirvStageCompiler.compile(temp.resolve("x"), Stage.VERTEX,
+                        "#version 100\nvoid main(){}"));
+        assertThrows(SpirvStageCompiler.CompileFailure.class,
+                () -> SpirvStageCompiler.compile(temp.resolve("x"), Stage.VERTEX,
+                        "#version 449\nvoid main(){}"));
+        // 450+ reaches the compiler process.
+        assertNotNull(SpirvStageCompiler.compile(fake, Stage.VERTEX, "#version 450\nvoid main(){}"));
+        assertNotNull(SpirvStageCompiler.compile(fake, Stage.VERTEX, "#version 460\nvoid main(){}"));
+        // A syntactically malformed directive is not a #version at all.
+        assertThrows(SpirvStageCompiler.CompileFailure.class,
+                () -> SpirvStageCompiler.compile(temp.resolve("x"), Stage.VERTEX,
+                        "#version\nvoid main(){}"));
+    }
+
     private Path fakeCompiler(byte[] binary, int exit) throws Exception {
         Path artifact = temp.resolve("binary.spv");
         Files.write(artifact, binary);
