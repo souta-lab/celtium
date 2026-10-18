@@ -124,18 +124,35 @@ public final class VulkanUiPipeline {
     }
 
     /** Binds the pipeline, its descriptor set and the given projection/model-view pair, then records the draw. */
-    public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants) {
+    public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
+                     long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
             return;
         }
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                org.lwjgl.system.MemoryStack.stackGet().longs(this.descriptorSet), null);
+        // OPT-12's dedup applies here too - the draw sits in the same window stream as the immediate groups.
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
+        if (bindCache[5] != this.descriptorSet) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    org.lwjgl.system.MemoryStack.stackGet().longs(this.descriptorSet), null);
+            bindCache[5] = this.descriptorSet;
+        }
         vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, pushConstants);
-        org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0,
-                org.lwjgl.system.MemoryStack.stackGet().longs(mesh.vertexBuffer()),
-                org.lwjgl.system.MemoryStack.stackGet().longs(0L));
-        vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer(), 0L, VK_INDEX_TYPE_UINT32);
+        long vb = mesh.vertexBuffer();
+        long ib = mesh.indexBuffer();
+        if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L) {
+            org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0,
+                    org.lwjgl.system.MemoryStack.stackGet().longs(vb),
+                    org.lwjgl.system.MemoryStack.stackGet().longs(0L));
+            vkCmdBindIndexBuffer(commandBuffer, ib, 0L, VK_INDEX_TYPE_UINT32);
+            bindCache[0] = vb;
+            bindCache[1] = ib;
+            bindCache[2] = 0L;
+            bindCache[3] = 0L;
+        }
         mesh.draw(commandBuffer);
     }
 

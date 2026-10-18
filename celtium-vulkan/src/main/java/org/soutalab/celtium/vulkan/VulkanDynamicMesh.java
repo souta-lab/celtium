@@ -248,6 +248,54 @@ public final class VulkanDynamicMesh {
         draw(commandBuffer);
     }
 
+    /**
+     * The flush-path form: consecutive groups borrowing from the same arena re-bind the same two buffers every
+     * draw (~19 groups/frame each paying vkCmdBindVertexBuffers+vkCmdBindIndexBuffer, OPT-12). The four slots of
+     * {@code bindCache} hold what the buffer actually has bound now: {vertexBuffer, indexBuffer, vertexBindOffset,
+     * indexBindOffset}. A slice whose byte offset converts to vertex units ({@code offset % stride == 0}) is carried
+     * in the draw call's vertexOffset/firstIndex instead - the buffers bind once at 0 and only the draw command is
+     * emitted per group. A slice that does not convert binds at its own offset exactly as {@link #bindAndDraw} does,
+     * and the cache then names that binding, so a mixed stream still dedups whatever repeats.
+     */
+    public void bindAndDraw(VkCommandBuffer commandBuffer, long[] bindCache) {
+        if (this.destroyed) {
+            throw new IllegalStateException("a destroyed mesh cannot be drawn");
+        }
+        long vb = vertexBuffer();
+        long ib = indexBuffer();
+        long vbo = vertexBindOffset();
+        long ibo = indexBindOffset();
+        int stride = this.layout.stride;
+        // Index byte offsets are always 4-aligned (the arena aligns slices to 16 and indices are uint32), so the
+        // firstIndex conversion below is lossless on every path.
+        boolean drawForm = stride > 0 && (vbo % stride) == 0L;
+        org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+        if (drawForm) {
+            if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L) {
+                org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(0L));
+                org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, 0L,
+                        org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+                bindCache[0] = vb;
+                bindCache[1] = ib;
+                bindCache[2] = 0L;
+                bindCache[3] = 0L;
+            }
+            org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
+                    (int) (ibo / 4L), (int) (vbo / stride), 0);
+            return;
+        }
+        if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != vbo || bindCache[3] != ibo) {
+            org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(vbo));
+            org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, ibo,
+                    org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+            bindCache[0] = vb;
+            bindCache[1] = ib;
+            bindCache[2] = vbo;
+            bindCache[3] = ibo;
+        }
+        draw(commandBuffer);
+    }
+
     /** Appends a vertex and returns the index the caller should pass to {@link #index(int)}. */
     public int nextVertex() {
         long base = vertexWriteAddress(this.vertexBytes, this.layout.stride);

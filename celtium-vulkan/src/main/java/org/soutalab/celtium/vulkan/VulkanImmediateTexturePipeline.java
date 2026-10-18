@@ -298,19 +298,28 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
     public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
-                     long descriptorSetToBind) {
+                     long descriptorSetToBind, long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
             return;
         }
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+        // OPT-12: the flush draws ~19 groups/frame and consecutive groups very often repeat the pipeline and the
+        // descriptor set - the bind cache dedups both, so the per-group tail is push + (maybe) one bind + draw.
+        // A pipeline switch disturbs the sets bound under the old layout, so the descriptor slot is invalidated on
+        // every rebind rather than trusted across layouts.
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
         // Only when there is one: the colourless variants of this class (the position-only and position-no-texture
         // ones) declare the set in their layout but their shaders never read it, and their callers pass 0. Binding
         // "set 0 = VK_NULL_HANDLE" is invalid - the validation layer said so itself on leg gv-cohort-r30-box,
         // "VUID-vkCmdBindDescriptorSets-pDescriptorSets-06563: pDescriptorSets[0] (VkDescriptorSet 0x0) is not a
         // valid VkDescriptorSet", ten times - and leaving a statically unused set unbound is legal.
-        if (descriptorSetToBind != 0L) {
+        if (descriptorSetToBind != 0L && bindCache[5] != descriptorSetToBind) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
+            bindCache[5] = descriptorSetToBind;
         }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
@@ -323,7 +332,7 @@ public final class VulkanImmediateTexturePipeline {
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
-        mesh.bindAndDraw(commandBuffer);
+        mesh.bindAndDraw(commandBuffer, bindCache);
     }
 
     public int vertexBytes() {

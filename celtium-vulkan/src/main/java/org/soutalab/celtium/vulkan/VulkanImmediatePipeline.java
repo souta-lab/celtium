@@ -136,11 +136,19 @@ public final class VulkanImmediatePipeline {
     }
 
     /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
-    public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants) {
+    public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
+                     long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
             return;
         }
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+        // OPT-12: the flush draws ~19 groups/frame and consecutive groups repeat the pipeline - rebinds are
+        // dedup'd against the flush's bind cache. A pipeline switch disturbs descriptor bindings, so the
+        // descriptor slot resets on every rebind even though this variant binds none of its own.
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
         ByteBuffer clamped = pushConstants.duplicate();
@@ -152,7 +160,7 @@ public final class VulkanImmediatePipeline {
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
-        mesh.bindAndDraw(commandBuffer);
+        mesh.bindAndDraw(commandBuffer, bindCache);
     }
 
     public int vertexBytes() {

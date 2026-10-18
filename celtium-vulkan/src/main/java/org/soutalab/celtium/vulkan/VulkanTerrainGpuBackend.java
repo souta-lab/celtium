@@ -14317,7 +14317,8 @@ this.frameBufferOpen = false;
             // Fog off for the isolation quad: its machinery is what is under test, not the world's fog. The selector is
             // the only field the shaders branch on, and the rest of the block is left at this buffer's own zeros.
             push.putFloat(156, 0.0f);
-            this.immediatePipeline.draw(this.commandBuffer, this.isolationMesh, push);
+            this.immediatePipeline.draw(this.commandBuffer, this.isolationMesh, push,
+                    this.immediateBindCache);
             this.immediateIsolationDraws++;
         } finally {
             MemoryUtil.memFree(push);
@@ -14344,6 +14345,10 @@ this.frameBufferOpen = false;
         // with biased immediate groups). Forcing NaN here makes this segment's first group re-emit; the immediate
         // pipelines all declare the state, so nothing inside the loop below can invalidate it again.
         this.passBiasC = this.passBiasS = Float.NaN;
+        // OPT-12: the pipeline/descriptor/vertex/index binds the flush dedups below track the same command state -
+        // whatever ran between this window and the last (terrain, the previous pass, a blit) bound other values, so
+        // the cache is only valid inside one drawPendingImmediate segment.
+        java.util.Arrays.fill(this.immediateBindCache, -1L);
         closeCurrentImmediateGroup();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // 216, not 208: the lit ITEM pipeline's block is five lighting vec4 (128..207) *plus* the light-map
@@ -14651,11 +14656,11 @@ this.frameBufferOpen = false;
                         this.immediateStatistics.noteImmediateDepthBiasedGroups();
                     }
                     Object pipeline = prepared.pipeline;
-                    if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                    else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                    else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                    else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
-                    else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
+                    if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                    else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                    else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                    else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                    else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);
                 }
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
@@ -14744,6 +14749,14 @@ this.frameBufferOpen = false;
     private int passVpX, passVpY, passVpW, passVpH;
     private int passScX, passScY, passScW, passScH;
     private float passBiasC = Float.NaN, passBiasS = Float.NaN;
+    /**
+     * OPT-12: {vertexBuffer, indexBuffer, vertexBindOffset, indexBindOffset, pipeline, descriptorSet} - what the
+     * current command buffer actually has bound for the immediate-draw path. Consecutive groups in a flush repeat
+     * pipeline, descriptor and arena buffers (~19 groups/frame); the dedup saves ~2-4 vkCmd calls per repeated
+     * group. Refilled at the head of every {@link #drawPendingImmediate} - a -1 can never be a real handle, and any
+     * other pass's binds between windows leave this stale, which is exactly what the fill discards.
+     */
+    private final long[] immediateBindCache = new long[6];
 
     /**
      * Applies one group's GL viewport as a Vulkan viewport and scissor.
@@ -14959,7 +14972,8 @@ this.frameBufferOpen = false;
                 // Identity projection and model-view: the vertices above are already in clip space.
                 putIdentity(push, 0);
                 putIdentity(push, 64);
-                this.uiPipeline.draw(this.commandBuffer, this.uiMesh, push);
+                this.uiPipeline.draw(this.commandBuffer, this.uiMesh, push,
+                    this.immediateBindCache);
             } finally {
                 MemoryUtil.memFree(push);
             }
