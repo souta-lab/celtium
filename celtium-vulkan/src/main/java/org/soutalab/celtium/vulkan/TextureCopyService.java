@@ -137,6 +137,22 @@ public final class TextureCopyService {
         /** {@return whether the GPU confirmed every submission}; a false is a refusal, never a fallback. */
         boolean waitForIdle();
 
+        /**
+         * {@return the framebuffer identity whose bind reported this colour texture}, or {@code Long#MIN_VALUE}.
+         * The {@code glReadPixels} path resolves a bound read framebuffer by its GL name: the stub records which
+         * colour texture that name carries (raw GL and vanilla binds both), and the identity that texture was
+         * reported under is the one whose pair the read's pixels live in.
+         */
+        long identityForColorTexture(int glTextureName);
+
+        /**
+         * {@return the framebuffer identity reported under this GL framebuffer-object name}, or
+         * {@code Long#MIN_VALUE}. The mixin sees both at bind time; the stub only has the name, so a readback bound to
+         * a vanilla framebuffer - which may never have called {@code glFramebufferTexture2D} through the stub, the
+         * main framebuffer being the measured case - resolves through this map instead of the colour-texture chain.
+         */
+        long identityForFramebufferName(int framebufferObject);
+
         void record(String diagnostic);
 
         /** {@return one line describing a throwable}, the same text the backend's own diagnostics use. */
@@ -790,6 +806,30 @@ public final class TextureCopyService {
 
     private long ownedReadImage(int readFbo) {
         GllessFrameTarget glless = this.host.offTargetTarget();
+        if (readFbo != 0) {
+            // The name-to-identity map covers every framebuffer the mixin saw at bind time, including the main one -
+            // whose creation never routed a glFramebufferTexture2D through the stub, which the texture chain below
+            // cannot see (measured: readFbo=1 refused). Raw-GL framebuffers have no object identity, so they fall back
+            // to resolving the colour texture their attach call did record, then the identity it was reported under.
+            // The pair the draws went into is the identity's own chain pair - not "the" shared one, which is what the
+            // single-pair design got wrong.
+            long identity = this.host.identityForFramebufferName(readFbo);
+            if (identity == Long.MIN_VALUE) {
+                int colorTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                        .celtium$framebufferColorTexture(readFbo);
+                identity = colorTexture == 0 ? Long.MIN_VALUE
+                        : this.host.identityForColorTexture(colorTexture);
+            }
+            if (glless == null || identity == Long.MIN_VALUE) {
+                return 0L;
+            }
+            // The routing rule the draws followed, read back: the window and the main framebuffer's picture live in
+            // the frame image; every other non-main identity's draws went into that identity's own chain pair.
+            if (identity == 0L || identity == this.host.mainTargetIdentity()) {
+                return this.host.frameTarget() == null ? 0L : this.host.frameTarget().colorImage();
+            }
+            return glless.chainPairColorImage(identity);
+        }
         // The routing decision, printed bounded: which facts the read resolved from and which image it chose. The
         // panorama copy reads GL name 0 while the cube faces were offered for a non-zero identity, and uniform white
         // is what a read of the wrong image looks like, so the inputs have to be in the log rather than inferred.
@@ -802,7 +842,8 @@ public final class TextureCopyService {
                     + " currentIsMain=" + this.host.currentRenderTargetIsMain()
                     + " frameImage=" + (this.host.frameTarget() == null ? 0L : this.host.frameTarget().colorImage())
                     + " defaultPair=" + (glless == null ? 0L : glless.offTargetColorImage())
-                    + " chainPair=" + (glless == null ? 0L : glless.chainPairColorImage()));
+                    + " chainPair=" + (glless == null ? 0L
+                            : glless.chainPairColorImage(this.host.currentRenderTarget())));
         }
         // The read framebuffer's GL name against the main framebuffer's own recorded GL name - not against the object
         // identity, which is a different number space and made this branch unreachable. Measured: Minecraft's main
@@ -838,8 +879,8 @@ public final class TextureCopyService {
             // the same rule the draws did.
             String route = GllessFrameTarget.routeLabelForBinding(this.host.currentRenderTarget(), this.host.currentRenderTargetIsMain());
             if ("chain-pair".equals(route)) {
-                glless.ensureOffTarget(this.host.targetWidth(), this.host.targetHeight());
-                return glless.chainPairColorImage();
+                glless.ensureChainPair(this.host.currentRenderTarget(), this.host.targetWidth(), this.host.targetHeight());
+                return glless.chainPairColorImage(this.host.currentRenderTarget());
             }
             if ("default-pair".equals(route)) {
                 // The symmetric half of the rule above, and its absence is what the panorama measured. The binding is
@@ -873,7 +914,9 @@ public final class TextureCopyService {
                 // uniform white (`CELTIUM_TEX_COPY_SERVED … mean=255,255,255`, firstPixels all 0xffffffff).
                 if ("chain-pair".equals(GllessFrameTarget.routeLabelForBinding(this.host.lastDrawnOffTargetIdentity(),
                         false))) {
-                    return glless.chainPairColorImage();
+                    glless.ensureChainPair(this.host.lastDrawnOffTargetIdentity(),
+                            this.host.targetWidth(), this.host.targetHeight());
+                    return glless.chainPairColorImage(this.host.lastDrawnOffTargetIdentity());
                 }
                 return glless.offTargetColorImage();
             }
@@ -881,6 +924,83 @@ public final class TextureCopyService {
             return glless.offTargetColorImage();
         }
         return 0L;
+    }
+
+    /**
+     * A {@code glReadPixels}: reads the bound read framebuffer's image rectangle into the caller's buffer.
+     * <p>
+     * The contract is GL's synchronous one: the reads see every draw the game has issued so far, which the deferred
+     * submission model makes an explicit ordering point - pending groups flush, the frame's recordings submit, and the
+     * device is waited before the rectangle is read (the wait itself now does that submission under
+     * {@code batchFrameSubmits}). Only {@code GL_RGBA}/{@code GL_BGRA} + {@code GL_UNSIGNED_BYTE} into a client
+     * address are served; everything else is a refusal a mod sees as untouched buffer, the same answer a noop gives
+     * but named in the log instead of silent.
+     *
+     * @param readFbo the GL name bound to {@code GL_READ_FRAMEBUFFER} (0 = the window)
+     * @param address the caller's destination address (a PBO binding is an offset - refused)
+     * @return whether the pixels were written
+     */
+    public boolean celtium$readPixels(int readFbo, int x, int y, int width, int height,
+            int format, int type, long address) {
+        if (address == 0L || width <= 0 || height <= 0) {
+            return false;
+        }
+        // GL_UNSIGNED_BYTE (0x1401) is the only type the callers a readback can serve need; GL_RGBA (0x1908) and
+        // GL_BGRA (0x80E1) are the two orders ScreenShotHelper and screenshot mods use.
+        if (type != 0x1401 || (format != 0x1908 && format != 0x80E1)) {
+            return false;
+        }
+        long image = ownedReadImage(readFbo);
+        if (image == 0L) {
+            if (this.readPixelsRefusals < 8) {
+                this.readPixelsRefusals++;
+                System.out.println("[Celtium] CELTIUM_READ_PIXELS refused: no image for readFbo=" + readFbo
+                        + " rect=" + x + "," + y + " " + width + "x" + height);
+            }
+            return false;
+        }
+        // The draws the read must see, then the submission the wait must cover. Both were already the copy path's
+        // contract; under batchFrameSubmits the wait's own submitOpenFrameBuffer is what sends them to the queue.
+        if (this.host.hasPendingImmediateWork()) {
+            this.host.flushPendingBeforeGlDraw();
+        }
+        if (!this.host.waitForIdle()) {
+            return false;
+        }
+        int[] pixels = readImageRectangle(image, x, y, width, height);
+        if (pixels == null) {
+            return false;
+        }
+        // ARGB ints -> RGBA or BGRA bytes, in image row order - row 0 is the picture's bottom, which is also the row
+        // order GL's readback contract returns.
+        boolean bgra = format == 0x80E1;
+        long dst = address;
+        int count = Math.min(pixels.length, width * height);
+        for (int i = 0; i < count; i++) {
+            int p = pixels[i];
+            if (bgra) {
+                org.lwjgl.system.MemoryUtil.memPutByte(dst, (byte) p);
+                org.lwjgl.system.MemoryUtil.memPutByte(dst + 1, (byte) (p >>> 8));
+                org.lwjgl.system.MemoryUtil.memPutByte(dst + 2, (byte) (p >>> 16));
+            } else {
+                org.lwjgl.system.MemoryUtil.memPutByte(dst, (byte) (p >>> 16));
+                org.lwjgl.system.MemoryUtil.memPutByte(dst + 1, (byte) (p >>> 8));
+                org.lwjgl.system.MemoryUtil.memPutByte(dst + 2, (byte) p);
+            }
+            org.lwjgl.system.MemoryUtil.memPutByte(dst + 3, (byte) (p >>> 24));
+            dst += 4L;
+        }
+        this.readPixelsServed++;
+        return true;
+    }
+
+    /** Bounded refusals for {@link #celtium$readPixels} and the serve count for the run report. */
+    private int readPixelsRefusals;
+    private long readPixelsServed;
+
+    /** {@return the glReadPixels calls served this run}, for the texture-copy section of the run report. */
+    public long readPixelsServed() {
+        return this.readPixelsServed;
     }
 
     private String refuseTextureCopy(String reason) {
@@ -1063,7 +1183,7 @@ public final class TextureCopyService {
                     + " frame=" + this.host.frameId()
                     + " passAttached=0x" + Long.toHexString(this.host.passAttachedColorImage())
                     + " chainPair=0x" + Long.toHexString(this.host.offTargetTarget() == null ? 0L
-                            : this.host.offTargetTarget().chainPairColorImage())
+                            : this.host.offTargetTarget().chainPairColorImage(this.host.currentRenderTarget()))
                     + " frameImage=0x" + Long.toHexString(this.host.frameTarget() == null ? 0L
                             : this.host.frameTarget().colorImage()));
         }

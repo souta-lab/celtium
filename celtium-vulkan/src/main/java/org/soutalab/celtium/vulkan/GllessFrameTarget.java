@@ -5,6 +5,8 @@ import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
@@ -143,7 +145,19 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * game's framebuffer asks for, and the post chain adopts it as its input, so the chain reads the silhouette
      * rather than the copy of the whole scene the default pair holds.
      */
-    private final Pair chainPair = new Pair("chain");
+    /**
+     * The chain pair per framebuffer identity. Two non-main identities used to share one Pair: the second one's
+     * clear or draw then reached the first one's content between its draw and the read that sampled it - measured
+     * as the world going black when the loading overlay's FBO and the frame's own passes alternated (legs
+     * bisect4/5: acceptedForOtherTargets=11942 with pairClearsRefusedOtherIdentity=3), and as the fixture's second
+     * framebuffer never holding its quad (leg fboalias-amd: every pixel check failed). Each identity now owns its
+     * own pair, which is what the BH-14 census's "widest pair must fall to 1" acceptance meant. The pool is bounded:
+     * a mod cycling framebuffers evicts the oldest member rather than growing images forever; the evicted pair is
+     * retired, not deleted in place, because an in-flight command buffer can still name it.
+     */
+    private final java.util.Map<Long, Pair> chainPairs = new java.util.LinkedHashMap<Long, Pair>();
+    /** The eviction bound for {@link #chainPairs}; a session that binds more targets reuses the oldest. */
+    private static final int MAX_CHAIN_PAIRS = 8;
 
     private boolean frameOpen;
     private boolean deleted;
@@ -156,7 +170,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * {@code VulkanTerrainGpuBackend.bindFramebuffer} at the binding change that ends it.
      * <p>
      * The game clears three different framebuffers and only one of them is this image: its own main framebuffer is
-     * the delivered frame, the entity-outline framebuffer is {@link #chainPair} and the default framebuffer is
+     * the delivered frame, the entity-outline framebuffer is {@link #chainPairs} and the default framebuffer is
      * {@link #defaultPair}. The stub records a clear's buffer mask and the colour it would use, but neither says
      * <em>which</em> framebuffer was bound when the game asked for it, and the request is consumed at the next
      * frame's acquire - by which time the previous frame's last {@code glClearColor} is the outline framebuffer's
@@ -647,7 +661,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private float latchedAlpha;
         private double latchedDepth;
         private boolean defaultAcquired;
-        private boolean chainAcquired;
+        private final java.util.Map<Long, Boolean> chainAcquired = new java.util.HashMap<Long, Boolean>();
+        private final java.util.Map<Long, Integer> chainColorLayouts = new java.util.HashMap<Long, Integer>();
     }
 
     /** {@return the owner state as it is now}, to be handed to {@link #rollbackRecording} if the record is discarded. */
@@ -665,7 +680,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         snapshot.latchedAlpha = this.gameClearLatchedAlpha;
         snapshot.latchedDepth = this.gameClearLatchedDepth;
         snapshot.defaultAcquired = this.defaultPair.acquired;
-        snapshot.chainAcquired = this.chainPair.acquired;
+        for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
+            snapshot.chainAcquired.put(entry.getKey(), Boolean.valueOf(entry.getValue().acquired));
+            snapshot.chainColorLayouts.put(entry.getKey(), Integer.valueOf(entry.getValue().colorImageLayout));
+        }
         return snapshot;
     }
 
@@ -689,7 +707,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.gameClearLatchedAlpha = snapshot.latchedAlpha;
         this.gameClearLatchedDepth = snapshot.latchedDepth;
         this.defaultPair.acquired = snapshot.defaultAcquired;
-        this.chainPair.acquired = snapshot.chainAcquired;
+        for (java.util.Map.Entry<Long, Boolean> entry : snapshot.chainAcquired.entrySet()) {
+            Pair pair = this.chainPairs.get(entry.getKey());
+            if (pair != null) {
+                pair.acquired = entry.getValue().booleanValue();
+                Integer layout = snapshot.chainColorLayouts.get(entry.getKey());
+                if (layout != null) {
+                    pair.colorImageLayout = layout.intValue();
+                }
+            }
+        }
         this.recordingRollbacks++;
     }
 
@@ -874,7 +901,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .oldLayout(COLOR_RENDER_LAYOUT).newLayout(COLOR_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
-                        .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                        // The readback (glReadPixels' copy) and the composite's sampling are the consumers a
+                        // mid-frame clear must publish to, not only the attachment the next pass draws through.
+                        .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                                | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
                 barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
             }
             if (depth) {
@@ -954,7 +984,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     // issued with no framebuffer bound at all - is drawn once per frame into the default framebuffer. Both used to
     // land in one owned pair, so the outline chain, whose input is that pair, blurred a per-frame copy of the whole
     // scene rather than the silhouette (audit N04). There are two pairs now: {@link #defaultPair} takes identity 0
-    // and {@link #chainPair} takes every other non-main identity, which is what makes each pair have exactly one
+    // and {@link #chainPairs} takes every other non-main identity, which is what makes each pair have exactly one
     // writer and the chain's input the silhouette.
     //
     // Both repeat the frame images' formats and usages - so the frame-compatible render pass built by
@@ -1024,30 +1054,68 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.defaultPair.selfTest(command);
     }
 
-    /** {@return whether the chain pair exists}, i.e. whether some non-default framebuffer has drawn into it. */
-    public boolean chainPairExists() {
-        return this.chainPair.exists();
+    /**
+     * {@return the chain pair an identity owns}, creating it on first ask and evicting the oldest member when the
+     * pool is full. Creating is what a binding's ensures and pass attaches need; callers that only look up - the
+     * census, the summary, a report - use {@link #existingChainPair} so the pool does not grow on a read.
+     */
+    private Pair chainPairFor(long identity) {
+        Pair pair = this.chainPairs.get(Long.valueOf(identity));
+        if (pair != null) {
+            return pair;
+        }
+        if (this.chainPairs.size() >= MAX_CHAIN_PAIRS) {
+            // Evict the oldest member by retiring it: its image can still be named by an in-flight command buffer,
+            // so the image goes to the retire queue rather than being destroyed where it stands.
+            Long oldest = null;
+            for (Long key : this.chainPairs.keySet()) {
+                oldest = key;
+                break;
+            }
+            Pair evicted = this.chainPairs.remove(oldest);
+            if (evicted != null) {
+                evicted.release();
+            }
+        }
+        Pair created = new Pair("chain-" + Long.toHexString(identity));
+        this.chainPairs.put(Long.valueOf(identity), created);
+        return created;
     }
 
-    /** Whether the chain pair exists and is exactly the requested size. */
-    public boolean chainPairMatches(int width, int height) {
-        return this.chainPair.matches(width, height);
+    /** {@return the identity's chain pair without creating it}, null when none exists yet. */
+    private Pair existingChainPair(long identity) {
+        return this.chainPairs.get(Long.valueOf(identity));
     }
 
-    /** {@return whether the chain pair has been acquired}, i.e. moved out of UNDEFINED into its render layout. */
-    public boolean chainPairAcquired() {
-        return this.chainPair.acquired;
+    /** {@return whether the identity's chain pair exists}, i.e. whether that framebuffer has drawn into it. */
+    public boolean chainPairExists(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.exists();
     }
 
-    /** {@return whether the chain pair still owes the one-shot self-test for its current images}. */
-    public boolean chainPairNeedsSelfTest() {
-        return this.chainPair.needsSelfTest();
+    /** Whether the identity's chain pair exists and is exactly the requested size. */
+    public boolean chainPairMatches(long identity, int width, int height) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.matches(width, height);
     }
 
-    /** The colour image the chain pair renders into and the post chain adopts, or 0 before it exists. */
-    public long chainPairColorImage() {
+    /** {@return whether the identity's chain pair has been acquired}, i.e. moved out of UNDEFINED into its render layout. */
+    public boolean chainPairAcquired(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.acquired;
+    }
+
+    /** {@return whether the identity's chain pair still owes the one-shot self-test for its current images}. */
+    public boolean chainPairNeedsSelfTest(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.needsSelfTest();
+    }
+
+    /** The colour image the identity's chain pair renders into and its consumers sample, or 0 before it exists. */
+    public long chainPairColorImage(long identity) {
         checkAlive();
-        return this.chainPair.colorImage;
+        Pair pair = existingChainPair(identity);
+        return pair == null ? 0L : pair.colorImage;
     }
 
     /**
@@ -1057,13 +1125,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * constant {@code GENERAL}, and a published wrapper that samples the same image records
      * {@code SHADER_READ_ONLY_OPTIMAL}. This is what the image itself was last moved to.
      */
-    public int chainPairColorLayout() {
+    public int chainPairColorLayout(long identity) {
         checkAlive();
-        return this.chainPair.colorLayout();
+        Pair pair = existingChainPair(identity);
+        return pair == null ? VK_IMAGE_LAYOUT_UNDEFINED : pair.colorLayout();
     }
 
     /**
-     * {@return the layout the chain pair's render pass declares for its colour attachment}.
+     * {@return the layout a chain pair's render pass declares for its colour attachment}.
      * <p>
      * A constant ({@code COLOR_RENDER_LAYOUT}) rather than a per-frame value: the pass is built with it, so this is the
      * declaration side of the comparison the pair's actual layout is measured against.
@@ -1080,43 +1149,118 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * caller that records those barriers reports them here. Without it the pair's record would claim GENERAL while the
      * image was left read-only, which is the message this field exists to make readable.
      */
-    public void noteChainPairColorLayout(int layout) {
+    public void noteChainPairColorLayout(long identity, int layout) {
         checkAlive();
-        this.chainPair.noteColorLayout(layout);
+        Pair pair = existingChainPair(identity);
+        if (pair != null) {
+            pair.noteColorLayout(layout);
+        }
     }
 
-    public long chainPairColorView() {
+    public long chainPairColorView(long identity) {
         checkAlive();
-        return this.chainPair.colorView;
+        Pair pair = existingChainPair(identity);
+        return pair == null ? 0L : pair.colorView;
     }
 
-    /** The depth image view the chain pair tests against, or 0 before it exists. */
-    public long chainPairDepthView() {
+    /** The depth image view the identity's chain pair tests against, or 0 before it exists. */
+    public long chainPairDepthView(long identity) {
         checkAlive();
-        return this.chainPair.depthView;
+        Pair pair = existingChainPair(identity);
+        return pair == null ? 0L : pair.depthView;
     }
 
-    /** Makes the chain pair exist at the requested size. See {@link Pair#ensure(int, int)}. */
-    public void ensureChainPair(int width, int height) {
-        this.chainPair.ensure(width, height);
+    /** Makes the identity's chain pair exist at the requested size. See {@link Pair#ensure(int, int)}. */
+    public void ensureChainPair(long identity, int width, int height) {
+        chainPairFor(identity).ensure(width, height);
     }
 
-    public void clearChainPair(VkCommandBuffer command) {
-        this.chainPair.clear(command);
+    public void clearChainPair(long identity, VkCommandBuffer command) {
+        Pair pair = existingChainPair(identity);
+        if (pair != null) {
+            pair.clear(command);
+        }
     }
 
-    public String chainPairSelfTest(VkCommandBuffer command) {
-        return this.chainPair.selfTest(command);
+    /**
+     * A game's own {@code glClear} against the identity's pair, with the colour and depth the game latched.
+     * <p>
+     * Recorded at the point the clear was consumed, which keeps it between the draws before it and the draws after it
+     * - the once-per-frame clear in {@link #clearChainPair} is the pair's initialisation, while this is an explicit
+     * mid-frame clear: measured in the fixture's clear-order phase, where a second {@code framebufferClear} after a
+     * drawn quad must erase that quad (before this route it was counted and dropped, and the quad survived).
+     * The pair's {@code acquired} barrier is honoured: a pair that never recorded its acquire gets it here first,
+     * exactly as {@link Pair#clear} does.
+     *
+     * @return whether any clear commands were recorded (false when the pair does not exist yet)
+     */
+    public boolean applyGameClearToChainPair(long identity, VkCommandBuffer command, int mask,
+            float[] rgba, double depth) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair == null || !pair.exists() || command == null || command.address() == 0L) {
+            return false;
+        }
+        pair.clearWith(command, mask, rgba, depth);
+        return true;
     }
 
-    /** {@return one line per pair, naming the counters that used to be one unlabelled set}. */
+    /** {@return the identity's chain-pair extent as {w, h}}, or null before the pair exists. */
+    public long[] chainPairExtent(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair == null || !pair.exists() ? null : new long[] {pair.width, pair.height};
+    }
+
+    public String chainPairSelfTest(long identity, VkCommandBuffer command) {
+        Pair pair = existingChainPair(identity);
+        return pair == null ? "no pair for identity" : pair.selfTest(command);
+    }
+
+    /**
+     * {@return whether this image is a live chain pair's colour image}, across identities.
+     * <p>
+     * The checks that ask "is this published name sampling a chain image" predate the per-identity pairs and have no
+     * identity in hand; their question is a membership test over the pool, not a lookup.
+     */
+    public boolean isChainPairColorImage(long image) {
+        if (image == 0L) {
+            return false;
+        }
+        for (Pair pair : this.chainPairs.values()) {
+            if (pair.colorImage == image) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** {@return every chain pair's identity}, for iteration in the dump and summary paths. */
+    public java.util.Set<Long> chainPairIdentities() {
+        return this.chainPairs.keySet();
+    }
+
+    /** {@return the identity whose chain pair holds this colour image}, or {@code Long#MIN_VALUE} when none does. */
+    public long chainPairIdentityForImage(long image) {
+        for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
+            if (entry.getValue().colorImage == image) {
+                return entry.getKey().longValue();
+            }
+        }
+        return Long.MIN_VALUE;
+    }
+
+    /** {@return one line per pair}, naming the counters that used to be one unlabelled set. */
     public String pairSummary() {
-        return this.defaultPair.summary() + " " + this.chainPair.summary();
+        StringBuilder summary = new StringBuilder(this.defaultPair.summary());
+        for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
+            summary.append(' ').append(entry.getValue().summary());
+        }
+        return summary.toString();
     }
 
     /**
      * Which of the two pairs an off-target draw identity renders into: {@link #defaultPair} for identity 0 - the
-     * default framebuffer, which under the stub carries the game's finished-frame composites - and {@link #chainPair}
+     * default framebuffer, which under the stub carries the game's finished-frame composites - and {@link #chainPairs}
      * for every other non-main identity, the game's own framebuffers, of which the entity-outline silhouette is the
      * measured case.
      * <p>
@@ -1147,10 +1291,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private static final java.util.Map<String, java.util.Set<Long>> CENSUS_PAIR_MEMBERS =
             new java.util.concurrent.ConcurrentHashMap<String, java.util.Set<Long>>();
 
-    /** Records one routed bind: the identity, whether it is main, and which pair it therefore shares. */
+    /** Records one routed bind: the identity, whether it is main, and which pair it therefore owns. */
     public static void noteIdentityForCensus(long identity, boolean isMain) {
         (isMain ? CENSUS_MAIN : CENSUS_NON_MAIN).add(Long.valueOf(identity));
-        String pair = routeLabelForBinding(identity, isMain);
+        // The per-identity chain pair landed: a non-main identity's pair key is its own name, so the census's
+        // "widest pair" falls to 1 when every identity owns its image - the acceptance the counter exists to read.
+        // The frame-image and default-pair routes keep their shared labels; they are single-owner by design.
+        String route = routeLabelForBinding(identity, isMain);
+        String pair = "chain-pair".equals(route) ? route + ":" + Long.toHexString(identity) : route;
         java.util.Set<Long> members = CENSUS_PAIR_MEMBERS.get(pair);
         if (members == null) {
             members = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -1193,7 +1341,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * ambiguity - {@code VulkanTerrainGpuBackend} keys it on the main flag, {@code offTarget = !currentRenderTargetIsMain}
      * - so this is the label that was wrong, and this method is the one place the two questions are separated:
      * the main framebuffer renders into the frame image, identity 0 into {@link #defaultPair} and every other
-     * non-main identity into {@link #chainPair}.
+     * non-main identity into {@link #chainPairs}.
      *
      * @param identity the framebuffer identity the game bound
      * @param isMain   whether that framebuffer is the game's own main one ({@code mc.getFramebuffer()})
@@ -1349,19 +1497,66 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 }
                 VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
 
+                // The game's own clear colour and depth, not a renderer-chosen one: this pair is the framebuffer's
+                // image, and glClear on a framebuffer clears with the current glClearColor - a mod's 256x256 target
+                // keeps its own background (measured: the fixture's 0x081020 read back as 0 under the fixed pair
+                // clear, every untouched pixel a mismatch).
+                float[] clearColor = new float[4];
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(clearColor);
                 VkClearColorValue color = VkClearColorValue.calloc(stack);
-                color.float32(0, OFF_TARGET_CLEAR_RED);
-                color.float32(1, OFF_TARGET_CLEAR_GREEN);
-                color.float32(2, OFF_TARGET_CLEAR_BLUE);
-                color.float32(3, OFF_TARGET_CLEAR_ALPHA);
+                color.float32(0, clearColor[0]);
+                color.float32(1, clearColor[1]);
+                color.float32(2, clearColor[2]);
+                color.float32(3, clearColor[3]);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
                 vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
 
                 VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
-                depth.depth(OFF_TARGET_CLEAR_DEPTH).stencil(0);
+                depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
 
+                recordClearToAttachment(command);
+                this.clears++;
+            }
+        }
+
+        /**
+         * {@link #clear} with explicit values and a mask, for a game-issued {@code glClear} replayed mid-recording.
+         * <p>
+         * Same barriers, same acquire-before-clear order; the colour and depth are the ones latched when the game
+         * issued the clear, and the mask says which buffers it names (0x4000 colour, 0x0100 depth). Unlike the
+         * once-per-frame clear this may run several times in one frame - the game's own ordering, not a policy.
+         */
+        private void clearWith(VkCommandBuffer command, int mask, float[] rgba, double depthValue) {
+            checkAlive();
+            if (command == null || command.address() == 0L) {
+                throw new IllegalArgumentException(this.label + " pair clear needs a command buffer");
+            }
+            if (!exists()) {
+                throw new IllegalStateException("ensure must run before the " + this.label + " pair is cleared");
+            }
+            try (MemoryStack stack = stackPush()) {
+                if (!this.acquired) {
+                    recordAcquire(command);
+                    this.acquired = true;
+                }
+                VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
+                if ((mask & 0x4000) != 0) {
+                    VkClearColorValue color = VkClearColorValue.calloc(stack);
+                    color.float32(0, rgba[0]);
+                    color.float32(1, rgba[1]);
+                    color.float32(2, rgba[2]);
+                    color.float32(3, rgba[3]);
+                    range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+                    vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
+                }
+                if ((mask & 0x0100) != 0) {
+                    VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
+                    depth.depth((float) depthValue).stencil(0);
+                    range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
+                    vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
+                }
                 recordClearToAttachment(command);
                 this.clears++;
             }
@@ -1392,19 +1587,26 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 }
                 VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
                 if (first) {
+                    // First-use initialisation keeps the same rule as {@link #clear}: the game's own clear colour,
+                    // because this image is a framebuffer's content and GL's framebuffer starts from the game's
+                    // state, not a renderer-chosen one.
+                    float[] clearColor = new float[4];
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(clearColor);
                     VkClearColorValue color = VkClearColorValue.calloc(stack);
-                    color.float32(0, OFF_TARGET_CLEAR_RED);
-                    color.float32(1, OFF_TARGET_CLEAR_GREEN);
-                    color.float32(2, OFF_TARGET_CLEAR_BLUE);
-                    color.float32(3, OFF_TARGET_CLEAR_ALPHA);
+                    color.float32(0, clearColor[0]);
+                    color.float32(1, clearColor[1]);
+                    color.float32(2, clearColor[2]);
+                    color.float32(3, clearColor[3]);
                     range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
                     vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
                 } else {
                     recordColourHandBack(command);
                 }
 
+                // The game's glClearDepth, because this clear is the game's own "clear just the depth" - the real
+                // default framebuffer answers it with the recorded value, not with 1.0.
                 VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
-                depth.depth(OFF_TARGET_CLEAR_DEPTH).stencil(0);
+                depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
 
@@ -1626,7 +1828,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.deleted = true;
         VkDevice device = this.context.device();
         this.defaultPair.release();
-        this.chainPair.release();
+        for (Pair pair : this.chainPairs.values()) {
+            pair.release();
+        }
+        this.chainPairs.clear();
         if (this.waitSemaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(device, this.waitSemaphore, null);
             this.waitSemaphore = VK_NULL_HANDLE;

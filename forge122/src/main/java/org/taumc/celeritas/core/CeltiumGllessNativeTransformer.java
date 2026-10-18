@@ -438,6 +438,24 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            // glReadPixels is the readback half of the same framebuffer contract the copies serve: a mod reads the
+            // bound read framebuffer's pixels into a client buffer (ScreenShotHelper's screenshots, the validation
+            // fixture's format-2 readback). Without the route it lands in the zero-writer below and every caller's
+            // buffer stays zeroed - measured as the fixture's all-zero pixel checks in leg fbo-read-amd.
+            if (("glReadPixels".equals(name) || "nglReadPixels".equals(name))
+                    && descriptor.startsWith("(IIIIIIJ)")) {
+                // (IIIIIIJ)V - x, y, width, height, format, type, pixels address. The descriptor guard keeps the
+                // ByteBuffer wrapper (IIIIIILjava/nio/ByteBuffer)V out: it calls this form, so the address route
+                // serves both spellings and a buffer argument never reaches an LLOAD slot.
+                for (int slot = 0; slot < 6; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.LLOAD, 6);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glReadPixels", "(IIIIIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // The client-array/VBO draw family. VertexBuffer.bindBuffer/glVertexPointer/glDrawArrays is how the sky
             // dome, the stars, the horizon plane and Forge's CloudRenderer draw; the stub decodes that shape, and
             // without this route the calls were no-ops (leg gv-cohort-cloud2's census: glDrawArrays=6220,

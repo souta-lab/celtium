@@ -102,6 +102,16 @@ public final class ImmediateGroup {
     /** Frame and target-generation stamp: groups of a destroyed frame target must be retired, not drawn. */
     public GroupStamp stamp;
     /**
+     * {@code glClear}s the game issued against this group's target after this group was queued.
+     * <p>
+     * A clear is an ordered command, not a state: the game's own ordering puts it after the draws already queued and
+     * before the ones that follow, and the deferred model only holds that order if the clear rides the queue with the
+     * draws. Attaching it to the last queued group of the same target places it at exactly that position when the
+     * target's pass drains. A group that is retired rather than drawn still carries its clears into the pass - the
+     * clear erases earlier content even when the group it followed is itself dropped.
+     */
+    public java.util.List<QueuedClear> postClears;
+    /**
      * The submission sequence that must be confirmed before this group's mesh may be freed: tagged when the group is
      * retired with the highest submission that could still name its arena bytes. 0 means nothing in flight reads
      * them (the group never reached a submission) and the mesh may go immediately.
@@ -222,7 +232,26 @@ public final class ImmediateGroup {
         this.polygonOffsetEnabled = false;
         GroupStamp.recycle(this.stamp);
         this.stamp = null;
+        this.postClears = null;
         this.retireSequence = 0L;
+    }
+}
+
+/**
+ * A {@code glClear} a group carries, to be replayed inside the pass right after the group's draws.
+ * <p>
+ * The mask is GL's own buffer mask (0x4000 colour, 0x0100 depth); the colour and depth are the values the game had
+ * latched when it issued the clear, not whatever the stub state says at record time.
+ */
+final class QueuedClear {
+    final int mask;
+    final float[] rgba;
+    final double depth;
+
+    QueuedClear(int mask, float[] rgba, double depth) {
+        this.mask = mask;
+        this.rgba = rgba;
+        this.depth = depth;
     }
 }
 

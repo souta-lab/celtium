@@ -181,6 +181,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private VulkanGlTexture publishedChainOutput;
     private int publishedChainTexture;
     private long publishedChainImage;
+    /** The framebuffer identity whose chain pair the published chain output is the image of. */
+    private long publishedChainIdentity;
     /**
      * Every game colour texture name published over the chain pair's image, as its *image handle*, so a pair
      * recreated at a new size can be unpublished from every name it stood for instead of only from the outline's.
@@ -2509,7 +2511,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.chainPairClearLogs++;
         GllessFrameTarget glless = offTargetTarget();
         System.out.println("[Celtium] CELTIUM_CHAIN_CLEAR frame=" + this.frameId + " site=" + site
-                + " image=0x" + Long.toHexString(glless == null ? 0L : glless.chainPairColorImage())
+                + " image=0x" + Long.toHexString(glless == null ? 0L
+                        : glless.chainPairColorImage(this.targetRegistry.currentIdentity()))
                 + " target=" + this.targetRegistry.currentIdentity() + " onMain=" + this.targetRegistry.currentIsMain()
                 + " activeTarget=" + this.activeImmediateTarget
                 + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
@@ -4634,7 +4637,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
         GllessFrameTarget target = offTargetTarget();
         long routed = "frame-image".equals(route) ? (this.frameTarget == null ? 0L : this.frameTarget.colorImage())
-                : "chain-pair".equals(route) ? (target == null ? 0L : target.chainPairColorImage())
+                : "chain-pair".equals(route) ? (target == null ? 0L : target.chainPairColorImage(identity))
                 : "default-pair".equals(route) ? (target == null ? 0L : target.offTargetColorImage()) : 0L;
         System.out.println("[Celtium] CELTIUM_HUD_GROUP frame=" + this.frameId
                 + " group=" + this.immediateStatistics.immediateGroupsClosed()
@@ -4658,7 +4661,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         GllessFrameTarget target = offTargetTarget();
         String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
         long frameImage = this.frameTarget == null ? 0L : this.frameTarget.colorImage();
-        long chainPair = target == null ? 0L : target.chainPairColorImage();
+        long chainPair = target == null ? 0L : target.chainPairColorImage(identity);
         long defaultPair = target == null ? 0L : target.offTargetColorImage();
         long routed = "frame-image".equals(route) ? frameImage
                 : "chain-pair".equals(route) ? chainPair
@@ -4808,6 +4811,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * Links a framebuffer's GL object name to its identity, from the mixin that sees both at bind time.
+     * <p>
+     * The map is what a {@code glReadPixels} on a framebuffer needs: the game binds the framebuffer by name for the
+     * read, and which image its draws went into is answered by the identity - the object's, not the name's, because a
+     * name can be deleted and reused while the object it used to name still holds the pixels the reader wants.
+     */
+    public void celtium$noteFramebufferName(long identity, int framebufferObject) {
+        this.targetRegistry.noteFramebufferName(identity, framebufferObject);
+    }
+
+    /** {@return the identity a GL framebuffer name was reported under}, or {@link Long#MIN_VALUE} when unknown. */
+    private long celtium$identityForFramebufferName(int framebufferObject) {
+        return this.targetRegistry.identityForFramebufferName(framebufferObject);
+    }
+
+    /**
      * Gives a bound texture name the image its own framebuffer draws into, when the registry holds no mirror for it.
      * <p>
      * The sampling side's half of the rule the copy path already follows: a name that is a framebuffer's colour
@@ -4860,12 +4879,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return false;
             }
             // The pairs exist only once something has drawn into one of them; the composite is the caller that needs
-            // them, so the size is asked for here rather than assumed to be there.
-            offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
+            // them, so the size is asked for here rather than assumed to be there. The chain pair's own size is the
+            // framebuffer's attachment extent, not the frame's - a mod's 256x256 target keeps its 256x256 image.
             if ("chain-pair".equals(route)) {
-                image = offTarget.chainPairColorImage();
-                view = offTarget.chainPairColorView();
+                offTarget.ensureChainPair(identity, width > 0 ? width : this.targetWidth,
+                        height > 0 ? height : this.targetHeight);
+                image = offTarget.chainPairColorImage(identity);
+                view = offTarget.chainPairColorView(identity);
             } else {
+                offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
                 image = offTarget.offTargetColorImage();
                 view = offTarget.offTargetColorView();
             }
@@ -4924,7 +4946,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // First, while the fields below still describe the framebuffer that is bound: the game clears a framebuffer
         // between binding it and binding the next one, so this is the only moment a glClear can be attributed to the
         // image it names. See celtium$latchGameClearAtTargetChange for what the two routes mean.
+        if (this.bindDebugLines < 40 && !isMain && this.immediateExecutionCounters()[4] > 0
+                && targetIdentity != this.targetRegistry.mainIdentity()) {
+            this.bindDebugLines++;
+            System.out.println("[Celtium] CELTIUM_BIND_ENTRY target=0x" + Long.toHexString(targetIdentity)
+                    + " current=0x" + Long.toHexString(this.targetRegistry.currentIdentity())
+                    + " pending=" + this.immediateExecutionCounters()[4]
+                    + " currentUsed=" + this.currentGroupUsed
+                    + " currentTarget=0x" + Long.toHexString(this.currentGroupTarget)
+                    + " queued=" + this.immediateGroups.size()
+                    + " recorded=" + this.recordedImmediateGroups.size()
+                    + " retired=" + this.retiredImmediateGroups.size()
+                    + callers(Thread.currentThread().getStackTrace()));
+        }
         celtium$latchGameClearAtTargetChange();
+        if (this.bindDebugLines < 20 && !isMain && this.immediateExecutionCounters()[4] > 0) {
+            this.bindDebugLines++;
+            System.out.println("[Celtium] CELTIUM_BIND_PENDING target=0x" + Long.toHexString(targetIdentity)
+                    + " current=0x" + Long.toHexString(this.targetRegistry.currentIdentity())
+                    + " pending=" + this.immediateExecutionCounters()[4]
+                    + " currentUsed=" + this.currentGroupUsed
+                    + " currentTarget=0x" + Long.toHexString(this.currentGroupTarget)
+                    + " queued=" + this.immediateGroups.size()
+                    + callers(Thread.currentThread().getStackTrace()));
+        }
         if (!this.immediateWindowBusy && targetIdentity != this.targetRegistry.currentIdentity() && !this.targetRegistry.replacementInProgress()) {
             // Framebuffer.bind HEAD: the OLD framebuffer is still bound, so complete its accepted draws before switching.
             flushPendingBeforeGlDraw();
@@ -7699,8 +7744,16 @@ this.frameBufferOpen = false;
                     if (this.splashPairAfterCompositeArmed && !this.splashPairAfterCompositeDone) {
                         this.splashPairAfterCompositeDone = true;
                         GllessFrameTarget compositePair = offTargetTarget();
-                        if (compositePair != null && compositePair.chainPairColorImage() != 0L) {
-                            int[] compositePairPixels = celtium$readImageRectangle(compositePair.chainPairColorImage(),
+                        // The per-identity pairs landed: the splash's pair is whichever identity it bound, and this
+                        // probe is a bounded one-shot, so it reads every chain pair rather than guessing at one.
+                        for (Long chainId : compositePair == null
+                                ? java.util.Collections.<Long>emptySet()
+                                : compositePair.chainPairIdentities()) {
+                            long compositeImage = compositePair.chainPairColorImage(chainId.longValue());
+                            if (compositeImage == 0L) {
+                                continue;
+                            }
+                            int[] compositePairPixels = celtium$readImageRectangle(compositeImage,
                                     0, 0, this.targetWidth, this.targetHeight);
                             if (compositePairPixels != null) {
                                 String signature = celtium$regionSignature(compositePairPixels, this.targetWidth,
@@ -7709,7 +7762,8 @@ this.frameBufferOpen = false;
                                         + " windows=" + this.immediateStatistics.immediateWindows()
                                         + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
                                         + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
-                                        + " pairImage=0x" + Long.toHexString(compositePair.chainPairColorImage())
+                                        + " pairImage=0x" + Long.toHexString(compositeImage)
+                                        + " identity=0x" + Long.toHexString(chainId.longValue())
                                         + " " + signature;
                                 System.out.println("[Celtium] " + line);
                                 record(line);
@@ -7778,18 +7832,28 @@ this.frameBufferOpen = false;
                                 // rather than by symptom, and that is the round-232 suspicion stated as a fact.
                                 GllessFrameTarget handles = offTargetTarget();
                                 Long publishedSix = this.publishedFrameImages.get(Integer.valueOf(6));
+                                boolean publishedIsLivePair = publishedSix != null && handles != null
+                                        && handles.isChainPairColorImage(publishedSix.longValue());
+                                StringBuilder chainHandles = new StringBuilder();
+                                if (handles != null) {
+                                    for (Long chainId : handles.chainPairIdentities()) {
+                                        if (chainHandles.length() > 0) {
+                                            chainHandles.append(',');
+                                        }
+                                        chainHandles.append("0x").append(Long.toHexString(chainId.longValue()))
+                                                .append("=0x").append(Long.toHexString(
+                                                        handles.chainPairColorImage(chainId.longValue())));
+                                    }
+                                }
                                 System.out.println("[Celtium] CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
                                         + " publishedName6=" + (publishedSix == null ? "none"
                                                 : "0x" + Long.toHexString(publishedSix.longValue()))
-                                        + " chainPair=" + (handles == null ? "none"
-                                                : "0x" + Long.toHexString(handles.chainPairColorImage()))
-                                        + " publishedIsLivePair=" + (publishedSix != null && handles != null
-                                                && publishedSix.longValue() == handles.chainPairColorImage()));
+                                        + " chainPairs=[" + chainHandles + "]"
+                                        + " publishedIsLivePair=" + publishedIsLivePair);
                                 record("CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
                                         + " publishedName6=" + (publishedSix == null ? "none"
                                                 : "0x" + Long.toHexString(publishedSix.longValue()))
-                                        + " chainPair=" + (handles == null ? "none"
-                                                : "0x" + Long.toHexString(handles.chainPairColorImage()))
+                                        + " chainPairs=[" + chainHandles + "]"
                                         + " defaultPair=" + (handles == null ? "none"
                                                 : "0x" + Long.toHexString(handles.offTargetColorImage()))
                                         + " frameImage=0x" + Long.toHexString(this.frameTarget.colorImage())
@@ -7820,8 +7884,14 @@ this.frameBufferOpen = false;
                                     }
                                 }
                                 GllessFrameTarget gllessSplash = offTargetTarget();
-                                if (gllessSplash != null && gllessSplash.chainPairColorImage() != 0L) {
-                                    int[] pair = celtium$readImageRectangle(gllessSplash.chainPairColorImage(), 0, 0,
+                                for (Long chainId : gllessSplash == null
+                                        ? java.util.Collections.<Long>emptySet()
+                                        : gllessSplash.chainPairIdentities()) {
+                                    long splashPairImage = gllessSplash.chainPairColorImage(chainId.longValue());
+                                    if (splashPairImage == 0L) {
+                                        continue;
+                                    }
+                                    int[] pair = celtium$readImageRectangle(splashPairImage, 0, 0,
                                             this.targetWidth, this.targetHeight);
                                     if (pair != null) {
                                         java.nio.ByteBuffer pairRgba = org.lwjgl.system.MemoryUtil.memAlloc(
@@ -8580,8 +8650,7 @@ this.frameBufferOpen = false;
             return;
         }
         GllessFrameTarget offTarget = offTargetTarget();
-        if (offTarget == null || publishedImage.longValue() != offTarget.chainPairColorImage()
-                || offTarget.chainPairColorImage() == 0L) {
+        if (offTarget == null || !offTarget.isChainPairColorImage(publishedImage.longValue())) {
             return;
         }
         this.pairNameSamplingDraws++;
@@ -8618,7 +8687,7 @@ this.frameBufferOpen = false;
             return false;
         }
         GllessFrameTarget offTarget = offTargetTarget();
-        if (offTarget == null || offTarget.chainPairColorImage() == 0L) {
+        if (offTarget == null || offTarget.chainPairColorImage(group.target) == 0L) {
             return false;
         }
         // The offer-time fact is the bind census, not the publication: a name is published over the pair image when the
@@ -8727,6 +8796,8 @@ this.frameBufferOpen = false;
         // chain pair, which is the image the post chain adopts. That split is the fix for the shared pair: the chain
         // used to read an image the composite had just painted a copy of the whole scene into. It is a routing rule
         // and not a skip rule: both streams are still drawn, each into an image of its own.
+        int passWidth = this.targetWidth;
+        int passHeight = this.targetHeight;
         // Identity 0 is the window (GL name 0 is the default framebuffer), so its draws go to the frame image in every
         // phase - the loading screen's composite, the main menu's skybox faces and the world's finished-frame
         // composite alike. The earlier phase test sent them to a pair once a main framebuffer was adopted, and that
@@ -8746,39 +8817,60 @@ this.frameBufferOpen = false;
         if (offTarget != null) {
             try {
                 if (chainIdentity) {
-                    offTarget.ensureChainPair(this.targetWidth, this.targetHeight);
+                    long chainIdentityValue = this.targetRegistry.currentIdentity();
+                    // The pair's extent is the framebuffer's own: a mod's 256x256 target keeps a 256x256 image, and
+                    // the publish path's ensure agrees with this one so the two never fight over a size.
+                    long[] fboExtent = framebufferColorTexture(chainIdentityValue);
+                    offTarget.ensureChainPair(chainIdentityValue,
+                            fboExtent != null && fboExtent.length >= 3 && fboExtent[1] > 0
+                                    ? (int) fboExtent[1] : this.targetWidth,
+                            fboExtent != null && fboExtent.length >= 3 && fboExtent[2] > 0
+                                    ? (int) fboExtent[2] : this.targetHeight);
                     // CELTIUM-OUTLINE-COMPOSITE: the image this pair holds was sampled last frame by whatever
                     // composites it (the game's own outline composite binds the published name), so it can be in
                     // SHADER_READ_ONLY while this pass clears it - which declares GENERAL - and then attaches it. The
                     // hand-back is recorded before both. A pair recreated at a new size is unpublished here instead:
                     // its wrapper names a destroyed image, and a barrier on that is a validation error rather than a
                     // missing glow.
-                    this.celtium$syncPublishedChainOutput(offTarget.chainPairColorImage());
+                    this.celtium$syncPublishedChainOutput(chainIdentityValue,
+                            offTarget.chainPairColorImage(chainIdentityValue));
                     // Every other published name gets the same hand-back here, before the clear and the attach: the
                     // sampling transition leaves the pair image in SHADER_READ_ONLY_OPTIMAL, and this pass begins with
                     // initialLayout GENERAL - which is VUID-vkCmdBeginRenderPass-initialLayout-00900 unless the image is
                     // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
                     celtium$transitionPublishedFrameTextures(true);
                     if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
-                            offTarget.chainPairAcquired(),
-                            this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.CHAIN_PAIR),
-                            "chain-pair")) {
+                            offTarget.chainPairAcquired(chainIdentityValue),
+                            this.targetRegistry.chainPairClearContentIdentity(chainIdentityValue),
+                            "chain-pair:" + Long.toHexString(chainIdentityValue), chainIdentityValue)) {
                         // Outside the pass, which is where the clear and its first-use barrier belong, and once per
                         // frame per content identity: the game clears a framebuffer when it binds it, and clearing per
                         // window would erase what an earlier window of the same frame already drew there. The acquire
                         // state is asked of the pair as well as the frame, because a pair recreated after this frame's
                         // clear is UNDEFINED again while the frame flag still says otherwise - which is the layout
                         // error a dimension change produced.
-                        if (offTarget.chainPairNeedsSelfTest()) {
+                        if (offTarget.chainPairNeedsSelfTest(chainIdentityValue)) {
                             // The one legal-use sequence of the images this pair now holds, recorded through the
                             // validation layer and reported once per creation: it is the same clear the ordinary path
                             // records, so it is the pair's first clear rather than an extra one.
-                            record(offTarget.chainPairSelfTest(this.commandBuffer));
+                            record(offTarget.chainPairSelfTest(chainIdentityValue, this.commandBuffer));
+                        } else if (this.targetRegistry.hasLatchedClear()
+                                && this.targetRegistry.latchedIdentity() == chainIdentityValue) {
+                            // A glClear the game issued for this framebuffer before it ever queued a draw - the
+                            // queue-marker route found no group to carry it, so it latched here instead. It clears
+                            // with the colour and depth the game latched, not whatever the stub reads now.
+                            int latchedMask = this.targetRegistry.latchedMask();
+                            float[] latchedColour = this.targetRegistry.latchedColour();
+                            double latchedDepth = this.targetRegistry.latchedDepth();
+                            this.targetRegistry.noteClear(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                                    (latchedMask & 0x4000) != 0, true);
+                            offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
+                                    latchedMask, latchedColour, latchedDepth);
                         } else {
-                            offTarget.clearChainPair(this.commandBuffer);
+                            offTarget.clearChainPair(chainIdentityValue, this.commandBuffer);
                         }
-                        this.targetRegistry.notePairCleared(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
-                                celtium$frameSerial(), this.targetRegistry.currentIdentity());
+                        this.targetRegistry.noteChainPairCleared(chainIdentityValue,
+                                celtium$frameSerial(), chainIdentityValue);
                         this.chainPairClears++;
                         // Order against the faces' own pass: the copy reads this pair and the faces drew into it, so
                         // a clear that lands after their DRAW_SITE is what leaves the copy white.
@@ -8792,7 +8884,15 @@ this.frameBufferOpen = false;
                         celtium$noteChainPairClear("first-non-main-pass");
                     }
                     framebuffer = ensureChainPairFramebuffer(renderPass);
-                    this.passAttachedColorImage = offTarget.chainPairColorImage();
+                    this.passAttachedColorImage = offTarget.chainPairColorImage(chainIdentityValue);
+                    // The pass's render area cannot exceed the framebuffer's - a chain pair at the game's
+                    // framebuffer size (the fixture's 256x256) is smaller than the window's, and the render area
+                    // must come from the pair, not from the frame.
+                    long[] chainExtent = offTarget.chainPairExtent(chainIdentityValue);
+                    if (chainExtent != null) {
+                        passWidth = (int) chainExtent[0];
+                        passHeight = (int) chainExtent[1];
+                    }
                     // The game's own framebuffer whose draws are landing in this pair: its colour texture name is what
                     // the game composites with, and under GL-less that texture has an extent and no pixels (the stub's
                     // glTexImage2D with a null pointer records the size and no data). Publishing the pair's image under
@@ -8847,7 +8947,7 @@ this.frameBufferOpen = false;
         begin.framebuffer(framebuffer);
         org.lwjgl.vulkan.VkRect2D.Buffer area = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
         area.get(0).offset().set(0, 0);
-        area.get(0).extent().set(this.targetWidth, this.targetHeight);
+        area.get(0).extent().set(passWidth, passHeight);
         begin.renderArea(area.get(0));
         if (this.publishedChainOutput != null
                 && celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)) {
@@ -8878,7 +8978,7 @@ this.frameBufferOpen = false;
                     + " attachedImage=0x" + Long.toHexString(this.passAttachedColorImage)
                     + " frameImage=0x" + Long.toHexString(this.frameTarget == null ? 0L : this.frameTarget.colorImage())
                     + " chainPair=0x" + Long.toHexString(offTargetTarget() == null ? 0L
-                            : offTargetTarget().chainPairColorImage())
+                            : offTargetTarget().chainPairColorImage(this.targetRegistry.currentIdentity()))
                     + " frameSerial=" + celtium$frameSerial() + " windowsThisFrame="
                     + this.immediateStatistics.immediateWindowsThisFrame());
         }
@@ -9137,6 +9237,19 @@ this.frameBufferOpen = false;
             celtium$noteFogCaptureDrift(group);
             group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), false, this.worldEpoch);
             this.immediateGroups.add(group);
+            if (this.currentGroupTarget != this.targetRegistry.mainIdentity()
+                    && this.groupCloseDebugLines < 12) {
+                this.groupCloseDebugLines++;
+                StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+                StringBuilder callers = new StringBuilder(160);
+                for (int i = 2; i < Math.min(stack.length, 9); i++) {
+                    callers.append(' ').append(stack[i].getClassName())
+                            .append('#').append(stack[i].getMethodName());
+                }
+                System.out.println("[Celtium] CELTIUM_GROUP_CLOSE target=0x"
+                        + Long.toHexString(this.currentGroupTarget) + " batches=" + group.batches
+                        + " queued=" + this.immediateGroups.size() + " callers=" + callers);
+            }
             if (GROUP_BOUNDS_DIAGNOSTICS) {
                 // Off by default: with the switch off this method keeps the "no caller" property it had, and no line
                 // reaches stdout or the report, so runs on the default flags stay comparable with older artifacts.
@@ -9448,9 +9561,14 @@ this.frameBufferOpen = false;
                 + " offTargetPairClears=[default-pair=" + this.defaultPairClears
                 + ",chain-pair=" + this.chainPairClears + "]"
                 + " gameClearAttribution=[latchedForFrame=" + this.targetStatistics.gameClearsLatchedForFrame()
-                + ",routedToPairs=" + this.gameClearsRoutedToPairs + "]"
+                + ",routedToPairs=" + this.gameClearsRoutedToPairs
+                + ",queuedOnGroups=" + this.gameClearsQueued
+                + ",inPassArm=" + this.gameClearsInPassArm
+                + ",appliedInPass=" + this.gameClearsAppliedInPass
+                + ",standaloneSubmits=" + this.gameClearsSubmittedStandalone
+                + ",latchedForPairs=" + this.gameClearsLatchedForPairs + "]"
                 + " offTargetPairFramebuffers=[default-pair=" + this.targetRegistry.pairFramebufferCreations(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR)
-                + ",chain-pair=" + this.targetRegistry.pairFramebufferCreations(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) + "]"
+                + ",chain-pair=" + this.targetRegistry.chainPairFramebufferCreationsTotal() + "]"
                 + " otherTargetGroups=[atMainFlush=" + this.targetStatistics.otherTargetGroupsAtMainFlush()
                 + ",discarded=" + this.otherTargetGroupsDiscarded
                 + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
@@ -10860,23 +10978,36 @@ this.frameBufferOpen = false;
         if (glless == null) {
             return 0L;
         }
-        if (!glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
+        long identity = this.targetRegistry.currentIdentity();
+        if (!glless.chainPairMatches(identity, this.targetWidth, this.targetHeight)) {
             // Same rule as the default pair: a size change means the views every cached handle named are dead.
-            destroyChainPairFramebuffer();
+            destroyChainPairFramebuffer(identity);
         }
-        long cached = this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, renderPass);
+        long cached = this.targetRegistry.chainPairFramebuffer(identity, renderPass);
         if (cached != 0L) {
             return cached;
         }
-        long handle = ensurePairFramebuffer(renderPass, glless.chainPairColorView(),
-                glless.chainPairDepthView(), "chain-pair");
-        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, handle, renderPass);
-        // counted by notePairFramebuffer
+        // The framebuffer's declared extent must cover the attachments': a chain pair renders at its own size
+        // (the fixture's 256x256 secondary measured this - declaring the window's 1280x720 was
+        // VUID-VkFramebufferCreateInfo-flags-04533/04534 on every such pair).
+        long[] pairExtent = glless.chainPairExtent(identity);
+        int pairWidth = pairExtent == null ? this.targetWidth : (int) pairExtent[0];
+        int pairHeight = pairExtent == null ? this.targetHeight : (int) pairExtent[1];
+        long handle = ensurePairFramebuffer(renderPass, glless.chainPairColorView(identity),
+                glless.chainPairDepthView(identity), pairWidth, pairHeight,
+                "chain-pair:" + Long.toHexString(identity));
+        this.targetRegistry.noteChainPairFramebuffer(identity, handle, renderPass);
+        // counted by noteChainPairFramebuffer
         return handle;
     }
 
-    /** Builds one framebuffer over a pair's views at the frame's size. */
+    /** Builds one framebuffer over a pair's views at the attachment's declared size. */
     private long ensurePairFramebuffer(long renderPass, long colorView, long depthView, String what) {
+        return ensurePairFramebuffer(renderPass, colorView, depthView, this.targetWidth, this.targetHeight, what);
+    }
+
+    private long ensurePairFramebuffer(long renderPass, long colorView, long depthView,
+            int width, int height, String what) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer attachments = stack.mallocLong(2);
             attachments.put(0, colorView);
@@ -10885,8 +11016,8 @@ this.frameBufferOpen = false;
                     .sType$Default()
                     .renderPass(renderPass)
                     .pAttachments(attachments)
-                    .width(this.targetWidth)
-                    .height(this.targetHeight)
+                    .width(width)
+                    .height(height)
                     .layers(1);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateFramebuffer(this.context.device(), create, null, handle),
@@ -10965,7 +11096,8 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(rgba);
         double depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
         if (!this.targetRegistry.currentIsMain()) {
-            // The default framebuffer's or one of the game's own: its pair carries that clear already.
+            // The non-main clear was already recorded into the pair's command stream when the game issued it
+            // (CeltiumGlStub.recordClear -> celtium$gameClear); this consume keeps the pending mask honest.
             this.gameClearsRoutedToPairs++;
             celtium$reportGameClearLatch("pair", mask, rgba, depth);
             return;
@@ -10974,6 +11106,243 @@ this.frameBufferOpen = false;
         this.targetStatistics.noteGameClearsLatchedForFrame();
         celtium$reportGameClearLatch("frame", mask, rgba, depth);
     }
+
+    /**
+     * Records a non-main framebuffer's {@code glClear} into the command stream at the position it was issued.
+     * <p>
+     * Until this existed the clear was counted and dropped, so a {@code framebufferClear()} issued after a draw left
+     * the draw in the picture - measured in the fixture's clear-order phase (the blue quad survived a clear that
+     * should have erased it). The command that stands in for {@code glClear} depends on where the recording is:
+     * inside the pair's own open pass it is {@code vkCmdClearAttachments}; outside a pass it is
+     * {@code vkCmdClearColorImage}/{@code vkCmdClearDepthStencilImage} - both recorded after the draws they erase and
+     * before the ones that follow, which is GL's own ordering. A pair that does not exist yet skips the replay because
+     * its first-use clear already clears with the game's own colour.
+     */
+    /**
+     * The stub's route for a {@code glClear} against a non-main framebuffer: the clear the game issued, placed in the
+     * draw queue at the position it was issued - after the draws already queued for that framebuffer and before the
+     * ones that follow.
+     * <p>
+     * Recording it into the command buffer at the call does not work: nothing is recorded at that moment (the groups
+     * are still queued, measured as {@code recording=false} on the fixture's clear-order phase), so the clear would
+     * land before the very draws it must erase. It rides the queue instead: the currently-filling group is closed so
+     * the queue position is exact, the last queued group of the same target carries it, and the group's pass replays
+     * it as {@code vkCmdClearAttachments} between the draws before and after - GL's own ordering. A clear that finds
+     * no queued draw for its framebuffer is an *early* clear and latches for the pass-begin site instead.
+     *
+     * @param mask the GL clear mask (0x4000 colour, 0x0100 depth)
+     * @param drawFbo the GL framebuffer name that was bound for drawing when the clear ran
+     */
+    public void celtium$gameClear(int mask, int drawFbo) {
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            return;
+        }
+        if (mask == 0) {
+            // glClear(0) clears nothing: no marker is worth a queue entry, a latch, or a submission.
+            return;
+        }
+        float[] rgba = new float[4];
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(rgba);
+        double depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+        long resolved = drawFbo <= 0 ? Long.MIN_VALUE
+                : this.targetRegistry.identityForFramebufferName(drawFbo);
+        boolean fixtureClear = resolved != Long.MIN_VALUE && resolved != 0L
+                && resolved != this.targetRegistry.mainIdentity() && mask == 0x4100;
+        if ((fixtureClear && this.gameClearApplyLogs < 400)
+                || (!fixtureClear && drawFbo != 0 && resolved != this.targetRegistry.mainIdentity()
+                        && this.gameClearApplyLogs < 400)) {
+            this.gameClearApplyLogs++;
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            ImmediateGroup lastGroup = this.immediateGroups.isEmpty() ? null
+                    : this.immediateGroups.get(this.immediateGroups.size() - 1);
+            System.out.println("[Celtium] CELTIUM_GAME_CLEAR fbo=" + drawFbo
+                    + " mask=0x" + Integer.toHexString(mask)
+                    + " entry currentUsed=" + this.currentGroupUsed
+                    + " currentTarget=0x" + Long.toHexString(this.currentGroupTarget)
+                    + " queued=" + this.immediateGroups.size()
+                    + " lastQueuedTarget=" + (lastGroup == null ? "none" : "0x" + Long.toHexString(lastGroup.target))
+                    + " recorded=" + this.recordedImmediateGroups.size()
+                    + " retired=" + this.retiredImmediateGroups.size()
+                    + " pendingNow=" + this.immediateExecutionCounters()[4]
+                    + " mesh=" + (this.currentImmediateMesh == null ? "null" : "present")
+                    + " windowBusy=" + this.immediateWindowBusy
+                    + " currentIdentity=0x" + Long.toHexString(this.targetRegistry.currentIdentity())
+                    + callers(stack));
+        }
+        long identity = drawFbo <= 0 ? Long.MIN_VALUE
+                : this.targetRegistry.identityForFramebufferName(drawFbo);
+        if (identity == Long.MIN_VALUE && drawFbo > 0) {
+            // Raw-GL framebuffer: no object identity was ever reported, so resolve through the colour texture its
+            // attach call recorded, then the identity that texture was reported under.
+            int colorTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(drawFbo);
+            if (colorTexture != 0) {
+                identity = celtium$framebufferIdentityForColorTexture(colorTexture);
+            }
+        }
+        if (identity == Long.MIN_VALUE) {
+            identity = this.targetRegistry.currentIdentity();
+        }
+        if (identity == 0L || identity == this.targetRegistry.mainIdentity()) {
+            // The window/main framebuffer's clear route is the frame path (the latch's main branch and the frame's
+            // own clear machinery), not the pair queue.
+            return;
+        }
+        // Close the batch still being filled first: the clear's queue position is "after everything offered so far",
+        // and an open group has no place in the queue to carry the marker yet.
+        if (this.currentGroupUsed && this.currentGroupTarget == identity) {
+            closeCurrentImmediateGroup();
+        }
+        for (int i = this.immediateGroups.size() - 1; i >= 0; i--) {
+            ImmediateGroup group = this.immediateGroups.get(i);
+            if (group.target == identity) {
+                if (group.postClears == null) {
+                    group.postClears = new java.util.ArrayList<QueuedClear>(2);
+                }
+                group.postClears.add(new QueuedClear(mask, rgba, depth));
+                this.gameClearsQueued++;
+                return;
+            }
+        }
+        // Nothing is queued for this framebuffer - but that is not always "the clear is early". The
+        // GlStateManager.clear ordering flush (flushBeforeClear, the S10 boundary) submits this framebuffer's pending
+        // draws before glClear reaches the stub, so an empty queue here also means "the draws the clear must erase
+        // are already in the pair's image". The clear then has to be recorded against that image, ordered after the
+        // submitted draws: inside the pair's own open pass it is vkCmdClearAttachments, and outside a pass it is a
+        // one-off submission carrying vkCmdClearColorImage/vkCmdClearDepthStencilImage - GL's own ordering for a
+        // clear issued after the draws it covers, which is the fixture's clear-order phase (the blue quad was
+        // submitted by the flush and then survived the latched clear that only ran at the next pass-begin).
+        if (this.commandState.inRenderPass() && this.activeImmediateTarget == identity) {
+            java.util.List<QueuedClear> single =
+                    java.util.Collections.singletonList(new QueuedClear(mask, rgba, depth));
+            celtium$recordQueuedClearsInPass(single, identity);
+            this.gameClearsInPassArm++;
+            celtium$noteGameClearRoute(drawFbo, mask, "inPass", identity);
+            return;
+        }
+        // vkCmdClearColorImage/vkCmdClearDepthStencilImage cannot be recorded inside a render pass, and the unified
+        // frame buffer may still be mid-pass for a different target: only a fresh buffer or an open frame buffer
+        // between passes may carry the image-level clear. An in-pass clear for another target's pass latches as
+        // before (rare: the clear-order flush draws for the pass's own target, which the in-pass arm above covers).
+        if (GAME_CLEAR_STANDALONE && !this.immediateWindowBusy && !this.commandState.inRenderPass()
+                && (!this.commandState.recording() || this.frameBufferOpen)) {
+            GllessFrameTarget pairOwner = offTargetTarget();
+            if (pairOwner != null && pairOwner.chainPairColorImage(identity) != 0L) {
+                boolean submitted = false;
+                try {
+                    beginCommands();
+                    // Outside a render pass by construction: vkCmdClearColorImage/vkCmdClearDepthStencilImage plus
+                    // the pair's own acquire/clear-attachment barriers.
+                    if (pairOwner.applyGameClearToChainPair(identity, this.commandBuffer, mask, rgba, depth)) {
+                        // No frame semaphores: this is a mid-frame ordering point, so the acquire/done pair stays
+                        // for the frame boundary exactly as submitOpenFrameBuffer's rule says.
+                        this.frameCoordinator.submitCommands(false);
+                        this.gameClearsSubmittedStandalone++;
+                        submitted = true;
+                        celtium$noteGameClearRoute(drawFbo, mask, "standalone", identity);
+                    } else if (!this.frameBufferOpen && this.commandState.recording()) {
+                        // The pair refused (exists() was false between the check above and the call): the buffer we
+                        // opened is abandoned rather than submitted, so the recording state has to unwind here.
+                        this.commandState.reset();
+                    }
+                } catch (RuntimeException | LinkageError error) {
+                    if (!this.frameBufferOpen && this.commandState.recording()) {
+                        this.commandState.reset();
+                    }
+                    record("standalone game clear failed for identity=0x" + Long.toHexString(identity)
+                            + ": " + describe(error));
+                }
+                if (submitted) {
+                    return;
+                }
+            }
+        }
+        // No queued draw for this framebuffer and none submitted it can erase: the clear still runs at the pair's
+        // pass-begin site, where the registry latch keeps the colour the game asked for rather than whatever the
+        // stub state says then.
+        this.targetRegistry.latchClear(identity, mask, rgba[0], rgba[1], rgba[2], rgba[3], depth);
+        this.gameClearsLatchedForPairs++;
+        celtium$noteGameClearRoute(drawFbo, mask, "latch", identity);
+    }
+
+    /** Bounded route log for {@link #celtium$gameClear}: which arm each non-main clear took. */
+    private void celtium$noteGameClearRoute(int drawFbo, int mask, String route, long identity) {
+        if (this.gameClearRouteLogs++ >= 200) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_GAME_CLEAR_ROUTE route=" + route
+                + " fbo=" + drawFbo + " mask=0x" + Integer.toHexString(mask)
+                + " identity=0x" + Long.toHexString(identity)
+                + " inPass=" + this.commandState.inRenderPass()
+                + " recording=" + this.commandState.recording()
+                + " activeTarget=0x" + Long.toHexString(this.activeImmediateTarget));
+    }
+
+    /**
+     * Replays the {@code glClear}s a group carries, inside the pass that just drew it.
+     * <p>
+     * {@code vkCmdClearAttachments} is the primitive a render pass answers for a clear of its own attachments, over
+     * the framebuffer's own extent - the pair is created at the framebuffer's size, and GL's clear names every texel
+     * of it. Called for drawn groups and for retired ones alike: a dropped group still leaves the clear that followed
+     * it to apply.
+     */
+    private void celtium$recordQueuedClearsInPass(java.util.List<QueuedClear> clears, long identity) {
+        if (clears == null || clears.isEmpty() || !this.commandState.inRenderPass()) {
+            return;
+        }
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null) {
+            return;
+        }
+        long[] extent = glless.chainPairExtent(identity);
+        int w = extent == null ? this.targetWidth : (int) extent[0];
+        int h = extent == null ? this.targetHeight : (int) extent[1];
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            for (QueuedClear clear : clears) {
+                int attachmentCount = ((clear.mask & 0x4000) != 0 ? 1 : 0) + ((clear.mask & 0x0100) != 0 ? 1 : 0);
+                if (attachmentCount == 0) {
+                    continue;
+                }
+                org.lwjgl.vulkan.VkClearAttachment.Buffer attachments =
+                        org.lwjgl.vulkan.VkClearAttachment.calloc(attachmentCount, stack);
+                int at = 0;
+                if ((clear.mask & 0x4000) != 0) {
+                    org.lwjgl.vulkan.VkClearAttachment a = attachments.get(at++);
+                    a.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).colorAttachment(0);
+                    a.clearValue().color().float32(0, clear.rgba[0]).float32(1, clear.rgba[1])
+                            .float32(2, clear.rgba[2]).float32(3, clear.rgba[3]);
+                }
+                if ((clear.mask & 0x0100) != 0) {
+                    org.lwjgl.vulkan.VkClearAttachment a = attachments.get(at);
+                    a.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
+                    a.clearValue().depthStencil().depth((float) clear.depth).stencil(0);
+                }
+                org.lwjgl.vulkan.VkClearRect.Buffer rect = org.lwjgl.vulkan.VkClearRect.calloc(1, stack);
+                rect.get(0).rect().offset().set(0, 0);
+                rect.get(0).rect().extent().set(w, h);
+                rect.get(0).baseArrayLayer(0).layerCount(1);
+                vkCmdClearAttachments(this.commandBuffer, attachments, rect);
+                this.gameClearsAppliedInPass++;
+            }
+        }
+    }
+
+    /** Bounded log for {@link #celtium$gameClear}: which route each non-main clear took. */
+    private int gameClearApplyLogs;
+    /** Queued-clears bookkeeping: attached to a group, latched for pass-begin, replayed inside a pass. */
+    private int gameClearsQueued;
+    private int gameClearsLatchedForPairs;
+    private long gameClearsAppliedInPass;
+    /** Clears submitted as a one-off command buffer after the ordering flush already sent the draws (fixture clear-order). */
+    private int gameClearsSubmittedStandalone;
+    /** Clears applied as vkCmdClearAttachments inside the target's own open pass (gameClear empty-queue, in-pass arm). */
+    private int gameClearsInPassArm;
+    /** Bounded log counter for {@link #celtium$noteGameClearRoute}. */
+    private int gameClearRouteLogs;
+    /** Bounded stack trace for off-target group closes, to find who empties the queue before a clear. */
+    private int groupCloseDebugLines;
+    /** Bounded stack trace for binds that arrive with pending off-target work. */
+    private int bindDebugLines;
 
     /** Bounded, so a run states the attribution a few times instead of once per bind. */
     private void celtium$reportGameClearLatch(String route, int mask, float[] rgba, double depth) {
@@ -10993,6 +11362,15 @@ this.frameBufferOpen = false;
                 + "]");
     }
 
+    /** The caller chain of a {@code glClear} routing decision, as {@code class#method} pairs up the stack. */
+    private static String callers(StackTraceElement[] stack) {
+        StringBuilder out = new StringBuilder(200);
+        for (int i = 2; i < Math.min(stack.length, 10); i++) {
+            out.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
+        }
+        return out.toString();
+    }
+
     /** Three decimals, the precision the renderer's own state lines use. */
     private static float celtium$round3(float value) {
         return (float) (Math.round(value * 1000.0D) / 1000.0D);
@@ -11002,8 +11380,38 @@ this.frameBufferOpen = false;
         destroyPairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
     }
 
-    private void destroyChainPairFramebuffer() {
-        destroyPairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
+    /** Destroys one identity's chain-pair framebuffers; the no-arg teardown variant destroys them all. */
+    private void destroyChainPairFramebuffer(long identity) {
+        java.util.Collection<Long> handles = this.targetRegistry.chainPairFramebufferHandles(identity);
+        if (handles.isEmpty()) {
+            return;
+        }
+        if (!settleGpu("chain-pair framebuffer release")) {
+            this.framebufferSettleFailures++;
+            // Leave both the handles and their render-pass keys intact. The ensure caller must
+            // stop here, rather than overwrite the cache with a replacement or use a different target.
+            throw new IllegalStateException("GPU did not settle for chain-pair framebuffer release");
+        }
+        for (Long handle : handles) {
+            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
+        }
+        this.targetRegistry.clearChainPairFramebuffer(identity);
+    }
+
+    /** Destroys every chain-pair framebuffer, across identities; the teardown path's variant. */
+    private void destroyAllChainPairFramebuffers() {
+        java.util.Collection<Long> handles = this.targetRegistry.allChainPairFramebufferHandles();
+        if (handles.isEmpty()) {
+            return;
+        }
+        if (!settleGpu("chain-pair framebuffer release")) {
+            this.framebufferSettleFailures++;
+            throw new IllegalStateException("GPU did not settle for chain-pair framebuffer release");
+        }
+        for (Long handle : handles) {
+            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
+        }
+        this.targetRegistry.clearAllChainPairFramebuffers();
     }
 
     /** Pair replacement also bypasses destroyFramebuffer(), so it must establish completion itself. */
@@ -11056,7 +11464,7 @@ this.frameBufferOpen = false;
         // bypass this method. VUID-vkDestroyFramebuffer-framebuffer-00892 applies to both routes.
         if (this.framebuffers.isEmpty()
                 && this.targetRegistry.pairFramebufferHandles(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR).isEmpty()
-                && this.targetRegistry.pairFramebufferHandles(RenderTargetRegistry.ImageSlot.CHAIN_PAIR).isEmpty()) {
+                && this.targetRegistry.allChainPairFramebufferHandles().isEmpty()) {
             return;
         }
         if (!settleGpu("framebuffer release")) {
@@ -11065,7 +11473,7 @@ this.frameBufferOpen = false;
             return;
         }
         destroyOffTargetFramebuffer();
-        destroyChainPairFramebuffer();
+        destroyAllChainPairFramebuffers();
         for (Long handle : this.framebuffers.values()) {
             vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
         }
@@ -11261,13 +11669,23 @@ this.frameBufferOpen = false;
      * not cleared" and "nothing was drawn into it" look the same in a dump.
      *
      * @param acquired whether the pair's images exist (a recreated pair is UNDEFINED and must be cleared)
+     * @param pairIdentity the identity owning the pair, used for the per-identity chain pairs; 0 for the slots that
+     *        are not keyed by identity
      * @return whether the caller must record the clear
      */
     private boolean celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot slot, boolean acquired,
             long contentIdentity, String pair) {
+        return celtium$pairClearNeeded(slot, acquired, contentIdentity, pair, 0L);
+    }
+
+    private boolean celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot slot, boolean acquired,
+            long contentIdentity, String pair, long pairIdentity) {
         // The frame each pair was last cleared in is the registry's now; the policy below is the backend's, because it
         // is the pair's identity collision and not the registry's business which identity may clear it.
-        if (!acquired || this.targetRegistry.pairClearedFrame(slot) != celtium$frameSerial()) {
+        long clearedFrame = slot == RenderTargetRegistry.ImageSlot.CHAIN_PAIR
+                ? this.targetRegistry.chainPairClearedFrame(pairIdentity)
+                : this.targetRegistry.pairClearedFrame(slot);
+        if (!acquired || clearedFrame != celtium$frameSerial()) {
             return true;
         }
         if (contentIdentity == this.targetRegistry.currentIdentity()) {
@@ -11917,18 +12335,21 @@ this.frameBufferOpen = false;
                 || identity == (int) this.targetRegistry.mainIdentity()) {
             return false;
         }
-        if (framebufferColorTexture(identity) == null) {
+        // groupMainFbId is the Framebuffer object's identity hash (ShaderGroupMixin reports identityHashCode), which
+        // is the same namespace the chain pairs key by - sign-extension matches how bindFramebuffer widened it.
+        long chainIdentity = identity;
+        if (framebufferColorTexture(chainIdentity) == null) {
             // Nothing was reported under this identity, so there is no GL name for the game's composite to bind
             // either; leaving it undeclared lets the preflight refuse with its own reason.
             return false;
         }
-        if (!glless.chainPairMatches(first.groupMainW, first.groupMainH)) {
+        if (!glless.chainPairMatches(chainIdentity, first.groupMainW, first.groupMainH)) {
             // The frame-time path reports this refusal together with the size it asked for. Declaring it here would
             // let the preflight accept an input the frame cannot supply, which is the N04 stand-in failure.
             return false;
         }
         try {
-            this.postChain.adoptTarget(identity, glless.chainPairColorImage(), glless.chainPairColorView(),
+            this.postChain.adoptTarget(identity, glless.chainPairColorImage(chainIdentity), glless.chainPairColorView(chainIdentity),
                     first.groupMainW, first.groupMainH);
             this.chainAdoptionDeclarations++;
             return true;
@@ -12008,7 +12429,7 @@ this.frameBufferOpen = false;
         System.out.println("[Celtium] CELTIUM_OUTLINE_INPUT frame=" + this.frameId
                 + " identity=" + identity + " texture=" + (reported == null ? -1L : reported[0])
                 + " size=" + (reported == null ? "?" : reported[1] + "x" + reported[2])
-                + " clearedThisFrame=" + (this.targetRegistry.pairClearedFrame(RenderTargetRegistry.ImageSlot.CHAIN_PAIR)
+                + " clearedThisFrame=" + (this.targetRegistry.chainPairClearedFrame(identity)
                         == celtium$frameSerial())
                 + " chainPairClears=" + this.chainPairClears
                 + " boundIdentity=" + this.currentFramebufferIdentity
@@ -12072,7 +12493,9 @@ this.frameBufferOpen = false;
         if (reported == null || width <= 0 || height <= 0 || identity == (int) this.targetRegistry.mainIdentity()) {
             return;
         }
-        if (!glless.chainPairMatches(width, height)) {
+        // identity is the Framebuffer identity hash (see ShaderGroupMixin), the same namespace the chain pairs key by.
+        long chainIdentity = identity;
+        if (!glless.chainPairMatches(chainIdentity, width, height)) {
             // Never resize a live pair here: the silhouette it holds is what the chain is about to read. A pair that
             // does not exist at all is refused the same way rather than created empty: the chain's real input is the
             // silhouette, and an image with nothing in it would make the chain report a run whose picture is the
@@ -12080,31 +12503,32 @@ this.frameBufferOpen = false;
             // says otherwise. Refusing leaves the caller's GL chain in charge, which is the audit's N04 rule.
             this.chainAdoptionsRefused++;
             record("post chain adoption refused: the chain image is "
-                    + (glless.chainPairExists() ? "not " + width + "x" + height : "absent")
-                    + " (asked for " + width + "x" + height + ")");
+                    + (glless.chainPairExists(chainIdentity) ? "not " + width + "x" + height : "absent")
+                    + " (asked for " + width + "x" + height + ", identity " + chainIdentity + ")");
             return;
         }
         // Before anything in this submission clears, attaches or samples the image: the previous frame's composite
         // may have left it in SHADER_READ_ONLY, and both the clear and the chain declare GENERAL.
-        this.celtium$syncPublishedChainOutput(glless.chainPairColorImage());
+        this.celtium$syncPublishedChainOutput(chainIdentity, glless.chainPairColorImage(chainIdentity));
         // The same clear-once contract as the pass sites: this is the post-chain adoption path, and it shares the
-        // chain pair with them, so the rule has to be one rule. Stated here because it is the second site of the same
-        // shape - it is not a different question that happened to look alike.
-        if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, glless.chainPairAcquired(),
-                this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.CHAIN_PAIR),
-                "chain-pair(sync)")) {
-            if (glless.chainPairNeedsSelfTest()) {
-                record(glless.chainPairSelfTest(this.commandBuffer));
+        // identity's pair with them, so the rule has to be one rule. Stated here because it is the second site of the
+        // same shape - it is not a different question that happened to look alike.
+        if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                glless.chainPairAcquired(chainIdentity),
+                this.targetRegistry.chainPairClearContentIdentity(chainIdentity),
+                "chain-pair(sync):" + Long.toHexString(chainIdentity), chainIdentity)) {
+            if (glless.chainPairNeedsSelfTest(chainIdentity)) {
+                record(glless.chainPairSelfTest(chainIdentity, this.commandBuffer));
             } else {
-                glless.clearChainPair(this.commandBuffer);
+                glless.clearChainPair(chainIdentity, this.commandBuffer);
             }
-            this.targetRegistry.notePairCleared(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
-                    celtium$frameSerial(), this.targetRegistry.currentIdentity());
+            this.targetRegistry.noteChainPairCleared(chainIdentity,
+                    celtium$frameSerial(), chainIdentity);
             this.chainPairClears++;
             celtium$noteChainPairClear("sync-published-chain-output");
         }
-        this.postChain.adoptTarget(identity, glless.chainPairColorImage(), glless.chainPairColorView(),
-                width, height);
+        this.postChain.adoptTarget(identity, glless.chainPairColorImage(chainIdentity),
+                glless.chainPairColorView(chainIdentity), width, height);
         this.chainAdoptions++;
         reportChainInputState(identity, reported, glless);
         // CELTIUM-OUTLINE-COMPOSITE: the chain's output IS this image, and the game composites it by binding the
@@ -12113,12 +12537,13 @@ this.frameBufferOpen = false;
         // bound name through the registry, and with no entry there this one is refused and the glow never reaches
         // the screen. Nothing is created, resized, transitioned or freed on the image's behalf here.
         this.publishedChainOutput = celtium$registry().publishExternalImage((int) reported[0],
-                glless.chainPairColorImage(), glless.chainPairColorView(), width, height);
+                glless.chainPairColorImage(chainIdentity), glless.chainPairColorView(chainIdentity), width, height);
         if (this.publishedChainOutput != null) {
             this.publishedChainOutput.notePairImage(true);
         }
         this.publishedChainTexture = (int) reported[0];
-        this.publishedChainImage = glless.chainPairColorImage();
+        this.publishedChainImage = glless.chainPairColorImage(chainIdentity);
+        this.publishedChainIdentity = chainIdentity;
     }
 
     /**
@@ -12165,9 +12590,20 @@ this.frameBufferOpen = false;
         // Which image this name stands for decides the layout a descriptor from it declares: a pair image is attached
         // by a pass that declares GENERAL, so with -Dceltium.vulkan.pairStayGeneral it must declare GENERAL too.
         GllessFrameTarget offTarget = offTargetTarget();
-        published.notePairImage(offTarget != null && (image == offTarget.chainPairColorImage()
+        published.notePairImage(offTarget != null && (offTarget.isChainPairColorImage(image)
                 || image == offTarget.offTargetColorImage()));
+        if (offTarget != null) {
+            long owner = offTarget.chainPairIdentityForImage(image);
+            if (owner != Long.MIN_VALUE) {
+                this.publishedFrameImageIdentities.put(Integer.valueOf(glTextureName), Long.valueOf(owner));
+            } else {
+                this.publishedFrameImageIdentities.remove(Integer.valueOf(glTextureName));
+            }
+        }
     }
+
+    /** GL name -> the chain-pair identity its published image belongs to. MIN_VALUE/absent = not a chain image. */
+    private final java.util.Map<Integer, Long> publishedFrameImageIdentities = new java.util.HashMap<Integer, Long>();
 
     /**
      * The first four vertices of a group's mesh, as the floats the shader will read.
@@ -12329,16 +12765,47 @@ this.frameBufferOpen = false;
         return "(" + (red / count) + "," + (green / count) + "," + (blue / count) + ")";
     }
 
-    /** {@return the chain pair's live colour image handle, or 0 when this is not the GL-less target}. */
+    /**
+     * {@return a live chain pair's colour image handle}, preferring the current target's pair, or 0 when this is not
+     * the GL-less target or no pair exists. The probes that call this are one-shot diagnostics on the splash's own
+     * pair; with per-identity pairs the "the chain pair" question needs an identity, and the current one is the pair
+     * the current pass would attach.
+     */
     private long celtium$livePairImage() {
         GllessFrameTarget live = offTargetTarget();
-        return live == null ? 0L : live.chainPairColorImage();
+        if (live == null) {
+            return 0L;
+        }
+        long current = this.targetRegistry.currentIdentity();
+        if (live.chainPairExists(current)) {
+            return live.chainPairColorImage(current);
+        }
+        for (Long identity : live.chainPairIdentities()) {
+            long image = live.chainPairColorImage(identity.longValue());
+            if (image != 0L) {
+                return image;
+            }
+        }
+        return 0L;
     }
 
-    /** {@return the chain pair's live colour view, the pair the published frame textures stand for}. */
+    /** {@return the same identity's live colour view}, following {@link #celtium$livePairImage}'s pick. */
     private long celtium$livePairView() {
         GllessFrameTarget live = offTargetTarget();
-        return live == null ? 0L : live.chainPairColorView();
+        if (live == null) {
+            return 0L;
+        }
+        long current = this.targetRegistry.currentIdentity();
+        if (live.chainPairExists(current)) {
+            return live.chainPairColorView(current);
+        }
+        for (Long identity : live.chainPairIdentities()) {
+            long view = live.chainPairColorView(identity.longValue());
+            if (view != 0L) {
+                return view;
+            }
+        }
+        return 0L;
     }
 
     /**
@@ -12358,10 +12825,11 @@ this.frameBufferOpen = false;
             return;
         }
         for (java.util.Map.Entry<Integer, VulkanGlTexture> entry : this.publishedTextures.publishedEntries()) {
-            boolean pairImageName = this.publishedFrameImages.get(entry.getKey()) != null
-                    && offTargetTarget() != null
-                    && this.publishedFrameImages.get(entry.getKey()).longValue()
-                            == offTargetTarget().chainPairColorImage();
+            GllessFrameTarget pairOwner = offTargetTarget();
+            Long publishedImageHandle = this.publishedFrameImages.get(entry.getKey());
+            long publishedImageIdentity = pairOwner == null || publishedImageHandle == null
+                    ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(publishedImageHandle.longValue());
+            boolean pairImageName = publishedImageIdentity != Long.MIN_VALUE;
             // The sampling side must not move the image this pass is about to attach: the pass declares GENERAL for
             // attachment 0, and the transition to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass is
             // VUID-vkCmdBeginRenderPass-initialLayout-00900. The attach-side hand-back (the `true` direction) already
@@ -12399,9 +12867,9 @@ this.frameBufferOpen = false;
                 // served. Counted, so "the transition was skipped" is a measurement; and the pair's own record follows,
                 // because the image is still in GENERAL and a record left at SHADER_READ_ONLY would be stale.
                 this.publishedTextures.noteSkippedForAttach();
-                GllessFrameTarget pairTarget = offTargetTarget();
-                if (pairTarget != null) {
-                    pairTarget.noteChainPairColorLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+                if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
+                    pairOwner.noteChainPairColorLayout(publishedImageIdentity,
+                            org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
                 }
             } else {
                 entry.getValue().ensureSampledLayout(this.commandBuffer);
@@ -12410,16 +12878,11 @@ this.frameBufferOpen = false;
             // stand for the pair image: a name published over the frame image is not the pair's business. This is what
             // makes the pair's actual layout readable next to the GENERAL its pass declares and the layout the
             // descriptor was written with - the three values VUID-vkCmdDraw-None-09600 compares.
-            GllessFrameTarget pairTarget = offTargetTarget();
-            if (pairTarget != null) {
-                Long publishedImage = this.publishedFrameImages.get(entry.getKey());
-                if (publishedImage != null && publishedImage.longValue() == pairTarget.chainPairColorImage()
-                        && pairTarget.chainPairColorImage() != 0L) {
-                    pairTarget.noteChainPairColorLayout(general
-                            ? org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
-                            : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                    celtium$reportPairLayout(general ? "hand-back" : "sampling");
-                }
+            if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
+                pairOwner.noteChainPairColorLayout(publishedImageIdentity, general
+                        ? org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
+                        : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                celtium$reportPairLayout(general ? "hand-back" : "sampling");
             }
         }
     }
@@ -12436,10 +12899,13 @@ this.frameBufferOpen = false;
      */
     private void celtium$reportPairLayout(String site) {
         GllessFrameTarget pairTarget = offTargetTarget();
-        if (pairTarget == null || pairTarget.chainPairColorImage() == 0L) {
+        if (pairTarget == null) {
             return;
         }
         String line = celtium$pairLayoutSummary();
+        if ("pair=absent".equals(line)) {
+            return;
+        }
         if (line.equals(this.lastPairLayoutLine) || this.pairLayoutLogs >= PAIR_LAYOUT_LINES) {
             return;
         }
@@ -12450,19 +12916,34 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return the chain pair's three layouts as one string}: what the pass declares, what the image is actually in,
-     * and what each published wrapper records - the three values {@code VUID-vkCmdDraw-None-09600} compares. Used by
-     * the change-triggered line and by {@code CELTIUM_VERIFY}, so the state at the end of a run is recorded even when
-     * nothing changed late enough to print.
+     * {@return every chain pair's three layouts as one string}: what the pass declares, what the image is actually
+     * in, and what each published wrapper records - the three values {@code VUID-vkCmdDraw-None-09600} compares.
+     * With per-identity pairs there is one entry per identity. Used by the change-triggered line and by
+     * {@code CELTIUM_VERIFY}, so the state at the end of a run is recorded even when nothing changed late enough to
+     * print.
      */
     private String celtium$pairLayoutSummary() {
         GllessFrameTarget pairTarget = offTargetTarget();
-        if (pairTarget == null || pairTarget.chainPairColorImage() == 0L) {
+        if (pairTarget == null) {
             return "pair=absent";
         }
-        return "pair=[declared=" + celtium$layoutName(pairTarget.chainPairDeclaredLayout())
-                + " actual=" + celtium$layoutName(pairTarget.chainPairColorLayout())
-                + " wrappers=" + this.publishedTextures.publishedLayoutsSummary() + "]";
+        StringBuilder pairs = new StringBuilder();
+        for (Long identity : pairTarget.chainPairIdentities()) {
+            if (pairTarget.chainPairColorImage(identity.longValue()) == 0L) {
+                continue;
+            }
+            if (pairs.length() > 0) {
+                pairs.append(' ');
+            }
+            pairs.append("0x").append(Long.toHexString(identity.longValue())).append(":[declared=")
+                    .append(celtium$layoutName(pairTarget.chainPairDeclaredLayout()))
+                    .append(" actual=").append(celtium$layoutName(pairTarget.chainPairColorLayout(identity.longValue())))
+                    .append(']');
+        }
+        if (pairs.length() == 0) {
+            return "pair=absent";
+        }
+        return "pair=" + pairs + " wrappers=" + this.publishedTextures.publishedLayoutsSummary();
     }
 
     /** {@return a Vulkan layout's name, so a line can be read without a table}. */
@@ -12500,17 +12981,27 @@ this.frameBufferOpen = false;
             // not ours to judge here.
             return;
         }
-        long live = offTarget.chainPairColorImage();
         java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =
                 this.publishedTextures.publishedEntries().iterator();
         while (iterator.hasNext()) {
             java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
             Long image = this.publishedFrameImages.get(entry.getKey());
-            // A name survives only while the pair still owns the very image it names. `live == 0` means the pair has been
-            // released (teardown, or the release half of a re-creation) and then no published name can be valid: the
-            // first version of this rule kept the names in that case, and the barrier landed on the freed handle - the
-            // measured crash was this method's caller, `ensureSampledLayout` on image 0x300000000030, with the
-            // Java frame `celtium$transitionPublishedFrameTextures` under it.
+            // A name survives only while the pair it belongs to still owns the very image it names. The owner is the
+            // identity the image was published under - recorded at publish time - because with per-identity pairs the
+            // live image differs per framebuffer and "the" chain pair is a question with no single answer.
+            Long ownerBoxed = this.publishedFrameImageIdentities.get(entry.getKey());
+            long owner = ownerBoxed == null ? Long.MIN_VALUE : ownerBoxed.longValue();
+            // A name with no chain-pair owner stands for the frame image or the default pair: its live handle is the
+            // one those owners publish now, so it survives as long as that is still the handle it names.
+            long live;
+            if (owner != Long.MIN_VALUE) {
+                live = offTarget.chainPairColorImage(owner);
+            } else if (image != null && (image.longValue() == this.frameTarget.colorImage()
+                    || image.longValue() == offTarget.offTargetColorImage())) {
+                live = image.longValue();
+            } else {
+                live = 0L;
+            }
             if (image != null && live != 0L && image.longValue() == live) {
                 continue;
             }
@@ -12522,7 +13013,7 @@ this.frameBufferOpen = false;
             // replaced with one standing for the live image.
             if (live != 0L) {
                 VulkanGlTexture republished = celtium$registry().publishExternalImage(entry.getKey().intValue(), live,
-                        offTarget.chainPairColorView(), this.targetWidth, this.targetHeight);
+                        offTarget.chainPairColorView(owner), this.targetWidth, this.targetHeight);
                 if (republished != null) {
                     entry.setValue(republished);
                     this.publishedFrameImages.put(entry.getKey(), Long.valueOf(live));
@@ -12534,32 +13025,46 @@ this.frameBufferOpen = false;
             // point the name at, so it is dropped rather than left naming freed memory.
             celtium$registry().unpublishExternalImage(entry.getKey().intValue());
             this.publishedFrameImages.remove(entry.getKey());
+            this.publishedFrameImageIdentities.remove(entry.getKey());
             this.publishedTextures.noteUnpublished();
             this.publishedTextures.noteStalePruned();
             if (this.publishedTextures.stalePruned() == 1) {
                 record("published name " + entry.getKey() + " named image 0x"
                         + (image == null ? "unknown" : Long.toHexString(image.longValue()))
                         + " which is no longer the pair's image (0x" + Long.toHexString(live)
+                        + " for identity 0x" + Long.toHexString(owner)
                         + "); unpublished before any barrier could be recorded on it");
             }
             iterator.remove();
         }
     }
 
-    private void celtium$syncPublishedChainOutput(long chainPairColorImage) {
-        // A pair recreated at a new size destroys the image every published name stands for: those wrappers name freed
-        // memory, so they are unpublished and dropped here - the same rule the outline's own name follows below. This
-        // runs before the early return that only looks at the outline's wrapper, because the other names are published
-        // even when the outline never adopted anything (the vanilla loading screen's framebuffer is the measured case).
+    /**
+     * Follows a pair re-creation for every published name whose image died with it.
+     * <p>
+     * With per-identity pairs the caller names <em>which</em> identity's pair was recreated: only names published over
+     * that identity's image can be stale; the others name living images and are left alone. The name's owner is the
+     * identity recorded at publish time.
+     *
+     * @param identity the framebuffer identity whose pair was (re)created
+     * @param chainPairColorImage the pair's live colour image now
+     */
+    private void celtium$syncPublishedChainOutput(long identity, long chainPairColorImage) {
         if (!this.publishedTextures.isEmptyPublished()) {
             GllessFrameTarget liveTarget = offTargetTarget();
-            long liveImage = liveTarget == null ? 0L : liveTarget.chainPairColorImage();
-            long liveView = liveTarget == null ? 0L : liveTarget.chainPairColorView();
+            long liveImage = liveTarget == null ? 0L : liveTarget.chainPairColorImage(identity);
+            long liveView = liveTarget == null ? 0L : liveTarget.chainPairColorView(identity);
             java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =
                     this.publishedTextures.publishedEntries().iterator();
             while (iterator.hasNext()) {
                 java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
                 Long image = this.publishedFrameImages.get(entry.getKey());
+                // Only names owned by this identity's pair can be stale when the pair is recreated; a name for the
+                // frame image, the default pair or another identity's pair still names a living image.
+                Long ownerBoxed = this.publishedFrameImageIdentities.get(entry.getKey());
+                if (ownerBoxed == null || ownerBoxed.longValue() != identity) {
+                    continue;
+                }
                 if (image != null && image.longValue() == chainPairColorImage) {
                     continue;
                 }
@@ -12582,6 +13087,7 @@ this.frameBufferOpen = false;
                 }
                 celtium$registry().unpublishExternalImage(entry.getKey().intValue());
                 this.publishedFrameImages.remove(entry.getKey());
+                this.publishedFrameImageIdentities.remove(entry.getKey());
                 this.publishedTextures.noteUnpublished();
                 iterator.remove();
             }
@@ -12589,7 +13095,7 @@ this.frameBufferOpen = false;
         if (this.publishedChainOutput == null) {
             return;
         }
-        if (this.publishedChainImage != chainPairColorImage) {
+        if (this.publishedChainIdentity == identity && this.publishedChainImage != chainPairColorImage) {
             celtium$registry().unpublishExternalImage(this.publishedChainTexture);
             this.publishedChainOutput = null;
             this.publishedChainImage = 0L;
@@ -12996,6 +13502,25 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * Serves one {@code glReadPixels} from an image this renderer owns.
+     * <p>
+     * The caller is the GL-less stub, which knows the bound read framebuffer's GL name and the rectangle, format and
+     * destination address the game asked for. The pixels come from the same readback the texture-copy path uses
+     * (transfer-source copy into a host-visible buffer) after the same ordering contract: pending groups flush, the
+     * frame's recordings submit, and the device is confirmed idle - the synchronous answer GL owes, which a noop left
+     * as a zeroed buffer for every caller that ever asked (the validation fixture's format-2 readback is the measured
+     * case; vanilla's ScreenShotHelper is the mod-facing one).
+     *
+     * @param readFbo the GL name bound to {@code GL_READ_FRAMEBUFFER} (0 = the window)
+     * @param address the caller's destination address
+     * @return whether the pixels were written
+     */
+    public boolean celtium$readPixels(int readFbo, int x, int y, int width, int height,
+            int format, int type, long address) {
+        return this.textureCopyService.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
+    }
+
+    /**
      * The backend side of {@link TextureCopyService.Host}: one method per fact the copy path reads.
      * <p>
      * Non-static so it reads the backend's own state, and every method is either a direct field read or the same call
@@ -13153,6 +13678,16 @@ this.frameBufferOpen = false;
         }
 
         @Override
+        public long identityForColorTexture(int glTextureName) {
+            return VulkanTerrainGpuBackend.this.celtium$framebufferIdentityForColorTexture(glTextureName);
+        }
+
+        @Override
+        public long identityForFramebufferName(int framebufferObject) {
+            return VulkanTerrainGpuBackend.this.celtium$identityForFramebufferName(framebufferObject);
+        }
+
+        @Override
         public void record(String diagnostic) {
             VulkanTerrainGpuBackend.this.record(diagnostic);
         }
@@ -13202,16 +13737,25 @@ this.frameBufferOpen = false;
                     this.targetWidth, this.targetHeight);
         }
         GllessFrameTarget glless = offTargetTarget();
-        if (glless != null && glless.chainPairColorImage() != 0L
-                && glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
-            // Dumped at the frame's size: the pair is created at the size the game's framebuffer asks for, and the
-            // readback's extent has to be inside the image it reads. A pair of another size is named rather than read.
-            celtium$dumpOwnedImage("chain-pair", glless.chainPairColorImage(), base,
-                    identity + " pairSize=" + this.targetWidth + "x" + this.targetHeight,
-                    this.targetWidth, this.targetHeight);
-        } else if (glless != null && glless.chainPairColorImage() != 0L) {
-            System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=chain-pair skipped=size"
-                    + " frameSize=" + this.targetWidth + "x" + this.targetHeight + " " + identity);
+        if (glless != null) {
+            for (Long chainId : glless.chainPairIdentities()) {
+                long pairImage = glless.chainPairColorImage(chainId.longValue());
+                if (pairImage == 0L) {
+                    continue;
+                }
+                if (glless.chainPairMatches(chainId.longValue(), this.targetWidth, this.targetHeight)) {
+                    // Dumped at the frame's size: the pair is created at the size the game's framebuffer asks for,
+                    // and the readback's extent has to be inside the image it reads. A pair of another size is named
+                    // rather than read.
+                    celtium$dumpOwnedImage("chain-pair-0x" + Long.toHexString(chainId.longValue()), pairImage,
+                            base, identity + " pairSize=" + this.targetWidth + "x" + this.targetHeight,
+                            this.targetWidth, this.targetHeight);
+                } else {
+                    System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=chain-pair skipped=size"
+                            + " identity=0x" + Long.toHexString(chainId.longValue())
+                            + " frameSize=" + this.targetWidth + "x" + this.targetHeight + " " + identity);
+                }
+            }
         }
         // Each pass's own output image, from the executor's bookkeeping (`VulkanPostChain.lastRecordedOutputs`, filled
         // as the passes are recorded and readable before `commitPasses`): the frame image alone cannot tell "pass 0
@@ -14016,6 +14560,14 @@ this.frameBufferOpen = false;
     private static final boolean BATCH_FRAME_SUBMITS =
             Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
                     && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
+    /**
+     * Mid-frame clear ordering for a framebuffer whose draws the S10 flush already submitted: on, the clear is
+     * recorded against the pair image in its own submission (queue order puts it after those draws); off, it
+     * latches for the pair's next pass-begin (the pre-standalone behaviour, which leaves the readback observing
+     * the uncleared image). Lab switch for A/B attribution.
+     */
+    private static final boolean GAME_CLEAR_STANDALONE =
+            !Boolean.getBoolean("celtium.vulkan.disableGameClearStandalone");
     /** The order this slot's last submission was made in; 0 means it has never submitted. */
     private final long[] slotSubmitSequence = new long[FRAME_SLOTS];
     /**
@@ -14382,6 +14934,7 @@ this.frameBufferOpen = false;
                     // The game's finished-frame composite, sampling the image it is about to be drawn into. Dropped by
                     // name rather than drawn: see SELF_COMPOSITE_SKIP for the measurement that makes this the repair
                     // and celtium$isScreenSelfComposite for the three shapes the same rule had in 2026-10-11.
+                    celtium$recordQueuedClearsInPass(group.postClears, group.target);
                     this.retiredImmediateGroups.add(group);
                     this.immediateStatistics.noteSelfCompositeSkips();
                     continue;
@@ -14392,6 +14945,7 @@ this.frameBufferOpen = false;
                         // Recorded against a frame target that has since been destroyed: its pipeline and render pass are
                         // gone, so drawing it would bind the wrong thing. Retired without drawing and counted; the mesh is
                         // freed by the next completion drain, which is safe because this group was never submitted.
+                        celtium$recordQueuedClearsInPass(group.postClears, group.target);
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleTargetGeneration();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
@@ -14403,6 +14957,7 @@ this.frameBufferOpen = false;
                         // this would read freed geometry. The target-generation stamp cannot see that: a frame target
                         // survives a world change. Retired without drawing and counted; the mesh is freed by the next
                         // completion drain, which is safe because the group was never submitted.
+                        celtium$recordQueuedClearsInPass(group.postClears, group.target);
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleWorldEpoch();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
@@ -14520,6 +15075,7 @@ this.frameBufferOpen = false;
                                         + Long.toHexString(currentTexture.key())
                                         + "; the group is refused rather than drawn with a destroyed view");
                             }
+                            celtium$recordQueuedClearsInPass(group.postClears, group.target);
                             this.retiredImmediateGroups.add(group);
                             this.immediateStatistics.noteImmediateGroupsDiscarded();
                             continue;
@@ -14720,6 +15276,10 @@ this.frameBufferOpen = false;
                 }
                 this.pendingImmediateIndices -= mesh.indexCount();
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
+                // The game's own glClears that arrived after this group was queued: recorded inside this same pass,
+                // after the draws they erase and before the groups that follow them.
+                celtium$recordQueuedClearsInPass(group.postClears, group.target);
+                group.postClears = null;
             }
             // Rebuild immediateGroups as only the kept groups, in order. Drawn and retired groups were moved to their
             // own lists during the pass; what remains in keptImmediateGroups is exactly the other-target groups the
@@ -15415,6 +15975,13 @@ this.frameBufferOpen = false;
             this.frameTarget.abandonFrame("injected idle failure");
             return false;
         }
+        // Under batchFrameSubmits the frame's recorded draws sit in the open unified buffer, visible to no fence:
+        // a wait that skipped them would answer "idle" while the draws the caller is about to read (the texture
+        // copy's framebuffer readback is the measured case: its waitForIdle returned instantly and the PNG held
+        // the pair's untouched clear) are still just commands. Submitting them first is what the wait means, and
+        // `withFrameSemaphores=false` leaves the frame's acquire/done pair for the boundary to consume exactly
+        // once - on this single queue, submission order already provides the ordering the pair encoded.
+        submitOpenFrameBuffer();
         // Every pending slot, not only the current one: the callers of this method (the present, endFrame, teardown,
         // the recovery paths) need "the GPU has finished everything submitted". Each slot's own fence carries the
         // bounded wait; the single-fence tail the old shape kept here was the same wait the slot loop already does.
@@ -15427,6 +15994,28 @@ this.frameBufferOpen = false;
             this.submissionPending = false;
         }
         return true;
+    }
+
+    /**
+     * Submits the recordings this frame has made so far, without consuming the frame's semaphores.
+     * <p>
+     * Under {@code batchFrameSubmits} the frame's work sits in the open unified buffer until the boundary: a
+     * mid-frame ordering point (the copy readback's {@link #waitForIdle} call, which a framebuffer-pixel read
+     * must not race) would otherwise wait on fences that carry none of the recorded draws and read the image
+     * before its content exists. Ending the buffer here and queueing its submission keeps the single-queue
+     * order, and {@code withFrameSemaphores=false} leaves the frame's acquire signal for the boundary's own
+     * submission to consume - the semaphore pair is signalled and waited exactly once, as it always was.
+     */
+    private void submitOpenFrameBuffer() {
+        if (!this.frameBufferOpen || this.immediateWindowBusy) {
+            return;
+        }
+        if (this.commandState.inRenderPass()) {
+            vkCmdEndRenderPass(this.commandBuffer);
+            this.commandState.endPass();
+        }
+        this.frameCoordinator.celtium$finishFrameBuffer(false);
+        this.context.celtium$flushBatchedSubmits();
     }
 
     /** How long a wait for the GPU will be tolerated before the run ends rather than hanging. */

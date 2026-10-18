@@ -152,6 +152,34 @@ public final class RenderTargetRegistry {
     }
 
     /**
+     * The GL framebuffer-object name an identity was reported under.
+     * <p>
+     * The identity is the framebuffer's object identity (the mixin's {@code System.identityHashCode}), which survives
+     * across bindings; the GL name is what a raw {@code glBindFramebuffer(GL_READ_FRAMEBUFFER, name)} binds when a mod
+     * reads pixels, and the stub only keeps that name - so a readback that asks "which image did name N's draws go
+     * into" resolves through this map. A name reused by a new framebuffer overwrites, which is the answer the new
+     * reader wants.
+     */
+    private final Map<Integer, Long> framebufferNames = new HashMap<Integer, Long>();
+
+    /**
+     * Records that the framebuffer with GL name {@code framebufferObject} is the object whose identity is
+     * {@code identity}. Identity 0 (the unbind) and name 0 (the window) are not recorded.
+     */
+    public void noteFramebufferName(long identity, int framebufferObject) {
+        if (identity == 0L || framebufferObject == 0) {
+            return;
+        }
+        this.framebufferNames.put(Integer.valueOf(framebufferObject), Long.valueOf(identity));
+    }
+
+    /** {@return the identity reported for a GL framebuffer name}, or {@link Long#MIN_VALUE} when none was recorded. */
+    public long identityForFramebufferName(int framebufferObject) {
+        Long identity = this.framebufferNames.get(Integer.valueOf(framebufferObject));
+        return identity == null ? Long.MIN_VALUE : identity.longValue();
+    }
+
+    /**
      * {@return the identities that share one slot}, as {@code slot=[id, id, ...]} entries.
      * <p>
      * This is the BH-14 measurement: a slot with two identities is an image two framebuffers are drawing into, and
@@ -293,6 +321,118 @@ public final class RenderTargetRegistry {
         this.pairFramebuffers.remove(slot);
     }
 
+    // ---------------------------------------------------------------- per-identity chain-pair records
+    //
+    // The chain pair is one image per framebuffer identity now (it used to be a single image every non-main
+    // identity shared - which is how two framebuffers overwrote each other's content: measured as the black world
+    // of legs bisect4/5 and the command-buffer fixture's missing quad of leg fboalias-amd). The records a slot
+    // used to hold therefore key by the identity that owns the pair.
+
+    /** identity -> render pass -> framebuffer, for the chain pairs. */
+    private final Map<Long, Map<Long, Long>> chainPairFramebuffers = new HashMap<Long, Map<Long, Long>>();
+    private final Map<Long, Integer> chainPairFramebufferCreationCounts = new HashMap<Long, Integer>();
+    /** identity -> {frame serial of its last clear, the content identity it then held}. */
+    private final Map<Long, long[]> chainPairClears = new HashMap<Long, long[]>();
+    /** identity -> {layout, generation noted at}. */
+    private final Map<Long, long[]> chainPairLayouts = new HashMap<Long, long[]>();
+
+    /** {@return the identity's chain-pair framebuffer built for this render pass, or 0 when it has none}. */
+    public long chainPairFramebuffer(long identity, long renderPass) {
+        Map<Long, Long> entry = this.chainPairFramebuffers.get(Long.valueOf(identity));
+        if (entry == null) {
+            return 0L;
+        }
+        Long handle = entry.get(Long.valueOf(renderPass));
+        return handle == null ? 0L : handle.longValue();
+    }
+
+    /** {@return every framebuffer handle one identity's chain pair holds}. */
+    public java.util.Collection<Long> chainPairFramebufferHandles(long identity) {
+        Map<Long, Long> entry = this.chainPairFramebuffers.get(Long.valueOf(identity));
+        return entry == null ? java.util.Collections.<Long>emptyList() : entry.values();
+    }
+
+    /** {@return every framebuffer handle every chain pair holds}, for the destroy-all paths. */
+    public java.util.Collection<Long> allChainPairFramebufferHandles() {
+        java.util.List<Long> handles = new ArrayList<Long>();
+        for (Map<Long, Long> entry : this.chainPairFramebuffers.values()) {
+            handles.addAll(entry.values());
+        }
+        return handles;
+    }
+
+    /** {@return how many framebuffers one identity's chain pair has created}. */
+    public int chainPairFramebufferCreations(long identity) {
+        Integer count = this.chainPairFramebufferCreationCounts.get(Long.valueOf(identity));
+        return count == null ? 0 : count.intValue();
+    }
+
+    /** {@return how many framebuffers every chain pair has created in total}, for the summary line. */
+    public int chainPairFramebufferCreationsTotal() {
+        int total = 0;
+        for (Integer count : this.chainPairFramebufferCreationCounts.values()) {
+            total += count.intValue();
+        }
+        return total;
+    }
+
+    /** Records a framebuffer for (identity, renderPass), counting it when it adds a new handle. */
+    public void noteChainPairFramebuffer(long identity, long handle, long renderPass) {
+        Map<Long, Long> entry = this.chainPairFramebuffers.get(Long.valueOf(identity));
+        if (entry == null) {
+            entry = new HashMap<Long, Long>();
+            this.chainPairFramebuffers.put(Long.valueOf(identity), entry);
+        }
+        if (entry.put(Long.valueOf(renderPass), Long.valueOf(handle)) == null) {
+            this.chainPairFramebufferCreationCounts.merge(Long.valueOf(identity), Integer.valueOf(1), Integer::sum);
+        }
+    }
+
+    /** Forgets one identity's chain-pair framebuffers, after they have been destroyed. */
+    public void clearChainPairFramebuffer(long identity) {
+        this.chainPairFramebuffers.remove(Long.valueOf(identity));
+    }
+
+    /** Forgets every chain-pair framebuffer, after they have been destroyed. */
+    public void clearAllChainPairFramebuffers() {
+        this.chainPairFramebuffers.clear();
+    }
+
+    /** {@return the frame serial the identity's chain pair was last cleared in}, or a value no serial can equal. */
+    public long chainPairClearedFrame(long identity) {
+        long[] entry = this.chainPairClears.get(Long.valueOf(identity));
+        return entry == null ? -1L : entry[0];
+    }
+
+    /** Records that the identity's chain pair was cleared in this frame, for the given content identity. */
+    public void noteChainPairCleared(long identity, long frameSerial, long contentIdentity) {
+        this.chainPairClears.put(Long.valueOf(identity), new long[] { frameSerial, contentIdentity });
+    }
+
+    /** {@return the identity whose content the identity's chain pair held when it was last cleared}. */
+    public long chainPairClearContentIdentity(long identity) {
+        long[] entry = this.chainPairClears.get(Long.valueOf(identity));
+        return entry == null ? Long.MIN_VALUE : entry[1];
+    }
+
+    /** Records the layout one identity's chain-pair image is in, at the current generation. */
+    public void noteChainPairLayout(long identity, int layout) {
+        this.chainPairLayouts.put(Long.valueOf(identity), new long[] { layout, this.generation });
+    }
+
+    /** {@return the layout the identity's chain-pair image is in}, or -1 when none current was recorded. */
+    public int chainPairLayoutOf(long identity) {
+        long[] entry = this.chainPairLayouts.get(Long.valueOf(identity));
+        if (entry == null) {
+            return -1;
+        }
+        if (entry[1] != this.generation) {
+            this.staleLayoutReads++;
+            return -1;
+        }
+        return (int) entry[0];
+    }
+
     /** Records the identity adopted as the main frame target, which the bind path can also discover later. */
     public void noteMainIdentity(long identity) {
         this.mainIdentity = identity;
@@ -334,6 +474,7 @@ public final class RenderTargetRegistry {
     public void noteFrameTargetReplaced() {
         this.generation++;
         this.layouts.clear();
+        this.chainPairLayouts.clear();
     }
 
     // ---------------------------------------------------------------- clear ownership
@@ -348,6 +489,8 @@ public final class RenderTargetRegistry {
     private ImageSlot latchedSlot;
     private long latchedGeneration = -1L;
     private boolean hasLatchedClear;
+    /** The identity the latched clear names - {@link #latchedSlot} alone cannot tell one chain pair from another. */
+    private long latchedIdentity = Long.MIN_VALUE;
     /** The frame whose clears have already been attributed, and which slot owns this frame's colour clear. */
     private long clearFrame = -1L;
     private ImageSlot colourClearOwner;
@@ -371,6 +514,7 @@ public final class RenderTargetRegistry {
         this.latchedAlpha = alpha;
         this.latchedDepth = depth;
         this.latchedSlot = slotFor(identity);
+        this.latchedIdentity = identity;
         this.latchedGeneration = this.generation;
         this.hasLatchedClear = true;
     }
@@ -383,6 +527,11 @@ public final class RenderTargetRegistry {
     /** {@return the slot the latched clear belongs to}, or {@code null} when none is latched. */
     public ImageSlot latchedSlot() {
         return this.latchedSlot;
+    }
+
+    /** {@return the identity the latched clear names}, or {@link Long#MIN_VALUE} when none is latched. */
+    public long latchedIdentity() {
+        return this.latchedIdentity;
     }
 
     /** {@return the latched clear's buffer mask}. */
@@ -416,6 +565,7 @@ public final class RenderTargetRegistry {
         if (this.hasLatchedClear && this.latchedGeneration != this.generation) {
             this.hasLatchedClear = false;
             this.latchedSlot = null;
+            this.latchedIdentity = Long.MIN_VALUE;
         }
     }
 
@@ -442,6 +592,7 @@ public final class RenderTargetRegistry {
             this.latchedClearsApplied++;
             this.hasLatchedClear = false;
             this.latchedSlot = null;
+            this.latchedIdentity = Long.MIN_VALUE;
         } else {
             this.liveClearsApplied++;
         }

@@ -103,6 +103,15 @@ public abstract class FramebufferMixin {
                             System.identityHashCode(game), game.framebufferTexture);
                 }
             }
+            // The GL name under the identity, for a readback that only has the name: the game binds the framebuffer by
+            // name for glReadPixels, and which image the name's draws went into is answered by the identity. The main
+            // framebuffer is the measured case - its creation routed no glFramebufferTexture2D through the stub, so
+            // the colour-texture chain cannot resolve it.
+            if (self.framebufferObject != 0
+                    && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$noteFramebufferName(
+                        identity, self.framebufferObject);
+            }
         }
     }
     /**

@@ -136,6 +136,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     // two steps, each landing on its own.
     private static final int SEM_BEGIN = 68;           // (mode) -> the site that opens an immediate-mode run
     private static final int SEM_END = 69;             // () -> the site that closes it
+    private static final int SEM_READ_PIXELS = 70;     // (x,y,w,h,format,type,pixels) -> read the bound read framebuffer
     private static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
     private static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
     private static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
@@ -368,6 +369,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         // image for the bound read framebuffer, which is a different component's resource.
         fn("glCopyTexImage2D", R_VOID, SEM_COPY_TEX_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
         fn("glCopyTexSubImage2D", R_VOID, SEM_COPY_TEX_SUB_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
+        // glReadPixels is the same question the copies answer, asked into a client buffer: the bound read framebuffer's
+        // rectangle from the image the renderer owns. It used to sit in the no-op list, which left every caller's
+        // buffer zeroed - the fixture's format-2 readback measured "all mismatch" and ScreenShotHelper's screenshots
+        // came out blank - so it is registered and served now.
+        fn("glReadPixels", R_VOID, SEM_READ_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
         fn("glBindFramebuffer", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
         fn("glBindFramebufferEXT", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
         fn("glBindFramebufferARB", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
@@ -461,7 +467,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glCallLists",
                 "glListBase", "glRenderMode", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
                 "glPushName", "glPopName", "glLoadName", "glRasterPos2f", "glRasterPos3f", "glBitmap",
-                "glCopyPixels", "glDrawPixels", "glReadPixels",
+                "glCopyPixels", "glDrawPixels",
                 "glBlitFramebuffer", "glFramebufferTexture2D", "glFramebufferTexture", "glFramebufferTexture1D",
                 "glFramebufferTexture3D", "glFramebufferTextureLayer", "glFramebufferRenderbuffer",
                 "glRenderbufferStorage", "glRenderbufferStorageMultisample",
@@ -1654,6 +1660,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.pendingClearDrawFbo = this.drawFbo;
         this.pendingClearIsMain = this.drawFramebufferIsMain;
         this.pendingClears.getAndUpdate(previous -> previous | mask);
+        if (!this.drawFramebufferIsMain) {
+            // A non-main framebuffer's clear has no other carrier: the latch only runs on the next vanilla
+            // bindFramebuffer, and a readback that binds by raw GL name never trips it - measured as a
+            // framebufferClear() whose drawn quad survived through glReadPixels. Recording it at the clear call
+            // keeps it between the draws before it and the draws after it, which is GL's own ordering; the
+            // main-framebuffer case keeps the latch path, which the frame machinery already owns.
+            try {
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                    vulkan.celtium$gameClear(mask, this.drawFbo);
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // The pending mask stays set, so the next bind's latch still carries the clear as before.
+            }
+        }
     }
 
     private void recordClearColor(float red, float green, float blue, float alpha) {
@@ -2763,6 +2784,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_COPY_TEX_SUB_IMAGE:
                 celtium$noteTextureCopy(fn.name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
                         (int) c[5], (int) c[6], (int) c[7]);
+                return 0L;
+            case SEM_READ_PIXELS:
+                serveReadPixels((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], c[6]);
                 return 0L;
             case SEM_TEX_PARAM_I:
                 celtium$setTextureParameterBound((int) c[0], (int) c[1],
@@ -5112,6 +5136,49 @@ public final class CeltiumGlStub implements FunctionProvider {
                     + " site=[" + celtium$callSite(8) + "]");
         }
     }
+
+    /** The transformer's entry for {@code glReadPixels}: forwards to the installed stub when one exists. */
+    public static void celtium$readPixels(int x, int y, int width, int height, int format, int type, long address) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.serveReadPixels(x, y, width, height, format, type, address);
+        }
+    }
+
+    /**
+     * Serves a {@code glReadPixels} against the image the bound read framebuffer stands for.
+     * <p>
+     * The resolution and the ordering live in the backend's copy service: the GL name finds the framebuffer's colour
+     * texture (the raw {@code glFramebufferTexture2D} map, which vanilla attaches through too), the texture finds the
+     * identity it was reported under, and the identity finds the pair its draws went into. When the renderer declines
+     * - no backend, an image it does not own, a format it cannot pack - the buffer keeps whatever the caller put
+     * there, which is the noop behaviour every previous caller saw and is at least no worse; the difference is the
+     * call is now counted and the served case writes real pixels.
+     */
+    private void serveReadPixels(int x, int y, int width, int height, int format, int type, long address) {
+        try {
+            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            boolean served = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    && vulkan.celtium$readPixels(this.readFbo, x, y, width, height, format, type, address);
+            if (!served && readPixelsRefusals < 8) {
+                readPixelsRefusals++;
+                System.out.println("[Celtium] CELTIUM_READ_PIXELS refused readFbo=" + this.readFbo
+                        + " rect=" + x + "," + y + " " + width + "x" + height
+                        + " format=0x" + Integer.toHexString(format) + " type=0x" + Integer.toHexString(type)
+                        + " backend=" + (backend == null ? "none" : backend.getClass().getSimpleName()));
+            }
+            this.readPixelsCalls++;
+        } catch (RuntimeException | LinkageError error) {
+            if (readPixelsRefusals < 8) {
+                readPixelsRefusals++;
+                System.out.println("[Celtium] CELTIUM_READ_PIXELS failed: " + error);
+            }
+        }
+    }
+
+    /** Bounded refusal log + the call count for {@link #serveReadPixels}. */
+    private int readPixelsRefusals;
+    private long readPixelsCalls;
 
     private static void celtium$putInt(long address, int value) {
         MemoryUtil.memPutInt(address, value);

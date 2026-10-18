@@ -527,6 +527,16 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindFramebuffer(target, framebuffer);
     }
 
+    /**
+     * A framebuffer-pixel read, as {@code glReadPixels(x, y, width, height, format, type, pixels)} does.
+     * <p>
+     * Without the route every caller's buffer stayed zeroed - a no-op that reads as transparent black rather than a
+     * failure, which is what ScreenShotHelper's screenshots and the fixture's format-2 readback measured.
+     */
+    public static void glReadPixels(int x, int y, int width, int height, int format, int type, long pixels) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$readPixels(x, y, width, height, format, type, pixels);
+    }
+
     /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */
     public static void glBufferData(int target, long size, long data, int usage) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferData(target, size, data, usage);
