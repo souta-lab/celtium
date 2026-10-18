@@ -21,15 +21,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * follows from that - the terrain pass has nothing to draw, nothing is submitted, and the present has no picture - so
  * the tracker is the root cause and this is the hook that fills it.
  * <p>
- * Two things changed here. The targets are the runtime (SRG) names, {@code func_73158_c} for {@code loadChunk} and
- * {@code func_186025_d} for {@code provideChunk}: this environment runs SRG-named classes - {@code javap} on
- * {@code srg_merged_minecraft.jar} shows {@code func_71411_J} and friends - and the SRG spelling is the one that has
- * applied every time in this session, including for the guards that had to be verified by their effect. And
- * {@code provideChunk} is hooked as well as {@code loadChunk}, because the client can reach a chunk through either -
- * {@code loadChunk} on the packet path and {@code provideChunk} whenever a chunk is asked for - and a chunk that
- * arrives through the unhooked one is a chunk the tracker never learns about.
+ * The target is the runtime (SRG) name {@code func_73158_c} for {@code loadChunk}: this environment runs SRG-named
+ * classes - {@code javap} on {@code srg_merged_minecraft.jar} shows {@code func_71411_J} and friends - and the SRG
+ * spelling is the one that has applied every time in this session, including for the guards that had to be verified by
+ * their effect.
  * <p>
- * Each add is counted, bounded to a dozen lines, so the next leg says which path fires and whether the tracker fills.
+ * The {@code provideChunk} hook that used to accompany this one is gone, and the source is why: in 1.12.2
+ * {@code ChunkProviderClient.provideChunk(x, z)} is "return getLoadedChunk(x, z) or blankChunk" - a pure query that
+ * never inserts into {@code chunkMapping}, while {@code loadChunk} is the only writer (the packet path) and
+ * {@code func_73234_b} the only remover. A chunk therefore cannot arrive through {@code provideChunk}, so the hook
+ * bought nothing and cost a mixin callback (a {@code CallbackInfoReturnable} allocation) plus a tracker map query on
+ * every query the game makes - the JFR execution samples measured it at 6.8% of the client thread's world-phase
+ * samples (leg imm1, 2,981 samples, celtium$noteChunkAdded 202 self samples plus the Long2IntOpenHashMap traffic it
+ * drove). The first version needed it because {@code getLoadedChunk} could return an EmptyChunk; the guard that fixed
+ * that stays here in spirit - only {@code loadChunk} now reports, and it reports what it stored.
+ * <p>
+ * Each add is counted, bounded to a dozen lines, so the next leg says whether the tracker fills.
  */
 @Mixin(ChunkProviderClient.class)
 public abstract class ClientChunkManagerMixin {
@@ -46,21 +53,6 @@ public abstract class ClientChunkManagerMixin {
     @Inject(method = "func_73158_c", at = @At("RETURN"), require = 0)
     private void afterLoadChunk(int x, int z, CallbackInfoReturnable<Chunk> cir) {
         celtium$noteChunkAdded(x, z, "loadChunk");
-    }
-
-    @Inject(method = "func_186025_d", at = @At("RETURN"), require = 0)
-    private void afterProvideChunk(int x, int z, CallbackInfoReturnable<Chunk> cir) {
-        // Only a real chunk counts. ChunkProviderClient.provideChunk returns its blankChunk - an EmptyChunk - when the
-        // coordinates are not in its mapping, and this method is a query: it is called for chunks that were never
-        // received. Teaching the tracker about those is what made it report hundreds of known chunks while
-        // RenderSectionManager's isSectionVisuallyEmpty saw an EmptyChunk for every one of them, marked them all
-        // EMPTY_DATA, and left every build queue at zero - measured on leg gv-cohort-rl2, where all queues read
-        // P0=P1=P2=0 with sections=4096.
-        Chunk chunk = cir.getReturnValue();
-        if (chunk == null || chunk.isEmpty() || chunk instanceof net.minecraft.world.chunk.EmptyChunk) {
-            return;
-        }
-        celtium$noteChunkAdded(x, z, "provideChunk");
     }
 
     @Inject(method = "func_73234_b", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/chunk/Chunk;onUnload()V", shift = At.Shift.AFTER), require = 0)
