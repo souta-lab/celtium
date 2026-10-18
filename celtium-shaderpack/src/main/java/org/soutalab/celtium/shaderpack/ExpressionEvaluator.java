@@ -30,16 +30,30 @@ final class ExpressionEvaluator {
     }
 
     private static final int MAX_EXPANSION_DEPTH = 16;
+    /** Parenthesis nesting bound: the grammar descends on '(', so depth is the recursion bound (audit #343). */
+    private static final int MAX_PARSE_DEPTH = 128;
 
     private final MacroState macros;
     private final Set<String> unknownIdentifiers = new TreeSet<>();
     private final Set<String> referencedIdentifiers = new TreeSet<>();
     private final String text;
     private int pos;
+    /**
+     * When true the grammar still runs - the cursor, the nesting and the identifier census keep their meaning -
+     * but arithmetic whose value cannot affect the outcome is not performed. This is how the lazy half of
+     * {@code &&} and {@code ||} is kept lazy without an unchecked {@code 1 % 0} reaching the JVM (audit #343).
+     */
+    private boolean dead;
+    private int parseDepth;
 
     private ExpressionEvaluator(MacroState macros, String text) {
+        this(macros, text, false);
+    }
+
+    private ExpressionEvaluator(MacroState macros, String text, boolean dead) {
         this.macros = macros;
         this.text = text;
+        this.dead = dead;
     }
 
     /**
@@ -74,9 +88,10 @@ final class ExpressionEvaluator {
         for (;;) {
             skipWhitespace();
             if (match("||")) {
-                // NOTE: no Java short-circuit - the right side must be parsed to
-                // advance the cursor even when the result is already decided.
-                double right = and();
+                // Lazy: once left is true the right side's value cannot change the result. It is still parsed -
+                // the cursor's advance, nested parentheses and the identifier census all stay real - but in dead
+                // mode an unreachable `1 % 0` or overflowing literal produces no runtime fault (audit #343).
+                double right = rightSide(this::and, left != 0.0);
                 left = (left != 0.0 || right != 0.0) ? 1.0 : 0.0;
             } else {
                 return left;
@@ -89,12 +104,33 @@ final class ExpressionEvaluator {
         for (;;) {
             skipWhitespace();
             if (match("&&")) {
-                double right = equality();
+                double right = rightSide(this::equality, left == 0.0);
                 left = (left != 0.0 && right != 0.0) ? 1.0 : 0.0;
             } else {
                 return left;
             }
         }
+    }
+
+    /**
+     * Parses one right operand, marking it dead when the result is already decided.
+     *
+     * <p>The flag is saved and restored around the parse so an {@link EvalFailure} deep inside cannot leak the
+     * dead state into the enclosing operand's own arithmetic.
+     */
+    private double rightSide(Level level, boolean decided) throws EvalFailure {
+        boolean saved = this.dead;
+        this.dead = this.dead || decided;
+        try {
+            return level.parse();
+        } finally {
+            this.dead = saved;
+        }
+    }
+
+    /** One grammar level so {@link #rightSide} can parse the operand a caller names without duplicating it. */
+    private interface Level {
+        double parse() throws EvalFailure;
     }
 
     private double equality() throws EvalFailure {
@@ -150,9 +186,24 @@ final class ExpressionEvaluator {
             if (match("*")) {
                 left = left * unary();
             } else if (match("/")) {
-                left = left / unary();
+                double divisor = unary();
+                if (!this.dead) {
+                    if (divisor == 0.0) {
+                        // A thrown ArithmeticException used to escape the preprocessor: the caller only catches
+                        // EvalFailure, so a raw JVM error crashed the pack load with no diagnostic (audit #343).
+                        throw new EvalFailure("division by zero");
+                    }
+                    left = left / divisor;
+                }
             } else if (match("%")) {
-                left = (long) left % (long) unary();
+                double divisor = unary();
+                if (!this.dead) {
+                    long d = (long) divisor;
+                    if (d == 0L) {
+                        throw new EvalFailure("modulo by zero");
+                    }
+                    left = (long) left % d;
+                }
             } else {
                 return left;
             }
@@ -184,13 +235,20 @@ final class ExpressionEvaluator {
         char c = text.charAt(pos);
         if (c == '(') {
             pos++;
-            double inner = or();
-            skipWhitespace();
-            if (pos >= text.length() || text.charAt(pos) != ')') {
-                throw new EvalFailure("missing ')'");
+            if (++this.parseDepth > MAX_PARSE_DEPTH) {
+                throw new EvalFailure("expression nested deeper than " + MAX_PARSE_DEPTH);
             }
-            pos++;
-            return inner;
+            try {
+                double inner = or();
+                skipWhitespace();
+                if (pos >= text.length() || text.charAt(pos) != ')') {
+                    throw new EvalFailure("missing ')'");
+                }
+                pos++;
+                return inner;
+            } finally {
+                this.parseDepth--;
+            }
         }
         if (Character.isDigit(c) || (c == '.' && pos + 1 < text.length() && Character.isDigit(text.charAt(pos + 1)))) {
             return number();
@@ -297,8 +355,9 @@ final class ExpressionEvaluator {
             // #define NAME with no replacement participates in #if as 1 (compiler -DNAME convention).
             return 1.0;
         }
-        // Textual substitution: the replacement is evaluated as an expression itself.
-        ExpressionEvaluator inner = new ExpressionEvaluator(macros, value);
+        // Textual substitution: the replacement is evaluated as an expression itself. The dead flag propagates so a
+        // macro body inside an unreachable operand cannot raise the runtime fault the operand itself must not.
+        ExpressionEvaluator inner = new ExpressionEvaluator(macros, value, this.dead);
         double result;
         try {
             result = inner.evaluate();
