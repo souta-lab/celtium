@@ -109,6 +109,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         @Override public void record(String message) { VulkanTerrainGpuBackend.this.record(message); }
         @Override public void setSubmissionPending(boolean pending) { VulkanTerrainGpuBackend.this.submissionPending = pending; }
         @Override public void setFrameSubmitReachedQueue(boolean reached) { VulkanTerrainGpuBackend.this.frameSubmitReachedQueue = reached; }
+        @Override public boolean frameBufferOpen() { return VulkanTerrainGpuBackend.this.frameBufferOpen; }
+        @Override public void setFrameBufferOpen(boolean open) { VulkanTerrainGpuBackend.this.frameBufferOpen = open; }
         @Override public void celtium$submitSlotDeferred(VkCommandBuffer commandBuffer, long[] waitSemaphores,
                 int[] waitStages, long[] signalSemaphores) {
             VulkanTerrainGpuBackend.this.celtium$submitSlotDeferred(commandBuffer, waitSemaphores, waitStages,
@@ -893,6 +895,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                         "vkResetCommandBuffer(terrain recovery)");
                 this.commandState.reset();
+                // A mid-frame reset discards the frame buffer too: the unified flag must not
+                // describe a buffer whose next begin thinks it is still recording.
+                this.frameBufferOpen = false;
                 this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                 this.recordedImmediateGroups.clear();
                 beginCommands();
@@ -6444,6 +6449,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.targetStatistics.addWindowFlushRetainedBatches(retained);
                     // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
                     // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
+// An abandoned frame is not "the frame is still recording": the flag must not route the
+// next beginCommands into the buffer whose recording the abandon just discards.
+this.frameBufferOpen = false;
                     this.frameTarget.abandonFrame("immediate window submit failure");
                     record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
                             + "); retained " + retained + " accepted batches, none dropped, the next frame retries"
@@ -7459,10 +7467,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * swap point is the boundary that <em>does</em> fire once per frame in both paths, so the flush is offered here
      * for that caller.
      */
+    /**
+     * Ends and defers the frame's unified command buffer - the frame's single submission, carrying every recording
+     * the frame made. The coordinator clears {@link #frameBufferOpen} itself; the boundary then flushes the batch,
+     * which is the ONE vkQueueSubmit the frame pays.
+     */
+    public void celtium$finishFrameBuffer() {
+        if (!this.frameBufferOpen) {
+            return;
+        }
+        this.frameCoordinator.celtium$finishFrameBuffer(true);
+    }
+
     public void celtium$flushPendingAtFrameBoundary() {
         long flushStartedNanos = System.nanoTime();
         try {
             flushPendingBeforeGlDraw();
+            // The last window's records just landed in the frame buffer; end and queue it before the batch flush
+            // sends the frame's work to the driver in logical order.
+            celtium$finishFrameBuffer();
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
             // flushes). A no-op when nothing batched - i.e. every run with batchFrameSubmits off.
@@ -7583,7 +7606,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.pendingImmediateIndices = 0;
             return;
         }
-        if (this.commandState.recording()) throw new IllegalStateException("nested immediate command recording");
+        // "Nested" means a window opened over a recording nobody can see end. The unified frame buffer is that
+        // recording by design - it stays open across the frame's segments - so the flag, not the state, is what
+        // tells "another window is mid-flush" from "the frame buffer is simply recording".
+        if (this.commandState.recording() && !this.frameBufferOpen) {
+            throw new IllegalStateException("nested immediate command recording");
+        }
         if (!supportedImmediateTarget()) throw new IllegalStateException("accepted target disappeared before flush");
         VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
         if (terrain == null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
@@ -7923,6 +7951,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                             "vkResetCommandBuffer(abort)");
                     this.commandState.reset();
+                // A mid-frame reset discards the frame buffer too: the unified flag must not
+                // describe a buffer whose next begin thinks it is still recording.
+                this.frameBufferOpen = false;
                     // BH-26: this recording is discarded before the queue ever saw it, and the recovery below
                     // re-records the acquire and release barriers on a fresh command buffer. Put the owner state back
                     // first, or the second recording sees the first one's consumption - the first transition, the
@@ -7970,6 +8001,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         for (ImmediateGroup group : this.immediateGroups) {
                             retained += group.batches;
                         }
+// An abandoned frame is not "the frame is still recording": the flag must not route the
+// next beginCommands into the buffer whose recording the abandon just discards.
+this.frameBufferOpen = false;
                         this.targetStatistics.addWindowFlushRetainedBatches(retained);
                         this.frameTarget.abandonFrame("accepted geometry retained");
                         record("window flush failed twice at frame " + this.frameId + " ("
@@ -11834,6 +11868,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     return false;
                 }
             } else {
+// An abandoned frame is not "the frame is still recording": the flag must not route the
+// next beginCommands into the buffer whose recording the abandon just discards.
+this.frameBufferOpen = false;
                 // GL is already holding the image or would wait on a signal that never comes: abandon rather than
                 // leave the frame half-closed.
                 this.frameTarget.abandonFrame("post chain submission refused");
@@ -11847,6 +11884,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                             "vkResetCommandBuffer(post chain refusal)");
                     this.commandState.reset();
+                // A mid-frame reset discards the frame buffer too: the unified flag must not
+                // describe a buffer whose next begin thinks it is still recording.
+                this.frameBufferOpen = false;
                 }
             }
         }
@@ -12600,6 +12640,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private boolean celtium$presentFrameImpl() {
+        // The present must not order after work still sitting in the frame buffer: paths that reach here without
+        // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
+        celtium$finishFrameBuffer();
         celtium$dropSplashCanvasesAtSplashEnd();
         // Fourth trigger for the counter summary, and the one a screen-open leg needs: frameId advances on the world
         // render path, which a GUI screen skips, so a leg that opens a screen never reached the frame-120 print and
@@ -13963,6 +14006,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * confirmed", never reset independently.
      */
     private final long[] slotDeferredFences = new long[FRAME_SLOTS];
+    /**
+     * The unified frame buffer's open state: when {@code batchFrameSubmits} is on and the target carries no frame
+     * semaphores, the first {@link #beginCommands()} of a frame begins the slot's buffer and every later recording
+     * of the same frame only re-points the aliases below - one vkReset+vkBegin, one end, one submission per frame
+     * instead of one per recording. Cleared at the frame's boundary submit and at every mid-frame reset path.
+     */
+    private boolean frameBufferOpen;
+    private static final boolean BATCH_FRAME_SUBMITS =
+            Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
+                    && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
     /** The order this slot's last submission was made in; 0 means it has never submitted. */
     private final long[] slotSubmitSequence = new long[FRAME_SLOTS];
     /**
@@ -14084,6 +14137,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private void beginCommands() {
+        if (this.frameBufferOpen) {
+            // The frame's buffer is still recording: a later segment (window, terrain pass) continues into it
+            // without paying the slot wait, the reset/begin pair, the query reset or the indirect-page rebind -
+            // the ~150-250 microseconds each recording was paying in cycle overhead, ~8-9 times a frame.
+            this.commandBuffer = this.slotCommandBuffers[this.frameSlot];
+            this.fence = this.slotFences[this.frameSlot];
+            this.commandState = this.slotCommandStates[this.frameSlot];
+            return;
+        }
         if (this.commandState.recording()) throw new IllegalStateException("nested begin on backend command buffer");
         // OPT-08's ownership half: a recording takes the next frame slot, and only that slot's submission has to have
         // completed - the other slots may still be executing, which is the overlap the pipelined step needs. With one
@@ -14153,6 +14215,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.passVpX = this.passVpY = this.passVpW = this.passVpH = -1;
         this.passScX = this.passScY = this.passScW = this.passScH = -1;
         this.passBiasC = this.passBiasS = Float.NaN;
+        // Open the unified frame buffer for this frame when the target carries no semaphore contract - a target that
+        // needs the wait/signal pair keeps the per-recording submits the contract was built on.
+        this.frameBufferOpen = BATCH_FRAME_SUBMITS
+                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
     }
 
     /**
@@ -14272,6 +14338,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
         try { this.commandState.requireDraw(target); }
         catch (IllegalStateException error) { this.immediateStatistics.noteInvalidImmediateRecords(); throw error; }
+        // The depth-bias dedup tracks command state that a pipeline bind can invalidate: binding a pipeline without
+        // VK_DYNAMIC_STATE_DEPTH_BIAS in its dynamic states resets it (VUID-vkCmdDrawIndexed-None-07834, measured on
+        // unified-amd: 10 violations once the unified buffer let terrain binds - VIEWPORT/SCISSOR only - interleave
+        // with biased immediate groups). Forcing NaN here makes this segment's first group re-emit; the immediate
+        // pipelines all declare the state, so nothing inside the loop below can invalidate it again.
+        this.passBiasC = this.passBiasS = Float.NaN;
         closeCurrentImmediateGroup();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // 216, not 208: the lit ITEM pipeline's block is five lighting vec4 (128..207) *plus* the light-map
@@ -15172,12 +15244,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
                 }
             }
+// An abandoned frame is not "the frame is still recording": the flag must not route the
+// next beginCommands into the buffer whose recording the abandon just discards.
+this.frameBufferOpen = false;
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 this.submissionStatistics.noteIdleWaitTimeouts();
                 this.noteStalled();
                 this.frameTarget.abandonFrame("frame slot fence timed out");
                 return false;
             }
+// An abandoned frame is not "the frame is still recording": the flag must not route the
+// next beginCommands into the buffer whose recording the abandon just discards.
+this.frameBufferOpen = false;
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
                     && result != org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                 record("waitForSlot(" + slot + "): vkWaitForFences returned " + result);
@@ -15312,6 +15390,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // steady-state one this audit item describes, and the earlier run showed exactly that as a start-up abort.
         this.submissionStatistics.noteIdleWait();
         if (FAIL_IDLE_AFTER > 0 && this.submissionStatistics.idleWaits() >= FAIL_IDLE_AFTER) {
+// An abandoned frame is not "the frame is still recording": the flag must not route the
+// next beginCommands into the buffer whose recording the abandon just discards.
+this.frameBufferOpen = false;
             this.submissionStatistics.noteInjectedIdleFailures();
             this.noteStalled();
             // Nothing was submitted, so the frame's semaphores are never consumed. Leaving the frame open made the

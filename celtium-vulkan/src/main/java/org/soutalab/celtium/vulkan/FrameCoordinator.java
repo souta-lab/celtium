@@ -74,6 +74,10 @@ public final class FrameCoordinator {
          */
         void celtium$submitSlotDeferred(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long[] waitSemaphores,
                 int[] waitStages, long[] signalSemaphores);
+
+        /** Whether the frame's unified command buffer is still recording; set at its begin, cleared at its submit. */
+        boolean frameBufferOpen();
+        void setFrameBufferOpen(boolean open);
     }
 
     private final Host host;
@@ -154,9 +158,22 @@ public final class FrameCoordinator {
         // and uniform bytes this command buffer reads are in place. It is a no-op when nothing is pending, and it is
         // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
         this.host.context().flushUploads();
+        if (this.host.frameBufferOpen()) {
+            // Unified frame buffer: the segment's commands stay recorded; end, submission and bookkeeping all happen
+            // once at the frame boundary via celtium$finishFrameBuffer. A frame that switched to a semaphore-carrying
+            // target mid-recording falls through instead and takes the direct path below.
+            if (!frameSemaphores && BATCH_FRAME_SUBMITS) {
+                return;
+            }
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer");
             this.host.commandState().end();
+            if (this.host.frameBufferOpen()) {
+                // Falling back to a direct submit mid-frame: the partially recorded frame buffer is ended above and
+                // armed by its own slot fence like any ordinary submission, so the flag's story ends here.
+                this.host.setFrameBufferOpen(false);
+            }
             long[] waitArray = null;
             int[] stageArray = null;
             long[] signalArray = null;
@@ -225,41 +242,100 @@ public final class FrameCoordinator {
                         this.host.check(vkQueueSubmit(this.host.context().queue(), submit, this.host.fence()), "vkQueueSubmit");
             }
 
-            // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
-            // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
-            // that never reaches the queue must not hold a slot, and an abandon after a successful submit must.
-            if (this.host.frameArena() != null) {
-                // The sequence increments a few lines below, where the slot's own record is armed; the value this
-                // submission will take is the current one plus one.
-                this.host.frameArena().submitted(this.host.frameId(), this.host.scheduler().submitSequence() + 1);
-            }
-            // The queue accepted this submission, so the layouts the recording declared into it are now the truth
-            // every wrapper of those images shares. A refused submit throws before this line, leaving the recording
-            // pending for the next beginCommands() to abandon - and the next ensureGeneralLayout/ensureSampledLayout
-            // to re-record.
-            VulkanGlTexture.commitLayoutRecording(this.host.commandBuffer());
-            this.host.setSubmissionPending(true);
-            // OPT-08: the submission belongs to a slot and carries a sequence. The slot's fence is what makes its
-            // buffer reusable, and the sequence watermark is what releases the resources this submission still names -
-            // not "some wait succeeded", which is what a single-frame renderer could get away with.
-            this.host.scheduler().noteSubmitted(this.host.frameSlot());
-            this.host.commandState().submitted();
-            for (ImmediateGroup group : this.host.recordedImmediateGroups()) {
-                this.host.immediateStatistics().addImmediateSubmittedBatches(group.batches);
-                // This submission is the newest one that can still name the group's arena bytes: its mesh may be
-                // freed exactly when the watermark covers this sequence and not before.
-                group.retireSequence = this.host.scheduler().submitSequence();
-                this.host.retiredImmediateGroups().add(group);
-            }
-            this.host.recordedImmediateGroups().clear();
-            this.host.setFrameSubmitReachedQueue(true);
-            this.host.setLastFrameReachedQueue(true);
-            if (frameSemaphores && this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
-                // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
-                // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
-                // outstanding and the next beginFrame signalled the same binary semaphore twice).
-                gllessTarget.noteWaitConsumed();
-            }
+            celtium$noteSubmissionBookkeeping(frameSemaphores);
+        }
+    }
+
+    /**
+     * Ends and queues the frame's single command buffer: every recording this frame made went into it, and this is
+     * the one place it hands to the queue - via the batched deferred list, so the frame's own vkQueueSubmit is the
+     * boundary flush's single call covering every recording.
+     * <p>
+     * Called from {@code celtium$flushPendingAtFrameBoundary} after the last window's records land in the buffer,
+     * and again defensively at the top of the present path for callers that skip the boundary. No-op when no
+     * unified buffer is open ({@code batchFrameSubmits} off, a fallback direct submit already ran, or a semaphore
+     * target mid-frame).
+     */
+    void celtium$finishFrameBuffer(boolean withFrameSemaphores) {
+        if (!this.host.frameBufferOpen()) {
+            return;
+        }
+        this.host.setFrameBufferOpen(false);
+        if (this.host.gpuStalled()) {
+            // The buffer may have been begun then stalled mid-frame: it was never submitted, so it may be reset by
+            // the next beginCommands without a wait. The state object goes back to initial with it, or that begin
+            // reports a nested begin on a recording nothing will ever end.
+            this.host.commandState().reset();
+            return;
+        }
+        boolean frameSemaphores = withFrameSemaphores && this.host.frameTarget().needsFrameSemaphores();
+        this.host.context().flushUploads();
+        long[] waitArray = null;
+        int[] stageArray = null;
+        long[] signalArray = null;
+        if (frameSemaphores) {
+            waitArray = new long[] {this.host.frameTarget().waitSemaphore()};
+            stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+            signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
+        }
+        this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer(frame)");
+        this.host.commandState().end();
+        if (this.host.immediateWindowBusy() && !this.host.recordedImmediateGroups().isEmpty() && this.host.failImmediateSubmits() > 0) {
+            this.host.noteImmediateSubmitFailure();
+            throw new IllegalStateException("injected immediate submit failure before queue ownership");
+        }
+        if (FAIL_SUBMITS_REMAINING > 0) {
+            FAIL_SUBMITS_REMAINING--;
+            this.host.record("injected submit failure (" + FAIL_SUBMITS_REMAINING + " left): this submission is not sent");
+            throw new IllegalStateException("injected submit failure before queue ownership");
+        }
+        if (VulkanSubmitFault.shouldFail("fenced")) {
+            this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
+        }
+        this.host.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
+        celtium$noteSubmissionBookkeeping(frameSemaphores);
+    }
+
+    /**
+     * The bookkeeping one accepted submission makes true - identical for the direct {@link #submitCommands} submit
+     * and the deferred {@link #celtium$finishFrameBuffer} one: arena in-flight marking, layout commit, the pending
+     * bit, the slot's sequence record, the recorded groups' retirement tags and the reached-queue flags.
+     */
+    private void celtium$noteSubmissionBookkeeping(boolean frameSemaphores) {
+        // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
+        // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
+        // that never reaches the queue must not hold a slot, and an abandon after a successful submit must.
+        if (this.host.frameArena() != null) {
+            // The sequence increments a few lines below, where the slot's own record is armed; the value this
+            // submission will take is the current one plus one.
+            this.host.frameArena().submitted(this.host.frameId(), this.host.scheduler().submitSequence() + 1);
+        }
+        // The queue accepted this submission, so the layouts the recording declared into it are now the truth
+        // every wrapper of those images shares. A refused submit throws before this line, leaving the recording
+        // pending for the next beginCommands() to abandon - and the next ensureGeneralLayout/ensureSampledLayout
+        // to re-record.
+        VulkanGlTexture.commitLayoutRecording(this.host.commandBuffer());
+        this.host.setSubmissionPending(true);
+        // OPT-08: the submission belongs to a slot and carries a sequence. The slot's fence is what makes its
+        // buffer reusable, and the sequence watermark is what releases the resources this submission still names -
+        // not "some wait succeeded", which is what a single-frame renderer could get away with.
+        this.host.scheduler().noteSubmitted(this.host.frameSlot());
+        this.host.commandState().submitted();
+        for (ImmediateGroup group : this.host.recordedImmediateGroups()) {
+            this.host.immediateStatistics().addImmediateSubmittedBatches(group.batches);
+            // This submission is the newest one that can still name the group's arena bytes: its mesh may be
+            // freed exactly when the watermark covers this sequence and not before.
+            group.retireSequence = this.host.scheduler().submitSequence();
+            this.host.retiredImmediateGroups().add(group);
+        }
+        this.host.recordedImmediateGroups().clear();
+        this.host.setFrameSubmitReachedQueue(true);
+        this.host.setLastFrameReachedQueue(true);
+        if (frameSemaphores && this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
+            // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
+            // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
+            // outstanding and the next beginFrame signalled the same binary semaphore twice).
+            gllessTarget.noteWaitConsumed();
         }
     }
 }
