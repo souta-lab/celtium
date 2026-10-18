@@ -178,7 +178,11 @@ public final class CeltiumLoadingProgress {
             splashTarget.unbindFramebuffer();
         }
         splashTarget.framebufferRender(width * scale, height * scale);
-        Display.update();
+        // Through Minecraft.updateDisplay, not Display.update directly: the fixture's presented-frame counter and
+        // its dump latch live on that method, and a bare Display.update() presents the frame without counting it -
+        // measured on leg plain-hurt5, where the mod-loading request stayed pending until the game's own second
+        // present and captured a vanilla frame instead of the overlay.
+        mc.updateDisplay();
         if (drewBars && ++overlayFrames >= MIN_DUMPPED_FRAME) {
             requestFixtureDump();
         }
