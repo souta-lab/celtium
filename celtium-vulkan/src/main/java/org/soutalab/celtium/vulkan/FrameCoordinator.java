@@ -39,12 +39,16 @@ public final class FrameCoordinator {
      * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
      * boundary. OFF by default: with it the flush wall time falls from 3.82 to 2.35-2.41 ms per frame (AMD RX 6400,
      * 4.55 flushes/frame) and queue submissions per frame from 12.7 to 4.6, but the E2E 1.93a pack produces
-     * command-buffer state validation errors under it (leg unife2e1, 8 VUIDs of the vkCmd*-commandBuffer-recording
-     * family from vkCmdPipelineBarrier/vkCmdSetViewport/vkCmdBeginRenderPass/vkCmdClearDepthStencilImage among
-     * others, then the process ended with no report) - the unified buffer is recorded across segments that the
-     * pack's own framebuffer and post-chain paths expect to begin with a fresh buffer. Take the win only once those
-     * paths are made segment-safe: {@code -Dceltium.vulkan.batchFrameSubmits=true} (opt-out stays
-     * {@code =false}) is the measured A/B for that work.
+     * command-buffer state validation errors under it (legs unife2e1 and uniE1, 8 VUIDs of the
+     * vkCmd*-commandBuffer-recording family, then the process ended with no report). The validation text names the
+     * mechanism exactly: the open command buffer "is now in an invalid state ... because the following objects bound
+     * to the command buffer were invalidated: VkBuffer ... was destroyed, VkDescriptorSet ... was destroyed or
+     * updated without UPDATE_AFTER_BIND". A long-lived open recording holds references to buffers and descriptor
+     * sets that the E2E pack's world load and mod framebuffer paths grow, replace or rewrite mid-frame, so the
+     * resource-lifetime contract has to become "nothing an open recording references is destroyed or rewritten
+     * before that recording is submitted" (the OPT-07 ownership contract the upload path already names) before this
+     * can be the default. Take the win only then: {@code -Dceltium.vulkan.batchFrameSubmits=true} is the measured
+     * A/B (flush 3.82 -> 2.35 ms/frame, submits 12.7 -> 4.6) for that work.
      */
     private static final boolean BATCH_FRAME_SUBMITS =
             Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
