@@ -141,10 +141,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
     private int targetWidth;
     private int targetHeight;
-    private long framebuffer;
+    /**
+     * The frame target's framebuffers keyed by the render pass each is compatible with. One entry per render pass,
+     * not one framebuffer total: the terrain and immediate pipelines build their own render passes, and a
+     * single-slot cache replaced the entry on every pass alternation - each replacement paying a device-idle wait
+     * to retire the old handle. Measured ~5 settleGpu calls per frame on leg ind2-amd.
+     */
+    private final java.util.Map<Long, Long> framebuffers = new java.util.HashMap<>();
     /** Times a framebuffer recreation found the GPU unsettled and kept the old framebuffer instead. */
     private int framebufferSettleFailures;
-    private long framebufferRenderPass;
     /**
      * The framebuffer over the owned off-target images, and the render pass it was built for.
      * <p>
@@ -10765,15 +10770,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (glless == null) {
             return 0L;
         }
-        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR) != 0 && this.targetRegistry.pairFramebufferRenderPass(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR) == renderPass
-                && glless.offTargetMatches(this.targetWidth, this.targetHeight)) {
-            return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
+        if (!glless.offTargetMatches(this.targetWidth, this.targetHeight)) {
+            // The images every cached framebuffer names were replaced with the target: all handles are stale
+            // regardless of their render-pass key, so the whole slot is rebuilt.
+            destroyOffTargetFramebuffer();
         }
-        destroyOffTargetFramebuffer();
-        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR, ensurePairFramebuffer(renderPass, glless.offTargetColorView(),
-                glless.offTargetDepthView(), "off-target"), renderPass);
+        long cached = this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR, renderPass);
+        if (cached != 0L) {
+            return cached;
+        }
+        long handle = ensurePairFramebuffer(renderPass, glless.offTargetColorView(),
+                glless.offTargetDepthView(), "off-target");
+        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR, handle, renderPass);
         // counted by notePairFramebuffer
-        return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
+        return handle;
     }
 
     /**
@@ -10786,15 +10796,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (glless == null) {
             return 0L;
         }
-        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) != 0 && this.targetRegistry.pairFramebufferRenderPass(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) == renderPass
-                && glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
-            return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
+        if (!glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
+            // Same rule as the default pair: a size change means the views every cached handle named are dead.
+            destroyChainPairFramebuffer();
         }
-        destroyChainPairFramebuffer();
-        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, ensurePairFramebuffer(renderPass, glless.chainPairColorView(),
-                glless.chainPairDepthView(), "chain-pair"), renderPass);
+        long cached = this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, renderPass);
+        if (cached != 0L) {
+            return cached;
+        }
+        long handle = ensurePairFramebuffer(renderPass, glless.chainPairColorView(),
+                glless.chainPairDepthView(), "chain-pair");
+        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, handle, renderPass);
         // counted by notePairFramebuffer
-        return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
+        return handle;
     }
 
     /** Builds one framebuffer over a pair's views at the frame's size. */
@@ -10930,36 +10944,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Pair replacement also bypasses destroyFramebuffer(), so it must establish completion itself. */
     private void destroyPairFramebuffer(RenderTargetRegistry.ImageSlot slot) {
-        long handle = this.targetRegistry.pairFramebuffer(slot);
-        if (handle == 0L) {
+        java.util.Collection<Long> handles = this.targetRegistry.pairFramebufferHandles(slot);
+        if (handles.isEmpty()) {
             return;
         }
         if (!settleGpu(slot.label() + " framebuffer release")) {
             this.framebufferSettleFailures++;
-            // Leave both the handle and its render-pass key intact. The ensure caller must
+            // Leave both the handles and their render-pass keys intact. The ensure caller must
             // stop here, rather than overwrite the cache with a replacement or use a different target.
             throw new IllegalStateException("GPU did not settle for " + slot.label() + " framebuffer release");
         }
-        vkDestroyFramebuffer(this.context.device(), handle, null);
+        for (Long handle : handles) {
+            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
+        }
         this.targetRegistry.clearPairFramebuffer(slot);
     }
 
     private long ensureFramebuffer(long renderPass, long colorView, long depthView) {
-        if (this.framebuffer != 0 && this.framebufferRenderPass == renderPass) {
-            return this.framebuffer;
+        Long cached = this.framebuffers.get(renderPass);
+        if (cached != null) {
+            return cached.longValue();
         }
-        // The old framebuffer is destroyed here when the render pass handle changes, and the release basis must be
-        // GPU completion - not "the render pass changed". The sibling site at the frame-target recreation path
-        // already guards the same call with settleGpu, and the validation layer named the rule there:
-        // vkDestroyFramebuffer() cannot be called on a framebuffer currently in use by a command buffer. This path
-        // had no guard, so a pass recreation could destroy one still in flight.
-        if (this.framebuffer != 0 && !settleGpu("framebuffer recreation")) {
-            this.framebufferSettleFailures++;
-            // Fail closed: without a settled GPU the old framebuffer cannot be released, and building a new one over
-            // it would leak the old handle rather than fix the ordering.
-            return this.framebuffer;
-        }
-        destroyFramebuffer();
+        // Creating a new framebuffer needs no GPU settle: nothing is destroyed here, the map keeps the older
+        // passes' handles alive beside the new one. Destruction - the thing VUID-vkDestroyFramebuffer-00892 guards -
+        // only happens at teardown below, which establishes completion once for every cached handle.
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer attachments = stack.mallocLong(2);
             attachments.put(0, colorView);
@@ -10973,9 +10981,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     .layers(1);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateFramebuffer(this.context.device(), create, null, handle), "vkCreateFramebuffer");
-            this.framebuffer = handle.get(0);
-            this.framebufferRenderPass = renderPass;
-            return this.framebuffer;
+            this.framebuffers.put(renderPass, handle.get(0));
+            return handle.get(0);
         }
     }
 
@@ -10983,6 +10990,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Full target teardown settles before releasing its caches. The pair helpers also
         // establish completion for direct replacements from ensure*PairFramebuffer(), which
         // bypass this method. VUID-vkDestroyFramebuffer-framebuffer-00892 applies to both routes.
+        if (this.framebuffers.isEmpty()
+                && this.targetRegistry.pairFramebufferHandles(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR).isEmpty()
+                && this.targetRegistry.pairFramebufferHandles(RenderTargetRegistry.ImageSlot.CHAIN_PAIR).isEmpty()) {
+            return;
+        }
         if (!settleGpu("framebuffer release")) {
             // Fail closed, exactly as the callers do: an unsettled GPU means these handles cannot be released yet.
             // Leaking them until process exit is the safe direction, and the caller's own counter records it.
@@ -10990,11 +11002,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         destroyOffTargetFramebuffer();
         destroyChainPairFramebuffer();
-        if (this.framebuffer != 0) {
-            vkDestroyFramebuffer(this.context.device(), this.framebuffer, null);
-            this.framebuffer = 0;
-            this.framebufferRenderPass = 0;
+        for (Long handle : this.framebuffers.values()) {
+            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
         }
+        this.framebuffers.clear();
     }
 
 
