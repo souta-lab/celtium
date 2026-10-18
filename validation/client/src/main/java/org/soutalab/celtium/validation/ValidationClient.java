@@ -256,6 +256,11 @@ public final class ValidationClient {
     private int celtium$pinnedSectionsStableFrames;
     /** The count the capture settled at, reported so a leg says which world it compared. */
     private int celtium$pinnedSectionsValue;
+    /** Bounded CAPTURE_TRACE lines printed, so a run that never captures still names the gate it waited on. */
+    private int celtium$captureTraceLines;
+    /** {@code -Dceltium.validation.captureTrace=true}: report the capture gate's inputs every 100 ticks. */
+    private static final boolean CAPTURE_TRACE =
+            Boolean.getBoolean("celtium.validation.captureTrace");
 
     /** The listed-section count {@code sections} waits for; 0 disables that condition. */
     private static final int CAPTURE_SECTIONS =
@@ -4712,6 +4717,16 @@ public final class ValidationClient {
      * {@link #CAPTURE_DEADLINE_TICK} rather than ending the run with no report.
      */
     private boolean celtium$captureDue() {
+        // Bounded trace (issue #354): a leg that ends NO_CAPTURE cannot say which gate refused, and on Intel the
+        // frame rate is low enough that "the ticks advanced" is not the same as "this function ran". Off unless
+        // -Dceltium.validation.captureTrace=true; 24 lines is enough for the whole pre-deadline window.
+        if (CAPTURE_TRACE && this.celtium$captureTraceLines < 24 && worldTicks % 100 == 0) {
+            this.celtium$captureTraceLines++;
+            System.out.println("[Celtium] CELTIUM_CAPTURE_TRACE tick=" + worldTicks + " frames=" + worldFrames
+                    + " frameFloor=" + (worldTicks < 200 || worldFrames < CAPTURE_MIN_WORLD_FRAMES)
+                    + " pin=" + PIN_SECTIONS + " deadline=" + CAPTURE_DEADLINE_TICK
+                    + " condition=" + CAPTURE_CONDITION);
+        }
         if (worldTicks < 200 || worldFrames < CAPTURE_MIN_WORLD_FRAMES) {
             return false;
         }
@@ -4731,35 +4746,48 @@ public final class ValidationClient {
                 this.celtium$pinnedSectionsStableFrames++;
             }
             this.celtium$pinnedSectionsValue = listed;
-            if (listed <= 0 || listed > PIN_SECTIONS
-                    || this.celtium$pinnedSectionsStableFrames < PIN_SECTIONS_STABLE_FRAMES) {
-                return false;
-            }
-            // A stable section count is not a settled world: measured 2026-10-13, heipin2 fired here at
-            // "pinned-sections (listed 39 stable for 20 frames)" with P1=058 - 58 chunk rebuilds still
-            // outstanding - so the picture it photographed was still moving. The count path already refuses
-            // that state; this path promises the settled world in its own name, so it refuses it too.
-            if (pinPendingP1 >= 0 && pinPendingP1 > CAPTURE_MAX_P1) {
-                return false;
-            }
             int pinHeld = celtium$heldBuildResults(pinLines);
-            if (CAPTURE_MAX_HELD_BUILDS >= 0 && pinHeld >= 0 && pinHeld > CAPTURE_MAX_HELD_BUILDS) {
-                return false;
+            // One "settled" answer for every clause, so the deadline below can fire against the same state the
+            // settled check refused. A stable section count is not a settled world: measured 2026-10-13, heipin2
+            // fired at "pinned-sections (listed 39 stable for 20 frames)" with P1=058 - 58 chunk rebuilds still
+            // outstanding - so the count, the pending rebuilds, the held build results, the world clock and the
+            // JEI state are all part of what this path promises.
+            boolean settled = listed > 0 && listed <= PIN_SECTIONS
+                    && this.celtium$pinnedSectionsStableFrames >= PIN_SECTIONS_STABLE_FRAMES
+                    && (pinPendingP1 < 0 || pinPendingP1 <= CAPTURE_MAX_P1)
+                    && (CAPTURE_MAX_HELD_BUILDS < 0 || pinHeld < 0 || pinHeld <= CAPTURE_MAX_HELD_BUILDS)
+                    && celtium$worldClockReached() && this.celtium$jeiSettled();
+            if (settled) {
+                celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
+                        + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1
+                        + ", held=" + pinHeld + ")";
+                // This block counted and named the settled state but never returned, so the value it wrote was
+                // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
+                // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
+                // and the verdict still came from "tick-sections-deadline (listed 36 of 0)". The pinned path was
+                // dead - it could never be the condition that fired. Returning here is what makes it live.
+                return true;
             }
-            if (!celtium$worldClockReached()) {
-                return false;
+            // The deadline the other conditions have and this one lacked: measured 2026-10-18, Intel legs
+            // hurtI1/hurtI2 and hurtmap1/hurtmap2 ran to the harness timeout with NO_CAPTURE although
+            // worldTicks reached 3093 - the entity probe's per-tick respawns kept the settle from ever being
+            // reached, and a leg that never settles must still report the world it saw instead of ending
+            // silently (issue #354). The clause that refused is named, so a leg says which one it timed out on.
+            if (worldTicks >= CAPTURE_DEADLINE_TICK) {
+                String refused = listed <= 0 || listed > PIN_SECTIONS ? "listed " + listed + " of " + PIN_SECTIONS
+                        : this.celtium$pinnedSectionsStableFrames < PIN_SECTIONS_STABLE_FRAMES
+                                ? "stable " + this.celtium$pinnedSectionsStableFrames + " of " + PIN_SECTIONS_STABLE_FRAMES
+                                : pinPendingP1 > CAPTURE_MAX_P1 ? "pendingP1 " + pinPendingP1 + " of " + CAPTURE_MAX_P1
+                                : CAPTURE_MAX_HELD_BUILDS >= 0 && pinHeld > CAPTURE_MAX_HELD_BUILDS
+                                        ? "held " + pinHeld + " of " + CAPTURE_MAX_HELD_BUILDS
+                                        : !celtium$worldClockReached() ? "world clock"
+                                        : this.celtium$jeiSettled() ? "none" : "jei";
+                celtium$captureConditionFired = "pinned-deadline (listed " + listed + " of " + PIN_SECTIONS
+                        + ", stable " + this.celtium$pinnedSectionsStableFrames + ", pendingP1=" + pinPendingP1
+                        + ", held=" + pinHeld + ", refused=" + refused + ")";
+                return true;
             }
-            if (!this.celtium$jeiSettled()) {
-                return false;
-            }
-            celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
-                    + this.celtium$pinnedSectionsStableFrames + " frames, pendingP1=" + pinPendingP1 + ", held=" + pinHeld + ")";
-            // This block counted and named the settled state but never returned, so the value it wrote was
-            // always overwritten by a later branch: measured 2026-10-13, heipin1 recorded
-            // capturePinnedStableFrames=57 against capturePinnedStableFramesRequired=20 with jeiSettled=true,
-            // and the verdict still came from "tick-sections-deadline (listed 36 of 0)". The pinned path was
-            // dead - it could never be the condition that fired. Returning here is what makes it live.
-            return true;
+            return false;
         }
         if ("sections".equals(CAPTURE_CONDITION)) {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
