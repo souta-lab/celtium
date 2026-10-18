@@ -160,13 +160,13 @@ public final class TextureCopyService {
      * user-reported "the panorama is very laggy", and it is a stall rather than work: the same pixels are already on
      * the GPU.
      *
-     * <p>Off by default, so the verified picture stays the one the host route produces. On, the copy is a blit and the
-     * destination carries the draws' own alpha where GL would have written 1 - a difference this switch exists to
-     * measure rather than to assume: the two arms are compared on the copy counters, the frame time and the picture
-     * before it can become the default.
+     * <p>On by default: a window-source copy used to need the host route because a blit carries alpha verbatim while
+     * the window's GL alpha must read 1. The capture now masks alpha writes on the delivered frame (the GL default
+     * framebuffer has no alpha bits), so the image's alpha is the acquire's clear - 1 - and the blit's verbatim copy
+     * is the answer GL owes. {@code -Dceltium.vulkan.windowCopyBlit=false} keeps the host route for comparison.
      */
-    private static final boolean WINDOW_COPY_BLIT =
-        Boolean.getBoolean("celtium.vulkan.windowCopyBlit");
+    private static final boolean WINDOW_COPY_BLIT = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.windowCopyBlit", "true"));
 
     /** Bounded lines for the copy's read resolution (see {@link #ownedReadImage}). */
     private static final int READ_RESOLVE_LOG_LIMIT =
@@ -432,12 +432,11 @@ public final class TextureCopyService {
             String blitRefusal = this.host.registry().blitRefusal(destName, image, this.host.targetWidth(),
                     this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
             if (blitRefusal == null && !WINDOW_COPY_BLIT && windowAlphaSource(readFbo, image)) {
-                // A blit cannot force the alpha the window's GL read owes the game (see windowAlphaSource), and
-                // `blitInto` has no channel mask. Declining is the honest choice: the host route below applies the
-                // rule and is the arm this project verifies. Counted, so "the blit was used and the picture is still
-                // washed out" and "the blit declined and the host read fixed it" are different logs.
+                // The host route is the comparison arm only: with alpha writes masked on the delivered frame the
+                // blit's verbatim copy already carries the alpha-1 the window's GL read owes. The switch stays so a
+                // leg can still measure the two routes against each other.
                 this.textureCopyWindowAlphaBlitsDeclined++;
-                blitRefusal = "the source is the window, whose GL alpha reads 1 but whose image carries the draws' alpha";
+                blitRefusal = "the source is the window and windowCopyBlit is off (A/B arm)";
             }
             if (blitRefusal == null) {
                 // The faces' window first, and no wait: the queue runs the blit after the draws that filled the
@@ -921,8 +920,9 @@ public final class TextureCopyService {
      * {@return whether this copy's GL source is the window} - the default framebuffer, whose alpha GL reports as 1
      * whatever the colour attachment holds (GL name 0, no alpha bits; the emulation pins 1, the value ANGLE's Vulkan
      * backend uses for its window surface). The rule lives here, once, because the two routes owe it differently: the
-     * host route applies it to the pixels it read, and the native route must decline the copy entirely, since
-     * {@code vkCmdBlitImage} carries the alpha channel verbatim and has no channel mask to express it.
+     * host route applies it to the pixels it read, and the native route gets it for free: alpha writes are masked on
+     * the delivered frame, so its image's alpha channel holds the acquire's alpha-1 clear and the blit's verbatim
+     * copy already yields 1.
      */
     private boolean windowAlphaSource(int readFbo, long image) {
         return readFbo == 0 && this.host.currentRenderTarget() == 0L && this.host.frameTarget() != null

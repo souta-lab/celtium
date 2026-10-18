@@ -6952,6 +6952,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (!IMMEDIATE_COLOR_MASK) {
             writeMask = VulkanColorBlendState.allChannels();
         }
+        // The delivered frame stands in for GL's default framebuffer, which has no alpha bits: a draw's alpha write
+        // is not observable there, and every read of it - a glCopyTexSubImage2D or a native blit - must yield 1.
+        // Masking the alpha write keeps the acquire's alpha-1 clear for the whole frame. Measured before this: the
+        // panorama's quads blended SRC_ALPHA into the image's alpha (0x80/0x00 over the 256x256 the menu blur
+        // copies), so the blurred panorama - itself blended by SRC_ALPHA - could not cover the frame and the native
+        // window copy had to decline into a synchronous host readback, seven of them per menu frame.
+        if (this.targetRegistry.currentIdentity() == 0L) {
+            writeMask &= ~0x8;
+        }
         // BH-03: the comparison function travels with the batch, next to the reference it is compared against. The
         // slot must distinguish "disabled" (0 - no GL enum is 0) from "enabled with a reference of 0", which the old
         // shader's `alphaRef > 0.0` guard could not: for GL_GREATER and a reference of 0 the discard is *not* off.
