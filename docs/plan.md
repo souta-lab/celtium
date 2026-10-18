@@ -37,10 +37,12 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 
 ## 性能の観測（受入・原因確定ではない）
 
-- **同fixture `frameIntervalP50`（tick間、RX6400・scene=terrain）**: **Celeritas GL `2.5.0-dev`(jar `567dcf8a`、pinned `989ebf2e`ではない)=7.87ms**（`perf-cel4-amd`、gl-screenshot PASSED、2348 frames）vs **Celtium GL-less=38.6-44.2ms**（`menu27-amd`/`swap4/5-amd`）。fixtureは`FramePassTimings`反射化(`af7ce927e`)で両側に載る。
-- **bracket内分解**（`passSplit[Cpu]`、legs `menu27-amd`/`perf-norb1/2-amd`）: frame wall 14.5-21.2ms vs cpu 7.9-8.7ms（cpu: world 7.5≈terrain 4.0+setupTerrain 2.0+recordPrepare 1.1、flush 1.4）。wall−cpu≈6-12.5msはGC(~1ms)+preemption層。
-- **swap点分解**（`swapPoint*`/`presentStages`、legs `swap2-6-amd`）: present ~11.7ms/call、うち**周期dump write ~9ms**（`presentedDumpEvery=40`のfull-readback+PNG、`=0`でimage 11.3→3.4ms/call）、readback ~0.6ms、acquire/queue/submit/caps ~0.2ms。**fixture税がpresent実効の約8割**。
-- 実装側の残荷はbracket CPU(7.9-8.7ms)とpresent(~1.5ms税抜)+bracket内preemption。`2× Celeritas`(interval≲4ms)は単一修正で届かない—未達を既存値と混同しない。
+- **同fixture `frameIntervalP50`（RX6400・terrain）**: **Celeritas GL `2.5.0-dev`(`567dcf8a`、pinned `989ebf2e`ではない)=7.87ms**（`perf-cel4-amd` PASSED、2348f）vs **Celtium=38.6-44.2ms**（`menu27/swap4/5/fbmap-amd`）。fixture反射化(`af7ce927e`)で両側に載る。
+- **bracket内分解**（`passSplit[Cpu]`）: frame wall 14.5-21.2 vs cpu 7.9-8.7ms（cpu: terrain ~4+setup ~2+prepare ~1.1+flush ~1.4）。wall−cpuはGC(~1ms)+preemption。
+- **swap点分解**（`swapPoint*`/`presentStages`、`swap2-6-amd`）: present ~11.7ms/call、うち**周期dump ~9ms**（`presentedDumpEvery=40`のfull-readback+PNG、`=0`で3.4ms/call）、readback ~0.6ms、残~0.2ms。**fixture税がpresent実効の~8割**。
+- **loop分解**（`gameTickSummary`）: runTick ~5-7ms×~1.15/frame（遅いframeで追いつきtickが増幅器化）、displayUpdate≈11ms（dump offで3ms—swap5実測）。
+- **fb renderPass map**（`f3b1beaa7`）: 単一cacheがpass交互で毎pass vkDeviceWaitIdle→`deviceWaitToken 4847→1`、recordPrepare 3.2→0.3（fbmap-amd）。**indirect配線**（`1cf53961d`）: `beginIndirectRecording`未呼出で全fallback→9168 calls（~18 draws/call、VUID 0）。
+- 残荷: bracket CPU(7.9-8.7ms)+present(~1.5ms税抜)+bracket内preemption。`2× Celeritas`(≲4ms)は単一修正で届かない—未達を既存値と混同しない。
 
 性能測定の正しいキーと残存負荷は [開発・検証手順](<development.md>)。READMEに別の現行性能表を作らない。
 
