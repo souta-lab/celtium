@@ -92,6 +92,89 @@ class ExpressionEvaluatorTest {
         assertNull(ExpressionEvaluator.evalBoolean("0 && (1 % )", Map.of()));
     }
 
+    // ---- audit #342: cyclic object-like macros reach EvalFailure, never StackOverflowError ----
+
+    @Test
+    void selfCycleIsDiagnostic() {
+        assertNull(ExpressionEvaluator.evalBoolean("A", Map.of("A", "A")));
+    }
+
+    @Test
+    void twoMacroCycleIsDiagnostic() {
+        assertNull(ExpressionEvaluator.evalBoolean("A", Map.of("A", "B", "B", "A")));
+    }
+
+    @Test
+    void cycleInsideAnOperandIsDiagnostic() {
+        assertNull(ExpressionEvaluator.evalBoolean("A || 1", Map.of("A", "B", "B", "A")));
+    }
+
+    @Test
+    void acyclicChainsEitherSideOfDepthLimit() {
+        // A chain one longer than MAX_EXPANSION_DEPTH fails as a diagnostic; one under it evaluates.
+        Map<String, String> deep = new java.util.HashMap<>();
+        for (int i = 0; i < 20; i++) {
+            deep.put("M" + i, "M" + (i + 1));
+        }
+        deep.put("M20", "1");
+        assertNull(ExpressionEvaluator.evalBoolean("M0", deep));
+
+        Map<String, String> shallow = new java.util.HashMap<>();
+        for (int i = 0; i < 8; i++) {
+            shallow.put("S" + i, "S" + (i + 1));
+        }
+        shallow.put("S8", "7");
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("S0 == 7", shallow));
+    }
+
+    @Test
+    void unrelatedExpressionUnaffectedByCycleGuard() {
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("A + B == 3",
+                Map.of("A", "1", "B", "2")));
+    }
+
+    // ---- audit #344: integer suffixes and bitwise/shift operators ----
+
+    @Test
+    void integerSuffixesParse() {
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("1u == 1", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("2ul == 2", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("0x10u == 16", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("0xFF == 255", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("0xFFFFFFFF == 4294967295", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("1.5f == 1.5", Map.of()));
+    }
+
+    @Test
+    void malformedLiteralsStayFailures() {
+        assertNull(ExpressionEvaluator.evalBoolean("1uu", Map.of()));
+        assertNull(ExpressionEvaluator.evalBoolean("1lll", Map.of()));
+        assertNull(ExpressionEvaluator.evalBoolean("1.5u", Map.of()));
+        assertNull(ExpressionEvaluator.evalBoolean("0x", Map.of()));
+    }
+
+    @Test
+    void bitwiseAndShiftOperators() {
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("1 << 4 == 16", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("16 >> 2 == 4", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("(0xF0 & 0x0F) == 0", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("(0xF0 | 0x0F) == 255", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("(0xFF ^ 0x0F) == 240", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("~0 == -1", Map.of()));
+    }
+
+    @Test
+    void bitwisePrecedenceMatchesC() {
+        // | binds tighter than &&: 1 && (0 | 1) = 1. == binds tighter than &: 1 & (3 == 1) = 0.
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("1 && 0 | 1", Map.of()));
+        assertEquals(Boolean.FALSE, ExpressionEvaluator.evalBoolean("1 & 3 == 1", Map.of()));
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("(1 & 3) == 1", Map.of()));
+        // Shifts sit between relational and additive: (1 + 2) << 1 == 6.
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("1 + 2 << 1 == 6", Map.of()));
+        // Relational binds tighter than shift the other way is false in C: 1 << 2 + 1 = 8.
+        assertEquals(Boolean.TRUE, ExpressionEvaluator.evalBoolean("1 << 2 + 1 == 8", Map.of()));
+    }
+
     @TempDir
     Path tmp;
 
