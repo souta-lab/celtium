@@ -61,6 +61,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(RenderItem.class)
 public abstract class RenderItemMixin {
     /**
+     * {@code EnumFacing.values()} returns a fresh clone of the six-element array on every call, and this mixin walks
+     * all six faces in three hot paths (the item plan builder, the tint probe and the plan cache's fallback). The JFR
+     * allocation pass measured {@code EnumFacing.values} as 13% of the sampled allocation pressure. The clone buys
+     * nothing here: the array is only iterated so its elements are copied out, and the six constants are immutable.
+     */
+    private static final net.minecraft.util.EnumFacing[] CELTIUM_FACINGS =
+            net.minecraft.util.EnumFacing.values();
+
+    /**
      * {@code -Dceltium.itemMeshCache=false} disables the interception entirely - the control leg for picture
      * comparisons.
      */
@@ -211,7 +220,7 @@ public abstract class RenderItemMixin {
         BakedQuad probeQuad = probe.isEmpty() ? null : probe.get(0);
         if (!ForgeModContainer.allowEmissiveItems) {
             BufferBuilder scratch = celtium$scratch();
-            for (EnumFacing enumfacing : EnumFacing.values()) {
+            for (EnumFacing enumfacing : CELTIUM_FACINGS) {
                 this.renderQuads(scratch, model.getQuads((IBlockState) null, enumfacing, 0L), color, stack);
             }
             this.renderQuads(scratch, model.getQuads((IBlockState) null, (EnumFacing) null, 0L), color, stack);
@@ -227,7 +236,7 @@ public abstract class RenderItemMixin {
         // emit a segment whenever the lighting or shading state changes - with ITEM-format quads carrying no light
         // data this usually collapses to one segment, but the structure is kept because mods' quads may differ.
         List<BakedQuad> allquads = new ArrayList<>();
-        for (EnumFacing enumfacing : EnumFacing.values()) {
+        for (EnumFacing enumfacing : CELTIUM_FACINGS) {
             allquads.addAll(model.getQuads((IBlockState) null, enumfacing, 0L));
         }
         allquads.addAll(model.getQuads((IBlockState) null, (EnumFacing) null, 0L));
@@ -387,7 +396,7 @@ public abstract class RenderItemMixin {
         }
         boolean found = false;
         outer:
-        for (EnumFacing enumfacing : EnumFacing.values()) {
+        for (EnumFacing enumfacing : CELTIUM_FACINGS) {
             for (BakedQuad quad : model.getQuads((IBlockState) null, enumfacing, 0L)) {
                 if (quad.hasTintIndex()) {
                     found = true;
