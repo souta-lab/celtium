@@ -292,7 +292,7 @@ public final class VulkanArena {
         if (length == 0) {
             return;
         }
-        this.context.uploadToBuffer(this.buffer, offsetBytes, source);
+        this.context.uploadToBuffer(this.buffer, offsetBytes, source, 0);
         recordUpload(offsetBytes, length);
     }
 

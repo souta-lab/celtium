@@ -84,7 +84,7 @@ public final class VulkanBuffer {
         // The deferred form: the handle is resolved when the frame's upload batch is submitted, so a growth of this
         // buffer between here and the flush (the arena grows when a mesh does not fit) cannot leave the copy naming a
         // destroyed VkBuffer. The copy still lands at this offset, because offsets survive a growth.
-        this.context.uploadToBuffer(this, offsetBytes, sourceAddress, length);
+        this.context.uploadToBuffer(this, offsetBytes, sourceAddress, length, 1);
     }
 
     /**

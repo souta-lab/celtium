@@ -398,6 +398,9 @@ public final class VulkanContext {
     private long uploadReserveNanos;
     private long uploadCopyNanos;
     private long uploadCopyBytes;
+    /** Upload copies and bytes by producer: 0 = VulkanArena (terrain/immediate meshes), 1 = VulkanBuffer. */
+    private final long[] uploadCopiesByKind = new long[2];
+    private final long[] uploadBytesByKind = new long[2];
     private long uploadPollNanos;
     private long uploadRecordNanos;
     private long uploadSubmitNanos;
@@ -1448,6 +1451,19 @@ public final class VulkanContext {
      * Render thread only.
      */
     public void uploadToBuffer(VulkanBuffer target, long destinationOffset, long sourceAddress, long length) {
+        uploadToBuffer(target, destinationOffset, sourceAddress, length, -1);
+    }
+
+    /**
+     * The same staging copy, tagged with its producer so the run report can say which subsystem owns the volume.
+     * <p>
+     * {@code kind} 0 is the arena writer (terrain section meshes and the immediate groups' vertex/index data) and 1
+     * is a plain {@link VulkanBuffer} write; -1 keeps the historic untagged path. Added because the upload copy
+     * measured 0.68 ms/frame of the frame's 1.18 ms upload phase and the only existing total could not say whether
+     * that is the terrain or the immediate path - a 15 GB/run volume with two possible owners.
+     */
+    public void uploadToBuffer(VulkanBuffer target, long destinationOffset, long sourceAddress, long length,
+            int kind) {
         if (target == null) {
             throw new IllegalArgumentException("target must not be null");
         }
@@ -1472,12 +1488,21 @@ public final class VulkanContext {
         celtium$zeroUploadTail(stagingOffset, length, paddedLength);
         this.uploadCopyNanos += System.nanoTime() - copyStarted;
         this.uploadCopyBytes += length;
+        if (kind >= 0 && kind < this.uploadCopiesByKind.length) {
+            this.uploadCopiesByKind[kind]++;
+            this.uploadBytesByKind[kind] += length;
+        }
         this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
         this.uploadCopiesBatched++;
     }
 
     /** The heap-buffer half of {@link #uploadToBuffer(VulkanBuffer, long, long, long)}. */
     public void uploadToBuffer(VulkanBuffer target, long destinationOffset, ByteBuffer source) {
+        uploadToBuffer(target, destinationOffset, source, -1);
+    }
+
+    /** The heap-buffer half, tagged with its producer like the native-address form. */
+    public void uploadToBuffer(VulkanBuffer target, long destinationOffset, ByteBuffer source, int kind) {
         if (target == null) {
             throw new IllegalArgumentException("target must not be null");
         }
@@ -1502,6 +1527,10 @@ public final class VulkanContext {
         celtium$zeroUploadTail(stagingOffset, length, paddedLength);
         this.uploadCopyNanos += System.nanoTime() - copyStarted;
         this.uploadCopyBytes += source.remaining();
+        if (kind >= 0 && kind < this.uploadCopiesByKind.length) {
+            this.uploadCopiesByKind[kind]++;
+            this.uploadBytesByKind[kind] += source.remaining();
+        }
         this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
         this.uploadCopiesBatched++;
     }
@@ -2756,6 +2785,8 @@ public final class VulkanContext {
         return "uploadCopiesBatched=" + this.uploadCopiesBatched + " uploadCopiesFlushed=" + this.uploadCopiesFlushed
                 + " uploadFlushes=" + this.uploadFlushes + " uploadFlushMillis=" + this.uploadFlushMillis
                 + " uploadFlushWorstMillis=" + this.uploadFlushWorstMillis
+                + " uploadBytesByKind=[arena=" + this.uploadBytesByKind[0] + " copies=" + this.uploadCopiesByKind[0]
+                + " buffer=" + this.uploadBytesByKind[1] + " copies=" + this.uploadCopiesByKind[1] + "]"
                 + " uploadPhaseMicros=[reserve=" + (this.uploadReserveNanos / 1000L)
                 + " copy=" + (this.uploadCopyNanos / 1000L)
                 + " poll=" + (this.uploadPollNanos / 1000L)
