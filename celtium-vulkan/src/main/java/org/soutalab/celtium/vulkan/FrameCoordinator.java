@@ -51,7 +51,7 @@ public final class FrameCoordinator {
      * A/B (flush 3.82 -> 2.35 ms/frame, submits 12.7 -> 4.6) for that work.
      */
     private static final boolean BATCH_FRAME_SUBMITS =
-            Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
                     && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
 
     /** What the coordinator needs from the renderer that owns the frame. */

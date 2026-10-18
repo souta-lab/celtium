@@ -168,13 +168,30 @@ public final class VulkanImmediatePipeline {
     }
 
     public void delete() {
-        if (this.pipeline != VK_NULL_HANDLE) {
-            vkDestroyPipeline(this.context.device(), this.pipeline, null);
-            this.pipeline = VK_NULL_HANDLE;
+        // Capture: a deferred teardown must destroy these handles, not whatever this object is rebuilt into later.
+        long pipelineToDestroy = this.pipeline;
+        long pipelineLayoutToDestroy = this.pipelineLayout;
+        this.pipeline = VK_NULL_HANDLE;
+        this.pipelineLayout = VK_NULL_HANDLE;
+        if (this.context.celtium$recordingOpen()) {
+            // The open recording can have bound this pipeline; destroying it invalidates the recording. Measured as
+            // one of the two remaining pipeline sites (leg uniEB: site=immediatepipeline). Deferred to the frame
+            // boundary, where the frame's recording has been ended and submitted.
+            this.context.celtium$retireCleanup("immediate.delete", () -> {
+                if (pipelineToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+                }
+                if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
+                }
+            });
+            return;
         }
-        if (this.pipelineLayout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(this.context.device(), this.pipelineLayout, null);
-            this.pipelineLayout = VK_NULL_HANDLE;
+        if (pipelineToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+        }
+        if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
         }
     }
 

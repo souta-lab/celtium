@@ -648,41 +648,57 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     public void delete() {
-        if (this.pipeline != VK_NULL_HANDLE) {
-            vkDestroyPipeline(this.context.device(), this.pipeline, null);
-            this.pipeline = VK_NULL_HANDLE;
-        }
+        // Capture the handles first. A deferred teardown that read the fields when it finally ran would destroy
+        // whatever this object had been rebuilt into by then - measured as the replacement pipeline being destroyed
+        // out from under fresh recordings (141 VUIDs, leg uniE7) - so the closure owns these handles and the object is
+        // empty immediately.
+        long pipelineToDestroy = this.pipeline;
+        long setLayoutToDestroy = this.descriptorSetLayout;
+        long pipelineLayoutToDestroy = this.pipelineLayout;
+        java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
+        this.pipeline = VK_NULL_HANDLE;
+        this.descriptorSetLayout = VK_NULL_HANDLE;
+        this.pipelineLayout = VK_NULL_HANDLE;
+        this.descriptorSet = VK_NULL_HANDLE;
+        this.descriptorPools.clear();
         this.setsByTextureView.clear();
         this.insertionOrder.clear();
         this.retiredSets.clear();
-        // Every pool this pipeline grew, not only the first: a set is alive in whichever pool allocated it, and a pool
-        // cannot be destroyed while one of its sets is in use, which is why they share the pipeline's lifetime.
-        // "In use" includes an open recording under the unified frame buffer: destroying a pool whose set that
-        // recording bound invalidates the whole recording (VUID-vkCmd*-commandBuffer-recording, measured on the E2E
-        // pack with texture.delete as the site). The pools are detached and freed once nothing can record; the
-        // pipeline and layouts stay on their immediate path, because deferring those measured worse.
-        java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
-        this.descriptorPools.clear();
         if (this.context.celtium$recordingOpen()) {
-            this.context.celtium$retireCleanup("texture.delete.pools", () -> {
+            // An open recording can have bound this pipeline and the sets of its pools: destroying either before that
+            // recording is submitted invalidates the whole recording. Every pool this pipeline grew is here, not only
+            // the first - a set is alive in whichever pool allocated it. The deferred list runs at a frame boundary,
+            // where the frame's recording has been ended and submitted (see the drain site in the backend).
+            this.context.celtium$retireCleanup("texture.delete", () -> {
+                if (pipelineToDestroy != VK_NULL_HANDLE) {
+                    this.context.celtium$notePipelineDestroy("immediatetexturepipeline");
+                    vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+                }
                 for (int i = 0; i < poolsToDestroy.size(); i++) {
                     this.context.celtium$noteDescriptorDestroy("texture.delete.deferred");
                     vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
                 }
+                if (setLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
+                }
+                if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
+                }
             });
-        } else {
-            for (int i = 0; i < poolsToDestroy.size(); i++) {
-                vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
-            }
+            return;
         }
-        this.descriptorSet = VK_NULL_HANDLE;
-        if (this.descriptorSetLayout != VK_NULL_HANDLE) {
-            vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);
-            this.descriptorSetLayout = VK_NULL_HANDLE;
+        if (pipelineToDestroy != VK_NULL_HANDLE) {
+            this.context.celtium$notePipelineDestroy("immediatetexturepipeline");
+            vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
         }
-        if (this.pipelineLayout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(this.context.device(), this.pipelineLayout, null);
-            this.pipelineLayout = VK_NULL_HANDLE;
+        for (int i = 0; i < poolsToDestroy.size(); i++) {
+            vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+        }
+        if (setLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
+        }
+        if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
         }
     }
 

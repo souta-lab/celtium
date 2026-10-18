@@ -1677,6 +1677,7 @@ public final class VulkanPostChain {
         }
         this.retiredTargets.clear();
         for (Program program : this.programs.values()) {
+            this.context.celtium$notePipelineDestroy("postchain");
             vkDestroyPipeline(device, program.pipeline, null);
             vkDestroyPipelineLayout(device, program.layout, null);
         }

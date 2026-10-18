@@ -888,6 +888,7 @@ public final class VulkanTerrainPipeline {
         deleted = true;
         VkDevice device = context.device();
         if (pipeline != 0L) {
+            this.context.celtium$notePipelineDestroy("terrainpipeline");
             vkDestroyPipeline(device, pipeline, null);
             pipeline = 0L;
         }

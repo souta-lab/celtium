@@ -2797,6 +2797,33 @@ public final class VulkanContext {
         this.recordingOpenProbe = probe;
     }
 
+    private int pipelineDestroyLogs;
+    private int pipelineDestroysWhileRecording;
+
+    /**
+     * Records that a pipeline is about to be destroyed while a recording may have bound it.
+     * <p>
+     * The OPT-07 invalidation list ended in one VkPipeline destroyed while a recording lived, and this probe named its
+     * sites (leg uniEB: immediatepipeline and immediateitempipeline), the same way the descriptor-pool probe named
+     * texture.delete.
+     */
+    public void celtium$notePipelineDestroy(String site) {
+        if (!celtium$recordingOpen()) {
+            return;
+        }
+        this.pipelineDestroysWhileRecording++;
+        if (this.pipelineDestroyLogs < 12) {
+            this.pipelineDestroyLogs++;
+            System.out.println("[Celtium] CELTIUM_PIPELINE_DESTROYED_WHILE_RECORDING site=" + site
+                    + " count=" + this.pipelineDestroysWhileRecording);
+        }
+    }
+
+    /** {@return how many pipelines were destroyed while a recording could have bound them}. */
+    public int celtium$pipelineDestroysWhileRecording() {
+        return this.pipelineDestroysWhileRecording;
+    }
+
     private int descriptorDestroyLogs;
     private int descriptorDestroysWhileRecording;
     /**
@@ -2819,47 +2846,95 @@ public final class VulkanContext {
         }
     }
 
-    /** Deferred destroy actions for resources an open recording may still name. */
-    private final java.util.ArrayList<Runnable> retiredCleanups = new java.util.ArrayList<Runnable>();
-    private int retiredCleanupsRan;
+    /** Deferred destroy actions for resources an open recording may still name, with the sequence they retired at. */
+    private static final class RetiredCleanup {
+        final long sequence;
+        final Runnable destroy;
+        final String site;
 
-    /**
-     * Defers a destroy action until no recording can name the resource.
-     * <p>
-     * The measured case is a pipeline being rebuilt (the HUD/texture pipeline is deleted and recreated when the
-     * texture set changes): the old descriptor pools are destroyed while the unified frame buffer still holds the
-     * recording that bound their sets, which the driver reports as "VkDescriptorSet ... was destroyed or updated
-     * without UPDATE_AFTER_BIND" and which invalidates the whole recording (legs uniE5/uniE6). Running the destroy
-     * later, at a point where no recording exists, keeps both the old and the new pipeline valid in between.
-     */
-    public void celtium$retireCleanup(String site, Runnable destroy) {
-        this.retiredCleanups.add(destroy);
-        if (this.retiredCleanupLogs < 8) {
-            this.retiredCleanupLogs++;
-            System.out.println("[Celtium] CELTIUM_CLEANUP_RETIRED site=" + site + " outstanding="
-                    + this.retiredCleanups.size());
+        RetiredCleanup(long sequence, String site, Runnable destroy) {
+            this.sequence = sequence;
+            this.site = site;
+            this.destroy = destroy;
         }
     }
 
-    private int retiredCleanupLogs;
+    private final java.util.ArrayList<RetiredCleanup> retiredCleanups = new java.util.ArrayList<RetiredCleanup>();
+    private int retiredCleanupsRan;
     private int retiredCleanupFailures;
+    private int retiredCleanupLogs;
 
-    /** Runs the deferred destroys. Only called where no recording can name their resources. */
+    /** Submission sequence sources, so a deferred destroy can prove the recording that named it has completed. */
+    private java.util.function.LongSupplier submitSequenceSource;
+    private java.util.function.LongSupplier completedSequenceSource;
+
+    /** Installs the frame scheduler's sequence numbers for the retirement contract. */
+    public void celtium$setSequenceSources(java.util.function.LongSupplier submitSequence,
+            java.util.function.LongSupplier completedSequence) {
+        this.submitSequenceSource = submitSequence;
+        this.completedSequenceSource = completedSequence;
+    }
+
+    private long currentSubmitSequence() {
+        java.util.function.LongSupplier source = this.submitSequenceSource;
+        return source == null ? 0L : source.getAsLong();
+    }
+
+    private long currentCompletedSequence() {
+        java.util.function.LongSupplier source = this.completedSequenceSource;
+        return source == null ? 0L : source.getAsLong();
+    }
+
+    /**
+     * Defers a destroy action until the recording that could name the resource has completed.
+     * <p>
+     * The measured case is a pipeline or pool being torn down while the unified frame buffer still records, or while
+     * the submission that read it is still pending: the driver reports VUID-vkCmd*-commandBuffer-recording (recording
+     * case) or VUID-vkDestroyPipeline-pipeline-00765 / VUID-vkDestroyDescriptorPool-descriptorPool-00303 (pending use
+     * case). Tagging the action with the submission sequence at retirement and running it only once that sequence has
+     * been confirmed covers both without adding a wait.
+     *
+     * @param site     who retired it, for the bounded log line
+     * @param destroy  the destruction to run later
+     */
+    public void celtium$retireCleanup(String site, Runnable destroy) {
+        this.retiredCleanups.add(new RetiredCleanup(currentSubmitSequence(), site, destroy));
+        if (this.retiredCleanupLogs < 8) {
+            this.retiredCleanupLogs++;
+            System.out.println("[Celtium] CELTIUM_CLEANUP_RETIRED site=" + site + " outstanding="
+                    + this.retiredCleanups.size() + " sequence=" + currentSubmitSequence());
+        }
+    }
+
+    /**
+     * Runs the deferred destroys whose submission sequence has been confirmed.
+     *
+     * @return how many ran
+     */
     public int celtium$runRetiredCleanups() {
         if (this.retiredCleanups.isEmpty()) {
             return 0;
         }
-        java.util.ArrayList<Runnable> pending = new java.util.ArrayList<Runnable>(this.retiredCleanups);
-        this.retiredCleanups.clear();
-        for (int i = 0; i < pending.size(); i++) {
+        long completed = currentCompletedSequence();
+        int ran = 0;
+        java.util.Iterator<RetiredCleanup> it = this.retiredCleanups.iterator();
+        while (it.hasNext()) {
+            RetiredCleanup cleanup = it.next();
+            // The recording that could name the resource is submitted after it retired, so the confirmation of the
+            // sequence that was current at retirement is not enough; wait for one more.
+            if (cleanup.sequence >= completed) {
+                continue;
+            }
+            it.remove();
             try {
-                pending.get(i).run();
+                cleanup.destroy.run();
                 this.retiredCleanupsRan++;
+                ran++;
             } catch (RuntimeException | LinkageError failure) {
                 this.retiredCleanupFailures++;
             }
         }
-        return pending.size();
+        return ran;
     }
 
     /** {@return how many deferred destroys ran and how many failed}. */

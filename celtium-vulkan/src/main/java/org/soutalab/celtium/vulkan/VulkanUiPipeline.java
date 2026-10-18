@@ -164,6 +164,7 @@ vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
             this.descriptorSet = VK_NULL_HANDLE;
         }
         if (this.pipeline != VK_NULL_HANDLE) {
+            this.context.celtium$notePipelineDestroy("uipipeline");
             vkDestroyPipeline(this.context.device(), this.pipeline, null);
             this.pipeline = VK_NULL_HANDLE;
         }

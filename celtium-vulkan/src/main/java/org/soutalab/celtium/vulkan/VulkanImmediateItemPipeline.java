@@ -392,34 +392,48 @@ public final class VulkanImmediateItemPipeline {
     private static final int DESCRIPTOR_POOL_LIMIT = VulkanImmediateTexturePipeline.DESCRIPTOR_POOL_LIMIT;
 
     public void delete() {
-        if (this.pipeline != VK_NULL_HANDLE) {
-            vkDestroyPipeline(this.context.device(), this.pipeline, null);
-            this.pipeline = VK_NULL_HANDLE;
-        }
-        this.setsByTextureView.clear();
+        // Capture: the deferred teardown below must not destroy a pipeline this object is rebuilt into.
+        long pipelineToDestroy = this.pipeline;
+        long setLayoutToDestroy = this.descriptorSetLayout;
+        long pipelineLayoutToDestroy = this.pipelineLayout;
         java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
+        this.pipeline = VK_NULL_HANDLE;
+        this.descriptorSetLayout = VK_NULL_HANDLE;
+        this.pipelineLayout = VK_NULL_HANDLE;
+        this.descriptorSet = VK_NULL_HANDLE;
         this.descriptorPools.clear();
+        this.setsByTextureView.clear();
         if (this.context.celtium$recordingOpen()) {
-            // A pool whose set an open recording bound must outlive that recording (same rule as texture.delete).
-            this.context.celtium$retireCleanup("item.delete.pools", () -> {
+            // The open recording may have bound this pipeline and the sets of its pools; destroying either invalidates
+            // it (leg uniEB names site=immediateitempipeline). Deferred to the frame boundary, where the frame's
+            // recording has been ended and submitted.
+            this.context.celtium$retireCleanup("item.delete", () -> {
+                if (pipelineToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+                }
                 for (int i = 0; i < poolsToDestroy.size(); i++) {
-                    this.context.celtium$noteDescriptorDestroy("item.delete.deferred");
                     vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
                 }
+                if (setLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
+                }
+                if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
+                }
             });
-        } else {
-            for (int i = 0; i < poolsToDestroy.size(); i++) {
-                vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
-            }
+            return;
         }
-        this.descriptorSet = VK_NULL_HANDLE;
-        if (this.descriptorSetLayout != VK_NULL_HANDLE) {
-            vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);
-            this.descriptorSetLayout = VK_NULL_HANDLE;
+        if (pipelineToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
         }
-        if (this.pipelineLayout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(this.context.device(), this.pipelineLayout, null);
-            this.pipelineLayout = VK_NULL_HANDLE;
+        for (int i = 0; i < poolsToDestroy.size(); i++) {
+            vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+        }
+        if (setLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
+        }
+        if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
         }
     }
 

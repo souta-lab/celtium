@@ -455,6 +455,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // so it installs the probe here, before any resource can be deleted.
         context.celtium$setRecordingOpenProbe(() -> this.frameBufferOpen || this.immediateWindowBusy
                 || this.commandState.recording());
+        // Deferred destroys are tagged with the submission sequence and only run once a later sequence has been
+        // confirmed, which is what makes tearing down a pipeline/pool used by a pending submission legal.
+        context.celtium$setSequenceSources(this.scheduler::submitSequence, this.scheduler::completedSubmitSequence);
         this.configuration = configuration;
         this.regionManager = regionManager;
         this.fogService = fogService;
@@ -7601,6 +7604,13 @@ this.frameBufferOpen = false;
             // order, and the boundary is the last ordering point before the present's own submit (which also
             // flushes). A no-op when nothing batched - i.e. every run with batchFrameSubmits off.
             this.context.celtium$flushBatchedSubmits();
+            // Deferred pipeline/pool teardowns run here rather than in a mid-frame wait: this is the point where the
+            // frame's recording has been ended and submitted, so nothing can still name the old pipeline, its pools
+            // or its layouts. Running them from waitForIdle measured worse (leg uniE8: 117 VUIDs of VkPipeline
+            // destroyed while a recording lived), which is why the drain moved to this boundary.
+            if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
+                this.context.celtium$runRetiredCleanups();
+            }
         } catch (RuntimeException | LinkageError error) {
             // A failed flush must not stop the frame: the queued work keeps its owner and the next boundary retries.
             record("frame-boundary flush failed: " + error);
@@ -14685,7 +14695,7 @@ this.frameBufferOpen = false;
      * A/B (flush 3.82 -> 2.35 ms/frame, submits 12.7 -> 4.6) for that work.
      */
     private static final boolean BATCH_FRAME_SUBMITS =
-            Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
                     && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
     /**
      * Mid-frame clear ordering for a framebuffer whose draws the S10 flush already submitted: on, the clear is
@@ -16126,8 +16136,6 @@ this.frameBufferOpen = false;
         // unconditional drain.
         if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
             this.context.celtium$destroyRetiredBuffers();
-            // Deferred pipeline/pool teardowns run at the same point and for the same reason: nothing can name them.
-            this.context.celtium$runRetiredCleanups();
         }
         return true;
     }

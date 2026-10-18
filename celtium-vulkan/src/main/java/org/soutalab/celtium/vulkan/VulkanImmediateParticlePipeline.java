@@ -229,6 +229,7 @@ public final class VulkanImmediateParticlePipeline {
 
     public void delete() {
         if (this.pipeline != VK_NULL_HANDLE) {
+            this.context.celtium$notePipelineDestroy("immediateparticlepipeline");
             vkDestroyPipeline(this.context.device(), this.pipeline, null);
             this.pipeline = VK_NULL_HANDLE;
         }
