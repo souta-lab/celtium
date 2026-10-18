@@ -7717,8 +7717,13 @@ this.frameBufferOpen = false;
         // is no owner state to put back.
         GllessFrameTarget gllessTarget = this.frameTarget instanceof GllessFrameTarget
                 ? (GllessFrameTarget) this.frameTarget : null;
-        GllessFrameTarget.RecordingSnapshot recordingSnapshot =
-                gllessTarget == null ? null : gllessTarget.snapshotRecording();
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("windowSetup");
+        GllessFrameTarget.RecordingSnapshot recordingSnapshot;
+        try {
+            recordingSnapshot = gllessTarget == null ? null : gllessTarget.snapshotRecording();
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("windowSetup");
+        }
         try {
             // Retry a pre-submit failure once. Never retry after vkQueueSubmit success/a fence timeout.
             for (int attempt = 0; attempt < 2; attempt++) {
@@ -9120,7 +9125,17 @@ this.frameBufferOpen = false;
     }
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
+
     private void closeCurrentImmediateGroup() {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("closeGroup");
+        try {
+            closeCurrentImmediateGroupBody();
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("closeGroup");
+        }
+    }
+
+    private void closeCurrentImmediateGroupBody() {
         // Group boundary for the font batching (task-59): a held run is closed out through the normal path here, so it
         // cannot be appended to a group that opens after it.
         celtium$flushPendingFontBatch("boundary");
@@ -9294,6 +9309,7 @@ this.frameBufferOpen = false;
         this.currentImmediateMesh = null;
         this.currentGroupUsed = false;
     }
+
 
     /**
      * Ends the backend's use of the queue: the idle wait makes the recorded groups unreachable, and then everything the

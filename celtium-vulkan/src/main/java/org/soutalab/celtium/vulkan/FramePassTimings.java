@@ -52,7 +52,12 @@ public final class FramePassTimings {
             // pipeline lookup, shared index buffer, uniform capacity, atlas/lightmap mirrors), the command-buffer
             // begin, and the frame end after the submission. The pass' bracket (3.5 ms p50 against a 0.9 ms record
             // and 0.2 ms submit) leaves that gap unnamed, and the three candidates have different owners.
-            "terrainEnsure", "terrainBegin", "terrainEnd"};
+            "terrainEnsure", "terrainBegin", "terrainEnd",
+            // The immediate path's two untimed spans: closing the batch still being filled (per group, and the
+            // group's payload capture is the expensive half) and the window's own setup before it records
+            // (recording snapshot, frame begin, target/device gates). They were the residue of the batch call's
+            // measured parts (batchCallMillis 3,153 ms against ~1,450 ms of named sub-timers).
+            "closeGroup", "windowSetup"};
 
     private static final int CAPACITY = 512;
 
