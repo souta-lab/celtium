@@ -5736,8 +5736,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // Under the GL-less window the swap point presents the finished frame, so this mid-frame present would
                 // be a second one for the same frame - and it restores the colour image to a layout the owned target
                 // does not use. The bridge configuration keeps it: that is where it was measured.
-                if (this.frameTarget != null && ensureSwapchain()
-                        && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // The GL-less check comes FIRST: it used to be the last term, so every format-2 composite candidate
+                // still ran ensureSwapchain() before being refused the present - a GLFW framebuffer-size query and a
+                // surface-capabilities query per font/text batch. Measured with JFR native samples on the client
+                // thread: of 201 glfwGetFramebufferSize samples, 195 came from ensureSwapchain() on this path
+                // (celtium$submitFontRun -> submitImmediateBatch -> ensureSwapchain), while GL-less never presents
+                // here at all. Reordering changes no behaviour: both terms must hold, and the skipped work is the
+                // side effect of a call whose result could not be used.
+                if (this.frameTarget != null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        && ensureSwapchain()) {
                     this.frameSubmitReachedQueue = false;
                     this.frameTarget.beginFrameForPresent();
                     long bridgeWait = this.frameTarget.waitSemaphore();

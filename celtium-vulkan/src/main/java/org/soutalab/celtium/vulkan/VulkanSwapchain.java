@@ -1569,7 +1569,38 @@ public final class VulkanSwapchain {
      * forever - the resize harness's compositor never reports it. The framebuffer size arguments are only the
      * fallback for a surface that pins no extent; a pinned one answers for itself.
      */
+    /**
+     * Cached answer of {@link #matchesSurfaceExtent}, with the inputs it was computed for.
+     * <p>
+     * The query is called once per frame from the present path and {@code vkGetPhysicalDeviceSurfaceCapabilitiesKHR}
+     * measured as one of the client thread's larger native frames (JFR: 108 samples against 32 before the window-size
+     * cache landed). The answer only changes when the window changes size, so it is recomputed when the framebuffer
+     * size arguments differ from the cached ones - which is what a real resize changes, on the very next frame - and
+     * otherwise at most every {@link #SURFACE_EXTENT_CACHE_NANOS}, so a compositor that resizes without touching the
+     * framebuffer cannot leave the answer stale for more than that interval.
+     */
+    private static final long SURFACE_EXTENT_CACHE_NANOS = 100_000_000L;
+    private int extentCacheFramebufferWidth = Integer.MIN_VALUE;
+    private int extentCacheFramebufferHeight = Integer.MIN_VALUE;
+    private long extentCacheNanos;
+    private boolean extentCacheMatches;
+
     public boolean matchesSurfaceExtent(int framebufferWidth, int framebufferHeight) {
+        long now = System.nanoTime();
+        if (framebufferWidth == this.extentCacheFramebufferWidth
+                && framebufferHeight == this.extentCacheFramebufferHeight
+                && now - this.extentCacheNanos < SURFACE_EXTENT_CACHE_NANOS) {
+            return this.extentCacheMatches;
+        }
+        boolean matches = queryMatchesSurfaceExtent(framebufferWidth, framebufferHeight);
+        this.extentCacheFramebufferWidth = framebufferWidth;
+        this.extentCacheFramebufferHeight = framebufferHeight;
+        this.extentCacheNanos = now;
+        this.extentCacheMatches = matches;
+        return matches;
+    }
+
+    private boolean queryMatchesSurfaceExtent(int framebufferWidth, int framebufferHeight) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSurfaceCapabilitiesKHR capabilities = VkSurfaceCapabilitiesKHR.calloc(stack);
             if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(this.context.physicalDevice(), this.surface,
