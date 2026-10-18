@@ -193,7 +193,9 @@ public final class ModelGeometryCache {
                             + " vertices and " + mesh.indexCount() + " indices, expected " + (quadLimit * 4)
                             + " and " + (quadLimit * 6);
                     this.modelMeshContractFailures++;
-                    if (this.modelMeshFailure == null) {
+                    // The sentinel is "none", not null (audit #348): the null check never ran, so every contract
+                    // failure counted but kept the report's reason at "none".
+                    if ("none".equals(this.modelMeshFailure)) {
                         this.modelMeshFailure = failure;
                     }
                     // The mesh never reaches the table, so this is a partial build's leftovers: released here rather
