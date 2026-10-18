@@ -85,6 +85,42 @@ public class MinecraftMixin {
         }
     }
 
+    /**
+     * The scheduled-executables drain inside the loop, timed per task: chunk-mesh uploads, world updates and mod
+     * tasks all queue there, so their share of the frame is named rather than folded into the unnamed remainder.
+     */
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/util/Util;runTask(Ljava/util/concurrent/FutureTask;Lorg/apache/logging/log4j/Logger;)Ljava/lang/Object;"),
+            require = 0)
+    private Object celtium$timedScheduledTask(java.util.concurrent.FutureTask<Object> task,
+            org.apache.logging.log4j.Logger logger) {
+        long started = GameLoopTiming.scheduledTaskStarted();
+        try {
+            return net.minecraft.util.Util.runTask(task, logger);
+        } finally {
+            GameLoopTiming.scheduledTaskEnded(started);
+        }
+    }
+
+    /**
+     * The render section of the loop, timed as the loop sees it: the frame brackets live inside
+     * {@code updateCameraAndRender}, so {@code loop minus render} names what the brackets cannot - the tick,
+     * display and "everything else" shares of a frame.
+     */
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/EntityRenderer;func_181560_a(FJ)V"), require = 0)
+    private void celtium$timedRenderSection(net.minecraft.client.renderer.EntityRenderer entityRenderer,
+            float partialTicks, long finishTimeNano) {
+        GameLoopTiming.renderStarted();
+        try {
+            entityRenderer.updateCameraAndRender(partialTicks, finishTimeNano);
+        } finally {
+            GameLoopTiming.renderEnded();
+        }
+    }
+
     @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
             at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/Display;sync(I)V"), require = 0)
     private void celtium$timedFpsSync(int fps) {

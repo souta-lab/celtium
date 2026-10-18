@@ -44,14 +44,22 @@ public final class GameLoopTiming {
             new java.util.concurrent.atomic.AtomicLong();
     private static final java.util.concurrent.atomic.AtomicLong syncNanos =
             new java.util.concurrent.atomic.AtomicLong();
+    /** The render section ({@code updateCameraAndRender}) inside the loop - the frame brackets live inside it. */
+    private static final java.util.concurrent.atomic.AtomicLong renderNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** The scheduled-task drain inside the loop - the queue the game's own work joins, chunk uploads included. */
+    private static final java.util.concurrent.atomic.AtomicLong scheduledNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong scheduledCount =
+            new java.util.concurrent.atomic.AtomicLong();
     /** The start of the tick currently executing, or 0 when none is. */
     private static volatile long openNanos;
     /** The start of the loop currently executing, or 0 when none is. */
     private static volatile long openLoopNanos;
     /** The start of the updateDisplay currently executing inside a loop, or 0 when none is. */
     private static volatile long openDisplayNanos;
-    /** The start of the blit / fps-sync currently executing inside a loop, or 0 when none is. */
-    private static volatile long openBlitNanos, openSyncNanos;
+    /** The start of the blit / fps-sync / render section currently executing inside a loop, or 0 when none is. */
+    private static volatile long openBlitNanos, openSyncNanos, openRenderNanos;
     /** updateDisplay re-entry depth: resize() calls it again from checkWindowResize inside the outer call. */
     private static int displayDepth;
     /** updateDisplay time accumulated inside the open loop, in nanoseconds. */
@@ -62,6 +70,12 @@ public final class GameLoopTiming {
     private static long syncInsideLoop;
     /** Tick time accumulated inside the open loop, in nanoseconds. */
     private static long tickInsideLoop;
+    /** Render section (updateCameraAndRender) time accumulated inside the open loop, in nanoseconds. */
+    private static long renderInsideLoop;
+    /** Scheduled-task time accumulated inside the open loop, in nanoseconds. */
+    private static long scheduledInsideLoop;
+    /** Scheduled-task count inside the open loop. */
+    private static int scheduledTasksInsideLoop;
     /** Snapshots of the most recently closed loop, for the fixture's per-slow-frame entry. */
     private static volatile long lastLoopNanos, lastLoopTickNanos, lastLoopDisplayNanos;
     private static volatile long lastLoopBlitNanos, lastLoopSyncNanos;
@@ -103,6 +117,9 @@ public final class GameLoopTiming {
         blitInsideLoop = 0L;
         syncInsideLoop = 0L;
         tickInsideLoop = 0L;
+        renderInsideLoop = 0L;
+        scheduledInsideLoop = 0L;
+        scheduledTasksInsideLoop = 0;
     }
 
     /**
@@ -127,10 +144,54 @@ public final class GameLoopTiming {
         displayUpdateNanos.addAndGet(displayInsideLoop);
         blitNanos.addAndGet(blitInsideLoop);
         syncNanos.addAndGet(syncInsideLoop);
+        renderNanos.addAndGet(renderInsideLoop);
+        scheduledNanos.addAndGet(scheduledInsideLoop);
+        scheduledCount.addAndGet(scheduledTasksInsideLoop);
         displayInsideLoop = 0L;
         blitInsideLoop = 0L;
         syncInsideLoop = 0L;
         tickInsideLoop = 0L;
+        renderInsideLoop = 0L;
+        scheduledInsideLoop = 0L;
+        scheduledTasksInsideLoop = 0;
+    }
+
+    /**
+     * Called around {@code entityRenderer.updateCameraAndRender} inside {@code runGameLoop}; the call site is a
+     * redirect wrapper in {@code MinecraftMixin}, so the span is inside a loop by construction. The frame brackets
+     * are nested inside this call, so "loop minus render" separates render-side work from the tick/display/other-loop
+     * share the frame bracket cannot name.
+     */
+    public static void renderStarted() {
+        openRenderNanos = openLoopNanos != 0L ? System.nanoTime() : 0L;
+    }
+
+    /** Called at the return of {@code entityRenderer.updateCameraAndRender}. */
+    public static void renderEnded() {
+        long started = openRenderNanos;
+        if (started == 0L) {
+            return;
+        }
+        openRenderNanos = 0L;
+        renderInsideLoop += System.nanoTime() - started;
+    }
+
+    /**
+     * Called around one {@code Util.runTask} in the {@code scheduledExecutables} drain: chunk-mesh uploads, world
+     * updates and mod tasks all queue there, so their share of the loop is named rather than folded into
+     * {@code loopOther}. The redirect wrapper runs one task; the elapsed time is that task's whole cost.
+     */
+    public static long scheduledTaskStarted() {
+        return openLoopNanos != 0L ? System.nanoTime() : 0L;
+    }
+
+    /** Called after a {@code Util.runTask} returns inside the drain. */
+    public static void scheduledTaskEnded(long started) {
+        if (started == 0L) {
+            return;
+        }
+        scheduledInsideLoop += System.nanoTime() - started;
+        scheduledTasksInsideLoop++;
     }
 
     /**
@@ -274,12 +335,26 @@ public final class GameLoopTiming {
         long blitMean = loops == 0L ? 0L : blitTotal / loops;
         long syncTotal = syncTotalMillis();
         long syncMean = loops == 0L ? 0L : syncTotal / loops;
+        long renderTotal = renderNanos.get() / 1_000_000L;
+        long renderMean = loops == 0L ? 0L : renderTotal / loops;
+        long schedTotal = scheduledNanos.get() / 1_000_000L;
+        long schedMean = loops == 0L ? 0L : schedTotal / loops;
+        long schedCount = scheduledCount.get();
+        // The loop remainder after every named section: profiler sections, resize checks, the FPS counter,
+        // FML render-tick hooks and everything else runGameLoop pays outside tick, render, the task drain and
+        // the display path - the bucket a "frame gets faster but the interval does not" report needs named.
+        long otherTotal = Math.max(0L, loopTotal - (total + displayTotal + blitTotal + syncTotal + renderTotal + schedTotal));
+        long otherMean = loops == 0L ? 0L : otherTotal / loops;
         return "ticks=" + count + " tickMillisTotal=" + total + " tickMillisMean=" + mean
                 + " tickMillisWorst=" + worstMillis()
                 + " loops=" + loops + " loopMillisTotal=" + loopTotal + " loopMillisMean=" + loopMean
                 + " loopMillisWorst=" + worstLoopMillis()
                 + " displayUpdateMillisTotal=" + displayTotal + " displayUpdateMillisMean=" + displayMean
                 + " blitMillisTotal=" + blitTotal + " blitMillisMean=" + blitMean
-                + " syncMillisTotal=" + syncTotal + " syncMillisMean=" + syncMean;
+                + " syncMillisTotal=" + syncTotal + " syncMillisMean=" + syncMean
+                + " renderMillisTotal=" + renderTotal + " renderMillisMean=" + renderMean
+                + " scheduledTasks=" + schedCount + " scheduledMillisTotal=" + schedTotal
+                + " scheduledMillisMean=" + schedMean
+                + " loopOtherMillisTotal=" + otherTotal + " loopOtherMillisMean=" + otherMean;
     }
 }
