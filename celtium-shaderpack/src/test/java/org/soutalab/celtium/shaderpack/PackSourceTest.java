@@ -13,6 +13,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -194,6 +195,40 @@ class PackSourceTest {
         assertFalse(src.exists(PackPath.absolute("/shaders/program/alias.glsl")));
         assertTrue(diags.stream().anyMatch(d -> d.code() == DiagnosticCode.SYMLINK_ESCAPE
                 && d.severity() == Severity.WARNING));
+    }
+
+    @Test
+    void directoryEntryLimitCountsDirectories() throws Exception {
+        // Audit #351: nested empty directories used to walk unbounded - the ZIP path already counts
+        // every entry including directories, so the directory walker must too.
+        Path dir = FixturePack.minimal().dir(tmp.resolve("packdir"));
+        // minimal() walks 7 entries: shaders/ + world0/ + 2 files + shaders.properties + program/ + 1 file.
+        for (int i = 0; i < 4; i++) {
+            Files.createDirectories(dir.resolve("shaders/deep" + i + "/nested"));
+        }
+        // 7 + 8 directory entries = 15 visits; a cap of 10 must refuse before reading a byte.
+        PackLimits limits = new PackLimits(10, 1024 * 1024, 1024 * 1024, 250, 1024 * 1024, 64, 8192,
+                8L << 20, 65536);
+        PackException e = assertThrows(PackException.class,
+                () -> PackSource.open(dir, limits, new ArrayList<>()));
+        assertEquals(DiagnosticCode.ENTRY_LIMIT_EXCEEDED, e.code());
+        // The same tree under a limit that covers all entries still opens.
+        PackLimits loose = new PackLimits(64, 1024 * 1024, 1024 * 1024, 250, 1024 * 1024, 64, 8192,
+                8L << 20, 65536);
+        assertNotNull(PackSource.open(dir, loose, new ArrayList<>()));
+    }
+
+    @Test
+    void directoryEntryLimitBoundaryCountsFilesAndDirectories() throws Exception {
+        // Files and directories share one budget: 7 entries at cap 7 opens; one file more trips it.
+        Path dir = FixturePack.minimal().dir(tmp.resolve("packdir"));
+        PackLimits exact = new PackLimits(7, 1024 * 1024, 1024 * 1024, 250, 1024 * 1024, 64, 8192,
+                8L << 20, 65536);
+        assertNotNull(PackSource.open(dir, exact, new ArrayList<>()));
+        Files.writeString(dir.resolve("shaders/extra.glsl"), "//\n");
+        PackException e = assertThrows(PackException.class,
+                () -> PackSource.open(dir, exact, new ArrayList<>()));
+        assertEquals(DiagnosticCode.ENTRY_LIMIT_EXCEEDED, e.code());
     }
 
     @Test

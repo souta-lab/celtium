@@ -95,6 +95,13 @@ final class DirectoryPackSource implements PackSource {
 
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                // Directories count toward the entry budget, like the ZIP path counts directory entries
+                // (audit #351): a pack of nested empty directories used to walk unbounded without ever
+                // tripping ENTRY_LIMIT_EXCEEDED. Symlinked dirs count too - they are still visits.
+                if (++entries[0] > limits.maxEntries()) {
+                    throw fail(new PackException(DiagnosticCode.ENTRY_LIMIT_EXCEEDED,
+                            "pack has more than " + limits.maxEntries() + " entries"));
+                }
                 // A symlinked directory inside the pack is skipped, not followed -
                 // with NOFOLLOW_LINKS attrs describes the link itself.
                 if (attrs.isSymbolicLink()) {
