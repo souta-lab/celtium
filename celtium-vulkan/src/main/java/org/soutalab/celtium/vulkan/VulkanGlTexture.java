@@ -860,6 +860,10 @@ public final class VulkanGlTexture {
         result.wrapRepeatV = wrapRepeatV;
         result.nearestMinFilter = nearestFilter;
         try {
+            // Dimensions are validated before any GPU object exists - and before mipLevelsFor, whose shift loop is
+            // meaningless for a rejected size (audit #347: an int shift masks its distance to 0..31, so a dimension
+            // at or above 1 << 30 made `1 << levels` wrap and the loop never returned).
+            requireSupportedDimensions(context, width, height);
             // One variable at a time: the level count is computed here so the sampler can be told the truth about the
             // chain, while the creation order stays exactly as it was. The previous measurement changed the order and the
             // clamp together, so it could not say which of them moved the frame.
@@ -2415,23 +2419,30 @@ public final class VulkanGlTexture {
      * about which levels ought to exist.
      */
     private static int mipLevelsFor(int width, int height) {
+        // Long shift and a hard cap: an int `1 << levels` masks its distance to 0..31, so a dimension at or above
+        // 1 << 30 wrapped the comparison forever (audit #347). Callers now validate first; the bound stays so a
+        // missed check in a new caller degrades to a wrong level count, never to a hang.
         int levels = 1;
-        while ((1 << levels) <= Math.max(width, height)) {
+        long maximum = Math.max(width, height);
+        while (levels < 32 && (1L << levels) <= maximum) {
             levels++;
         }
         return levels;
     }
 
-    private void createImageResources(int newWidth, int newHeight) {
-        requireOwned("creating an image");
-        this.mipLevels = mipLevelsFor(newWidth, newHeight);
+    /**
+     * Validates a mirrored texture's extent before a mip count is computed or a GPU object is touched.
+     *
+     * <p>Both call sites used to run {@link #mipLevelsFor} first, and a rejected size could therefore reach the shift
+     * loop (audit #347). Hoisted here once so {@link #create} and a resize agree on the same refusal, with the same
+     * message text as before.
+     */
+    private static void requireSupportedDimensions(VulkanContext context, int newWidth, int newHeight) {
         if (newWidth <= 0 || newHeight <= 0) {
             throw new IllegalArgumentException("A mirrored texture size of " + newWidth + "x" + newHeight
                     + " pixels is not usable");
         }
-        VkDevice device = context.device();
-        try {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(context.physicalDevice(), properties);
             int maxDimension = properties.limits().maxImageDimension2D();
@@ -2439,6 +2450,16 @@ public final class VulkanGlTexture {
                 throw new IllegalArgumentException("A mirrored texture of " + newWidth + "x" + newHeight
                         + " pixels exceeds the device limit of " + maxDimension + " per dimension");
             }
+        }
+    }
+
+    private void createImageResources(int newWidth, int newHeight) {
+        requireOwned("creating an image");
+        requireSupportedDimensions(context, newWidth, newHeight);
+        this.mipLevels = mipLevelsFor(newWidth, newHeight);
+        VkDevice device = context.device();
+        try {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
             int requiredFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
                     | VK_FORMAT_FEATURE_TRANSFER_DST_BIT
                     | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
