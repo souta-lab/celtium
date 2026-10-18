@@ -784,6 +784,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.terrainStatistics.setLastSkipReason(pass.name() + ": no frame target");
             return;
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainEnsure");
         VulkanTerrainPipeline pipeline = this.terrain.pipelineFor(pass);
         if (pipeline == null) {
             this.terrainStatistics.notePassSkips();
@@ -826,6 +827,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
 
+        org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
         boolean useBlockFaceCulling = !pass.isSorted();
         this.terrainStatistics.setLastDrawCommands(0);
         this.terrainStatistics.setLastSectionsDrawn(0);
@@ -860,7 +862,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
         boolean submitted = false;
         try {
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainBegin");
             beginCommands();
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainBegin");
             // The pass's own phases, timed inside the terrain bracket. Its 8.2 ms p50 is larger than the GPU's
             // 2.6 ms for the same passes (the rendererDebug lines carry the GPU timestamps, measured 2026-10-16) and
             // the internal counters that existed - pipeline prepare 2-6 ms, group clone 0-1 ms - are too small to
@@ -924,7 +928,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             long handoffStart = System.nanoTime();
             this.windowOpen = false;
-            this.frameTarget.endFrame();
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainEnd");
+            try {
+                this.frameTarget.endFrame();
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnd");
+            }
             this.frameCloses++;
             recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
@@ -4459,8 +4468,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return celtium$refusalText();
     }
 
+    /** Clear-mask-0 ordering flushes: {@code glClear(0)} clears nothing, so ordering it is not GL's contract. */
+    private long clearOrderFlushesZeroMask;
+    /** {@return calls to {@link #flushBeforeClear} whose mask was 0}, so the share can be priced. */
+    public long clearOrderZeroMaskFlushes() {
+        return this.clearOrderFlushesZeroMask;
+    }
+
     public void flushBeforeClear(int mask) {
         if (this.immediateWindowBusy) return; // bridge GL state restore must not recursively flush
+        if (mask == 0) {
+            this.clearOrderFlushesZeroMask++;
+        }
         flushPendingBeforeGlDraw();
         this.immediateStatistics.noteClearOrderFlushes();
     }
@@ -9551,6 +9570,7 @@ this.frameBufferOpen = false;
                 + " prepBranchMillis=" + (this.immediateStatistics.prepBranchNanos() / 1000000L)
                 + " descriptorHits=" + VulkanImmediateTexturePipeline.DESCRIPTOR_HITS
                 + " descriptorMisses=" + VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + this.immediateStatistics.clearOrderFlushes()
+                + " clearOrderZeroMask=" + this.clearOrderFlushesZeroMask
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.targetStatistics.offTargetTargetsCreated()
                 + " refusedBeforeAppend=" + this.immediateStatistics.refusedBeforeAppend()
                 + " partialMirrorRefusals=" + this.immediateStatistics.partialMirrorRefusals()

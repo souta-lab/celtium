@@ -47,7 +47,12 @@ public final class FramePassTimings {
             "setupTerrain", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
             "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin",
             "recBind", "recDraw", "recLoop",
-            "winBarrier", "winRecord", "winSubmit", "winEnd"};
+            "winBarrier", "winRecord", "winSubmit", "winEnd",
+            // The terrain pass' three unmeasured spans: the fixed prepare work before recording (frame target,
+            // pipeline lookup, shared index buffer, uniform capacity, atlas/lightmap mirrors), the command-buffer
+            // begin, and the frame end after the submission. The pass' bracket (3.5 ms p50 against a 0.9 ms record
+            // and 0.2 ms submit) leaves that gap unnamed, and the three candidates have different owners.
+            "terrainEnsure", "terrainBegin", "terrainEnd"};
 
     private static final int CAPACITY = 512;
 
