@@ -136,30 +136,47 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
                              @Deprecated(forRemoval = true) int frame,
                              boolean spectator,
                              boolean updateChunksImmediately) {
+        TerrainPhaseTiming.begin("stReclaim");
         NativeBuffer.reclaim(false);
+        TerrainPhaseTiming.end("stReclaim");
 
         // When a shadow pass preceded this one, it joined the previous frame's searches, applied the chunk events
         // and submitted this frame's searches; joining again here would stall on those, and chunk events must
-        // be applied while no search is in flight.
-        if (!this.renderSectionManager.didShadowPassRunThisFrame()) {
+        // be applied while no search is in flight. The two steps are timed apart because they have different causes:
+        // a join waits on the search, an event apply walks the tracker.
+        TerrainPhaseTiming.begin("stGraph");
+        boolean shadowPassRan = this.renderSectionManager.didShadowPassRunThisFrame();
+        if (!shadowPassRan) {
             this.renderSectionManager.finishAllGraphUpdates();
+        }
+        TerrainPhaseTiming.end("stGraph");
+        TerrainPhaseTiming.begin("stEvents");
+        if (!shadowPassRan) {
             this.processChunkEvents();
         }
+        TerrainPhaseTiming.end("stEvents");
 
+        TerrainPhaseTiming.begin("stAsync");
         this.renderSectionManager.runAsyncTasks();
 
         if (getEffectiveRenderDistance() != this.renderDistance) {
             this.reload();
         }
+        TerrainPhaseTiming.end("stAsync");
 
+        TerrainPhaseTiming.begin("stPrepare");
         this.prepareFrame(viewport, cameraState, updateChunksImmediately);
+        TerrainPhaseTiming.end("stPrepare");
 
         // After a shadow pass the uploads already happened there; uploading here would join the searches it submitted,
         // which is only worth it for rebuilds the render thread just waited on.
+        TerrainPhaseTiming.begin("stUpload");
         if (!this.renderSectionManager.didShadowPassRunThisFrame() || this.renderSectionManager.hasBlockingResultsPending()) {
             this.renderSectionManager.uploadChunks();
         }
+        TerrainPhaseTiming.end("stUpload");
 
+        TerrainPhaseTiming.begin("stUpdate");
         if (this.renderSectionManager.needsUpdate()) {
             this.renderSectionManager.update(viewport, frame, spectator);
         }
@@ -167,8 +184,11 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         if (updateChunksImmediately) {
             this.renderSectionManager.uploadChunks();
         }
+        TerrainPhaseTiming.end("stUpdate");
 
+        TerrainPhaseTiming.begin("stVisible");
         this.renderSectionManager.tickVisibleRenders();
+        TerrainPhaseTiming.end("stVisible");
     }
 
     /**

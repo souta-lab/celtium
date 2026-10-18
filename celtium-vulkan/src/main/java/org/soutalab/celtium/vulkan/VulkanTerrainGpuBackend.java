@@ -458,6 +458,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Deferred destroys are tagged with the submission sequence and only run once a later sequence has been
         // confirmed, which is what makes tearing down a pipeline/pool used by a pending submission legal.
         context.celtium$setSequenceSources(this.scheduler::submitSequence, this.scheduler::completedSubmitSequence);
+        // setupTerrain's phases: the bracket that owns most of the world pass is in the shared renderer module, which
+        // cannot see FramePassTimings; it times through this sink instead, installed here so only the Vulkan path pays
+        // for it and only while the pass timings are enabled.
+        org.embeddedt.embeddium.impl.render.terrain.TerrainPhaseTiming.install(
+                new org.embeddedt.embeddium.impl.render.terrain.TerrainPhaseTiming.Sink() {
+                    @Override
+                    public void begin(String name) {
+                        FramePassTimings.begin(name);
+                    }
+
+                    @Override
+                    public void end(String name) {
+                        FramePassTimings.end(name);
+                    }
+                });
         this.configuration = configuration;
         this.regionManager = regionManager;
         this.fogService = fogService;

@@ -44,7 +44,7 @@ public final class FramePassTimings {
      * which of its driver-visible calls owns that.
      */
     private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload",
-            "setupTerrain", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
+            "setupTerrain", "stGraph", "stEvents", "stAsync", "stPrepare", "stUpload", "stUpdate", "stVisible", "stReclaim", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
             "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin",
             "recBind", "recDraw", "recLoop",
             "winBarrier", "winRecord", "winSubmit", "winEnd",
