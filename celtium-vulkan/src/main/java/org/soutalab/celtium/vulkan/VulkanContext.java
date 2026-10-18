@@ -292,6 +292,18 @@ public final class VulkanContext {
         private long[] signalSemaphores;
         /** The batch this submission's fence belongs to; null on the legacy per-submit path. */
         private SharedBatch batch;
+        /**
+         * {@code >= 0} marks a frame-slot command buffer: it belongs to the frame coordinator's own pool and is
+         * NOT freed on reclaim - the slot stays a reusable resource, and {@link #slotReclaim} performs the
+         * completion bookkeeping the slot fence would have made. {@code -1} is the pool-owned buffer the original
+         * deferred path frees.
+         */
+        private int frameSlot = -1;
+        /**
+         * Runs at reclaim (and at batched-submit failure) with the lost-device flag, exactly once, instead of the
+         * pool free: the caller's per-slot confirmation - the thing the armed slot fence used to stand for.
+         */
+        private java.util.function.Consumer<Boolean> slotReclaim;
     }
 
     /**
@@ -627,6 +639,9 @@ public final class VulkanContext {
         requireUsable();
         submitWithSemaphoresCalls++;
         submitWithSemaphoresWaits += waitSemaphores.length;
+        // Deferred (batched) submissions logically precede this direct one; flushing first keeps logical and queue
+        // order identical - without it a vkQueueSubmit here would jump ahead of entries the frame already submitted.
+        celtium$flushBatchedSubmits();
         long fence = VK_NULL_HANDLE;
         try {
             check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
@@ -976,6 +991,10 @@ public final class VulkanContext {
         requireUsable();
         submitWithSemaphoresCalls++;
         submitWithSemaphoresWaits += waitSemaphores == null ? 0 : waitSemaphores.length;
+        // Queue order: deferred (batched) submissions logically precede this direct one, and a vkQueueSubmit placed
+        // ahead of them would reorder the queue. Flushing first keeps "logical submission order == queue order" for
+        // every path that can submit.
+        celtium$flushBatchedSubmits();
         check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer (deferred+semaphores)");
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
@@ -1069,13 +1088,66 @@ public final class VulkanContext {
     }
 
     /**
+     * Queues an ALREADY-ENDED frame-slot command buffer into the batched-submit list.
+     * {@return the batch's shared fence the caller records as the slot's stand-in}.
+     * <p>
+     * The vkQueueSubmit fence limit - one per call - is the only thing keeping every frame recording on its own
+     * driver call: ~8-9 recordings per frame were ~8-9 submits. The batch's one armed fence stands for every entry,
+     * and {@link DeferredSubmit#slotReclaim} runs the slot's completion bookkeeping at reclaim exactly once -
+     * the same facts an armed per-slot fence used to publish. Order is preserved by entry order inside the batch:
+     * entries flush in the sequence they were queued, which is what the per-call submits expressed.
+     * <p>
+     * {@link #celtium$submitDeferred}'s contract differs in two places deliberately: the buffer is not ended here
+     * (the coordinator already ended it inside its own bookkeeping), and it is never freed on reclaim - a frame
+     * slot's buffer belongs to the coordinator's pool and outlives the entry.
+     * <p>
+     * Requires {@link #BATCHED_SUBMITS}; callers gate themselves on it.
+     */
+    public long celtium$submitDeferredFrame(VkCommandBuffer commandBuffer, long[] waitSemaphores, int[] waitStages,
+            long[] signalSemaphores, int frameSlot, java.util.function.Consumer<Boolean> slotReclaim) {
+        if (!BATCHED_SUBMITS) {
+            throw new IllegalStateException("celtium$submitDeferredFrame requires batchedSubmits");
+        }
+        if (commandBuffer == null || frameSlot < 0 || slotReclaim == null) {
+            throw new IllegalArgumentException("deferred frame submit needs a buffer, a slot and a reclaim callback");
+        }
+        requireUsable();
+        DeferredSubmit entry = new DeferredSubmit();
+        entry.commandBuffer = commandBuffer;
+        entry.batch = celtium$currentBatch();
+        entry.batch.pending++;
+        entry.fence = entry.batch.fence;
+        entry.waitSemaphores = waitSemaphores;
+        entry.waitStages = waitStages;
+        entry.signalSemaphores = signalSemaphores;
+        entry.frameSlot = frameSlot;
+        entry.slotReclaim = slotReclaim;
+        this.pendingBatchedSubmits.add(entry);
+        this.deferredSubmits.add(entry);
+        this.deferredSubmitsOutstanding++;
+        if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
+            this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
+        }
+        return entry.fence;
+    }
+
+    /**
      * Frees a confirmed deferred submission: its command buffer goes back to the pool, its fence is reset and pooled
      * (or destroyed past the cap), and the upload-ring slots it read become writable again. The submission's
      * completion counts once in the OPT-04 epoch.
      */
     private void celtium$reclaimDeferred(DeferredSubmit entry, boolean lostDevice) {
-        vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
+        if (entry.frameSlot >= 0) {
+            // A slot-owned buffer is never freed: the slot's own pool keeps it for the next recording. The reclaim
+            // is the completion event the slot fence stood for, so the callback runs the slot bookkeeping instead.
+            if (entry.slotReclaim != null) {
+                entry.slotReclaim.accept(Boolean.valueOf(lostDevice));
+            }
+        } else {
+            vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
+        }
         entry.commandBuffer = null;
+        entry.slotReclaim = null;
         if (entry.batch != null) {
             // The fence is the batch's: armed once for every entry it carried, it returns to the pool only when the
             // last entry reclaims - pooling it early would let a new submission arm a fence older entries still
@@ -1167,8 +1239,17 @@ public final class VulkanContext {
                 for (DeferredSubmit entry : entries) {
                     this.deferredSubmits.remove(entry);
                     this.deferredSubmitsOutstanding--;
-                    vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
+                    if (entry.frameSlot >= 0) {
+                        // The slot buffer stays its pool's resource; the callback marks the submission "completed"
+                        // (lost, for pending purposes) so nothing waits on a fence that never armed.
+                        if (entry.slotReclaim != null) {
+                            entry.slotReclaim.accept(Boolean.TRUE);
+                        }
+                    } else {
+                        vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
+                    }
                     entry.commandBuffer = null;
+                    entry.slotReclaim = null;
                     entry.uploadSlotMask = 0L;
                 }
                 vkDestroyFence(this.device, batch.fence, null);
@@ -1183,9 +1264,15 @@ public final class VulkanContext {
      * Reclaims every deferred submission whose fence has already signaled, in submission order, without waiting.
      * {@return how many were reclaimed}. A head whose fence has not signaled ends the walk: the queue executes
      * submissions in order, so nothing newer can have completed either.
+     * <p>
+     * Deliberately does NOT flush the pending batch first: a poll is a reclaim scan, and flushing here made every
+     * mid-frame poll fragment the batch into ~1-entry submits (measured: 10.7 flushes/frame, submissions/batch 1.09).
+     * Sites whose ordering or arming actually requires the queue to see the pending work call
+     * {@link #celtium$flushBatchedSubmits()} themselves - the awaits, the one-copy submit, the present path, the
+     * frame boundary and the slot wait all do. Pending entries left unflushed are simply "not complete": their
+     * fences are unarmed and read NOT_READY, which is the truthful answer a poll owes.
      */
     public int celtium$pollDeferredSubmits() {
-        celtium$flushBatchedSubmits();
         int reclaimed = 0;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();

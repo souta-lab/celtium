@@ -109,6 +109,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         @Override public void record(String message) { VulkanTerrainGpuBackend.this.record(message); }
         @Override public void setSubmissionPending(boolean pending) { VulkanTerrainGpuBackend.this.submissionPending = pending; }
         @Override public void setFrameSubmitReachedQueue(boolean reached) { VulkanTerrainGpuBackend.this.frameSubmitReachedQueue = reached; }
+        @Override public void celtium$submitSlotDeferred(VkCommandBuffer commandBuffer, long[] waitSemaphores,
+                int[] waitStages, long[] signalSemaphores) {
+            VulkanTerrainGpuBackend.this.celtium$submitSlotDeferred(commandBuffer, waitSemaphores, waitStages,
+                    signalSemaphores);
+        }
         @Override public void setLastFrameReachedQueue(boolean reached) {
             // Temporary probe (2026-10-15): the present skips every frame with "no completed frame waiting" even though
             // the pass-submission counter shows frames being submitted, so the question is whether this setter is ever
@@ -7458,6 +7463,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long flushStartedNanos = System.nanoTime();
         try {
             flushPendingBeforeGlDraw();
+            // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
+            // order, and the boundary is the last ordering point before the present's own submit (which also
+            // flushes). A no-op when nothing batched - i.e. every run with batchFrameSubmits off.
+            this.context.celtium$flushBatchedSubmits();
         } catch (RuntimeException | LinkageError error) {
             // A failed flush must not stop the frame: the queued work keeps its owner and the next boundary retries.
             record("frame-boundary flush failed: " + error);
@@ -13946,6 +13955,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int FRAME_SLOTS = FrameSubmissionScheduler.FRAME_SLOTS;
     private final VkCommandBuffer[] slotCommandBuffers = new VkCommandBuffer[FRAME_SLOTS];
     private final long[] slotFences = new long[FRAME_SLOTS];
+    /**
+     * When a frame recording's submission goes into the batched deferred queue instead of vkQueueSubmit, the batch's
+     * shared fence stands in for the slot's own fence (vkQueueSubmit arms one fence per call - it cannot arm each
+     * entry's). 0 means the slot's last submission armed {@link #slotFences} the ordinary way. Cleared at
+     * {@link #celtium$noteSlotConfirmed}: the reclaim runs that confirmation, so the map's lifetime is "queued until
+     * confirmed", never reset independently.
+     */
+    private final long[] slotDeferredFences = new long[FRAME_SLOTS];
     /** The order this slot's last submission was made in; 0 means it has never submitted. */
     private final long[] slotSubmitSequence = new long[FRAME_SLOTS];
     /**
@@ -13992,6 +14009,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.nextFrameSlot = 0;
             this.commandBuffer = this.slotCommandBuffers[0];
             this.fence = this.slotFences[0];
+
             this.commandState = this.slotCommandStates[0];
 
             org.lwjgl.vulkan.VkPhysicalDeviceProperties properties =
@@ -15109,9 +15127,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
             return true;
         }
+        long deferredFence = this.slotDeferredFences[slot];
+        if (deferredFence != 0) {
+            // The slot's submission is still queued in the batched list: its fence arms only when that list submits,
+            // so the flush has to happen before the wait or the wait blocks on a fence nothing armed yet.
+            this.context.celtium$flushBatchedSubmits();
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
-            fences.put(0, this.slotFences[slot]);
+            fences.put(0, deferredFence != 0 ? deferredFence : this.slotFences[slot]);
             long started = System.nanoTime();
             int result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
             this.celtium$recordFrameWait(started);
@@ -15162,7 +15186,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return false;
             }
             this.scheduler.noteSlotWait(true);
-            celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
+            if (deferredFence != 0) {
+                // The batch fence is shared: the slot's confirm (and the flag's clear) runs inside the reclaim's
+                // callback, once, rather than here - polling also frees every earlier entry the fence covered.
+                this.context.celtium$pollDeferredSubmits();
+            } else {
+                celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
+            }
             return true;
         }
     }
@@ -15180,6 +15210,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         int confirmed = 0;
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
             if (!this.scheduler.isPending(slot) || this.slotFences[slot] == 0) {
+                continue;
+            }
+            long deferredFence = this.slotDeferredFences[slot];
+            if (deferredFence != 0) {
+                // Batched slot: its confirm lives in the reclaim callback, so the poll only triggers the poll -
+                // an armed-and-signalled batch fence reclaims the entry, which runs the slot confirmation exactly once.
+                int deferredStatus = vkGetFenceStatus(this.context.device(), deferredFence);
+                if (deferredStatus == org.lwjgl.vulkan.VK10.VK_SUCCESS
+                        || deferredStatus == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                    this.context.celtium$pollDeferredSubmits();
+                    confirmed++;
+                    this.scheduler.notePollConfirmation();
+                }
                 continue;
             }
             int status = vkGetFenceStatus(this.context.device(), this.slotFences[slot]);
@@ -15207,7 +15250,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * reported lost, which is completion-equivalent for pending purposes), so the slot may be re-recorded and every
      * resource gated on its sequence may be released.
      */
+    /**
+     * The deferred counterpart of the slot's own {@code vkQueueSubmit}: the ended slot buffer joins the batched
+     * list, and the batch's shared fence is recorded as this slot's completion proxy until the reclaim runs the
+     * confirmation. Every piece of bookkeeping the direct submit performs (pending bit, sequence, retirement) is
+     * the coordinator's own code - the only change is where the queue sees the work.
+     */
+    public void celtium$submitSlotDeferred(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long[] waitSemaphores,
+            int[] waitStages, long[] signalSemaphores) {
+        final int slot = this.frameSlot;
+        this.slotDeferredFences[slot] = this.context.celtium$submitDeferredFrame(
+                commandBuffer, waitSemaphores, waitStages, signalSemaphores, slot,
+                lost -> celtium$noteSlotConfirmed(slot, lost.booleanValue()));
+    }
+
     private void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
+        this.slotDeferredFences[slot] = 0;
         this.scheduler.noteCompleted(slot, this.scheduler.slotSubmitSequence(slot));
         // Queue order: this submission's completion implies every earlier one finished too, and the
         // scheduler's noteCompleted records exactly that.

@@ -28,6 +28,17 @@ public final class FrameCoordinator {
     /** The failure injection the submit path honours, as the backend declares it (a property, not a constant). */
     private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();
 
+    /**
+     * Route frame submissions through the batched deferred queue instead of an immediate vkQueueSubmit: every
+     * recording of the frame becomes a VkSubmitInfo inside the batch's single driver call. Order is preserved
+     * because the flush submits the entries in the order they were queued. Requires
+     * {@code celtium.vulkan.batchedSubmits} (the deferred machinery's own switch); off by default until a leg
+     * measures it.
+     */
+    private static final boolean BATCH_FRAME_SUBMITS =
+            Boolean.getBoolean("celtium.vulkan.batchFrameSubmits")
+                    && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
+
     /** What the coordinator needs from the renderer that owns the frame. */
     public interface Host {
         org.lwjgl.vulkan.VkCommandBuffer commandBuffer();
@@ -56,6 +67,13 @@ public final class FrameCoordinator {
         void setSubmissionPending(boolean pending);
         void setFrameSubmitReachedQueue(boolean reached);
         void setLastFrameReachedQueue(boolean reached);
+
+        /**
+         * Queue an ended slot buffer through the batched deferred list instead of vkQueueSubmit; the host records
+         * the returned batch fence as the slot's completion proxy. See {@link #submitCommands(boolean)}.
+         */
+        void celtium$submitSlotDeferred(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long[] waitSemaphores,
+                int[] waitStages, long[] signalSemaphores);
     }
 
     private final Host host;
@@ -139,8 +157,20 @@ public final class FrameCoordinator {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer");
             this.host.commandState().end();
+            long[] waitArray = null;
+            int[] stageArray = null;
+            long[] signalArray = null;
+            if (frameSemaphores) {
+                // Plain arrays for the deferred entry: the batch flush copies them into its VkSubmitInfo array at
+                // submit time, long after this stack is gone, so stack buffers cannot carry them.
+                waitArray = new long[] {this.host.frameTarget().waitSemaphore()};
+                stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+                signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
+            }
+            VkSubmitInfo submit = null;
+            if (!BATCH_FRAME_SUBMITS) {
             this.host.check(vkResetFences(this.host.context().device(), this.host.fence()), "vkResetFences");
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
+            submit = VkSubmitInfo.calloc(stack).sType$Default();
             LongBuffer waitSemaphores = null;
             IntBuffer waitStages = null;
             LongBuffer signalSemaphores = null;
@@ -166,6 +196,7 @@ public final class FrameCoordinator {
                         .pSignalSemaphores(signalSemaphores);
             }
             submit.pCommandBuffers(commandBuffers);
+            }
             if (this.host.immediateWindowBusy() && !this.host.recordedImmediateGroups().isEmpty() && this.host.failImmediateSubmits() > 0) {
                 this.host.noteImmediateSubmitFailure();
                 throw new IllegalStateException("injected immediate submit failure before queue ownership");
@@ -184,8 +215,15 @@ public final class FrameCoordinator {
                 // touched. That is the property this switch exists to check.
                 this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
+            if (BATCH_FRAME_SUBMITS) {
+                // One vkQueueSubmit arms ONE fence, so ~9 recordings a frame were ~9 driver calls. The batch keeps
+                // every VkSubmitInfo and submits them together at the frame's flush points: same queue order, one
+                // call, and the shared batch fence stands in for the slot's own fence via the reclaim callback.
+                this.host.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
+            } else {
                         VulkanContext.queueSubmitCalls++;
                         this.host.check(vkQueueSubmit(this.host.context().queue(), submit, this.host.fence()), "vkQueueSubmit");
+            }
 
             // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
             // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
