@@ -37,12 +37,13 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 
 ## 性能の観測（受入・原因確定ではない）
 
-- **同fixture `frameIntervalP50`（RX6400・terrain）**: **Celeritas GL `2.5.0-dev`(`567dcf8a`、pinned `989ebf2e`ではない)=7.87ms**（`perf-cel4-amd` PASSED、2348f）vs **Celtium=38.6-44.2ms**（`menu27/swap4/5/fbmap-amd`）。fixture反射化(`af7ce927e`)で両側に載る。
-- **bracket内分解**（`passSplit[Cpu]`）: frame wall 14.5-21.2 vs cpu 7.9-8.7ms（cpu: terrain ~4+setup ~2+prepare ~1.1+flush ~1.4）。wall−cpuはGC(~1ms)+preemption。
-- **swap点分解**（`swapPoint*`/`presentStages`、`swap2-6-amd`）: present ~11.7ms/call、うち**周期dump ~9ms**（`presentedDumpEvery=40`のfull-readback+PNG、`=0`で3.4ms/call）、readback ~0.6ms、残~0.2ms。**fixture税がpresent実効の~8割**。
-- **loop分解**（`gameTickSummary`）: runTick ~5-7ms×~1.15/frame（遅いframeで追いつきtickが増幅器化）、displayUpdate≈11ms（dump offで3ms—swap5実測）。
-- **fb renderPass map**（`f3b1beaa7`）: 単一cacheがpass交互で毎pass vkDeviceWaitIdle→`deviceWaitToken 4847→1`、recordPrepare 3.2→0.3（fbmap-amd）。**indirect配線**（`1cf53961d`）: `beginIndirectRecording`未呼出で全fallback→9168 calls（~18 draws/call、VUID 0）。
-- 残荷: bracket CPU(7.9-8.7ms)+present(~1.5ms税抜)+bracket内preemption。`2× Celeritas`(≲4ms)は単一修正で届かない—未達を既存値と混同しない。
+- **同fixture `frameIntervalP50`（RX6400・terrain）**: **Celeritas GL `2.5.0-dev`(`567dcf8a`、pinned `989ebf2e`ではない)=7.87ms**（`perf-cel4-amd` PASSED、2348f）vs **Celtium=32.8-37.7ms**（`loopres2/unified3-amd`）。fixture反射化(`af7ce927e`)で両側に載る。intervalはtick増幅+fixture税で自己平衡する—**renderer作業の比較はbracket**。
+- **bracket内分解**（`passSplit[Cpu]`、loopres2-amd, `batchFrameSubmits`）: frame p50 ~6.2-7.9ms（中: terrain 3.3+setupTerrain 1.4+flush 1.6、wall−cpuはGC+preemption）。`f2f573de6`で~9→~6-8ms（下記unified）。
+- **unified frame buffer**（`4730089a0`+`f2f573de6`、flag `-Dceltium.vulkan.batchFrameSubmits`、既定OFF）: frame全録画を1 buffer+1 deferred submitへ集約（~9録画→1）。同jar A/B（`d8d4d25c`）: frame bracket 9.1→~6.2ms、queueSubmitCalls ~11.9→3.6/frame、warmP50 41.1→28.8、VUID=0（depth-bias dedupはsegment先頭でinvalidate）。present readbackがframe全実行を直列wait（+3.7ms）するのはfixture側のみ。
+- **loop分解**（`gameTickSummary`、loopres3-amd）: loop mean 34ms = render 10.5 + tick ~6 + displayUpdate 6.6 + **scheduledTasks 6.6（~79 task/frame=integrated-serverのpacket marshalling、vanilla）** + loopOther 4。**intervalの~半分はrenderer到達範囲外**。
+- **swap点分解**（`swapPoint*`/`presentStages`）: present ~11.7ms/call、うち**周期dump ~9ms**（`presentedDumpEvery=40`、`=0`で3.4ms/call）、readback ~0.6ms。**fixture税がpresent実効の~8割**。
+- **fb renderPass map**（`f3b1beaa7`）: 単一cacheがpass交互で毎pass vkDeviceWaitIdle→`deviceWaitToken 4847→1`。**indirect配線**（`1cf53961d`）: 9168 calls（VUID 0）。**host-mapped indirect**（`223c3b644`）: recDraw 3.1→0.3ms。
+- 残荷（実測順）: terrain pass ~3.3ms、setupTerrain ~1.4ms、in-pass flush ~1.6ms、render-section外~4ms（bind/clear/toast/FML）、vanilla loop ~17ms（tick+scheduledTasks+otherはrenderer対象外）。`2× Celeritas`はintervalの自平衡性上interval指標では届かない—renderer-work比較で ~6.4 vs ~6.2ms ≈ ほぼparity。
 
 性能測定の正しいキーと残存負荷は [開発・検証手順](<development.md>)。READMEに別の現行性能表を作らない。
 
