@@ -4554,8 +4554,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * startup). That drop is what kept the loading screen off the window. The caller says which framebuffer it is.
      */
     public void celtium$noteBindSize(int width, int height, boolean mainFramebuffer) {
-        if (mainFramebuffer && this.frameTarget != null && !this.frameTarget.matches(width, height)) {
-            this.targetRegistry.noteReplacementAnnounced();
+        if (mainFramebuffer) {
+            // The game's own framebuffer has just told us the drawable size; a cached read that disagrees is stale
+            // (a resize happened) and must not be served. This is what makes the cache safe for the resize paths.
+            int[] cached = windowSizeCache;
+            if (cached != null && (cached[0] != width || cached[1] != height)) {
+                windowSizeCache = null;
+            }
+            if (this.frameTarget != null && !this.frameTarget.matches(width, height)) {
+                this.targetRegistry.noteReplacementAnnounced();
+            }
         }
     }
 
@@ -14269,7 +14277,7 @@ this.frameBufferOpen = false;
             // when the main framebuffer arrived, which threw the splash's pixels away and left the composite sampling an
             // empty image: the white loading screen. The main framebuffer's reported size is the second choice, the
             // viewport the last.
-            int[] window = windowFramebufferSize();
+            int[] window = cachedWindowFramebufferSize();
             if (window[0] > 0 && window[1] > 0) {
                 return ensureFrameTarget(window[0], window[1]);
             }
@@ -14390,7 +14398,7 @@ this.frameBufferOpen = false;
         // "target: the viewport 0,0 0x0 has no area" for 140+ draws per frame, so no draw reached the backend and the
         // present had nothing to take. windowFramebufferSize() is the drawable the default would have described.
         if (width <= 0 || height <= 0) {
-            int[] drawable = windowFramebufferSize();
+            int[] drawable = cachedWindowFramebufferSize();
             if (drawable[0] > 0 && drawable[1] > 0) {
                 return new int[] { 0, 0, drawable[0], drawable[1] };
             }
@@ -14406,6 +14414,35 @@ this.frameBufferOpen = false;
      * GL-less window, where there is no context to ask (reflective, because celtium-vulkan does not depend on the
      * lwjglxx shim). This is the size the frame target must have: it is the drawable the swapchain presents.
      */
+    /**
+     * Last window drawable size, and when it was read. {@code glfwGetFramebufferSize} on X11 is a server round-trip
+     * and the viewport fallback asks for it on paths that run many times per frame: JFR native samples measured
+     * {@code GLFW.nglfwGetFramebufferSize} as the top native frame on the client thread (502 of 1,348 samples, ~4% of
+     * the thread's own CPU) with this fallback as the only per-frame caller.
+     */
+    private static int[] windowSizeCache;
+    private static long windowSizeCacheNanos;
+    /**
+     * How long a cached drawable size is trusted. The cache is also dropped the moment the game's own framebuffer
+     * reports a different size ({@link #celtium$noteBindSize}), so a resize is picked up on the bind that follows it,
+     * not after this interval; the interval only bounds the case where nothing binds (early startup).
+     */
+    private static final long WINDOW_SIZE_CACHE_NANOS = 200_000_000L;
+
+    private static int[] cachedWindowFramebufferSize() {
+        int[] cached = windowSizeCache;
+        long now = System.nanoTime();
+        if (cached != null && now - windowSizeCacheNanos < WINDOW_SIZE_CACHE_NANOS) {
+            return cached;
+        }
+        int[] fresh = windowFramebufferSize();
+        if (fresh[0] > 0 && fresh[1] > 0) {
+            windowSizeCache = fresh;
+            windowSizeCacheNanos = now;
+        }
+        return fresh;
+    }
+
     private static int[] windowFramebufferSize() {
         long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
         if (window == 0L) {
