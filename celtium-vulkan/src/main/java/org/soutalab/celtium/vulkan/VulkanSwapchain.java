@@ -1553,29 +1553,70 @@ public final class VulkanSwapchain {
                 return false;
             }
             IntBuffer count = stack.mallocInt(1);
-            vkGetPhysicalDeviceSurfaceFormatsKHR(this.context.physicalDevice(), this.surface, count, null);
-            VkSurfaceFormatKHR.Buffer formats = VkSurfaceFormatKHR.calloc(count.get(0), stack);
-            vkGetPhysicalDeviceSurfaceFormatsKHR(this.context.physicalDevice(), this.surface, count, formats);
+            // Both phases checked (audit #349): a failed count query leaves count undefined, so allocating from it is
+            // a wild allocation; a failed or incomplete list query means the buffer is not the offer.
+            result = vkGetPhysicalDeviceSurfaceFormatsKHR(this.context.physicalDevice(), this.surface, count, null);
+            if (result != VK_SUCCESS) {
+                reasons.add("vkGetPhysicalDeviceSurfaceFormatsKHR (count) returned " + result);
+                return false;
+            }
+            int formatCount = count.get(0);
+            if (formatCount <= 0) {
+                reasons.add("the surface offered no formats to enumerate");
+                return false;
+            }
+            VkSurfaceFormatKHR.Buffer formats = VkSurfaceFormatKHR.calloc(formatCount, stack);
+            count.put(0, formatCount);
+            result = vkGetPhysicalDeviceSurfaceFormatsKHR(this.context.physicalDevice(), this.surface, count, formats);
+            if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+                reasons.add("vkGetPhysicalDeviceSurfaceFormatsKHR (list) returned " + result);
+                return false;
+            }
+            // VK_INCOMPLETE means the offer shrank mid-query: the written prefix is still the honest subset.
+            int formatsWritten = Math.min(count.get(0), formatCount);
+            if (formatsWritten <= 0) {
+                reasons.add("the surface format query filled no entries");
+                return false;
+            }
             List<String> availableFormats = new ArrayList<>();
             // The surface's format list as (format, colourSpace) pairs, which is what the pure selection function
             // takes; the list itself is still enumerated into the argument summary below (BH-18: what was offered and
             // what was chosen, one line).
-            int[] offeredFormats = new int[formats.capacity() * 2];
-            for (int i = 0; i < formats.capacity(); i++) {
+            int[] offeredFormats = new int[formatsWritten * 2];
+            for (int i = 0; i < formatsWritten; i++) {
                 offeredFormats[i * 2] = formats.get(i).format();
                 offeredFormats[i * 2 + 1] = formats.get(i).colorSpace();
                 availableFormats.add(String.valueOf(formats.get(i).format()));
             }
 
-            vkGetPhysicalDeviceSurfacePresentModesKHR(this.context.physicalDevice(), this.surface, count, null);
-            IntBuffer modes = stack.mallocInt(count.get(0));
-            vkGetPhysicalDeviceSurfacePresentModesKHR(this.context.physicalDevice(), this.surface, count, modes);
+            result = vkGetPhysicalDeviceSurfacePresentModesKHR(this.context.physicalDevice(), this.surface, count, null);
+            if (result != VK_SUCCESS) {
+                reasons.add("vkGetPhysicalDeviceSurfacePresentModesKHR (count) returned " + result);
+                return false;
+            }
+            int modeCount = count.get(0);
+            if (modeCount <= 0) {
+                reasons.add("the surface offered no present modes to enumerate");
+                return false;
+            }
+            IntBuffer modes = stack.mallocInt(modeCount);
+            count.put(0, modeCount);
+            result = vkGetPhysicalDeviceSurfacePresentModesKHR(this.context.physicalDevice(), this.surface, count, modes);
+            if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+                reasons.add("vkGetPhysicalDeviceSurfacePresentModesKHR (list) returned " + result);
+                return false;
+            }
+            int modesWritten = Math.min(count.get(0), modeCount);
+            if (modesWritten <= 0) {
+                reasons.add("the present-mode query filled no entries");
+                return false;
+            }
             boolean mailbox = false;
             boolean immediate = false;
             boolean fifo = false;
             StringBuilder supported = new StringBuilder();
             this.presentModesOffered = "";
-            for (int i = 0; i < modes.capacity(); i++) {
+            for (int i = 0; i < modesWritten; i++) {
                 int mode = modes.get(i);
                 if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
                     mailbox = true;
@@ -1735,12 +1776,30 @@ public final class VulkanSwapchain {
             // A dedicated count buffer: LWJGL's argument check requires a null image buffer to come with a count of
             // zero, and the buffer used for the format and present-mode queries still holds their count.
             IntBuffer actualImageCount = stack.mallocInt(1);
-            vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, actualImageCount, null);
+            result = vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, actualImageCount, null);
+            if (result != VK_SUCCESS) {
+                reasons.add("vkGetSwapchainImagesKHR (count) returned " + result);
+                return false;
+            }
             int countImages = actualImageCount.get(0);
+            if (countImages <= 0) {
+                reasons.add("the new swapchain reported no images");
+                return false;
+            }
             LongBuffer imageHandles = stack.mallocLong(countImages);
-            vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, actualImageCount, imageHandles);
-            this.images = new long[countImages];
-            this.views = new long[countImages];
+            actualImageCount.put(0, countImages);
+            result = vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, actualImageCount, imageHandles);
+            if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+                reasons.add("vkGetSwapchainImagesKHR (list) returned " + result);
+                return false;
+            }
+            int imagesWritten = Math.min(actualImageCount.get(0), countImages);
+            if (imagesWritten <= 0) {
+                reasons.add("the swapchain image query filled no handles");
+                return false;
+            }
+            this.images = new long[imagesWritten];
+            this.views = new long[imagesWritten];
             for (int i = 0; i < this.images.length; i++) {
                 this.images[i] = imageHandles.get(i);
                 org.lwjgl.vulkan.VkImageViewCreateInfo view = org.lwjgl.vulkan.VkImageViewCreateInfo.calloc(stack)
