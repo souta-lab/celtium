@@ -104,6 +104,64 @@ public class MinecraftMixin {
     }
 
     /**
+     * The render section's non-frame pieces, each timed on its own invoke: the framebuffer bind+clear wrapper, the
+     * toast draw and Forge's render-tick hooks. Together with the render-section span they name "render minus frame"
+     * - the share the frame bracket cannot see.
+     */
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/shader/Framebuffer;bindFramebuffer(Z)V"), require = 0)
+    private void celtium$timedRenderFramebufferBind(net.minecraft.client.shader.Framebuffer framebuffer,
+            boolean setViewport) {
+        long started = GameLoopTiming.renderPieceStarted();
+        try {
+            framebuffer.bindFramebuffer(setViewport);
+        } finally {
+            GameLoopTiming.renderPieceEnded(0, started);
+        }
+    }
+
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/gui/toasts/GuiToast;drawToast(Lnet/minecraft/client/gui/ScaledResolution;)V"),
+            require = 0)
+    private void celtium$timedToastDraw(net.minecraft.client.gui.toasts.GuiToast toastGui,
+            net.minecraft.client.gui.ScaledResolution resolution) {
+        long started = GameLoopTiming.renderPieceStarted();
+        try {
+            toastGui.drawToast(resolution);
+        } finally {
+            GameLoopTiming.renderPieceEnded(1, started);
+        }
+    }
+
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraftforge/fml/common/FMLCommonHandler;onRenderTickStart(F)V"), require = 0)
+    private void celtium$timedFmlRenderTickStart(net.minecraftforge.fml.common.FMLCommonHandler handler,
+            float partialTicks) {
+        long started = GameLoopTiming.renderPieceStarted();
+        try {
+            handler.onRenderTickStart(partialTicks);
+        } finally {
+            GameLoopTiming.renderPieceEnded(2, started);
+        }
+    }
+
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraftforge/fml/common/FMLCommonHandler;onRenderTickEnd(F)V"), require = 0)
+    private void celtium$timedFmlRenderTickEnd(net.minecraftforge.fml.common.FMLCommonHandler handler,
+            float partialTicks) {
+        long started = GameLoopTiming.renderPieceStarted();
+        try {
+            handler.onRenderTickEnd(partialTicks);
+        } finally {
+            GameLoopTiming.renderPieceEnded(2, started);
+        }
+    }
+
+    /**
      * The render section of the loop, timed as the loop sees it: the frame brackets live inside
      * {@code updateCameraAndRender}, so {@code loop minus render} names what the brackets cannot - the tick,
      * display and "everything else" shares of a frame.

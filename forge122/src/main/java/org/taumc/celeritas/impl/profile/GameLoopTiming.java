@@ -52,6 +52,17 @@ public final class GameLoopTiming {
             new java.util.concurrent.atomic.AtomicLong();
     private static final java.util.concurrent.atomic.AtomicLong scheduledCount =
             new java.util.concurrent.atomic.AtomicLong();
+    /**
+     * The render section's non-frame pieces: the framebuffer bind + clear wrapper around
+     * {@code updateCameraAndRender} ("renderWrapper"), the toast draw ("toasts") and Forge's render-tick hooks
+     * ("fmlRenderTicks") - together they name the share the frame bracket cannot see.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong renderWrapperNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong toastNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong fmlTickNanos =
+            new java.util.concurrent.atomic.AtomicLong();
     /** The start of the tick currently executing, or 0 when none is. */
     private static volatile long openNanos;
     /** The start of the loop currently executing, or 0 when none is. */
@@ -76,6 +87,8 @@ public final class GameLoopTiming {
     private static long scheduledInsideLoop;
     /** Scheduled-task count inside the open loop. */
     private static int scheduledTasksInsideLoop;
+    /** The render-section's wrapper/toast/FML pieces inside the open loop, in nanoseconds. */
+    private static long renderWrapperInsideLoop, toastInsideLoop, fmlTickInsideLoop;
     /** Snapshots of the most recently closed loop, for the fixture's per-slow-frame entry. */
     private static volatile long lastLoopNanos, lastLoopTickNanos, lastLoopDisplayNanos;
     private static volatile long lastLoopBlitNanos, lastLoopSyncNanos;
@@ -120,6 +133,9 @@ public final class GameLoopTiming {
         renderInsideLoop = 0L;
         scheduledInsideLoop = 0L;
         scheduledTasksInsideLoop = 0;
+        renderWrapperInsideLoop = 0L;
+        toastInsideLoop = 0L;
+        fmlTickInsideLoop = 0L;
     }
 
     /**
@@ -147,6 +163,9 @@ public final class GameLoopTiming {
         renderNanos.addAndGet(renderInsideLoop);
         scheduledNanos.addAndGet(scheduledInsideLoop);
         scheduledCount.addAndGet(scheduledTasksInsideLoop);
+        renderWrapperNanos.addAndGet(renderWrapperInsideLoop);
+        toastNanos.addAndGet(toastInsideLoop);
+        fmlTickNanos.addAndGet(fmlTickInsideLoop);
         displayInsideLoop = 0L;
         blitInsideLoop = 0L;
         syncInsideLoop = 0L;
@@ -154,6 +173,9 @@ public final class GameLoopTiming {
         renderInsideLoop = 0L;
         scheduledInsideLoop = 0L;
         scheduledTasksInsideLoop = 0;
+        renderWrapperInsideLoop = 0L;
+        toastInsideLoop = 0L;
+        fmlTickInsideLoop = 0L;
     }
 
     /**
@@ -192,6 +214,26 @@ public final class GameLoopTiming {
         }
         scheduledInsideLoop += System.nanoTime() - started;
         scheduledTasksInsideLoop++;
+    }
+
+    /**
+     * The render-section pieces that sit outside the frame bracket: the framebuffer bind+clear wrapper, the toast
+     * draw and Forge's render-tick hooks. Each named piece accumulates its own span, so "render minus frame" stops
+     * being one unmeasured residue.
+     */
+    public static long renderPieceStarted() {
+        return openLoopNanos != 0L ? System.nanoTime() : 0L;
+    }
+
+    /** @param which 0 = framebuffer bind/clear wrapper, 1 = toast draw, 2 = FML render-tick hook */
+    public static void renderPieceEnded(int which, long started) {
+        if (started == 0L) {
+            return;
+        }
+        long elapsed = System.nanoTime() - started;
+        if (which == 0) renderWrapperInsideLoop += elapsed;
+        else if (which == 1) toastInsideLoop += elapsed;
+        else fmlTickInsideLoop += elapsed;
     }
 
     /**
@@ -340,6 +382,12 @@ public final class GameLoopTiming {
         long schedTotal = scheduledNanos.get() / 1_000_000L;
         long schedMean = loops == 0L ? 0L : schedTotal / loops;
         long schedCount = scheduledCount.get();
+        long wrapperTotal = renderWrapperNanos.get() / 1_000_000L;
+        long wrapperMean = loops == 0L ? 0L : wrapperTotal / loops;
+        long toastTotal = toastNanos.get() / 1_000_000L;
+        long toastMean = loops == 0L ? 0L : toastTotal / loops;
+        long fmlTotal = fmlTickNanos.get() / 1_000_000L;
+        long fmlMean = loops == 0L ? 0L : fmlTotal / loops;
         // The loop remainder after every named section: profiler sections, resize checks, the FPS counter,
         // FML render-tick hooks and everything else runGameLoop pays outside tick, render, the task drain and
         // the display path - the bucket a "frame gets faster but the interval does not" report needs named.
@@ -355,6 +403,9 @@ public final class GameLoopTiming {
                 + " renderMillisTotal=" + renderTotal + " renderMillisMean=" + renderMean
                 + " scheduledTasks=" + schedCount + " scheduledMillisTotal=" + schedTotal
                 + " scheduledMillisMean=" + schedMean
+                + " renderWrapperMillisTotal=" + wrapperTotal + " renderWrapperMillisMean=" + wrapperMean
+                + " toastMillisTotal=" + toastTotal + " toastMillisMean=" + toastMean
+                + " fmlTickMillisTotal=" + fmlTotal + " fmlTickMillisMean=" + fmlMean
                 + " loopOtherMillisTotal=" + otherTotal + " loopOtherMillisMean=" + otherMean;
     }
 }
