@@ -1662,6 +1662,20 @@ public final class ValidationClient {
     private int framesAtInterop;
     private int fboAtInterop, colorAtInterop, depthAtInterop;
     private int worldTicks;
+    /**
+     * The whole client tick, measured by this fixture so both renderers can be compared on it.
+     * <p>
+     * {@code GameLoopTiming} only exists in the Celtium jar, so the reference's tick cost could not be read from a
+     * leg at all - and the Celtium legs measured a tick mean of ~14 ms against a ~1-2 ms vanilla client tick, which
+     * is either the world's own work or this renderer blocking the tick. A START/END pair around
+     * {@code TickEvent.ClientTickEvent} is renderer-independent and rides the fixture both legs already load.
+     */
+    private long celtium$tickStartedNanos;
+    private long celtium$tickCount;
+    private long celtium$tickTotalNanos;
+    private long celtium$tickWorstNanos;
+    private final long[] celtium$tickSamples = new long[8192];
+    private int celtium$tickSampleCount;
     /** Whether this run has already asked for the presented image to be dumped; the request is one-shot. */
     private static boolean celtium$presentedDumpRequested;
     /**
@@ -3030,7 +3044,21 @@ public final class ValidationClient {
 
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
-        if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
+        if (!enabled || finished) return;
+        if (event.phase == TickEvent.Phase.START) {
+            this.celtium$tickStartedNanos = System.nanoTime();
+            return;
+        }
+        if (this.celtium$tickStartedNanos != 0L) {
+            long took = System.nanoTime() - this.celtium$tickStartedNanos;
+            this.celtium$tickStartedNanos = 0L;
+            this.celtium$tickCount++;
+            this.celtium$tickTotalNanos += took;
+            if (took > this.celtium$tickWorstNanos) this.celtium$tickWorstNanos = took;
+            if (this.celtium$tickSampleCount < this.celtium$tickSamples.length) {
+                this.celtium$tickSamples[this.celtium$tickSampleCount++] = took;
+            }
+        }
         Minecraft mc = Minecraft.getMinecraft();
         celtium$clientTicks++;
         // Liveness, in the log, because nothing else here can answer "did the fixture tick at all?". Every other
@@ -4716,6 +4744,28 @@ public final class ValidationClient {
      * count is unchanged and fires at {@link #CAPTURE_STABLE_FRAMES}; a count that never settles falls back to
      * {@link #CAPTURE_DEADLINE_TICK} rather than ending the run with no report.
      */
+    /**
+     * The fixture's own client-tick statistics, in the same shape for every renderer.
+     * <p>
+     * Printed and reported so "tick cost" can be compared between the reference GL renderer and this one: the
+     * renderer's own {@code GameLoopTiming} does not exist in the reference jar, and a slow tick that this renderer
+     * causes is part of the frame interval the KPI compares.
+     */
+    private String celtium$fixtureTickSummary() {
+        int count = this.celtium$tickSampleCount;
+        if (count <= 0) {
+            return "none";
+        }
+        long[] copy = java.util.Arrays.copyOf(this.celtium$tickSamples, count);
+        java.util.Arrays.sort(copy);
+        long p50 = copy[count / 2];
+        long p95 = copy[Math.min(count - 1, (int) (count * 0.95D))];
+        long mean = this.celtium$tickCount == 0 ? 0L : this.celtium$tickTotalNanos / this.celtium$tickCount;
+        return "ticks=" + this.celtium$tickCount + " meanMillis=" + (mean / 1_000_000L)
+                + " p50Millis=" + (p50 / 1_000_000L) + " p95Millis=" + (p95 / 1_000_000L)
+                + " worstMillis=" + (this.celtium$tickWorstNanos / 1_000_000L) + " samples=" + count;
+    }
+
     private boolean celtium$captureDue() {
         // Bounded trace (issue #354): a leg that ends NO_CAPTURE cannot say which gate refused, and on Intel the
         // frame rate is low enough that "the ticks advanced" is not the same as "this function ran". Off unless
@@ -10230,6 +10280,10 @@ public final class ValidationClient {
         } catch (Throwable absent) {
             report.addProperty("gameTickSummary", "not installed: " + absent);
         }
+        // The fixture's own tick statistics ride every leg, including the reference arm where GameLoopTiming does not
+        // exist: this is the only tick measurement both renderers can produce, so it must not live inside the
+        // reflective block that skips the reference.
+        report.addProperty("fixtureTickSummary", celtium$fixtureTickSummary());
         // The counter summary has to be readable at the end of EVERY leg. The three bounded triggers are not enough:
         // `frame 120` and `present 120` are snapshots a slow leg never reaches (the r166-bh09-forced3 leg reached 86
         // presents and printed no CELTIUM_VERIFY line at all), world teardown is skipped by a fixture that exits with
