@@ -14092,6 +14092,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0, TIMESTAMP_SLOTS);
             }
         }
+        // The indirect packet pages are slot-owned: the slot's prior fence already completed above (or it never
+        // submitted), so its pages may be rewritten from the start of this recording. Without this call the field
+        // stays -1 and every terrain batch falls back with "no_indirect_recording_slot_owns_the_packets" - measured
+        // as offers=7011/fallbacks=7011/draws=0 on leg swap6-amd, the whole indirect path dead letter.
+        this.terrain.beginIndirectRecording(this.frameSlot);
         this.terrain.resetUniformWriteCursor();
         // The reset above leaves every piece of dynamic state undefined, so the dedup trackers go to their never-
         // matching sentinels: the first group in this buffer emits whatever it needs, whatever it is.
