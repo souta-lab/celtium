@@ -230,6 +230,9 @@ public final class VulkanSwapchain {
     private static long presentStageCalls;
     private static long presentCapsNanos;
     private static long presentSubmitNanos;
+    private static long presentDumpWriteNanos;
+    private static long presentWholeNanos;
+    private static long presentWholeCalls;
 
     /** {@return the accumulated per-stage present costs, as {@code acquire/readback/queue} milliseconds} */
     public static String presentStageSummary() {
@@ -238,6 +241,8 @@ public final class VulkanSwapchain {
                 + " queueMs=" + (presentQueueNanos / 1000000L)
                 + " capsMs=" + (presentCapsNanos / 1000000L)
                 + " submitMs=" + (presentSubmitNanos / 1000000L)
+                + " dumpWriteMs=" + (presentDumpWriteNanos / 1000000L)
+                + " wholeMs=" + (presentWholeNanos / 1000000L)
                 + " calls=" + presentStageCalls;
     }
     /** Bisection switch: present without recording anything, to separate the recording from the semaphores. */
@@ -840,7 +845,10 @@ public final class VulkanSwapchain {
         long presentStarted = System.nanoTime();
         String presentResult = celtium$presentImage(sourceImage, sourceLayout, width, height, bridgeWaitSemaphore,
                 bridgeDoneSemaphore, sourceLayoutAfter);
-        celtium$notePresentTime(System.nanoTime() - presentStarted);
+        long presentSpent = System.nanoTime() - presentStarted;
+        celtium$notePresentTime(presentSpent);
+        presentWholeNanos += presentSpent;
+        presentWholeCalls++;
         return presentResult;
     }
 
@@ -1058,7 +1066,10 @@ public final class VulkanSwapchain {
                 boolean anyWritten = false;
                 java.util.List<java.nio.file.Path> failedPaths = new java.util.ArrayList<>();
                 for (java.nio.file.Path path : pendingPaths) {
-                    if (writePresentedImage(path, image)) {
+                    long writeStartedNanos = System.nanoTime();
+                    boolean wrote = writePresentedImage(path, image);
+                    presentDumpWriteNanos += System.nanoTime() - writeStartedNanos;
+                    if (wrote) {
                         anyWritten = true;
                     } else {
                         failedPaths.add(path);
@@ -1091,7 +1102,10 @@ public final class VulkanSwapchain {
                     // the list without end.
                     java.util.List<java.nio.file.Path> failed = new java.util.ArrayList<>();
                     for (java.nio.file.Path path : paths) {
-                        if (writePresentedImage(path, image)) {
+                        long writeStartedNanos = System.nanoTime();
+                        boolean wrote = writePresentedImage(path, image);
+                        presentDumpWriteNanos += System.nanoTime() - writeStartedNanos;
+                        if (wrote) {
                             written = true;
                         } else {
                             failed.add(path);
