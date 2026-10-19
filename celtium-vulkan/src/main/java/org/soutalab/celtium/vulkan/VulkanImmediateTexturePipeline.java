@@ -77,6 +77,9 @@ public final class VulkanImmediateTexturePipeline {
     // surface, sun, moon, clouds) layouts, which is where the fog is visible.
     private static final int PUSH_CONSTANT_BYTES = 208;
 
+    /** Elides a push whose bytes are already in this command buffer (see {@link VulkanPushCache}). */
+    private final VulkanPushCache pushCache = VulkanPushCache.SHARED;
+
     private final VulkanContext context;
     private final long renderPass;
     /** Whether this instance takes the colourless POSITION_TEX layout rather than POSITION_TEX_COLOR. */
@@ -327,8 +330,11 @@ public final class VulkanImmediateTexturePipeline {
         // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
         // past the range is a validation error, so only the declared bytes go out.
         clamped.limit(Math.min(clamped.remaining(), PUSH_CONSTANT_BYTES));
-        vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
+        if (this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, clamped)) {
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
+            this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, clamped);
+        }
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).

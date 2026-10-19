@@ -54,6 +54,9 @@ public final class VulkanImmediateItemPipeline {
     // to byte 207. A 128-byte range would make the shader's block exceed the declared range (VUID on the push range),
     // so the unlit range grows to the 208 the shared layout needs; the lit range is unchanged at 216.
     private static final int PUSH_CONSTANT_BYTES = 208;
+
+    /** Elides a push whose bytes are already in this command buffer (see {@link VulkanPushCache}). */
+    private final VulkanPushCache pushCache = VulkanPushCache.SHARED;
     /**
      * The lit variant's block: the shared 128 plus five vec4 - two model-space light directions, the scene ambient,
      * and each light's diffuse - plus the light-map coordinate pair at 208, matching the layout
@@ -193,8 +196,11 @@ public final class VulkanImmediateItemPipeline {
         // The shared block may be wider than this layout's declared range (the lit variant's block is) - pushing past
         // the range is a validation error, so the view is clamped to what this pipeline declared.
         view.limit(Math.min(view.remaining(), pushBytes()));
-        vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, view);
+        if (this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, view)) {
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, view);
+            this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, view);
+        }
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
