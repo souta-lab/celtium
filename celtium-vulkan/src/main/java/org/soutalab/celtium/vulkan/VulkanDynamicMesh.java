@@ -486,8 +486,20 @@ public final class VulkanDynamicMesh {
      * Issues the batch with 32-bit indices and no vertex offset. The caller binds the pipeline, the descriptor sets
      * and the vertex buffer first, exactly as the terrain path does.
      */
+    /**
+     * Whether the draw call itself is skipped: {@code -Dceltium.debug.skipDrawCalls=true}, off by default.
+     * <p>
+     * A measurement switch, not a mode: it keeps every bind, push and state change and drops only
+     * {@code vkCmdDrawIndexed}, so the difference against a normal leg is the cost of the draw call itself. The
+     * picture is wrong by construction and no leg with it on is evidence of anything but timing.
+     */
+    private static final boolean SKIP_DRAW_CALLS = Boolean.getBoolean("celtium.debug.skipDrawCalls");
+
     public void draw(VkCommandBuffer commandBuffer) {
         if (this.indexCount == 0 || this.vertexCount == 0) {
+            return;
+        }
+        if (SKIP_DRAW_CALLS) {
             return;
         }
         org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1, 0, 0, 0);

@@ -9634,6 +9634,9 @@ this.frameBufferOpen = false;
                 + " windowRecordPerFrameMillis=" + (this.frameId == 0L ? -1.0
                         : Math.round((double) this.windowRecordNanos / 1000000.0 / this.frameId * 100.0) / 100.0)
                 + " drawSites=[" + drawSiteSummary() + "]"
+                + " pushBlockHits=" + this.pushBlockHits
+                + " pushBlockMisses=" + this.pushBlockMisses
+                + " pushBlockEntries=" + this.pushBlocks.size()
                 + " batchReuseHits=" + this.batchReuseHits
                 + " batchReuseMisses=" + this.batchReuseMisses
                 + " batchReuseLastFrameSize=" + this.batchReuseLastFrame.size()
@@ -12211,6 +12214,21 @@ this.frameBufferOpen = false;
      * tax is why the census is a measurement rather than a feature, and why a real cache would have to earn its
      * lookup back with a cheaper identity than this hash.
      */
+    /**
+     * Whether the per-group push block is memoised: {@code -Dceltium.vulkan.pushBlockCache=true}, off by default.
+     * <p>
+     * The recording half of the immediate path is 0.95 ms a frame for ~330 groups, and two measurements narrowed it to
+     * our own Java work: skipping every {@code vkCmdDrawIndexed} changed the frame by nothing, so the draw calls are
+     * not the cost, and 95.9% of the batches repeat byte-identically frame to frame. What repeats is the block itself -
+     * the combined matrix, the fog rows, the colour and the light-map coordinates, ~40 float writes plus a 4x4 product
+     * per group. Memoising it by the group's inputs replaces that with a 216-byte copy.
+     */
+    private static final boolean PUSH_BLOCK_CACHE = Boolean.getBoolean("celtium.vulkan.pushBlockCache");
+    /** The memoised push blocks, keyed by the group inputs that produce them. */
+    private final java.util.HashMap<Long, byte[]> pushBlocks = new java.util.HashMap<Long, byte[]>();
+    private long pushBlockHits;
+    private long pushBlockMisses;
+
     private static final boolean BATCH_REUSE_CENSUS =
             Boolean.getBoolean("celtium.vulkan.batchReuseCensus");
 
@@ -13476,6 +13494,73 @@ this.frameBufferOpen = false;
      * this method's call site - and it is one property away when the question comes back.
      */
     private static final boolean DRAW_SITE_CENSUS = Boolean.getBoolean("celtium.vulkan.drawSiteCensus");
+
+    /** {@return a key over every group input the push block is built from}. */
+    private long celtium$pushBlockKey(ImmediateGroup group) {
+        long hash = 0xcbf29ce484222325L;
+        hash = celtium$mixPushKey(hash, group.formatId);
+        hash = celtium$mixPushKey(hash, group.texture);
+        hash = celtium$mixPushKey(hash, (int) group.stateKey);
+        hash = celtium$mixPushKey(hash, (int) (group.stateKey >>> 32));
+        if (group.state != null) {
+            for (int value : group.state) {
+                hash = celtium$mixPushKey(hash, value);
+            }
+        }
+        for (int i = 0; i < 16; i++) {
+            hash = celtium$mixPushKey(hash, Float.floatToRawIntBits(group.projection[i]));
+            hash = celtium$mixPushKey(hash, Float.floatToRawIntBits(group.modelView[i]));
+        }
+        hash = celtium$mixPushFloats(hash, group.color);
+        hash = celtium$mixPushFloats(hash, group.combineColor);
+        hash = celtium$mixPushFloats(hash, group.texMatrix);
+        hash = celtium$mixPushFloats(hash, group.lightParams);
+        hash = celtium$mixPushFloats(hash, group.lightmapCoords);
+        return celtium$mixPushFloats(hash, group.fog);
+    }
+
+    private static long celtium$mixPushKey(long hash, int value) {
+        hash ^= value & 0xFFFFFFFFL;
+        return hash * 0x100000001b3L;
+    }
+
+    private static long celtium$mixPushFloats(long hash, float[] values) {
+        if (values == null) {
+            return celtium$mixPushKey(hash, 0x5f3759df);
+        }
+        hash = celtium$mixPushKey(hash, values.length);
+        for (float value : values) {
+            hash = celtium$mixPushKey(hash, Float.floatToRawIntBits(value));
+        }
+        return hash;
+    }
+
+    /** Copies a memoised block into the push buffer; {@return false} when there is none for this key. */
+    private boolean celtium$copyPushBlock(long key, java.nio.ByteBuffer push) {
+        byte[] cached = this.pushBlocks.get(Long.valueOf(key));
+        if (cached == null) {
+            this.pushBlockMisses++;
+            return false;
+        }
+        push.position(0);
+        push.put(cached);
+        push.position(0);
+        this.pushBlockHits++;
+        return true;
+    }
+
+    /** Remembers the block just built, so the next group with the same inputs copies it instead. */
+    private void celtium$storePushBlock(long key, java.nio.ByteBuffer push) {
+        if (this.pushBlocks.size() >= 4096) {
+            return;
+        }
+        byte[] copy = new byte[216];
+        int position = push.position();
+        push.position(0);
+        push.get(copy);
+        push.position(position);
+        this.pushBlocks.put(Long.valueOf(key), copy);
+    }
 
     /** Counts one drawn group against the site that recorded it, and the batches it carried. */
     private void celtium$noteGroupDrawnAtSite(int batches) {
@@ -15668,6 +15753,11 @@ this.frameBufferOpen = false;
                 }
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcResolve");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcPush");
+                long pushBlockKey = PUSH_BLOCK_CACHE ? celtium$pushBlockKey(group) : 0L;
+                boolean pushBlockCached = PUSH_BLOCK_CACHE && celtium$copyPushBlock(pushBlockKey, push);
+                if (!pushBlockCached) {
+                // The fill below is left unindented inside this guard on purpose: it is ninety lines of column writes
+                // whose offsets are the shader contract, and re-indenting them would bury that contract in the diff.
                 pushCombinedMatrixInto(group.projection, group.modelView, push, 0);
                 // The push buffer is shared by every group in this flush, so the texture-matrix slots must be
                 // rewritten per group rather than only when a matrix is present: a stale affine would otherwise leak
@@ -15753,6 +15843,10 @@ this.frameBufferOpen = false;
                 // block at all (see the report: lit items and entities are the unfogged part of the immediate path).
                 if (light == null) {
                     celtium$writeFogPush(group, push);
+                }
+                }
+                if (PUSH_BLOCK_CACHE && !pushBlockCached) {
+                    celtium$storePushBlock(pushBlockKey, push);
                 }
                 // The batch's own viewport, applied as the drawable sub-rect GL would have used. Without this the
                 // pipeline's baked-in viewport (set once per pass by setViewportAndScissor) would draw a 256x256 GUI
