@@ -15,9 +15,9 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 | 優先・項目 | 実装/判定 | AMD受入 | Intel受入 | 根拠と残り |
 |---|---|---|---|---|
 | GL-less native Vulkan提示 | 実装済み | 成功（記録） | 成功（記録） | 下記E2E legsのnative device・提示画像。scanout未測。全描画の正しさとは別 |
-| cohort terrain画像gate | 実装済み | 成功（記録） | 成功（別artifactの記録） | `gv-cohort-r30-box2` / `gv-cohort-r13-tex2-intel`。同一最新JARで両GPU再受入したとは言わない |
-| E2E 1.93a terrain画像gate | 実装済み・両GPU成功（当該legs） | 成功 | 成功 | `gv-e2e-268-r16-fbo` / `gv-e2e-268-r16-intel`。black fraction 0.005081 / 0.003777、較正gate・validation clean。**完全pack互換は未完** |
-| RLCraft 2.9.3 recipe terrain画像gate | 実装済み・両GPU成功（当該legs） | 成功 | 成功 | `gv-recipe-r14` / `gv-recipe-r14-intel`。**全modded scene・保存再読込・完全pack内容の受入は別**。旧runnerの補足contentコピー漏れも再開時に確認 |
+| cohort terrain画像gate | 実装済み | 成功（記録） | 成功（別artifactの記録） | `reAccCohort1`（AMD, jar `e07e50986`, PASSED）。Intelは旧`gv-cohort-r13-tex2-intel`の記録のみで、同一JARの両GPU再受入ではない |
+| E2E 1.93a terrain画像gate | 実装済み・両GPU成功（当該legs） | 成功 | 成功 | `reAccE2E1`（AMD, jar `e07e50986`, PASSED, VUID 0, black 0.04651, 7 sections）。Intelは旧`gv-e2e-268-r16-intel`の記録。**完全pack互換は未完** |
+| RLCraft 2.9.3 recipe terrain画像gate | 実装済み・両GPU成功（当該legs） | 成功 | 成功 | `reAccRecipe1`（AMD, jar `e07e50986`, PASSED, VUID 0, 26 sections）/ 旧`gv-recipe-r14-intel`。**全modded scene・保存再読込・完全pack内容の受入は別**。旧runnerの補足contentコピー漏れも再開時に確認 |
 | reload | 実装済み・両GPU成功（当該legs） | 成功（記録） | 成功（記録） | `gv-cohort-reload2` / `gv-cohort-reload3` |
 | resize寿命（限定受入） | pair直接置換の待機漏れ修正・**当該条件は両GPU成功** | 成功 | 成功 | [resize証拠](<evidence/resize-pair-lifetime-2026-10-17.json>)。同一JARで`1280x720→1280x800`、較正キー一致・validation 0件。`resize-pair-fix1-amd/intel`。旧`resize3`のIntel FAILEDは履歴として保全。`1024x640`基準runはGUI scale差で未較正。全サイズ・minimize・loadingは別 |
 | minimize / multi-size resize | iconify呼出+multi-size swapchainは両GPU成功・restore未検証 | 成功 | 成功 | `window-life1-{amd,intel}`：`resizeSchedule`で1280x720→1024x640→800x600→1280x720、3/3 transitionが1-2tickで追従・validation clean。iconifyはtick700で呼出済み（Waylandではno-op+restore不可、GLFW制約）。真のminimize→restore往復はX11/Windows待ち |
@@ -42,10 +42,10 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 - **同fixture `frameIntervalP50`（RX6400・terrain）**: **Celeritas GL `2.5.0-dev`(`567dcf8a`、pinned `989ebf2e`ではない)=7.87ms**（`perf-cel4-amd` PASSED、2348f）vs **Celtium=32.8-37.7ms**（`loopres2/unified3-amd`）。fixture反射化(`af7ce927e`)で両側に載る。intervalはtick増幅+fixture税で自己平衡する—**renderer作業の比較はbracket**。
 - **bracket内分解**（`passSplit[Cpu]`、loopres2-amd, `batchFrameSubmits`）: frame p50 ~6.2-7.9ms（中: terrain 3.3+setupTerrain 1.4+flush 1.6、wall−cpuはGC+preemption）。`f2f573de6`で~9→~6-8ms（下記unified）。
 - **unified frame buffer**（`4730089a0`+`f2f573de6`、flag `-Dceltium.vulkan.batchFrameSubmits`、既定OFF）: frame全録画を1 buffer+1 deferred submitへ集約（~9録画→1）。同jar A/B（`d8d4d25c`）: frame bracket 9.1→~6.2ms、queueSubmitCalls ~11.9→3.6/frame、warmP50 41.1→28.8、VUID=0（depth-bias dedupはsegment先頭でinvalidate）。present readbackがframe全実行を直列wait（+3.7ms）するのはfixture側のみ。
-- **loop分解**（`gameTickSummary`、loopres3-amd）: loop mean 34ms = render 10.5 + tick ~6 + displayUpdate 6.6 + **scheduledTasks 6.6（~79 task/frame=integrated-serverのpacket marshalling、vanilla）** + loopOther 4。**intervalの~半分はrenderer到達範囲外**。
-- **swap点分解**（`swapPoint*`/`presentStages`）: present ~11.7ms/call、うち**周期dump ~9ms**（`presentedDumpEvery=40`、`=0`で3.4ms/call）、readback ~0.6ms。**fixture税がpresent実効の~8割**。
-- **fb renderPass map**（`f3b1beaa7`）: 単一cacheがpass交互で毎pass vkDeviceWaitIdle→`deviceWaitToken 4847→1`。**indirect配線**（`1cf53961d`）: 9168 calls（VUID 0）。**host-mapped indirect**（`223c3b644`）: recDraw 3.1→0.3ms。
-- 残荷（実測順）: terrain pass ~3.3ms、setupTerrain ~1.4ms、in-pass flush ~1.6ms、render-section外~4ms（bind/clear/toast/FML）、vanilla loop ~17ms（tick+scheduledTasks+otherはrenderer対象外）。`2× Celeritas`はintervalの自平衡性上interval指標では届かない—renderer-work比較で ~6.4 vs ~6.2ms ≈ ほぼparity。
+- **loop分解**（`gameTickSummary`）: loop mean 34ms = render 10.5 + tick ~6 + displayUpdate 6.6 + **scheduledTasks 6.6（~79 task/frame=integrated-serverのpacket marshalling、vanilla）** + loopOther 4。**intervalの~半分はrenderer到達範囲外**。
+- **swap点分解**（`swapPoint*`/`presentStages`）: present ~11.7ms/call、周期dump ~9ms（`=0`で3.4ms/call）、readback ~0.6ms。**fixture税**効の~8割**。
+- **fb renderPass map**（`f3b1beaa7`）: 単一cacheがpass交互で毎pass vkDeviceWaitIdle→`deviceWaitToken 4847→1`。**indirect配線**: 9168 calls（VUID 0）。**host-mapped indirect**（`223c3b644`）: recDraw 3.1→0.3ms。
+- 残荷（実測順）: terrain pass ~3.3ms、setupTerrain ~1.4ms、in-pass flush ~1.6ms、render-section外~4ms、vanilla loop ~17ms（tick+scheduledTasks+otherはrenderer対象外）。`2× Celeritas`はintervalの自平衡性上interval指標では届かない—renderer-work比較で ~6.4 vs ~6.2ms ≈ ほぼparity。
 
 性能測定の正しいキーと残存負荷は [開発・検証手順](<development.md>)。READMEに別の現行性能表を作らない。
 
