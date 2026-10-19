@@ -504,7 +504,7 @@ public final class ShadowMapPass {
                 .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
         vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                 .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
-        if (descriptorSet != 0L) {
+        if (descriptorSet != 0L && !Boolean.getBoolean("celtium.shadow.noDescriptors")) {
             // The terrain pass bound its region's set with a dynamic offset inside its own pass; the frame's later windows
             // bound other sets, so the shadow scope has to bind it again - the same set and the same offset, which is what
             // makes this draw the same region the colour pass drew (seventeen messages in leg shadowTerrain2 without it).
@@ -523,7 +523,9 @@ public final class ShadowMapPass {
         // A bisection switch: the frame loop stops presenting when the terrain draw runs (3 presents in 60 s against 600
         // without it), so the draw count is the first thing to vary.
         int draws = Integer.getInteger("celtium.shadow.maxDraws", indirectCount).intValue();
-        vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, Math.min(draws, indirectCount), 20);
+        if (!Boolean.getBoolean("celtium.shadow.noDraw")) {
+            vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, Math.min(draws, indirectCount), 20);
+        }
         vkCmdEndRenderingKHR(commandBuffer);
         depthBarrier(commandBuffer, stack, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         this.passes++;
