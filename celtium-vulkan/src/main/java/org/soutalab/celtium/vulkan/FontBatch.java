@@ -518,6 +518,33 @@ public final class FontBatch {
      * offered again at the next flush, and while a retained run waits for its target, later runs for that target queue
      * behind it so the glyphs cannot be drawn out of order.
      */
+    /**
+     * The projection or model-view array a run carries, reused when it is unchanged from the previous run.
+     * <p>
+     * Every run used to clone both matrices - 128 bytes and a GC candidate per text run, twice that when the shadow pass
+     * runs, for a frame with dozens of runs. The arrays are read-only once a run holds them (the sink copies them into the
+     * renderer's state and a retained run is retried unchanged), so a run can share the previous run's array when the
+     * values are the same, which they are for every run inside one GUI matrix.
+     */
+    private float[] matrixSnapshot(boolean projection) {
+        float[] pending = projection ? this.pendingProjection : this.pendingModelView;
+        float[] last = projection ? this.lastRunProjection : this.lastRunModelView;
+        if (last != null && java.util.Arrays.equals(last, pending)) {
+            return last;
+        }
+        float[] snapshot = pending.clone();
+        if (projection) {
+            this.lastRunProjection = snapshot;
+        } else {
+            this.lastRunModelView = snapshot;
+        }
+        return snapshot;
+    }
+
+    /** The last matrices handed to a run, for {@link #matrixSnapshot}. */
+    private float[] lastRunProjection;
+    private float[] lastRunModelView;
+
     public void celtium$flushPendingFontBatch(String how) {
         // The capture's own per-string buffer flushes through the same point as this pending run: whatever is about to
         // happen - an intervening submission, a boundary, a state change - every glyph the capture is holding belongs
@@ -551,7 +578,7 @@ public final class FontBatch {
         Run run = new Run(this.pendingFormat, this.pendingStride, this.pendingFormatId,
                 org.lwjgl.system.MemoryUtil.memAddress(this.pendingVertices, 0), this.pendingVertexCount,
                 this.pendingDrawMode, this.pendingTexture, this.pendingAlphaTest, this.pendingAlphaRef,
-                this.pendingProjection.clone(), this.pendingModelView.clone(), this.pendingTargetIdentity, how);
+                matrixSnapshot(true), matrixSnapshot(false), this.pendingTargetIdentity, how);
         this.pendingActive = false;
         this.pendingBytesUsed = 0;
         this.pendingVertexCount = 0;
