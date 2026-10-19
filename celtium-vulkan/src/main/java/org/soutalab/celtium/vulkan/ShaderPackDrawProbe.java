@@ -54,8 +54,17 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private final List<Integer> vertexBufferLocations = new ArrayList<>();
     private final int vertexCount;
 
+    /** Whether a descriptor set is bound at all; the built-in triangle's layout has none. */
+    private final boolean builtin;
+
     private ShaderPackDrawProbe(VulkanContext context, long pipeline, long pipelineLayout, long descriptorPool,
                                 long descriptorSet, int vertexCount) {
+        this(context, pipeline, pipelineLayout, descriptorPool, descriptorSet, vertexCount, false);
+    }
+
+    private ShaderPackDrawProbe(VulkanContext context, long pipeline, long pipelineLayout, long descriptorPool,
+                                long descriptorSet, int vertexCount, boolean builtin) {
+        this.builtin = builtin;
         this.context = context;
         this.pipeline = pipeline;
         this.pipelineLayout = pipelineLayout;
@@ -205,6 +214,14 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      * if it does not, the hook is recording into a buffer nobody sends.
      */
     void recordClear(VkCommandBuffer commandBuffer, GllessFrameTarget target) {
+        recordClear(commandBuffer, target, 1280, 720);
+    }
+
+    /**
+     * Clears a smaller area, the same one the triangle's viewport covers: if this corner changes, the area and the
+     * attachment are fine and the draw state is what fails; if it does not, the small-area path itself is broken.
+     */
+    void recordClear(VkCommandBuffer commandBuffer, GllessFrameTarget target, int width, int height) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkRenderingAttachmentInfoKHR.Buffer colour = VkRenderingAttachmentInfoKHR.calloc(1, stack);
             colour.get(0).sType$Default().imageView(target.colorView())
@@ -217,11 +234,73 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             clear.color().float32(3, 1.0f);
             colour.get(0).clearValue(clear);
             org.lwjgl.vulkan.VkRect2D area = org.lwjgl.vulkan.VkRect2D.calloc(stack)
-                    .offset(it -> it.set(0, 0)).extent(it -> it.set(1280, 720));
+                    .offset(it -> it.set(0, 0)).extent(it -> it.set(width, height));
             VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
                     .renderArea(area).layerCount(1).pColorAttachments(colour);
             vkCmdBeginRenderingKHR(commandBuffer, rendering);
             vkCmdEndRenderingKHR(commandBuffer);
+        }
+    }
+
+    /**
+     * A triangle with hard-coded shaders and no pack at all, drawn through the same record path.
+     * <p>
+     * The experiment that separates the two explanations for a recorded draw nobody can see: if this appears, the
+     * recording, pipeline state, descriptors and vertex setup are all sound and what fails is the pack program's own use
+     * of its blocks; if it does not, the draw state is still wrong.
+     */
+    static ShaderPackDrawProbe createBuiltin(VulkanContext context, ShadercGlslCompiler compiler, int colorFormat,
+                                             int depthFormat) throws Exception {
+        String vertexSource = "#version 450\n"
+                + "layout(location = 0) in vec3 a_Position;\n"
+                + "layout(location = 0) out vec3 v_Colour;\n"
+                + "void main() { v_Colour = vec3(1.0, 0.0, 0.0); gl_Position = vec4(a_Position, 1.0); }\n";
+        String fragmentSource = "#version 450\n"
+                + "layout(location = 0) in vec3 v_Colour;\n"
+                + "layout(location = 0) out vec4 o_Colour;\n"
+                + "void main() { o_Colour = vec4(v_Colour, 1.0); }\n";
+        SpirvModule vertexModule = compiler.compile(Stage.VERTEX, vertexSource);
+        SpirvModule fragmentModule = compiler.compile(Stage.FRAGMENT, fragmentSource);
+        ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(context);
+        ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
+        ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
+        LongBuffer layoutHandle = MemoryUtil.memAllocLong(1);
+        LongBuffer pipelineLayoutHandle = MemoryUtil.memAllocLong(1);
+        LongBuffer pipelineHandle = MemoryUtil.memAllocLong(1);
+        LongBuffer pool = MemoryUtil.memAllocLong(1);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            int result = vkCreatePipelineLayout(context.device(), org.lwjgl.vulkan.VkPipelineLayoutCreateInfo
+                    .calloc(stack).sType$Default(), null, pipelineLayoutHandle);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreatePipelineLayout(builtin) failed: " + result);
+            }
+            // The built-in shaders sample nothing, so the layout has no descriptor sets and no set is bound.
+            result = vkCreateDescriptorPool(context.device(), VkDescriptorPoolCreateInfo.calloc(stack)
+                    .sType$Default().maxSets(1), null, pool);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreateDescriptorPool(builtin) failed: " + result);
+            }
+            long pipeline = factory.createBuiltinTrianglePipeline(pipelineLayoutHandle.get(0), vertexHandle,
+                    fragmentHandle, colorFormat, depthFormat);
+            ShaderPackDrawProbe probe = new ShaderPackDrawProbe(context, pipeline, pipelineLayoutHandle.get(0),
+                    pool.get(0), 0L, 3, true);
+            VulkanHostBuffer vertices = new VulkanHostBuffer(context, 3 * 3 * 4, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            probe.buffers.add(vertices);
+            probe.vertexBuffers.add(vertices);
+            probe.vertexBufferLocations.add(Integer.valueOf(0));
+            FloatBuffer data = MemoryUtil.memFloatBuffer(vertices.mappedAddress(), 9);
+            float[] triangle = {-1.0f, -1.0f, 0.0f, 3.0f, -1.0f, 0.0f, -1.0f, 3.0f, 0.0f};
+            for (int i = 0; i < 9; i++) {
+                data.put(i, triangle[i]);
+            }
+            return probe;
+        } finally {
+            MemoryUtil.memFree(layoutHandle);
+            MemoryUtil.memFree(pipelineLayoutHandle);
+            MemoryUtil.memFree(pipelineHandle);
+            MemoryUtil.memFree(pool);
+            vertexHandle.close();
+            fragmentHandle.close();
         }
     }
 
@@ -245,8 +324,10 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                     .pDepthAttachment(depth.get(0));
             vkCmdBeginRenderingKHR(commandBuffer, rendering);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0,
-                    stack.longs(descriptorSet), null);
+            if (!this.builtin) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0,
+                        stack.longs(descriptorSet), null);
+            }
             vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
                     .x(0.0f).y(0.0f).width(64.0f).height(64.0f).minDepth(0.0f).maxDepth(1.0f));
             vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)

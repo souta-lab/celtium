@@ -13902,7 +13902,10 @@ this.frameBufferOpen = false;
             System.getProperty("celtium.shaderpack.drawProbe", "false");
     private static final boolean SHADER_PACK_DRAW_PROBE = !"false".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
             && !SHADER_PACK_DRAW_PROBE_MODE.isEmpty();
-    private static final boolean SHADER_PACK_DRAW_CLEAR = "clear".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
+    private static final boolean SHADER_PACK_DRAW_CLEAR = "clear".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
+            || "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
+    /** {@code drawProbe=builtin}: the hard-coded triangle, for separating the draw state from the pack's own shaders. */
+    private static final boolean SHADER_PACK_DRAW_BUILTIN = "builtin".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     private ShaderPackDrawProbe shaderPackDrawProbe;
     private int shaderPackDraws;
     private boolean shaderPackDrawProbeProgramChosen;
@@ -13999,6 +14002,15 @@ this.frameBufferOpen = false;
             }
             if (wanted.size() >= 6) {
                 break;
+            }
+        }
+        if (SHADER_PACK_DRAW_BUILTIN && this.shaderPackDrawProbe == null) {
+            try {
+                this.shaderPackDrawProbe = ShaderPackDrawProbe.createBuiltin(this.context, compiler,
+                        org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM, org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
+                System.out.println("[Celtium] CELTIUM_PACK_DRAW builtin=prepared");
+            } catch (Throwable failure) {
+                System.out.println("[Celtium] CELTIUM_PACK_DRAW builtin=FAILED error=" + failure);
             }
         }
         celtium$probePackPipeline(compiler, pack);
@@ -14181,7 +14193,9 @@ this.frameBufferOpen = false;
                     + " inPass=" + this.commandState.inRenderPass() + " slot=" + this.frameSlot);
         }
         if (SHADER_PACK_DRAW_CLEAR) {
-            this.shaderPackDrawProbe.recordClear(this.commandBuffer, target);
+            this.shaderPackDrawProbe.recordClear(this.commandBuffer, target,
+                    "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE) ? 64 : 1280,
+                    "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE) ? 64 : 720);
         } else {
             this.shaderPackDrawProbe.record(this.commandBuffer, target);
         }
