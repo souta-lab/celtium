@@ -91,7 +91,7 @@ public final class ShadercGlslCompiler implements GlslCompiler {
      * heap, the thread stack, which in a modded Minecraft client is the JVM default (512 KiB-1 MiB). Compilations run on
      * a thread of their own with an explicit stack, so the game's thread stacks stay as the game configured them.
      */
-    private static final long COMPILE_STACK_BYTES = 256L * 1024L * 1024L;
+    private static final long COMPILE_STACK_BYTES = 64L * 1024L * 1024L;
 
     @Override public SpirvModule compile(Stage stage, String source) throws SpirvStageCompiler.CompileFailure {
         if (!available()) {

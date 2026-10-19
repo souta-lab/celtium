@@ -44,6 +44,24 @@ class ShaderPackExpandTest {
     }
 
     @Test
+    void stripsOptifineOptionAnnotations(@TempDir Path temp) throws Exception {
+        Path zip = FixturePack.writeZip(temp.resolve("annotations.zip"), Map.of(
+                "shaders/gbuffers_basic.fsh", """
+                        #version 120
+                        #define CG_GM 0 //[0 4 8 12]
+                        void main() {
+                            gl_FragColor = vec4(float(CG_GM));
+                        }
+                        """,
+                "shaders/shaders.properties", "profile.CELTIUM=TEST\n"));
+        String expanded = ShaderPackLoader.expand(zip, PackPath.absolute("/shaders/gbuffers_basic.fsh"), Map.of());
+        // The annotation is metadata for the options screen, and it is what made shaderc's preprocessor overflow on a
+        // real pack: the same program compiles with the annotations gone and not with only the brackets neutralised.
+        assertFalse(expanded.contains("//[0 4 8 12]"), "the option annotation reached the compiler:\n" + expanded);
+        assertTrue(expanded.contains("#define CG_GM 0"), "the definition was lost:\n" + expanded);
+    }
+
+    @Test
     void refusesAPackWithoutTheFile(@TempDir Path temp) throws Exception {
         Path zip = FixturePack.writeZip(temp.resolve("empty.zip"), Map.of(
                 "shaders/shaders.properties", "profile.CELTIUM=TEST\n"));

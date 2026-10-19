@@ -64,6 +64,14 @@ public final class ShaderPackLoader {
         for (SourcePreprocessor.ExpandedLine line : expanded.lines) {
             text.append(line.text()).append('\n');
         }
+        // OptiFine's option annotations ("//[0 4 8 ... 255]" after a #define) are metadata for the options screen, not
+        // GLSL, and they are what made shaderc's preprocessor overflow its stack on BSL's fragment programs: with every
+        // annotation removed the same program compiles, with only the brackets neutralised it still overflows, and the
+        // line on its own does not - it is the annotation text against the rest of the program. The frontend has already
+        // read them for the option table, so the compiler does not need them.
+        String joined = text.toString().replaceAll("//\\[[^\\]\\n]*\\]", "");
+        text.setLength(0);
+        text.append(joined);
         if (diagnostics.stream().anyMatch(d -> d.severity() == Severity.ERROR)) {
             Diagnostic first = diagnostics.stream().filter(d -> d.severity() == Severity.ERROR).findFirst().orElseThrow();
             throw new PackException(first.code(), first.message());
