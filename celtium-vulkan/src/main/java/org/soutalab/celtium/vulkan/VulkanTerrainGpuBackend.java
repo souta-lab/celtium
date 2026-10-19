@@ -13918,6 +13918,8 @@ this.frameBufferOpen = false;
             || "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     /** {@code drawProbe=builtin}: the hard-coded triangle, for separating the draw state from the pack's own shaders. */
     private static final boolean SHADER_PACK_DRAW_BUILTIN = "builtin".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
+    /** {@code drawProbe=blit}: transfer the pack-rendered image into the delivered frame. */
+    private static final boolean SHADER_PACK_DRAW_BLIT = "blit".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     private ShaderPackDrawProbe shaderPackDrawProbe;
     /** The delivered image's size, from the frame target; the capture's size is not assumed to be it. */
     private int frameTargetWidth = 1280;
@@ -14209,6 +14211,17 @@ this.frameBufferOpen = false;
             System.out.println("[Celtium] CELTIUM_PACK_DRAW_HOOK cb=" + Long.toHexString(this.commandBuffer.address())
                     + " open=" + this.frameBufferOpen + " recording=" + this.commandState.recording()
                     + " inPass=" + this.commandState.inRenderPass() + " slot=" + this.frameSlot);
+        }
+        if (SHADER_PACK_DRAW_BLIT) {
+            // The delivery experiment: the pixels the pack's shaders already produced, transferred into the delivered
+            // image at the frame boundary - no draw into the frame, no partial render area.
+            if (target.colorImage() != 0L) {
+                this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), 0, 0, 256, 256);
+                if (this.shaderPackDraws++ <= 2) {
+                    System.out.println("[Celtium] CELTIUM_PACK_DRAW blit=true draws=" + this.shaderPackDraws);
+                }
+            }
+            return;
         }
         if (SHADER_PACK_DRAW_CLEAR) {
             if ("small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)) {

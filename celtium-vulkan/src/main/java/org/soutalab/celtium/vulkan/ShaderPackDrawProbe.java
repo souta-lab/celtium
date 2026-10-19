@@ -54,6 +54,11 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private final List<Integer> vertexBufferLocations = new ArrayList<>();
     private final int vertexCount;
 
+    private long offscreenImage;
+    private long offscreenView;
+    private long offscreenMemory;
+    private int offscreenSize;
+
     private long passPipeline;
     private ShaderPackPipelineFactory.ModuleHandle passVertexHandle;
     private ShaderPackPipelineFactory.ModuleHandle passFragmentHandle;
@@ -238,6 +243,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      */
     String renderOffscreenAndSample(ShaderPackPipelineFactory.ModuleHandle vertexModule,
                                     ShaderPackPipelineFactory.ModuleHandle fragmentModule, int size) {
+        StringBuilder summary = new StringBuilder();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer image = stack.mallocLong(1);
             LongBuffer memory = stack.mallocLong(1);
@@ -374,13 +380,17 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                     }
                 }
                 vkDestroyPipeline(context.device(), passPipeline, null);
-                return "centre=#" + String.format("%06X", Integer.valueOf((r << 16) | (g << 8) | b))
-                        + " sampledColours=" + colours.size();
+                summary.append("centre=#").append(String.format("%06X", Integer.valueOf((r << 16) | (g << 8) | b)))
+                        .append(" sampledColours=").append(colours.size());
+                // The image, view and memory stay alive: the delivery experiment blits this image into the delivered
+                // frame, so the pixels the pack's shaders produced are what appears on screen.
+                this.offscreenImage = image.get(0);
+                this.offscreenView = view.get(0);
+                this.offscreenMemory = memory.get(0);
+                this.offscreenSize = size;
+                return summary.toString();
             } finally {
                 vkDestroyCommandPool(context.device(), privatePool.get(0), null);
-                vkDestroyImageView(context.device(), view.get(0), null);
-                vkFreeMemory(context.device(), memory.get(0), null);
-                vkDestroyImage(context.device(), image.get(0), null);
             }
         } catch (Throwable failure) {
             return "offscreen=failed(" + failure + ")";
@@ -440,6 +450,32 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                         stack.longs(this.vertexBuffers.get(index).buffer()), stack.longs(0L));
             }
             vkCmdDraw(commandBuffer, this.vertexCount, 1, 0, 0);
+        }
+    }
+
+    /**
+     * Blits the image the pack's shaders rendered into the delivered image.
+     * <p>
+     * The on-screen tests so far added a draw or a clear into the frame's own recording, and a full-image clear was the
+     * only one that appeared. A blit is neither: it is a transfer of pixels that are already known to be correct, into an
+     * image whose usage flags include TRANSFER_DST, at the last point before the frame is submitted.
+     */
+    void blitToFrame(VkCommandBuffer commandBuffer, long frameImage, int x, int y, int width, int height) {
+        if (this.offscreenImage == 0L) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkImageBlit.Buffer blit = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
+            blit.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                    .layerCount(1);
+            blit.get(0).srcOffsets(0).set(0, 0, 0);
+            blit.get(0).srcOffsets(1).set(this.offscreenSize, this.offscreenSize, 1);
+            blit.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                    .layerCount(1);
+            blit.get(0).dstOffsets(0).set(x, y, 0);
+            blit.get(0).dstOffsets(1).set(x + width, y + height, 1);
+            vkCmdBlitImage(commandBuffer, this.offscreenImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, frameImage,
+                    VK_IMAGE_LAYOUT_GENERAL, blit, VK_FILTER_NEAREST);
         }
     }
 
@@ -608,6 +644,15 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         }
         if (pipeline != 0L) {
             vkDestroyPipeline(context.device(), pipeline, null);
+        }
+        if (this.offscreenView != 0L) {
+            vkDestroyImageView(context.device(), this.offscreenView, null);
+        }
+        if (this.offscreenImage != 0L) {
+            vkDestroyImage(context.device(), this.offscreenImage, null);
+        }
+        if (this.offscreenMemory != 0L) {
+            vkFreeMemory(context.device(), this.offscreenMemory, null);
         }
         for (VulkanHostBuffer buffer : buffers) {
             buffer.delete();
