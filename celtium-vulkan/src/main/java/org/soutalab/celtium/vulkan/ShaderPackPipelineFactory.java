@@ -214,6 +214,84 @@ public final class ShaderPackPipelineFactory {
         }
     }
 
+    /**
+     * A pack pipeline built against an existing render pass, for drawing inside the renderer's own immediate window.
+     * <p>
+     * The alternative is a dynamic-rendering pipeline recorded beside the frame's passes, and that path was measured as
+     * only taking effect when its render area covers the whole attachment. This one is created against the pass the
+     * window already has open, so it draws where the game's own quads draw.
+     */
+    public long createPipelineForRenderPass(long renderPass, long pipelineLayout, ModuleHandle vertex,
+                                            ModuleHandle fragment, LegacyGlslLowering.Result vertexInterface,
+                                            boolean depthTest) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
+            stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertex.module())
+                    .pName(stack.UTF8("main"));
+            stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragment.module())
+                    .pName(stack.UTF8("main"));
+            Map<String, Integer> attributes = vertexInterface.attributes();
+            VkVertexInputAttributeDescription.Buffer attributeDescriptions =
+                    VkVertexInputAttributeDescription.calloc(Math.max(1, attributes.size()), stack);
+            VkVertexInputBindingDescription.Buffer bindingDescriptions =
+                    VkVertexInputBindingDescription.calloc(Math.max(1, attributes.size()), stack);
+            int index = 0;
+            java.util.List<String> ordered = new ArrayList<>(attributes.keySet());
+            ordered.sort(java.util.Comparator.comparingInt(attributes::get));
+            for (String name : ordered) {
+                if (occurrences(vertexInterface.source(), name) <= 1) {
+                    continue;
+                }
+                int[] format = vertexFormat(vertexInterface.attributeTypes().get(name));
+                if (format == null) {
+                    continue;
+                }
+                int location = attributes.get(name).intValue();
+                bindingDescriptions.get(index).binding(location).stride(format[1])
+                        .inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                attributeDescriptions.get(index).location(location).binding(location).format(format[0]).offset(0);
+                index++;
+            }
+            bindingDescriptions.limit(index);
+            attributeDescriptions.limit(index);
+            VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
+                    .sType$Default().pVertexBindingDescriptions(bindingDescriptions)
+                    .pVertexAttributeDescriptions(attributeDescriptions);
+            VkPipelineInputAssemblyStateCreateInfo assembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+                    .sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
+                    .sType$Default().viewportCount(1).scissorCount(1);
+            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                    .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
+                    .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
+            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                    .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            VkPipelineDepthStencilStateCreateInfo depthState = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                    .sType$Default().depthTestEnable(depthTest).depthWriteEnable(depthTest)
+                    .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+            VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
+                    VkPipelineColorBlendAttachmentState.calloc(1, stack);
+            blendAttachment.get(0).colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                    | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+            VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
+                    .sType$Default().pAttachments(blendAttachment);
+            org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamic =
+                    org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                            .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR));
+            VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
+                    .pInputAssemblyState(assembly).pViewportState(viewport).pRasterizationState(raster)
+                    .pMultisampleState(multisample).pDepthStencilState(depthState).pColorBlendState(blend)
+                    .pDynamicState(dynamic).layout(pipelineLayout).renderPass(renderPass);
+            LongBuffer handle = stack.mallocLong(1);
+            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreateGraphicsPipelines(render pass) failed: " + result);
+            }
+            return handle.get(0);
+        }
+    }
+
     /** A pipeline for the hard-coded triangle: one vec3 attribute at location 0, no descriptors, no depth. */
     public long createBuiltinTrianglePipeline(long pipelineLayout, ModuleHandle vertex, ModuleHandle fragment,
                                               int colourFormat, int depthFormat) {

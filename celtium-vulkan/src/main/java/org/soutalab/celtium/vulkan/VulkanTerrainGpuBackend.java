@@ -9348,6 +9348,18 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("wrecLoop");
         drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
+        // Inside the pass the game's own quads draw into, which is the delivery path that is known to paint the screen.
+        if (SHADER_PACK_DRAW_PROBE && !SHADER_PACK_DRAW_CLEAR && !SHADER_PACK_DRAW_BUILTIN
+                && this.shaderPackDrawProbe != null) {
+            try {
+                this.shaderPackDrawProbe.recordInPass(this.commandBuffer, renderPass);
+                if (this.shaderPackDraws++ <= 2) {
+                    System.out.println("[Celtium] CELTIUM_PACK_DRAW inPass=true draws=" + this.shaderPackDraws);
+                }
+            } catch (RuntimeException | LinkageError error) {
+                record("pack draw in pass failed: " + describe(error));
+            }
+        }
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
@@ -14152,6 +14164,9 @@ this.frameBufferOpen = false;
                                 org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT, white);
                         line.append(" drawProbe=prepared attributes=").append(vertex.attributes().size())
                                 .append(" result=OK");
+                        // The execution evidence that does not depend on the delivery path: the pack's shaders render
+                        // into an image this probe owns, and the pixels are read back.
+                        line.append(" offscreen=[").append(this.shaderPackDrawProbe.sampleOffscreen(64)).append(']');
                     } else {
                         try (ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
                              ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
