@@ -197,9 +197,11 @@ public final class FramePassTimings {
 
     /** Closes a pass bracket and adds its time to the current frame. */
     public static void end(String pass) {
-        if (indexOf(pass) == GUI_INDEX) guiActive = false;
+        // One lookup for both uses: the GUI check and the bracket index are the same question.
+        int resolved = indexOf(pass);
+        if (resolved == GUI_INDEX) guiActive = false;
         if (!enabled() || frameStart == 0L) return;
-        int i = indexOf(pass);
+        int i = resolved;
         if (i < 0 || starts[i] == 0L) return;
         long now = clockNanos();
         boolean outermost;
@@ -216,13 +218,34 @@ public final class FramePassTimings {
         else currentInside[i - TOP_LEVEL.length] += elapsed;
     }
 
+    /**
+     * Name to bracket index, built once.
+     * <p>
+     * The lookup used to be two linear scans with string compares, run on every bracket open and twice on every close.
+     * The dense world scene (leg splitD1, qmagnet's exhibition) opens several thousand brackets a frame - ~1,955
+     * immediate batches each with their own spans - and JFR put 1.4% of the client thread's samples in this scan
+     * alone. A bracket name is a literal, so a map is the right shape: it costs one hash instead of up to
+     * {@code TOP_LEVEL.length + INSIDE.length} string comparisons.
+     */
+    private static final java.util.Map<String, Integer> INDEX = buildIndex();
+
+    private static java.util.Map<String, Integer> buildIndex() {
+        java.util.Map<String, Integer> index = new java.util.HashMap<String, Integer>();
+        for (int i = 0; i < TOP_LEVEL.length; i++) {
+            index.put(TOP_LEVEL[i], Integer.valueOf(i));
+        }
+        for (int i = 0; i < INSIDE.length; i++) {
+            index.put(INSIDE[i], Integer.valueOf(TOP_LEVEL.length + i));
+        }
+        return java.util.Collections.unmodifiableMap(index);
+    }
+
     /** The index of {@code gui} in the pass tables, so the flag is set by name rather than by a literal. */
     private static final int GUI_INDEX = indexOf("gui");
 
     private static int indexOf(String pass) {
-        for (int i = 0; i < TOP_LEVEL.length; i++) if (TOP_LEVEL[i].equals(pass)) return i;
-        for (int i = 0; i < INSIDE.length; i++) if (INSIDE[i].equals(pass)) return TOP_LEVEL.length + i;
-        return -1;
+        Integer found = INDEX.get(pass);
+        return found == null ? -1 : found.intValue();
     }
 
     /** Prints a one-line split every 200 frames, so a running session shows the shape without a report. */
