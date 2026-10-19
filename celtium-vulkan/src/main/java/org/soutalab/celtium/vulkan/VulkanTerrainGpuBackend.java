@@ -13959,6 +13959,7 @@ this.frameBufferOpen = false;
     private int terrainCaptureStride;
     private int terrainCaptureCount;
     private int terrainCaptureFormat;
+    private int terrainCaptureAttempts;
 
     /**
      * Keeps the first terrain-shaped batch's vertices for the shaderpack probe.
@@ -13967,22 +13968,32 @@ this.frameBufferOpen = false;
      * under GL-less; the offer entry the probe originally hooked is rarely reached in that scene.
      */
     public void celtium$captureTerrainBatch(int formatId, int stride, long address, int count) {
+        if (this.terrainCaptureAttempts < 6) {
+            this.terrainCaptureAttempts++;
+            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE attempt=" + this.terrainCaptureAttempts
+                    + " format=" + formatId + " stride=" + stride + " count=" + count
+                    + " probe=" + SHADER_PACK_DRAW_PROBE + " address=" + (address != 0L));
+        }
         if (!SHADER_PACK_DRAW_PROBE || this.terrainCaptureVertices != null || address == 0L) {
             return;
         }
-        if (formatId != 3 && formatId != 8) {
+        // The world's batches arrive as format 2 (POSITION_TEX_COLOR, stride 24) and format 7 (position only); the
+        // adapter converts 2, 3, 6 and 8, so 7 is skipped and 2 is what a world scene actually offers. The captured
+        // count is capped: a probe does not need a 10,656-vertex batch to show that the pack's program draws terrain.
+        if (formatId != 2 && formatId != 3 && formatId != 6 && formatId != 8) {
             return;
         }
-        if (count <= 0 || count > 4096 || stride <= 0) {
+        if (count <= 0 || stride <= 0) {
             return;
         }
-        long bytes = (long) count * stride;
+        int captured = Math.min(count, 4096);
+        long bytes = (long) captured * stride;
         java.nio.ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
         org.lwjgl.system.MemoryUtil.memCopy(address, org.lwjgl.system.MemoryUtil.memAddress(copy), bytes);
         copy.rewind();
         this.terrainCaptureVertices = copy;
         this.terrainCaptureStride = stride;
-        this.terrainCaptureCount = count;
+        this.terrainCaptureCount = captured;
         this.terrainCaptureFormat = formatId;
     }
     private int immediateOffersLastFrame;

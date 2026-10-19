@@ -71,6 +71,9 @@ final class ShaderPackDrawProbe implements AutoCloseable {
 
     private long offscreenImage;
 
+    /** The host address of the transform block, so a fitted transform can replace the identity one. */
+    private long transformBlockAddress;
+
     /** The host address of the plain uniform block, for the environment values a pack's vertex stage needs. */
     private long uniformBlockAddress;
     private long offscreenView;
@@ -173,6 +176,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             if (!vertex.usedTransformBlock().isEmpty() || !fragment.usedTransformBlock().isEmpty()) {
                 transforms = new VulkanHostBuffer(context, TRANSFORM_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
                 buffers.add(transforms);
+                this.transformBlockAddress = transforms.mappedAddress();
                 FloatBuffer data = MemoryUtil.memFloatBuffer(transforms.mappedAddress(), TRANSFORM_BYTES / 4);
                 for (int i = 0; i < TRANSFORM_BYTES / 4; i++) {
                     data.put(i, 0.0f);
@@ -572,6 +576,9 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             index++;
         }
         this.vertexCount = count;
+        // World-space captured vertices with an identity transform land outside clip space and are clipped (measured),
+        // so the probe fits the geometry's own bounds into the visible area; there is no camera to reproduce here.
+        String fitted = fitTransformToBounds(adapted.get("a_Position"));
         return "terrain vertices=" + count + " format=" + formatId + " attributes="
                 + this.packAttributeLocations.size();
     }
@@ -653,6 +660,71 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      * uniforms the probe only approximates is noise for that question and, when its uniforms are not the real ones,
      * makes gl_Position non-finite. Only statements of the form {@code gl_Position.xy = ...TAAJitter...;} are dropped.
      */
+    /**
+     * Writes a model-view-projection that fits the given positions' bounds into clip space, and returns a one-line
+     * description of the fit.
+     */
+    private String fitTransformToBounds(float[] positions) {
+        if (positions == null || positions.length < 4 || this.transformBlockAddress == 0L) {
+            return "none";
+        }
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+        int vertices = positions.length / 4;
+        for (int vertex = 0; vertex < vertices; vertex++) {
+            float x = positions[vertex * 4];
+            float y = positions[vertex * 4 + 1];
+            if (!Float.isFinite(x) || !Float.isFinite(y)) {
+                continue;
+            }
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+        if (minX > maxX || minY > maxY) {
+            return "empty";
+        }
+        float extentX = Math.max(1.0e-3f, maxX - minX);
+        float extentY = Math.max(1.0e-3f, maxY - minY);
+        float extent = Math.max(extentX, extentY);
+        float scale = 2.0f / extent;
+        float centreX = (minX + maxX) * 0.5f;
+        float centreY = (minY + maxY) * 0.5f;
+        float[] fit = new float[16];
+        fit[0] = scale;
+        fit[5] = scale;
+        fit[10] = 0.0f;
+        fit[12] = -scale * centreX;
+        fit[13] = -scale * centreY;
+        fit[14] = 0.0f;
+        fit[15] = 1.0f;
+        // u_TextureMatrix[8] (128 floats), u_NormalMatrix (12), u_ModelView (16), u_Projection (16),
+        // u_ModelViewProjection (16): the layout the emitter writes and the earlier identity fill already used.
+        writeTransformMatrix((8 * 16 + 12) * 4, identityMatrix());
+        writeTransformMatrix((8 * 16 + 28) * 4, fit);
+        writeTransformMatrix((8 * 16 + 44) * 4, fit);
+        return String.format(java.util.Locale.ROOT, "bounds=%.1fx%.1f scale=%.4f", extentX, extentY, scale);
+    }
+
+    private static float[] identityMatrix() {
+        float[] identity = new float[16];
+        identity[0] = 1.0f;
+        identity[5] = 1.0f;
+        identity[10] = 1.0f;
+        identity[15] = 1.0f;
+        return identity;
+    }
+
+    private void writeTransformMatrix(int byteOffset, float[] matrix) {
+        for (int i = 0; i < 16; i++) {
+            org.lwjgl.system.MemoryUtil.memPutFloat(this.transformBlockAddress + byteOffset + (long) i * 4L,
+                    matrix[i]);
+        }
+    }
+
     static String sanitiseProbeVertex(String source) {
         StringBuilder out = new StringBuilder(source.length());
         for (String line : source.split("\n", -1)) {
