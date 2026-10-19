@@ -1271,7 +1271,18 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
             stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                     .pName(stack.UTF8("main"));
+            // The shadow path is behind a specialisation constant, so the pipeline for the default configuration compiles
+            // it out rather than paying for the derivative pairs and nine taps on every terrain fragment. The JVM argument is
+            // the same one that enables the shadow pass, and it is a start-up switch either way.
+            org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer shadowEntry =
+                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(1, stack);
+            shadowEntry.get(0).constantID(0).offset(0).size(4);
+            java.nio.ByteBuffer shadowValue = stack.calloc(4);
+            shadowValue.putInt(0, Boolean.getBoolean("celtium.shadow.enabled") ? 1 : 0);
+            org.lwjgl.vulkan.VkSpecializationInfo shadowSpecialization =
+                    org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(shadowEntry, shadowValue);
             stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
+                    .pSpecializationInfo(shadowSpecialization)
                     .pName(stack.UTF8("main"));
 
             VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);

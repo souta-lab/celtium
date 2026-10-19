@@ -91,6 +91,9 @@ layout(set = 0, binding = 2) uniform sampler2D u_BlockTex; // The block texture
 // comparison sampler so the same view can be read back for diagnostics.
 layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
 
+// false in the shipping pipeline, true when the native shadow pass runs.
+layout(constant_id = 0) const bool CELTIUM_SHADOW_ENABLED = false;
+
 layout(location = 0) out vec4 fragColor; // The output fragment for the color framebuffer
 
 // --------------------------------------------------------------------------------------------
@@ -205,6 +208,10 @@ void main() {
     // distance to the fragment so a surface at a grazing angle does not shadow itself. Three by three taps give the
     // soft edge, and a coordinate outside the map reads as lit - an unrendered map leaves the terrain exactly as the
     // shaderless path drew it.
+    // The whole shadow path is behind a specialisation constant: with the pass off the compiler removes the derivative
+    // pairs, the cross product and the nine taps, so the shipping fragment shader costs what it did before the feature
+    // existed. A uniform branch would leave all of that in place for the default configuration.
+    if (CELTIUM_SHADOW_ENABLED) {
     vec3 shadowCoord = v_ShadowCoord.xyz / v_ShadowCoord.w;
     // The derivatives are taken unconditionally: inside the branch below they are in non-uniform control flow, which is
     // undefined in GLSL and made the frame loop stall on this driver (3 presents in 60 s against 600 without the
@@ -228,5 +235,6 @@ void main() {
         // strength (0.45) left ON and OFF within 0.13 percentage points of dark pixels of each other.
         float shadow = lit / 9.0;
         fragColor.rgb *= mix(0.2, 1.0, shadow);
+    }
     }
 }
