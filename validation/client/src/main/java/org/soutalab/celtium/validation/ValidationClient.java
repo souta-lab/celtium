@@ -1958,6 +1958,8 @@ public final class ValidationClient {
      */
     private boolean celtium$flyingSet;
     private boolean celtium$entitiesSpawned;
+    /** Whether the shadow stage has been built this run. */
+    private boolean celtium$shadowStageBuilt;
     /**
      * The entity set of a dimension scene, spawned once after the client has arrived in the target dimension
      * ({@code celtium.validation.spawnEntitiesAfterTransfer}). The tick-60 set is in the overworld and cannot be
@@ -3804,6 +3806,11 @@ public final class ValidationClient {
                     report.addProperty("probeCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium probe"));
                     report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
                 }
+            }
+            if (worldTicks >= 60 && !celtium$shadowStageBuilt
+                    && Boolean.getBoolean("celtium.validation.shadowStage")) {
+                celtium$shadowStageBuilt = true;
+                celtium$buildShadowStage(mc);
             }
             if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
                 celtium$entitiesSpawned = true;
@@ -10647,5 +10654,44 @@ public final class ValidationClient {
                         + " guiOpen=" + mc.currentScreen);
             }
         }
+    }
+
+    /**
+     * Builds a stage the native shadow map can be photographed on: a stone platform under the player, five pillars to
+     * cast, and a raised camera looking down at it.
+     * <p>
+     * The standard scenes have no floor a cast shadow can land on - the qmagnet view is wall-dominated and its
+     * decorations float against the sky - so the shadow's pictorial acceptance needs geometry of its own. With
+     * -Dceltium.validation.shadowStage=true this runs at world tick 60 and the capture that follows shows the pillars'
+     * shadows on the platform.
+     */
+    private void celtium$buildShadowStage(net.minecraft.client.Minecraft mc) {
+        if (mc.world == null || mc.player == null) {
+            return;
+        }
+        int px = (int) Math.floor(mc.player.posX);
+        int pz = (int) Math.floor(mc.player.posZ);
+        int groundY = mc.world.getHeight(px, pz);
+        int built = 0;
+        for (int dx = -20; dx <= 20; dx++) {
+            for (int dz = -20; dz <= 20; dz++) {
+                // getHeight is the first air block above the top solid one, so the platform goes at groundY to sit on
+                // the surface; at groundY - 1 it was buried inside the ground and the earlier stage screenshots showed
+                // the map's own wall instead of a floor.
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + dx, groundY, pz + dz),
+                        net.minecraft.init.Blocks.STONE.getDefaultState(), 2);
+                built++;
+            }
+        }
+        int[][] pillars = {{-6, -10}, {6, -12}, {0, -16}, {-10, -6}, {10, -8}};
+        for (int[] pillar : pillars) {
+            for (int height = 0; height < 4; height++) {
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + pillar[0], groundY + 1 + height,
+                        pz + pillar[1]), net.minecraft.init.Blocks.STONE.getDefaultState(), 2);
+                built++;
+            }
+        }
+        mc.player.setPositionAndRotation(px + 0.5D, groundY + 8.0D, pz + 8.5D, 180.0F, 35.0F);
+        System.out.println("[Celtium] CELTIUM_SHADOW_STAGE blocks=" + built + " at=" + px + "," + groundY + "," + pz);
     }
 }
