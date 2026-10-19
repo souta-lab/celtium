@@ -1001,6 +1001,7 @@ public final class VulkanSwapchain {
             if (renderFinished == VK_NULL_HANDLE) {
                 renderFinished = renderFinishedFor(stack, index.get(0));
                 if (renderFinished == VK_NULL_HANDLE) {
+                    abandonAcquiredImage("render-finished allocation failed after a successful acquire");
                     return "present image: could not create the render-finished semaphore";
                 }
             }
@@ -1019,6 +1020,9 @@ public final class VulkanSwapchain {
             long recorded = preRecordedPresentBlit(index.get(0), sourceImage, sourceLayout,
                     sourceLayoutAfter, width, height);
             if (recorded == VK_NULL_HANDLE) {
+                if ("retire".equals(presentStageDisposition(true, false, false))) {
+                    abandonAcquiredImage("the blit command buffer could not be recorded after a successful acquire");
+                }
                 return "present image: could not record the blit command buffer";
             }
             // The pre-recorded buffer goes to the queue directly - no vkEndCommandBuffer (recording closed at
@@ -1033,6 +1037,9 @@ public final class VulkanSwapchain {
                     new long[] {renderFinished, bridgeDone});
             presentSubmitNanos += System.nanoTime() - submitStartedNanos;
             if (submitError != null) {
+                if ("retire".equals(presentStageDisposition(true, true, false))) {
+                    abandonAcquiredImage("the present submission failed after a successful acquire");
+                }
                 return submitError;
             }
             if (this.bridgeTarget != null && bridgeDone != 0L) {
@@ -1487,34 +1494,122 @@ public final class VulkanSwapchain {
     }
 
     /** Drops the recorded blit set: the queue is drained first because a previous present may still read them. */
+    /**
+     * {@return how a queue drain before cleanup must be treated}: "destroy" when the queue confirmed idle, "destroy-
+     * device-lost" when the device is gone (the objects went with it, and a wait cannot confirm anything), "preserve"
+     * when the drain could not be confirmed.
+     * <p>
+     * Audit #368: {@code discardPreRecorded} and {@code delete} called {@code vkQueueWaitIdle} and destroyed the command
+     * pool and semaphores whatever it returned, so a wait that failed - pending commands still pending - was followed by
+     * freeing the objects those commands might be referenced from. A lost device is not the same case as a failed wait and
+     * is not folded into it.
+     */
+    /**
+     * {@return what a present attempt must do when a stage after the acquire fails}: "present" only when every stage
+     * succeeded, "retire" when the image was acquired but could not be presented.
+     * <p>
+     * Core Vulkan has no way to hand an acquired image back (the release entry points are extensions, and this renderer
+     * holds to the 1.2 baseline), so the acquisition is recovered by retiring the swapchain: the next frame rebuilds it and
+     * every image it handed out is reclaimed with it. Audit #367 found the failure branches simply returning, which leaks
+     * one acquired image per occurrence and leaves the acquire semaphore's signal/wait ownership undecided.
+     */
+    static String presentStageDisposition(boolean acquired, boolean recorded, boolean submitted) {
+        if (!acquired) {
+            return "present";
+        }
+        return submitted && recorded ? "present" : "retire";
+    }
+
+    /** Acquisitions retired instead of presented because a later stage failed. */
+    private long abandonedAcquisitions;
+
+    /** {@return how many acquisitions were retired rather than presented, for the verification line}. */
+    public long abandonedAcquisitions() {
+        return this.abandonedAcquisitions;
+    }
+
+    /** Retires the swapchain after an acquired image could not be presented, so the leak does not accumulate. */
+    private void abandonAcquiredImage(String why) {
+        this.abandonedAcquisitions++;
+        if (this.abandonedAcquisitions <= 4) {
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN_ACQUIRE_ABANDONED " + why
+                    + " (the swapchain is retired; the next frame rebuilds it)");
+        }
+        // The image cannot be presented, and core Vulkan cannot release it; retiring the swapchain recovers every image
+        // it handed out, which is the only recovery the 1.2 baseline offers.
+        this.outOfDate = true;
+        drainForCleanup("abandoned acquired image");
+    }
+
+    static String cleanupDecision(int waitResult) {
+        if (waitResult == VK_SUCCESS) {
+            return "destroy";
+        }
+        if (waitResult == VK_ERROR_DEVICE_LOST) {
+            return "destroy-device-lost";
+        }
+        return "preserve";
+    }
+
+    /** Drains the queue before cleanup; a drain that is not confirmed idle is reported and the caller keeps its handles. */
+    private boolean drainForCleanup(String what) {
+        int result = vkQueueWaitIdle(this.context.queue());
+        String decision = cleanupDecision(result);
+        if ("preserve".equals(decision)) {
+            this.unconfirmedDrains++;
+            if (this.unconfirmedDrains <= 4) {
+                System.out.println("[Celtium] CELTIUM_SWAPCHAIN_DRAIN_UNCONFIRMED what=" + what + " result=" + result
+                        + " - the handles are preserved rather than destroyed");
+            }
+            return false;
+        }
+        if ("destroy-device-lost".equals(decision)) {
+            this.deviceLostDrains++;
+        }
+        return true;
+    }
+
+    /** Drains that could not confirm the queue idle, so their handles were preserved. */
+    private long unconfirmedDrains;
+
+    /** Drains that returned device-lost, where cleanup still proceeds because the device took the objects with it. */
+    private long deviceLostDrains;
+
+    /** {@return the drain counters, for the verification line}. */
+    public String drainCensus() {
+        return "unconfirmed=" + this.unconfirmedDrains + " deviceLost=" + this.deviceLostDrains;
+    }
+
     private void discardPreRecorded() {
         this.preRecordedSourceImage = VK_NULL_HANDLE;
         this.preRecordedSwapchain = VK_NULL_HANDLE;
         this.preRecordedBlits = new long[0];
-        if (this.presentBlitPool != VK_NULL_HANDLE) {
-            vkQueueWaitIdle(this.context.queue());
+        if (this.presentBlitPool != VK_NULL_HANDLE && drainForCleanup("present blit pool")) {
             vkDestroyCommandPool(this.context.device(), this.presentBlitPool, null);
             this.presentBlitPool = VK_NULL_HANDLE;
         }
     }
 
     public void delete() {
+        if (!drainForCleanup("delete")) {
+            // The queue could not be confirmed idle: destroying the pool, the semaphores or the views would free objects
+            // a pending submission may still reference. They are held instead (#368), which is a leak at a moment the
+            // device is already not answering, and never a use-after-free.
+            return;
+        }
         if (!this.freshSemaphorePool.isEmpty()) {
-            vkQueueWaitIdle(this.context.queue());
             for (Long semaphore : this.freshSemaphorePool) {
                 vkDestroySemaphore(this.context.device(), semaphore.longValue(), null);
             }
             this.freshSemaphorePool.clear();
         }
         if (this.renderFinishedSemaphores != null) {
-            vkQueueWaitIdle(this.context.queue());
             for (long semaphore : this.renderFinishedSemaphores) {
                 vkDestroySemaphore(this.context.device(), semaphore, null);
             }
             this.renderFinishedSemaphores = null;
         }
         if (this.acquireSemaphores != null) {
-            vkQueueWaitIdle(this.context.queue());
             for (long semaphore : this.acquireSemaphores) {
                 vkDestroySemaphore(this.context.device(), semaphore, null);
             }
@@ -1522,7 +1617,6 @@ public final class VulkanSwapchain {
         }
         if (this.acquireSemaphore != VK_NULL_HANDLE) {
             // The queue is drained first: the semaphore may still be referenced by a pending present.
-            vkQueueWaitIdle(this.context.queue());
             vkDestroySemaphore(this.context.device(), this.acquireSemaphore, null);
             this.acquireSemaphore = VK_NULL_HANDLE;
         }
