@@ -14452,7 +14452,14 @@ this.frameBufferOpen = false;
                 org.joml.Vector3f centre = new org.joml.Vector3f();
                 new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
                 // More oblique than the first attempt, so horizontal surfaces throw longer shadows across the ground.
-                org.joml.Vector3f direction = new org.joml.Vector3f(-0.7f, -1.0f, -0.45f).normalize();
+                // A property, so the sun's direction can be swept in a leg rather than recompiled: shadows are only
+                // convincing when they fall on surfaces the camera can see.
+                String directionText = System.getProperty("celtium.shadow.direction", "-0.7,-1.0,-0.45");
+                String[] directionParts = directionText.split(",");
+                org.joml.Vector3f direction = new org.joml.Vector3f(
+                        Float.parseFloat(directionParts[0].trim()),
+                        Float.parseFloat(directionParts[1].trim()),
+                        Float.parseFloat(directionParts[2].trim())).normalize();
                 float radius = 48.0f;
                 org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
                         new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
