@@ -688,9 +688,13 @@ public final class VulkanTerrainPipeline {
             // then all zeros, the divide is not a number and the comparison leaves every fragment lit.
             VkDescriptorImageInfo.Buffer shadowInfo = VkDescriptorImageInfo.calloc(1, stack);
             boolean shadowing = this.shadowView != 0L && this.shadowSampler != 0L;
-            shadowInfo.get(0).sampler(shadowing ? this.shadowSampler : lightmap.sampler())
-                    .imageView(shadowing ? this.shadowView : lightmap.view())
-                    .imageLayout(shadowing ? VK_IMAGE_LAYOUT_GENERAL : lightmap.samplingLayout());
+            // A bisection switch: bind a colour texture in the shadow sampler's place while still letting the shader take
+            // the sampling path. If the frame loop runs with this and stalls without it, sampling a depth image is what the
+            // path cannot afford here, and the map has to be copied to a colour target before it is read.
+            boolean dummySample = shadowing && Boolean.getBoolean("celtium.shadow.dummySample");
+            shadowInfo.get(0).sampler(shadowing && !dummySample ? this.shadowSampler : lightmap.sampler())
+                    .imageView(shadowing && !dummySample ? this.shadowView : lightmap.view())
+                    .imageLayout(shadowing && !dummySample ? VK_IMAGE_LAYOUT_GENERAL : lightmap.samplingLayout());
             VkDescriptorBufferInfo.Buffer shadowBuffer = VkDescriptorBufferInfo.calloc(1, stack);
             shadowBuffer.get(0).buffer(this.shadowUniform != 0L ? this.shadowUniform : uniformBuffer)
                     .offset(0L).range(64L);

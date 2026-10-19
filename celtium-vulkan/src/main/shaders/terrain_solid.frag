@@ -206,8 +206,14 @@ void main() {
     // soft edge, and a coordinate outside the map reads as lit - an unrendered map leaves the terrain exactly as the
     // shaderless path drew it.
     vec3 shadowCoord = v_ShadowCoord.xyz / v_ShadowCoord.w;
+    // The derivatives are taken unconditionally: inside the branch below they are in non-uniform control flow, which is
+    // undefined in GLSL and made the frame loop stall on this driver (3 presents in 60 s against 600 without the
+    // sampling). Computing the slope term first costs one derivative pair on every fragment and removes the hazard.
+    vec3 shadowDx = dFdx(shadowCoord);
+    vec3 shadowDy = dFdy(shadowCoord);
+    float slopeTerm = abs(normalize(cross(shadowDx, shadowDy)).z);
     if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
-        float bias = 0.0015 + 0.004 * (1.0 - abs(normalize(cross(dFdx(shadowCoord), dFdy(shadowCoord))).z));
+        float bias = 0.0015 + 0.004 * (1.0 - slopeTerm);
         float lit = 0.0;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {

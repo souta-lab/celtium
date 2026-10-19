@@ -497,7 +497,11 @@ public final class ShadowMapPass {
                 .renderArea(area).layerCount(1).pDepthAttachment(depth.get(0));
         // The map is read by the world pass of one frame and written by this pass of the next, both in the same command
         // buffer: the two barriers order the sampling against the write in both directions.
-        depthBarrier(commandBuffer, stack, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        boolean barriers = !Boolean.getBoolean("celtium.shadow.noBarriers");
+        if (barriers) {
+            depthBarrier(commandBuffer, stack, VK_ACCESS_SHADER_READ_BIT,
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        }
         vkCmdBeginRenderingKHR(commandBuffer, rendering);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipelineForThisDraw);
         vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
@@ -527,7 +531,10 @@ public final class ShadowMapPass {
             vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, Math.min(draws, indirectCount), 20);
         }
         vkCmdEndRenderingKHR(commandBuffer);
-        depthBarrier(commandBuffer, stack, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        if (barriers) {
+            depthBarrier(commandBuffer, stack, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT);
+        }
         this.passes++;
         this.terrainPasses++;
         if (this.terrainPasses == 60 && Boolean.getBoolean("celtium.shadow.depthSample")) {

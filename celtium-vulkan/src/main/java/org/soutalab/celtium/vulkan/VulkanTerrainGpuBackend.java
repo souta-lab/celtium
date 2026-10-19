@@ -14337,7 +14337,8 @@ this.frameBufferOpen = false;
             // offset bound for the shadow scope as well, which is not solved yet - borrowing the layout alone produced
             // VUID-VkGraphicsPipelineCreateInfo-layout-07988 and then seventeen messages in leg shadowTerrain2 (the
             // pipeline is created but the draw is not valid). The triangle path below is the verified one.
-            boolean terrainShadow = Boolean.getBoolean("celtium.shadow.terrain");
+            boolean terrainShadow = Boolean.getBoolean("celtium.shadow.terrain")
+                    && !Boolean.getBoolean("celtium.shadow.noPass");
             VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
             boolean drawn = false;
             if (terrainShadow && (this.frameId < 3 || this.frameId % 300 == 0)) {
@@ -14379,8 +14380,10 @@ this.frameBufferOpen = false;
                 java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
                         this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
                 lightViewProjection.get(0, matrix);
-                terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
-                        this.shadowMapPass.matrixBuffer().buffer());
+                if (!Boolean.getBoolean("celtium.shadow.noSources")) {
+                    terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
+                            this.shadowMapPass.matrixBuffer().buffer());
+                }
             }
             // The capture is one frame's geometry: the next frame records its own.
             this.terrain.resetShadowCapture();
