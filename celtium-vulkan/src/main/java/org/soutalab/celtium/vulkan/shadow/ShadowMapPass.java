@@ -24,6 +24,13 @@ import static org.lwjgl.vulkan.VK10.*;
  * the one call site, not a change spread through the renderer.
  */
 public final class ShadowMapPass {
+    /**
+     * Command pools whose submissions have not completed yet, with the fence that will tell: a pool may only be
+     * destroyed once the queue is done with its command buffers, and waiting here would serialise the frame against the
+     * pass. Each frame reclaims whatever has signalled.
+     */
+    private final java.util.ArrayDeque<long[]> pendingOwnSubmissions = new java.util.ArrayDeque<>();
+
     /** The edge length of the shadow map; a power of two because the depth comparison will filter across it. */
     public static final int SIZE = 2048;
 
@@ -687,7 +694,9 @@ public final class ShadowMapPass {
             return null;
         }
         long terrainPipelineForThisDraw = this.terrainPipelines.get(terrain).longValue();
+        reclaimCompletedSubmissions();
         long pool = VK_NULL_HANDLE;
+        long ownFence = VK_NULL_HANDLE;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             java.nio.LongBuffer handle = stack.mallocLong(1);
             if (vkCreateCommandPool(this.context.device(), org.lwjgl.vulkan.VkCommandPoolCreateInfo
@@ -724,11 +733,9 @@ public final class ShadowMapPass {
             vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                     .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
             if (descriptorSet == 0L) {
-                // Same rule as recordTerrain: no set 0, no draw.
-                vkCmdEndRenderingKHR(commandBuffer);
-                vkEndCommandBuffer(commandBuffer);
-                vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
-                        .pCommandBuffers(stack.pointers(commandBuffer.address())), VK_NULL_HANDLE);
+                // Same rule as recordTerrain: no set 0, no draw - and nothing to submit, so the pool this command buffer
+                // came from stays with the caller and is destroyed in its finally (submitting here and destroying the
+                // pool afterwards is what the layer reported as vkDestroyCommandPool ... is in use).
                 return "no descriptor set";
             }
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain.pipelineLayout(), 0,
@@ -747,8 +754,16 @@ public final class ShadowMapPass {
             depthBarrier(commandBuffer, stack, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                     VK_ACCESS_SHADER_READ_BIT);
             vkEndCommandBuffer(commandBuffer);
+            java.nio.LongBuffer fenceHandle = stack.mallocLong(1);
+            if (vkCreateFence(this.context.device(), org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack)
+                    .sType$Default(), null, fenceHandle) != VK_SUCCESS) {
+                return "fence failed";
+            }
+            ownFence = fenceHandle.get(0);
             vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
-                    .pCommandBuffers(stack.pointers(commandBuffer.address())), VK_NULL_HANDLE);
+                    .pCommandBuffers(stack.pointers(commandBuffer.address())), ownFence);
+            this.pendingOwnSubmissions.add(new long[]{pool, ownFence});
+            pool = VK_NULL_HANDLE;   // ownership moves to the pending list
             this.passes++;
             this.terrainPasses++;
             return "submitted draws=" + indirectCount;
@@ -788,6 +803,19 @@ public final class ShadowMapPass {
         if (this.memory != VK_NULL_HANDLE) {
             vkFreeMemory(this.context.device(), this.memory, null);
             this.memory = VK_NULL_HANDLE;
+        }
+    }
+
+    /** Destroys the pools of submissions the queue has finished, and no others. */
+    private void reclaimCompletedSubmissions() {
+        while (!this.pendingOwnSubmissions.isEmpty()) {
+            long[] pending = this.pendingOwnSubmissions.peek();
+            if (vkGetFenceStatus(this.context.device(), pending[1]) != VK_SUCCESS) {
+                return;
+            }
+            this.pendingOwnSubmissions.poll();
+            vkDestroyFence(this.context.device(), pending[1], null);
+            vkDestroyCommandPool(this.context.device(), pending[0], null);
         }
     }
 }

@@ -14389,9 +14389,11 @@ this.frameBufferOpen = false;
                     && !Boolean.getBoolean("celtium.shadow.noPass");
             VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
             boolean drawn = false;
-            if (Boolean.getBoolean("celtium.shadow.ownSubmission") && terrainPipeline != null) {
-                // The pass as its own queue packet: the frame's command buffer never carries it, which is what stalled
-                // the game, and the queue orders it against the frame's own submissions.
+            if (terrainPipeline != null && !Boolean.getBoolean("celtium.shadow.inFrame")) {
+                // The pass as its own queue packet, which is the default now: recording it into the frame's command
+                // buffer puts vkCmdBeginRendering inside the frame's render pass, and the validation layer says so on
+                // Intel (VUID-vkCmdBeginRendering-renderpass) - AMD stayed quiet about it. Its own submission has no
+                // enclosing pass, and the queue orders it against the frame's own submissions.
                 String submitted = this.shadowMapPass.recordTerrainAndSubmit(terrainPipeline,
                         this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
                         this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
