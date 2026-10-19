@@ -444,6 +444,17 @@ public final class ValidationClient {
          * its sky is the End's, its ground is the main island and its light is its own. No GL-bridge reference run
          * exists, so it is gated as uncalibrated rather than by the overworld's floors.
          */
+        /**
+         * The standard real-world scene: QMAGNET's Test Map (CurseForge project 71679, file 2467609, "QMAGNET's Test
+         * Map [1.12.1].zip", the newest upload; distributed map, installed as the save {@code qmagnet}) at the map's
+         * spawn, render distance 18, captured like the flat scene. It exists because the flat world is not what the
+         * renderer is played on: the user's own session (2026-10-19 07:21) runs render distance 18 with 19,600
+         * sections tracked, and a distributed map with real content is what a lag report is about. Reference: the GL
+         * arm on this same map and pose (2026-10-19, {@code run-qmref}, Celeritas 2.5.0-dev) measured
+         * distinctColours=2891, nonBackgroundFraction=0.622893, verticalBands=720, blackFraction=0.001949 at
+         * 1280x720; its floors are in {@link #celtium$worldMapGate()}.
+         */
+        WORLD_MAP("world", false, true),
         END("end", false, false),
         /**
          * Any other dimension the fixture is asked to travel to (dimension 2 and up). Recorded by name and dimension
@@ -1202,6 +1213,11 @@ public final class ValidationClient {
         if (scene == Scene.NETHER) {
             return new CameraPose(1.5D, 70.0D, 1.5D, 180.0F, 20.0F);
         }
+        if (scene == Scene.WORLD_MAP) {
+            // The map's own spawn point (level.dat SpawnX/Y/Z = 295/235/231), three blocks up and looking slightly
+            // down so the picture holds the exhibition floor rather than the sky.
+            return new CameraPose(295.5D, 238.0D, 231.5D, 180.0F, 18.0F);
+        }
         return new CameraPose(0.5D, 12.0D, 0.5D, 180.0F, 20.0F);
     }
 
@@ -1270,6 +1286,8 @@ public final class ValidationClient {
     /** The measured gate for a scene: the scene's own reference runs, their numbers, and the floors derived from them. */
     private static SceneGate celtium$measuredGate(Scene scene) {
         switch (scene) {
+            case WORLD_MAP:
+                return celtium$worldMapGate();
             case NETHER:
                 return celtium$netherGate();
             case VIDEO_SETTINGS:
@@ -1321,6 +1339,35 @@ public final class ValidationClient {
      * audit wants caught (outline2 0.6715 black at 11751 colours, outline5 0.321, tesr1 0.519 at 46 colours - all
      * three of which passed the old "more than 16 colours" test).
      */
+    /**
+     * The real-world scene's floors, measured on a GL-arm reference run of the same map at the same pose.
+     * <p>
+     * Reference (Celeritas 2.5.0-dev, {@code run-qmref}, 2026-10-19 10:31, scene=terrain with saveSlot=qmagnet,
+     * render distance 18, camera 295.5/238.0/231.5 yaw 180 pitch 18, 1280x720, picture =
+     * {@code screenshots/celtium-validation.png} written by the GL arm's own screenshot): distinctColours=2891,
+     * nonBackgroundFraction=0.622893, verticalBands=720, blackFraction=0.001949.
+     * <p>
+     * The floors follow the same rule as the flat scene's (the smaller reference with a stated margin):
+     * {@code nonBackgroundFraction >= 0.34} is 55% of 0.622893, {@code verticalBands >= 250} is 35% of 720, and
+     * {@code blackFraction <= 0.05} carries the same slack over the measured 0.001949 that the flat scene uses over its
+     * 0.000000. They are deliberately directional floors, not an equality: the distributed map is a real world whose
+     * content differs from the flat scene, so the gate asks "is there a rendered world here" rather than "is this
+     * pixel-identical to the reference".
+     */
+    private static SceneGate celtium$worldMapGate() {
+        String runs = "gl-arm run-qmref (2026-10-19 10:31, Celeritas 2.5.0-dev, scene=terrain with"
+                + " saveSlot=qmagnet, render distance 18, camera 295.5/238.0/231.5 yaw 180 pitch 18, 1280x720,"
+                + " picture=screenshots/celtium-validation.png)";
+        String numbers = "run-qmref: distinctColours=2891 nonBackgroundFraction=0.622893 verticalBands=720"
+                + " blackFraction=0.001949";
+        String margin = "nonBackgroundFraction floor 0.34 = 55% of the reference 0.622893; verticalBands floor 250 ="
+                + " 35% of the reference 720; blackFraction ceiling 0.05 = measured 0.001949 + 0.048";
+        String reference = "gl-arm " + runs + ": " + numbers + " -> floors distinctColours>16,"
+                + " nonBackgroundFraction>=0.34, verticalBands>=250, blackFraction<=0.05; margin: " + margin;
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.34D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+                numbers, margin, true);
+    }
+
     private static SceneGate celtium$terrainGate() {
         String runs = "gl-bridge scene-ref-terrain (2026-10-11 01:15, .celtium-work/runtime/scene-ref-terrain) and"
                 + " gl-bridge scene-floors/terrain-a (.celtium-work/runtime/scene-floors/terrain-a), both scene=terrain"
@@ -3230,7 +3277,8 @@ public final class ValidationClient {
                 // third of that. The override keeps every existing leg identical (default 8) while letting a leg run
                 // at the radius the report came from.
                 int renderDistance = Math.max(2, Math.min(32,
-                        Integer.getInteger("celtium.validation.renderDistance", 8).intValue()));
+                        Integer.getInteger("celtium.validation.renderDistance",
+                                celtium$scene == Scene.WORLD_MAP ? 18 : 8).intValue()));
                 mc.gameSettings.renderDistanceChunks = renderDistance;
                 report.addProperty("renderDistanceUsed", Integer.valueOf(renderDistance));
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
@@ -3274,12 +3322,17 @@ public final class ValidationClient {
                         celtium$controlledLoadingProbe = false;
                     }
                 }
-                if (celtium$saveSlot != null && !celtium$saveSlot.isEmpty()) {
+                // The real-world scene names its own save; an explicit -Dceltium.validation.saveSlot overrides it.
+                String saveSlot = celtium$saveSlot;
+                if ((saveSlot == null || saveSlot.isEmpty()) && celtium$scene == Scene.WORLD_MAP) {
+                    saveSlot = "qmagnet";
+                }
+                if (saveSlot != null && !saveSlot.isEmpty()) {
                     // An existing save instead of the generated flat world: the directory the runner copies the
                     // instance's saves into, loaded the way the game's own selection screen loads it - the real
                     // terrain/entity mix the flat world cannot show.
-                    report.addProperty("saveSlot", celtium$saveSlot);
-                    mc.launchIntegratedServer(celtium$saveSlot, celtium$saveSlot, null);
+                    report.addProperty("saveSlot", saveSlot);
+                    mc.launchIntegratedServer(saveSlot, saveSlot, null);
                 } else {
                     mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
                 }

@@ -124,7 +124,7 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         raise LegError("LEG must be 1-64 ASCII letters/digits/_/-, starting with a letter or digit")
     if type(duration) is not int or duration <= 0:
         raise LegError("duration must be a positive integer number of seconds")
-    if mode not in ("cohort", "plain", "e2e", "recipe") or gpu not in ("amd", "intel"):
+    if mode not in ("cohort", "plain", "e2e", "recipe", "world") or gpu not in ("amd", "intel"):
         raise LegError("unknown mode or GPU")
     for arg in extras:
         if "\0" in arg or not (re.fullmatch(r"-D[A-Za-z0-9_.-]+(?:=.*)?", arg, re.DOTALL)
@@ -154,6 +154,9 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         "cohort": Path.home() / ".local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha",
         "e2e": root / ".celtium-work/modpack-p0/prism-e2e-private/instances/e2e-1.93a-no-stellar-parallel",
         "recipe": root / ".celtium-work/modpack-p0/recipe-profile/instances/rlcraft-2.9.3-recipe",
+        # The standard real-world profile: the clone of the cohort instance that carries the distributed map
+        # (QMAGNET's Test Map) as the save "qmagnet". Clone it and install the map as that save to reproduce.
+        "world": Path.home() / ".local/share/PrismLauncher/instances/celtium-world-accept",
     }
     profile = "cohort" if mode == "plain" else mode
     instance = require_dir(Path(os.environ.get(f"CELTIUM_INSTANCE_{profile.upper()}", defaults[profile])))
@@ -203,9 +206,13 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     else:
         environment.pop("DRI_PRIME", None)
         render_node, required_gpu = "/dev/dri/by-path/pci-0000:03:00.0-render", "RX 6400"
+    # The real-world mode drives the fixture's own world scene, which names its map, its spawn pose and its render
+    # distance; every other mode keeps the flat acceptance scene.
+    scene = "world" if mode == "world" else "terrain"
     jvm_args = (["-Xmx5g"] if mode in ("e2e", "recipe") else []) + [
         "-Dceltium.vulkan.glless=true", "-Dceltium.vulkan.presentReadback=true", "-Dfml.readTimeout=120",
-        "-Dceltium.vulkan.validation=true", "-Dceltium.validation=true", "-Dceltium.validation.scene=terrain",
+        "-Dceltium.vulkan.validation=true", "-Dceltium.validation=true",
+        f"-Dceltium.validation.scene={scene}",
         "-Dceltium.validation.keepGui=true", "-Dceltium.validation.minWorldFrames=5",
         "-Dceltium.validation.pinSections=64", "-Dceltium.validation.screenshotAtTick=200",
         "-Dceltium.validation.dumpPresentedImage=true", f"-Dceltium.vulkan.frameDumpDir={paths['game'] / 'framedump'}",
@@ -535,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("leg")
     parser.add_argument("jar_dir", type=Path)
-    parser.add_argument("mode", choices=("cohort", "plain", "e2e", "recipe"))
+    parser.add_argument("mode", choices=("cohort", "plain", "e2e", "recipe", "world"))
     parser.add_argument("gpu", choices=("amd", "intel"))
     parser.add_argument("duration", nargs="?", type=int, default=900)
     parser.add_argument("jvm_args", nargs=argparse.REMAINDER)

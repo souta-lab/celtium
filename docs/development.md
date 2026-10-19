@@ -64,9 +64,14 @@ scripts/gv-leg.sh <unique-leg> .gv-verify/jars/<tag> cohort amd 900
 scripts/gv-leg.sh <different-leg> .gv-verify/jars/<tag> cohort intel 900
 ```
 
-- mode: `plain` / `cohort` / `e2e` / `recipe`。recipeはRLCraft移行profileでresources/structures/scriptsも要求する。
+- mode: `plain` / `cohort` / `world` / `e2e` / `recipe`。recipeはRLCraft移行profileでresources/structures/scriptsも要求する。
   profileの内容が完全かは別途確認し、mode名・mod数だけで完全pack互換を主張しない。
-- `CELTIUM_ROOT` / `CELTIUM_INSTANCE_COHORT` / `CELTIUM_INSTANCE_E2E` / `CELTIUM_INSTANCE_RECIPE`でcheckout/instanceを差し替える。
+- **`world` は実プレイ標準**（2026-10-19の利用者指示で平坦fixtureから移行）。配布ワールド
+  QMAGNET's Test Map（CurseForge project 71679 / file 2467609、`.celtium-work/worlds/` に展開・来歴は同dirのREADME）を
+  save `qmagnet` として持つclone instanceで走り、fixtureの `scene=world` がマップのspawnポーズ・描画距離18で撮影し、
+  同マップのGL参照runから測った床で判定する（`celtium$worldMapGate`）。instanceが無ければ
+  `CELTIUM_INSTANCE_COHORT` のcloneを作り `.celtium-work/worlds/qmagnet` を `minecraft/saves/qmagnet` へコピーする。
+- `CELTIUM_ROOT` / `CELTIUM_INSTANCE_COHORT` / `CELTIUM_INSTANCE_WORLD` / `CELTIUM_INSTANCE_E2E` / `CELTIUM_INSTANCE_RECIPE`でcheckout/instanceを差し替える。
 - IntelはrunnerがMesaの `DRI_PRIME=pci-0000_00_02_0!` を設定する。それでも結果のnative device行とGPU gateを読む。
 - 追加JVM引数は秒数の**後**へ1引数ずつ渡す（空白を含む値はquote）。同じキーを複数回書いた時の有効値も記録する。
 - **ゲームは同時に1つ**。ハーネスのworktree共通 `game-slot/owner.pid` が直列化する。旧 `gpu.lock` のmkdir待ちを重ねない。
