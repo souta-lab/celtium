@@ -5310,7 +5310,35 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         celtium$swapPushComponentFrame();
         // The parity arms: even frames use the cached answer, odd frames the live lookup. Only with the property set,
         // so a normal run never splits its counters.
+        if (!AB_PARITY_LABEL.isEmpty()) {
+            long boundary = System.nanoTime();
+            if (this.abLastFrameBoundaryNanos != 0L) {
+                int previousArm = this.abPreviousFrameBaseline ? 1 : 0;
+                long interval = boundary - this.abLastFrameBoundaryNanos;
+                this.abFrameIntervalNanos[previousArm] += interval;
+                this.abFrameIntervals[previousArm]++;
+                int millis = (int) (interval / 1000000L);
+                if (millis >= 0 && millis < AB_INTERVAL_BUCKETS) {
+                    this.abIntervalHistogram[previousArm][millis]++;
+                } else {
+                    this.abIntervalOverflow[previousArm]++;
+                }
+            }
+            this.abLastFrameBoundaryNanos = boundary;
+            this.abPreviousFrameBaseline = this.abBaselineArm;
+        }
         this.abBaselineArm = !AB_PARITY_LABEL.isEmpty() && (this.frameId & 1L) == 1L;
+        if (!AB_PARITY_LABEL.isEmpty()) {
+            // The label selects what the non-baseline (even-frame) arm changes. Every arm keeps the picture wrong by
+            // construction only where the property says so, and no leg with one of these on is evidence of anything
+            // except timing.
+            boolean skipArm = !this.abBaselineArm;
+            if ("skipPush".equals(AB_PARITY_LABEL)) {
+                org.soutalab.celtium.vulkan.VulkanImmediateTexturePipeline.abSkipPush = skipArm;
+            } else if ("skipDraw".equals(AB_PARITY_LABEL)) {
+                org.soutalab.celtium.vulkan.VulkanDynamicMesh.abSkipDraw = skipArm;
+            }
+        }
         if (PUSH_BLOCK_CACHE && this.pushBlocks.size() >= PUSH_BLOCK_LIMIT) {
             // The map is full: start over at a frame boundary, where no group is holding a reference to a block.
             this.pushBlocks.clear();
@@ -8961,6 +8989,28 @@ this.frameBufferOpen = false;
 
     /** Whether the current frame is the baseline arm of the parity A/B. */
     private boolean abBaselineArm;
+    /**
+     * The frame interval, measured at the frame boundary and accumulated per arm.
+     * <p>
+     * The interval is the number the KPI is about, and it is also the noisiest: two legs of the same jar differed by
+     * 2x this session. Alternating the arm by frame parity puts both arms in the same leg, so the per-arm means are
+     * comparable - the baseline arm is a built-in control for whatever the other arm changes.
+     */
+    private long abLastFrameBoundaryNanos;
+    private boolean abPreviousFrameBaseline;
+    private final long[] abFrameIntervalNanos = new long[2];
+    private final long[] abFrameIntervals = new long[2];
+    /**
+     * A per-arm histogram of frame intervals in whole milliseconds, 0..127, plus a tail bucket.
+     * <p>
+     * The mean is not usable here: the fixture's picture dumps and the occasional stall land on single frames and
+     * inflate one arm's average by milliseconds (measured: a skip-push arm reading 14.6 ms against 10.2 ms for the
+     * *unmodified* arm, which is physically backwards). A median from a millisecond histogram is immune to that.
+     */
+    private static final int AB_INTERVAL_BUCKETS = 128;
+    private final int[][] abIntervalHistogram = new int[2][AB_INTERVAL_BUCKETS];
+    /** Intervals at or past the last bucket, counted separately so the median cannot be dragged. */
+    private final int[] abIntervalOverflow = new int[2];
     /** Window-recording nanoseconds per arm, and the recordings each covers. */
     private final long[] windowRecordNanosByArm = new long[2];
     private final long[] windowRecordsByArm = new long[2];
@@ -13625,6 +13675,26 @@ this.frameBufferOpen = false;
                 ? Math.max(1L, this.pushComponentSamples[0]) : 0L;
     }
 
+    /** {@return the median interval in milliseconds for one arm, from its histogram} */
+    private double abMedianMillis(int arm) {
+        int total = 0;
+        for (int bucket = 0; bucket < AB_INTERVAL_BUCKETS; bucket++) {
+            total += this.abIntervalHistogram[arm][bucket];
+        }
+        if (total == 0) {
+            return -1.0;
+        }
+        int half = total / 2;
+        int seen = 0;
+        for (int bucket = 0; bucket < AB_INTERVAL_BUCKETS; bucket++) {
+            seen += this.abIntervalHistogram[arm][bucket];
+            if (seen >= half) {
+                return bucket + 0.5;
+            }
+        }
+        return AB_INTERVAL_BUCKETS;
+    }
+
     /** {@return the parity A/B's two arms, as recorded milliseconds per window} */
     private String abParitySummary() {
         if (AB_PARITY_LABEL.isEmpty()) {
@@ -13636,7 +13706,14 @@ this.frameBufferOpen = false;
                 : Math.round((double) this.windowRecordNanosByArm[0] / 1000000.0 / cachedRecords * 1000.0) / 1000.0;
         double baselineMs = baselineRecords == 0 ? -1.0
                 : Math.round((double) this.windowRecordNanosByArm[1] / 1000000.0 / baselineRecords * 1000.0) / 1000.0;
-        return AB_PARITY_LABEL + " cached=" + cachedMs + "ms/" + cachedRecords + " baseline=" + baselineMs + "ms/"
+        long armFrames = this.abFrameIntervals[0];
+        long armFramesBaseline = this.abFrameIntervals[1];
+        return AB_PARITY_LABEL + " medianArm=" + abMedianMillis(0) + "ms/" + armFrames + " medianBaseline="
+                + abMedianMillis(1) + "ms/" + armFramesBaseline + " meanArm="
+                + (armFrames == 0 ? -1.0 : Math.round((double) this.abFrameIntervalNanos[0] / 1000000.0 / armFrames * 100.0) / 100.0)
+                + " meanBaseline="
+                + (armFramesBaseline == 0 ? -1.0 : Math.round((double) this.abFrameIntervalNanos[1] / 1000000.0 / armFramesBaseline * 100.0) / 100.0)
+                + " recordCached=" + cachedMs + "ms/" + cachedRecords + " recordBaseline=" + baselineMs + "ms/"
                 + baselineRecords;
     }
 

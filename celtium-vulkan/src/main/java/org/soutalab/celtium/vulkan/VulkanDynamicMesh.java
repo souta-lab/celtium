@@ -495,11 +495,14 @@ public final class VulkanDynamicMesh {
      */
     private static final boolean SKIP_DRAW_CALLS = Boolean.getBoolean("celtium.debug.skipDrawCalls");
 
+    /** Set by the backend's parity A/B ({@code -Dceltium.debug.abParity=skipDraw}) so one arm skips the call. */
+    public static boolean abSkipDraw;
+
     public void draw(VkCommandBuffer commandBuffer) {
         if (this.indexCount == 0 || this.vertexCount == 0) {
             return;
         }
-        if (SKIP_DRAW_CALLS) {
+        if (SKIP_DRAW_CALLS || abSkipDraw) {
             return;
         }
         org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1, 0, 0, 0);
