@@ -2713,6 +2713,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the difference that decides whether a group drawn "successfully" can still leave no pixels.
      */
     private String immediateDrawSite = "none";
+
+    /**
+     * How many immediate groups each draw site recorded, and how many batches they carried.
+     * <p>
+     * The window census (windowOpenSites) named <em>who opens</em> the frame's five windows; this names <em>who draws</em>
+     * the groups, which is the other half of the question the failed pass-head experiment asked: its groups were moved
+     * to a new site and the picture broke, so "which site drew them, how often, and did any site draw them twice" has
+     * to be answerable before a second attempt. Counted per site, not per call, so a site that runs five times a frame
+     * is still one row.
+     */
+    /**
+     * The immediate windows' recording time, summed and counted over the whole run.
+     * <p>
+     * {@code FramePassTimings} reports a bracket's p50 <em>per call</em>, and the window path is reached from several
+     * sites, so "the flush is 0.7 ms" and "there are five windows a frame" cannot be combined into a per-frame cost
+     * without knowing how many recordings a frame actually has. These two fields are that denominator, and the summary
+     * prints the frame-normalised millisecond figure beside the raw counters.
+     */
+    private long windowRecordNanos;
+    /** How many immediate windows recorded, over the whole run. */
+    private long windowRecords;
+
+    private final java.util.Map<String, Integer> groupsDrawnBySite = new java.util.LinkedHashMap<String, Integer>();
+    /** The batch count per draw site, in the same order as {@link #groupsDrawnBySite}. */
+    private final java.util.Map<String, Integer> batchesDrawnBySite = new java.util.LinkedHashMap<String, Integer>();
     /** Lines of {@code CELTIUM_DRAW_SITE} printed; bounded by {@code celtium.vulkan.enqAll} + {@code enqFormat}. */
     /** Groups left in the queue because they belong to another render target (audit A32). */
     /** Off-target passes not begun because their target had no pending geometry. */
@@ -8120,7 +8145,10 @@ this.frameBufferOpen = false;
                             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
+                            long windowRecordStarted = System.nanoTime();
                             recordImmediateOnlyPass(stack, terrain);
+                            this.windowRecordNanos += System.nanoTime() - windowRecordStarted;
+                            this.windowRecords++;
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winRecord");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
@@ -9556,6 +9584,11 @@ this.frameBufferOpen = false;
                 + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " windowOpenSites=[" + windowOpenSiteSummary() + "]"
+                + " windowRecordMillis=" + (this.windowRecordNanos / 1000000L)
+                + " windowRecords=" + this.windowRecords
+                + " windowRecordPerFrameMillis=" + (this.frameId == 0L ? -1.0
+                        : Math.round((double) this.windowRecordNanos / 1000000.0 / this.frameId * 100.0) / 100.0)
+                + " drawSites=[" + drawSiteSummary() + "]"
                 + " splashSourcedGroups=" + this.targetStatistics.splashSourcedGroups()
                 + " splashCanvasInvalidations=" + this.targetStatistics.splashCanvasInvalidations()
                 + " immediateDrawSiteLogged=" + this.immediateStatistics.immediateDrawSiteLogged()
@@ -13298,6 +13331,32 @@ this.frameBufferOpen = false;
      * and that is exactly where the panorama's white lives. The rule is the same: the first frame with no splash
      * upload after one that had them ends the splash, and its canvases must not stay as any texture's content.
      */
+    /** Counts one drawn group against the site that recorded it, and the batches it carried. */
+    private void celtium$noteGroupDrawnAtSite(int batches) {
+        String site = this.immediateDrawSite;
+        Integer groups = this.groupsDrawnBySite.get(site);
+        this.groupsDrawnBySite.put(site, Integer.valueOf(groups == null ? 1 : groups.intValue() + 1));
+        Integer carried = this.batchesDrawnBySite.get(site);
+        this.batchesDrawnBySite.put(site, Integer.valueOf(carried == null ? batches : carried.intValue() + batches));
+    }
+
+    /** {@return the draw-site census as {@code site=groups/batches | ...}} */
+    private String drawSiteSummary() {
+        if (this.groupsDrawnBySite.isEmpty()) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> entry : this.groupsDrawnBySite.entrySet()) {
+            if (text.length() > 0) {
+                text.append(" | ");
+            }
+            Integer batches = this.batchesDrawnBySite.get(entry.getKey());
+            text.append(entry.getKey()).append('=').append(entry.getValue()).append('/')
+                    .append(batches == null ? 0 : batches.intValue());
+        }
+        return text.toString();
+    }
+
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {
         String site = "unattributed";
@@ -15541,6 +15600,7 @@ this.frameBufferOpen = false;
                 }
                 this.immediateStatistics.noteImmediateFlushes();
                 this.frameDrawn++;
+                celtium$noteGroupDrawnAtSite(group.batches);
                 if (group.formatId >= 0 && group.formatId < this.drawnByFormat.length) {
                     // Batches, not groups: acceptedByFormat counts batches, so counting groups here would compare a
                     // group against a batch and read as "38,123 accepted, 1,358 drawn" for formats whose batches merge
