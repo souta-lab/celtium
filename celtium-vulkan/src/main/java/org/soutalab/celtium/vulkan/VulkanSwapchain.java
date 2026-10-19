@@ -204,6 +204,8 @@ public final class VulkanSwapchain {
     /** Freshly created semaphores awaiting destruction with the swapchain (the {@code FRESH_SEMAPHORES} experiment). */
     private final java.util.List<Long> freshSemaphorePool = new java.util.ArrayList<Long>();
     private int presentReadbacks;
+    /** How many presented-image dumps have been written; printed so the dump tax can be measured. */
+    private static int presentDumpWrites;
     /**
      * Whether the last {@code presentImage} submission reached the queue, and whether its present reached the screen.
      * <p>
@@ -357,7 +359,14 @@ public final class VulkanSwapchain {
         if (image == VK_NULL_HANDLE || this.width <= 0 || this.height <= 0) {
             return false;
         }
+        long writeStartedNanos = System.nanoTime();
         int[] pixels = readBackBlock(this.context, image, this.width, this.height, 0, 0, this.width, this.height);
+        presentDumpWrites++;
+        if (presentDumpWrites <= 12 || presentDumpWrites % 50 == 0) {
+            System.out.println("[Celtium] CELTIUM_DUMP_WRITE count=" + presentDumpWrites
+                    + " path=" + path.getFileName()
+                    + " readbackMillis=" + ((System.nanoTime() - writeStartedNanos) / 1_000_000L));
+        }
         if (pixels == null) {
             return false;
         }

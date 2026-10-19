@@ -14876,7 +14876,7 @@ this.frameBufferOpen = false;
         if (every <= 0 || presented % every != 0) {
             return;
         }
-        if (this.frameDumpsWritten >= Integer.getInteger("celtium.vulkan.frameDumpCount", 6).intValue()) {
+        if (this.frameDumpsWritten >= Integer.getInteger("celtium.vulkan.frameDumpCount", 0).intValue()) {
             return;
         }
         this.frameDumpsWritten++;
