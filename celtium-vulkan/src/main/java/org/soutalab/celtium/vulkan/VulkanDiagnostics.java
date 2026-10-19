@@ -19,9 +19,17 @@ public final class VulkanDiagnostics {
     /** Explicit switch, for a support session that wants the repeating lines without a validation run. */
     public static final String PROPERTY = "celtium.vulkan.diagnostics";
 
+    /**
+     * The switch, the Vulkan validation layer, and nothing else.
+     * <p>
+     * {@code celtium.validation} used to count as a trigger, and it is the acceptance fixture's own switch - the leg
+     * runner always passes it - so every KPI leg ran with the renderer's repeating censuses on: the target census
+     * alone is documented at ~0.5-1.0 ms a frame for this scene. A fixture switch is not a reason to spend that in the
+     * frame being measured. A run that wants the lines asks for them with {@code celtium.vulkan.diagnostics}, which the
+     * leg runner can pass when a leg's purpose is the census rather than the frame time.
+     */
     private static final boolean ENABLED =
             Boolean.getBoolean(PROPERTY)
-                    || Boolean.getBoolean("celtium.validation")
                     || Boolean.getBoolean("celtium.vulkan.validation");
 
     private VulkanDiagnostics() {
