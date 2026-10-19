@@ -455,18 +455,34 @@ public final class TextureCopyService {
                 blitRefusal = "the source is the window and windowCopyBlit is off (A/B arm)";
             }
             if (blitRefusal == null) {
-                // The faces' window first, and no wait: the queue runs the blit after the draws that filled the
-                // source and before the draws that sample the mirror, which is the ordering the host path got from
-                // waiting for the device to go idle.
+                // The source has to be real pixels before the blit runs. Flushing alone is not enough under the
+                // unified frame buffer: the draws stay *recorded* in the open buffer and are submitted at the frame
+                // boundary, i.e. after this blit - measured as the main menu's grey background (1,830 distinct
+                // colours with the blit route, 50,882 with the host route, whose waitForIdle submits the open buffer
+                // first). The wait is paid only when there is pending work to confirm, and the blit route stays the
+                // cheaper one afterwards (no readback, no upload).
                 if (this.host.hasPendingImmediateWork()) {
                     this.host.flushPendingBeforeGlDraw();
+                    if (!this.host.waitForIdle()) {
+                        blitRefusal = "the GPU did not confirm the source's draws before the native copy";
+                    }
                 }
+            }
+            if (blitRefusal == null) {
                 VkCommandBuffer commands = this.host.context().beginCommands();
                 try {
                     String recorded = this.host.registry().blitInto(destName, commands, image,
                             this.host.targetWidth(), this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
                     if (recorded == null) {
                         this.host.context().celtium$submitDeferred(commands, 0L);
+                        // Ordering: the deferred list is normally flushed at the frame boundary, which is *after* the
+                        // draws that sample the mirror this blit fills - the blur passes (`rotateAndBlurSkybox`) land
+                        // in the same frame's recordings and would read the stale mirror. Submitting now keeps the
+                        // blit in queue order before everything the game records from here on, which is the ordering
+                        // the host route got from waiting for the device. Measured as the main menu's panorama: with
+                        // the host route (nativeTextureCopy=false) the frame held 50,882 distinct colours, with the
+                        // deferred blit 1,830 - a grey background.
+                        this.host.context().celtium$flushBatchedSubmits();
                         commands = null; // submitted: the context owns it and frees it at its fence
                         this.textureCopyBlits++;
                         this.textureCopiesServedThisFrame.put(copyKey, Long.valueOf(copyMarker));
