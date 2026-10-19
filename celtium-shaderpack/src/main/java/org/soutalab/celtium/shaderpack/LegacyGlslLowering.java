@@ -154,6 +154,19 @@ public final class LegacyGlslLowering {
      */
     public static Result lower(Stage stage, String source, Map<String, Integer> locations,
                                Map<String, Integer> bindings) {
+        return lower(stage, source, locations, bindings, Map.of(), false);
+    }
+
+    /**
+     * Lowers one stage against a program-wide contract.
+     *
+     * @param sharedUniforms  the union of both stages' declarations, so the block has one type for the whole program
+     * @param canonicalTransforms when true the transform block always carries every fixed-function matrix, again so the
+     *                        two stages agree on its type
+     */
+    public static Result lower(Stage stage, String source, Map<String, Integer> locations,
+                               Map<String, Integer> bindings, Map<String, String> sharedUniforms,
+                               boolean canonicalTransforms) {
         Map<String, Integer> assigned = new LinkedHashMap<>(locations);
         List<String> unsupported = new ArrayList<>();
         List<String> uniforms = new ArrayList<>();
@@ -169,6 +182,7 @@ public final class LegacyGlslLowering {
         boolean usesTransforms = false;
         /** Whether {@code ftransform()} itself was rewritten, which is what needs the helper function. */
         boolean usesFtransform = false;
+
         boolean usesFragmentColour = false;
         boolean usesFragmentData = false;
         int originalVersion = 0;
@@ -182,6 +196,21 @@ public final class LegacyGlslLowering {
         Map<String, String> samplerRenames = new LinkedHashMap<>();
         Map<String, String> plainUniforms = new LinkedHashMap<>();
         java.util.Set<String> declaredLocals = new java.util.LinkedHashSet<>();
+        // The program-wide contract, applied once the local state exists: the union of what both stages declared, so
+        // both emit the same block types.
+        for (Map.Entry<String, String> shared : sharedUniforms.entrySet()) {
+            if (!plainUniforms.containsKey(shared.getKey())) {
+                plainUniforms.put(shared.getKey(), shared.getValue());
+            }
+        }
+        if (canonicalTransforms) {
+            for (Map.Entry<String, String> matrix : BUILTIN_MATRICES.entrySet()) {
+                if (!uniforms.contains(matrix.getValue())) {
+                    uniforms.add(matrix.getValue());
+                }
+            }
+            usesTransforms = true;
+        }
         GlslComments prescan = new GlslComments();
         for (String line : lines) {
             String code = prescan.split(line).code();
@@ -531,6 +560,61 @@ public final class LegacyGlslLowering {
         }
         // "vec3 fogColor = ..." and "vec3 a, b;" both declare names; the first is enough for the shadowing rule.
         return name;
+    }
+
+    /**
+     * What one stage's source needs in the two blocks, for lowering a program's stages against the same layout.
+     * <p>
+     * A pipeline layout has one binding per block, and both stages' shaders have to declare the SAME type there: one
+     * stage emitting the members it uses and the other emitting a different set is what
+     * VUID-VkGraphicsPipelineCreateInfo-layout-07990 reports ("the pipeline layout is not compatible with the shader").
+     * Scanning first and lowering both stages against the union keeps one type for both.
+     */
+    public record Needs(Map<String, String> uniforms, java.util.List<String> samplers, boolean transforms,
+                        boolean ftransform) {
+    }
+
+    /** {@return what the blocks would have to contain for this source}. */
+    public static Needs scan(String source) {
+        java.util.Map<String, String> uniforms = new LinkedHashMap<>();
+        java.util.List<String> samplers = new ArrayList<>();
+        boolean transforms = false;
+        boolean ftransform = false;
+        GlslComments comments = new GlslComments();
+        for (String line : source.split("\n", -1)) {
+            String code = comments.split(line).code();
+            String plain = plainUniformDeclaration(code);
+            if (plain != null) {
+                for (String one : plain.substring("uniform ".length()).split("\u0000")) {
+                    String normalised = one.trim().replaceAll("\\s+", " ");
+                    String[] parts = normalised.split(" ");
+                    if (parts.length > 1) {
+                        String name = parts[1];
+                        int bracket = name.indexOf('[');
+                        uniforms.put(bracket >= 0 ? name.substring(0, bracket) : name, normalised);
+                    }
+                }
+            }
+            String opaque = samplerDeclaration(code);
+            if (opaque != null) {
+                for (String one : opaque.substring("uniform ".length()).split("\u0000")) {
+                    String[] parts = one.split(" ");
+                    if (parts.length > 1 && !samplers.contains(parts[1])) {
+                        samplers.add(parts[1]);
+                    }
+                }
+            }
+            if (containsIdentifier(code, "ftransform")) {
+                ftransform = true;
+                transforms = true;
+            }
+            for (Map.Entry<String, String> matrix : BUILTIN_MATRICES.entrySet()) {
+                if (containsIdentifier(code, matrix.getKey())) {
+                    transforms = true;
+                }
+            }
+        }
+        return new Needs(uniforms, samplers, transforms, ftransform);
     }
 
     /** {@return the interpolation qualifier a declaration starts with ({@code flat}, {@code smooth}, ...)}, or null. */

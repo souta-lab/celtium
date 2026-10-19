@@ -14055,12 +14055,36 @@ this.frameBufferOpen = false;
                             java.util.Map.of("MC_VERSION", "11202"));
                     String fragmentSource = org.soutalab.celtium.shaderpack.ShaderPackLoader.expand(pack, fragmentPath,
                             java.util.Map.of("MC_VERSION", "11202"));
+                    // One contract for both stages: the union of what each of them declared, so the two shaders name
+                    // the same block types at the same bindings.
+                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Needs vertexNeeds =
+                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.scan(vertexSource);
+                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Needs fragmentNeeds =
+                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.scan(fragmentSource);
+                    java.util.Map<String, String> contractUniforms = new java.util.LinkedHashMap<>(vertexNeeds.uniforms());
+                    contractUniforms.putAll(fragmentNeeds.uniforms());
+                    boolean contractTransforms = vertexNeeds.transforms() || fragmentNeeds.transforms();
+                    // Blocks take 0 and 1; samplers start at 2. Letting the lowering number them from 0 put the first
+                    // sampler on the transform block's binding - "pBindings[2].binding and pBindings[0].binding are
+                    // both 0" - which then made the layout's type disagree with the vertex shader's use of binding 0.
+                    java.util.Map<String, Integer> samplerBindings = new java.util.LinkedHashMap<>();
+                    java.util.List<String> allSamplers = new java.util.ArrayList<>(vertexNeeds.samplers());
+                    for (String sampler : fragmentNeeds.samplers()) {
+                        if (!allSamplers.contains(sampler)) {
+                            allSamplers.add(sampler);
+                        }
+                    }
+                    for (int i = 0; i < allSamplers.size(); i++) {
+                        samplerBindings.put(allSamplers.get(i), Integer.valueOf(2 + i));
+                    }
                     org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result vertex =
                             org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
-                                    org.soutalab.celtium.shaderpack.Stage.VERTEX, vertexSource, java.util.Map.of());
+                                    org.soutalab.celtium.shaderpack.Stage.VERTEX, vertexSource, java.util.Map.of(),
+                                    samplerBindings, contractUniforms, contractTransforms);
                     org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result fragment =
                             org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
-                                    org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragmentSource, java.util.Map.of());
+                                    org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragmentSource, java.util.Map.of(),
+                                    samplerBindings, contractUniforms, contractTransforms);
                     org.soutalab.celtium.shaderpack.SpirvModule vertexModule =
                             compiler.compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertex.source());
                     org.soutalab.celtium.shaderpack.SpirvModule fragmentModule =
