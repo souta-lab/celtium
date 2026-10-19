@@ -60,7 +60,12 @@ public final class FramePassTimings {
             "closeGroup", "windowSetup",
             // The flush's per-group halves: everything the group's own draw needs prepared (descriptor resolution,
             // push-block fill, viewport and bias state) against the pipeline call that binds and draws it.
-            "grpPrep", "grpDraw"};
+            "grpPrep", "grpDraw",
+            // The per-group body of the immediate flush, in four pieces: the state/descriptor resolution, the
+            // push-block fill (matrix, fog, colour, light map), the viewport/scissor/depth-bias state, and the
+            // pipeline's bind+draw call. ~2.5 us a group at 332 groups a frame is the largest renderer-owned item
+            // left, and the four names say which piece it is.
+            "rcResolve", "rcPush", "rcViewport"};
 
     private static final int CAPACITY = 512;
 

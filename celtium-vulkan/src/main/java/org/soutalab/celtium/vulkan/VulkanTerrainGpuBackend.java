@@ -15274,6 +15274,7 @@ this.frameBufferOpen = false;
                     this.immediateStatistics.noteImmediateGroupsKeptForOtherTargets();
                     continue;
                 }
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("rcResolve");
                 if (SELF_COMPOSITE_SKIP && (celtium$isSelfCompositeGroup(group)
                         || celtium$isPairSelfCompositeGroup(group))) {
                     // The game's finished-frame composite, sampling the image it is about to be drawn into. Dropped by
@@ -15442,6 +15443,8 @@ this.frameBufferOpen = false;
                         }
                     }
                 }
+                org.soutalab.celtium.vulkan.FramePassTimings.end("rcResolve");
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("rcPush");
                 pushCombinedMatrixInto(group.projection, group.modelView, push, 0);
                 // The push buffer is shared by every group in this flush, so the texture-matrix slots must be
                 // rewritten per group rather than only when a matrix is present: a stale affine would otherwise leak
@@ -15539,6 +15542,8 @@ this.frameBufferOpen = false;
                 // parameter arrays before this scope ends; Vulkan owns the recorded handles.
                 long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
+                org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("rcViewport");
                 try (MemoryStack groupStack = MemoryStack.stackPush()) {
                     celtium$setGroupViewport(groupStack, group);
                     // BH-11: GL's polygon offset, applied as this group's depth bias. It is command state - one
@@ -15577,6 +15582,7 @@ this.frameBufferOpen = false;
                     // the dense scene (winRecord 2.8 of it), and the questions are "which half" and "is it the
                     // driver call or our own state preparation". Both brackets nest inside winRecord.
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("rcViewport");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
                     if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                     else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
