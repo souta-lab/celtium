@@ -240,8 +240,10 @@ class LegRunnerTests(unittest.TestCase):
         # The one control that may be turned off: the validation layer is the correctness arm's switch, and the
         # shipping configuration runs without it - measured at 6.6 ms of an 11.0 ms frame on the standard scene, so
         # a performance arm has to be able to say so. The plan keeps the two numbers apart.
-        plan = self.plan(extras=["-Dceltium.vulkan.validation=false"])
-        self.assertEqual(plan.command.count("--jvm-arg=-Dceltium.vulkan.validation=false"), 1)
+        for extra in ("-Dceltium.vulkan.validation=false", "-Dceltium.vulkan.presentReadback=false"):
+            with self.subTest(extra=extra):
+                plan = self.plan(extras=[extra])
+                self.assertEqual(plan.command.count(f"--jvm-arg={extra}"), 1)
         with self.assertRaisesRegex(runner.LegError, "celtium.vulkan.presentedDumpEvery"):
             self.plan(extras=["-Dceltium.validation.presentedDumpEvery=0"])
 

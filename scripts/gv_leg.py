@@ -133,12 +133,15 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         key, _, value = arg.partition("=")
         if key == "-Dceltium.validation.presentedDumpEvery":
             raise LegError("unknown celtium.validation.presentedDumpEvery; use -Dceltium.vulkan.presentedDumpEvery=0")
-        if key == "-Dceltium.vulkan.validation" and value.lower() == "false":
-            # The one opt-out, and it is a measurement switch rather than a mode. The correctness arms keep the
-            # validation layer on - that is where the VUID evidence comes from - while the shipping configuration has
-            # it off. Measured on the standard scene, the layer costs 6.6 ms of an 11.0 ms frame, so a performance
-            # number quoted from a validation-on arm is a validation-layer number, not the renderer's; a leg that
-            # turns it off has to say so wherever its numbers are used.
+        if key in ("-Dceltium.vulkan.validation", "-Dceltium.vulkan.presentReadback") and value.lower() == "false":
+            # The two opt-outs, and both are measurement switches rather than modes.
+            # -Dceltium.vulkan.validation: the correctness arms keep the layer on (that is where the VUID evidence
+            # comes from) while the shipping configuration has it off; measured on the standard scene it costs 6.6 ms
+            # of an 11.0 ms frame.
+            # -Dceltium.vulkan.presentReadback: the runner's default reads the presented image back on every present
+            # (the bridge legs' picture check), which JFR put 16% of the client thread's samples inside - a GPU sync
+            # and a full 1280x720 readback per frame. A performance arm turns both off and checks its picture through
+            # the requested dump instead; the numbers from such a leg have to be labelled as the shipping arm.
             pass
         elif key in ("-Dceltium.vulkan.glless", "-Dceltium.vulkan.validation", "-Dceltium.validation",
                      "-Dceltium.vulkan.presentReadback", "-Dceltium.validation.dumpPresentedImage") and value.lower() != "true":
