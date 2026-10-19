@@ -63,6 +63,13 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private final List<Integer> vertexBufferLocations = new ArrayList<>();
     private int vertexCount;
 
+    /** The index buffer for quad-sourced geometry, and how many indices it holds; zero means a plain draw. */
+    /** One-shot diagnostic switch for the fitted transform. */
+    private boolean geometryFitLogged;
+
+    private VulkanHostBuffer geometryIndices;
+    private int geometryIndexCount;
+
     /** Byte capacity of each vertex buffer, so a larger geometry replaces rather than overruns one. */
     private final java.util.List<Long> vertexBufferCapacities = new java.util.ArrayList<>();
 
@@ -493,7 +500,12 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 vkCmdBindVertexBuffers(commandBuffer, this.vertexBufferLocations.get(index).intValue(),
                         stack.longs(this.vertexBuffers.get(index).buffer()), stack.longs(0L));
             }
-            vkCmdDraw(commandBuffer, this.vertexCount, 1, 0, 0);
+            if (this.geometryIndexCount > 0 && this.geometryIndices != null) {
+                vkCmdBindIndexBuffer(commandBuffer, this.geometryIndices.buffer(), 0L, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(commandBuffer, this.geometryIndexCount, 1, 0, 0, 0);
+            } else {
+                vkCmdDraw(commandBuffer, this.vertexCount, 1, 0, 0);
+            }
         }
     }
 
@@ -574,6 +586,32 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 data.put(i, values[i]);
             }
             index++;
+        }
+        // A format-2 batch is a GL_QUADS list and the probe draws triangles: the quads are indexed explicitly, because
+        // drawing the quad corners as a triangle list produced no pixels at all.
+        int quads = count / 4;
+        if (quads > 0) {
+            int[] indices = new int[quads * 6];
+            for (int quad = 0; quad < quads; quad++) {
+                int base = quad * 4;
+                indices[quad * 6] = base;
+                indices[quad * 6 + 1] = base + 1;
+                indices[quad * 6 + 2] = base + 2;
+                indices[quad * 6 + 3] = base;
+                indices[quad * 6 + 4] = base + 2;
+                indices[quad * 6 + 5] = base + 3;
+            }
+            long indexBytes = (long) indices.length * 4L;
+            if (this.geometryIndices != null) {
+                this.geometryIndices.delete();
+            }
+            this.geometryIndices = new VulkanHostBuffer(this.context, indexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            this.buffers.add(this.geometryIndices);
+            java.nio.IntBuffer indexData = MemoryUtil.memIntBuffer(this.geometryIndices.mappedAddress(), indices.length);
+            for (int i = 0; i < indices.length; i++) {
+                indexData.put(i, indices[i]);
+            }
+            this.geometryIndexCount = indices.length;
         }
         this.vertexCount = count;
         // World-space captured vertices with an identity transform land outside clip space and are clipped (measured),
@@ -706,6 +744,13 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         writeTransformMatrix((8 * 16 + 12) * 4, identityMatrix());
         writeTransformMatrix((8 * 16 + 28) * 4, fit);
         writeTransformMatrix((8 * 16 + 44) * 4, fit);
+        if (!geometryFitLogged) {
+            geometryFitLogged = true;
+            System.out.println("[Celtium] CELTIUM_PACK_FIT blockAddress=" + Long.toHexString(this.transformBlockAddress)
+                    + " vertices=" + vertices + " bounds=[" + minX + "," + maxX + "]x[" + minY + "," + maxY + "]"
+                    + " scale=" + scale + " first3=[" + positions[0] + "," + positions[1] + "]["
+                    + positions[4] + "," + positions[5] + "][" + positions[8] + "," + positions[9] + "]");
+        }
         return String.format(java.util.Locale.ROOT, "bounds=%.1fx%.1f scale=%.4f", extentX, extentY, scale);
     }
 
