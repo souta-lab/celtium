@@ -27,6 +27,27 @@ public final class SpirvStageCompiler {
 
     private SpirvStageCompiler() {}
 
+    /** The external-tool route as a {@link GlslCompiler}, so the renderer can pick between the two by availability. */
+    public static GlslCompiler external(Path glslangValidator) {
+        return new GlslCompiler() {
+            @Override public SpirvModule compile(Stage stage, String source) throws CompileFailure {
+                try {
+                    return SpirvStageCompiler.compile(glslangValidator, stage, source);
+                } catch (IOException | InterruptedException failure) {
+                    throw new CompileFailure("glslangValidator failed: " + failure);
+                }
+            }
+
+            @Override public String name() {
+                return "glslangValidator";
+            }
+
+            @Override public boolean available() {
+                return Files.isRegularFile(glslangValidator) && Files.isExecutable(glslangValidator);
+            }
+        };
+    }
+
     public static SpirvModule compile(Path glslangValidator, Stage stage, String source)
             throws IOException, InterruptedException, CompileFailure {
         if (stage != Stage.VERTEX && stage != Stage.FRAGMENT) {

@@ -37,6 +37,10 @@ dependencies {
     compileOnly 'org.lwjgl:lwjgl'
     compileOnly 'org.lwjgl:lwjgl-opengl'
     compileOnly 'org.lwjgl:lwjgl-vulkan'
+    // The in-process GLSL compiler for shaderpacks (S2). compileOnly like every other LWJGL module: the validated
+    // installation provides the bindings, and ShadercGlslCompiler reports a diagnostic when they are absent instead of
+    // failing. It is the distributable alternative to the external glslangValidator the frontend's probe uses.
+    compileOnly 'org.lwjgl:lwjgl-shaderc'
     // The swapchain needs the window's native handles, which GLFW exposes; like the other LWJGL modules this is
     // never bundled and the module reports a diagnostic when it is missing.
     compileOnly 'org.lwjgl:lwjgl-glfw'
@@ -50,6 +54,12 @@ dependencies {
     testImplementation platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
     testImplementation 'org.lwjgl:lwjgl'
     testImplementation 'org.lwjgl:lwjgl-opengl'
+    // Version pinned: testRuntimeOnly does not extend testImplementation, so the BOM declared there does not constrain
+    // this configuration and the unversioned form silently resolved to nothing.
+    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:3.4.1'
+    // Four-part notation: the three-part form is group:name:version, so "natives-linux" there was read as a version and
+    // the natives jar never resolved - the test then failed on the binding being present without its library.
+    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:3.4.1:natives-linux'
     testImplementation 'org.lwjgl:lwjgl-vulkan'
     testImplementation 'com.google.code.gson:gson:2.10.1'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
@@ -71,7 +81,34 @@ configurations {
 artifacts {
     modEmbed(tasks.named('jar'))
 }
-tasks.named('test') { useJUnitPlatform() }
+tasks.named('test') {
+    useJUnitPlatform()
+    // LWJGL extracts a native from the classpath only when java.library.path is not already set, and a Gradle test JVM
+    // sets it - so the shaderc natives are unpacked and pointed at with org.lwjgl.librarypath instead of being relied
+    // on to appear. Measured: without this the binding class fails its own initialiser with NoClassDefFoundError and
+    // the compiler reports "could not be loaded", which is a distribution problem as much as a test one: a shipped mod
+    // has to put the library somewhere LWJGL will find it.
+    def shadercNatives = layout.buildDirectory.dir('shaderc-natives')
+    doFirst {
+        def dir = shadercNatives.get().asFile
+        dir.mkdirs()
+        configurations.testRuntimeClasspath.resolve()
+                .findAll { it.name.startsWith('lwjgl-shaderc') && it.name.contains('natives') }
+                .each { jar ->
+                    // The natives jar keeps LWJGL's own layout (linux/x64/org/lwjgl/shaderc/libshaderc.so) and LWJGL
+                    // looks for the library directly in org.lwjgl.librarypath, so the files are flattened as they are
+                    // copied. Measured: extracting with the layout intact left the loader with no library in that
+                    // directory and the binding class failing its initialiser.
+                    copy {
+                        from zipTree(jar).matching { include '**/*.so', '**/*.dylib', '**/*.dll' }
+                        into dir
+                        eachFile { it.path = it.name }
+                        includeEmptyDirs = false
+                    }
+                }
+    }
+    systemProperty 'org.lwjgl.librarypath', shadercNatives.get().asFile.absolutePath
+}
 
 // ------------------------------------------------------------------------------------------------
 // Terrain shaders: GLSL -> SPIR-V, as part of the build.
