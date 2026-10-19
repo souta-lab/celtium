@@ -7782,7 +7782,19 @@ this.frameBufferOpen = false;
             // window's pass is exactly that point - the pass has ended, the frame buffer is still open, and the present
             // has not been queued.
             celtium$recordShaderPackDraw();
-            celtium$recordShadowPass();
+            long shadowStart = System.nanoTime();
+            try {
+                celtium$recordShadowPass();
+            } finally {
+                long shadowNanos = System.nanoTime() - shadowStart;
+                this.shadowRecordNanos += shadowNanos;
+                if (this.shadowRecordPrints < 8 || shadowNanos > 50_000_000L) {
+                    this.shadowRecordPrints++;
+                    System.out.println("[Celtium] CELTIUM_SHADOW_RECORD millis=" + (shadowNanos / 1_000_000L)
+                            + " totalMillis=" + (this.shadowRecordNanos / 1_000_000L)
+                            + " frame=" + this.frameId);
+                }
+            }
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
             celtium$finishFrameBuffer();
@@ -13969,6 +13981,8 @@ this.frameBufferOpen = false;
     private VulkanTerrainPipeline shadowTerrainPipeline;
     private int shadowShadowDiag;
     private boolean shadowProbeReported;
+    private long shadowRecordNanos;
+    private int shadowRecordPrints;
     private org.soutalab.celtium.vulkan.shadow.ShadowMapPass shadowMapPass;
     private int terrainCaptureStride;
     private int terrainCaptureCount;
