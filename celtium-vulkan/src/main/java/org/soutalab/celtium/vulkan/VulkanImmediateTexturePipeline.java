@@ -41,6 +41,26 @@ import static org.lwjgl.vulkan.VK10.*;
  * Threading: render thread only.
  */
 public final class VulkanImmediateTexturePipeline {
+
+    /** Bounded census of the layout a descriptor is actually written with, for VUID-vkCmdDraw-None-09600. */
+    private static int descLayoutLogs;
+
+    /** Prints the layout of the descriptor write about to be issued, bounded, so the offending write names itself. */
+    static void celtium$noteDescWrite(org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write) {
+        if (descLayoutLogs >= 24 || write == null || write.remaining() == 0) {
+            return;
+        }
+        org.lwjgl.vulkan.VkDescriptorImageInfo.Buffer images = write.get(0).pImageInfo();
+        int layout = images == null ? -1 : images.get(0).imageLayout();
+        descLayoutLogs++;
+        String name = layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL ? "GENERAL"
+                : layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? "SHADER_READ_ONLY"
+                : layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ? "TRANSFER_DST"
+                : Integer.toString(layout);
+        System.out.println("[Celtium] CELTIUM_DESC_WRITE layout=" + name + " images="
+                + (images == null ? 0 : images.remaining()));
+    }
+
     /** {@code POSITION_TEX_COLOR}: 3 floats position, 2 floats texture coordinates, 4 unsigned bytes colour. */
     public static final int VERTEX_BYTES = 24;
 
@@ -521,6 +541,7 @@ public final class VulkanImmediateTexturePipeline {
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(1)
                     .pImageInfo(image);
+            celtium$noteDescWrite(write);
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(Long.valueOf(texture.key()), Long.valueOf(set));
             DESCRIPTOR_KEYS_CACHED.incrementAndGet();
