@@ -315,6 +315,15 @@ public final class VulkanTerrainPipeline {
     private int uniformsRange;
 
     /** The vertex layout of the pass this pipeline draws. */
+    /**
+     * The matrix bound when no shadow pass runs: identity with the translation pushed far away, so the fragment stage's
+     * projective divide gives a coordinate well outside the map and the lookup is skipped - with finite values. Binding
+     * the region uniform buffer there instead, as this did at first, meant the shader divided whatever those bytes
+     * happened to be, and a non-finite coordinate makes the derivative pair the shader takes unconditionally
+     * non-finite as well.
+     */
+    private org.soutalab.celtium.vulkan.VulkanHostBuffer fallbackShadowMatrix;
+
     /** Where the shadow map and its matrix come from; zero while no shadow pass is running. */
     private long shadowView;
     private long shadowSampler;
@@ -696,7 +705,9 @@ public final class VulkanTerrainPipeline {
                     .imageView(shadowing && !dummySample ? this.shadowView : lightmap.view())
                     .imageLayout(shadowing && !dummySample ? VK_IMAGE_LAYOUT_GENERAL : lightmap.samplingLayout());
             VkDescriptorBufferInfo.Buffer shadowBuffer = VkDescriptorBufferInfo.calloc(1, stack);
-            shadowBuffer.get(0).buffer(this.shadowUniform != 0L ? this.shadowUniform : uniformBuffer)
+            createFallbackShadowMatrix();
+            shadowBuffer.get(0).buffer(this.shadowUniform != 0L ? this.shadowUniform
+                            : this.fallbackShadowMatrix.buffer())
                     .offset(0L).range(64L);
 
             // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
@@ -1177,6 +1188,25 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         LongBuffer handle = stack.mallocLong(1);
         check(vkCreateRenderPass(device, create, null, handle), "vkCreateRenderPass");
         return handle.get(0);
+    }
+
+    /** Creates the fallback matrix buffer, once the context is known to be alive. */
+    private void createFallbackShadowMatrix() {
+        if (this.fallbackShadowMatrix != null) {
+            return;
+        }
+        this.fallbackShadowMatrix = new org.soutalab.celtium.vulkan.VulkanHostBuffer(this.context, 64L,
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+        java.nio.FloatBuffer data = org.lwjgl.system.MemoryUtil.memFloatBuffer(
+                this.fallbackShadowMatrix.mappedAddress(), 16);
+        for (int i = 0; i < 16; i++) {
+            data.put(i, 0.0f);
+        }
+        data.put(0, 1.0f);
+        data.put(5, 1.0f);
+        data.put(10, 1.0f);
+        data.put(15, 1.0f);
+        data.put(12, -1.0e6f);
     }
 
     private void createDescriptorSetLayout(MemoryStack stack, VkDevice device) {
