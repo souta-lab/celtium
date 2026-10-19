@@ -41,6 +41,36 @@ public final class ShaderPackLoader {
         return load(input, LoadOptions.defaults());
     }
 
+    /**
+     * Expands one file of a pack and returns its GLSL text: includes resolved, macros from {@code seeds} applied.
+     * <p>
+     * The loader expands every program while building the manifest and keeps the directives it found, not the text. The
+     * renderer needs the text itself - a program whose {@code #include}s are still in it is not GLSL, so nothing
+     * downstream can lower or compile it. This is that door, using the same preprocessor and the same bounds.
+     *
+     * @param input pack zip or extracted directory
+     * @param file  the file to expand, under {@code shaders/}
+     * @param seeds object-like macros to define before expansion, e.g. the pack's own enabled options
+     */
+    public static String expand(Path input, PackPath file, Map<String, String> seeds) throws PackException {
+        List<Diagnostic> diagnostics = new ArrayList<>();
+        PackSource pack = PackSource.open(input, LoadOptions.defaults().limits(), diagnostics);
+        SourcePreprocessor preprocessor = new SourcePreprocessor(pack, LoadOptions.defaults().limits(), diagnostics,
+                SourcePreprocessor.Mode.GLSL);
+        preprocessor.keepDefines();
+        Map<String, String> environment = new TreeMap<>(seeds);
+        SourcePreprocessor.ExpandedSource expanded = preprocessor.expand(file, environment);
+        StringBuilder text = new StringBuilder();
+        for (SourcePreprocessor.ExpandedLine line : expanded.lines) {
+            text.append(line.text()).append('\n');
+        }
+        if (diagnostics.stream().anyMatch(d -> d.severity() == Severity.ERROR)) {
+            Diagnostic first = diagnostics.stream().filter(d -> d.severity() == Severity.ERROR).findFirst().orElseThrow();
+            throw new PackException(first.code(), first.message());
+        }
+        return text.toString();
+    }
+
     public static PackManifest load(Path input, LoadOptions options) throws PackException {
         PackLimits limits = options.limits();
         List<Diagnostic> diagnostics = new ArrayList<>();

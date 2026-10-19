@@ -13883,6 +13883,8 @@ this.frameBufferOpen = false;
     /** Whether the pack probe has run; it is a one-shot at the first present. */
     private boolean shaderPackProbed;
     private boolean shaderCompileProbed;
+    /** The loaded pack, kept for the S2 probe's program paths. */
+    private org.soutalab.celtium.shaderpack.PackManifest shaderPackManifest;
     /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
     private static final boolean SHADER_COMPILE_PROBE =
             Boolean.getBoolean("celtium.shaderpack.compileProbe");
@@ -13937,6 +13939,66 @@ this.frameBufferOpen = false;
             report.append(" result=FAILED error=").append(failure);
         }
         System.out.println(report);
+        celtium$probePackProgram(compiler);
+    }
+
+    /**
+     * The S2 chain on a real program: expand the pack's own file, lower it, compile it.
+     * <p>
+     * This is the step that says whether the pieces fit a pack that was written for OptiFine rather than for this
+     * renderer. Every stage reports what it produced, and a failure at any of them is evidence about which stage needs
+     * work - the expansion (includes and the pack's conditionals), the lowering, or the compile.
+     */
+    private void celtium$probePackProgram(ShadercGlslCompiler compiler) {
+        if (SHADER_PACK_PATH.isEmpty() || !compiler.available()) {
+            return;
+        }
+        java.nio.file.Path pack = java.nio.file.Paths.get(SHADER_PACK_PATH);
+        if (this.shaderPackManifest == null) {
+            return;
+        }
+        // The program's paths come from the manifest, not from a guess: packs put their programs under a dimension
+        // folder (BSL's gbuffers_terrain lives at /shaders/world0/gbuffers_terrain.vsh), and the manifest is what
+        // resolved that. A hard-coded path reported "no such file in pack" for a pack that plainly has the program.
+        java.util.List<org.soutalab.celtium.shaderpack.PackPath> wanted = new java.util.ArrayList<>();
+        for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : this.shaderPackManifest.dimensions()) {
+            for (org.soutalab.celtium.shaderpack.ProgramEntry program : dimension.programs()) {
+                if (program.name().contains("terrain") && !program.isComputeOnly()) {
+                    wanted.addAll(program.stages().values());
+                }
+                if (wanted.size() >= 2) {
+                    break;
+                }
+            }
+            if (wanted.size() >= 2) {
+                break;
+            }
+        }
+        for (org.soutalab.celtium.shaderpack.PackPath path : wanted) {
+            String file = path.toString();
+            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_PACK_PROGRAM file=").append(file);
+            try {
+                org.soutalab.celtium.shaderpack.Stage stage =
+                        org.soutalab.celtium.shaderpack.LegacyGlslLowering.stageOf(file);
+                String expanded = org.soutalab.celtium.shaderpack.ShaderPackLoader.expand(pack, path,
+                        java.util.Map.of("MC_VERSION", "11202"));
+                line.append(" expandedBytes=").append(expanded.length());
+                org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result lowered =
+                        org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(stage, expanded, java.util.Map.of());
+                line.append(" loweredBytes=").append(lowered.source().length())
+                        .append(" attributes=").append(lowered.attributes())
+                        .append(" varyings=").append(lowered.varyings().size())
+                        .append(" samplers=").append(lowered.samplers())
+                        .append(" unsupported=").append(lowered.unsupported().size());
+                org.soutalab.celtium.shaderpack.SpirvModule module = compiler.compile(stage, lowered.source());
+                line.append(" spirvWords=").append(ShadercGlslCompiler.wordCount(module))
+                        .append(" result=OK");
+            } catch (Throwable failure) {
+                String text = String.valueOf(failure);
+                line.append(" result=FAILED error=").append(text.length() > 300 ? text.substring(0, 300) : text);
+            }
+            System.out.println(line);
+        }
     }
 
     private void celtium$probeShaderPack() {
@@ -13944,12 +14006,15 @@ this.frameBufferOpen = false;
             return;
         }
         this.shaderPackProbed = true;
-        celtium$probeShaderCompile();
         try {
             java.nio.file.Path path = java.nio.file.Paths.get(SHADER_PACK_PATH);
             long started = System.nanoTime();
             org.soutalab.celtium.shaderpack.PackManifest manifest =
                     org.soutalab.celtium.shaderpack.ShaderPackLoader.load(path);
+            this.shaderPackManifest = manifest;
+            // After the manifest, not before: the program probe reads the manifest to find the pack's own paths, and the
+            // first version ran it first, so it returned early with nothing to report.
+            celtium$probeShaderCompile();
             long millis = (System.nanoTime() - started) / 1000000L;
             for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : manifest.dimensions()) {
                 this.shaderPackPrograms += dimension.programs().size();

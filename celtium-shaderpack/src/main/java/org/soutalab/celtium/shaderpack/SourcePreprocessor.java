@@ -59,6 +59,14 @@ final class SourcePreprocessor {
     private final List<Diagnostic> diagnostics;
     private final Mode mode;
 
+    /** Whether {@code #define} lines are emitted as well as recorded: true only when the text goes to a compiler. */
+    private boolean keepDefines;
+
+    /** Asks for {@code #define} lines to survive expansion, for callers that compile the text. */
+    void keepDefines() {
+        this.keepDefines = true;
+    }
+
     private long emittedChars;
     private int expansions;
     private boolean outputLimitHit;
@@ -238,6 +246,12 @@ final class SourcePreprocessor {
             case "define" -> {
                 if (isLive(conditions)) {
                     handleDefine(argument, at, macros);
+                    if (this.keepDefines) {
+                        // The compiler is handed the text, so it has to receive the definitions: a #define consumed here
+                        // and not emitted leaves every use of it unresolved, which is not GLSL the compiler can accept.
+                        // Only the compilation path asks for this; the loader's own scan still reads a define-free list.
+                        emit(out, file, at.line(), line);
+                    }
                 }
             }
             case "undef" -> {
