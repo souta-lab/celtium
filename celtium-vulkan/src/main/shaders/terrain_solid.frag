@@ -217,7 +217,9 @@ void main() {
         float lit = 0.0;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
-                vec2 offset = vec2(float(x), float(y)) * (1.0 / 2048.0);
+                // Two texels per step: the map is 4.7 cm per texel at a +/-48 block radius, so a 3x3 pattern two
+                // texels apart reads as a soft edge rather than a stair-stepped one, without doubling the tap count.
+                vec2 offset = vec2(float(x), float(y)) * (2.0 / 2048.0);
                 float depth = texture(u_ShadowMap, shadowCoord.xy + offset).r;
                 lit += shadowCoord.z - bias > depth ? 0.0 : 1.0;
             }
