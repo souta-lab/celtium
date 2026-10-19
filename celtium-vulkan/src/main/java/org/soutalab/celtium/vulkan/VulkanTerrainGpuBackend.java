@@ -2636,6 +2636,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
                 + " groupLoopIterations=" + this.immediateStatistics.groupLoopIterations()
                 + " groupLoopCalls=" + this.immediateStatistics.groupLoopCalls()
+                + " offerCount=" + this.immediateOfferCount
+                + " offerTotalMillis=" + (this.immediateSubmitNanos / 1000000L)
+                + " offersLastFrame=" + this.immediateOffersLastFrame
                 + " windowsTotal=" + this.immediateStatistics.immediateWindows()
                 + " lastTerrainPassFrame=" + this.terrainStatistics.lastTerrainPassFrame()
                 + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId));
@@ -5282,6 +5285,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateStatistics.setLastFrameDrawn(this.frameDrawn);
         }
         this.frameId++;
+        this.immediateOffersLastFrame = this.immediateOffersThisFrame;
+        this.immediateOffersThisFrame = 0;
         // Third trigger for the counter summary: a fixture that exits without tearing its world down never reaches the
         // teardown print, and the overlay trigger needs the Celeritas F3 section to be drawn. One bounded print at a
         // frame every leg reaches makes the counters visible in any leg that runs at all.
@@ -5698,6 +5703,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (formatId >= 0 && formatId < this.immediateOfferedByFormat.length) {
             this.immediateOfferedByFormat[formatId]++;
         }
+        this.immediateOfferCount++;
+        this.immediateOffersThisFrame++;
         long submitStart = System.nanoTime();
         this.submitFlushesAtEntry = this.immediateStatistics.immediateFlushes();
         this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
@@ -13929,6 +13936,8 @@ this.frameBufferOpen = false;
     private int frameTargetWidth = 1280;
     private int frameTargetHeight = 720;
     private int shaderPackDraws;
+    private int immediateOffersThisFrame;
+    private int immediateOffersLastFrame;
     private boolean shaderPackDrawProbeProgramChosen;
 
     /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
