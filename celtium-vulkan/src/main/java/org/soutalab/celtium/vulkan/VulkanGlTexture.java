@@ -2794,12 +2794,15 @@ public final class VulkanGlTexture {
             // the bottom is the image's row sy, and the destination mirror is in that same order. Inverting read the
             // band mirrored about the image's centre and wrote it upside-down, which is the second half of the
             // misplaced-panorama defect (the viewport carried the first).
+            // A 2D image's blit region must run z 0..1 (VUID-vkCmdBlitImage-srcImage-00247 / dstImage-00252): with
+            // both z at 0 the region has a zero extent, and the driver is told to copy nothing - measured as 30
+            // validation errors and an upload blit that did not write the mirror (the menu/loading splash path).
             region.get(0).srcOffsets().get(0).set(sx, sy, 0);
-            region.get(0).srcOffsets().get(1).set(sx + width, sy + height, 0);
+            region.get(0).srcOffsets().get(1).set(sx + width, sy + height, 1);
             region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
                     .layerCount(1);
             region.get(0).dstOffsets().get(0).set(xoffset, yoffset, 0);
-            region.get(0).dstOffsets().get(1).set(xoffset + width, yoffset + height, 0);
+            region.get(0).dstOffsets().get(1).set(xoffset + width, yoffset + height, 1);
             vkCmdBlitImage(commandBuffer, sourceImage, VK_IMAGE_LAYOUT_GENERAL, this.image,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
 
