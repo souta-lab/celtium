@@ -58,6 +58,15 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private long offscreenView;
     private long offscreenMemory;
     private int offscreenSize;
+    /** The delivered image's size, so a full-viewport draw can be asked for. */
+    private int frameWidth = 1280;
+    private int frameHeight = 720;
+
+    /** Sets the size the in-pass draw's viewport covers. */
+    void setFrameSize(int width, int height) {
+        this.frameWidth = width;
+        this.frameHeight = height;
+    }
 
     private long passPipeline;
     private ShaderPackPipelineFactory.ModuleHandle passVertexHandle;
@@ -441,10 +450,12 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, passPipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     stack.longs(this.descriptorSet), null);
+            // Full screen, deliberately: partial coverage has been the one property every invisible case shared, and a
+            // draw that covers the whole viewport is the direct test of whether that is the rule.
             vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
-                    .x(0.0f).y(0.0f).width(256.0f).height(256.0f).minDepth(0.0f).maxDepth(1.0f));
+                    .x(0.0f).y(0.0f).width(this.frameWidth).height(this.frameHeight).minDepth(0.0f).maxDepth(1.0f));
             vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
-                    .offset(it -> it.set(0, 0)).extent(it -> it.set(256, 256)));
+                    .offset(it -> it.set(0, 0)).extent(it -> it.set(this.frameWidth, this.frameHeight)));
             for (int index = 0; index < this.vertexBuffers.size(); index++) {
                 vkCmdBindVertexBuffers(commandBuffer, this.vertexBufferLocations.get(index).intValue(),
                         stack.longs(this.vertexBuffers.get(index).buffer()), stack.longs(0L));

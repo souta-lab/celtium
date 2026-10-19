@@ -9350,7 +9350,8 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         // Inside the pass the game's own quads draw into, which is the delivery path that is known to paint the screen.
         if (SHADER_PACK_DRAW_PROBE && !SHADER_PACK_DRAW_CLEAR && !SHADER_PACK_DRAW_BUILTIN
-                && this.shaderPackDrawProbe != null) {
+                && !SHADER_PACK_DRAW_BLIT && this.shaderPackDrawProbe != null) {
+            this.shaderPackDrawProbe.setFrameSize(this.frameTargetWidth, this.frameTargetHeight);
             try {
                 this.shaderPackDrawProbe.recordInPass(this.commandBuffer, renderPass);
                 if (this.shaderPackDraws++ <= 2) {
