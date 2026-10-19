@@ -16480,6 +16480,14 @@ this.frameBufferOpen = false;
                     if (offsetEnabled) {
                         this.immediateStatistics.noteImmediateDepthBiasedGroups();
                     }
+                    // Merging a run of consecutive groups into one draw was the last structural idea for this loop and it
+                    // is not available: every group pushes its own matrices, so two groups only share a draw when their
+                    // push-constant blocks are byte-identical, which in the world window means groups that share a
+                    // transform (many UI batches, few entity ones). The census that would have justified it is therefore a
+                    // measurement of push-block equality, not of pipeline and buffer adjacency. What remains is two driver
+                    // calls per group (one push, one draw) with the binds, viewport and depth bias already deduped above -
+                    // the group loop's 0.7 ms p50 for ~334 groups is close to that floor, and cutting it further means
+                    // offering fewer groups rather than drawing them more cheaply.
                     Object pipeline = prepared.pipeline;
                     // grpPrep/grpDraw split the flush's per-group cost: the flush is 3.3 ms p50 for ~334 groups on
                     // the dense scene (winRecord 2.8 of it), and the questions are "which half" and "is it the
