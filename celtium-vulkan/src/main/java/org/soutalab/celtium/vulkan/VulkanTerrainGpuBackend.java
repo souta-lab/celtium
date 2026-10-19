@@ -14367,6 +14367,21 @@ this.frameBufferOpen = false;
             if (!drawn) {
                 this.shadowMapPass.record(this.commandBuffer, stack);
             }
+            // The world pass of the next frame reads the map through this matrix. The camera's own projection and model
+            // view stand in for a light's for this first visible step: the map is then the scene depth as the camera sees
+            // it, which is exactly what makes the shading difference appear without a light rig.
+            if (terrainPipeline != null && this.shadowMapPass.matrixBuffer() != null) {
+                org.joml.Matrix4f projection = new org.joml.Matrix4f().set(
+                        java.nio.FloatBuffer.wrap(java.util.Arrays.copyOfRange(terrainPipeline.lastPushBlock(), 0, 16)));
+                org.joml.Matrix4f modelView = new org.joml.Matrix4f().set(
+                        java.nio.FloatBuffer.wrap(java.util.Arrays.copyOfRange(terrainPipeline.lastPushBlock(), 16, 32)));
+                org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(projection).mul(modelView);
+                java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
+                        this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
+                lightViewProjection.get(0, matrix);
+                terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
+                        this.shadowMapPass.matrixBuffer().buffer());
+            }
             // The capture is one frame's geometry: the next frame records its own.
             this.terrain.resetShadowCapture();
         } catch (RuntimeException | LinkageError error) {

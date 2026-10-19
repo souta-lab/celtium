@@ -315,6 +315,28 @@ public final class VulkanTerrainPipeline {
     private int uniformsRange;
 
     /** The vertex layout of the pass this pipeline draws. */
+    /** Where the shadow map and its matrix come from; zero while no shadow pass is running. */
+    private long shadowView;
+    private long shadowSampler;
+    private long shadowUniform;
+
+    /**
+     * Tells the pipeline where the native shadow map and its matrix live, for the descriptor set it writes each pass.
+     * Passing zeros (or never calling this) leaves the shaderless picture unchanged: the sampler falls back to the light
+     * map and the matrix to an all-zero block, whose projective divide lands every lookup outside the map.
+     */
+    public void setShadowSources(long view, long sampler, long uniformBuffer) {
+        this.shadowView = view;
+        this.shadowSampler = sampler;
+        this.shadowUniform = uniformBuffer;
+    }
+
+    /** The native shadow map's sampler binding, used by the fragment stage when the shadow pass is on. */
+    public static final int SHADOW_MAP_BINDING = 3;
+
+    /** The shadow matrix's uniform binding, read by the vertex stage. */
+    public static final int SHADOW_UNIFORM_BINDING = 4;
+
     private final VertexLayout vertexLayout;
 
     /** The last push-constant block sent to the vertex stage: projection then model view, 32 floats. */
@@ -662,11 +684,21 @@ public final class VulkanTerrainPipeline {
             VkDescriptorImageInfo.Buffer lightmapInfo = VkDescriptorImageInfo.calloc(1, stack);
             lightmapInfo.get(0).sampler(lightmap.sampler()).imageView(lightmap.view())
                     .imageLayout(lightmap.samplingLayout());
+            // The shadow map, or the light map standing in for it while no shadow pass runs: the shader's coordinate is
+            // then all zeros, the divide is not a number and the comparison leaves every fragment lit.
+            VkDescriptorImageInfo.Buffer shadowInfo = VkDescriptorImageInfo.calloc(1, stack);
+            boolean shadowing = this.shadowView != 0L && this.shadowSampler != 0L;
+            shadowInfo.get(0).sampler(shadowing ? this.shadowSampler : lightmap.sampler())
+                    .imageView(shadowing ? this.shadowView : lightmap.view())
+                    .imageLayout(shadowing ? VK_IMAGE_LAYOUT_GENERAL : lightmap.samplingLayout());
+            VkDescriptorBufferInfo.Buffer shadowBuffer = VkDescriptorBufferInfo.calloc(1, stack);
+            shadowBuffer.get(0).buffer(this.shadowUniform != 0L ? this.shadowUniform : uniformBuffer)
+                    .offset(0L).range(64L);
 
             // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
             // goes to BLOCK_ATLAS_BINDING (2) and the lightmap to LIGHTMAP_BINDING (1), matching the shader source.
             long set = this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
-            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(3, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(5, stack);
             writes.get(0).sType$Default().dstSet(set).dstBinding(UNIFORM_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                     .pBufferInfo(bufferInfo);
@@ -676,6 +708,12 @@ public final class VulkanTerrainPipeline {
             writes.get(2).sType$Default().dstSet(set).dstBinding(LIGHTMAP_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .pImageInfo(lightmapInfo);
+            writes.get(3).sType$Default().dstSet(set).dstBinding(SHADOW_MAP_BINDING).dstArrayElement(0)
+                    .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .pImageInfo(shadowInfo);
+            writes.get(4).sType$Default().dstSet(set).dstBinding(SHADOW_UNIFORM_BINDING).dstArrayElement(0)
+                    .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    .pBufferInfo(shadowBuffer);
             VulkanDescriptorWrites.note(writes, "VulkanTerrainPipeline");
             vkUpdateDescriptorSets(context.device(), writes, null);
         }
@@ -1142,7 +1180,10 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         // listed in its stageFlags makes the set invalid, while listing a stage that does not use it is harmless.
         // The shader sources are authored in parallel with this class, so permissiveness is the safe choice.
         int stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(3, stack);
+        // Five bindings: the region uniforms, the atlas and the light map, plus the native shadow map and its light
+        // matrix. The last two are always declared (the shaders statically use them) and are bound to a one-pixel dummy
+        // and a zeroed matrix when no shadow pass is running, which is what keeps the shaderless picture unchanged.
+        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(5, stack);
         bindings.get(0).binding(UNIFORM_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                 .descriptorCount(1)
@@ -1153,6 +1194,14 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
                 .stageFlags(stages);
         bindings.get(2).binding(LIGHTMAP_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                .descriptorCount(1)
+                .stageFlags(stages);
+        bindings.get(3).binding(SHADOW_MAP_BINDING)
+                .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                .descriptorCount(1)
+                .stageFlags(stages);
+        bindings.get(4).binding(SHADOW_UNIFORM_BINDING)
+                .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                 .descriptorCount(1)
                 .stageFlags(stages);
         VkDescriptorSetLayoutCreateInfo create = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
@@ -1334,9 +1383,13 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     }
 
     private void createDescriptorPool(MemoryStack stack, VkDevice device) {
-        VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(2, stack);
+        // The pool has to name every descriptor type the set layout uses: the shadow map adds a combined image sampler
+        // and a plain uniform buffer, and a pool that does not list them allocates sets of the wrong type
+        // (WARNING-CoreValidation-AllocateDescriptorSets-WrongType, five of them in leg shadowVisible4).
+        VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(3, stack);
         sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(DESCRIPTOR_SLOTS);
-        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(2 * DESCRIPTOR_SLOTS);
+        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(3 * DESCRIPTOR_SLOTS);
+        sizes.get(2).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(DESCRIPTOR_SLOTS);
         VkDescriptorPoolCreateInfo create = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                 .maxSets(DESCRIPTOR_SLOTS)
                 .pPoolSizes(sizes);

@@ -66,6 +66,7 @@ layout(location = 3) in vec2 v_TexCoord;
 layout(location = 4) in float v_FragDistance;
 layout(location = 5) flat in float v_MaterialMipBias;
 layout(location = 6) flat in float v_MaterialAlphaCutoff;
+layout(location = 7) in vec4 v_ShadowCoord;
 
 // --------------------------------------------------------------------------------------------
 // Descriptor set 0
@@ -86,6 +87,9 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
 } celtium;
 
 layout(set = 0, binding = 2) uniform sampler2D u_BlockTex; // The block texture
+// The native shadow map: a D32 depth image sampled as a plain float. The comparison is done here rather than with a
+// comparison sampler so the same view can be read back for diagnostics.
+layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
 
 layout(location = 0) out vec4 fragColor; // The output fragment for the color framebuffer
 
@@ -193,5 +197,26 @@ void main() {
         fragColor = _expFog(diffuseColor, fragDistance, celtium.u_FogColor, celtium.u_FogDensity);
     } else { // FOG_MODE_SMOOTH
         fragColor = _linearFog(diffuseColor, fragDistance, celtium.u_FogColor, celtium.u_FogStart, celtium.u_FogEnd);
+
+
+    }
+
+    // Native shadow map. The world position projected by the light matrix is divided here; the bias grows with the
+    // distance to the fragment so a surface at a grazing angle does not shadow itself. Three by three taps give the
+    // soft edge, and a coordinate outside the map reads as lit - an unrendered map leaves the terrain exactly as the
+    // shaderless path drew it.
+    vec3 shadowCoord = v_ShadowCoord.xyz / v_ShadowCoord.w;
+    if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
+        float bias = 0.0015 + 0.004 * (1.0 - abs(normalize(cross(dFdx(shadowCoord), dFdy(shadowCoord))).z));
+        float lit = 0.0;
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                vec2 offset = vec2(float(x), float(y)) * (1.0 / 2048.0);
+                float depth = texture(u_ShadowMap, shadowCoord.xy + offset).r;
+                lit += shadowCoord.z - bias > depth ? 0.0 : 1.0;
+            }
+        }
+        float shadow = lit / 9.0;
+        fragColor.rgb *= mix(0.45, 1.0, shadow);
     }
 }

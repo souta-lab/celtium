@@ -92,6 +92,13 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
 
 layout(set = 0, binding = 1) uniform sampler2D u_LightTex; // The light map texture sampler
 
+// The shadow map's light matrix. Written per frame by the native shadow pass; the fragment stage turns it into a lookup
+// through v_ShadowCoord. With no shadow pass running the matrix is all zeros, the projective divide puts every lookup
+// outside [0, 1] and the fragment shader leaves the terrain unshadowed - which is what an off pass has to mean.
+layout(std140, set = 0, binding = 4) uniform CeltiumShadowUniforms {
+    mat4 u_ShadowMatrix;    // light projection * view, the same convention the world pass renders with
+} celtiumShadow;
+
 // --------------------------------------------------------------------------------------------
 // Vertex attributes - the 24-byte COMPACT chunk vertex (CompactChunkVertex.VERTEX_FORMAT).
 // --------------------------------------------------------------------------------------------
@@ -115,6 +122,8 @@ layout(location = 4) out float v_FragDistance;
 // removes any interpolation-rounding ambiguity on the alpha-cutoff comparison.
 layout(location = 5) flat out float v_MaterialMipBias;
 layout(location = 6) flat out float v_MaterialAlphaCutoff;
+// The world position projected by the shadow pass's light matrix: the fragment stage divides it and samples the map.
+layout(location = 7) out vec4 v_ShadowCoord;
 
 // NOTE: the OpenGL shader declares `invariant gl_Position;` so that the solid and cutout copies of
 // the program stay bit-identical. The keyword is intentionally dropped here: the SPIR-V module
@@ -224,6 +233,7 @@ void main() {
     v_FragDistance = getFragDistance(celtium.u_FogShape, worldPosition);
 
     // Transform the vertex position into model-view-projection space
+    v_ShadowCoord = celtiumShadow.u_ShadowMatrix * vec4(worldPosition, 1.0);
     gl_Position = pc.u_ProjectionMatrix * pc.u_ModelViewMatrix * vec4(worldPosition, 1.0);
 
     // Add the light color to the vertex color, and pass the texture coordinates to the fragment shader

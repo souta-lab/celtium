@@ -31,6 +31,25 @@ public final class ShadowMapPass {
     private long image = VK_NULL_HANDLE;
     private long memory = VK_NULL_HANDLE;
     private long view = VK_NULL_HANDLE;
+    /** The sampler and the 64-byte matrix block the terrain shader reads the map through. */
+    private long sampler;
+    private org.soutalab.celtium.vulkan.VulkanHostBuffer matrixBuffer;
+
+    /** {@return the sampled view of the map}, valid while the pass exists. */
+    public long view() {
+        return this.view;
+    }
+
+    /** {@return the sampler the world pass reads the map with}. */
+    public long sampler() {
+        return this.sampler;
+    }
+
+    /** {@return the host-visible block holding the light matrix the vertex stage projects with}. */
+    public org.soutalab.celtium.vulkan.VulkanHostBuffer matrixBuffer() {
+        return this.matrixBuffer;
+    }
+
     /** Whether the depth image has been moved out of UNDEFINED into GENERAL. */
     private boolean transitioned;
 
@@ -117,6 +136,25 @@ public final class ShadowMapPass {
                 this.pipeline = factory.createDepthOnlyPipeline(this.pipelineLayout, moduleHandle,
                         VK_FORMAT_D32_SFLOAT);
             }
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                java.nio.LongBuffer handle = stack.mallocLong(1);
+                org.lwjgl.vulkan.VkSamplerCreateInfo samplerInfo = org.lwjgl.vulkan.VkSamplerCreateInfo
+                        .calloc(stack).sType$Default()
+                        .magFilter(VK_FILTER_NEAREST).minFilter(VK_FILTER_NEAREST)
+                        .mipmapMode(VK_SAMPLER_MIPMAP_MODE_NEAREST)
+                        .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                        .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                        .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+                if (vkCreateSampler(this.context.device(), samplerInfo, null, handle) != VK_SUCCESS) {
+                    this.failures++;
+                    this.lastFailure = "vkCreateSampler(shadow) failed";
+                    return false;
+                }
+                this.sampler = handle.get(0);
+            }
+            this.matrixBuffer = new org.soutalab.celtium.vulkan.VulkanHostBuffer(this.context, 64L,
+                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+            org.lwjgl.system.MemoryUtil.memSet(this.matrixBuffer.mappedAddress(), 0, 64L);
             return true;
         } catch (RuntimeException | LinkageError | org.soutalab.celtium.shaderpack.SpirvStageCompiler.CompileFailure
                  error) {
@@ -457,6 +495,9 @@ public final class ShadowMapPass {
                 .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE));
         VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
                 .renderArea(area).layerCount(1).pDepthAttachment(depth.get(0));
+        // The map is read by the world pass of one frame and written by this pass of the next, both in the same command
+        // buffer: the two barriers order the sampling against the write in both directions.
+        depthBarrier(commandBuffer, stack, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
         vkCmdBeginRenderingKHR(commandBuffer, rendering);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipelineForThisDraw);
         vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
@@ -481,6 +522,7 @@ public final class ShadowMapPass {
         vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
         vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, indirectCount, 20);
         vkCmdEndRenderingKHR(commandBuffer);
+        depthBarrier(commandBuffer, stack, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         this.passes++;
         this.terrainPasses++;
         if (this.terrainPasses == 60 && Boolean.getBoolean("celtium.shadow.depthSample")) {
@@ -497,6 +539,22 @@ public final class ShadowMapPass {
                     + " count=" + indirectCount + " passes=" + this.passes);
         }
         return true;
+    }
+
+    /** One GENERAL-to-GENERAL barrier over the map with the given access masks. */
+    private void depthBarrier(VkCommandBuffer commandBuffer, MemoryStack stack, int srcAccess, int dstAccess) {
+        org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier =
+                org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default().oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(this.image).srcAccessMask(srcAccess).dstAccessMask(dstAccess);
+        barrier.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).levelCount(1).layerCount(1);
+        vkCmdPipelineBarrier(commandBuffer,
+                srcAccess == VK_ACCESS_SHADER_READ_BIT ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                        : VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                dstAccess == VK_ACCESS_SHADER_READ_BIT ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                        : VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                0, null, null, barrier);
     }
 
     /** {@return whether the terrain pipeline has been built}. */

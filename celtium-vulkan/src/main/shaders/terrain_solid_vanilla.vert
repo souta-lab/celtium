@@ -90,7 +90,13 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
     vec4  u_ChunkFadeParams;        // offset 64
 } celtium;
 
-layout(set = 0, binding = 1) uniform sampler2D u_LightTex; // The light map texture sampler
+layout(set = 0, binding = 1) uniform sampler2D u_LightTex;
+
+// The shadow map's light matrix, as in the compact-format variant: the fragment stage is shared, so this stage has to
+// declare and produce the same interface or the pipeline is rejected (VUID-RuntimeSpirv-OpEntryPoint-08743).
+layout(std140, set = 0, binding = 4) uniform CeltiumShadowUniforms {
+    mat4 u_ShadowMatrix;
+} celtiumShadow; // The light map texture sampler
 
 // --------------------------------------------------------------------------------------------
 // Vertex attributes - the 24-byte COMPACT chunk vertex (CompactChunkVertex.VERTEX_FORMAT).
@@ -115,6 +121,7 @@ layout(location = 4) out float v_FragDistance;
 // removes any interpolation-rounding ambiguity on the alpha-cutoff comparison.
 layout(location = 5) flat out float v_MaterialMipBias;
 layout(location = 6) flat out float v_MaterialAlphaCutoff;
+layout(location = 7) out vec4 v_ShadowCoord;
 
 // NOTE: the OpenGL shader declares `invariant gl_Position;` so that the solid and cutout copies of
 // the program stay bit-identical. The keyword is intentionally dropped here: the SPIR-V module
@@ -217,6 +224,7 @@ void main() {
     v_FragDistance = getFragDistance(celtium.u_FogShape, worldPosition);
 
     // Transform the vertex position into model-view-projection space
+    v_ShadowCoord = celtiumShadow.u_ShadowMatrix * vec4(worldPosition, 1.0);
     gl_Position = pc.u_ProjectionMatrix * pc.u_ModelViewMatrix * vec4(worldPosition, 1.0);
 
     // Add the light color to the vertex color, and pass the texture coordinates to the fragment shader
