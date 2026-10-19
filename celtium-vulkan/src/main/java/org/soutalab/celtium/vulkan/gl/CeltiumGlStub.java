@@ -607,6 +607,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Clears seen for the framebuffer the game calls its main one, and for every other target. */
     private int mainClears;
     private int foreignClears;
+    private float lastForeignClearRed;
+    private float lastForeignClearGreen;
+    private float lastForeignClearBlue;
     private float lastMainClearRed;
     private float lastMainClearGreen;
     private float lastMainClearBlue;
@@ -617,9 +620,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return "main=none foreign=none colour=none";
         }
-        return "main=" + stub.mainClears + " foreign=" + stub.foreignClears
-                + " lastMainColour=" + stub.lastMainClearRed + "," + stub.lastMainClearGreen + ","
-                + stub.lastMainClearBlue;
+        return "main=" + stub.mainClears + "/" + stub.lastMainClearRed + "," + stub.lastMainClearGreen + ","
+                + stub.lastMainClearBlue + " foreign=" + stub.foreignClears + "/" + stub.lastForeignClearRed + ","
+                + stub.lastForeignClearGreen + "," + stub.lastForeignClearBlue;
     }
     /** Set by the backend after each bind, so a clear is classified by routing rather than by a raw GL name. */
     private volatile boolean drawFramebufferIsMain = true;
@@ -1731,6 +1734,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.lastMainClearBlue = this.clearBlue;
         } else {
             this.foreignClears++;
+            this.lastForeignClearRed = this.clearRed;
+            this.lastForeignClearGreen = this.clearGreen;
+            this.lastForeignClearBlue = this.clearBlue;
         }
         this.pendingClears.getAndUpdate(previous -> previous | mask);
         if (!this.drawFramebufferIsMain) {
