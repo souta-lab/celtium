@@ -662,8 +662,11 @@ public final class VulkanGlState {
         if (this.activeTextureUnit == 0) {
             this.boundTextureName = glTextureId;
         }
-        if (glTextureId != 0 && !this.firstBindSites.containsKey(Integer.valueOf(glTextureId))
-                && this.firstBindSites.size() < MAX_BIND_SITES) {
+        // A diagnostic, and not a free one: for a name it has not seen, this walks the stack. It used to run on every
+        // bind - including the ones the font path issues per glyph - and the size check came *after* the lookup, so the
+        // cost stayed after the table was full. Off unless diagnostics are asked for, and the size check first.
+        if (glTextureId != 0 && VulkanDiagnostics.enabled() && this.firstBindSites.size() < MAX_BIND_SITES
+                && !this.firstBindSites.containsKey(Integer.valueOf(glTextureId))) {
             this.firstBindSites.put(Integer.valueOf(glTextureId), bindSite());
         }
     }
