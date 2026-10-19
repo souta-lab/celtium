@@ -441,6 +441,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int readbackSlots;
     private long readbackOffset;
     private int timestampSlots;
+    /**
+     * GPU time the immediate windows took, summed over the run, and how many windows it covers.
+     * <p>
+     * The frame is not all CPU: with the immediate path on, {@code submitToFenceMs} reads p50 5 ms against 1 ms with
+     * it off, so the immediate windows cost GPU time as well - 330 draws a frame, each with its own pipeline,
+     * descriptor and push. This is that cost measured rather than inferred: the window path writes a timestamp pair
+     * around its render pass on the same pool the terrain passes use, and the readback adds it here under its own
+     * label instead of the pass map. It decides between the two remaining levers - fewer draws on the GPU side (the
+     * per-draw-parameter merge) or cheaper recording on the CPU side (secondary command buffers).
+     */
+    private long windowGpuNanos;
+    /** How many immediate windows contributed a GPU timestamp pair. */
+    private int windowGpuSamples;
+    /** The timestamp slots this frame's immediate windows took, so the readback can route them here. */
+    private final java.util.Set<Integer> windowTimestampSlots = new java.util.LinkedHashSet<Integer>();
     private final Reference2ReferenceMap<Integer, TerrainRenderPass> timestampPasses = new Reference2ReferenceOpenHashMap<>();
     private TerrainRenderer.RegionResources readbackRegion;
     private boolean readbackPending;
@@ -8156,6 +8171,12 @@ this.frameBufferOpen = false;
                         // discarded before it reaches the queue must put that state back, or the re-record skips the
                         // transition and the clear it already consumed (BH-26).
                         try {
+                            int windowTimestampSlot = this.timestampsUsable && this.timestampSlots < (TIMESTAMP_SLOTS / 2)
+                                    ? this.timestampSlots : -1;
+                            if (windowTimestampSlot >= 0) {
+                                vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                        this.timestampPool, windowTimestampSlot * 2);
+                            }
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
@@ -8168,6 +8189,12 @@ this.frameBufferOpen = false;
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
+                            if (windowTimestampSlot >= 0) {
+                                vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                        this.timestampPool, (windowTimestampSlot * 2) + 1);
+                                this.windowTimestampSlots.add(Integer.valueOf(windowTimestampSlot));
+                                this.timestampSlots++;
+                            }
                         } catch (RuntimeException | LinkageError recordError) {
                             if (gllessTarget != null) {
                                 gllessTarget.rollbackRecording(recordingSnapshot);
@@ -9599,6 +9626,8 @@ this.frameBufferOpen = false;
                 + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " windowOpenSites=[" + windowOpenSiteSummary() + "]"
+                + " windowGpuMillis=" + (this.windowGpuNanos / 1000000L)
+                + " windowGpuSamples=" + this.windowGpuSamples
                 + " windowRecordMillis=" + (this.windowRecordNanos / 1000000L)
                 + " windowRecords=" + this.windowRecords
                 + " windowRecordPerFrameMillis=" + (this.frameId == 0L ? -1.0
@@ -10246,12 +10275,18 @@ this.frameBufferOpen = false;
                 long start = data.get(slot * 2 * 2);
                 long end = data.get((slot * 2 * 2) + 2);
                 if (end >= start) {
-                    this.passTimings.put(this.timestampPasses.get(slot),
-                            (long) ((end - start) * this.timestampPeriod));
+                    if (this.windowTimestampSlots.contains(Integer.valueOf(slot))) {
+                        this.windowGpuNanos += (long) ((end - start) * this.timestampPeriod);
+                        this.windowGpuSamples++;
+                    } else {
+                        this.passTimings.put(this.timestampPasses.get(slot),
+                                (long) ((end - start) * this.timestampPeriod));
+                    }
                 }
             }
         }
         this.timestampPasses.clear();
+        this.windowTimestampSlots.clear();
         this.timestampSlots = 0;
     }
 
