@@ -13960,17 +13960,22 @@ this.frameBufferOpen = false;
         // The program's paths come from the manifest, not from a guess: packs put their programs under a dimension
         // folder (BSL's gbuffers_terrain lives at /shaders/world0/gbuffers_terrain.vsh), and the manifest is what
         // resolved that. A hard-coded path reported "no such file in pack" for a pack that plainly has the program.
+        // Several programs, smallest first: whether the stack overflow is a property of these packs' terrain programs
+        // or of the chain itself is decided by where it starts, and one program cannot answer it.
         java.util.List<org.soutalab.celtium.shaderpack.PackPath> wanted = new java.util.ArrayList<>();
+        java.util.List<String> preference = java.util.List.of("gbuffers_basic", "gbuffers_skybasic",
+                "gbuffers_textured", "gbuffers_terrain");
         for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : this.shaderPackManifest.dimensions()) {
             for (org.soutalab.celtium.shaderpack.ProgramEntry program : dimension.programs()) {
-                if (program.name().contains("terrain") && !program.isComputeOnly()) {
-                    wanted.addAll(program.stages().values());
+                if (program.isComputeOnly() || preference.stream().noneMatch(w -> program.name().contains(w))) {
+                    continue;
                 }
-                if (wanted.size() >= 2) {
+                wanted.addAll(program.stages().values());
+                if (wanted.size() >= 6) {
                     break;
                 }
             }
-            if (wanted.size() >= 2) {
+            if (wanted.size() >= 6) {
                 break;
             }
         }

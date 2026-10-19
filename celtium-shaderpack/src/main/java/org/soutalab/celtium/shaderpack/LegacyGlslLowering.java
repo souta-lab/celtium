@@ -30,6 +30,10 @@ public final class LegacyGlslLowering {
     public static final String TRANSFORM_BLOCK = "CeltiumTransforms";
     /** The instance name the block's members are reached through. */
     public static final String TRANSFORM_INSTANCE = "celtium_transforms";
+    /** The block the pack's own non-opaque uniforms are collected into. */
+    public static final String UNIFORM_BLOCK = "CeltiumUniforms";
+    /** The instance name that block's members are reached through. */
+    public static final String UNIFORM_INSTANCE = "celtium_uniforms";
     /** The fragment output {@code gl_FragColor} becomes. */
     public static final String FRAGMENT_COLOUR = "celtium_FragColour";
     /** The fragment output array {@code gl_FragData[i]} becomes. */
@@ -133,18 +137,29 @@ public final class LegacyGlslLowering {
         // which the compiler resolves to the variable and rejects. Bindings are assigned here for the same reason -
         // every opaque uniform needs one, and a later line may sample a sampler declared earlier.
         Map<String, String> samplerRenames = new LinkedHashMap<>();
+        Map<String, String> plainUniforms = new LinkedHashMap<>();
         GlslComments prescan = new GlslComments();
         for (String line : lines) {
+            String plain = plainUniformDeclaration(prescan.split(line).code());
+            if (plain != null) {
+                for (String one : plain.substring("uniform ".length()).split("\u0000")) {
+                    String[] parts = one.trim().split(" ");
+                    String nameAndSuffix = parts.length > 1 ? parts[0] + parts[1] : parts[0];
+                    plainUniforms.put(nameAndSuffix, one.trim());
+                }
+            }
             String declaration = samplerDeclaration(prescan.split(line).code());
             if (declaration == null) {
                 continue;
             }
-            String[] parts = declaration.split(" ");
-            String declared = parts[2];
+            for (String one : declaration.substring("uniform ".length()).split("\u0000")) {
+            String[] parts = one.split(" ");
+            String declared = parts[1];
             String effective = RESERVED_FUNCTION_NAMES.contains(declared) ? "celtium_sampler_" + declared : declared;
             samplerRenames.put(declared, effective);
             if (!bindings.containsKey(effective) && !samplerBindings.containsKey(effective)) {
                 samplerBindings.put(effective, Integer.valueOf(nextBinding++));
+            }
             }
         }
         List<String> out = new ArrayList<>(lines.size() + 16);
@@ -190,38 +205,52 @@ public final class LegacyGlslLowering {
             // attribute / varying declarations.
             if (trimmed.startsWith("attribute ")) {
                 String rest = trimmed.substring("attribute ".length()).trim();
-                int nameStart = lastIdentifierStart(rest);
-                if (nameStart <= 0) {
+                String[] parts = typeAndNames(rest);
+                if (parts == null) {
                     unsupported.add("attribute declaration could not be read: " + trimmed);
                     out.add(rawLine);
                     continue;
                 }
-                String type = rest.substring(0, nameStart).trim();
-                String name = rest.substring(nameStart).replace(";", "").trim();
-                int location = assigned.computeIfAbsent(name, key -> Integer.valueOf(-1)).intValue();
-                if (location < 0) {
-                    location = nextLocation++;
-                    assigned.put(name, Integer.valueOf(location));
+                String type = parts[0];
+                String names = parts[1].replace(";", "").trim();
+                for (String name : names.split(",")) {
+                    String single = name.trim();
+                    if (single.isEmpty()) {
+                        continue;
+                    }
+                    int location = assigned.computeIfAbsent(single, key -> Integer.valueOf(-1)).intValue();
+                    if (location < 0) {
+                        location = nextLocation++;
+                        assigned.put(single, Integer.valueOf(location));
+                    }
+                    attributeDeclarations.add(single);
+                    out.add("layout(location = " + location + ") in " + type + " " + single + ";"
+                            + (comment.isEmpty() ? "" : " //" + comment));
                 }
-                attributeDeclarations.add(name);
-                out.add("layout(location = " + location + ") in " + type + " " + name + ";"
-                        + (comment.isEmpty() ? "" : " //" + comment));
                 attributeLine = true;
             } else if (trimmed.startsWith("varying ")) {
                 String rest = trimmed.substring("varying ".length()).trim();
-                int nameStart = lastIdentifierStart(rest);
-                if (nameStart <= 0) {
+                String[] parts = typeAndNames(rest);
+                if (parts == null) {
                     unsupported.add("varying declaration could not be read: " + trimmed);
                     out.add(rawLine);
                     continue;
                 }
-                String type = rest.substring(0, nameStart).trim();
-                String name = rest.substring(nameStart).replace(";", "").trim();
-                int location = varyings.size();
+                String type = parts[0];
+                String names = parts[1].replace(";", "").trim();
                 String qualifier = stage == Stage.VERTEX ? "out" : "in";
-                varyings.add(qualifier + " " + type + " " + name);
-                out.add("layout(location = " + location + ") " + qualifier + " " + type + " " + name + ";"
-                        + (comment.isEmpty() ? "" : " //" + comment));
+                // "varying vec2 texCoord, lmCoord;" is one declaration and two variables: giving the pair one location
+                // is what "overlapping use of location 1" was. Each name gets its own line and its own location.
+                for (String name : names.split(",")) {
+                    String single = name.trim();
+                    if (single.isEmpty()) {
+                        continue;
+                    }
+                    int location = varyings.size();
+                    varyings.add(qualifier + " " + type + " " + single);
+                    out.add("layout(location = " + location + ") " + qualifier + " " + type + " " + single + ";"
+                            + (comment.isEmpty() ? "" : " //" + comment));
+                }
                 varyingLine = true;
             }
 
@@ -251,8 +280,14 @@ public final class LegacyGlslLowering {
                 for (Map.Entry<String, String> matrix : BUILTIN_MATRICES.entrySet()) {
                     if (lowered.contains(matrix.getKey())) {
                         usesTransforms = true;
-                        lowered = lowered.replace(matrix.getKey(), TRANSFORM_INSTANCE + "." + matrix.getValue()
-                                .substring(matrix.getValue().indexOf(' ') + 1));
+                        String member = matrix.getValue().substring(matrix.getValue().indexOf(' ') + 1);
+                        int arrayAt = member.indexOf('[');
+                        if (arrayAt >= 0) {
+                            // The declared array suffix is not part of the reference: the pack writes its own index, and
+                            // keeping the suffix produced u_TextureMatrix[8][0] - "array index out of range '8'".
+                            member = member.substring(0, arrayAt);
+                        }
+                        lowered = lowered.replace(matrix.getKey(), TRANSFORM_INSTANCE + "." + member);
                         if (!uniforms.contains(matrix.getValue())) {
                             uniforms.add(matrix.getValue());
                         }
@@ -266,6 +301,17 @@ public final class LegacyGlslLowering {
                     usesFragmentData = true;
                     lowered = lowered.replace("gl_FragData", FRAGMENT_DATA);
                 }
+                String plainDeclaration = plainUniformDeclaration(lowered);
+                if (plainDeclaration != null) {
+                    // The declaration moves into the block emitted after #version, so the line itself goes away.
+                    out.add((comment.isEmpty() ? "" : "//" + comment));
+                    continue;
+                }
+                for (Map.Entry<String, String> uniform : plainUniforms.entrySet()) {
+                    if (containsIdentifier(lowered, uniform.getKey())) {
+                        lowered = replaceIdentifier(lowered, uniform.getKey(), UNIFORM_INSTANCE + "." + uniform.getKey());
+                    }
+                }
                 for (Map.Entry<String, String> rename : samplerRenames.entrySet()) {
                     if (containsIdentifier(lowered, rename.getKey())) {
                         lowered = replaceIdentifier(lowered, rename.getKey(), rename.getValue());
@@ -273,12 +319,14 @@ public final class LegacyGlslLowering {
                 }
                 String opaque = samplerDeclaration(lowered);
                 if (opaque != null) {
-                    String[] parts = opaque.split(" ");
-                    Integer binding = samplerBindings.get(parts[2]);
-                    if (binding != null) {
-                        String declaration = parts[0] + " " + parts[1] + " " + parts[2];
-                        lowered = lowered.replace(declaration,
-                                "layout(binding = " + binding.intValue() + ") " + declaration);
+                    for (String one : opaque.substring("uniform ".length()).split("\u0000")) {
+                        String[] parts = one.split(" ");
+                        Integer binding = samplerBindings.get(parts[1]);
+                        if (binding != null) {
+                            String declaration = "uniform " + parts[0] + " " + parts[1];
+                            lowered = lowered.replace(declaration,
+                                    "layout(binding = " + binding.intValue() + ") " + declaration);
+                        }
                     }
                 }
                 for (Map.Entry<String, String> function : TEXTURE_FUNCTIONS.entrySet()) {
@@ -300,6 +348,13 @@ public final class LegacyGlslLowering {
             text.append(out.get(i)).append('\n');
             if (inserted == 0 && out.get(i).startsWith("#version")) {
                 text.append('\n');
+                if (!plainUniforms.isEmpty()) {
+                    text.append("layout(set = 0, binding = 1, std140) uniform ").append(UNIFORM_BLOCK).append(" {\n");
+                    for (String member : plainUniforms.values()) {
+                        text.append("    ").append(member).append(";\n");
+                    }
+                    text.append("} ").append(UNIFORM_INSTANCE).append(";\n\n");
+                }
                 if (usesTransforms || !uniforms.isEmpty()) {
                     text.append("layout(set = 0, binding = 0, std140) uniform ").append(TRANSFORM_BLOCK).append(" {\n");
                     for (String member : uniforms) {
@@ -343,6 +398,68 @@ public final class LegacyGlslLowering {
     }
 
     /**
+     * {@return the leading type token and the rest of a declaration}, e.g. {@code vec2} and {@code texCoord, lmCoord;}.
+     * <p>
+     * The type is the first token, not everything before the last identifier: a comma-declared line like
+     * {@code varying vec2 texCoord, lmCoord;} has two names, and searching for the last identifier put
+     * {@code "vec2 texCoord,"} into the type - which emitted both names under one location and is what
+     * "overlapping use of location 1" was.
+     */
+    private static String[] typeAndNames(String declaration) {
+        String text = declaration.trim();
+        int space = text.indexOf(' ');
+        if (space <= 0) {
+            return null;
+        }
+        return new String[] {text.substring(0, space), text.substring(space + 1).trim()};
+    }
+
+    /**
+     * {@return {@code uniform <type> <name> <suffix>} for a non-opaque uniform declaration}, or null.
+     * <p>
+     * Vulkan GLSL does not allow non-opaque uniforms outside a block ("not allowed when using GLSL for Vulkan"), and a
+     * pack declares dozens of them - frameTimeCounter, cameraPosition, the gbuffer matrices. They are collected into one
+     * std140 block and their uses rewritten, the same shape as the fixed-function matrices.
+     */
+    private static String plainUniformDeclaration(String code) {
+        String trimmed = code.trim();
+        if (!trimmed.startsWith("uniform ") || !trimmed.endsWith(";")) {
+            return null;
+        }
+        String rest = trimmed.substring("uniform ".length()).trim();
+        String withoutSemicolon = rest.substring(0, rest.length() - 1).trim();
+        String[] split = typeAndNames(withoutSemicolon);
+        if (split == null) {
+            return null;
+        }
+        String type = split[0];
+        if (type.isEmpty() || type.startsWith("sampler") || type.startsWith("usampler")
+                || type.startsWith("isampler") || type.startsWith("image")) {
+            return null;
+        }
+        StringBuilder all = new StringBuilder();
+        // "uniform mat4 a, b;" declares two uniforms: one block member each, or the compiler rejects the line as a
+        // non-opaque uniform outside a block - which is what BSL's shadow.vsh reported.
+        for (String piece : split[1].split(",")) {
+            String name = piece.trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            String suffix = "";
+            int bracket = name.indexOf('[');
+            if (bracket >= 0) {
+                suffix = name.substring(bracket);
+                name = name.substring(0, bracket);
+            }
+            if (name.isEmpty() || !Character.isJavaIdentifierStart(name.charAt(0))) {
+                return null;
+            }
+            all.append(all.length() == 0 ? "" : "\u0000").append(type).append(' ').append(name).append(' ').append(suffix);
+        }
+        return all.length() == 0 ? null : "uniform " + all;
+    }
+
+    /**
      * {@return {@code <type> uniform <name>} for an opaque uniform declaration}, or null.
      * <p>
      * Samplers are the one uniform kind Vulkan GLSL insists on binding explicitly, so they are handled here rather than
@@ -357,16 +474,22 @@ public final class LegacyGlslLowering {
         if (!rest.endsWith(";")) {
             return null;
         }
-        int nameStart = lastIdentifierStart(rest);
-        if (nameStart <= 0) {
+        String[] split = typeAndNames(rest);
+        if (split == null) {
             return null;
         }
-        String type = rest.substring(0, nameStart).trim();
-        String name = rest.substring(nameStart).replace(";", "").trim();
+        String type = split[0];
         if (!type.startsWith("sampler") && !type.startsWith("usampler") && !type.startsWith("isampler")) {
             return null;
         }
-        return "uniform " + type + " " + name;
+        StringBuilder all = new StringBuilder();
+        for (String piece : split[1].replace(";", "").split(",")) {
+            String name = piece.trim();
+            if (!name.isEmpty()) {
+                all.append(all.length() == 0 ? "" : "\u0000").append(type).append(' ').append(name);
+            }
+        }
+        return all.length() == 0 ? null : "uniform " + all;
     }
 
     /** {@return the index where the trailing identifier of a declaration starts}, or -1. */

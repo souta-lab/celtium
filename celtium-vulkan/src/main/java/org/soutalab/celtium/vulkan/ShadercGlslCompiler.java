@@ -83,6 +83,16 @@ public final class ShadercGlslCompiler implements GlslCompiler {
         return "none";
     }
 
+    /**
+     * The stack a compilation gets.
+     * <p>
+     * glslang parses by recursion, and a pack's terrain program is a deeply nested expression tree: compiling BSL's
+     * {@code gbuffers_terrain.vsh} on a game thread failed with {@code OutOfMemoryError: Out of stack space} - not the
+     * heap, the thread stack, which in a modded Minecraft client is the JVM default (512 KiB-1 MiB). Compilations run on
+     * a thread of their own with an explicit stack, so the game's thread stacks stay as the game configured them.
+     */
+    private static final long COMPILE_STACK_BYTES = 64L * 1024L * 1024L;
+
     @Override public SpirvModule compile(Stage stage, String source) throws SpirvStageCompiler.CompileFailure {
         if (!available()) {
             throw new SpirvStageCompiler.CompileFailure("shaderc unavailable: " + unavailableReason());
@@ -90,6 +100,45 @@ public final class ShadercGlslCompiler implements GlslCompiler {
         if (stage != Stage.VERTEX && stage != Stage.FRAGMENT) {
             throw new SpirvStageCompiler.CompileFailure("unsupported stage: " + stage);
         }
+        java.util.concurrent.atomic.AtomicReference<SpirvModule> module =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> thrown =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread worker = new Thread(null, () -> {
+            try {
+                module.set(compileOnThisThread(stage, source));
+            } catch (Throwable failure) {
+                thrown.set(failure);
+            }
+        }, "celtium-shaderc", COMPILE_STACK_BYTES);
+        worker.setDaemon(true);
+        worker.start();
+        try {
+            worker.join();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new SpirvStageCompiler.CompileFailure("interrupted while compiling: " + interrupted);
+        }
+        if (thrown.get() != null) {
+            Throwable failure = thrown.get();
+            if (failure instanceof SpirvStageCompiler.CompileFailure compileFailure) {
+                throw compileFailure;
+            }
+            if (failure instanceof OutOfMemoryError) {
+                throw new SpirvStageCompiler.CompileFailure("shaderc ran out of stack or heap on the compile thread ("
+                        + COMPILE_STACK_BYTES / (1024 * 1024) + " MiB stack): " + failure);
+            }
+            throw new SpirvStageCompiler.CompileFailure("shaderc threw: " + failure);
+        }
+        SpirvModule compiled = module.get();
+        if (compiled == null) {
+            throw new SpirvStageCompiler.CompileFailure("shaderc produced nothing");
+        }
+        return compiled;
+    }
+
+    /** The compilation itself, on the thread that owns the large stack. */
+    private SpirvModule compileOnThisThread(Stage stage, String source) throws SpirvStageCompiler.CompileFailure {
         long compiler = 0L;
         long options = 0L;
         long result = 0L;
