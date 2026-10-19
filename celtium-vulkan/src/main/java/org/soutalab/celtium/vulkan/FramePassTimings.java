@@ -57,7 +57,10 @@ public final class FramePassTimings {
             // group's payload capture is the expensive half) and the window's own setup before it records
             // (recording snapshot, frame begin, target/device gates). They were the residue of the batch call's
             // measured parts (batchCallMillis 3,153 ms against ~1,450 ms of named sub-timers).
-            "closeGroup", "windowSetup"};
+            "closeGroup", "windowSetup",
+            // The flush's per-group halves: everything the group's own draw needs prepared (descriptor resolution,
+            // push-block fill, viewport and bias state) against the pipeline call that binds and draws it.
+            "grpPrep", "grpDraw"};
 
     private static final int CAPACITY = 512;
 

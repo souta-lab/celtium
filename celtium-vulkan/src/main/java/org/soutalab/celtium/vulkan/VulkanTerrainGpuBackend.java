@@ -15422,6 +15422,7 @@ this.frameBufferOpen = false;
                 // Bound the lifetime to ONE group. All vkCmd* calls synchronously consume these
                 // parameter arrays before this scope ends; Vulkan owns the recorded handles.
                 long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
                 try (MemoryStack groupStack = MemoryStack.stackPush()) {
                     celtium$setGroupViewport(groupStack, group);
                     // BH-11: GL's polygon offset, applied as this group's depth bias. It is command state - one
@@ -15456,11 +15457,17 @@ this.frameBufferOpen = false;
                         this.immediateStatistics.noteImmediateDepthBiasedGroups();
                     }
                     Object pipeline = prepared.pipeline;
+                    // grpPrep/grpDraw split the flush's per-group cost: the flush is 3.3 ms p50 for ~334 groups on
+                    // the dense scene (winRecord 2.8 of it), and the questions are "which half" and "is it the
+                    // driver call or our own state preparation". Both brackets nest inside winRecord.
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
                     if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                     else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                     else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                     else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                     else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                 }
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
