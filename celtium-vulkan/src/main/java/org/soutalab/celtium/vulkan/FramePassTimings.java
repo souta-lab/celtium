@@ -101,8 +101,16 @@ public final class FramePassTimings {
     }
 
     /** {@return whether the instrument should measure at all}. */
+    /**
+     * Resolved once: {@code Boolean.getBoolean} walks {@code System.getProperty} into a ConcurrentHashMap, and this is
+     * asked on both sides of every bracket - the JFR census of the shipping configuration put that lookup at 1.8% of the
+     * client thread's samples, 65 of the 87 ConcurrentHashMap.get samples, from the instrumentation itself. The switch is
+     * a JVM argument, so it cannot change after this class initialises.
+     */
+    private static final boolean PASS_SPLIT_ENABLED = Boolean.getBoolean("celtium.vulkan.passSplit");
+
     public static boolean enabled() {
-        return VulkanDiagnostics.enabled() || Boolean.getBoolean("celtium.vulkan.passSplit");
+        return VulkanDiagnostics.enabled() || PASS_SPLIT_ENABLED;
     }
 
     /**
