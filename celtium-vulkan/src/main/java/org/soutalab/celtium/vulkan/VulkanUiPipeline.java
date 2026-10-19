@@ -119,6 +119,7 @@ public final class VulkanUiPipeline {
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(1)
                     .pImageInfo(image);
+            VulkanDescriptorWrites.note(write, "VulkanUiPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
         }
     }

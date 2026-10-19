@@ -615,6 +615,7 @@ public final class VulkanTerrainPipeline {
             writes.get(2).sType$Default().dstSet(set).dstBinding(LIGHTMAP_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .pImageInfo(lightmapInfo);
+            VulkanDescriptorWrites.note(writes, "VulkanTerrainPipeline");
             vkUpdateDescriptorSets(context.device(), writes, null);
         }
         descriptorsWritten[slot & (DESCRIPTOR_SLOTS - 1)] = true;

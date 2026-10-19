@@ -592,6 +592,7 @@ public final class VulkanPostChain {
                 write.get(0).sType$Default().dstSet(this.setRing[i]).dstBinding(UNIFORM_BLOCK_BINDING)
                         .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                         .pBufferInfo(info);
+                VulkanDescriptorWrites.note(write, "VulkanPostChain");
                 vkUpdateDescriptorSets(device, write, null);
             }
         }
@@ -1623,6 +1624,7 @@ public final class VulkanPostChain {
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).pImageInfo(auxInfo);
             // Binding 2 is not written here: it names this slot's uniform block for the chain's whole life, set once
             // at creation. Only the block's contents change per pass, through the mapping below.
+            VulkanDescriptorWrites.note(writes, "VulkanPostChain");
             vkUpdateDescriptorSets(device, writes, null);
             return slot;
         }
