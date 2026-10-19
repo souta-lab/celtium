@@ -206,4 +206,34 @@ class ExpressionEvaluatorTest {
         assertTrue(diags.stream().anyMatch(d -> d.message().contains("modulo by zero")
                 || d.message().contains("1 % 0")));
     }
+
+    /**
+     * A long run of unary operators is a depth problem, not a crash (audit #369: 20,000 {@code !} raised a raw
+     * StackOverflowError out of the parser, well inside the default line length).
+     */
+    @Test
+    void aLongRunOfUnaryOperatorsIsRefusedNotAStackOverflow() {
+        // Any EvalFailure is the contract: the case must not escape as a raw StackOverflowError.
+        org.junit.jupiter.api.Assertions.assertThrows(ExpressionEvaluator.EvalFailure.class,
+                () -> ExpressionEvaluator.parse(new MacroState(), "!".repeat(20000) + "1").evaluate());
+    }
+
+    @Test
+    void everyUnaryOperatorStillEvaluatesInTheRightOrder() throws Exception {
+        assertEquals(1.0, ExpressionEvaluator.parse(new MacroState(), "!!5").evaluate(), 0.0001);
+        assertEquals(-5.0, ExpressionEvaluator.parse(new MacroState(), "-5").evaluate(), 0.0001);
+        assertEquals(5.0, ExpressionEvaluator.parse(new MacroState(), "-+-5").evaluate(), 0.0001);
+        assertEquals(0.0, ExpressionEvaluator.parse(new MacroState(), "!7").evaluate(), 0.0001);
+        assertEquals(-6.0, ExpressionEvaluator.parse(new MacroState(), "~5").evaluate(), 0.0001);
+        // The operators must bind tighter than a multiplication that follows them: -2*3 is -6, not 6.
+        assertEquals(-6.0, ExpressionEvaluator.parse(new MacroState(), "-2*3").evaluate(), 0.0001);
+    }
+
+    @Test
+    void aModerateChainUnderTheLimitStillWorks() throws Exception {
+        // 100 operators is inside the budget, and ! applied an even number of times returns the argument's truth value
+        // inverted back: !...!(0) with an even count is 0, with an odd count 1.
+        assertEquals(0.0, ExpressionEvaluator.parse(new MacroState(), "!".repeat(100) + "0").evaluate(), 0.0001);
+        assertEquals(1.0, ExpressionEvaluator.parse(new MacroState(), "!".repeat(99) + "0").evaluate(), 0.0001);
+    }
 }

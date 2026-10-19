@@ -293,21 +293,73 @@ final class ExpressionEvaluator {
         }
     }
 
+    /**
+     * Unary operators, counted against the same depth budget as parentheses.
+     * <p>
+     * Each operator recursed without any guard, so a 20,000-character run of {@code !} - inside the default line
+     * length - raised a raw {@link StackOverflowError} out of {@link #parse} (audit #369). The operators are applied
+     * from the innermost out, so the chain is walked once to count them and then once to apply them; the depth check
+     * runs before the outer recursion so a deep chain is an {@link EvalFailure}, never a stack overflow.
+     */
     private double unary() throws EvalFailure {
         skipWhitespace();
-        if (match("!")) {
-            return unary() == 0.0 ? 1.0 : 0.0;
+        int start = this.pos;
+        int operators = 0;
+        while (true) {
+            if (match("!")) {
+                operators++;
+            } else if (match("-")) {
+                operators++;
+            } else if (match("+")) {
+                operators++;
+            } else if (match("~")) {
+                operators++;
+            } else {
+                break;
+            }
+            if (operators > MAX_PARSE_DEPTH) {
+                throw new EvalFailure("more than " + MAX_PARSE_DEPTH + " unary operators");
+            }
         }
-        if (match("-")) {
-            return -unary();
+        if (operators == 0) {
+            return primary();
         }
-        if (match("+")) {
-            return unary();
+        // The operators must be applied innermost first: the operand is parsed once here, then the run is re-read
+        // from its end. The operand's parse leaves pos after the operand, which is where the caller expects it.
+        double value = primary();
+        for (int index = operators - 1; index >= 0; index--) {
+            char operator = operatorAt(start, index, operators);
+            switch (operator) {
+                case '!' -> value = value == 0.0 ? 1.0 : 0.0;
+                case '-' -> value = -value;
+                case '+' -> {
+                    // Identity.
+                }
+                case '~' -> value = ~(long) value;
+                default -> throw new EvalFailure("unexpected unary operator " + operator);
+            }
         }
-        if (match("~")) {
-            return ~(long) unary();
+        return value;
+    }
+
+    /** {@return the operator character of the {@code index}-th unary operator beginning at {@code start}}. */
+    private char operatorAt(int start, int index, int operators) {
+        int seen = 0;
+        for (int at = start; at < this.text.length() && seen <= index; at++) {
+            char c = this.text.charAt(at);
+            if (c == ' ' || c == '\t') {
+                continue;
+            }
+            if (c == '!' || c == '-' || c == '+' || c == '~') {
+                if (seen == index) {
+                    return c;
+                }
+                seen++;
+            } else {
+                break;
+            }
         }
-        return primary();
+        throw new IllegalStateException("unary operator run changed under the parser");
     }
 
     private double primary() throws EvalFailure {

@@ -69,7 +69,8 @@ public final class ShaderPackLoader {
         // annotation removed the same program compiles, with only the brackets neutralised it still overflows, and the
         // line on its own does not - it is the annotation text against the rest of the program. The frontend has already
         // read them for the option table, so the compiler does not need them.
-        String joined = text.toString().replaceAll("//\\[[^\\]\\n]*\\]", "");
+        String joined = insertSeedDefines(text.toString(), environment);
+        joined = joined.replaceAll("//\\[[^\\]\\n]*\\]", "");
         text.setLength(0);
         text.append(joined);
         if (diagnostics.stream().anyMatch(d -> d.severity() == Severity.ERROR)) {
@@ -77,6 +78,48 @@ public final class ShaderPackLoader {
             throw new PackException(first.code(), first.message());
         }
         return text.toString();
+    }
+
+    /**
+     * Inserts the seed environment as {@code #define} lines after the {@code #version} line.
+     * <p>
+     * The seeds are what the {@code #if} lines were decided with, but they only lived in the preprocessor's own macro
+     * state: a shader that refers to a seed (the usual {@code MC_VERSION}) reached shaderc as an undefined identifier
+     * (audit #372). A name the text already defines is left to the shader, so a pack's own value is not redefined.
+     */
+    static String insertSeedDefines(String text, Map<String, String> seeds) {
+        if (seeds == null || seeds.isEmpty()) {
+            return text;
+        }
+        StringBuilder defines = new StringBuilder();
+        for (Map.Entry<String, String> seed : seeds.entrySet()) {
+            String name = seed.getKey();
+            String value = seed.getValue();
+            if (name == null || name.isEmpty() || value == null || value.isEmpty()) {
+                continue;
+            }
+            if (text.contains("#define " + name + " ") || text.contains("#define " + name + "\n")) {
+                continue;
+            }
+            defines.append("#define ").append(name).append(' ').append(value).append('\n');
+        }
+        if (defines.length() == 0) {
+            return text;
+        }
+        String[] lines = text.split("\n", -1);
+        StringBuilder out = new StringBuilder(text.length() + defines.length() + 32);
+        boolean inserted = false;
+        for (String line : lines) {
+            out.append(line).append('\n');
+            if (!inserted && line.trim().startsWith("#version")) {
+                out.append(defines);
+                inserted = true;
+            }
+        }
+        if (!inserted) {
+            out.insert(0, defines);
+        }
+        return out.toString();
     }
 
     public static PackManifest load(Path input, LoadOptions options) throws PackException {

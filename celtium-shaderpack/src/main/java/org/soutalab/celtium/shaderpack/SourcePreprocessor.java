@@ -257,6 +257,12 @@ final class SourcePreprocessor {
             case "undef" -> {
                 if (isLive(conditions)) {
                     macros.undef(firstIdentifier(argument));
+                    if (this.keepDefines) {
+                        // A dropped #undef leaves the compiler believing a name that this file removed is still
+                        // defined, so a define/undef/redefine sequence reaches shaderc with the wrong value (audit #372).
+                        // The line is emitted exactly as written, in order.
+                        emit(out, file, at.line(), line);
+                    }
                 }
             }
             case "error" -> {

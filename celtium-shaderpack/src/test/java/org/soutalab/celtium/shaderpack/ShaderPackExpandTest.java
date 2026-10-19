@@ -68,4 +68,66 @@ class ShaderPackExpandTest {
         assertThrows(PackException.class, () -> ShaderPackLoader.expand(zip,
                 PackPath.absolute("/shaders/gbuffers_terrain.vsh"), Map.of()));
     }
+
+    /**
+     * The seeds decide the {@code #if} lines, so the compiler has to see the same environment: a shader that reads a seed
+     * reached shaderc as an undefined identifier (audit #372). The define goes after {@code #version}, and a name the
+     * shader defines itself is left to the shader.
+     */
+    @Test
+    void seedsReachTheCompiledTextAsDefines(@TempDir Path temp) throws Exception {
+        Path zip = FixturePack.writeZip(temp.resolve("pack.zip"), Map.of(
+                "shaders/gbuffers_terrain.vsh", """
+                        #version 120
+                        #if FLAG
+                        const int k = MC_VERSION;
+                        #endif
+                        void main() {
+                            gl_Position = vec4(float(k));
+                        }
+                        """));
+        String expanded = ShaderPackLoader.expand(zip, PackPath.absolute("/shaders/gbuffers_terrain.vsh"),
+                Map.of("FLAG", "1", "MC_VERSION", "11202"));
+        String[] lines = expanded.split("\n");
+        int versionLine = -1;
+        int seedLine = -1;
+        for (int index = 0; index < lines.length; index++) {
+            if (lines[index].trim().startsWith("#version")) {
+                versionLine = index;
+            }
+            if (lines[index].contains("#define MC_VERSION 11202")) {
+                seedLine = index;
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(versionLine >= 0, expanded);
+        org.junit.jupiter.api.Assertions.assertTrue(seedLine > versionLine,
+                "the seed define must follow #version: " + expanded);
+        org.junit.jupiter.api.Assertions.assertTrue(expanded.contains("const int k = MC_VERSION;"), expanded);
+    }
+
+    /**
+     * A {@code #define / #undef / #define} sequence has to reach the compiler with both its defines and the removal: the
+     * preprocessor used to drop the {@code #undef} (audit #372), so the compiler kept the first value.
+     */
+    @Test
+    void undefSurvivesOnTheCompilationPath(@TempDir Path temp) throws Exception {
+        Path zip = FixturePack.writeZip(temp.resolve("pack.zip"), Map.of(
+                "shaders/gbuffers_basic.fsh", """
+                        #version 120
+                        #define X 7
+                        #undef X
+                        #define X 9
+                        void main() {
+                            gl_FragColor = vec4(float(X));
+                        }
+                        """));
+        String expanded = ShaderPackLoader.expand(zip, PackPath.absolute("/shaders/gbuffers_basic.fsh"), Map.of());
+        int first = expanded.indexOf("#define X 7");
+        int undef = expanded.indexOf("#undef X");
+        int second = expanded.indexOf("#define X 9");
+        org.junit.jupiter.api.Assertions.assertTrue(first >= 0, expanded);
+        org.junit.jupiter.api.Assertions.assertTrue(undef > first, "the #undef must be kept, in order: " + expanded);
+        org.junit.jupiter.api.Assertions.assertTrue(second > undef, expanded);
+        org.junit.jupiter.api.Assertions.assertTrue(expanded.contains("float(X)"), expanded);
+    }
 }
