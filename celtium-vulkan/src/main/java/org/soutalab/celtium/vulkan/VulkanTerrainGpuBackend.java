@@ -2273,29 +2273,38 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return text.toString();
     }
 
-    private static boolean celtium$formatAccepted(int formatId) {
-        // Comma-separated ids, not digit-by-digit: the matcher walked the string's characters and compared each to the
-        // format id, so an id of 10 could never be accepted - the mask would have to be the single character ':' or a
-        // duplicate 1, and the first version of this line silently admitted every format-1 batch instead. Reading the
-        // entries as numbers is what lets the mask grow past nine ids, which is where the layouts are now.
-        String accepted = ACCEPTED_FORMATS;
-        int start = 0;
-        while (start <= accepted.length()) {
-            int comma = accepted.indexOf(',', start);
-            String entry = comma < 0 ? accepted.substring(start) : accepted.substring(start, comma);
+    /**
+     * The accepted immediate format ids, parsed once.
+     * <p>
+     * The check used to walk {@link #ACCEPTED_FORMATS} with {@code indexOf}/{@code substring}/{@code Integer.parseInt}
+     * on every batch. The dense world scene (qmagnet's exhibition) offers a few hundred batches a frame and JFR put
+     * ~1.5% of the client thread's samples inside that scan, so the ids are parsed once into a lookup table and the
+     * per-batch question is a bounds-checked array read.
+     */
+    private static final boolean[] ACCEPTED_FORMAT_TABLE = buildAcceptedFormats();
+
+    private static boolean[] buildAcceptedFormats() {
+        boolean[] table = new boolean[VulkanImmediateFormats.COUNT + 1];
+        for (String entry : ACCEPTED_FORMATS.split(",")) {
+            String trimmed = entry.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
             try {
-                if (Integer.parseInt(entry.trim()) == formatId) {
-                    return true;
+                int id = Integer.parseInt(trimmed);
+                if (id >= 0 && id < table.length) {
+                    table[id] = true;
                 }
             } catch (NumberFormatException notAnId) {
                 // An unreadable entry admits nothing; the ids that did parse still apply.
             }
-            if (comma < 0) {
-                break;
-            }
-            start = comma + 1;
         }
-        return false;
+        return table;
+    }
+
+    private static boolean celtium$formatAccepted(int formatId) {
+        boolean[] table = ACCEPTED_FORMAT_TABLE;
+        return formatId >= 0 && formatId < table.length && table[formatId];
     }
 
     /**
@@ -14491,8 +14500,20 @@ this.frameBufferOpen = false;
 
 
 
+    /** Reused by the GL fallback below: the immediate path asks for the viewport once per group, and a fresh direct
+     * buffer per call was ~1.4% of the client thread's samples on the dense world scene (JFR line census). */
+    private static final IntBuffer VIEWPORT_SCRATCH = org.lwjgl.BufferUtils.createIntBuffer(4);
+
     private static int[] currentViewport() {
-        IntBuffer viewport = org.lwjgl.BufferUtils.createIntBuffer(4);
+        // Under the GL-less window the answer is the rectangle the game last set, kept by the stub: asking GL through
+        // the direct buffer below costs an allocation and a query for every group.
+        long packed = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewportPacked();
+        if (packed >= 0L) {
+            return new int[] { (int) ((packed >> 48) & 0xFFFF) - (((packed >> 48) & 0x8000) != 0 ? 0x10000 : 0),
+                    (int) ((packed >> 32) & 0xFFFF) - (((packed >> 32) & 0x8000) != 0 ? 0x10000 : 0),
+                    (int) ((packed >> 16) & 0xFFFF), (int) (packed & 0xFFFF) };
+        }
+        IntBuffer viewport = VIEWPORT_SCRATCH;
         org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
 
         int width = viewport.get(2);

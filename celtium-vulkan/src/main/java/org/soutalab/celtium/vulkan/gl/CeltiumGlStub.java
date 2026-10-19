@@ -1320,7 +1320,23 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records the viewport selected through Minecraft's API or LWJGL3's native entry point. */
+    /** The last viewport the game set, packed as x|y|w|h in four 16-bit fields; 0 means "never set". */
+    private static long viewportPacked;
+    private static boolean viewportSeen;
+
+    /** {@return the last viewport rectangle packed into one long, or {@code -1} when the game never set one}. */
+    public static long celtium$viewportPacked() {
+        return viewportSeen ? viewportPacked : -1L;
+    }
+
     public static void celtium$viewport(int x, int y, int width, int height) {
+        // Kept for the renderer's own viewport reader: the GL query goes through a direct IntBuffer allocation per
+        // call, and the immediate path asks once per group. Four 16-bit fields are enough for any real viewport.
+        if (width >= 0 && height >= 0 && width <= 0xFFFF && height <= 0xFFFF) {
+            viewportPacked = ((long) (x & 0xFFFF) << 48) | ((long) (y & 0xFFFF) << 32)
+                    | ((long) (width & 0xFFFF) << 16) | (height & 0xFFFF);
+            viewportSeen = true;
+        }
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.viewportX = x;
