@@ -400,7 +400,9 @@ public final class ShaderPackPipelineFactory {
      */
     public LayoutHandle createLayout(LegacyGlslLowering.Result vertex, LegacyGlslLowering.Result fragment) {
         boolean transformBlock = !vertex.usedTransformBlock().isEmpty() || !fragment.usedTransformBlock().isEmpty();
-        boolean uniformBlock = !vertex.uniforms().isEmpty() || !fragment.uniforms().isEmpty();
+        // The plain-uniform block is its own metadata: uniforms() is the transform list, so a shader with plain
+        // uniforms and no matrix used to emit binding 1 in the source and leave it out of the layout (audit #378).
+        boolean uniformBlock = vertex.usesPlainUniformBlock() || fragment.usesPlainUniformBlock();
         java.util.Set<Integer> samplerBindings = new java.util.TreeSet<>();
         samplerBindings.addAll(vertex.samplers().values());
         samplerBindings.addAll(fragment.samplers().values());
@@ -409,7 +411,7 @@ public final class ShaderPackPipelineFactory {
 
     public LayoutHandle createLayout(LegacyGlslLowering.Result lowered) {
         boolean transformBlock = !lowered.usedTransformBlock().isEmpty();
-        boolean uniformBlock = !lowered.uniforms().isEmpty();
+        boolean uniformBlock = lowered.usesPlainUniformBlock();
         return createLayout(transformBlock, uniformBlock,
                 new java.util.TreeSet<>(lowered.samplers().values()), lowered.samplers(), java.util.Map.of());
     }

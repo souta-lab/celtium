@@ -94,7 +94,12 @@ public final class LegacyGlslLowering {
     /** The lowered source and what it declares, so a pipeline can be built against it without re-parsing the text. */
     public record Result(String source, Map<String, Integer> attributes, List<String> varyings, List<String> uniforms,
                          Map<String, Integer> samplers, List<String> unsupported, int originalVersion,
-                         String usedTransformBlock, Map<String, String> attributeTypes) {
+                         String usedTransformBlock, Map<String, String> attributeTypes,
+                         // Whether the source declares the plain-uniform block at binding 1. It used to be inferred by
+                         // consumers from uniforms() being non-empty, which is the transform list - so a shader with
+                         // plain uniforms and no matrices emitted the block and left it out of the descriptor layout
+                         // (audit #378). The block is now its own fact.
+                         boolean usesPlainUniformBlock) {
     }
 
     private static Map<String, String> builtinAttributes() {
@@ -208,7 +213,12 @@ public final class LegacyGlslLowering {
         // every opaque uniform needs one, and a later line may sample a sampler declared earlier.
         Map<String, String> samplerRenames = new LinkedHashMap<>();
         Map<String, String> plainUniforms = new LinkedHashMap<>();
-        java.util.Set<String> declaredLocals = new java.util.LinkedHashSet<>();
+        // Which function each line belongs to, and which functions declare a shadowing local. A stage-wide set was
+        // wrong in the way audit #376 measured: "float gain = 2.0" inside helper() made main's reference to the global
+        // uniform gain skip the rewrite as well, and the compiler reported it as an undeclared identifier. A global
+        // declaration (function index -1) still shadows the uniform everywhere.
+        int[] functionOfLine = new int[lines.size()];
+        java.util.Map<String, java.util.Set<Integer>> localFunctions = new java.util.LinkedHashMap<>();
         // The program-wide contract, applied once the local state exists: the union of what both stages declared, so
         // both emit the same block types.
         for (Map.Entry<String, String> shared : sharedUniforms.entrySet()) {
@@ -225,14 +235,34 @@ public final class LegacyGlslLowering {
             usesTransforms = true;
         }
         GlslComments prescan = new GlslComments();
-        for (String line : lines) {
+        int braceDepth = 0;
+        int functionIndex = -1;
+        int functionsSeen = 0;
+        for (int lineIndex = 0; lineIndex < lines.size(); lineIndex++) {
+            String line = lines.get(lineIndex);
             String code = prescan.split(line).code();
+            functionOfLine[lineIndex] = functionIndex;
             String local = localDeclarationName(code);
             if (local != null) {
                 // A local (or global) variable the pack declares shadows any built-in of the same name. Packs really do
                 // this - BSL declares "vec3 fogColor" - and rewriting the declaration produced
                 // "vec3 celtium_uniforms.fogColor", which the compiler reports as "unexpected DOT".
-                declaredLocals.add(local);
+                localFunctions.computeIfAbsent(local, key -> new java.util.LinkedHashSet<>())
+                        .add(Integer.valueOf(functionIndex));
+            }
+            for (int at = 0; at < code.length(); at++) {
+                char c = code.charAt(at);
+                if (c == '{') {
+                    if (braceDepth == 0) {
+                        functionIndex = functionsSeen++;
+                    }
+                    braceDepth++;
+                } else if (c == '}' && braceDepth > 0) {
+                    braceDepth--;
+                    if (braceDepth == 0) {
+                        functionIndex = -1;
+                    }
+                }
             }
             String plain = plainUniformDeclaration(code);
             if (plain != null) {
@@ -254,6 +284,7 @@ public final class LegacyGlslLowering {
             if (declaration == null) {
                 continue;
             }
+            // samplerDeclaration returns "uniform type name" pieces joined by \u0000, so the shared prefix is cut once.
             for (String one : declaration.substring("uniform ".length()).split("\u0000")) {
             String[] parts = one.split(" ");
             String declared = parts[1];
@@ -271,7 +302,8 @@ public final class LegacyGlslLowering {
             nextLocation = Math.max(nextLocation, used.intValue() + 1);
         }
 
-        for (String rawLine : lines) {
+        for (int lineIndex = 0; lineIndex < lines.size(); lineIndex++) {
+            String rawLine = lines.get(lineIndex);
             GlslComments.Split split = comments.split(rawLine);
             String code = split.code();
             String comment = split.comment();
@@ -426,8 +458,9 @@ public final class LegacyGlslLowering {
                     out.add((comment.isEmpty() ? "" : "//" + comment));
                     continue;
                 }
+                int currentFunction = functionOfLine[lineIndex] + 0;
                 for (Map.Entry<String, String> uniform : plainUniforms.entrySet()) {
-                    if (declaredLocals.contains(uniform.getKey())) {
+                    if (isShadowedAt(localFunctions, uniform.getKey(), currentFunction)) {
                         continue;
                     }
                     if (containsIdentifier(lowered, uniform.getKey())) {
@@ -441,14 +474,31 @@ public final class LegacyGlslLowering {
                 }
                 String opaque = samplerDeclaration(lowered);
                 if (opaque != null) {
+                    // One declaration per sampler. A comma declaration ("uniform sampler2D first, second;") only
+                    // matched its first name when the line was rewritten by substring, so the second name stayed
+                    // unqualified and SPIR-V gave it binding 0 - the same binding the first was allocated (audit #377).
+                    StringBuilder declarations = new StringBuilder();
                     for (String one : opaque.substring("uniform ".length()).split("\u0000")) {
                         String[] parts = one.split(" ");
-                        Integer binding = samplerBindings.get(parts[1]);
-                        if (binding != null) {
-                            String declaration = "uniform " + parts[0] + " " + parts[1];
-                            lowered = lowered.replace(declaration,
-                                    "layout(binding = " + binding.intValue() + ") " + declaration);
+                        if (parts.length < 2) {
+                            continue;
                         }
+                        Integer binding = samplerBindings.get(parts[1]);
+                        if (declarations.length() > 0) {
+                            declarations.append('\n');
+                        }
+                        if (binding == null) {
+                            declarations.append("uniform ").append(parts[0]).append(' ').append(parts[1]).append(';');
+                        } else {
+                            declarations.append("layout(binding = ").append(binding.intValue())
+                                    .append(") uniform ").append(parts[0]).append(' ').append(parts[1]).append(';');
+                        }
+                    }
+                    boolean qualified = declarations.indexOf("layout(binding") >= 0;
+                    if (qualified) {
+                        // The line is exactly the declaration (samplerDeclaration required a trimmed line starting with
+                        // "uniform " and ending with ';'), so it is what gets replaced.
+                        lowered = declarations.toString();
                     }
                 }
                 for (Map.Entry<String, String> function : TEXTURE_FUNCTIONS.entrySet()) {
@@ -474,7 +524,9 @@ public final class LegacyGlslLowering {
                     break;
                 }
             }
-            if (declaredLocals.contains(builtin.getKey())) {
+            if (localFunctions.containsKey(builtin.getKey())) {
+                // A name the pack declares itself is not the built-in. Uses inside the declaring function are shadowed;
+                // a use in another function is the built-in and keeps the synthesized member (audit #376's rule).
                 used = false;
             }
             if (used && !plainUniforms.containsKey(builtin.getKey())) {
@@ -484,6 +536,7 @@ public final class LegacyGlslLowering {
 
         StringBuilder text = new StringBuilder();
         int inserted = 0;
+        boolean usesPlainUniformBlock = false;
         for (int i = 0; i < out.size(); i++) {
             text.append(out.get(i)).append('\n');
             if (inserted == 0 && out.get(i).startsWith("#version")) {
@@ -513,7 +566,8 @@ public final class LegacyGlslLowering {
                     }
                     text.append('\n');
                 }
-                if (!plainUniforms.isEmpty()) {
+                usesPlainUniformBlock = !plainUniforms.isEmpty();
+                if (usesPlainUniformBlock) {
                     text.append("layout(set = 0, binding = 1, std140) uniform ").append(UNIFORM_BLOCK).append(" {\n");
                     for (String member : plainUniforms.values()) {
                         text.append("    ").append(member).append(";\n");
@@ -560,7 +614,20 @@ public final class LegacyGlslLowering {
         Map<String, Integer> attributes = new TreeMap<>(assigned);
         return new Result(text.toString(), attributes, List.copyOf(varyings), List.copyOf(uniforms),
                 new TreeMap<>(samplerBindings), List.copyOf(unsupported), originalVersion,
-                usesTransforms ? TRANSFORM_BLOCK : "", new TreeMap<>(attributeTypes));
+                usesTransforms ? TRANSFORM_BLOCK : "", new TreeMap<>(attributeTypes), usesPlainUniformBlock);
+    }
+
+    /**
+     * {@return whether a name is a local visible at {@code functionIndex}} - a declaration in the same function, or a
+     * global one (recorded as function -1, which every line matches).
+     */
+    private static boolean isShadowedAt(java.util.Map<String, java.util.Set<Integer>> localFunctions, String name,
+                                        int functionIndex) {
+        java.util.Set<Integer> functions = localFunctions.get(name);
+        if (functions == null) {
+            return false;
+        }
+        return functions.contains(Integer.valueOf(functionIndex)) || functions.contains(Integer.valueOf(-1));
     }
 
     /**
