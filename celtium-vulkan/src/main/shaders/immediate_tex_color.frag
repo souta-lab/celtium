@@ -2,6 +2,11 @@
 
 layout(set = 0, binding = 0) uniform sampler2D u_Texture;
 
+// The native shadow map, sampled as the terrain shader samples it.
+layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
+layout(location = 5) in vec4 v_ShadowCoord;
+layout(constant_id = 0) const bool CELTIUM_SHADOW_ENABLED = false;
+
 layout(location = 0) in vec2 v_TexCoord;
 layout(location = 1) in vec4 v_Color;
 layout(location = 2) in float v_FogDistance;
@@ -86,5 +91,23 @@ void main() {
         }
     }
     colour.rgb = mix(colour.rgb, celtium.u_FogColor.rgb, celtiumFogAmount(v_FogDistance));
+    if (CELTIUM_SHADOW_ENABLED) {
+        vec3 shadowCoord = v_ShadowCoord.xyz / v_ShadowCoord.w;
+        vec3 shadowDx = dFdx(shadowCoord);
+        vec3 shadowDy = dFdy(shadowCoord);
+        float slopeTerm = abs(normalize(cross(shadowDx, shadowDy)).z);
+        if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
+            float bias = 0.0008 + 0.002 * (1.0 - slopeTerm);
+            float lit = 0.0;
+            for (int x = -1; x <= 1; x++) {
+                for (int y = -1; y <= 1; y++) {
+                    vec2 offset = vec2(float(x), float(y)) * (2.0 / 2048.0);
+                    float depth = texture(u_ShadowMap, shadowCoord.xy + offset).r;
+                    lit += shadowCoord.z - bias > depth ? 0.0 : 1.0;
+                }
+            }
+            colour.rgb *= mix(0.2, 1.0, lit / 9.0);
+        }
+    }
     fragColor = colour;
 }

@@ -28,6 +28,11 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 192) vec4 u_FogRow2;
 } celtium;
 
+// The native shadow map: the eye-space light matrix for this pipeline's already-transformed vertices, and the map.
+layout(set = 0, binding = 2) uniform CeltiumShadowUniforms { mat4 u_ShadowMatrix; } celtiumShadow;
+layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
+layout(location = 5) out vec4 v_ShadowCoord;
+
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec2 a_TexCoord;
 layout(location = 2) in vec4 a_Color;
@@ -54,5 +59,6 @@ void main() {
     }
     v_Color = a_Color;
     v_FogDistance = (int(celtium.u_FogParams.w + 0.5) & 7) == 0 ? 0.0 : celtiumFogDistance(a_Position);
+    v_ShadowCoord = celtiumShadow.u_ShadowMatrix * vec4(a_Position, 1.0);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }
