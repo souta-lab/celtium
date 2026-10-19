@@ -12086,6 +12086,9 @@ this.frameBufferOpen = false;
     /** Whether the once-per-run box-before-the-cube dump has been taken (round 225's coverage mask). */
     private boolean boxPreProbeDone;
 
+    /** Bounded count for {@code CELTIUM_MENU_GROUP}, the menu-phase group texture census. */
+    private int menuGroupCensus;
+
     /** The GL name whose uploads {@code CELTIUM_UPLOAD_CALLER} reports without the sixteen-line bound, or -1. */
     public static int uploadCallerId() {
         return Integer.getInteger("celtium.vulkan.uploadCallerId", -1).intValue();
@@ -15192,6 +15195,21 @@ this.frameBufferOpen = false;
                     if (source.startsWith("published-image")) {
                         this.splashPairAfterCompositeArmed = true;
                     }
+                }
+                // Menu-phase group census: which texture each group recorded, against the two sources the texture can
+                // come from. The panorama's faces are the measured case - 384 rotated quads a frame, mostly white in the
+                // picture - and the question is whether the group carries the panorama sheet's name or the splash
+                // canvas's (the mirror and the stub keep separate last-bind values, so a capture that reads one for a
+                // bind only the other saw would show exactly this).
+                if (this.menuGroupCensus < 24 && !this.worldPassActive) {
+                    this.menuGroupCensus++;
+                    System.out.println("[Celtium] CELTIUM_MENU_GROUP frame=" + this.frameId
+                            + " texture=" + group.texture + " format=" + group.formatId
+                            + " batches=" + group.batches + " verts=" + mesh.vertexCount()
+                            + " mirrorBound=" + this.immediateState.boundTextureName()
+                            + " stubBound=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture()
+                            + " target=" + group.target
+                            + " mirrorSource=" + celtium$registry().celtium$mirrorSourceFor(group.texture));
                 }
                 if (group.formatId == 2 && this.mirrorDrawLogs < MIRROR_DRAW_LOG_LIMIT) {
                     this.mirrorDrawLogs++;
