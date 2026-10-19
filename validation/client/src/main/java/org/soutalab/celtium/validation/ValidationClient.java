@@ -446,8 +446,8 @@ public final class ValidationClient {
          */
         /**
          * The standard real-world scene: QMAGNET's Test Map (CurseForge project 71679, file 2467609, "QMAGNET's Test
-         * Map [1.12.1].zip", the newest upload; distributed map, installed as the save {@code qmagnet}) at the map's
-         * spawn, render distance 18, captured like the flat scene. It exists because the flat world is not what the
+         * Map [1.12.1].zip", the newest upload; distributed map, installed as the save {@code qmagnet}) at the dense
+         * exhibition viewpoint (see {@link #celtium$referencePose}), render distance 18, captured like the flat scene. It exists because the flat world is not what the
          * renderer is played on: the user's own session (2026-10-19 07:21) runs render distance 18 with 19,600
          * sections tracked, and a distributed map with real content is what a lag report is about. Reference: the GL
          * arm on this same map and pose (2026-10-19, {@code run-qmref}, Celeritas 2.5.0-dev) measured
@@ -1214,9 +1214,13 @@ public final class ValidationClient {
             return new CameraPose(1.5D, 70.0D, 1.5D, 180.0F, 20.0F);
         }
         if (scene == Scene.WORLD_MAP) {
-            // The map's own spawn point (level.dat SpawnX/Y/Z = 295/235/231), three blocks up and looking slightly
-            // down so the picture holds the exhibition floor rather than the sky.
-            return new CameraPose(295.5D, 238.0D, 231.5D, 180.0F, 18.0F);
+            // The dense exhibition viewpoint, chosen from the map's own data rather than by eye: the world generator's
+            // blocks were scanned per chunk section (blocks/types), the richest area is x 192..271, z 192..303 at
+            // y 32..79 (76 distinct block types in one chunk), and this pose stands east of the display wall at eye
+            // height looking at it - 137 visible sections and 52,084 distinct colours against 18 sections and 4,160
+            // colours at the spawn point. The pose sees the floating islands, the every-block display wall and the
+            // red carpet together, which is what a "many objects" comparison needs.
+            return new CameraPose(272.5D, 67.0D, 248.5D, 90.0F, 10.0F);
         }
         return new CameraPose(0.5D, 12.0D, 0.5D, 180.0F, 20.0F);
     }
@@ -1342,10 +1346,10 @@ public final class ValidationClient {
     /**
      * The real-world scene's floors, measured on a GL-arm reference run of the same map at the same pose.
      * <p>
-     * Reference (Celeritas 2.5.0-dev, {@code run-qmref}, 2026-10-19 10:31, scene=terrain with saveSlot=qmagnet,
-     * render distance 18, camera 295.5/238.0/231.5 yaw 180 pitch 18, 1280x720, picture =
-     * {@code screenshots/celtium-validation.png} written by the GL arm's own screenshot): distinctColours=2891,
-     * nonBackgroundFraction=0.622893, verticalBands=720, blackFraction=0.001949.
+     * Reference (Celeritas 2.5.0-dev, {@code run-qmref2}, 2026-10-19 11:19, scene=world, render distance 18, camera
+     * 272.5/67.0/248.5 yaw 90 pitch 10, 1280x720, picture = {@code screenshots/celtium-validation.png} written by the
+     * GL arm's own screenshot): distinctColours=63859, nonBackgroundFraction=0.770652, verticalBands=720,
+     * blackFraction=0.005905.
      * <p>
      * The floors follow the same rule as the flat scene's (the smaller reference with a stated margin):
      * {@code nonBackgroundFraction >= 0.34} is 55% of 0.622893, {@code verticalBands >= 250} is 35% of 720, and
@@ -1355,16 +1359,16 @@ public final class ValidationClient {
      * pixel-identical to the reference".
      */
     private static SceneGate celtium$worldMapGate() {
-        String runs = "gl-arm run-qmref (2026-10-19 10:31, Celeritas 2.5.0-dev, scene=terrain with"
-                + " saveSlot=qmagnet, render distance 18, camera 295.5/238.0/231.5 yaw 180 pitch 18, 1280x720,"
+        String runs = "gl-arm run-qmref2 (2026-10-19 11:19, Celeritas 2.5.0-dev, scene=world with"
+                + " saveSlot=qmagnet, render distance 18, camera 272.5/67.0/248.5 yaw 90 pitch 10, 1280x720,"
                 + " picture=screenshots/celtium-validation.png)";
-        String numbers = "run-qmref: distinctColours=2891 nonBackgroundFraction=0.622893 verticalBands=720"
-                + " blackFraction=0.001949";
-        String margin = "nonBackgroundFraction floor 0.34 = 55% of the reference 0.622893; verticalBands floor 250 ="
-                + " 35% of the reference 720; blackFraction ceiling 0.05 = measured 0.001949 + 0.048";
+        String numbers = "run-qmref2: distinctColours=63859 nonBackgroundFraction=0.770652 verticalBands=720"
+                + " blackFraction=0.005905";
+        String margin = "nonBackgroundFraction floor 0.42 = 55% of the reference 0.770652; verticalBands floor 250 ="
+                + " 35% of the reference 720; blackFraction ceiling 0.05 = measured 0.005905 + 0.044";
         String reference = "gl-arm " + runs + ": " + numbers + " -> floors distinctColours>16,"
                 + " nonBackgroundFraction>=0.34, verticalBands>=250, blackFraction<=0.05; margin: " + margin;
-        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.34D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.42D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
                 numbers, margin, true);
     }
 
