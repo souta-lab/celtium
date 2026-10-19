@@ -659,6 +659,34 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private volatile List<Object[]> openList;
     private final Map<Integer, List<Object[]>> displayLists = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Replays and recorded calls per display-list id, for the sky lists' census (RenderGlobal's two of them). */
+    private final int[] listReplayCounts = new int[512];
+    private final long[] listReplayTotals = new long[512];
+
+    /** {@return the most-replayed display lists and their recorded call counts}, for the verification line. */
+    public static String listCensus() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder();
+        Integer[] ids = new Integer[stub.listReplayCounts.length];
+        for (int i = 0; i < ids.length; i++) {
+            ids[i] = Integer.valueOf(i);
+        }
+        java.util.Arrays.sort(ids, (a, b) -> Integer.compare(stub.listReplayCounts[b.intValue()],
+                stub.listReplayCounts[a.intValue()]));
+        for (int i = 0; i < 10 && i < ids.length; i++) {
+            int id = ids[i].intValue();
+            if (stub.listReplayCounts[id] == 0) {
+                break;
+            }
+            text.append(text.length() == 0 ? "" : ",").append(id).append(":x").append(stub.listReplayCounts[id])
+                    .append("/calls=").append(stub.listReplayTotals[id]);
+        }
+        return text.length() == 0 ? "none" : text.toString();
+    }
+
     /** How deep a replay currently is. glCallList may appear inside a list; the spec puts the limit at 64 or more. */
     private int replayDepth;
     private static final int MAX_LIST_NESTING = 64;
@@ -2924,6 +2952,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                         this.executingList = this.replayDepth == 0 ? 0 : this.executingList;
                     }
                     this.displayListsReplayed++;
+                    if (this.lastCalledList >= 0 && this.lastCalledList < this.listReplayCounts.length) {
+                        this.listReplayCounts[this.lastCalledList]++;
+                        this.listReplayTotals[this.lastCalledList] += list.size();
+                    }
                 }
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:

@@ -9653,6 +9653,7 @@ this.frameBufferOpen = false;
 
     public String verificationSummary() {
         return "celtium/clears[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearCensus() + "] "
+                + "celtium/lists[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.listCensus() + "] "
                 + "celtium/vulkan-check passes=" + this.terrainStatistics.passSubmissions() + " skipped=" + this.terrainStatistics.passSkips() + " errors="
                 + this.terrainStatistics.passErrors() + " lastDraw=" + this.terrainStatistics.lastDrawCommands() + " lastSections=" + this.terrainStatistics.lastSectionsDrawn()
                 + " skipReason=" + (this.terrainStatistics.lastSkipReason() == null ? "none" : this.terrainStatistics.lastSkipReason().replace(' ', '_'))
