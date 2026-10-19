@@ -14470,6 +14470,13 @@ this.frameBufferOpen = false;
                 java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
                         this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
                 lightViewProjection.get(0, matrix);
+                // The immediate path's vertices are already in eye space, so its shadow lookup needs
+                // lightWorld * inverse(modelView); it reads that from the second half of the same block.
+                org.joml.Matrix4f eyeSpaceLight = new org.joml.Matrix4f(lightViewProjection)
+                        .mul(new org.joml.Matrix4f(modelViewForCamera).invert());
+                float[] eyeMatrix = new float[16];
+                eyeSpaceLight.get(eyeMatrix);
+                this.shadowMapPass.writeEyeSpaceMatrix(eyeMatrix);
                 if (!Boolean.getBoolean("celtium.shadow.noSources")) {
                     terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
                             this.shadowMapPass.matrixBuffer().buffer());

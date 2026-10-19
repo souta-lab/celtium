@@ -45,6 +45,21 @@ public final class ShadowMapPass {
         return this.sampler;
     }
 
+    /**
+     * Writes the eye-space light matrix, for the immediate path: its vertices arrive already transformed by the model
+     * view, so the matrix it needs is lightWorld * inverse(modelView), which the caller composes.
+     */
+    public void writeEyeSpaceMatrix(float[] matrix) {
+        if (this.matrixBuffer == null) {
+            return;
+        }
+        java.nio.FloatBuffer data = org.lwjgl.system.MemoryUtil.memFloatBuffer(
+                this.matrixBuffer.mappedAddress() + 64L, 16);
+        for (int i = 0; i < 16 && i < matrix.length; i++) {
+            data.put(i, matrix[i]);
+        }
+    }
+
     /** {@return the host-visible block holding the light matrix the vertex stage projects with}. */
     public org.soutalab.celtium.vulkan.VulkanHostBuffer matrixBuffer() {
         return this.matrixBuffer;
@@ -152,9 +167,12 @@ public final class ShadowMapPass {
                 }
                 this.sampler = handle.get(0);
             }
-            this.matrixBuffer = new org.soutalab.celtium.vulkan.VulkanHostBuffer(this.context, 64L,
+            // Two matrices: the world-space one the terrain vertex stage projects with, and an eye-space one for the
+            // immediate path, whose vertices are already transformed by the model view. The immediate shaders read the
+            // second at offset 64.
+            this.matrixBuffer = new org.soutalab.celtium.vulkan.VulkanHostBuffer(this.context, 128L,
                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-            org.lwjgl.system.MemoryUtil.memSet(this.matrixBuffer.mappedAddress(), 0, 64L);
+            org.lwjgl.system.MemoryUtil.memSet(this.matrixBuffer.mappedAddress(), 0, 128L);
             return true;
         } catch (RuntimeException | LinkageError | org.soutalab.celtium.shaderpack.SpirvStageCompiler.CompileFailure
                  error) {
