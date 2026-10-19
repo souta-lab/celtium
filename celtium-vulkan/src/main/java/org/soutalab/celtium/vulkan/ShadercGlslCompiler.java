@@ -91,7 +91,7 @@ public final class ShadercGlslCompiler implements GlslCompiler {
      * heap, the thread stack, which in a modded Minecraft client is the JVM default (512 KiB-1 MiB). Compilations run on
      * a thread of their own with an explicit stack, so the game's thread stacks stay as the game configured them.
      */
-    private static final long COMPILE_STACK_BYTES = 64L * 1024L * 1024L;
+    private static final long COMPILE_STACK_BYTES = 256L * 1024L * 1024L;
 
     @Override public SpirvModule compile(Stage stage, String source) throws SpirvStageCompiler.CompileFailure {
         if (!available()) {
@@ -189,6 +189,65 @@ public final class ShadercGlslCompiler implements GlslCompiler {
                 org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
             }
         }
+    }
+
+    /**
+     * {@return the text shaderc's own preprocessor produces}, for diagnosing a source that overflows the compiler.
+     * <p>
+     * The expanded text a pack hands over still carries its {@code #define}s, so the compiler's preprocessor is what
+     * expands them - and when a compilation dies of stack exhaustion the question is whether that expansion is what
+     * grew, not the parse of a 70 kB file.
+     */
+    public String preprocess(Stage stage, String source) throws SpirvStageCompiler.CompileFailure {
+        if (!available()) {
+            throw new SpirvStageCompiler.CompileFailure("shaderc unavailable: " + unavailableReason());
+        }
+        java.util.concurrent.atomic.AtomicReference<String> text = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> thrown = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread worker = new Thread(null, () -> {
+            long compiler = 0L;
+            long options = 0L;
+            long result = 0L;
+            try {
+                compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
+                options = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_initialize();
+                result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_preprocessed_text(compiler, source,
+                        stage == Stage.VERTEX ? org.lwjgl.util.shaderc.Shaderc.shaderc_vertex_shader
+                                : org.lwjgl.util.shaderc.Shaderc.shaderc_fragment_shader,
+                        "celtium-preprocess", "main", options);
+                if (result == 0L) {
+                    thrown.set(new IllegalStateException("shaderc_compile_into_preprocessed_text returned null"));
+                    return;
+                }
+                java.nio.ByteBuffer bytes =
+                        org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_bytes(result);
+                text.set(bytes == null ? "" : org.lwjgl.system.MemoryUtil.memUTF8(bytes));
+            } catch (Throwable failure) {
+                thrown.set(failure);
+            } finally {
+                if (result != 0L) {
+                    org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
+                }
+                if (options != 0L) {
+                    org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_release(options);
+                }
+                if (compiler != 0L) {
+                    org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
+                }
+            }
+        }, "celtium-shaderc-preprocess", COMPILE_STACK_BYTES);
+        worker.setDaemon(true);
+        worker.start();
+        try {
+            worker.join();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new SpirvStageCompiler.CompileFailure("interrupted: " + interrupted);
+        }
+        if (thrown.get() != null) {
+            throw new SpirvStageCompiler.CompileFailure("preprocess failed: " + thrown.get());
+        }
+        return text.get() == null ? "" : text.get();
     }
 
     /** {@return the SPIR-V word count of a module}, for a log line that does not have to print the whole blob. */

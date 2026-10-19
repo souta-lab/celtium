@@ -44,6 +44,46 @@ public final class LegacyGlslLowering {
     private static final Map<String, String> BUILTIN_ATTRIBUTES = builtinAttributes();
     private static final Map<String, String> BUILTIN_MATRICES = builtinMatrices();
     private static final Map<String, String> TEXTURE_FUNCTIONS = textureFunctions();
+    /**
+     * OptiFine's built-in uniforms, the ones a pack uses without declaring them.
+     * <p>
+     * The pack writes {@code frameTimeCounter} or {@code eyeBrightnessSmooth} because OptiFine's patched compiler supplies
+     * them; a Vulkan GLSL compilation of the same source reports "undeclared identifier" for each one. They are declared
+     * here in a fixed order so the block's layout does not depend on which program is being compiled, and a name the
+     * pack declares itself is left alone.
+     */
+    private static final Map<String, String> OPTIFINE_BUILTINS = optifineBuiltins();
+
+    private static Map<String, String> optifineBuiltins() {
+        Map<String, String> map = new LinkedHashMap<>();
+        // Scalars first, then vectors, then matrices: one order, the same in every program.
+        for (String name : new String[] {"frameCounter", "frameTimeCounter", "framemod8", "rainStrength", "wetness",
+                "sunAngle", "shadowAngle", "eyeAltitude", "near", "far", "aspectRatio", "viewWidth", "viewHeight",
+                "centerDepthSmooth", "blindness", "nightVision", "darknessFactor", "darknessLightFactor",
+                "heldBlockLightValueF", "playerMood", "constantMood"}) {
+            map.put(name, "float " + name);
+        }
+        for (String name : new String[] {"cameraPosition", "previousCameraPosition", "sunPosition", "moonPosition",
+                "shadowLightPosition", "upPosition", "fogColor", "skyColor", "entityColor"}) {
+            map.put(name, "vec3 " + name);
+        }
+        for (String name : new String[] {"eyeBrightness", "eyeBrightnessSmooth", "atlasSize", "gbufferSize",
+                "eyeBrightnessSmooth2"}) {
+            map.put(name, "vec2 " + name);
+        }
+        for (String name : new String[] {"entityColor4", "bossColor", "fogColor4"}) {
+            map.put(name, "vec4 " + name);
+        }
+        for (String name : new String[] {"entityId", "blockEntityId", "heldItemId", "heldBlockLightValue"}) {
+            map.put(name, "int " + name);
+        }
+        for (String name : new String[] {"gbufferModelView", "gbufferModelViewInverse", "gbufferPreviousModelView",
+                "shadowModelView", "shadowModelViewInverse", "shadowProjection", "shadowProjectionInverse"}) {
+            map.put(name, "mat4 " + name);
+        }
+        return map;
+    }
+
     /** Names a sampler uniform cannot keep once the legacy calls are rewritten to the Vulkan GLSL built-ins. */
     private static final java.util.Set<String> RESERVED_FUNCTION_NAMES =
             java.util.Set.of("texture", "textureLod", "textureGrad", "textureProj");
@@ -143,9 +183,17 @@ public final class LegacyGlslLowering {
             String plain = plainUniformDeclaration(prescan.split(line).code());
             if (plain != null) {
                 for (String one : plain.substring("uniform ".length()).split("\u0000")) {
-                    String[] parts = one.trim().split(" ");
-                    String nameAndSuffix = parts.length > 1 ? parts[0] + parts[1] : parts[0];
-                    plainUniforms.put(nameAndSuffix, one.trim());
+                    String normalised = one.trim().replaceAll("\\s+", " ");
+                    String[] parts = normalised.split(" ");
+                    // Keyed by the NAME, not by "type name[suffix]": the key is what the uses are rewritten by, and an
+                    // arrayed uniform keyed with its suffix was never matched at all ("eyeBrightness[2]" is not an
+                    // identifier). Keying by name also makes one block member per name, which is what the duplicate
+                    // member errors were about when a pack declared the same name with a different type.
+                    if (parts.length > 1) {
+                        String name = parts[1];
+                        int bracket = name.indexOf('[');
+                        plainUniforms.put(bracket >= 0 ? name.substring(0, bracket) : name, normalised);
+                    }
                 }
             }
             String declaration = samplerDeclaration(prescan.split(line).code());
@@ -228,8 +276,13 @@ public final class LegacyGlslLowering {
                             + (comment.isEmpty() ? "" : " //" + comment));
                 }
                 attributeLine = true;
-            } else if (trimmed.startsWith("varying ")) {
-                String rest = trimmed.substring("varying ".length()).trim();
+            } else if (interpolationQualifier(trimmed) != null || trimmed.startsWith("varying ")) {
+                // "flat varying vec4 color;" is GLSL 1.30 interpolation, and it survived as a varying - which the
+                // compiler rejected twice over ("no longer supported in core profile", "requires location"). The
+                // qualifier is kept and placed before the storage qualifier.
+                String qualifierWord = interpolationQualifier(trimmed);
+                String rest = trimmed.substring(qualifierWord == null ? "varying ".length()
+                        : qualifierWord.length() + "varying ".length()).trim();
                 String[] parts = typeAndNames(rest);
                 if (parts == null) {
                     unsupported.add("varying declaration could not be read: " + trimmed);
@@ -238,7 +291,8 @@ public final class LegacyGlslLowering {
                 }
                 String type = parts[0];
                 String names = parts[1].replace(";", "").trim();
-                String qualifier = stage == Stage.VERTEX ? "out" : "in";
+                String qualifier = (qualifierWord == null ? "" : qualifierWord + " ")
+                        + (stage == Stage.VERTEX ? "out" : "in");
                 // "varying vec2 texCoord, lmCoord;" is one declaration and two variables: giving the pair one location
                 // is what "overlapping use of location 1" was. Each name gets its own line and its own location.
                 for (String name : names.split(",")) {
@@ -342,6 +396,21 @@ public final class LegacyGlslLowering {
             }
         }
 
+        // OptiFine's built-ins, for the names this program uses and does not declare: the pack was written against a
+        // compiler that supplied them, and a name it declares itself is already in the block.
+        for (Map.Entry<String, String> builtin : OPTIFINE_BUILTINS.entrySet()) {
+            boolean used = false;
+            for (String line : lines) {
+                if (containsIdentifier(comments.split(line).code(), builtin.getKey())) {
+                    used = true;
+                    break;
+                }
+            }
+            if (used && !plainUniforms.containsKey(builtin.getKey())) {
+                plainUniforms.put(builtin.getKey(), builtin.getValue());
+            }
+        }
+
         StringBuilder text = new StringBuilder();
         int inserted = 0;
         for (int i = 0; i < out.size(); i++) {
@@ -405,6 +474,16 @@ public final class LegacyGlslLowering {
      * {@code "vec2 texCoord,"} into the type - which emitted both names under one location and is what
      * "overlapping use of location 1" was.
      */
+    /** {@return the interpolation qualifier a declaration starts with ({@code flat}, {@code smooth}, ...)}, or null. */
+    private static String interpolationQualifier(String trimmed) {
+        for (String word : new String[] {"flat", "smooth", "noperspective", "centroid", "sample"}) {
+            if (trimmed.startsWith(word + " varying ")) {
+                return word;
+            }
+        }
+        return null;
+    }
+
     private static String[] typeAndNames(String declaration) {
         String text = declaration.trim();
         int space = text.indexOf(' ');
@@ -454,7 +533,11 @@ public final class LegacyGlslLowering {
             if (name.isEmpty() || !Character.isJavaIdentifierStart(name.charAt(0))) {
                 return null;
             }
-            all.append(all.length() == 0 ? "" : "\u0000").append(type).append(' ').append(name).append(' ').append(suffix);
+            // Single spaces on the way out: the block is keyed by this text, and a declaration written with two spaces or
+            // a tab produced a different key for the same name - two members with one name, which the compiler rejects,
+            // and it also hid the pack's own declaration from the built-in table's check for it.
+            all.append(all.length() == 0 ? "" : "\u0000").append(type).append(' ').append(name).append(' ')
+                    .append(suffix);
         }
         return all.length() == 0 ? null : "uniform " + all;
     }

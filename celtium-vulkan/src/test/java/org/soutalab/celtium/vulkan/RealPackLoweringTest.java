@@ -81,7 +81,31 @@ class RealPackLoweringTest {
                 assertTrue(ShadercGlslCompiler.wordCount(module) > 20, path + " compiled to a tiny module");
                 compiled++;
             } catch (SpirvStageCompiler.CompileFailure | PackException failure) {
-                failures.add(path + ": " + failure.getMessage());
+                String failureText = failure.getMessage();
+                failures.add(path + ": " + failureText);
+                if (failureText != null && failureText.length() > 160) {
+                    System.out.println("[real-pack]   log " + failureText.replace('\n', ' '));
+                }
+                // Is the runaway recursion ours or the compiler's? Compiling the expanded text without lowering answers
+                // it: if the raw text overflows the same stack, the lowering is not what is being parsed.
+                try {
+                    String expanded = ShaderPackLoader.expand(pack, path, Map.of("MC_VERSION", "11202"));
+                    compiler.compile(stage, expanded);
+                    System.out.println("[real-pack]   NOTE unreduced text compiled");
+                } catch (Throwable raw) {
+                    String message = String.valueOf(raw);
+                    System.out.println("[real-pack]   raw=" + message.substring(0, Math.min(150, message.length())));
+                    try {
+                        String expanded = ShaderPackLoader.expand(pack, path, Map.of("MC_VERSION", "11202"));
+                        String preprocessed = compiler.preprocess(stage, expanded);
+                        System.out.println("[real-pack]   expanded=" + expanded.length()
+                                + " preprocessed=" + preprocessed.length());
+                    } catch (Throwable preprocess) {
+                        String text = String.valueOf(preprocess);
+                        System.out.println("[real-pack]   preprocess=" + text.substring(0,
+                                Math.min(150, text.length())));
+                    }
+                }
                 // The compiler reports a line; printing it turns "somewhere in 60 kB" into a line to read.
                 java.util.regex.Matcher where = java.util.regex.Pattern.compile("celtium-stage:(\\d+):").matcher(
                         String.valueOf(failure.getMessage()));
