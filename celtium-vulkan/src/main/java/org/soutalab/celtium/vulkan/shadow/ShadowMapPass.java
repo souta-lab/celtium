@@ -520,7 +520,10 @@ public final class ShadowMapPass {
             push.put(i, block[i]);
         }
         vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
-        vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, indirectCount, 20);
+        // A bisection switch: the frame loop stops presenting when the terrain draw runs (3 presents in 60 s against 600
+        // without it), so the draw count is the first thing to vary.
+        int draws = Integer.getInteger("celtium.shadow.maxDraws", indirectCount).intValue();
+        vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, Math.min(draws, indirectCount), 20);
         vkCmdEndRenderingKHR(commandBuffer);
         depthBarrier(commandBuffer, stack, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         this.passes++;
