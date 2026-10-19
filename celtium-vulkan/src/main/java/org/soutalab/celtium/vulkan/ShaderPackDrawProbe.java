@@ -609,7 +609,17 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         }
     }
 
-    /** Records the draw into the delivered image. The caller has ended any render pass already. */
+    /**
+     * Records the draw into the delivered image. The caller has ended any render pass already.
+     * <p>
+     * <b>Coordinates here are image space, which is bottom-up relative to the presented picture.</b> The present blits the
+     * frame image into the swapchain with a 1:1 flip (VulkanSwapchain's pre-recorded blit says so), so a rectangle recorded
+     * at image (0, 0) appears at the <i>bottom</i> left on screen. Three rounds of probes were read as silent because the
+     * samples were taken from the top left: a 64x64 clear is visible at (10, height - 10) in the early capture of leg
+     * flipTest1, and the same experiment looked like a delivery failure because the identical patch was sampled at (10, 10).
+     * A clear recorded here therefore does reach the screen; a draw recorded here still does not, which is a draw-specific
+     * question rather than a coordinate one.
+     */
     void record(VkCommandBuffer commandBuffer, GllessFrameTarget target) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkRenderingAttachmentInfoKHR.Buffer colour = VkRenderingAttachmentInfoKHR.calloc(1, stack);
