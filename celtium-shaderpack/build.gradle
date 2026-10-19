@@ -29,6 +29,19 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// Mirror celtium-vulkan's embed configuration: the mod consumes exactly this jar, and the renderer resolves this
+// module's classes at runtime through it. Without the export the jar was built and tested and then left out of the
+// packaged mod - the in-game probe failed with NoClassDefFoundError on the frontend's own entry point.
+configurations {
+    modEmbed {
+        canBeConsumed = true
+        canBeResolved = false
+    }
+}
+artifacts {
+    modEmbed(tasks.named('jar'))
+}
+
 tasks.named('test') {
     useJUnitPlatform()
     maxHeapSize = '512M'

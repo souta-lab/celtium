@@ -127,6 +127,10 @@ dependencies {
     // In-mod Vulkan bootstrap/backend classes. Compiled against LWJGL, never bundled with it.
     implementation(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }
     modEmbedDependencies(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }
+    // The shaderpack frontend is not a transitive dependency of the renderer's own jar: the renderer compiles against
+    // it, but the packaged mod has to carry it, and the embed configuration is what says so.
+    implementation(project(":celtium-shaderpack", configuration = "modEmbed")) { isTransitive = false }
+    modEmbedDependencies(project(":celtium-shaderpack", configuration = "modEmbed")) { isTransitive = false }
     val lombokVersion = rootProject.findProperty("lombok_version").toString()
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")
