@@ -12241,6 +12241,8 @@ this.frameBufferOpen = false;
      * renderLayer 237,005 groups, beforeUnbind 17,041, worldPassEnd 1,542, clear 55 over 849 openings, present 4.
      */
     private String lastWindowOpenSite = "none";
+    /** Whether the window-open census runs, which is the same property as the draw-site census it feeds. */
+    private final boolean windowSiteCensusWanted = DRAW_SITE_CENSUS;
 
     /** The GL name whose uploads {@code CELTIUM_UPLOAD_CALLER} reports without the sixteen-line bound, or -1. */
     public static int uploadCallerId() {
@@ -13464,8 +13466,21 @@ this.frameBufferOpen = false;
         this.batchReuseThisFrame.clear();
     }
 
+    /**
+     * Whether the draw-site census runs: {@code -Dceltium.vulkan.drawSiteCensus=true}, off by default.
+     * <p>
+     * Off because it is on the shipping path: it built a string from two site names and touched two maps for every
+     * drawn group (~330 a frame), which is a tax on the very path it measures. Its measurement is kept - the census
+     * that attributed 237,005 groups to the terrain entry and 55 to the game's clear is recorded in the issue and in
+     * this method's call site - and it is one property away when the question comes back.
+     */
+    private static final boolean DRAW_SITE_CENSUS = Boolean.getBoolean("celtium.vulkan.drawSiteCensus");
+
     /** Counts one drawn group against the site that recorded it, and the batches it carried. */
     private void celtium$noteGroupDrawnAtSite(int batches) {
+        if (!DRAW_SITE_CENSUS) {
+            return;
+        }
         String site = this.lastWindowOpenSite + "/" + this.immediateDrawSite;
         Integer groups = this.groupsDrawnBySite.get(site);
         this.groupsDrawnBySite.put(site, Integer.valueOf(groups == null ? 1 : groups.intValue() + 1));
@@ -13492,6 +13507,12 @@ this.frameBufferOpen = false;
 
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {
+        if (!this.windowSiteCensusWanted) {
+            // The census names the callers that open the frame's windows. It walks the stack, so it is not left on the
+            // shipping path once it has answered: measured, the frame's five windows come from the terrain entry (2),
+            // the game's framebuffer unbind, its clear, and the world pass' end.
+            return;
+        }
         String site = "unattributed";
         StackTraceElement[] frames = Thread.currentThread().getStackTrace();
         for (int i = 2; i < frames.length; i++) {
