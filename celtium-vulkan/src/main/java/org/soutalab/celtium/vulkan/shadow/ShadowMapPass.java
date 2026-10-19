@@ -1,13 +1,10 @@
 package org.soutalab.celtium.vulkan.shadow;
 
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.*;
 import org.soutalab.celtium.vulkan.VulkanContext;
 
 import java.nio.LongBuffer;
-
-import org.lwjgl.vulkan.VkRenderingAttachmentInfoKHR;
-import org.lwjgl.vulkan.VkRenderingInfoKHR;
 
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
@@ -44,6 +41,13 @@ public final class ShadowMapPass {
 
     private long pipeline;
     private long pipelineLayout;
+    /** Draws of real terrain into the map, as opposed to the test triangle. */
+    private long terrainPasses;
+
+    private long terrainPipeline;
+    private long terrainPipelineLayout;
+    private long terrainModule;
+
     private long passes;
     private long failures;
     private String lastFailure = "";
@@ -319,12 +323,156 @@ public final class ShadowMapPass {
         }
     }
 
+    /**
+     * Builds the pipeline that draws the game's terrain into the map: the terrain's own vertex module and vertex layout,
+     * a push-constant range of the same size the terrain pass uses (it carries the matrices), and no fragment stage - the
+     * rasteriser writes depth.
+     */
+    public boolean createTerrainPipeline(org.soutalab.celtium.vulkan.VulkanTerrainPipeline terrain) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.LongBuffer handle = stack.mallocLong(1);
+            // The terrain's own pipeline layout, not a fresh one: its vertex stage reads the region uniforms through
+            // descriptor set 0 (VUID-VkGraphicsPipelineCreateInfo-layout-07988 named exactly that when this created a
+            // layout without them), and the descriptors the terrain pass bound remain bound in the command buffer, so the
+            // shadow draw only has to bind its pipeline and push the matrices.
+            this.terrainPipelineLayout = terrain.pipelineLayout();
+            if (this.terrainPipelineLayout == 0L) {
+                this.failures++;
+                this.lastFailure = "the terrain pipeline has no layout";
+                return false;
+            }
+            int[] formats = terrain.vertexFormats();
+            int[] offsets = terrain.vertexOffsets();
+            org.lwjgl.vulkan.VkVertexInputBindingDescription.Buffer bindings =
+                    org.lwjgl.vulkan.VkVertexInputBindingDescription.calloc(1, stack);
+            bindings.get(0).binding(0).stride(terrain.vertexStride())
+                    .inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+            org.lwjgl.vulkan.VkVertexInputAttributeDescription.Buffer attributes =
+                    org.lwjgl.vulkan.VkVertexInputAttributeDescription.calloc(formats.length, stack);
+            for (int i = 0; i < formats.length; i++) {
+                attributes.get(i).location(i).binding(0).format(formats[i]).offset(offsets[i]);
+            }
+            VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(1, stack);
+            // The module comes from the same checked-in SPIR-V the terrain pass loads; SpirvShaders.load hands over a
+            // native buffer the caller owns, so it is freed here after the module is created.
+            java.nio.ByteBuffer code = org.soutalab.celtium.vulkan.SpirvShaders.load(terrain.vertexModuleName());
+            if (code == null) {
+                this.failures++;
+                this.lastFailure = "shader module " + terrain.vertexModuleName() + " unavailable";
+                return false;
+            }
+            org.lwjgl.vulkan.VkShaderModuleCreateInfo moduleInfo =
+                    org.lwjgl.vulkan.VkShaderModuleCreateInfo.calloc(stack).sType$Default().pCode(code);
+            if (vkCreateShaderModule(this.context.device(), moduleInfo, null, handle) != VK_SUCCESS) {
+                this.failures++;
+                this.lastFailure = "vkCreateShaderModule(shadow terrain) failed";
+                return false;
+            }
+            long module = handle.get(0);
+            stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(module)
+                    .pName(stack.UTF8("main"));
+            VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
+                    .sType$Default().pVertexBindingDescriptions(bindings)
+                    .pVertexAttributeDescriptions(attributes);
+            VkPipelineInputAssemblyStateCreateInfo assembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+                    .sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
+                    .sType$Default().viewportCount(1).scissorCount(1);
+            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                    .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
+                    .depthBiasEnable(true).depthBiasConstantFactor(1.25f).depthBiasSlopeFactor(1.75f)
+                    .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
+            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                    .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            VkPipelineDepthStencilStateCreateInfo depthState = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                    .sType$Default().depthTestEnable(true).depthWriteEnable(true)
+                    .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+            org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamic =
+                    org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                            .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR));
+            org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR rendering =
+                    org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR.calloc(stack).sType$Default()
+                            .colorAttachmentCount(0).depthAttachmentFormat(VK_FORMAT_D32_SFLOAT);
+            VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
+                    .pInputAssemblyState(assembly).pViewportState(viewport).pRasterizationState(raster)
+                    .pMultisampleState(multisample).pDepthStencilState(depthState).pDynamicState(dynamic)
+                    .layout(this.terrainPipelineLayout).renderPass(VK_NULL_HANDLE).pNext(rendering.address());
+            if (vkCreateGraphicsPipelines(this.context.device(), VK_NULL_HANDLE, info, null, handle) != VK_SUCCESS) {
+                this.failures++;
+                this.lastFailure = "vkCreateGraphicsPipelines(shadow terrain) failed";
+                return false;
+            }
+            this.terrainPipeline = handle.get(0);
+            this.terrainModule = module;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.failures++;
+            this.lastFailure = "shadow terrain pipeline: " + error;
+            return false;
+        }
+    }
+
+    /**
+     * Records the game's terrain into the map with the light's matrices: the same vertex and index buffers the terrain pass
+     * uses, the same indirect commands, and the terrain's own vertex stage, so the depth in the map is the geometry the
+     * player sees rather than a test triangle.
+     *
+     * @param block the 32-float push block (projection then model view) the terrain vertex stage expects
+     * @return whether anything was drawn
+     */
+    public boolean recordTerrain(VkCommandBuffer commandBuffer, MemoryStack stack, long vertexBuffer, long indexBuffer,
+                                 long indirectBuffer, long indirectOffset, int indirectCount, float[] block) {
+        if (this.terrainPipeline == 0L || vertexBuffer == 0L || indirectBuffer == 0L || indirectCount <= 0
+                || block == null || block.length < 32) {
+            return false;
+        }
+        VkRenderingAttachmentInfoKHR.Buffer depth = VkRenderingAttachmentInfoKHR.calloc(1, stack);
+        depth.get(0).sType$Default().imageView(this.view)
+                .imageLayout(VK_IMAGE_LAYOUT_GENERAL)
+                .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+        org.lwjgl.vulkan.VkClearValue clear = org.lwjgl.vulkan.VkClearValue.calloc(stack);
+        clear.depthStencil().depth(1.0f);
+        clear.depthStencil().stencil(0);
+        depth.get(0).clearValue(clear);
+        org.lwjgl.vulkan.VkRect2D area = org.lwjgl.vulkan.VkRect2D.calloc(stack)
+                .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE));
+        VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
+                .renderArea(area).layerCount(1).pDepthAttachment(depth.get(0));
+        vkCmdBeginRenderingKHR(commandBuffer, rendering);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.terrainPipeline);
+        vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
+                .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
+        vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
+                .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
+        vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
+        if (indexBuffer != 0L) {
+            vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+        }
+        java.nio.FloatBuffer push = stack.mallocFloat(32);
+        for (int i = 0; i < 32; i++) {
+            push.put(i, block[i]);
+        }
+        vkCmdPushConstants(commandBuffer, this.terrainPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, push);
+        vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, indirectCount, 20);
+        vkCmdEndRenderingKHR(commandBuffer);
+        this.passes++;
+        this.terrainPasses++;
+        return true;
+    }
+
+    /** {@return whether the terrain pipeline has been built}. */
+    public boolean hasTerrainPipeline() {
+        return this.terrainPipeline != 0L;
+    }
+
     /** {@return the pass's counters for the verification line}. */
     public String statistics() {
-        return "shadowPasses=" + this.passes + " size=" + SIZE + " failures=" + this.failures
+        return "shadowPasses=" + this.passes + " terrainPasses=" + this.terrainPasses + " size=" + SIZE
+                + " failures=" + this.failures + (this.lastFailure.isEmpty() ? "" : " lastFailure=[" + this.lastFailure + "]")
                 + (this.sampledDepthMin < 0.0f ? "" : " depthCorner=[" + this.sampledDepthMin + ","
                         + this.sampledDepthMax + "]")
-                + (this.lastFailure.isEmpty() ? "" : " lastFailure=[" + this.lastFailure + "]");
+;
     }
 
     /** Frees the pass's resources. */

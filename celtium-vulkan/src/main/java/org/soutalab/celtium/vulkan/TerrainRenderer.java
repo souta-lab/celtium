@@ -200,12 +200,50 @@ public final class TerrainRenderer {
         java.nio.LongBuffer offsets = stack.mallocLong(1);
         offsets.put(0, 0L);
         org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
+        this.shadowVertexBuffer = resources.vertexArena.buffer().buffer();
+    }
+
+    /** Geometry the shadow pass may draw, captured from the pass's own bindings and indirect range. */
+    private long shadowVertexBuffer;
+    private long shadowIndexBuffer;
+    private long shadowIndirectBuffer;
+    private long shadowIndirectOffset;
+    private int shadowIndirectCount;
+
+    /** {@return the vertex buffer the terrain pass bound}, for the shadow pass. */
+    public long shadowVertexBuffer() {
+        return this.shadowVertexBuffer;
+    }
+
+    /** {@return the index buffer the terrain pass bound}. */
+    public long shadowIndexBuffer() {
+        return this.shadowIndexBuffer;
+    }
+
+    /** {@return the indirect command buffer and range the terrain pass issued}. */
+    public long shadowIndirectBuffer() {
+        return this.shadowIndirectBuffer;
+    }
+
+    public long shadowIndirectOffset() {
+        return this.shadowIndirectOffset;
+    }
+
+    public int shadowIndirectCount() {
+        return this.shadowIndirectCount;
+    }
+
+    /** Clears the capture, so each frame's shadow draw is the geometry of that frame. */
+    public void resetShadowCapture() {
+        this.shadowIndirectCount = 0;
+        this.shadowIndirectBuffer = 0L;
     }
 
     /** Binds a 32-bit index buffer, for the same reason the vertex binding takes the command buffer. */
     void bindIndexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, VulkanBuffer buffer) {
         org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, buffer.buffer(), 0L,
                 org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+        this.shadowIndexBuffer = buffer.buffer();
     }
 
 
@@ -498,6 +536,10 @@ public final class TerrainRenderer {
             long offsetBytes = this.indirectBatchOffset + (long) first * INDIRECT_COMMAND_BYTES;
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
+            // Captured for the shadow pass: the same commands draw the same geometry into the depth map.
+            this.shadowIndirectBuffer = this.indirectBuffer.buffer();
+            this.shadowIndirectOffset = offsetBytes;
+            this.shadowIndirectCount += count;
             this.terrainIndirectCalls++;
             this.terrainIndirectDraws += count;
             this.statistics.addLastDrawCommands(count);

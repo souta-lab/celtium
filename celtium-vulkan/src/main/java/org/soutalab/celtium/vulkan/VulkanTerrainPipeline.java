@@ -189,7 +189,11 @@ public final class VulkanTerrainPipeline {
      * and the choice changes both the attribute layout and the position decoding in the vertex shader, so a
      * configuration using a format this backend does not know must be refused rather than drawn wrong.
      */
-    private static final class VertexLayout {
+    /**
+     * The vertex layout a pipeline has to declare, readable from outside so a second pipeline (the shadow pass) can use
+     * the same input without copying the pass switch.
+     */
+    public static final class VertexLayout {
         final int stride;
         final int[] formats;
         final int[] offsets;
@@ -312,6 +316,49 @@ public final class VulkanTerrainPipeline {
 
     /** The vertex layout of the pass this pipeline draws. */
     private final VertexLayout vertexLayout;
+
+    /** The last push-constant block sent to the vertex stage: projection then model view, 32 floats. */
+    private final float[] lastPushBlock = new float[2 * MATRIX_FLOATS];
+
+    /** {@return the last push block the vertex stage was given}, so another pipeline can reuse the same matrices. */
+    public float[] lastPushBlock() {
+        return this.lastPushBlock;
+    }
+
+    /** {@return the pipeline layout}, borrowed by the shadow pass so its pipeline reads the same descriptors. */
+    public long pipelineLayout() {
+        return this.layout;
+    }
+
+    /** {@return the vertex input this pipeline declares, for a pipeline that has to match it}. */
+    public VertexLayout vertexInputLayout() {
+        return this.vertexLayout;
+    }
+
+    /** {@return the stride of the terrain vertex}. */
+    public int vertexStride() {
+        return this.vertexLayout.stride;
+    }
+
+    /** {@return the vertex attribute formats, in location order}. */
+    public int[] vertexFormats() {
+        return this.vertexLayout.formats.clone();
+    }
+
+    /** {@return the vertex attribute offsets, in location order}. */
+    public int[] vertexOffsets() {
+        return this.vertexLayout.offsets.clone();
+    }
+
+    /** {@return the classpath name of the vertex SPIR-V module this pass uses}. */
+    public String vertexModuleName() {
+        return this.vertexLayout.vertexModule;
+    }
+
+    /** {@return the size of the push-constant block the terrain vertex stage reads}. */
+    public static int pushConstantBytes() {
+        return PUSH_CONSTANT_BYTES;
+    }
 
     /** What the device reported for the limits this pipeline depends on. Used for diagnostics. */
     private String limitsSummary = "unqueried";
@@ -823,6 +870,9 @@ public final class VulkanTerrainPipeline {
             projection.get(0, block);
             modelView.get(MATRIX_FLOATS, block);
             vkCmdPushConstants(commandBuffer, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, block);
+            // Kept so a second pipeline can draw the same scene with the same matrices - the shadow pass does, and
+            // rebuilding the block there would mean a second copy of the camera state.
+            block.get(0, this.lastPushBlock);
         }
     }
 

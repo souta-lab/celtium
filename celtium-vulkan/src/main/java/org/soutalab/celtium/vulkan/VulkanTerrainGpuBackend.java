@@ -14321,7 +14321,33 @@ this.frameBufferOpen = false;
             record("native shadow map created: " + this.shadowMapPass.statistics());
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.shadowMapPass.record(this.commandBuffer, stack);
+            // The terrain first: the pass captures the same buffers and indirect range the terrain pass issued, and the
+            // pipeline is the terrain's own vertex stage with no fragment stage. The test triangle stays as the fallback for
+            // frames where no terrain was recorded.
+            // Off unless asked for: the terrain draw into the map needs the terrain pass's descriptor set with its dynamic
+            // offset bound for the shadow scope as well, which is not solved yet - borrowing the layout alone produced
+            // VUID-VkGraphicsPipelineCreateInfo-layout-07988 and then seventeen messages in leg shadowTerrain2 (the
+            // pipeline is created but the draw is not valid). The triangle path below is the verified one.
+            boolean terrainShadow = Boolean.getBoolean("celtium.shadow.terrain");
+            VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.terrain.pipelineFor(this.lastUiPass) : null;
+            boolean drawn = false;
+            if (terrainPipeline != null && this.shadowMapPass.hasTerrainPipeline()) {
+                drawn = this.shadowMapPass.recordTerrain(this.commandBuffer, stack,
+                        this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
+                        this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
+                        this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock());
+            } else if (terrainPipeline != null) {
+                drawn = this.shadowMapPass.createTerrainPipeline(terrainPipeline);
+                if (drawn) {
+                    drawn = this.shadowMapPass.recordTerrain(this.commandBuffer, stack,
+                            this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
+                            this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
+                            this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock());
+                }
+            }
+            if (!drawn) {
+                this.shadowMapPass.record(this.commandBuffer, stack);
+            }
         } catch (RuntimeException | LinkageError error) {
             record("native shadow pass failed: " + describe(error));
         }
