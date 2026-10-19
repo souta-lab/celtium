@@ -526,7 +526,13 @@ public final class ShadowMapPass {
                 .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
         vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                 .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
-        if (descriptorSet != 0L && !Boolean.getBoolean("celtium.shadow.noDescriptors")) {
+        if (descriptorSet == 0L || Boolean.getBoolean("celtium.shadow.noDescriptors")) {
+            // The terrain pipeline's layout statically uses set 0, so drawing without it is undefined and the validation
+            // layer says so (VUID-vkCmdDrawIndexedIndirect-None-08600). The set is only known after the colour pass has
+            // drawn the region once, so the first frames of a run have none and this is the branch they take.
+            return false;
+        }
+        if (descriptorSet != 0L) {
             // The terrain pass bound its region's set with a dynamic offset inside its own pass; the frame's later windows
             // bound other sets, so the shadow scope has to bind it again - the same set and the same offset, which is what
             // makes this draw the same region the colour pass drew (seventeen messages in leg shadowTerrain2 without it).
@@ -717,10 +723,16 @@ public final class ShadowMapPass {
                     .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
             vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                     .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
-            if (descriptorSet != 0L) {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain.pipelineLayout(), 0,
-                        stack.longs(descriptorSet), stack.ints(dynamicOffset));
+            if (descriptorSet == 0L) {
+                // Same rule as recordTerrain: no set 0, no draw.
+                vkCmdEndRenderingKHR(commandBuffer);
+                vkEndCommandBuffer(commandBuffer);
+                vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
+                        .pCommandBuffers(stack.pointers(commandBuffer.address())), VK_NULL_HANDLE);
+                return "no descriptor set";
             }
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain.pipelineLayout(), 0,
+                    stack.longs(descriptorSet), stack.ints(dynamicOffset));
             vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
             if (indexBuffer != 0L) {
                 vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
