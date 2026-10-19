@@ -37,6 +37,8 @@ public final class ShadowMapPass {
     /** Whether the depth image has been moved out of UNDEFINED into GENERAL. */
     private boolean transitioned;
 
+    private long pipeline;
+    private long pipelineLayout;
     private long passes;
     private long failures;
     private String lastFailure = "";
@@ -61,7 +63,53 @@ public final class ShadowMapPass {
         if (!pass.allocate()) {
             return null;
         }
+        if (!pass.createPipeline()) {
+            pass.destroy();
+            return null;
+        }
         return pass;
+    }
+
+    /**
+     * Builds the depth-only pipeline: a vertex stage whose positions come from {@code gl_VertexIndex}, no fragment stage,
+     * no descriptors and no push constants. It draws a triangle at clip depth 0.5 over the whole map, which is enough to
+     * prove that the pass rasterises into the shadow map and writes depth - the quantity the next slice (terrain from the
+     * light's matrix) depends on.
+     */
+    private boolean createPipeline() {
+        try {
+            String vertexSource = "#version 450\n"
+                    + "void main() {\n"
+                    + "  vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+                    + "  gl_Position = vec4(p * 2.0 - 1.0, 0.5, 1.0);\n"
+                    + "}\n";
+            org.soutalab.celtium.shaderpack.SpirvModule module = new org.soutalab.celtium.vulkan.ShadercGlslCompiler()
+                    .compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertexSource);
+            org.soutalab.celtium.vulkan.ShaderPackPipelineFactory factory =
+                    new org.soutalab.celtium.vulkan.ShaderPackPipelineFactory(this.context);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                java.nio.LongBuffer handle = stack.mallocLong(1);
+                if (vkCreatePipelineLayout(this.context.device(),
+                        org.lwjgl.vulkan.VkPipelineLayoutCreateInfo.calloc(stack).sType$Default(), null, handle)
+                        != VK_SUCCESS) {
+                    this.failures++;
+                    this.lastFailure = "vkCreatePipelineLayout(depth-only) failed";
+                    return false;
+                }
+                this.pipelineLayout = handle.get(0);
+            }
+            try (org.soutalab.celtium.vulkan.ShaderPackPipelineFactory.ModuleHandle moduleHandle =
+                         factory.createModule(module)) {
+                this.pipeline = factory.createDepthOnlyPipeline(this.pipelineLayout, moduleHandle,
+                        VK_FORMAT_D32_SFLOAT);
+            }
+            return true;
+        } catch (RuntimeException | LinkageError | org.soutalab.celtium.shaderpack.SpirvStageCompiler.CompileFailure
+                 error) {
+            this.failures++;
+            this.lastFailure = "depth-only pipeline: " + error;
+            return false;
+        }
     }
 
     private boolean allocate() {
@@ -145,6 +193,12 @@ public final class ShadowMapPass {
         VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
                 .renderArea(area).layerCount(1).pDepthAttachment(depth.get(0));
         vkCmdBeginRenderingKHR(commandBuffer, rendering);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+        vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
+                .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
+        vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
+                .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
         vkCmdEndRenderingKHR(commandBuffer);
         this.passes++;
     }

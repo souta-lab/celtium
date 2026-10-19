@@ -348,6 +348,53 @@ public final class ShaderPackPipelineFactory {
         }
     }
 
+    /**
+     * A depth-only pipeline with no vertex input and no fragment stage, for writing geometry into a shadow map.
+     * <p>
+     * Vulkan allows a pipeline without a fragment stage: the rasteriser writes depth and nothing else, which is exactly
+     * what a shadow pass does. The vertex positions come from {@code gl_VertexIndex} here so the pipeline can be verified
+     * with no buffers at all; the terrain variant is the same pipeline with the terrain vertex layout added.
+     */
+    public long createDepthOnlyPipeline(long pipelineLayout, ModuleHandle vertex, int depthFormat) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(1, stack);
+            stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertex.module())
+                    .pName(stack.UTF8("main"));
+            VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
+                    .sType$Default();
+            VkPipelineInputAssemblyStateCreateInfo assembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+                    .sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
+                    .sType$Default().viewportCount(1).scissorCount(1);
+            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                    .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
+                    .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
+            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                    .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            // A shadow pass writes depth: test and write enabled, less-or-equal so the light's nearest surface survives.
+            VkPipelineDepthStencilStateCreateInfo depthState = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                    .sType$Default().depthTestEnable(true).depthWriteEnable(true)
+                    .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+            org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamic =
+                    org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                            .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR));
+            org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR rendering =
+                    org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR.calloc(stack).sType$Default()
+                            .colorAttachmentCount(0).depthAttachmentFormat(depthFormat);
+            VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
+                    .pInputAssemblyState(assembly).pViewportState(viewport).pRasterizationState(raster)
+                    .pMultisampleState(multisample).pDepthStencilState(depthState).pDynamicState(dynamic)
+                    .layout(pipelineLayout).renderPass(VK_NULL_HANDLE).pNext(rendering.address());
+            LongBuffer handle = stack.mallocLong(1);
+            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreateGraphicsPipelines(depth-only) failed: " + result);
+            }
+            return handle.get(0);
+        }
+    }
+
     /** A pipeline for the hard-coded triangle: one vec3 attribute at location 0, no descriptors, no depth. */
     public long createBuiltinTrianglePipeline(long pipelineLayout, ModuleHandle vertex, ModuleHandle fragment,
                                               int colourFormat, int depthFormat) {
