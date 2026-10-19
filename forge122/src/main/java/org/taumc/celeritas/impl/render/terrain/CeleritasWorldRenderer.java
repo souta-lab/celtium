@@ -157,13 +157,10 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
                 // U is the results waiting to be processed and P2 is the INITIAL_BUILD queue that feeds first-time
                 // meshes. Reading it here rather than adding a counter of my own: the numbers that separate "no task
                 // was ever queued" from "tasks ran and produced nothing" already exist.
-                String queues = "";
-                for (String line : manager.getDebugStrings()) {
-                    if (line.startsWith("Chunk Queues:")) {
-                        queues = " " + line;
-                        break;
-                    }
-                }
+                // Only the queue line is wanted here: asking getDebugStrings() for it built the whole F3 collection -
+                // the backend's transfer-queue and verification summaries included - once every forty frames, ~12% of
+                // the client thread by JFR. The manager now answers with that one line.
+                String queues = " " + manager.getBuildQueueDebugLine();
                 System.out.println("[Celtium] CELTIUM_RENDERLIST lists=" + lists + " sectionsWithGeometry=" + sections
                         + " layer=" + renderLayer + " world=" + System.identityHashCode(this.world) + queues);
             }

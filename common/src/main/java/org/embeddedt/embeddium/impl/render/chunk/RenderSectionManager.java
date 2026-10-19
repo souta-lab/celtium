@@ -1369,6 +1369,26 @@ public abstract class RenderSectionManager {
         return (listed & 0x1FFFFFL) | ((long) (p1 & 0x1FFFFF) << 21) | ((long) (held & 0x1FFFFF) << 42);
     }
 
+    /**
+     * {@return just the build-queue line of {@link #getDebugStrings()}}.
+     * <p>
+     * {@code CeleritasWorldRenderer.drawChunkLayer} asks for that one line every fortieth frame to report whether
+     * meshes were ever queued, and it used to ask by building the whole debug collection - which includes the backend's
+     * transfer-queue and verification summaries. A dump-free JFR census put that call at ~12% of the client thread's
+     * samples, the largest item left after the queue walk was fixed: one call builds a few hundred kilobytes of text,
+     * almost all of it discarded by the caller.
+     */
+    public String getBuildQueueDebugLine() {
+        var rebuildLists = this.getCurrentRenderListManager().getRebuildLists();
+        return String.format("Chunk Queues: U=%02d (P0=%03d | P1=%03d | P2=%03d) S=%03d/%03d",
+                this.buildResults.size(),
+                rebuildLists.getUpdateCount(ChunkUpdateType.IMPORTANT_REBUILD),
+                rebuildLists.getUpdateCount(ChunkUpdateType.REBUILD),
+                rebuildLists.getUpdateCount(ChunkUpdateType.INITIAL_BUILD),
+                rebuildLists.getUpdateCount(ChunkUpdateType.IMPORTANT_SORT),
+                rebuildLists.getUpdateCount(ChunkUpdateType.SORT));
+    }
+
     public Collection<String> getDebugStrings() {
         List<String> list = new ArrayList<>();
 
