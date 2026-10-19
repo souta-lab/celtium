@@ -276,7 +276,31 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             VulkanHostBuffer readback = new VulkanHostBuffer(context, (long) size * size * 4,
                     VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             buffers.add(readback);
-            org.lwjgl.vulkan.VkCommandBuffer commandBuffer = context.beginCommands();
+            // A pool and buffer of this probe's own: the context's beginCommands() hands out a frame-slot buffer that
+            // the frame coordinator also submits, and handing that buffer to a second submission is what the validation
+            // layer rejected as an invalid command buffer. A diagnostic with its own lifecycle does not disturb the frame.
+            LongBuffer privatePool = stack.mallocLong(1);
+            org.lwjgl.vulkan.VkCommandPoolCreateInfo poolInfo =
+                    org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack).sType$Default()
+                            .queueFamilyIndex(context.queueFamilyIndex())
+                            .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+            if (vkCreateCommandPool(context.device(), poolInfo, null, privatePool) != VK_SUCCESS) {
+                return "pool=failed";
+            }
+            org.lwjgl.PointerBuffer privateBuffer = stack.callocPointer(1);
+            org.lwjgl.vulkan.VkCommandBufferAllocateInfo allocateInfo =
+                    org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
+                            .commandPool(privatePool.get(0)).level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                            .commandBufferCount(1);
+            if (vkAllocateCommandBuffers(context.device(), allocateInfo, privateBuffer) != VK_SUCCESS) {
+                vkDestroyCommandPool(context.device(), privatePool.get(0), null);
+                return "buffer=failed";
+            }
+            org.lwjgl.vulkan.VkCommandBuffer commandBuffer =
+                    new org.lwjgl.vulkan.VkCommandBuffer(privateBuffer.get(0), context.device());
+            org.lwjgl.vulkan.VkCommandBufferBeginInfo begin = org.lwjgl.vulkan.VkCommandBufferBeginInfo
+                    .calloc(stack).sType$Default();
+            vkBeginCommandBuffer(commandBuffer, begin);
             try {
                 barrier(stack, commandBuffer, image.get(0), VK_IMAGE_LAYOUT_UNDEFINED,
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
@@ -318,15 +342,23 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 copy.get(0).imageExtent().set(size, size, 1);
                 vkCmdCopyImageToBuffer(commandBuffer, image.get(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                         readback.buffer(), copy);
-                context.endCommands(commandBuffer);
+                if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+                    return "end=failed";
+                }
                 // A one-off synchronous submit: this is a diagnostic, not a frame, so it waits for its own work rather
                 // than joining the frame's pipelined submissions.
                 org.lwjgl.vulkan.VkSubmitInfo submit = org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
                         // The native handle, not the Java wrapper: passing the wrapper put an invalid handle in the
                         // submit (VUID-VkSubmitInfo-pCommandBuffers-parameter).
                         .pCommandBuffers(stack.pointers(commandBuffer.address()));
-                vkQueueSubmit(context.queue(), submit, VK_NULL_HANDLE);
-                vkQueueWaitIdle(context.queue());
+                LongBuffer fence = stack.mallocLong(1);
+                if (vkCreateFence(context.device(), org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack)
+                        .sType$Default(), null, fence) != VK_SUCCESS) {
+                    return "fence=failed";
+                }
+                vkQueueSubmit(context.queue(), submit, fence.get(0));
+                vkWaitForFences(context.device(), fence.get(0), true, Long.MAX_VALUE);
+                vkDestroyFence(context.device(), fence.get(0), null);
                 int centre = size / 2;
                 long at = readback.mappedAddress() + ((long) centre * size + centre) * 4L;
                 int b = MemoryUtil.memGetByte(at) & 0xFF;
@@ -345,6 +377,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 return "centre=#" + String.format("%06X", Integer.valueOf((r << 16) | (g << 8) | b))
                         + " sampledColours=" + colours.size();
             } finally {
+                vkDestroyCommandPool(context.device(), privatePool.get(0), null);
                 vkDestroyImageView(context.device(), view.get(0), null);
                 vkFreeMemory(context.device(), memory.get(0), null);
                 vkDestroyImage(context.device(), image.get(0), null);
