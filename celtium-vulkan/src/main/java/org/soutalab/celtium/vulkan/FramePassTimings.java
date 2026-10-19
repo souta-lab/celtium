@@ -69,7 +69,12 @@ public final class FramePassTimings {
             // The offer path's four pieces: the GL state capture and its key, the pipeline/descriptor preparation,
             // the group-match decision, and the vertex append (the transform for a pre-transformed group, a memcpy
             // otherwise). 0.71 ms a frame for ~292 batches is 2.4 us each, and the names say which part owns it.
-            "offCapture", "offPrepare", "offMerge", "offAppend"};
+            "offCapture", "offPrepare", "offMerge", "offAppend",
+            // The flush's non-recording halves: the frame target's begin (semaphores and slot state), and the region
+            // between the begin and the acquire barriers - target resolution, group filtering, the queued clear and
+            // the diagnostics. actualFlush minus winRecord left more than half of the flush unaccounted for, and these
+            // two names say which side of the pass it is on.
+            "wfpBegin", "wfpMiddle"};
 
     private static final int CAPACITY = 512;
 

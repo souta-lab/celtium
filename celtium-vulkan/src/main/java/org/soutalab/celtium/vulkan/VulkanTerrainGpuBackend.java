@@ -5308,6 +5308,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         celtium$swapBatchReuseFrames();
         celtium$swapPushComponentFrame();
+        // The parity arms: even frames use the cached answer, odd frames the live lookup. Only with the property set,
+        // so a normal run never splits its counters.
+        this.abBaselineArm = !AB_PARITY_LABEL.isEmpty() && (this.frameId & 1L) == 1L;
         if (PUSH_BLOCK_CACHE && this.pushBlocks.size() >= PUSH_BLOCK_LIMIT) {
             // The map is full: start over at a frame boundary, where no group is holding a reference to a block.
             this.pushBlocks.clear();
@@ -7909,7 +7912,10 @@ this.frameBufferOpen = false;
                 boolean opened = false;
                 try {
                     this.frameSubmitReachedQueue = false;
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("wfpBegin");
                     this.frameTarget.beginFrame();
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("wfpBegin");
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("wfpMiddle");
                     opened = true;
                     // What the pair held when the composite sampled it. The composite's own group was drawn in an
                     // earlier window of this frame, so this boundary is the first point after that draw that is not
@@ -8183,14 +8189,19 @@ this.frameBufferOpen = false;
                                 vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                         this.timestampPool, windowTimestampSlot * 2);
                             }
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("wfpMiddle");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
                             long windowRecordStarted = System.nanoTime();
                             recordImmediateOnlyPass(stack, terrain);
-                            this.windowRecordNanos += System.nanoTime() - windowRecordStarted;
+                            long windowRecordTook = System.nanoTime() - windowRecordStarted;
+                            this.windowRecordNanos += windowRecordTook;
                             this.windowRecords++;
+                            int arm = this.abBaselineArm ? 1 : 0;
+                            this.windowRecordNanosByArm[arm] += windowRecordTook;
+                            this.windowRecordsByArm[arm]++;
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winRecord");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
@@ -8938,6 +8949,22 @@ this.frameBufferOpen = false;
         return "chain-pair".equals(GllessFrameTarget.routeLabelForBinding(owner, false));
     }
 
+    /**
+     * Whether the in-process per-frame A/B runs: {@code -Dceltium.debug.abParity=<label>}, off by default.
+     * <p>
+     * Cross-leg A/B cannot be read on this machine: the same jar and flags measured p50 4.84 and 9.41 ms minutes
+     * apart, and per-window counters inflate with the drift (0.17 to 0.36 ms for the same work). Alternating arms by
+     * frame parity and accumulating the *same* in-process timers per arm compares the two inside one leg, where both
+     * see the same machine state. The label only names the experiment in the summary.
+     */
+    private static final String AB_PARITY_LABEL = System.getProperty("celtium.debug.abParity", "");
+
+    /** Whether the current frame is the baseline arm of the parity A/B. */
+    private boolean abBaselineArm;
+    /** Window-recording nanoseconds per arm, and the recordings each covers. */
+    private final long[] windowRecordNanosByArm = new long[2];
+    private final long[] windowRecordsByArm = new long[2];
+
     private boolean celtium$isSelfCompositeGroup(ImmediateGroup group) {
         if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || this.frameTarget == null) {
             return false;
@@ -8949,6 +8976,9 @@ this.frameBufferOpen = false;
         if (mainIdentity == Long.MIN_VALUE) {
             return false;
         }
+        // Measured with the parity A/B: caching this lookup against the identity and registry generation made no
+        // difference (0.189 ms/window against 0.180 ms/window over 1724 and 1716 recordings), so the map lookup stays
+        // as it is. The harness that measured it is kept below for the next candidate.
         return group.texture == framebufferColorTextureName(mainIdentity);
     }
 
@@ -9640,6 +9670,7 @@ this.frameBufferOpen = false;
                 + " windowRecordPerFrameMillis=" + (this.frameId == 0L ? -1.0
                         : Math.round((double) this.windowRecordNanos / 1000000.0 / this.frameId * 100.0) / 100.0)
                 + " drawSites=[" + drawSiteSummary() + "]"
+                + " abParity=[" + abParitySummary() + "]"
                 + " pushComponents=[" + pushComponentSummary() + "]"
                 + " pushBlockHits=" + this.pushBlockHits
                 + " pushBlockMisses=" + this.pushBlockMisses
@@ -13592,6 +13623,21 @@ this.frameBufferOpen = false;
         this.pushComponentCount = 0;
         this.pushComponentSamples[0] = this.pushComponentSamples[0] > 0
                 ? Math.max(1L, this.pushComponentSamples[0]) : 0L;
+    }
+
+    /** {@return the parity A/B's two arms, as recorded milliseconds per window} */
+    private String abParitySummary() {
+        if (AB_PARITY_LABEL.isEmpty()) {
+            return "off";
+        }
+        long cachedRecords = this.windowRecordsByArm[0];
+        long baselineRecords = this.windowRecordsByArm[1];
+        double cachedMs = cachedRecords == 0 ? -1.0
+                : Math.round((double) this.windowRecordNanosByArm[0] / 1000000.0 / cachedRecords * 1000.0) / 1000.0;
+        double baselineMs = baselineRecords == 0 ? -1.0
+                : Math.round((double) this.windowRecordNanosByArm[1] / 1000000.0 / baselineRecords * 1000.0) / 1000.0;
+        return AB_PARITY_LABEL + " cached=" + cachedMs + "ms/" + cachedRecords + " baseline=" + baselineMs + "ms/"
+                + baselineRecords;
     }
 
     /** {@return the per-component change census, one line} */
