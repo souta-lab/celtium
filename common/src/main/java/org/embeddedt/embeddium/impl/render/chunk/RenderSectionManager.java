@@ -1294,6 +1294,30 @@ public abstract class RenderSectionManager {
         return stats;
     }
 
+    /**
+     * The three capture-condition counters, packed into one long: listed sections (max over the render lists' pass
+     * counts), the P1 rebuild depth, and the held build results.
+     * <p>
+     * The validation fixture used to read these by parsing {@link #getDebugStrings()}, and on the standard real-world
+     * scene that made the harness a large part of the frame it measured: building the strings (including the transfer
+     * queue's description and one formatted line per pass) and regex-scanning them was ~44% of the client thread's
+     * samples (JFR, leg std1). These are the same numbers the strings are formatted from, so a caller that needs the
+     * numbers can ask for them directly. Fields are 21 bits each so a long carries all three.
+     */
+    public long celtium$captureCountersPacked() {
+        int listed = 0;
+        var debugStats = this.getCurrentRenderListManager().getDebugStatistics();
+        for (var counted : debugStats.renderPassCounts().object2IntEntrySet()) {
+            if (counted.getIntValue() > listed) {
+                listed = counted.getIntValue();
+            }
+        }
+        var rebuildLists = this.getCurrentRenderListManager().getRebuildLists();
+        int p1 = rebuildLists.getUpdateCount(ChunkUpdateType.REBUILD);
+        int held = this.buildResults.size();
+        return (listed & 0x1FFFFFL) | ((long) (p1 & 0x1FFFFF) << 21) | ((long) (held & 0x1FFFFF) << 42);
+    }
+
     public Collection<String> getDebugStrings() {
         List<String> list = new ArrayList<>();
 

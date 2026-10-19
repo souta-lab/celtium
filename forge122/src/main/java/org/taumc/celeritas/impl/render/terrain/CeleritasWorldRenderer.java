@@ -27,6 +27,15 @@ import java.util.*;
  */
 public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, VintageRenderSectionManager, BlockRenderLayer, TileEntity, CeleritasWorldRenderer.TileEntityRenderContext>  {
 
+    /**
+     * The capture-condition counters for the validation fixture, without building any debug strings.
+     * See {@code RenderSectionManager.celtium$captureCountersPacked}.
+     */
+    public long celtium$captureCountersPacked() {
+        var manager = this.getRenderSectionManager();
+        return manager == null ? -1L : manager.celtium$captureCountersPacked();
+    }
+
     /** Bounded report countdown for the render lists. */
     private int celtium$listReportCountdown;
     @Desugar

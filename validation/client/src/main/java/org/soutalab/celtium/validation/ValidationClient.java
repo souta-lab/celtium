@@ -4804,6 +4804,63 @@ public final class ValidationClient {
     private static java.lang.reflect.Method celtium$rendererDebugMethod;
     private static boolean celtium$rendererLookupFailed;
 
+    /** Reflective handle for the renderer's packed capture counters (absent in a GL-arm run). */
+    private static java.lang.reflect.Method celtium$countersMethod;
+    private static boolean celtium$countersLookupFailed;
+
+    /** The current frame's counters, filled once per frame by {@link #celtium$fillCounters()}. */
+    private int celtium$countersListed = -1;
+    private int celtium$countersP1 = -1;
+    private int celtium$countersHeld = -1;
+    private int celtium$countersFrame = -1;
+
+    /**
+     * Fills the frame's capture-condition counters.
+     * <p>
+     * The renderer exposes them directly ({@code celtium$captureCountersPacked}); the strings-and-regex path is only
+     * the fallback for a renderer that does not. On the standard real-world scene the previous always-parse path was
+     * ~44% of the client thread's samples (JFR, leg std1), i.e. the harness was a large part of the frame it measured.
+     */
+    private void celtium$fillCounters() {
+        if (this.celtium$countersFrame == this.worldFrames) {
+            return;
+        }
+        this.celtium$countersFrame = this.worldFrames;
+        long packed = celtium$packedCounters();
+        if (packed != Long.MIN_VALUE) {
+            this.celtium$countersListed = (int) (packed & 0x1FFFFFL);
+            this.celtium$countersP1 = (int) ((packed >>> 21) & 0x1FFFFFL);
+            this.celtium$countersHeld = (int) ((packed >>> 42) & 0x1FFFFFL);
+            return;
+        }
+        java.util.List<String> lines = celtium$rendererDebugLines();
+        this.celtium$countersListed = celtium$parsedListed(lines);
+        this.celtium$countersP1 = celtium$parsedP1(lines);
+        this.celtium$countersHeld = celtium$parsedHeld(lines);
+    }
+
+    /** {@return the renderer's packed counters, or {@link Long#MIN_VALUE} when it has no such accessor}. */
+    private static long celtium$packedCounters() {
+        try {
+            if (celtium$countersMethod == null && !celtium$countersLookupFailed) {
+                Class<?> rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
+                celtium$countersMethod = rendererClass.getMethod("celtium$captureCountersPacked");
+            }
+            if (celtium$countersMethod == null) {
+                return Long.MIN_VALUE;
+            }
+            Object renderer = celtium$countersMethod.getDeclaringClass().getMethod("instanceNullable").invoke(null);
+            if (renderer == null) {
+                return Long.MIN_VALUE;
+            }
+            Object value = celtium$countersMethod.invoke(renderer);
+            return value instanceof Long ? ((Long) value).longValue() : Long.MIN_VALUE;
+        } catch (Throwable absent) {
+            celtium$countersLookupFailed = true;
+            return Long.MIN_VALUE;
+        }
+    }
+
     /** The debug lines and parsed values of the current frame, so one frame parses them once. */
     private java.util.List<String> celtium$debugLinesFrame;
     private int celtium$debugLinesWorldFrame = -1;
@@ -4962,9 +5019,9 @@ public final class ValidationClient {
         // PIN_SECTIONS_STABLE_FRAMES consecutive frames, at or below PIN_SECTIONS - and reports the value it settled
         // at, so a comparison that quotes two legs can say what world each of them held.
         if (PIN_SECTIONS > 0) {
-            java.util.List<String> pinLines = celtium$rendererDebugLines();
-            int listed = celtium$parsedListed(pinLines);
-            int pinPendingP1 = celtium$parsedP1(pinLines);
+            celtium$fillCounters();
+            int listed = this.celtium$countersListed;
+            int pinPendingP1 = this.celtium$countersP1;
             if (listed != this.celtium$pinnedSectionsSeen) {
                 this.celtium$pinnedSectionsSeen = listed;
                 this.celtium$pinnedSectionsStableFrames = 0;
@@ -4972,7 +5029,7 @@ public final class ValidationClient {
                 this.celtium$pinnedSectionsStableFrames++;
             }
             this.celtium$pinnedSectionsValue = listed;
-            int pinHeld = celtium$parsedHeld(pinLines);
+            int pinHeld = this.celtium$countersHeld;
             // One "settled" answer for every clause, so the deadline below can fire against the same state the
             // settled check refused. A stable section count is not a settled world: measured 2026-10-13, heipin2
             // fired at "pinned-sections (listed 39 stable for 20 frames)" with P1=058 - 58 chunk rebuilds still
@@ -5016,11 +5073,11 @@ public final class ValidationClient {
             return false;
         }
         if ("sections".equals(CAPTURE_CONDITION)) {
-            java.util.List<String> sectionLines = celtium$rendererDebugLines();
-            int listed = celtium$parsedListed(sectionLines);
-            int pendingP1 = celtium$parsedP1(sectionLines);
+            celtium$fillCounters();
+            int listed = this.celtium$countersListed;
+            int pendingP1 = this.celtium$countersP1;
             // The same two conditions the pinned path honours, so both paths promise the same settled world.
-            int heldBuilds = celtium$parsedHeld(sectionLines);
+            int heldBuilds = this.celtium$countersHeld;
             boolean heldOk = CAPTURE_MAX_HELD_BUILDS < 0 || heldBuilds < 0 || heldBuilds <= CAPTURE_MAX_HELD_BUILDS;
             if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS && heldOk
                     && (pendingP1 < 0 || pendingP1 <= CAPTURE_MAX_P1) && celtium$worldClockReached()) {
@@ -5039,9 +5096,9 @@ public final class ValidationClient {
             // cond1 recorded captureConditionFired="tick" with listedSections 56, while two legs of one jar with the
             // same flags held 45 and 55 sections and differed by fivefold in black fraction. Waiting for the
             // section count here is the same gate the sections condition uses, deadline included.
-            java.util.List<String> tickLines = celtium$rendererDebugLines();
-            int tickListed = celtium$parsedListed(tickLines);
-            int tickP1 = celtium$parsedP1(tickLines);
+            celtium$fillCounters();
+            int tickListed = this.celtium$countersListed;
+            int tickP1 = this.celtium$countersP1;
             // The JEI variant is not a world-only picture: the search box is driven over several ticks
             // (before / typed / after), so a capture that fires while those are still arriving photographs a
             // different screen each run. Measured 2026-10-13: two legs with identical flags reached the same
