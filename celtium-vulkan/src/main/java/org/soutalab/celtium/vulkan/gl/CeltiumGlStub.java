@@ -603,6 +603,24 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile int pendingClearDrawFbo;
     /** Whether the backend's routing considered the bound framebuffer the main one when the clear was issued. */
     private volatile boolean pendingClearIsMain = true;
+
+    /** Clears seen for the framebuffer the game calls its main one, and for every other target. */
+    private int mainClears;
+    private int foreignClears;
+    private float lastMainClearRed;
+    private float lastMainClearGreen;
+    private float lastMainClearBlue;
+
+    /** {@return the main/foreign clear census and the last main clear colour}, for the verification line. */
+    public static String clearCensus() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "main=none foreign=none colour=none";
+        }
+        return "main=" + stub.mainClears + " foreign=" + stub.foreignClears
+                + " lastMainColour=" + stub.lastMainClearRed + "," + stub.lastMainClearGreen + ","
+                + stub.lastMainClearBlue;
+    }
     /** Set by the backend after each bind, so a clear is classified by routing rather than by a raw GL name. */
     private volatile boolean drawFramebufferIsMain = true;
 
@@ -1675,6 +1693,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
         this.pendingClearDrawFbo = this.drawFbo;
         this.pendingClearIsMain = this.drawFramebufferIsMain;
+        // How often the game clears what it calls its main framebuffer, and with what colour. The E2E scene's black
+        // horizon needed exactly this: the model says the world frame clears that framebuffer with the fog colour every
+        // frame, while a census of the routes said the clear never reached the delivered image.
+        if (this.drawFramebufferIsMain) {
+            this.mainClears++;
+            this.lastMainClearRed = this.clearRed;
+            this.lastMainClearGreen = this.clearGreen;
+            this.lastMainClearBlue = this.clearBlue;
+        } else {
+            this.foreignClears++;
+        }
         this.pendingClears.getAndUpdate(previous -> previous | mask);
         if (!this.drawFramebufferIsMain) {
             // A non-main framebuffer's clear has no other carrier: the latch only runs on the next vanilla
