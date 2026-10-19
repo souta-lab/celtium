@@ -233,10 +233,15 @@ class LegRunnerTests(unittest.TestCase):
 
     def test_reject_unusable_extra_and_known_wrong_control(self):
         for extra in ("--game-dir=/escape", "argument", "-D", "-Dceltium.validation.presentedDumpEvery=0",
-                      "-Dceltium.vulkan.validation=false", "-Dceltium.vulkan.glless=false",
+                      "-Dceltium.vulkan.glless=false",
                       "-Dceltium.validation.dumpPresentedImage=false"):
             with self.subTest(extra=extra), self.assertRaises(runner.LegError):
                 self.plan(extras=[extra])
+        # The one control that may be turned off: the validation layer is the correctness arm's switch, and the
+        # shipping configuration runs without it - measured at 6.6 ms of an 11.0 ms frame on the standard scene, so
+        # a performance arm has to be able to say so. The plan keeps the two numbers apart.
+        plan = self.plan(extras=["-Dceltium.vulkan.validation=false"])
+        self.assertEqual(plan.command.count("--jvm-arg=-Dceltium.vulkan.validation=false"), 1)
         with self.assertRaisesRegex(runner.LegError, "celtium.vulkan.presentedDumpEvery"):
             self.plan(extras=["-Dceltium.validation.presentedDumpEvery=0"])
 

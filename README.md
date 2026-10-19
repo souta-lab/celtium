@@ -107,6 +107,8 @@ Optimizations are also derived from — or cross-checked against — the followi
 | [embeddedt/ModernFix](https://github.com/embeddedt/ModernFix) | LGPL-3.0 (config derived from Sodium under LGPL-3.0) | concept reference: dynamic/lazy model loading, faster startup, memory reduction |
 | [malte0811/FerriteCore](https://github.com/malte0811/FerriteCore) | MIT | concept reference: dedup blockstate property maps, multipart model instances (~200k→1.5k), cached shape internals |
 | [MoePus/Flerovium](https://github.com/MoePus/Flerovium) | LGPL-3.0 | modern (1.21): item render backface culling / fast math / LOD, particle light caching, entity fast math |
+| [MCRcortex/nvidium](https://github.com/MCRcortex/nvidium) | LGPL-3.0 (verified through the GitHub license API, 2026-10-19) | GPU-driven terrain: indirect draws built on the GPU, mesh-shader geometry in place of per-section draw calls, and the "one draw per pipeline" shape. Its mesh-shader path is NVIDIA-only and is not portable, but the draw-merge argument is the one this renderer needs: combined draws are how the immediate path's ~920 ITEM batches a frame stop costing a driver call each |
+| [IrisShaders/Iris](https://github.com/IrisShaders/Iris) | LGPL-3.0 (verified through the GitHub license API, 2026-10-19) | shaderpack pipeline: program parsing, uniform/framebuffer plumbing, shadow-map stages. Relevant to the shaderpack and native shadow-map items; the design is re-implemented against this renderer's Vulkan pipeline model |
 
 ## Coexisting optimization mods (not porting sources)
 
@@ -122,4 +124,6 @@ The test instance runs the standard 1.12.2 performance stack — these are **coe
 
 The inventoried candidates per project are kept in [docs/performance_plan.md](docs/performance_plan.md). Porting a listed item means: check the file/module license first (FalseTweaks and ArchaicFix contain non-LGPL islands), re-implement — do not copy code —, then credit in commit, code comment and PR.
 
-Current Sodium source under its newer restrictive license is not imported by this project. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.
+**GPL and LGPL sources are used within their terms**, which for a GPL project means design reference only: adapting GPL code into this LGPL-3.0 renderer would relicense the combined work, so a GPL project is read for its technique and re-implemented here, with the source named in the commit, the code comment and the PR. LGPL-3.0 sources may be adapted, and where code is adapted rather than re-implemented the file keeps its notice and the adaption is named the same way.
+
+Current Sodium source under its newer restrictive license (and any other source-available-but-not-free project) is not imported, not adapted, and not copied: published descriptions of its techniques are read the way a paper is read, and the resulting design is this renderer's own. **Provenance is never concealed** - every derived change names its source, because a change that has to hide where it came from is not one this project can ship. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.
