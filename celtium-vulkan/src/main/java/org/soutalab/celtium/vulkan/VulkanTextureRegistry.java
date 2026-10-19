@@ -63,6 +63,10 @@ public final class VulkanTextureRegistry {
     private boolean blitUnsupported;
     private String blitUnsupportedReason = "unqueried";
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
+
+    /** The last name {@link #get(int)} resolved, with its image; dropped by every mutation of {@code entries}. */
+    private int memoTextureId = Integer.MIN_VALUE;
+    private VulkanGlTexture memoTexture;
     /**
      * Images this registry does not own, published under a GL name so the immediate path can sample them.
      * <p>
@@ -258,6 +262,7 @@ public final class VulkanTextureRegistry {
             retireExternal(existing, "GL texture " + glTextureId + " was published with new handles");
         }
         Entry superseded = this.entries.remove(id);
+        this.memoTextureId = Integer.MIN_VALUE;
         if (superseded != null) {
             // A mirror this registry created for the same name is superseded by the renderer's own live image. It is
             // this registry's object, so it is destroyed - through the retire queue, because a recorded frame may
@@ -370,7 +375,16 @@ public final class VulkanTextureRegistry {
     }
 
     public VulkanGlTexture get(int glTextureId) {
-        return get(glTextureId, true);
+        // A one-entry memo over the map lookup: the callers resolve the same name several times in a row (the JFR
+        // census showed get() calling get() with the same argument, and the draw path asks once per group), and the map
+        // is a boxed HashMap. Any mutation of the table drops the memo, so it cannot answer a stale name.
+        if (glTextureId == this.memoTextureId) {
+            return this.memoTexture;
+        }
+        VulkanGlTexture texture = get(glTextureId, true);
+        this.memoTextureId = glTextureId;
+        this.memoTexture = texture;
+        return texture;
     }
 
     /**
@@ -389,6 +403,7 @@ public final class VulkanTextureRegistry {
         }
         VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
         this.entries.put(Integer.valueOf(glTextureId), new Entry(glTextureId, width, height, texture));
+        this.memoTextureId = Integer.MIN_VALUE;
         this.mirrorCount++;
         return texture;
     }
@@ -791,6 +806,7 @@ public final class VulkanTextureRegistry {
                         wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T));
                 entry = new Entry(glTextureId, extent[0], extent[1], texture);
                 this.entries.put(id, entry);
+        this.memoTextureId = Integer.MIN_VALUE;
                 this.mirrorCount++;
             }
             // Control: -Dceltium.vulkan.mirrorCapturedLevels=false keeps the pre-N07b behaviour (level 0 only, the
@@ -848,6 +864,7 @@ public final class VulkanTextureRegistry {
                 texture = VulkanGlTexture.create(this.context, width, height, nearestFilter, wrapS, wrapT);
                 entry = new Entry(glTextureId, width, height, texture);
                 this.entries.put(glTextureId, entry);
+        this.memoTextureId = Integer.MIN_VALUE;
                 this.mirrorCount++;
             }
             if (texture.uploadFromNamedImage(glTextureId, width, height, rgba)) {
@@ -1002,6 +1019,7 @@ public final class VulkanTextureRegistry {
                         nearestFilterFor(glTextureId, x, y, width, height), wrapS, wrapT);
                 entry = new Entry(glTextureId, textureWidth, textureHeight, created);
                 this.entries.put(glTextureId, entry);
+        this.memoTextureId = Integer.MIN_VALUE;
                 this.mirrorCount++;
                 this.createdByAnnouncement++;
             } catch (RuntimeException | LinkageError error) {
@@ -1485,6 +1503,7 @@ public final class VulkanTextureRegistry {
             retireExternal(external, "GL texture " + glTextureId + " was forgotten by its owner");
         }
         Entry entry = this.entries.remove(id);
+        this.memoTextureId = Integer.MIN_VALUE;
         this.fullyInitialized.remove(id);
         // The GL name is free for reuse the moment it is deleted ("its name is free for reuse"), so the label that
         // says which source filled *this* name's mirror must go with the entry. It did not, and `splashSourcedGroups`
@@ -1852,6 +1871,7 @@ public final class VulkanTextureRegistry {
             }
             VulkanGlTexture empty = VulkanGlTexture.create(this.context, width, height, nearestFilter);
             this.entries.put(glTextureId, new Entry(glTextureId, width, height, empty));
+        this.memoTextureId = Integer.MIN_VALUE;
             this.mirrorCount++;
             celtium$noteMirrorSource(glTextureId, "none", width, height, null);
             this.rejectPatch("GL-less mirror: GL texture " + glTextureId + " has no announced pixels and no captured"
@@ -1874,6 +1894,7 @@ public final class VulkanTextureRegistry {
             VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
             texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
             this.entries.put(glTextureId, new Entry(glTextureId, width, height, texture));
+        this.memoTextureId = Integer.MIN_VALUE;
             if (width >= 512 || height >= 512) {
                 // Who asks for a screen-sized mirror: the stack is the evidence for whether the frame's own colour is
                 // being mirrored (and read back every frame) or something else is.
@@ -1952,6 +1973,7 @@ public final class VulkanTextureRegistry {
             entry.texture.delete();
         }
         this.entries.clear();
+        this.memoTextureId = Integer.MIN_VALUE;
         // Published images are dropped the same way forgetTexture drops one: the wrapper's sampler is released and
         // the image, its memory and its view are left to their owner. Skipping them would leak a sampler per
         // published name; deleting them like entries would destroy an image this class never created.
