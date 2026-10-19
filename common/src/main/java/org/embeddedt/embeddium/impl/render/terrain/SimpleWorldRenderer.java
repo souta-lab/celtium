@@ -472,13 +472,22 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
      */
     private static int celtium$blockAreaStacks;
 
+    /**
+     * The build-flow diagnostics switch, read once.
+     * <p>
+     * It used to be a {@code Boolean.getBoolean} inside the per-call check of
+     * {@link #scheduleRebuildForBlockArea} - and that method is called ~8.6 thousand times per frame while vanilla
+     * drains its light-update queue, so the property lookup alone was a measurable part of the storm's cost.
+     */
+    private static final boolean BUILD_FLOW_LOG = Boolean.getBoolean("celtium.debug.buildFlow");
+
     public void scheduleRebuildForBlockArea(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, boolean important) {
         // Who calls this twelve thousand times a frame in a still scene? The stack names the caller instead of the
         // next round guessing between block updates, light updates and a renderer loop.
         // Classified sampling, not per-call stacks: one stack capture per 2000 calls is free and still says which
         // vanilla path owns the storm (light updates, block placement, chunk data, chunk light init).
         long areaCalls = ++org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.areaCalls;
-        if (Boolean.getBoolean("celtium.debug.buildFlow") && areaCalls % 2000 == 0) {
+        if (BUILD_FLOW_LOG && areaCalls % 2000 == 0) {
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
             boolean light = false, setBlock = false, chunkData = false, chunkLightInit = false;
             for (int i = 2; i < stack.length; i++) {
@@ -543,7 +552,8 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
      * the world as it is when the task runs), so repeated requests inside the same frame are dropped; the
      * pending-update merge in {@code scheduleRebuild} would have collapsed them anyway, this skips the work.
      */
-    private final java.util.HashSet<Long> celtium$scheduledSections = new java.util.HashSet<Long>();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet celtium$scheduledSections =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
 
     public void scheduleRebuildForChunk(int x, int y, int z, boolean important) {
         // Only the unimportant requests are collapsed: those are the light-update storm's shape (a position that had a
@@ -552,7 +562,7 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         // light request in the same frame.
         if (!important) {
             long key = ((long) (x & 0x3FFFFF) << 42) | ((long) (z & 0x3FFFFF) << 20) | (y & 0xFFFFF);
-            if (!this.celtium$scheduledSections.add(Long.valueOf(key))) {
+            if (!this.celtium$scheduledSections.add(key)) {
                 org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.scheduleDeduped++;
                 return;
             }
