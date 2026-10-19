@@ -9340,6 +9340,7 @@ this.frameBufferOpen = false;
         drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         vkCmdEndRenderPass(this.commandBuffer);
+        celtium$recordShaderPackDraw();
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
     }
@@ -13887,6 +13888,12 @@ this.frameBufferOpen = false;
     private boolean shaderCompileProbed;
     /** The loaded pack, kept for the S2 probe's program paths. */
     private org.soutalab.celtium.shaderpack.PackManifest shaderPackManifest;
+    /** {@code -Dceltium.shaderpack.drawProbe=true}: draw a triangle with the pack's shaders and record it. */
+    private static final boolean SHADER_PACK_DRAW_PROBE =
+            Boolean.getBoolean("celtium.shaderpack.drawProbe");
+    private ShaderPackDrawProbe shaderPackDrawProbe;
+    private boolean shaderPackDrawRecorded;
+
     /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
     private static final boolean SHADER_COMPILE_PROBE =
             Boolean.getBoolean("celtium.shaderpack.compileProbe");
@@ -14097,16 +14104,28 @@ this.frameBufferOpen = false;
                             compiler.compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertex.source());
                     org.soutalab.celtium.shaderpack.SpirvModule fragmentModule =
                             compiler.compile(org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragment.source());
-                    try (ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
-                         ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
-                         ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(vertex, fragment)) {
-                        long pipeline = factory.createPipeline(layout.pipelineLayout(), vertexHandle, fragmentHandle,
-                                vertex, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                                org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
-                        line.append(" pipeline=").append(pipeline != 0L ? "ok" : "null")
-                                .append(" attributes=").append(vertex.attributes().size())
+                    if (SHADER_PACK_DRAW_PROBE) {
+                        // The draw probe owns the pipeline, the descriptor set and the vertex buffers, and records a
+                        // triangle with them once. It is created from the same interfaces and modules the pipeline
+                        // check above uses, so what it draws is the same program.
+                        org.soutalab.celtium.vulkan.VulkanGlTexture white = this.textureRegistry.get(this.whiteTextureId());
+                        this.shaderPackDrawProbe = ShaderPackDrawProbe.create(this.context, vertex, fragment,
+                                vertexModule, fragmentModule, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                                org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT, white);
+                        line.append(" drawProbe=prepared attributes=").append(vertex.attributes().size())
                                 .append(" result=OK");
-                        org.lwjgl.vulkan.VK10.vkDestroyPipeline(this.context.device(), pipeline, null);
+                    } else {
+                        try (ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
+                             ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
+                             ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(vertex, fragment)) {
+                            long pipeline = factory.createPipeline(layout.pipelineLayout(), vertexHandle,
+                                    fragmentHandle, vertex, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                                    org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
+                            line.append(" pipeline=").append(pipeline != 0L ? "ok" : "null")
+                                    .append(" attributes=").append(vertex.attributes().size())
+                                    .append(" result=OK");
+                            org.lwjgl.vulkan.VK10.vkDestroyPipeline(this.context.device(), pipeline, null);
+                        }
                     }
                 } catch (Throwable failure) {
                     String text = String.valueOf(failure);
@@ -14117,6 +14136,19 @@ this.frameBufferOpen = false;
                 return;
             }
         }
+    }
+
+    /** Records the pack's triangle into the delivered image, once, after the window's own pass has ended. */
+    private void celtium$recordShaderPackDraw() {
+        if (this.shaderPackDrawProbe == null || this.shaderPackDrawRecorded) {
+            return;
+        }
+        if (!(this.frameTarget instanceof GllessFrameTarget target)) {
+            return;
+        }
+        this.shaderPackDrawRecorded = true;
+        this.shaderPackDrawProbe.record(this.commandBuffer, target);
+        System.out.println("[Celtium] CELTIUM_PACK_DRAW recorded=true");
     }
 
     private void celtium$probeShaderPack() {

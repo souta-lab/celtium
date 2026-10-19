@@ -276,10 +276,10 @@ public final class ShaderPackPipelineFactory {
         // fixed-function matrix has no transform block at all.
         int uniformBlockBinding = uniformBlock ? 1 : -1;
         if (transformBlock) {
-            bindings.add(new int[] {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
+            bindings.add(new int[] {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1});
         }
         if (uniformBlockBinding >= 0) {
-            bindings.add(new int[] {uniformBlockBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
+            bindings.add(new int[] {uniformBlockBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1});
         }
         for (Integer binding : samplerBindings) {
             bindings.add(new int[] {binding.intValue(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1});
