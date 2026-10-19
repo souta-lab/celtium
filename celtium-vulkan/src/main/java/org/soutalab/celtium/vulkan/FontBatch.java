@@ -238,6 +238,21 @@ public final class FontBatch {
 
     /** The run's vertices, owned by this batch and grown as needed; the font's own buffer is copied into it. */
     private ByteBuffer pendingVertices;
+
+    /**
+     * Bakes each appended glyph quad's position with the model view current at its append, so a run can span a model
+     * view change.
+     * <p>
+     * The run closes on every matrix change today because the submission path installs the run's own model view before
+     * offering it - a run held across a change would be drawn with whatever transform came last (the measured symptom
+     * with batching on was garbled labels and a rotated splash). Baking at append removes that reason: the vertices
+     * carry their own transform, the run is offered with an identity model view, and a text-heavy frame stops closing a
+     * run per translate/scale. Off by default while it is being measured.
+     */
+    private static final boolean BAKE_MODEL_VIEW = Boolean.getBoolean("celtium.font.matrixBake");
+
+    /** Whether every batch in the open run was baked; a run may not mix baked and unbaked batches. */
+    private boolean pendingBaked;
     private int pendingBytesUsed;
     private int pendingVertexCount;
     private Object pendingFormat;
@@ -336,6 +351,52 @@ public final class FontBatch {
      * glyph's first - because a strip of 4N vertices draws 4N-2 triangles, so the last vertices of one glyph connect
      * to the first of the next and the connecting triangles are the 1-px bars between characters.
      */
+    /** Writes the identity into a 4x4 column-major matrix. */
+    private static void setIdentity(float[] matrix) {
+        java.util.Arrays.fill(matrix, 0.0f);
+        matrix[0] = 1.0f;
+        matrix[5] = 1.0f;
+        matrix[10] = 1.0f;
+        matrix[15] = 1.0f;
+    }
+
+    /** {@return whether a matrix is a diagonal plus translation}, the form the baked copy can apply exactly. */
+    private static boolean axisAligned(float[] matrix) {
+        if (matrix == null || matrix.length < 16) {
+            return false;
+        }
+        for (int row = 0; row < 3; row++) {
+            for (int column = 0; column < 3; column++) {
+                if (row != column && matrix[row * 4 + column] != 0.0f) {
+                    return false;
+                }
+            }
+        }
+        // The bottom row must be the affine one; a perspective term would not survive the bake.
+        return matrix[3] == 0.0f && matrix[7] == 0.0f && matrix[11] == 0.0f && matrix[15] == 1.0f;
+    }
+
+    /** Copies {@code count} vertices, applying {@code x' = sx*x + tx} and friends to each position. */
+    private static void bakePositions(long source, long destination, int count, int stride, float[] modelView) {
+        float sx = modelView[0];
+        float sy = modelView[5];
+        float sz = modelView[10];
+        float tx = modelView[12];
+        float ty = modelView[13];
+        float tz = modelView[14];
+        for (int vertex = 0; vertex < count; vertex++) {
+            long from = source + (long) vertex * stride;
+            long to = destination + (long) vertex * stride;
+            org.lwjgl.system.MemoryUtil.memPutFloat(to,
+                    sx * org.lwjgl.system.MemoryUtil.memGetFloat(from) + tx);
+            org.lwjgl.system.MemoryUtil.memPutFloat(to + 4,
+                    sy * org.lwjgl.system.MemoryUtil.memGetFloat(from + 4) + ty);
+            org.lwjgl.system.MemoryUtil.memPutFloat(to + 8,
+                    sz * org.lwjgl.system.MemoryUtil.memGetFloat(from + 8) + tz);
+            org.lwjgl.system.MemoryUtil.memCopy(from + 12, to + 12, (long) stride - 12L);
+        }
+    }
+
     public boolean celtium$fontAppend(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                       int vertexCount, int drawMode) {
         long started = System.nanoTime();
@@ -396,6 +457,10 @@ public final class FontBatch {
                 this.pendingScissorKey = scissorKey;
                 System.arraycopy(view.projection(), 0, this.pendingProjection, 0, 16);
                 System.arraycopy(view.modelView(), 0, this.pendingModelView, 0, 16);
+                if (this.pendingBaked) {
+                    // The vertices already carry the model view; installing it again at submit would transform twice.
+                    setIdentity(this.pendingModelView);
+                }
                 this.pendingTargetIdentity = view.targetIdentity();
                 this.pendingBytesUsed = 0;
                 this.pendingVertexCount = 0;
@@ -419,7 +484,17 @@ public final class FontBatch {
                 this.stripSeparators++;
             }
             long destination = base + this.pendingBytesUsed;
-            org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, destination, bytes);
+            boolean bakeable = BAKE_MODEL_VIEW && this.state != null && axisAligned(this.state.modelView());
+            if (this.pendingActive && this.pendingBaked && !bakeable) {
+                // The open run holds baked batches: it has to close before an unbaked one joins it.
+                celtium$flushPendingFontBatch("state-change");
+            }
+            if (bakeable) {
+                bakePositions(vertexAddress, destination, vertexCount, vertexStride, this.state.modelView());
+                this.pendingBaked = true;
+            } else {
+                org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, destination, bytes);
+            }
             this.pendingBytesUsed += bytes;
             this.pendingVertexCount += vertexCount;
             this.quadsAppended++;
@@ -440,6 +515,12 @@ public final class FontBatch {
      * every quad with the matrices it was written for.
      */
     public void celtium$fontMatrixBoundary() {
+        if (BAKE_MODEL_VIEW && this.pendingActive && this.pendingBaked && this.state != null
+                && java.util.Arrays.equals(this.pendingProjection, this.state.projection())) {
+            // The run's vertices carry their own model view and the projection is unchanged, so this change is not a
+            // boundary: closing here is the per-string flush that batching exists to avoid.
+            return;
+        }
         celtium$flushPendingFontBatch("state-change");
     }
 
@@ -553,6 +634,7 @@ public final class FontBatch {
                 this.pendingDrawMode, this.pendingTexture, this.pendingAlphaTest, this.pendingAlphaRef,
                 this.pendingProjection.clone(), this.pendingModelView.clone(), this.pendingTargetIdentity, how);
         this.pendingActive = false;
+        this.pendingBaked = false;
         this.pendingBytesUsed = 0;
         this.pendingVertexCount = 0;
         // The run's bytes stay valid until the pending buffer is reused, so a refusal can still copy them.
