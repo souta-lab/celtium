@@ -512,9 +512,18 @@ public final class ImmediateStatistics {
     /** Group-loop iterations across the run, so the per-window scan's size is a number rather than an assumption. */
     private long groupLoopIterations;
 
+    /** How many times the group loop has been entered, so an empty pass cannot be read as "never ran". */
+    private long groupLoopCalls;
+
     /** Counts one pass of the group loop over {@code steps} groups. */
     void noteGroupLoopIterations(int steps) {
         this.groupLoopIterations += steps;
+        this.groupLoopCalls++;
+    }
+
+    /** {@return how many times the group loop has been entered across the run}. */
+    public long groupLoopCalls() {
+        return this.groupLoopCalls;
     }
 
     /** {@return how many groups the immediate group loop has iterated over across the run}. */

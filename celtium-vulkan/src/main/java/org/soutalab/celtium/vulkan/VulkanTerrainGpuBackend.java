@@ -2635,6 +2635,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " activeTarget=" + this.activeImmediateTarget
                 + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
                 + " groupLoopIterations=" + this.immediateStatistics.groupLoopIterations()
+                + " groupLoopCalls=" + this.immediateStatistics.groupLoopCalls()
                 + " windowsTotal=" + this.immediateStatistics.immediateWindows()
                 + " lastTerrainPassFrame=" + this.terrainStatistics.lastTerrainPassFrame()
                 + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId));
