@@ -509,6 +509,19 @@ public final class ImmediateStatistics {
     }
 
     /** Records one immediateGroupsKeptForOtherTargets. */
+    /** Group-loop iterations across the run, so the per-window scan's size is a number rather than an assumption. */
+    private long groupLoopIterations;
+
+    /** Counts one pass of the group loop over {@code steps} groups. */
+    void noteGroupLoopIterations(int steps) {
+        this.groupLoopIterations += steps;
+    }
+
+    /** {@return how many groups the immediate group loop has iterated over across the run}. */
+    public long groupLoopIterations() {
+        return this.groupLoopIterations;
+    }
+
     void noteImmediateGroupsKeptForOtherTargets() {
         this.immediateGroupsKeptForOtherTargets++;
     }
