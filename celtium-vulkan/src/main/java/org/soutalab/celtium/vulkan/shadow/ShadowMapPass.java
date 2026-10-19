@@ -424,6 +424,12 @@ public final class ShadowMapPass {
     public boolean recordTerrain(VkCommandBuffer commandBuffer, MemoryStack stack, long vertexBuffer, long indexBuffer,
                                  long indirectBuffer, long indirectOffset, int indirectCount, float[] block,
                                  long descriptorSet, int dynamicOffset) {
+        if (System.getProperty("celtium.shadow.diag") != null) {
+            System.out.println("[Celtium] CELTIUM_SHADOW_RECORD terrainPipeline=" + this.terrainPipeline
+                    + " vertex=" + Long.toHexString(vertexBuffer) + " indirect=" + Long.toHexString(indirectBuffer)
+                    + " count=" + indirectCount + " block=" + (block == null ? -1 : block.length)
+                    + " set=" + Long.toHexString(descriptorSet));
+        }
         if (this.terrainPipeline == 0L || vertexBuffer == 0L || indirectBuffer == 0L || indirectCount <= 0
                 || block == null || block.length < 32) {
             return false;

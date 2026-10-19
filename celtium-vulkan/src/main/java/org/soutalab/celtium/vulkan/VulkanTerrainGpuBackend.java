@@ -14340,7 +14340,7 @@ this.frameBufferOpen = false;
             boolean terrainShadow = Boolean.getBoolean("celtium.shadow.terrain");
             VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
             boolean drawn = false;
-            if (terrainShadow && this.shadowShadowDiag++ < 3) {
+            if (terrainShadow && (this.frameId < 3 || this.frameId % 300 == 0)) {
                 System.out.println("[Celtium] CELTIUM_SHADOW_DIAG pipeline=" + (terrainPipeline != null)
                         + " hasTerrainPipeline=" + this.shadowMapPass.hasTerrainPipeline()
                         + " vertex=" + Long.toHexString(this.terrain.shadowVertexBuffer())
