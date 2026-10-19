@@ -596,18 +596,22 @@ public final class VulkanTextureRegistry {
         int w = image.getWidth();
         int h = image.getHeight();
         java.nio.ByteBuffer out = org.lwjgl.system.MemoryUtil.memAlloc(w * h * 4);
-        int[] row = new int[w];
-        for (int y = 0; y < h; y++) {
-            image.getRGB(0, y, w, 1, row, 0, w);
-            for (int x = 0; x < w; x++) {
-                int argb = row[x];
-                out.put((byte) ((argb >> 16) & 0xFF));
-                out.put((byte) ((argb >> 8) & 0xFF));
-                out.put((byte) (argb & 0xFF));
-                out.put((byte) ((argb >>> 24) & 0xFF));
-            }
+        // One conversion call for the whole image and one pass over a direct buffer: the per-row getRGB plus the ByteBuffer
+        // put() per component was five AWT calls per pixel (measured in a JFR of the world window: DirectColorModel.getRGB
+        // and friends 5.5% of the client thread, rgbaOf 3.8% inclusive), and it ran on the render thread while the world
+        // was being entered.
+        int[] pixels = new int[w * h];
+        image.getRGB(0, 0, w, h, pixels, 0, w);
+        long address = org.lwjgl.system.MemoryUtil.memAddress(out);
+        for (int pixel = 0; pixel < pixels.length; pixel++) {
+            int argb = pixels[pixel];
+            long at = address + (long) pixel * 4L;
+            org.lwjgl.system.MemoryUtil.memPutByte(at, (byte) ((argb >> 16) & 0xFF));
+            org.lwjgl.system.MemoryUtil.memPutByte(at + 1L, (byte) ((argb >> 8) & 0xFF));
+            org.lwjgl.system.MemoryUtil.memPutByte(at + 2L, (byte) (argb & 0xFF));
+            org.lwjgl.system.MemoryUtil.memPutByte(at + 3L, (byte) ((argb >>> 24) & 0xFF));
         }
-        out.flip();
+        out.position(0).limit(w * h * 4);
         return out;
     }
 
