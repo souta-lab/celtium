@@ -14451,7 +14451,8 @@ this.frameBufferOpen = false;
                         java.util.Arrays.copyOfRange(push, 16, 32));
                 org.joml.Vector3f centre = new org.joml.Vector3f();
                 new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
-                org.joml.Vector3f direction = new org.joml.Vector3f(-0.4f, -1.0f, -0.3f).normalize();
+                // More oblique than the first attempt, so horizontal surfaces throw longer shadows across the ground.
+                org.joml.Vector3f direction = new org.joml.Vector3f(-0.7f, -1.0f, -0.45f).normalize();
                 float radius = 48.0f;
                 org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
                         new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,

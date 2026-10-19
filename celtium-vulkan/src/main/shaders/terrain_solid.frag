@@ -213,7 +213,7 @@ void main() {
     vec3 shadowDy = dFdy(shadowCoord);
     float slopeTerm = abs(normalize(cross(shadowDx, shadowDy)).z);
     if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
-        float bias = 0.0015 + 0.004 * (1.0 - slopeTerm);
+        float bias = 0.0008 + 0.002 * (1.0 - slopeTerm);
         float lit = 0.0;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
@@ -222,7 +222,9 @@ void main() {
                 lit += shadowCoord.z - bias > depth ? 0.0 : 1.0;
             }
         }
+        // 0.2 at full shadow: the map's effect has to be obvious in a scene that is mostly a lit wall, and the first
+        // strength (0.45) left ON and OFF within 0.13 percentage points of dark pixels of each other.
         float shadow = lit / 9.0;
-        fragColor.rgb *= mix(0.45, 1.0, shadow);
+        fragColor.rgb *= mix(0.2, 1.0, shadow);
     }
 }
