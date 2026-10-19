@@ -11972,15 +11972,14 @@ this.frameBufferOpen = false;
             record("swapchain unavailable: no current GLFW window");
             return false;
         }
-        int framebufferWidth;
-        int framebufferHeight;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            IntBuffer width = stack.mallocInt(1);
-            IntBuffer height = stack.mallocInt(1);
-            org.lwjgl.glfw.GLFW.glfwGetFramebufferSize(window, width, height);
-            framebufferWidth = width.get(0);
-            framebufferHeight = height.get(0);
-        }
+        // Through the cached read: this runs on every present (and every frame that ensures the swapchain), and
+        // glfwGetFramebufferSize on X11 is a server round-trip - JFR put it at 1.4% of the client thread's samples with
+        // this as one of its two callers. The cache is dropped when the game's own framebuffer reports a different size,
+        // and the surface capabilities below remain the authority on what a fresh swapchain would be given, so a resize
+        // is still seen on the first frame after it.
+        int[] drawable = cachedWindowFramebufferSize();
+        int framebufferWidth = drawable[0];
+        int framebufferHeight = drawable[1];
         if (framebufferWidth <= 0 || framebufferHeight <= 0) {
             // A minimised window has no drawable: the swapchain stays as it is and the frame swaps through GL.
             this.presentSkipReason = "window has no drawable size";
