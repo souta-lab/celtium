@@ -92,6 +92,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         @Override public VulkanFrameArena frameArena() { return VulkanTerrainGpuBackend.this.frameArena; }
         @Override public long frameId() { return VulkanTerrainGpuBackend.this.frameId; }
         @Override public int frameSlot() { return VulkanTerrainGpuBackend.this.frameSlot; }
+        @Override public void celtium$noteDirectSubmit() { VulkanTerrainGpuBackend.this.celtium$noteDirectSubmit(); }
         @Override public boolean frameSubmitReachedQueue() { return VulkanTerrainGpuBackend.this.frameSubmitReachedQueue; }
         @Override public FrameImageTarget frameTarget() { return VulkanTerrainGpuBackend.this.frameTarget; }
         @Override public boolean gpuStalled() { return VulkanTerrainGpuBackend.this.gpuStalled; }
@@ -1186,6 +1187,54 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long swapPointCalls;
     /** The three blocks inside a present call that are not the swapchain stages themselves. */
     private long swapPointImageNanos;
+    /**
+     * The last {@link #DISTRIBUTION_SAMPLES} durations of the two frame costs that decide the interval but are invisible
+     * in the render brackets: the swap-point image path (frame image to swapchain blit plus the wait for the frame's
+     * completion) and the time from a submission reaching the queue to its fence being confirmed. Totals cannot answer
+     * "what does a steady-state frame pay" - the load phase dominates them - so the summary reports p50/p95/worst of
+     * both.
+     */
+    private static final int DISTRIBUTION_SAMPLES = 512;
+    private final long[] swapPointImageRing = new long[DISTRIBUTION_SAMPLES];
+    private int swapPointImageRingAt;
+    private int swapPointImageRingCount;
+    private final long[] submitToFenceRing = new long[DISTRIBUTION_SAMPLES];
+    private int submitToFenceRingAt;
+    private int submitToFenceRingCount;
+    /** When the current slot's submission reached the queue, for the submit-to-fence measurement. */
+    private final long[] slotSubmitNanos = new long[FRAME_SLOTS];
+
+    private void celtium$noteSwapPointImage(long nanos) {
+        this.swapPointImageRing[this.swapPointImageRingAt] = nanos;
+        this.swapPointImageRingAt = (this.swapPointImageRingAt + 1) % DISTRIBUTION_SAMPLES;
+        if (this.swapPointImageRingCount < DISTRIBUTION_SAMPLES) {
+            this.swapPointImageRingCount++;
+        }
+    }
+
+    private void celtium$noteSubmitToFence(int slot, long nanos) {
+        if (nanos <= 0L) {
+            return;
+        }
+        this.submitToFenceRing[this.submitToFenceRingAt] = nanos;
+        this.submitToFenceRingAt = (this.submitToFenceRingAt + 1) % DISTRIBUTION_SAMPLES;
+        if (this.submitToFenceRingCount < DISTRIBUTION_SAMPLES) {
+            this.submitToFenceRingCount++;
+        }
+    }
+
+    /** {@return "p50/p95/worst" in milliseconds over the ring, or "n/a" when nothing was sampled}. */
+    private static String celtium$distribution(long[] ring, int count) {
+        if (count <= 0) {
+            return "n/a";
+        }
+        long[] copy = java.util.Arrays.copyOf(ring, count);
+        java.util.Arrays.sort(copy);
+        long p50 = copy[(int) (count * 0.50)] / 1000000L;
+        long p95 = copy[Math.min(count - 1, (int) (count * 0.95))] / 1000000L;
+        long worst = copy[count - 1] / 1000000L;
+        return p50 + "/" + p95 + "/" + worst + " n=" + count;
+    }
     private long swapPointDumpNanos;
     private long swapPointPollNanos;
     /** Bounded probe counter for the frame-queued setter. */
@@ -9723,6 +9772,8 @@ this.frameBufferOpen = false;
                 + " presentStages[" + (this.swapchain != null
                         ? org.soutalab.celtium.vulkan.VulkanSwapchain.presentStageSummary() : "none") + "]"
                 + " swapPointImageMillis=" + (this.swapPointImageNanos / 1000000L)
+                + " swapPointImageMs[p50/p95/worst=" + celtium$distribution(this.swapPointImageRing, this.swapPointImageRingCount) + "]"
+                + " submitToFenceMs[p50/p95/worst=" + celtium$distribution(this.submitToFenceRing, this.submitToFenceRingCount) + "]"
                 + " swapPointDumpMillis=" + (this.swapPointDumpNanos / 1000000L)
                 + " swapPointPollMillis=" + (this.swapPointPollNanos / 1000000L)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
@@ -13409,7 +13460,9 @@ this.frameBufferOpen = false;
             this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
                     presentSourceLayout, this.targetWidth, this.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
                     org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
-            this.swapPointImageNanos += System.nanoTime() - presentImageStartedNanos;
+            long presentImageNanos = System.nanoTime() - presentImageStartedNanos;
+            this.swapPointImageNanos += presentImageNanos;
+            celtium$noteSwapPointImage(presentImageNanos);
             this.presentAttempts++;
             this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();
@@ -16063,12 +16116,23 @@ this.frameBufferOpen = false;
     public void celtium$submitSlotDeferred(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long[] waitSemaphores,
             int[] waitStages, long[] signalSemaphores) {
         final int slot = this.frameSlot;
+        this.slotSubmitNanos[slot] = System.nanoTime();
         this.slotDeferredFences[slot] = this.context.celtium$submitDeferredFrame(
                 commandBuffer, waitSemaphores, waitStages, signalSemaphores, slot,
                 lost -> celtium$noteSlotConfirmed(slot, lost.booleanValue()));
     }
 
+    /** Stamps the direct (non-deferred) submit path, which the frame coordinator drives itself. */
+    public void celtium$noteDirectSubmit() {
+        this.slotSubmitNanos[this.frameSlot] = System.nanoTime();
+    }
+
     private void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
+        long submitNanos = this.slotSubmitNanos[slot];
+        if (submitNanos != 0L) {
+            this.slotSubmitNanos[slot] = 0L;
+            celtium$noteSubmitToFence(slot, System.nanoTime() - submitNanos);
+        }
         this.slotDeferredFences[slot] = 0;
         this.scheduler.noteCompleted(slot, this.scheduler.slotSubmitSequence(slot));
         // Queue order: this submission's completion implies every earlier one finished too, and the

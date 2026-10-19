@@ -57,6 +57,8 @@ public final class FrameCoordinator {
     /** What the coordinator needs from the renderer that owns the frame. */
     public interface Host {
         org.lwjgl.vulkan.VkCommandBuffer commandBuffer();
+        /** Stamps the direct submit path for the submit-to-fence distribution the summary reports. */
+        void celtium$noteDirectSubmit();
         VulkanCommandBufferState commandState();
         VulkanContext context();
         long fence();
@@ -257,6 +259,7 @@ public final class FrameCoordinator {
                         this.host.check(vkQueueSubmit(this.host.context().queue(), submit, this.host.fence()), "vkQueueSubmit");
             }
 
+            this.host.celtium$noteDirectSubmit();
             celtium$noteSubmissionBookkeeping(frameSemaphores);
         }
     }
