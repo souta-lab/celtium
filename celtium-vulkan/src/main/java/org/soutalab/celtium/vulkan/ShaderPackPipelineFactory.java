@@ -103,6 +103,18 @@ public final class ShaderPackPipelineFactory {
      */
     public long createPipeline(long pipelineLayout, ModuleHandle vertex, ModuleHandle fragment,
                                LegacyGlslLowering.Result vertexInterface, int colourFormat, int depthFormat) {
+        return createPipeline(pipelineLayout, vertex, fragment, vertexInterface, colourFormat, depthFormat, true);
+    }
+
+    /**
+     * @param depthTest      whether the pipeline tests and writes depth. The probe draws a triangle that would sit
+     *                       behind the frame's own geometry - the depth buffer already holds the world - and with depth
+     *                       testing on it is simply invisible; a real draw tests depth, so this is a parameter and not a
+     *                       constant
+     */
+    public long createPipeline(long pipelineLayout, ModuleHandle vertex, ModuleHandle fragment,
+                               LegacyGlslLowering.Result vertexInterface, int colourFormat, int depthFormat,
+                               boolean depthTest) {
         if (vertex == null || fragment == null || vertex.stage() != Stage.VERTEX
                 || fragment.stage() != Stage.FRAGMENT) {
             throw new IllegalArgumentException("a pack pipeline needs one vertex and one fragment module");
@@ -160,7 +172,7 @@ public final class ShaderPackPipelineFactory {
             VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
                     .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
             VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
-                    .sType$Default().depthTestEnable(true).depthWriteEnable(true)
+                    .sType$Default().depthTestEnable(depthTest).depthWriteEnable(depthTest)
                     .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
             VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
                     VkPipelineColorBlendAttachmentState.calloc(1, stack);

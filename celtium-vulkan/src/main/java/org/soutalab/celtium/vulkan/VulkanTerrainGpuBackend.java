@@ -7748,6 +7748,11 @@ this.frameBufferOpen = false;
         long flushStartedNanos = System.nanoTime();
         try {
             flushPendingBeforeGlDraw();
+            // Before the frame's own recording is ended: the pack's triangle has to be the last thing written into the
+            // frame image, or the frame's remaining draws and its composite run over it. Recording it after the last
+            // window's pass is exactly that point - the pass has ended, the frame buffer is still open, and the present
+            // has not been queued.
+            celtium$recordShaderPackDraw();
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
             celtium$finishFrameBuffer();
@@ -9340,7 +9345,6 @@ this.frameBufferOpen = false;
         drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         vkCmdEndRenderPass(this.commandBuffer);
-        celtium$recordShaderPackDraw();
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
     }
@@ -13892,7 +13896,7 @@ this.frameBufferOpen = false;
     private static final boolean SHADER_PACK_DRAW_PROBE =
             Boolean.getBoolean("celtium.shaderpack.drawProbe");
     private ShaderPackDrawProbe shaderPackDrawProbe;
-    private boolean shaderPackDrawRecorded;
+    private int shaderPackDraws;
 
     /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
     private static final boolean SHADER_COMPILE_PROBE =
@@ -14140,15 +14144,23 @@ this.frameBufferOpen = false;
 
     /** Records the pack's triangle into the delivered image, once, after the window's own pass has ended. */
     private void celtium$recordShaderPackDraw() {
-        if (this.shaderPackDrawProbe == null || this.shaderPackDrawRecorded) {
+        if (this.shaderPackDrawProbe == null) {
             return;
         }
         if (!(this.frameTarget instanceof GllessFrameTarget target)) {
             return;
         }
-        this.shaderPackDrawRecorded = true;
+        if (!this.frameBufferOpen || this.commandState.inRenderPass()) {
+            // The probe draws at a frame boundary: the frame buffer must still be open and no pass may be running.
+            return;
+        }
+        // Every frame, not once: the first frame after the probe is prepared is a loading screen, and a draw recorded
+        // there is in a frame nobody captures. One triangle a frame is not a cost worth a flag.
         this.shaderPackDrawProbe.record(this.commandBuffer, target);
-        System.out.println("[Celtium] CELTIUM_PACK_DRAW recorded=true");
+        this.shaderPackDraws++;
+        if (this.shaderPackDraws <= 3 || this.shaderPackDraws % 300 == 0) {
+            System.out.println("[Celtium] CELTIUM_PACK_DRAW recorded=true draws=" + this.shaderPackDraws);
+        }
     }
 
     private void celtium$probeShaderPack() {

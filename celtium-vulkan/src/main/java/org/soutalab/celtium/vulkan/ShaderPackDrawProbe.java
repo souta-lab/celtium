@@ -71,8 +71,10 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
         ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
         ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(vertex, fragment);
+        // Without depth testing: the frame's depth buffer already holds the world, and a probe triangle drawn with
+        // the identity transform sits behind it - measured as a recorded draw that appeared in no screenshot.
         long pipeline = factory.createPipeline(layout.pipelineLayout(), vertexHandle, fragmentHandle, vertex,
-                colorFormat, depthFormat);
+                colorFormat, depthFormat, false);
         vertexHandle.close();
         fragmentHandle.close();
 
