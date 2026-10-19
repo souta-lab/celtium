@@ -37,6 +37,11 @@ public final class ShadowMapPass {
     /** Whether the depth image has been moved out of UNDEFINED into GENERAL. */
     private boolean transitioned;
 
+    /** Whether the map's depth has been sampled once, and what the corner held. */
+    private boolean depthSampled;
+    private float sampledDepthMin = -1.0f;
+    private float sampledDepthMax = -1.0f;
+
     private long pipeline;
     private long pipelineLayout;
     private long passes;
@@ -120,7 +125,11 @@ public final class ShadowMapPass {
                     .extent(it -> it.width(SIZE).height(SIZE).depth(1))
                     .mipLevels(1).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
                     .tiling(VK_IMAGE_TILING_OPTIMAL).initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
-                    .usage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+                    // TRANSFER_SRC is what the depth readback needs: without it the transition to TRANSFER_SRC and the
+                    // copy are both invalid (VUID-VkImageMemoryBarrier-oldLayout-01212 and -srcImage-00186, three
+                    // messages in leg shadowDepth3).
+                    .usage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
             LongBuffer handle = stack.mallocLong(1);
             int result = vkCreateImage(this.context.device(), imageInfo, null, handle);
             if (result != VK_SUCCESS) {
@@ -201,11 +210,120 @@ public final class ShadowMapPass {
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
         vkCmdEndRenderingKHR(commandBuffer);
         this.passes++;
+        if (this.passes == 2) {
+            sampleDepthOnce();
+        }
+    }
+
+    /**
+     * Reads a small corner of the map back and records its depth range.
+     * <p>
+     * The counters say the pass recorded; they do not say the rasteriser wrote anything. A triangle at clip depth 0.5 over
+     * the whole map must leave 0.5 everywhere in the sampled corner (and 1.0 outside it), so the range is the evidence that
+     * the depth-only pipeline is writing depth, which is what the terrain draw will depend on. Run once, on the frame after
+     * the first pass, so a frame's cost does not carry it.
+     */
+    private void sampleDepthOnce() {
+        if (this.depthSampled || this.image == VK_NULL_HANDLE) {
+            return;
+        }
+        this.depthSampled = true;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            final int edge = 8;
+            int bytes = edge * edge * 4;
+            LongBuffer handle = stack.mallocLong(1);
+            LongBuffer memory = stack.mallocLong(1);
+            LongBuffer pool = stack.mallocLong(1);
+            LongBuffer buffer = stack.mallocLong(1);
+            if (vkCreateBuffer(this.context.device(), org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
+                    .sType$Default().size(bytes).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE), null, handle) != VK_SUCCESS) {
+                this.lastFailure = "readback buffer creation failed";
+                return;
+            }
+            long readback = handle.get(0);
+            org.lwjgl.vulkan.VkMemoryRequirements requirements = org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
+            vkGetBufferMemoryRequirements(this.context.device(), readback, requirements);
+            if (vkAllocateMemory(this.context.device(), org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
+                    .sType$Default().allocationSize(requirements.size())
+                    .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            "shadow map readback")), null, memory) != VK_SUCCESS) {
+                vkDestroyBuffer(this.context.device(), readback, null);
+                this.lastFailure = "readback memory allocation failed";
+                return;
+            }
+            vkBindBufferMemory(this.context.device(), readback, memory.get(0), 0);
+            org.lwjgl.vulkan.VkCommandPoolCreateInfo poolInfo = org.lwjgl.vulkan.VkCommandPoolCreateInfo
+                    .calloc(stack).sType$Default().queueFamilyIndex(this.context.queueFamilyIndex());
+            vkCreateCommandPool(this.context.device(), poolInfo, null, pool);
+            org.lwjgl.vulkan.VkCommandBufferAllocateInfo allocateInfo =
+                    org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
+                            .commandPool(pool.get(0)).level(VK_COMMAND_BUFFER_LEVEL_PRIMARY).commandBufferCount(1);
+            org.lwjgl.PointerBuffer buffers = stack.callocPointer(1);
+            vkAllocateCommandBuffers(this.context.device(), allocateInfo, buffers);
+            org.lwjgl.vulkan.VkCommandBuffer commandBuffer =
+                    new org.lwjgl.vulkan.VkCommandBuffer(buffers.get(0), this.context.device());
+            vkBeginCommandBuffer(commandBuffer, org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack)
+                    .sType$Default());
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default().oldLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(this.image).srcAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+            barrier.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).levelCount(1).layerCount(1);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+            org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
+            copy.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).mipLevel(0)
+                    .baseArrayLayer(0).layerCount(1);
+            copy.get(0).imageOffset().set(0, 0, 0);
+            copy.get(0).imageExtent().set(edge, edge, 1);
+            vkCmdCopyImageToBuffer(commandBuffer, this.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, copy);
+            barrier.get(0).oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0,
+                    null, null, barrier);
+            vkEndCommandBuffer(commandBuffer);
+            LongBuffer fence = stack.mallocLong(1);
+            vkCreateFence(this.context.device(), org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(),
+                    null, fence);
+            vkQueueSubmit(this.context.queue(),
+                    org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
+                            .pCommandBuffers(stack.pointers(commandBuffer.address())), fence.get(0));
+            vkWaitForFences(this.context.device(), fence.get(0), true, Long.MAX_VALUE);
+            vkDestroyFence(this.context.device(), fence.get(0), null);
+            vkDestroyCommandPool(this.context.device(), pool.get(0), null);
+            org.lwjgl.PointerBuffer mapped = stack.callocPointer(1);
+            vkMapMemory(this.context.device(), memory.get(0), 0, bytes, 0, mapped);
+            float min = Float.MAX_VALUE;
+            float max = -Float.MAX_VALUE;
+            for (int i = 0; i < edge * edge; i++) {
+                float value = org.lwjgl.system.MemoryUtil.memGetFloat(mapped.get(0) + (long) i * 4L);
+                min = Math.min(min, value);
+                max = Math.max(max, value);
+            }
+            vkUnmapMemory(this.context.device(), memory.get(0));
+            this.sampledDepthMin = min;
+            this.sampledDepthMax = max;
+            vkFreeMemory(this.context.device(), memory.get(0), null);
+            vkDestroyBuffer(this.context.device(), readback, null);
+        } catch (RuntimeException | LinkageError error) {
+            this.lastFailure = "depth sample: " + error;
+        }
     }
 
     /** {@return the pass's counters for the verification line}. */
     public String statistics() {
         return "shadowPasses=" + this.passes + " size=" + SIZE + " failures=" + this.failures
+                + (this.sampledDepthMin < 0.0f ? "" : " depthCorner=[" + this.sampledDepthMin + ","
+                        + this.sampledDepthMax + "]")
                 + (this.lastFailure.isEmpty() ? "" : " lastFailure=[" + this.lastFailure + "]");
     }
 

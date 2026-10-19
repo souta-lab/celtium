@@ -250,7 +250,7 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.shadow.enabled` | `Boolean.getBoolean` | [ShadowMapPass.java:52](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L52>) |
+| `celtium.shadow.enabled` | `Boolean.getBoolean` | [ShadowMapPass.java:57](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L57>) |
 
 <a id="group-celtium-stub"></a>
 ## `celtium.stub.*`
