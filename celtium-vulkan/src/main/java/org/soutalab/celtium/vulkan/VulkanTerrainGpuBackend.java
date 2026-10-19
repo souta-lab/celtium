@@ -6593,7 +6593,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // of the two append paths they take.
             org.soutalab.celtium.vulkan.FramePassTimings.end("offMerge");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offAppend");
-            celtium$noteBatchReuse(vertexAddress, vertexCount, vertexStride, formatId, drawMode, state);
+            if (BATCH_REUSE_CENSUS) {
+                celtium$noteBatchReuse(vertexAddress, vertexCount, vertexStride, formatId, drawMode, state);
+            }
             boolean appended = this.currentGroupPreTransformed
                     ? this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
                             indices, this.glModelView)
@@ -12165,6 +12167,17 @@ this.frameBufferOpen = false;
      * frame's set. The hash reads the same bytes the transform reads, so it is cheap enough for a normal leg; the
      * counters decide whether a cache is worth building.
      */
+    /**
+     * Whether the cross-frame reuse census runs: {@code -Dceltium.vulkan.batchReuseCensus=true}, off by default.
+     * <p>
+     * Off because it is not cheap: measured on the standard scene it added ~1.3 ms a frame (the leg's interval was
+     * 6.22 ms against a 4.88 ms baseline), which is the cost of hashing every batch's source block byte by byte. That
+     * tax is why the census is a measurement rather than a feature, and why a real cache would have to earn its
+     * lookup back with a cheaper identity than this hash.
+     */
+    private static final boolean BATCH_REUSE_CENSUS =
+            Boolean.getBoolean("celtium.vulkan.batchReuseCensus");
+
     private final java.util.HashSet<Long> batchReuseThisFrame = new java.util.HashSet<Long>();
     private final java.util.HashSet<Long> batchReuseLastFrame = new java.util.HashSet<Long>();
     private long batchReuseHits;
