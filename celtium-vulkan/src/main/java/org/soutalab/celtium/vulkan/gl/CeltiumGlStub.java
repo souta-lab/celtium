@@ -5605,6 +5605,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // client-memory path the menu and the loading screen use is stride 16 (POSITION_COLOR, id 1), and
                     // Forge's cloud VBO is stride 24 (POSITION_TEX_COLOR, id 2) - both carry attributes the format-7
                     // shader would read as the next vertex's position.
+                    // The shaderpack probe draws the game's own geometry rather than its triangle: this is the path the
+                    // world's terrain and entity batches actually take under GL-less, so the capture belongs here as well
+                    // as at the offer entry (which the world scene rarely reaches).
+                    if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend) {
+                        vulkanBackend.celtium$captureTerrainBatch(formatId, this.vertexPointerStride, address, count);
+                    }
                     taken = backend.submitImmediateBatch(null, this.vertexPointerStride, formatId, address,
                             count, mode);
                 } catch (RuntimeException | LinkageError error) {

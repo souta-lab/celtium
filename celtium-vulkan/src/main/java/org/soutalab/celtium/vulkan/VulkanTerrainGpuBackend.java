@@ -5704,6 +5704,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateOfferedByFormat[formatId]++;
         }
         this.immediateOfferCount++;
+        if (SHADER_PACK_DRAW_PROBE && this.terrainCaptureVertices == null
+                && (formatId == 3 || formatId == 8) && vertexCount > 0 && vertexCount <= 4096) {
+            // The first terrain-shaped batch of the session, kept as bytes so the shaderpack probe can draw the game's
+            // own geometry instead of its triangle: the conversion to the pack's attributes happens once, after the pack's
+            // program is known.
+            long bytes = (long) vertexCount * vertexStride;
+            java.nio.ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
+            org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, org.lwjgl.system.MemoryUtil.memAddress(copy), bytes);
+            copy.rewind();
+            this.terrainCaptureVertices = copy;
+            this.terrainCaptureStride = vertexStride;
+            this.terrainCaptureCount = vertexCount;
+            this.terrainCaptureFormat = formatId;
+        }
         this.immediateOffersThisFrame++;
         long submitStart = System.nanoTime();
         this.submitFlushesAtEntry = this.immediateStatistics.immediateFlushes();
@@ -13939,6 +13953,38 @@ this.frameBufferOpen = false;
     private int frameTargetHeight = 720;
     private int shaderPackDraws;
     private int immediateOffersThisFrame;
+
+    /** The first terrain-shaped batch's vertices, kept for the shaderpack probe's real-geometry draw. */
+    private java.nio.ByteBuffer terrainCaptureVertices;
+    private int terrainCaptureStride;
+    private int terrainCaptureCount;
+    private int terrainCaptureFormat;
+
+    /**
+     * Keeps the first terrain-shaped batch's vertices for the shaderpack probe.
+     * <p>
+     * Called from the GL trampoline's offer path, which is where the world's terrain and entity batches actually arrive
+     * under GL-less; the offer entry the probe originally hooked is rarely reached in that scene.
+     */
+    public void celtium$captureTerrainBatch(int formatId, int stride, long address, int count) {
+        if (!SHADER_PACK_DRAW_PROBE || this.terrainCaptureVertices != null || address == 0L) {
+            return;
+        }
+        if (formatId != 3 && formatId != 8) {
+            return;
+        }
+        if (count <= 0 || count > 4096 || stride <= 0) {
+            return;
+        }
+        long bytes = (long) count * stride;
+        java.nio.ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
+        org.lwjgl.system.MemoryUtil.memCopy(address, org.lwjgl.system.MemoryUtil.memAddress(copy), bytes);
+        copy.rewind();
+        this.terrainCaptureVertices = copy;
+        this.terrainCaptureStride = stride;
+        this.terrainCaptureCount = count;
+        this.terrainCaptureFormat = formatId;
+    }
     private int immediateOffersLastFrame;
     private boolean shaderPackDrawProbeProgramChosen;
 
@@ -14205,6 +14251,7 @@ this.frameBufferOpen = false;
                         // The execution evidence that does not depend on the delivery path: the pack's shaders render
                         // into an image this probe owns, and the pixels are read back.
                         line.append(" offscreen=[").append(this.shaderPackDrawProbe.sampleOffscreen(64)).append(']');
+
                         this.shaderPackDrawProbe.dumpVertexContract();
                         if (Boolean.getBoolean("celtium.shaderpack.drawProbeDebug")) {
                             // What the two stages actually say about gl_Position and the fragment colour: the pipeline
@@ -14266,6 +14313,16 @@ this.frameBufferOpen = false;
                 }
             }
             return;
+        }
+        if (this.terrainCaptureVertices != null) {
+            // Applied here rather than where the probe is prepared: the pack loads long before the world's first terrain
+            // batch arrives, so the capture is only complete by the time a draw is being recorded.
+            String adopted = this.shaderPackDrawProbe.replaceGeometry(this.terrainCaptureFormat,
+                    this.terrainCaptureVertices, this.terrainCaptureStride, this.terrainCaptureCount);
+            if (adopted != null && this.shaderPackDraws == 0) {
+                System.out.println("[Celtium] CELTIUM_PACK_GEOMETRY " + adopted);
+            }
+            this.terrainCaptureVertices = null;
         }
         if (SHADER_PACK_DRAW_CLEAR) {
             if ("small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)) {

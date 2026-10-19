@@ -61,7 +61,13 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private final List<VulkanHostBuffer> vertexBuffers = new ArrayList<>();
     /** The attribute location each vertex buffer belongs to; the pipeline declares binding == location. */
     private final List<Integer> vertexBufferLocations = new ArrayList<>();
-    private final int vertexCount;
+    private int vertexCount;
+
+    /** Byte capacity of each vertex buffer, so a larger geometry replaces rather than overruns one. */
+    private final java.util.List<Long> vertexBufferCapacities = new java.util.ArrayList<>();
+
+    /** The pack attributes the probe's vertex buffers feed, name to location, in the order they were declared. */
+    private final java.util.Map<String, Integer> packAttributeLocations = new java.util.LinkedHashMap<>();
 
     private long offscreenImage;
 
@@ -221,6 +227,8 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 buffers.add(vertexBuffer);
                 vertexBuffers.add(vertexBuffer);
                 vertexBufferLocations.add(attribute.getValue());
+                this.packAttributeLocations.put(attribute.getKey(), attribute.getValue());
+                this.vertexBufferCapacities.add(Long.valueOf(bytes));
                 FloatBuffer data = MemoryUtil.memFloatBuffer(vertexBuffer.mappedAddress(), bytes / 4);
                 for (int i = 0; i < 3 * components; i++) {
                     data.put(i, 0.0f);
@@ -524,6 +532,50 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      * {@code celtium.shaderpack.drawProbeDebug=true}. The constant triangle draws and the pack program does not, so the
      * difference has to be visible: locations, formats, strides and the first position's bytes.
      */
+    /**
+     * Replaces the probe's three-vertex triangle with real geometry converted to the pack's attributes.
+     * <p>
+     * This is the step from "a pack's shaders can draw" to "a pack's shaders can draw the game's terrain": the vertices come
+     * from the renderer's own immediate format and {@link ShaderPackVertexAdapter} produces the attribute set the pack's
+     * vertex stage declares, so what the probe then draws is the game's geometry through the pack's program.
+     *
+     * @return a one-line summary for the log, or null when the format is not one the adapter converts
+     */
+    String replaceGeometry(int formatId, java.nio.ByteBuffer vertices, int stride, int count) {
+        java.util.Map<String, float[]> adapted = ShaderPackVertexAdapter.adapt(formatId, vertices, stride, count);
+        if (adapted == null) {
+            return null;
+        }
+        int index = 0;
+        for (java.util.Map.Entry<String, Integer> attribute : this.packAttributeLocations.entrySet()) {
+            float[] values = adapted.get(attribute.getKey());
+            if (values == null) {
+                index++;
+                continue;
+            }
+            VulkanHostBuffer buffer = this.vertexBuffers.get(index);
+            long bytes = (long) values.length * 4L;
+            if (this.vertexBufferCapacities.size() <= index) {
+                this.vertexBufferCapacities.add(Long.valueOf(0L));
+            }
+            if (this.vertexBufferCapacities.get(index).longValue() < bytes) {
+                buffer.delete();
+                buffer = new VulkanHostBuffer(this.context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                this.vertexBuffers.set(index, buffer);
+                this.vertexBufferCapacities.set(index, Long.valueOf(bytes));
+                this.buffers.add(buffer);
+            }
+            java.nio.FloatBuffer data = MemoryUtil.memFloatBuffer(buffer.mappedAddress(), values.length);
+            for (int i = 0; i < values.length; i++) {
+                data.put(i, values[i]);
+            }
+            index++;
+        }
+        this.vertexCount = count;
+        return "terrain vertices=" + count + " format=" + formatId + " attributes="
+                + this.packAttributeLocations.size();
+    }
+
     void dumpVertexContract() {
         if (!Boolean.getBoolean("celtium.shaderpack.drawProbeDebug")) {
             return;
