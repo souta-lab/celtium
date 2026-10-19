@@ -12146,6 +12146,17 @@ this.frameBufferOpen = false;
     private final java.util.Map<String, Integer> windowOpenSites = new java.util.LinkedHashMap<String, Integer>();
     /** How many window openings carried a caller census; the rest are counted by site only. */
     private int windowOpenSiteLogs;
+    /**
+     * The site that opened the window currently being recorded.
+     * <p>
+     * The draw-site census keys groups by {@code immediateDrawSite}, which is the constant
+     * {@code immediate-only-window} for every group in this scene - so on its own it says "all groups are drawn in
+     * immediate windows" and nothing about <em>which</em> window. Keyed by the opening site instead it answers the
+     * question that decides where the window cost can be cut: which of the game's calls carries the group load, and
+     * which opens a window that draws almost nothing. Measured that way on the standard scene (771 frames):
+     * renderLayer 237,005 groups, beforeUnbind 17,041, worldPassEnd 1,542, clear 55 over 849 openings, present 4.
+     */
+    private String lastWindowOpenSite = "none";
 
     /** The GL name whose uploads {@code CELTIUM_UPLOAD_CALLER} reports without the sixteen-line bound, or -1. */
     public static int uploadCallerId() {
@@ -13333,7 +13344,7 @@ this.frameBufferOpen = false;
      */
     /** Counts one drawn group against the site that recorded it, and the batches it carried. */
     private void celtium$noteGroupDrawnAtSite(int batches) {
-        String site = this.immediateDrawSite;
+        String site = this.lastWindowOpenSite + "/" + this.immediateDrawSite;
         Integer groups = this.groupsDrawnBySite.get(site);
         this.groupsDrawnBySite.put(site, Integer.valueOf(groups == null ? 1 : groups.intValue() + 1));
         Integer carried = this.batchesDrawnBySite.get(site);
@@ -13370,6 +13381,7 @@ this.frameBufferOpen = false;
             site = name.replaceAll(".*\\.", "") + "." + frames[i].getMethodName() + ":" + frames[i].getLineNumber();
             break;
         }
+        this.lastWindowOpenSite = site;
         Integer seen = this.windowOpenSites.get(site);
         this.windowOpenSites.put(site, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
         if (this.windowOpenSiteLogs < 12) {
