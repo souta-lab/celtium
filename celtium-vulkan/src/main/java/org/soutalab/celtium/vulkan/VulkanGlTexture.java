@@ -2176,10 +2176,21 @@ public final class VulkanGlTexture {
      * "one stretched tile" defect. Bounded to once per mirror; a change bumps the generation so descriptor caches
      * keyed on {@link #key()} cannot keep naming the destroyed sampler.
      */
+    /** The recorded-parameter version this texture's sampler state was last confirmed against. */
+    private int confirmedParameterVersion = -1;
+
     public void confirmSamplerStateFromRecord(int glTextureId) {
         if (glTextureId <= 0 || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             return;
         }
+        // Nothing has changed in this texture's recorded parameters since the last confirmation, so the four to six
+        // lookups below (and the sampler rebuild they gate) cannot find anything new. The version is bumped by the
+        // stub where the record is written, which is the only way these values move - so BH-23's requirement holds.
+        int parameterVersion = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameterVersion(glTextureId);
+        if (parameterVersion == this.confirmedParameterVersion) {
+            return;
+        }
+        this.confirmedParameterVersion = parameterVersion;
         // BH-23: this used to be a one-shot (`wrapConfirmed`), so a texture whose filter or wrap changed *after* its
         // first draw kept the old sampler for the rest of its life, and the full minification meaning never reached it.
         // It now re-consults on every lookup and rebuilds only when something actually differs, which is what makes

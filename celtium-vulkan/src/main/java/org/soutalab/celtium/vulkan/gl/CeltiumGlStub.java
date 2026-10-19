@@ -4789,6 +4789,38 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_CLAMP_TO_EDGE = 0x812F;
     private static final int GL_NEAREST = 0x2600;
 
+    /**
+     * Per-texture counter of recorded parameter changes, so a consumer can skip re-reading four parameters it already
+     * read for this texture.
+     * <p>
+     * {@code VulkanGlTexture.confirmSamplerStateFromRecord} re-consults the wrap and filter records on every texture
+     * lookup - four to six boxed map lookups per draw - because BH-23 requires a parameter changed after the first
+     * draw to be seen. A version bumped here, read there, keeps that requirement (a change still re-confirms) while a
+     * texture whose parameters nobody touched costs one array read.
+     */
+    private int[] texParamVersions = new int[1024];
+
+    /** Bumps the recorded-parameter version of this texture name, growing the table as names appear. */
+    private void celtium$bumpTextureParameterVersion(int textureName) {
+        if (textureName <= 0) {
+            return;
+        }
+        if (textureName >= this.texParamVersions.length) {
+            int grown = Math.max(textureName + 1, this.texParamVersions.length * 2);
+            this.texParamVersions = java.util.Arrays.copyOf(this.texParamVersions, grown);
+        }
+        this.texParamVersions[textureName]++;
+    }
+
+    /** {@return how many times this texture's recorded parameters changed}, 0 when the game never set one. */
+    public static int textureParameterVersion(int textureName) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || textureName <= 0 || textureName >= stub.texParamVersions.length) {
+            return 0;
+        }
+        return stub.texParamVersions[textureName];
+    }
+
     /** Recorded values, keyed {@code (textureName << 32) | pname}. Bounded: past the limit the call is counted. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<Integer> texParams =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
@@ -4873,6 +4905,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         this.texParams.put(key, Integer.valueOf(value));
+        celtium$bumpTextureParameterVersion((int) (key >>> 32));
         int calls = this.texParamCalls.incrementAndGet();
         if (org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(TEX_PARAM_SHAPES.size(), 24)) {
             String shape = textureName + "/" + pname + "=" + value;

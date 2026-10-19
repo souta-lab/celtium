@@ -214,11 +214,16 @@ public final class FramePassTimings {
 
     /** Closes a pass bracket and adds its time to the current frame. */
     public static void end(String pass) {
-        // One lookup for both uses: the GUI check and the bracket index are the same question.
-        int resolved = indexOf(pass);
-        if (resolved == GUI_INDEX) guiActive = false;
+        // The GUI flag is the only thing this method needs with the timings off, and it is one string comparison
+        // against a literal - which is a pointer compare for the interned name the mixin passes - rather than the
+        // map lookup the index needs. With the timings on, both are wanted and the lookup is paid once as before.
+        // Measured: with the timings off, FramePassTimings.end was 1.4% of the client thread's JFR samples in
+        // HashMap tree-bin lookups, because every bracket close in the frame went through the map.
+        if (GUI_PASS.equals(pass)) {
+            guiActive = false;
+        }
         if (!enabled() || frameStart == 0L) return;
-        int i = resolved;
+        int i = indexOf(pass);
         if (i < 0 || starts[i] == 0L) return;
         long now = clockNanos();
         boolean outermost;
@@ -258,11 +263,31 @@ public final class FramePassTimings {
     }
 
     /** The index of {@code gui} in the pass tables, so the flag is set by name rather than by a literal. */
+    /**
+     * A direct-mapped cache over the bracket-name lookup.
+     * <p>
+     * Bracket names are literals, so the same handful of strings repeat for the whole session; a 32-slot table keyed by
+     * identity hash answers almost every call with a reference compare instead of a map get. Measured with the timings
+     * disabled - the shipping configuration - {@code FramePassTimings.indexOf} was still 1.4% of the client thread's JFR
+     * samples, because both begin and end resolve the name even when nothing is being timed.
+     */
+    private static final String[] INDEX_CACHE_NAME = new String[32];
+    private static final int[] INDEX_CACHE_VALUE = new int[32];
+
+    /** The GUI bracket's name: {@link #end} compares it directly so the disabled path pays no map lookup. */
+    private static final String GUI_PASS = "gui";
     private static final int GUI_INDEX = indexOf("gui");
 
     private static int indexOf(String pass) {
+        int slot = System.identityHashCode(pass) & 31;
+        if (INDEX_CACHE_NAME[slot] == pass) {
+            return INDEX_CACHE_VALUE[slot];
+        }
         Integer found = INDEX.get(pass);
-        return found == null ? -1 : found.intValue();
+        int index = found == null ? -1 : found.intValue();
+        INDEX_CACHE_NAME[slot] = pass;
+        INDEX_CACHE_VALUE[slot] = index;
+        return index;
     }
 
     /** Prints a one-line split every 200 frames, so a running session shows the shape without a report. */
