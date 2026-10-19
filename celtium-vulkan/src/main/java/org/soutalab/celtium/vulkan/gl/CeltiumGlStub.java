@@ -1159,9 +1159,54 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Records the array-buffer binding, as the stub's own {@code glBindBuffer} case does. */
     public static void celtium$bindBuffer(int target, int name) {
         CeltiumGlStub stub = installed;
-        if (stub != null && target >= 0 && target < stub.bufferBindings.length) {
+        if (stub == null) {
+            return;
+        }
+        if (target == GL_PIXEL_PACK_BUFFER) {
+            stub.pixelPackBuffer = name;
+            return;
+        }
+        if (target == GL_PIXEL_UNPACK_BUFFER) {
+            stub.pixelUnpackBuffer = name;
+            return;
+        }
+        if (target >= 0 && target < stub.bufferBindings.length) {
             stub.bufferBindings[target] = name;
         }
+    }
+
+    /** Refusals caused by a bound pixel buffer, counted once so the diagnostic is bounded. */
+    private int pixelBufferRefusals;
+
+    /** {@code GL_PIXEL_PACK_BUFFER}: with one bound, a readback's {@code pixels} argument is a buffer offset, not a pointer. */
+    static final int GL_PIXEL_PACK_BUFFER = 0x88EB;
+
+    /** {@code GL_PIXEL_UNPACK_BUFFER}: with one bound, a texture upload's {@code pixels} argument is a buffer offset. */
+    static final int GL_PIXEL_UNPACK_BUFFER = 0x88EC;
+
+    /** The bound pixel pack buffer, 0 when none is bound. */
+    private int pixelPackBuffer;
+
+    /** The bound pixel unpack buffer, 0 when none is bound. */
+    private int pixelUnpackBuffer;
+
+    /**
+     * {@return why a readback or upload must be refused when a pixel buffer is bound}, or null when it may proceed.
+     * <p>
+     * With {@code GL_PIXEL_PACK_BUFFER} or {@code GL_PIXEL_UNPACK_BUFFER} bound, GL's contract says the {@code pixels}
+     * argument is an offset into that buffer, not a client address (audit #360). Treating the offset as a pointer - which
+     * the readback and upload paths did - reads or writes the JVM's low memory at address 0 or 16. Neither path can honour
+     * a buffer offset, so both refuse explicitly instead of dereferencing it; the offset reaches the diagnostic verbatim.
+     */
+    static String pixelBufferRefusal(int boundPixelBuffer, long offset, String operation) {
+        if (boundPixelBuffer == 0) {
+            return null;
+        }
+        if (boundPixelBuffer < 0) {
+            return null;
+        }
+        return operation + " with a pixel buffer bound (buffer=" + boundPixelBuffer + " offset=" + offset
+                + "): the argument is a buffer offset, not a client pointer, and this path cannot copy into a PBO";
     }
 
     /**
@@ -4490,6 +4535,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      * unpack alignment; a row length or a pixel/row skip that is not the default is refused rather than misread.
      */
     private ByteBuffer uploadToRgba8(int width, int height, int format, int type, long pixels) {
+        String pboRefusal = pixelBufferRefusal(this.pixelUnpackBuffer, pixels, "texture upload");
+        if (pboRefusal != null) {
+            if (this.pixelBufferRefusals < 8) {
+                this.pixelBufferRefusals++;
+                System.out.println("[Celtium] CELTIUM_PBO_REFUSED " + pboRefusal);
+            }
+            return null;
+        }
         if (pixels == 0L || width <= 0 || height <= 0) {
             return null;
         }
@@ -4699,6 +4752,37 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * {@return the byte offset a {@code glMapBufferRange} may map}, or -1 when the range is not within the buffer.
+     * <p>
+     * GL's contract: {@code offset} and {@code length} are non-negative, {@code length > 0}, and the range must lie
+     * inside the buffer. Anything else is an error the caller has to see, not a range quietly moved to zero (audit #361:
+     * offset -1 was answered as 0, and a length running past the end was not looked at).
+     */
+    static long mapRangeOffset(long offset, long length, long capacity) {
+        if (offset < 0L || length <= 0L || capacity < 0L) {
+            return -1L;
+        }
+        // Written this way round so the sum cannot overflow: length is bounded by the capacity instead.
+        if (length > capacity || offset > capacity - length) {
+            return -1L;
+        }
+        return offset;
+    }
+
+    /** Calls and refusals of {@link #mapBuffer}, so an invalid range is a counted event rather than a silent clamp. */
+    private long mapBufferCalls;
+    private long mapBufferRefusals;
+
+    /** {@return the map calls and how many were refused for an out-of-range request}, for the verification line. */
+    public static String mapBufferCensus() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "calls=none refusals=none";
+        }
+        return "calls=" + stub.mapBufferCalls + " refusals=" + stub.mapBufferRefusals;
+    }
+
     private long mapBuffer(Fn fn, long[] c) {
         int name;
         if (fn.name.startsWith("glMapNamedBuffer")) {
@@ -4716,13 +4800,23 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         long base = memAddress(storage);
         if (fn.args.length == 4) {
-            // glMapBufferRange(target, offset, length, access)
-            long offset = c[1];
-            if (offset < 0 || offset >= storage.capacity()) {
-                offset = 0L;
+            // glMapBufferRange(target, offset, length, access): the range is validated, not corrected. Returning base +
+            // a clamped offset turned an invalid request into a valid-looking mapping (audit #361 measured offset = -1
+            // answered as 0, and a length past the end simply ignored), which lets a caller write outside the buffer it
+            // thinks it mapped. GL returns NULL for a range that is not within the buffer, and so does this.
+            long offset = mapRangeOffset(c[1], c[2], storage.capacity());
+            this.mapBufferCalls++;
+            if (offset < 0L) {
+                this.mapBufferRefusals++;
+                if (this.mapBufferRefusals <= 3) {
+                    System.out.println("[Celtium] CELTIUM_MAP_RANGE_REFUSED buffer=" + name + " offset=" + c[1]
+                            + " length=" + c[2] + " capacity=" + storage.capacity());
+                }
+                return 0L;
             }
             return base + offset;
         }
+        this.mapBufferCalls++;
         return base;
     }
 
@@ -5272,6 +5366,15 @@ public final class CeltiumGlStub implements FunctionProvider {
      * call is now counted and the served case writes real pixels.
      */
     private void serveReadPixels(int x, int y, int width, int height, int format, int type, long address) {
+        String pboRefusal = pixelBufferRefusal(this.pixelPackBuffer, address, "glReadPixels");
+        if (pboRefusal != null) {
+            if (this.pixelBufferRefusals < 8) {
+                this.pixelBufferRefusals++;
+                System.out.println("[Celtium] CELTIUM_PBO_REFUSED " + pboRefusal);
+            }
+            this.readPixelsCalls++;
+            return;
+        }
         try {
             Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             boolean served = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
