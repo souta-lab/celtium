@@ -45,6 +45,9 @@ class ShadercGlslCompilerTest {
         // runtime classpath and the natives jar's libshaderc.so dlopens on this machine, but LWJGL's own load still
         // fails its initialiser. The test stays enabled so it starts verifying the moment that is fixed, and its skip
         // message carries the diagnosis instead of hiding it.
+        System.out.println("[test] org.lwjgl.librarypath=" + System.getProperty("org.lwjgl.librarypath")
+                + " java.library.path=" + System.getProperty("java.library.path"));
+        System.out.println("[test] shaderc availability: " + compiler.unavailableReason());
         Assumptions.assumeTrue(compiler.available(), () -> "shaderc unavailable: " + compiler.unavailableReason());
         assertEquals("shaderc", compiler.name());
 

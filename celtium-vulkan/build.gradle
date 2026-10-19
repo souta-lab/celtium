@@ -59,6 +59,9 @@ dependencies {
     testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:3.4.1'
     // Four-part notation: the three-part form is group:name:version, so "natives-linux" there was read as a version and
     // the natives jar never resolved - the test then failed on the binding being present without its library.
+    // The core natives are required as well: the shaderc binding's initialiser needs liblwjgl.so first, and its absence
+    // was what the load failure actually said once the diagnosis printed the cause chain instead of the first message.
+    testRuntimeOnly 'org.lwjgl:lwjgl:3.4.1:natives-linux'
     testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:3.4.1:natives-linux'
     testImplementation 'org.lwjgl:lwjgl-vulkan'
     testImplementation 'com.google.code.gson:gson:2.10.1'
@@ -88,12 +91,12 @@ tasks.named('test') {
     // on to appear. Measured: without this the binding class fails its own initialiser with NoClassDefFoundError and
     // the compiler reports "could not be loaded", which is a distribution problem as much as a test one: a shipped mod
     // has to put the library somewhere LWJGL will find it.
-    def shadercNatives = layout.buildDirectory.dir('shaderc-natives')
+    def shadercNatives = layout.buildDirectory.dir('lwjgl-natives')
     doFirst {
         def dir = shadercNatives.get().asFile
         dir.mkdirs()
         configurations.testRuntimeClasspath.resolve()
-                .findAll { it.name.startsWith('lwjgl-shaderc') && it.name.contains('natives') }
+                .findAll { it.name.startsWith('lwjgl') && it.name.contains('natives') }
                 .each { jar ->
                     // The natives jar keeps LWJGL's own layout (linux/x64/org/lwjgl/shaderc/libshaderc.so) and LWJGL
                     // looks for the library directly in org.lwjgl.librarypath, so the files are flattened as they are

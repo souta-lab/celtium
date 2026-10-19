@@ -13882,6 +13882,10 @@ this.frameBufferOpen = false;
 
     /** Whether the pack probe has run; it is a one-shot at the first present. */
     private boolean shaderPackProbed;
+    private boolean shaderCompileProbed;
+    /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
+    private static final boolean SHADER_COMPILE_PROBE =
+            Boolean.getBoolean("celtium.shaderpack.compileProbe");
     /** The loaded manifest's one-line census, or the failure that stopped it. */
     private String shaderPackSummary = "none";
     /** The pack's program entries, across dimensions. */
@@ -13896,11 +13900,51 @@ this.frameBufferOpen = false;
      * manifest, and a failure must not take the game down: a pack the frontend rejects is reported and the run
      * continues shaderless, which is the only safe direction for an experimental path.
      */
+    /**
+     * Compiles one lowered Vulkan GLSL stage in process and reports what came back.
+     * <p>
+     * The S2 question is not whether a compiler exists on the development machine - the frontend's probe shells out to
+     * a glslangValidator executable there - but whether one can run inside the shipped game, where no executable can be
+     * installed. This is that compiler: LWJGL's shaderc binding, the same glslang, as a library. The source is the
+     * smallest pair of stages a pipeline can be built from, so a failure here is the compiler and not the shader.
+     */
+    private void celtium$probeShaderCompile() {
+        if (this.shaderCompileProbed || !SHADER_COMPILE_PROBE) {
+            return;
+        }
+        this.shaderCompileProbed = true;
+        ShadercGlslCompiler compiler = new ShadercGlslCompiler();
+        StringBuilder report = new StringBuilder("[Celtium] CELTIUM_SHADER_COMPILE compiler=").append(compiler.name())
+                .append(" available=").append(compiler.available())
+                .append(" reason=").append(compiler.unavailableReason());
+        try {
+            String vertex = "#version 450\n"
+                    + "layout(location = 0) in vec3 a_Position;\n"
+                    + "void main() { gl_Position = vec4(a_Position, 1.0); }\n";
+            String fragment = "#version 450\n"
+                    + "layout(location = 0) out vec4 o_Colour;\n"
+                    + "void main() { o_Colour = vec4(0.25, 0.5, 0.75, 1.0); }\n";
+            org.soutalab.celtium.shaderpack.SpirvModule vertexModule =
+                    compiler.compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertex);
+            org.soutalab.celtium.shaderpack.SpirvModule fragmentModule =
+                    compiler.compile(org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragment);
+            report.append(" vertexWords=").append(ShadercGlslCompiler.wordCount(vertexModule))
+                    .append(" vertexVersion=0x")
+                    .append(Integer.toHexString(ShadercGlslCompiler.headerVersion(vertexModule)))
+                    .append(" fragmentWords=").append(ShadercGlslCompiler.wordCount(fragmentModule))
+                    .append(" sha=").append(vertexModule.sha256(), 0, 12);
+        } catch (Throwable failure) {
+            report.append(" result=FAILED error=").append(failure);
+        }
+        System.out.println(report);
+    }
+
     private void celtium$probeShaderPack() {
         if (this.shaderPackProbed || SHADER_PACK_PATH.isEmpty()) {
             return;
         }
         this.shaderPackProbed = true;
+        celtium$probeShaderCompile();
         try {
             java.nio.file.Path path = java.nio.file.Paths.get(SHADER_PACK_PATH);
             long started = System.nanoTime();

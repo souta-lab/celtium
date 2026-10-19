@@ -155,6 +155,12 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     harness = require_file(root / "scripts/prism_validation.py")
     headless = require_file(root / "scripts/headless_wayland.py")
     library = require_file(gv / "lib/lwjgl-vulkan-3.4.1.jar")
+    # Extra classpath jars for one leg, for features whose bindings the validated installation does not ship yet (the
+    # in-process GLSL compiler is the first): `CELTIUM_LEG_EXTRA_LIBS` is a colon-separated list, kept out of the
+    # standard set so a normal leg's classpath stays exactly what the product would have.
+    extra_libraries = [Path(p) for p in os.environ.get("CELTIUM_LEG_EXTRA_LIBS", "").split(":") if p.strip()]
+    for extra in extra_libraries:
+        require_file(extra)
     jar_dir = require_dir(jar_dir)
     # The renderer can be replaced by an external jar for a reference arm: the same pack, scene, camera and fixture, with
     # Celeritas in place of this renderer, so a gate for a modpack world is calibrated from the reference that actually
@@ -239,6 +245,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     ]
     command = [sys.executable, "-B", "-E", str(harness), str(instance), "--output", str(paths["runtimeLock"]),
                "--game-dir", str(paths["game"]), "--library", str(library), "--slot-wait", str(SLOT_WAIT)]
+    for extra in extra_libraries:
+        command.extend(["--library", str(extra)])
     for pattern in instance_exclusions:
         command.extend(["--exclude-instance-mod", pattern])
     for mod in mods:

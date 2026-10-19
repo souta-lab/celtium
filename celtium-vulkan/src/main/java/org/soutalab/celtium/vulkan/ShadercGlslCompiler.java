@@ -39,7 +39,15 @@ public final class ShadercGlslCompiler implements GlslCompiler {
             Class.forName("org.lwjgl.util.shaderc.Shaderc");
             return true;
         } catch (Throwable missing) {
-            bindingFailure = missing.getClass().getSimpleName() + ": " + missing.getMessage();
+            StringBuilder chain = new StringBuilder();
+            for (Throwable t = missing; t != null; t = t.getCause()) {
+                chain.append(chain.length() == 0 ? "" : " <- ").append(t.getClass().getSimpleName())
+                        .append(": ").append(t.getMessage());
+                if (chain.length() > 600) {
+                    break;
+                }
+            }
+            bindingFailure = chain.toString();
             return false;
         }
     }
