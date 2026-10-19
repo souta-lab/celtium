@@ -230,6 +230,16 @@ public final class VulkanContext {
         }
     }
 
+    /** Frees a readback allocation whose binding failed, where nothing can reference it because nothing was submitted. */
+    public void releaseReadbackAllocation(long buffer, long memory) {
+        if (buffer != 0L) {
+            vkDestroyBuffer(this.device, buffer, null);
+        }
+        if (memory != 0L) {
+            vkFreeMemory(this.device, memory, null);
+        }
+    }
+
     /** {@return how many readback buffers were quarantined instead of freed}. */
     public long readbackQuarantines() {
         return this.readbackQuarantines;

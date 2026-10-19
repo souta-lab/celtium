@@ -1156,7 +1156,15 @@ public final class TextureCopyService {
                 return null;
             }
             memory = handle.get(0);
-            org.lwjgl.vulkan.VK10.vkBindBufferMemory(this.host.context().device(), buffer, memory, 0);
+            if (org.lwjgl.vulkan.VK10.vkBindBufferMemory(this.host.context().device(), buffer, memory, 0)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                // Binding can fail (invalid memory type for this buffer in a portability build, for one): the buffer and
+                // its memory are then unusable, and continuing would copy into unbound memory - audit #365 found the
+                // result discarded. An out-of-memory failure that never became an exception is also what a silent
+                // failure looked like. The two handles are released and the caller is told there is no readback.
+                this.host.context().releaseReadbackAllocation(buffer, memory);
+                return null;
+            }
             VkCommandBuffer commands = this.host.context().beginCommands();
             org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy =
                     org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
@@ -1270,7 +1278,15 @@ public final class TextureCopyService {
                 return null;
             }
             memory = handle.get(0);
-            org.lwjgl.vulkan.VK10.vkBindBufferMemory(this.host.context().device(), buffer, memory, 0);
+            if (org.lwjgl.vulkan.VK10.vkBindBufferMemory(this.host.context().device(), buffer, memory, 0)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                // Binding can fail (invalid memory type for this buffer in a portability build, for one): the buffer and
+                // its memory are then unusable, and continuing would copy into unbound memory - audit #365 found the
+                // result discarded. An out-of-memory failure that never became an exception is also what a silent
+                // failure looked like. The two handles are released and the caller is told there is no readback.
+                this.host.context().releaseReadbackAllocation(buffer, memory);
+                return null;
+            }
 
             VkCommandBuffer commands = this.host.context().beginCommands();
             org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy =

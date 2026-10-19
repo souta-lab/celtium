@@ -1362,8 +1362,12 @@ public final class VulkanSwapchain {
         }
         discardPreRecorded();
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            // The pool has to belong to the family the commands are submitted on. It defaulted to 0, which is only
+            // right when the graphics queue happens to be family 0 - the portability/Intel case has its own family
+            // (audit #366).
             org.lwjgl.vulkan.VkCommandPoolCreateInfo poolInfo =
-                    org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack).sType$Default();
+                    org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack).sType$Default()
+                            .queueFamilyIndex(this.context.queueFamilyIndex());
             LongBuffer poolOut = stack.mallocLong(1);
             if (vkCreateCommandPool(this.context.device(), poolInfo, null, poolOut) != VK_SUCCESS) {
                 return VK_NULL_HANDLE;
