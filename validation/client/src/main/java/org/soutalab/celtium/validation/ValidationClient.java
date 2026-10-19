@@ -1220,7 +1220,10 @@ public final class ValidationClient {
             // height looking at it - 137 visible sections and 52,084 distinct colours against 18 sections and 4,160
             // colours at the spawn point. The pose sees the floating islands, the every-block display wall and the
             // red carpet together, which is what a "many objects" comparison needs.
-            return new CameraPose(272.5D, 67.0D, 248.5D, 90.0F, 10.0F);
+            // ... and standing ON the display tower (the tallest structure at the exhibition level: columns at
+            // x 284..288, z 271..277 reach y=75) puts the whole exhibition in frame - 151 visible sections and 45,655
+            // distinct colours, against 137 and 52,396 from the ground-level pose, and it is the viewpoint asked for.
+            return new CameraPose(286.5D, 77.0D, 274.5D, 90.0F, 15.0F);
         }
         return new CameraPose(0.5D, 12.0D, 0.5D, 180.0F, 20.0F);
     }
@@ -1346,10 +1349,10 @@ public final class ValidationClient {
     /**
      * The real-world scene's floors, measured on a GL-arm reference run of the same map at the same pose.
      * <p>
-     * Reference (Celeritas 2.5.0-dev, {@code run-qmref2}, 2026-10-19 11:19, scene=world, render distance 18, camera
-     * 272.5/67.0/248.5 yaw 90 pitch 10, 1280x720, picture = {@code screenshots/celtium-validation.png} written by the
-     * GL arm's own screenshot): distinctColours=63859, nonBackgroundFraction=0.770652, verticalBands=720,
-     * blackFraction=0.005905.
+     * Reference (Celeritas 2.5.0-dev, {@code run-qmref3}, 2026-10-19 11:53, scene=world, render distance 18, camera
+     * 286.5/77.0/274.5 yaw 90 pitch 15 - standing on the display tower, 1280x720, picture =
+     * {@code screenshots/celtium-validation.png} written by the GL arm's own screenshot): distinctColours=55852,
+     * nonBackgroundFraction=0.60372, verticalBands=720, blackFraction=0.001926.
      * <p>
      * The floors follow the same rule as the flat scene's (the smaller reference with a stated margin):
      * {@code nonBackgroundFraction >= 0.34} is 55% of 0.622893, {@code verticalBands >= 250} is 35% of 720, and
@@ -1359,16 +1362,16 @@ public final class ValidationClient {
      * pixel-identical to the reference".
      */
     private static SceneGate celtium$worldMapGate() {
-        String runs = "gl-arm run-qmref2 (2026-10-19 11:19, Celeritas 2.5.0-dev, scene=world with"
-                + " saveSlot=qmagnet, render distance 18, camera 272.5/67.0/248.5 yaw 90 pitch 10, 1280x720,"
-                + " picture=screenshots/celtium-validation.png)";
-        String numbers = "run-qmref2: distinctColours=63859 nonBackgroundFraction=0.770652 verticalBands=720"
-                + " blackFraction=0.005905";
-        String margin = "nonBackgroundFraction floor 0.42 = 55% of the reference 0.770652; verticalBands floor 250 ="
-                + " 35% of the reference 720; blackFraction ceiling 0.05 = measured 0.005905 + 0.044";
+        String runs = "gl-arm run-qmref3 (2026-10-19 11:53, Celeritas 2.5.0-dev, scene=world with"
+                + " saveSlot=qmagnet, render distance 18, camera 286.5/77.0/274.5 yaw 90 pitch 15 on the display tower,"
+                + " 1280x720, picture=screenshots/celtium-validation.png)";
+        String numbers = "run-qmref3: distinctColours=55852 nonBackgroundFraction=0.60372 verticalBands=720"
+                + " blackFraction=0.001926";
+        String margin = "nonBackgroundFraction floor 0.33 = 55% of the reference 0.60372; verticalBands floor 250 ="
+                + " 35% of the reference 720; blackFraction ceiling 0.05 = measured 0.001926 + 0.048";
         String reference = "gl-arm " + runs + ": " + numbers + " -> floors distinctColours>16,"
                 + " nonBackgroundFraction>=0.34, verticalBands>=250, blackFraction<=0.05; margin: " + margin;
-        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.42D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.33D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
                 numbers, margin, true);
     }
 
