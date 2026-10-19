@@ -5291,6 +5291,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.frameArena != null) {
             this.frameArena.beginFrame(this.frameId, VulkanContext.completedEpoch());
         }
+        celtium$swapBatchReuseFrames();
         this.immediateStatistics.setFrameAccepted(0);
         this.frameDrawn = 0;
         reportOutOfDateState();
@@ -6582,6 +6583,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             long appendCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             // A pre-transformed group bakes the live modelView into this batch's positions on append: the GUI matrices
             // that would have split the group are applied exactly here instead of being carried in its key.
+            // The reuse census covers both families: it hashes the source block before either append, because the
+            // question it answers (how much of this work repeats frame to frame) is about the offers, not about which
+            // of the two append paths they take.
+            celtium$noteBatchReuse(vertexAddress, vertexCount, vertexStride, formatId, drawMode, state);
             boolean appended = this.currentGroupPreTransformed
                     ? this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
                             indices, this.glModelView)
@@ -9589,6 +9594,9 @@ this.frameBufferOpen = false;
                 + " windowRecordPerFrameMillis=" + (this.frameId == 0L ? -1.0
                         : Math.round((double) this.windowRecordNanos / 1000000.0 / this.frameId * 100.0) / 100.0)
                 + " drawSites=[" + drawSiteSummary() + "]"
+                + " batchReuseHits=" + this.batchReuseHits
+                + " batchReuseMisses=" + this.batchReuseMisses
+                + " batchReuseLastFrameSize=" + this.batchReuseLastFrame.size()
                 + " pushElided=" + VulkanPushCache.SHARED.skipped()
                 + " pushIssued=" + VulkanPushCache.SHARED.issued()
                 + " splashSourcedGroups=" + this.targetStatistics.splashSourcedGroups()
@@ -12137,6 +12145,24 @@ this.frameBufferOpen = false;
     private int menuGroupCensus;
 
     /**
+     * How many offered batches are byte-identical repeats of one offered in the previous frame.
+     * <p>
+     * The immediate path costs 1.97 ms of a 4.88 ms frame (A/B: {@code -Dceltium.vulkan.immediate=false} falls to
+     * 2.91 ms). The question the reference pool's item-mesh cache (Angelica) and immediate-mode batching
+     * (ImmediatelyFast) both turn on is how much of that work repeats: a batch whose source bytes, state key, format
+     * and matrix match one from the previous frame has nothing new to record, so its transform, append and group
+     * could be reused rather than rebuilt.
+     * <p>
+     * Measured per accepted batch by hashing the source vertex block and comparing the tuple against the previous
+     * frame's set. The hash reads the same bytes the transform reads, so it is cheap enough for a normal leg; the
+     * counters decide whether a cache is worth building.
+     */
+    private final java.util.HashSet<Long> batchReuseThisFrame = new java.util.HashSet<Long>();
+    private final java.util.HashSet<Long> batchReuseLastFrame = new java.util.HashSet<Long>();
+    private long batchReuseHits;
+    private long batchReuseMisses;
+
+    /**
      * Which call site opens an immediate window, counted by the first game frame that names it.
      * <p>
      * Five windows a frame at ~0.15 ms each is the largest fixed cost left on the standard scene (measured: 4308
@@ -13344,6 +13370,44 @@ this.frameBufferOpen = false;
      * and that is exactly where the panorama's white lives. The rule is the same: the first frame with no splash
      * upload after one that had them ends the splash, and its canvases must not stay as any texture's content.
      */
+    /** Hashes one accepted batch's source bytes with its state and matrix, and counts a previous-frame repeat. */
+    private void celtium$noteBatchReuse(long vertexAddress, int vertexCount, int vertexStride, int formatId,
+            int drawMode, int[] state) {
+        if (vertexAddress == 0L || vertexCount <= 0 || vertexStride <= 0) {
+            return;
+        }
+        long hash = 0xcbf29ce484222325L;
+        int bytes = vertexCount * vertexStride;
+        for (int i = 0; i < bytes; i++) {
+            hash ^= org.lwjgl.system.MemoryUtil.memGetByte(vertexAddress + i) & 0xFFL;
+            hash *= 0x100000001b3L;
+        }
+        hash ^= ((long) formatId << 32) ^ drawMode;
+        hash *= 0x100000001b3L;
+        for (int i = 0; i < state.length; i++) {
+            hash ^= state[i] & 0xFFFFFFFFL;
+            hash *= 0x100000001b3L;
+        }
+        for (int i = 0; i < 16; i++) {
+            hash ^= Float.floatToIntBits(this.glModelView[i]) & 0xFFFFFFFFL;
+            hash *= 0x100000001b3L;
+        }
+        Long key = Long.valueOf(hash);
+        if (this.batchReuseLastFrame.contains(key)) {
+            this.batchReuseHits++;
+        } else {
+            this.batchReuseMisses++;
+        }
+        this.batchReuseThisFrame.add(key);
+    }
+
+    /** Publishes this frame's batch hashes as the previous frame's set, at the frame boundary. */
+    private void celtium$swapBatchReuseFrames() {
+        this.batchReuseLastFrame.clear();
+        this.batchReuseLastFrame.addAll(this.batchReuseThisFrame);
+        this.batchReuseThisFrame.clear();
+    }
+
     /** Counts one drawn group against the site that recorded it, and the batches it carried. */
     private void celtium$noteGroupDrawnAtSite(int batches) {
         String site = this.lastWindowOpenSite + "/" + this.immediateDrawSite;
