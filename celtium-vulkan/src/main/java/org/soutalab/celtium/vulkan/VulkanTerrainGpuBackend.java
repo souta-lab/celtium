@@ -14483,9 +14483,12 @@ this.frameBufferOpen = false;
                 // The immediate pipelines draw the blocks and entities that fill the view; they project the map with the
                 // same eye-space matrix, and their cached descriptor sets are pointed at the map the first time it exists.
                 org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.writeShadowMatrix(eyeMatrix);
+                org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.writeShadowMatrix(eyeMatrix);
                 if (!this.shadowItemSourcesSet) {
                     this.shadowItemSourcesSet = true;
                     org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.setShadowSources(
+                            this.shadowMapPass.view(), this.shadowMapPass.sampler());
+                    org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.setShadowSources(
                             this.shadowMapPass.view(), this.shadowMapPass.sampler());
                 }
                 if (!Boolean.getBoolean("celtium.shadow.noSources")) {

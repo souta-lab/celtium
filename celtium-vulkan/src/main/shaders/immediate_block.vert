@@ -19,6 +19,13 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 124) float u_ColorB;
 } celtium;
 
+// The native shadow map's eye-space matrix and the map itself: block vertices are already transformed by the model view,
+// so the matrix is lightWorld * inverse(modelView). Bindings 0 and 1 belong to the fragment stage's texture and light
+// map, so the shadow starts at 2.
+layout(set = 0, binding = 2) uniform CeltiumShadowUniforms { mat4 u_ShadowMatrix; } celtiumShadow;
+layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
+layout(location = 3) out vec4 v_ShadowCoord;
+
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec4 a_Color;
 layout(location = 2) in vec2 a_TexCoord;
@@ -43,5 +50,6 @@ void main() {
         v_TexCoord = a_TexCoord;
     }
     v_Lightmap = (vec2(a_LightCoord) + 8.0) / 256.0;
+    v_ShadowCoord = celtiumShadow.u_ShadowMatrix * vec4(a_Position, 1.0);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }
