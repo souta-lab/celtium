@@ -1223,7 +1223,11 @@ public final class ValidationClient {
             // ... and standing ON the display tower (the tallest structure at the exhibition level: columns at
             // x 284..288, z 271..277 reach y=75) puts the whole exhibition in frame - 151 visible sections and 45,655
             // distinct colours, against 137 and 52,396 from the ground-level pose, and it is the viewpoint asked for.
-            return new CameraPose(286.5D, 77.0D, 274.5D, 90.0F, 15.0F);
+            // ... and finally where the user pointed: at the stepped every-block stack with the mushroom-like
+            // cluster below it, standing by the command block at x=217 z=216. That frame holds the richest content of
+            // all the poses tried - 71,010 distinct colours against 45,182 from the tower - because the staircase,
+            // the plants, the water, the item frames and the command-block contraption are all in view at once.
+            return new CameraPose(217.5D, 48.0D, 217.5D, 180.0F, 10.0F);
         }
         return new CameraPose(0.5D, 12.0D, 0.5D, 180.0F, 20.0F);
     }
@@ -1349,10 +1353,11 @@ public final class ValidationClient {
     /**
      * The real-world scene's floors, measured on a GL-arm reference run of the same map at the same pose.
      * <p>
-     * Reference (Celeritas 2.5.0-dev, {@code run-qmref3}, 2026-10-19 11:53, scene=world, render distance 18, camera
-     * 286.5/77.0/274.5 yaw 90 pitch 15 - standing on the display tower, 1280x720, picture =
-     * {@code screenshots/celtium-validation.png} written by the GL arm's own screenshot): distinctColours=55852,
-     * nonBackgroundFraction=0.60372, verticalBands=720, blackFraction=0.001926.
+     * Reference (Celeritas 2.5.0-dev, {@code run-qmref4}, 2026-10-19 12:04, scene=world, render distance 18, camera
+     * 217.5/48.0/217.5 yaw 180 pitch 10 - the stepped every-block stack with the mushroom cluster and the command-block
+     * contraption in one frame, 1280x720, picture = {@code screenshots/celtium-validation.png} written by the GL arm's
+     * own screenshot): distinctColours=80160, nonBackgroundFraction=0.92709, verticalBands=720,
+     * blackFraction=0.001943.
      * <p>
      * The floors follow the same rule as the flat scene's (the smaller reference with a stated margin):
      * {@code nonBackgroundFraction >= 0.34} is 55% of 0.622893, {@code verticalBands >= 250} is 35% of 720, and
@@ -1362,16 +1367,16 @@ public final class ValidationClient {
      * pixel-identical to the reference".
      */
     private static SceneGate celtium$worldMapGate() {
-        String runs = "gl-arm run-qmref3 (2026-10-19 11:53, Celeritas 2.5.0-dev, scene=world with"
-                + " saveSlot=qmagnet, render distance 18, camera 286.5/77.0/274.5 yaw 90 pitch 15 on the display tower,"
-                + " 1280x720, picture=screenshots/celtium-validation.png)";
-        String numbers = "run-qmref3: distinctColours=55852 nonBackgroundFraction=0.60372 verticalBands=720"
-                + " blackFraction=0.001926";
-        String margin = "nonBackgroundFraction floor 0.33 = 55% of the reference 0.60372; verticalBands floor 250 ="
-                + " 35% of the reference 720; blackFraction ceiling 0.05 = measured 0.001926 + 0.048";
+        String runs = "gl-arm run-qmref4 (2026-10-19 12:04, Celeritas 2.5.0-dev, scene=world with"
+                + " saveSlot=qmagnet, render distance 18, camera 217.5/48.0/217.5 yaw 180 pitch 10 at the stepped"
+                + " every-block stack, 1280x720, picture=screenshots/celtium-validation.png)";
+        String numbers = "run-qmref4: distinctColours=80160 nonBackgroundFraction=0.92709 verticalBands=720"
+                + " blackFraction=0.001943";
+        String margin = "nonBackgroundFraction floor 0.51 = 55% of the reference 0.92709; verticalBands floor 250 ="
+                + " 35% of the reference 720; blackFraction ceiling 0.05 = measured 0.001943 + 0.048";
         String reference = "gl-arm " + runs + ": " + numbers + " -> floors distinctColours>16,"
                 + " nonBackgroundFraction>=0.34, verticalBands>=250, blackFraction<=0.05; margin: " + margin;
-        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.33D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.51D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
                 numbers, margin, true);
     }
 
