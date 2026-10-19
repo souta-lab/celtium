@@ -9625,6 +9625,7 @@ this.frameBufferOpen = false;
                 + " uniform" + (this.terrain.uniforms() == null ? "=none" : this.terrain.uniforms().growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
+                + " shaderPack=[" + this.shaderPackSummary + "]"
                 + " windowOpenSites=[" + windowOpenSiteSummary() + "]"
                 + " windowGpuMillis=" + (this.windowGpuNanos / 1000000L)
                 + " windowGpuSamples=" + this.windowGpuSamples
@@ -13570,7 +13571,74 @@ this.frameBufferOpen = false;
         this.splashUploadsThisFrame = false;
     }
 
+    /**
+     * The shaderpack path this run was told to load, or empty for none: {@code -Dceltium.shaderpack.path=<zip|dir>}.
+     * <p>
+     * The renderer owns the loading site because the manifest and the backend share one class loader, and the point of
+     * this first step is to prove exactly that: a real pack (BSL 10.1.8 was the one used) is parsed where the renderer
+     * lives, with the result reported on one line and its program/dimension counts in the summary. Nothing is rendered
+     * from it yet - the shadow map and the program dispatch are the next units - so this is an integration probe, not
+     * a shaderpack feature.
+     */
+    private static final String SHADER_PACK_PATH = System.getProperty("celtium.shaderpack.path", "");
+
+    /** Whether the pack probe has run; it is a one-shot at the first present. */
+    private boolean shaderPackProbed;
+    /** The loaded manifest's one-line census, or the failure that stopped it. */
+    private String shaderPackSummary = "none";
+    /** The pack's program entries, across dimensions. */
+    private int shaderPackPrograms;
+    /** The pack's diagnostics by severity, as {@code ERROR/WARNING/UNSUPPORTED}. */
+    private final int[] shaderPackDiagnostics = new int[3];
+
+    /**
+     * Loads the configured shaderpack once, at the first present, and reports what the frontend made of it.
+     * <p>
+     * Runs here rather than in the mod's initialisation because the renderer is the component that will consume the
+     * manifest, and a failure must not take the game down: a pack the frontend rejects is reported and the run
+     * continues shaderless, which is the only safe direction for an experimental path.
+     */
+    private void celtium$probeShaderPack() {
+        if (this.shaderPackProbed || SHADER_PACK_PATH.isEmpty()) {
+            return;
+        }
+        this.shaderPackProbed = true;
+        try {
+            java.nio.file.Path path = java.nio.file.Paths.get(SHADER_PACK_PATH);
+            long started = System.nanoTime();
+            org.soutalab.celtium.shaderpack.PackManifest manifest =
+                    org.soutalab.celtium.shaderpack.ShaderPackLoader.load(path);
+            long millis = (System.nanoTime() - started) / 1000000L;
+            for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : manifest.dimensions()) {
+                this.shaderPackPrograms += dimension.programs().size();
+            }
+            for (org.soutalab.celtium.shaderpack.Diagnostic diagnostic : manifest.diagnostics()) {
+                switch (diagnostic.severity()) {
+                    case ERROR: this.shaderPackDiagnostics[0]++; break;
+                    case WARNING: this.shaderPackDiagnostics[1]++; break;
+                    default: this.shaderPackDiagnostics[2]++; break;
+                }
+            }
+            this.shaderPackSummary = "pack=" + manifest.label() + " files=" + manifest.fileCount()
+                    + " dimensions=" + manifest.dimensions().size()
+                    + " programs=" + this.shaderPackPrograms
+                    + " features=" + manifest.activeFeatures().size()
+                    + " options=" + manifest.options().size()
+                    + " disabled=" + manifest.disabledPrograms().size()
+                    + " errors=" + this.shaderPackDiagnostics[0]
+                    + " warnings=" + this.shaderPackDiagnostics[1]
+                    + " unsupported=" + this.shaderPackDiagnostics[2]
+                    + " hasErrors=" + manifest.hasErrors()
+                    + " loadMillis=" + millis;
+            System.out.println("[Celtium] CELTIUM_SHADERPACK " + this.shaderPackSummary);
+        } catch (Throwable error) {
+            this.shaderPackSummary = "failed path=" + SHADER_PACK_PATH + " reason=" + describe(error);
+            System.out.println("[Celtium] CELTIUM_SHADERPACK " + this.shaderPackSummary);
+        }
+    }
+
     public boolean celtium$presentFrame() {
+        celtium$probeShaderPack();
         long presentStartedNanos = System.nanoTime();
         try {
             return celtium$presentFrameImpl();

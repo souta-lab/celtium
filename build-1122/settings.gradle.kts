@@ -40,8 +40,11 @@ require(JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)) {
 }
 
 rootProject.name = "celtium-1122"
-include("common", "forge122", "celtium-probe", "celtium-vulkan")
+include("common", "forge122", "celtium-probe", "celtium-vulkan", "celtium-shaderpack")
 project(":common").projectDir = file("../common")
 project(":forge122").projectDir = file("../forge122")
 project(":celtium-probe").projectDir = file("../celtium-probe")
 project(":celtium-vulkan").projectDir = file("../celtium-vulkan")
+// The shaderpack frontend is a pure-Java 21 module (no GPU, no Minecraft); the renderer embeds it so a pack can be
+// loaded where the renderer lives, rather than through a second classloader.
+project(":celtium-shaderpack").projectDir = file("../celtium-shaderpack")

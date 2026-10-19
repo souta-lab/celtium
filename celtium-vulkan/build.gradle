@@ -29,6 +29,10 @@ if (coreProject != null) {
 }
 
 dependencies {
+    // The shaderpack frontend: the renderer loads a pack's manifest where it renders, so the CPU-side plan and the
+    // backend share one class loader. The module is pure Java 21 with no runtime dependencies, which is why it can be
+    // an ordinary project dependency here.
+    implementation project(':celtium-shaderpack')
     compileOnly platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
     compileOnly 'org.lwjgl:lwjgl'
     compileOnly 'org.lwjgl:lwjgl-opengl'
