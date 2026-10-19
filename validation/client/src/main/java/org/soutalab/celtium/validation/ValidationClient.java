@@ -3224,7 +3224,15 @@ public final class ValidationClient {
                 // for automated runs. The fixture forces it off so the measurement does not depend on who has focus.
                 mc.gameSettings.pauseOnLostFocus = false;
                 report.addProperty("pauseOnLostFocusForcedOff", Boolean.TRUE);
-                mc.gameSettings.renderDistanceChunks = 8;
+                // The acceptance scene's radius. Every leg used to be pinned to 8, which is not what the user plays:
+                // their own session (2026-10-19 07:21) runs renderDistance 18 with 1,369 chunks known and 19,600
+                // sections tracked, and a bug report about lag at their settings cannot be checked at a radius a
+                // third of that. The override keeps every existing leg identical (default 8) while letting a leg run
+                // at the radius the report came from.
+                int renderDistance = Math.max(2, Math.min(32,
+                        Integer.getInteger("celtium.validation.renderDistance", 8).intValue()));
+                mc.gameSettings.renderDistanceChunks = renderDistance;
+                report.addProperty("renderDistanceUsed", Integer.valueOf(renderDistance));
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
                 mc.gameSettings.limitFramerate = 260;
                 mc.gameSettings.enableVsync = false;
@@ -4406,13 +4414,25 @@ public final class ValidationClient {
      * reference could not satisfy.
      */
     private java.util.List<String> celtium$rendererDebugLines() {
+        // Once per world frame: the condition reads this list (and the renderer builds it) several times a frame
+        // otherwise, and on a real world the renderer's debug strings are hundreds of lines.
+        if (this.celtium$debugLinesWorldFrame == this.worldFrames && this.celtium$debugLinesFrame != null) {
+            return this.celtium$debugLinesFrame;
+        }
         try {
-            Class<?> rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
-            Object renderer = rendererClass.getMethod("instanceNullable").invoke(null);
+            if (celtium$rendererClass == null && !celtium$rendererLookupFailed) {
+                celtium$rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
+                celtium$rendererInstanceMethod = celtium$rendererClass.getMethod("instanceNullable");
+                celtium$rendererDebugMethod = celtium$rendererClass.getMethod("getDebugStrings");
+            }
+            if (celtium$rendererClass == null) {
+                return null;
+            }
+            Object renderer = celtium$rendererInstanceMethod.invoke(null);
             if (renderer == null) {
                 return null;
             }
-            Object lines = rendererClass.getMethod("getDebugStrings").invoke(renderer);
+            Object lines = celtium$rendererDebugMethod.invoke(renderer);
             if (!(lines instanceof java.util.List)) {
                 return null;
             }
@@ -4420,11 +4440,41 @@ public final class ValidationClient {
             for (Object line : (java.util.List<?>) lines) {
                 result.add(String.valueOf(line));
             }
+            this.celtium$debugLinesFrame = result;
+            this.celtium$debugLinesWorldFrame = this.worldFrames;
+            this.celtium$parsedListed = celtium$listedSections(result);
+            this.celtium$parsedP1 = celtium$pendingP1(result);
+            this.celtium$parsedHeld = celtium$heldBuildResults(result);
             return result;
         } catch (Throwable unavailable) {
             // A run without a world renderer is a run this condition cannot judge; the caller falls back to the tick.
+            celtium$rendererLookupFailed = true;
             return null;
         }
+    }
+
+    /** {@return the current frame's parsed section count, filling the per-frame cache when needed}. */
+    private int celtium$parsedListed(java.util.List<String> lines) {
+        if (lines == this.celtium$debugLinesFrame) {
+            return this.celtium$parsedListed;
+        }
+        return celtium$listedSections(lines);
+    }
+
+    /** {@return the current frame's parsed P1 depth, filling the per-frame cache when needed}. */
+    private int celtium$parsedP1(java.util.List<String> lines) {
+        if (lines == this.celtium$debugLinesFrame) {
+            return this.celtium$parsedP1;
+        }
+        return celtium$pendingP1(lines);
+    }
+
+    /** {@return the current frame's parsed held-build count, filling the per-frame cache when needed}. */
+    private int celtium$parsedHeld(java.util.List<String> lines) {
+        if (lines == this.celtium$debugLinesFrame) {
+            return this.celtium$parsedHeld;
+        }
+        return celtium$heldBuildResults(lines);
     }
 
     /**
@@ -4650,8 +4700,7 @@ public final class ValidationClient {
         if (lines == null) {
             return -1;
         }
-        java.util.regex.Matcher matcher =
-                java.util.regex.Pattern.compile("Chunk Queues: U=(\\d+)").matcher("");
+        java.util.regex.Matcher matcher = HELD_PATTERN.matcher("");
         for (String line : lines) {
             if (line == null) {
                 continue;
@@ -4669,7 +4718,7 @@ public final class ValidationClient {
     }
 
     private static int celtium$pendingP1(java.util.List<String> lines) {
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile("P1=(\\d+)");
+        java.util.regex.Pattern p = P1_PATTERN;
         for (String line : lines) {
             if (line != null && line.contains("Chunk Queues:")) {
                 java.util.regex.Matcher m = p.matcher(line);
@@ -4681,12 +4730,40 @@ public final class ValidationClient {
         return -1;
     }
 
+    /**
+     * The three patterns the capture condition reads every frame.
+     * <p>
+     * They used to be compiled inside the helpers, so every frame paid three {@code Pattern.compile} calls plus the
+     * scans - measured on a real world (2026-10-19, RD18, 723 listed sections) as ~44% of the client thread's
+     * samples sitting in {@code Pattern$Slice.match}/{@code Pattern$Start.match} and friends, i.e. the harness was a
+     * large part of the frame it was measuring, and it was biased against the renderer that emits more debug lines.
+     */
+    private static final java.util.regex.Pattern SECTIONS_PATTERN =
+            java.util.regex.Pattern.compile("- (\\d+) sections");
+    private static final java.util.regex.Pattern P1_PATTERN =
+            java.util.regex.Pattern.compile("P1=(\\d+)");
+    private static final java.util.regex.Pattern HELD_PATTERN =
+            java.util.regex.Pattern.compile("Chunk Queues: U=(\\d+)");
+
+    /** Cached reflective handles, so the per-frame condition does not redo Class.forName/getMethod. */
+    private static Class<?> celtium$rendererClass;
+    private static java.lang.reflect.Method celtium$rendererInstanceMethod;
+    private static java.lang.reflect.Method celtium$rendererDebugMethod;
+    private static boolean celtium$rendererLookupFailed;
+
+    /** The debug lines and parsed values of the current frame, so one frame parses them once. */
+    private java.util.List<String> celtium$debugLinesFrame;
+    private int celtium$debugLinesWorldFrame = -1;
+    private int celtium$parsedListed = -1;
+    private int celtium$parsedP1 = -1;
+    private int celtium$parsedHeld = -1;
+
     private static int celtium$listedSections(java.util.List<String> lines) {
         if (lines == null) {
             return -1;
         }
         int most = -1;
-        java.util.regex.Matcher sections = java.util.regex.Pattern.compile("- (\\d+) sections").matcher("");
+        java.util.regex.Matcher sections = SECTIONS_PATTERN.matcher("");
         for (String line : lines) {
             sections.reset(line);
             if (sections.find()) {
@@ -4833,8 +4910,8 @@ public final class ValidationClient {
         // at, so a comparison that quotes two legs can say what world each of them held.
         if (PIN_SECTIONS > 0) {
             java.util.List<String> pinLines = celtium$rendererDebugLines();
-            int listed = celtium$listedSections(pinLines);
-            int pinPendingP1 = celtium$pendingP1(pinLines);
+            int listed = celtium$parsedListed(pinLines);
+            int pinPendingP1 = celtium$parsedP1(pinLines);
             if (listed != this.celtium$pinnedSectionsSeen) {
                 this.celtium$pinnedSectionsSeen = listed;
                 this.celtium$pinnedSectionsStableFrames = 0;
@@ -4842,7 +4919,7 @@ public final class ValidationClient {
                 this.celtium$pinnedSectionsStableFrames++;
             }
             this.celtium$pinnedSectionsValue = listed;
-            int pinHeld = celtium$heldBuildResults(pinLines);
+            int pinHeld = celtium$parsedHeld(pinLines);
             // One "settled" answer for every clause, so the deadline below can fire against the same state the
             // settled check refused. A stable section count is not a settled world: measured 2026-10-13, heipin2
             // fired at "pinned-sections (listed 39 stable for 20 frames)" with P1=058 - 58 chunk rebuilds still
@@ -4887,10 +4964,10 @@ public final class ValidationClient {
         }
         if ("sections".equals(CAPTURE_CONDITION)) {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
-            int listed = celtium$listedSections(sectionLines);
-            int pendingP1 = celtium$pendingP1(sectionLines);
+            int listed = celtium$parsedListed(sectionLines);
+            int pendingP1 = celtium$parsedP1(sectionLines);
             // The same two conditions the pinned path honours, so both paths promise the same settled world.
-            int heldBuilds = celtium$heldBuildResults(sectionLines);
+            int heldBuilds = celtium$parsedHeld(sectionLines);
             boolean heldOk = CAPTURE_MAX_HELD_BUILDS < 0 || heldBuilds < 0 || heldBuilds <= CAPTURE_MAX_HELD_BUILDS;
             if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS && heldOk
                     && (pendingP1 < 0 || pendingP1 <= CAPTURE_MAX_P1) && celtium$worldClockReached()) {
@@ -4910,8 +4987,8 @@ public final class ValidationClient {
             // same flags held 45 and 55 sections and differed by fivefold in black fraction. Waiting for the
             // section count here is the same gate the sections condition uses, deadline included.
             java.util.List<String> tickLines = celtium$rendererDebugLines();
-            int tickListed = celtium$listedSections(tickLines);
-            int tickP1 = celtium$pendingP1(tickLines);
+            int tickListed = celtium$parsedListed(tickLines);
+            int tickP1 = celtium$parsedP1(tickLines);
             // The JEI variant is not a world-only picture: the search box is driven over several ticks
             // (before / typed / after), so a capture that fires while those are still arriving photographs a
             // different screen each run. Measured 2026-10-13: two legs with identical flags reached the same
