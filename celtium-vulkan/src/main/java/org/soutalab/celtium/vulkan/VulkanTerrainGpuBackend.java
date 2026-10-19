@@ -14435,11 +14435,30 @@ this.frameBufferOpen = false;
             // view stand in for a light's for this first visible step: the map is then the scene depth as the camera sees
             // it, which is exactly what makes the shading difference appear without a light rig.
             if (terrainPipeline != null && this.shadowMapPass.matrixBuffer() != null) {
-                org.joml.Matrix4f projection = new org.joml.Matrix4f().set(
-                        java.nio.FloatBuffer.wrap(java.util.Arrays.copyOfRange(terrainPipeline.lastPushBlock(), 0, 16)));
-                org.joml.Matrix4f modelView = new org.joml.Matrix4f().set(
-                        java.nio.FloatBuffer.wrap(java.util.Arrays.copyOfRange(terrainPipeline.lastPushBlock(), 16, 32)));
-                org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(projection).mul(modelView);
+                // Arrays, not wrapped FloatBuffers: JOML reads a FloatBuffer through Unsafe at its address, and an
+                // array-backed buffer has none - that SIGSEGV was this line, and it killed the process about eighteen
+                // seconds into every leg with the terrain shadow path on (hs_err: Unsafe.getLong, Matrix4f.set, this
+                // method). The float[] overload copies the values and is what the arrays are anyway.
+                // A real light: the sun's direction with an orthographic box around the world origin, wide enough to
+                // cover the qmagnet map (its centre is at about 217, 48, 217). The camera's own projection was standing in
+                // here before, which put the scene's depth in the map exactly as the camera sees it - so only silhouette
+                // edges darkened, and the pair of legs ON/OFF differed by 0.3 percentage points of dark pixels.
+                // The box follows the camera and covers a short distance around it, which is what makes the shadows both
+                // visible and sharp: at +/-48 blocks a 2048-texel map is about 4.7 cm per texel, where the origin-centred
+                // +/-256 box texelled 25 cm and left the visible surfaces almost entirely lit.
+                float[] push = terrainPipeline.lastPushBlock();
+                org.joml.Matrix4f modelViewForCamera = new org.joml.Matrix4f().set(
+                        java.util.Arrays.copyOfRange(push, 16, 32));
+                org.joml.Vector3f centre = new org.joml.Vector3f();
+                new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
+                org.joml.Vector3f direction = new org.joml.Vector3f(-0.4f, -1.0f, -0.3f).normalize();
+                float radius = 48.0f;
+                org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
+                        new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
+                        new org.joml.Vector3f(0.0f, 1.0f, 0.0f));
+                org.joml.Matrix4f lightProjection = new org.joml.Matrix4f()
+                        .ortho(-radius, radius, -radius, radius, 0.0f, radius * 6.0f);
+                org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(lightProjection).mul(lightView);
                 java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
                         this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
                 lightViewProjection.get(0, matrix);
