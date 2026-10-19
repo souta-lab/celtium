@@ -187,6 +187,10 @@ ShadowHelper.createShadowRemapJar(project, "celeritasRemapJar")
 
 tasks.named<ShadowJar>("shadowRemapJar") {
     configurations.set(listOf(modEmbedDependencies))
+    // The embedded module jars are inputs in their own right. Without this the task reported UP-TO-DATE after a module
+    // had been rebuilt, so a leg could run a jar whose embedded classes predate the change - measured: the packaged jar's
+    // hash did not move across a shaderpack fix, and three separate rounds verified their fixes offline because of it.
+    inputs.files(modEmbedDependencies)
     exclude("module-info.class", "**/module-info.class")
 }
 
