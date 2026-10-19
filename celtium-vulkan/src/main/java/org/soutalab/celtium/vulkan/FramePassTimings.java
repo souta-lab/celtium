@@ -65,7 +65,11 @@ public final class FramePassTimings {
             // push-block fill (matrix, fog, colour, light map), the viewport/scissor/depth-bias state, and the
             // pipeline's bind+draw call. ~2.5 us a group at 332 groups a frame is the largest renderer-owned item
             // left, and the four names say which piece it is.
-            "rcResolve", "rcPush", "rcViewport"};
+            "rcResolve", "rcPush", "rcViewport",
+            // The offer path's four pieces: the GL state capture and its key, the pipeline/descriptor preparation,
+            // the group-match decision, and the vertex append (the transform for a pre-transformed group, a memcpy
+            // otherwise). 0.71 ms a frame for ~292 batches is 2.4 us each, and the names say which part owns it.
+            "offCapture", "offPrepare", "offMerge", "offAppend"};
 
     private static final int CAPACITY = 512;
 

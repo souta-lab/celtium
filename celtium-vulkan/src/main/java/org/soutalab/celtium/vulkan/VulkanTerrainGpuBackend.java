@@ -6140,10 +6140,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             if (BATCH_TIMINGS) this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
             long captureStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("offCapture");
             int[] state = celtium$captureState();
             if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - captureStart);
             long keyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             long stateKey = celtium$stateKey(formatId, state);
+            org.soutalab.celtium.vulkan.FramePassTimings.end("offCapture");
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("offPrepare");
             // A bound-texture term was tried here and reverted: the reuse predicate already compares
             // `currentGroupTexture != boundTexture` (below), and an A/B on two menu-hold legs of the same scene shows
             // the group ids are 45/46/48/49/50 both with and without it - it only split 901 groups into 1285.
@@ -6238,6 +6241,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // and the lightmap by its own record for the families that carry one.
             org.soutalab.celtium.vulkan.VulkanGlTexture liveTextureImage =
                     boundTexture == 0 ? null : celtium$registry().get(boundTexture);
+            org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
             boolean fastMerged = this.currentImmediateMesh != null
                     && this.currentGroupFormatId == formatId
                     && this.currentGroupTexture == boundTexture
@@ -6586,6 +6591,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // The reuse census covers both families: it hashes the source block before either append, because the
             // question it answers (how much of this work repeats frame to frame) is about the offers, not about which
             // of the two append paths they take.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("offMerge");
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("offAppend");
             celtium$noteBatchReuse(vertexAddress, vertexCount, vertexStride, formatId, drawMode, state);
             boolean appended = this.currentGroupPreTransformed
                     ? this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
@@ -6594,6 +6601,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             long appendCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (BATCH_TIMINGS) this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
             if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
+            org.soutalab.celtium.vulkan.FramePassTimings.end("offAppend");
             this.immediateStatistics.noteAppendCount();
             if (!appended) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
