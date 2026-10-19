@@ -7776,6 +7776,18 @@ this.frameBufferOpen = false;
     public void celtium$flushPendingAtFrameBoundary() {
         long flushStartedNanos = System.nanoTime();
         try {
+            celtium$flushPendingAtFrameBoundaryBody(flushStartedNanos);
+        } finally {
+            long boundaryNanos = System.nanoTime() - flushStartedNanos;
+            if (boundaryNanos > 50_000_000L) {
+                System.out.println("[Celtium] CELTIUM_BOUNDARY_SLOW millis=" + (boundaryNanos / 1_000_000L)
+                        + " frame=" + this.frameId);
+            }
+        }
+    }
+
+    private void celtium$flushPendingAtFrameBoundaryBody(long flushStartedNanos) {
+        try {
             flushPendingBeforeGlDraw();
             // Before the frame's own recording is ended: the pack's triangle has to be the last thing written into the
             // frame image, or the frame's remaining draws and its composite run over it. Recording it after the last
@@ -7797,7 +7809,13 @@ this.frameBufferOpen = false;
             }
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
+            long finishStart = System.nanoTime();
             celtium$finishFrameBuffer();
+            long finishNanos = System.nanoTime() - finishStart;
+            if (finishNanos > 50_000_000L) {
+                System.out.println("[Celtium] CELTIUM_FRAME_SUBMIT millis=" + (finishNanos / 1_000_000L)
+                        + " frame=" + this.frameId);
+            }
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
             // flushes). A no-op when nothing batched - i.e. every run with batchFrameSubmits off.
@@ -13981,6 +13999,7 @@ this.frameBufferOpen = false;
     private VulkanTerrainPipeline shadowTerrainPipeline;
     private int shadowShadowDiag;
     private boolean shadowProbeReported;
+    private int shadowOwnPrints;
     private long shadowRecordNanos;
     private int shadowRecordPrints;
     private org.soutalab.celtium.vulkan.shadow.ShadowMapPass shadowMapPass;
@@ -14370,6 +14389,21 @@ this.frameBufferOpen = false;
                     && !Boolean.getBoolean("celtium.shadow.noPass");
             VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
             boolean drawn = false;
+            if (Boolean.getBoolean("celtium.shadow.ownSubmission") && terrainPipeline != null) {
+                // The pass as its own queue packet: the frame's command buffer never carries it, which is what stalled
+                // the game, and the queue orders it against the frame's own submissions.
+                String submitted = this.shadowMapPass.recordTerrainAndSubmit(terrainPipeline,
+                        this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
+                        this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
+                        this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
+                        terrainPipeline.lastDescriptorSet(), terrainPipeline.lastDynamicOffset());
+                if (submitted != null && this.shadowOwnPrints < 4) {
+                    this.shadowOwnPrints++;
+                    System.out.println("[Celtium] CELTIUM_SHADOW_OWN " + submitted);
+                }
+                this.terrain.resetShadowCapture();
+                return;
+            }
             if (terrainShadow && (this.frameId < 3 || this.frameId % 300 == 0)) {
                 System.out.println("[Celtium] CELTIUM_SHADOW_DIAG pipeline=" + (terrainPipeline != null)
                         + " hasTerrainPipeline=" + this.shadowMapPass.hasTerrainPipeline()
@@ -14557,6 +14591,19 @@ this.frameBufferOpen = false;
     }
 
     private boolean celtium$presentFrameImpl() {
+        long presentStart = System.nanoTime();
+        try {
+            return celtium$presentFrameBody();
+        } finally {
+            long presentNanos = System.nanoTime() - presentStart;
+            if (presentNanos > 50_000_000L) {
+                System.out.println("[Celtium] CELTIUM_PRESENT_SLOW millis=" + (presentNanos / 1_000_000L)
+                        + " frame=" + this.frameId);
+            }
+        }
+    }
+
+    private boolean celtium$presentFrameBody() {
         // The present must not order after work still sitting in the frame buffer: paths that reach here without
         // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
         celtium$finishFrameBuffer();
@@ -16177,6 +16224,7 @@ this.frameBufferOpen = false;
         this.fence = this.slotFences[this.frameSlot];
         this.commandState = this.slotCommandStates[this.frameSlot];
         if (this.scheduler.isPending(this.frameSlot)) {
+            long waitStart = System.nanoTime();
             // This slot's own previous submission is still in flight: only this one blocks the reset below. Every
             // submission older than it has completed by the queue's own ordering, which is what the sequence watermark
             // records after a successful wait.
@@ -16186,6 +16234,11 @@ this.frameBufferOpen = false;
                 this.submissionStatistics.noteStalledStops();
                 record("gpu stalled: frame slot " + this.frameSlot + " did not complete; drawing is refused from here");
                 throw new IllegalStateException("pending frame slot command buffer did not complete");
+            }
+            long waitNanos = System.nanoTime() - waitStart;
+            if (waitNanos > 50_000_000L) {
+                System.out.println("[Celtium] CELTIUM_SLOT_WAIT millis=" + (waitNanos / 1_000_000L)
+                        + " slot=" + this.frameSlot + " frame=" + this.frameId);
             }
         }
         if (this.submissionPending) {

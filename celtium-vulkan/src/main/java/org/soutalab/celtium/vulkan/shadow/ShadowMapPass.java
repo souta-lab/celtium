@@ -645,6 +645,92 @@ public final class ShadowMapPass {
         }
     }
 
+    /**
+     * Records the terrain pass into a command buffer of its own and submits it, without waiting.
+     * <p>
+     * The pass stalls the game when it is recorded into the frame's own command buffer (3 presents in 45 s against 600,
+     * with the recording itself measured at zero and the same scope completing in under two seconds on its own buffer).
+     * So it is submitted as its own queue packet instead: same queue, so ordering against the frame's submissions is the
+     * queue's, and the world pass samples what the previous packet wrote.
+     *
+     * @return a one-line result for the log, or null when nothing was recorded
+     */
+    public String recordTerrainAndSubmit(org.soutalab.celtium.vulkan.VulkanTerrainPipeline terrain, long vertexBuffer,
+                                         long indexBuffer, long indirectBuffer, long indirectOffset, int indirectCount,
+                                         float[] block, long descriptorSet, int dynamicOffset) {
+        if (this.image == VK_NULL_HANDLE || !this.terrainPipelines.containsKey(terrain)
+                && !createTerrainPipeline(terrain)) {
+            return null;
+        }
+        long terrainPipelineForThisDraw = this.terrainPipelines.get(terrain).longValue();
+        long pool = VK_NULL_HANDLE;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.LongBuffer handle = stack.mallocLong(1);
+            if (vkCreateCommandPool(this.context.device(), org.lwjgl.vulkan.VkCommandPoolCreateInfo
+                    .calloc(stack).sType$Default().queueFamilyIndex(this.context.queueFamilyIndex()), null,
+                    handle) != VK_SUCCESS) {
+                return "pool failed";
+            }
+            pool = handle.get(0);
+            org.lwjgl.PointerBuffer buffers = stack.callocPointer(1);
+            if (vkAllocateCommandBuffers(this.context.device(), org.lwjgl.vulkan.VkCommandBufferAllocateInfo
+                    .calloc(stack).sType$Default().commandPool(pool).level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                    .commandBufferCount(1), buffers) != VK_SUCCESS) {
+                return "buffer failed";
+            }
+            VkCommandBuffer commandBuffer = new VkCommandBuffer(buffers.get(0), this.context.device());
+            vkBeginCommandBuffer(commandBuffer, org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack)
+                    .sType$Default());
+            depthBarrier(commandBuffer, stack, VK_ACCESS_SHADER_READ_BIT,
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            VkRenderingAttachmentInfoKHR.Buffer depth = VkRenderingAttachmentInfoKHR.calloc(1, stack);
+            depth.get(0).sType$Default().imageView(this.view).imageLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+            org.lwjgl.vulkan.VkClearValue clear = org.lwjgl.vulkan.VkClearValue.calloc(stack);
+            clear.depthStencil().depth(1.0f);
+            depth.get(0).clearValue(clear);
+            org.lwjgl.vulkan.VkRect2D area = org.lwjgl.vulkan.VkRect2D.calloc(stack)
+                    .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE));
+            VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
+                    .renderArea(area).layerCount(1).pDepthAttachment(depth.get(0));
+            vkCmdBeginRenderingKHR(commandBuffer, rendering);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipelineForThisDraw);
+            vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
+                    .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
+            vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
+                    .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
+            if (descriptorSet != 0L) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain.pipelineLayout(), 0,
+                        stack.longs(descriptorSet), stack.ints(dynamicOffset));
+            }
+            vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
+            if (indexBuffer != 0L) {
+                vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+            }
+            java.nio.FloatBuffer push = stack.mallocFloat(32);
+            for (int i = 0; i < 32; i++) {
+                push.put(i, block[i]);
+            }
+            vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
+            vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, indirectCount, 20);
+            vkCmdEndRenderingKHR(commandBuffer);
+            depthBarrier(commandBuffer, stack, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT);
+            vkEndCommandBuffer(commandBuffer);
+            vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
+                    .pCommandBuffers(stack.pointers(commandBuffer.address())), VK_NULL_HANDLE);
+            this.passes++;
+            this.terrainPasses++;
+            return "submitted draws=" + indirectCount;
+        } catch (RuntimeException | LinkageError error) {
+            return "threw " + error;
+        } finally {
+            if (pool != VK_NULL_HANDLE) {
+                vkDestroyCommandPool(this.context.device(), pool, null);
+            }
+        }
+    }
+
     /** {@return whether the terrain pipeline has been built}. */
     public boolean hasTerrainPipeline() {
         return this.terrainPipeline != 0L;
