@@ -269,7 +269,17 @@ public final class VulkanTerrainPipeline {
     private long descriptorSetLayout;
     private long layout;
     private long descriptorPool;
-    private long descriptorSet;
+    /**
+     * One descriptor set per frame slot.
+     * <p>
+     * It used to be a single set rewritten by every pass, and measured on a real world (2026-10-19, RD18, 723 listed
+     * sections) that produced ten {@code VUID-vkUpdateDescriptorSets-None-03047} errors: a set updated while a
+     * *pending* command buffer still uses it. The frame scheduler already guarantees the invariant this needs - a
+     * slot's fence is waited before the slot is reused - so tying the set to the slot makes the rewrite legal: the
+     * submissions that name slot N's set have completed before slot N records again.
+     */
+    private static final int DESCRIPTOR_SLOTS = 4;
+    private final long[] descriptorSets = new long[DESCRIPTOR_SLOTS];
     private long pipeline;
     /**
      * The atlas sampler this pass binds when {@link #ATLAS_MAX_LOD} differs from the mirror's own clamp; zero when
@@ -312,7 +322,7 @@ public final class VulkanTerrainPipeline {
     /** Non-null when a limit was not reported and a check had to be skipped. */
     private String limitsWarning;
     /** True once {@link #bindTextures} has written a complete descriptor set; until then binding it is invalid. */
-    private boolean descriptorsWritten;
+    private final boolean[] descriptorsWritten = new boolean[DESCRIPTOR_SLOTS];
     private boolean deleted;
 
     /**
@@ -533,11 +543,11 @@ public final class VulkanTerrainPipeline {
      * @throws IllegalArgumentException if the uniform buffer has no storage
      * @throws IllegalStateException    if this pass samples the lightmap but no lightmap was supplied
      */
-    public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, VulkanBuffer uniforms) {
+    public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, VulkanBuffer uniforms, int slot) {
         if (uniforms == null) {
             throw new NullPointerException("uniforms");
         }
-        bindTextures(atlas, lightmap, uniforms.buffer(), uniforms.size());
+        bindTextures(atlas, lightmap, uniforms.buffer(), uniforms.size(), slot);
     }
 
     /**
@@ -557,7 +567,7 @@ public final class VulkanTerrainPipeline {
      * @throws IllegalStateException    if this pass samples the lightmap but no lightmap was supplied
      */
     public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, long uniformBuffer,
-                             long uniformBufferSize) {
+                             long uniformBufferSize, int slot) {
         requireAlive();
         if (atlas == null) {
             throw new NullPointerException("atlas");
@@ -594,19 +604,20 @@ public final class VulkanTerrainPipeline {
 
             // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
             // goes to BLOCK_ATLAS_BINDING (2) and the lightmap to LIGHTMAP_BINDING (1), matching the shader source.
+            long set = this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(3, stack);
-            writes.get(0).sType$Default().dstSet(descriptorSet).dstBinding(UNIFORM_BINDING).dstArrayElement(0)
+            writes.get(0).sType$Default().dstSet(set).dstBinding(UNIFORM_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                     .pBufferInfo(bufferInfo);
-            writes.get(1).sType$Default().dstSet(descriptorSet).dstBinding(BLOCK_ATLAS_BINDING).dstArrayElement(0)
+            writes.get(1).sType$Default().dstSet(set).dstBinding(BLOCK_ATLAS_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .pImageInfo(atlasInfo);
-            writes.get(2).sType$Default().dstSet(descriptorSet).dstBinding(LIGHTMAP_BINDING).dstArrayElement(0)
+            writes.get(2).sType$Default().dstSet(set).dstBinding(LIGHTMAP_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .pImageInfo(lightmapInfo);
             vkUpdateDescriptorSets(context.device(), writes, null);
         }
-        descriptorsWritten = true;
+        descriptorsWritten[slot & (DESCRIPTOR_SLOTS - 1)] = true;
         auditAtlasWrite(atlas);
     }
 
@@ -741,17 +752,22 @@ public final class VulkanTerrainPipeline {
         return this.pipeline;
     }
 
-    /** The descriptor set this object writes and binds; see {@link #pipelineHandle()}. */
-    public long descriptorSetHandle() {
-        return this.descriptorSet;
+    /** The descriptor set this object writes and binds for a frame slot; see {@link #pipelineHandle()}. */
+    public long descriptorSetHandle(int slot) {
+        return this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
     }
 
     public void bindDescriptors(VkCommandBuffer commandBuffer, long uniformBufferOffset) {
+        bindDescriptors(commandBuffer, uniformBufferOffset, 0);
+    }
+
+    public void bindDescriptors(VkCommandBuffer commandBuffer, long uniformBufferOffset, int slot) {
         requireAlive();
         if (commandBuffer == null) {
             throw new NullPointerException("commandBuffer");
         }
-        if (!descriptorsWritten) {
+        int useSlot = slot & (DESCRIPTOR_SLOTS - 1);
+        if (!descriptorsWritten[useSlot]) {
             throw new IllegalStateException("bindDescriptors was called before bindTextures for terrain pass '"
                     + passName + "'; the descriptor set holds no valid descriptors yet");
         }
@@ -776,7 +792,7 @@ public final class VulkanTerrainPipeline {
         auditAtlasDraw(uniformBufferOffset);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0,
-                    stack.longs(descriptorSet), stack.ints((int) uniformBufferOffset));
+                    stack.longs(this.descriptorSets[useSlot]), stack.ints((int) uniformBufferOffset));
         }
     }
 
@@ -897,7 +913,7 @@ public final class VulkanTerrainPipeline {
             this.context.celtium$noteDescriptorDestroy("terrain.delete");
 vkDestroyDescriptorPool(device, descriptorPool, null);
             descriptorPool = 0L;
-            descriptorSet = 0L;
+            java.util.Arrays.fill(this.descriptorSets, 0L);
         }
         if (descriptorSetLayout != 0L) {
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout, null);
@@ -918,7 +934,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         }
         uniformsSize = 0L;
         uniformsRange = 0;
-        descriptorsWritten = false;
+        java.util.Arrays.fill(descriptorsWritten, false);
         auditSummary("delete(" + passName + ")");
         this.boundAtlas = null;
     }
@@ -1252,20 +1268,25 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
 
     private void createDescriptorPool(MemoryStack stack, VkDevice device) {
         VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(2, stack);
-        sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(1);
-        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(2);
+        sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(DESCRIPTOR_SLOTS);
+        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(2 * DESCRIPTOR_SLOTS);
         VkDescriptorPoolCreateInfo create = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                .maxSets(1)
+                .maxSets(DESCRIPTOR_SLOTS)
                 .pPoolSizes(sizes);
         LongBuffer handle = stack.mallocLong(1);
         check(vkCreateDescriptorPool(device, create, null, handle), "vkCreateDescriptorPool");
 
         descriptorPool = handle.get(0);
+        long[] layouts = new long[DESCRIPTOR_SLOTS];
+        java.util.Arrays.fill(layouts, descriptorSetLayout);
+        LongBuffer sets = stack.mallocLong(DESCRIPTOR_SLOTS);
         VkDescriptorSetAllocateInfo allocate = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
                 .descriptorPool(descriptorPool)
-                .pSetLayouts(stack.longs(descriptorSetLayout));
-        check(vkAllocateDescriptorSets(device, allocate, handle), "vkAllocateDescriptorSets");
-        descriptorSet = handle.get(0);
+                .pSetLayouts(stack.longs(layouts));
+        check(vkAllocateDescriptorSets(device, allocate, sets), "vkAllocateDescriptorSets");
+        for (int slot = 0; slot < DESCRIPTOR_SLOTS; slot++) {
+            this.descriptorSets[slot] = sets.get(slot);
+        }
     }
 
     private static long createShaderModule(MemoryStack stack, VkDevice device, ByteBuffer code, String stage) {

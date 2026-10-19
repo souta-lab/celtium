@@ -10682,7 +10682,7 @@ this.frameBufferOpen = false;
                     + " size=" + this.lightmapTexture.width() + "x" + this.lightmapTexture.height()
                     + " atlas=" + this.atlasTexture.width() + "x" + this.atlasTexture.height());
         }
-        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size());
+        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size(), this.frameSlot);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
         }
@@ -10791,14 +10791,14 @@ this.frameBufferOpen = false;
             }
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
             long uniformOffset = this.terrain.writeUniforms(region, pass, camera);
-            pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
+            pipeline.bindDescriptors(this.commandBuffer, uniformOffset, this.frameSlot);
             if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
                 // Which pipeline and descriptor set the draw will actually use, next to the views the backend handed
                 // bindTextures. If the set printed here is not the one that was written, the terrain samples another
                 // image - and that is invisible from the image's content, however correct the content is.
                 this.boundHandleLogs++;
                 record("bound draw: pass=" + nameOf(pass) + " pipeline=" + Long.toHexString(pipeline.pipelineHandle())
-                        + " set=" + Long.toHexString(pipeline.descriptorSetHandle())
+                        + " set=" + Long.toHexString(pipeline.descriptorSetHandle(this.frameSlot))
                         + " atlasView=" + Long.toHexString(this.atlasTexture.view())
                         + " atlasKey=" + Long.toHexString(this.atlasTexture.key())
                         + " lightmapView=" + (this.lightmapTexture == null ? "none"
