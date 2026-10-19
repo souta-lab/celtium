@@ -167,6 +167,19 @@ public final class LegacyGlslLowering {
     public static Result lower(Stage stage, String source, Map<String, Integer> locations,
                                Map<String, Integer> bindings, Map<String, String> sharedUniforms,
                                boolean canonicalTransforms) {
+        return lower(stage, source, locations, bindings, sharedUniforms, canonicalTransforms, java.util.List.of());
+    }
+
+    /**
+     * Lowers one stage against a program-wide contract including the varying interface.
+     * <p>
+     * Both stages have to declare the same varyings in the same order, or a vertex output that the fragment stage does
+     * not declare is reported as WARNING-Shader-OutputNotConsumed - which is not an error in Vulkan, and is one of the
+     * messages this project's acceptance legs count.
+     */
+    public static Result lower(Stage stage, String source, Map<String, Integer> locations,
+                               Map<String, Integer> bindings, Map<String, String> sharedUniforms,
+                               boolean canonicalTransforms, java.util.List<String> sharedVaryings) {
         Map<String, Integer> assigned = new LinkedHashMap<>(locations);
         List<String> unsupported = new ArrayList<>();
         List<String> uniforms = new ArrayList<>();
@@ -333,6 +346,11 @@ public final class LegacyGlslLowering {
                 }
                 String type = parts[0];
                 String names = parts[1].replace(";", "").trim();
+                if (!sharedVaryings.isEmpty()) {
+                    // Declared once in the preamble from the contract, so both stages have the same list.
+                    varyingLine = true;
+                    continue;
+                }
                 String qualifier = (qualifierWord == null ? "" : qualifierWord + " ")
                         + (stage == Stage.VERTEX ? "out" : "in");
                 // "varying vec2 texCoord, lmCoord;" is one declaration and two variables: giving the pair one location
@@ -470,6 +488,31 @@ public final class LegacyGlslLowering {
             text.append(out.get(i)).append('\n');
             if (inserted == 0 && out.get(i).startsWith("#version")) {
                 text.append('\n');
+                if (!sharedVaryings.isEmpty()) {
+                    String storage = stage == Stage.VERTEX ? "out" : "in";
+                    for (int varyingIndex = 0; varyingIndex < sharedVaryings.size(); varyingIndex++) {
+                        // Two forms travel here: "type name" and "qualifier type name". Splitting into three parts only
+                        // covered the qualified one, so every plain varying was skipped and its uses became
+                        // "undeclared identifier".
+                        String[] parts = sharedVaryings.get(varyingIndex).trim().split("\\s+");
+                        String type;
+                        String name;
+                        String prefix = "";
+                        if (parts.length == 3) {
+                            prefix = parts[0] + " ";
+                            type = parts[1];
+                            name = parts[2];
+                        } else if (parts.length == 2) {
+                            type = parts[0];
+                            name = parts[1];
+                        } else {
+                            continue;
+                        }
+                        text.append("layout(location = ").append(varyingIndex).append(") ").append(prefix)
+                                .append(storage).append(' ').append(type).append(' ').append(name).append(";\n");
+                    }
+                    text.append('\n');
+                }
                 if (!plainUniforms.isEmpty()) {
                     text.append("layout(set = 0, binding = 1, std140) uniform ").append(UNIFORM_BLOCK).append(" {\n");
                     for (String member : plainUniforms.values()) {
@@ -570,14 +613,15 @@ public final class LegacyGlslLowering {
      * VUID-VkGraphicsPipelineCreateInfo-layout-07990 reports ("the pipeline layout is not compatible with the shader").
      * Scanning first and lowering both stages against the union keeps one type for both.
      */
-    public record Needs(Map<String, String> uniforms, java.util.List<String> samplers, boolean transforms,
-                        boolean ftransform) {
+    public record Needs(Map<String, String> uniforms, java.util.List<String> samplers,
+                        java.util.List<String> varyings, boolean transforms, boolean ftransform) {
     }
 
     /** {@return what the blocks would have to contain for this source}. */
     public static Needs scan(String source) {
         java.util.Map<String, String> uniforms = new LinkedHashMap<>();
         java.util.List<String> samplers = new ArrayList<>();
+        java.util.List<String> varyings = new ArrayList<>();
         boolean transforms = false;
         boolean ftransform = false;
         GlslComments comments = new GlslComments();
@@ -592,6 +636,25 @@ public final class LegacyGlslLowering {
                         String name = parts[1];
                         int bracket = name.indexOf('[');
                         uniforms.put(bracket >= 0 ? name.substring(0, bracket) : name, normalised);
+                    }
+                }
+            }
+            String varySource = null;
+            String qualifier = interpolationQualifier(code.trim());
+            if (qualifier != null) {
+                varySource = code.trim().substring((qualifier + " varying ").length());
+            } else if (code.trim().startsWith("varying ")) {
+                varySource = code.trim().substring("varying ".length());
+            }
+            if (varySource != null) {
+                String cleaned = varySource.replace(";", "").trim();
+                String[] parts = typeAndNames(cleaned);
+                if (parts != null) {
+                    for (String name : parts[1].split(",")) {
+                        String single = name.trim();
+                        if (!single.isEmpty()) {
+                            varyings.add((qualifier == null ? "" : qualifier + " ") + parts[0] + " " + single);
+                        }
                     }
                 }
             }
@@ -614,7 +677,7 @@ public final class LegacyGlslLowering {
                 }
             }
         }
-        return new Needs(uniforms, samplers, transforms, ftransform);
+        return new Needs(uniforms, samplers, varyings, transforms, ftransform);
     }
 
     /** {@return the interpolation qualifier a declaration starts with ({@code flat}, {@code smooth}, ...)}, or null. */

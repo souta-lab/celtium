@@ -14077,14 +14077,22 @@ this.frameBufferOpen = false;
                     for (int i = 0; i < allSamplers.size(); i++) {
                         samplerBindings.put(allSamplers.get(i), Integer.valueOf(2 + i));
                     }
+                    // The varying interface is a contract too: a vertex output the fragment stage does not declare is
+                    // WARNING-Shader-OutputNotConsumed, and the acceptance gate counts messages, not just errors.
+                    java.util.List<String> contractVaryings = new java.util.ArrayList<>(vertexNeeds.varyings());
+                    for (String varying : fragmentNeeds.varyings()) {
+                        if (!contractVaryings.contains(varying)) {
+                            contractVaryings.add(varying);
+                        }
+                    }
                     org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result vertex =
                             org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
                                     org.soutalab.celtium.shaderpack.Stage.VERTEX, vertexSource, java.util.Map.of(),
-                                    samplerBindings, contractUniforms, contractTransforms);
+                                    samplerBindings, contractUniforms, contractTransforms, contractVaryings);
                     org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result fragment =
                             org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
                                     org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragmentSource, java.util.Map.of(),
-                                    samplerBindings, contractUniforms, contractTransforms);
+                                    samplerBindings, contractUniforms, contractTransforms, contractVaryings);
                     org.soutalab.celtium.shaderpack.SpirvModule vertexModule =
                             compiler.compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertex.source());
                     org.soutalab.celtium.shaderpack.SpirvModule fragmentModule =

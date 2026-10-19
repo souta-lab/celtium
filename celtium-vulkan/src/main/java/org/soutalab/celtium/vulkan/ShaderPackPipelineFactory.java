@@ -123,6 +123,14 @@ public final class ShaderPackPipelineFactory {
             java.util.List<String> ordered = new java.util.ArrayList<>(attributes.keySet());
             ordered.sort(java.util.Comparator.comparingInt(attributes::get));
             for (String name : ordered) {
+                // Only attributes the shader actually reads. A pack declares attributes it does not use in a given
+                // program (BSL's mc_Entity is declared by the shared header, used only by some stages), and declaring a
+                // vertex input for one is "Vertex attribute at location N not consumed by vertex shader" - a warning,
+                // and this project's acceptance gate counts messages rather than only errors. The declaration itself is
+                // one occurrence of the name in the lowered source, so more than one means a use.
+                if (occurrences(vertexInterface.source(), name) <= 1) {
+                    continue;
+                }
                 String type = vertexInterface.attributeTypes().get(name);
                 int[] format = vertexFormat(type);
                 if (format == null) {
@@ -191,6 +199,25 @@ public final class ShaderPackPipelineFactory {
                 throw new IllegalStateException("vkCreateGraphicsPipelines failed: " + result);
             }
             return handle.get(0);
+        }
+    }
+
+    /** {@return how often a whole-word identifier occurs in the text}. */
+    private static int occurrences(String text, String identifier) {
+        int count = 0;
+        int from = 0;
+        while (true) {
+            int at = text.indexOf(identifier, from);
+            if (at < 0) {
+                return count;
+            }
+            boolean leftOk = at == 0 || !Character.isLetterOrDigit(text.charAt(at - 1));
+            int after = at + identifier.length();
+            boolean rightOk = after >= text.length() || !Character.isLetterOrDigit(text.charAt(after));
+            if (leftOk && rightOk) {
+                count++;
+            }
+            from = at + 1;
         }
     }
 
