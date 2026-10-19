@@ -7741,6 +7741,10 @@ this.frameBufferOpen = false;
         if (!this.frameBufferOpen) {
             return;
         }
+        if (this.shaderPackDraws < 3) {
+            System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
+                    + " slot=" + this.frameSlot);
+        }
         this.frameCoordinator.celtium$finishFrameBuffer(true);
     }
 
@@ -13893,10 +13897,15 @@ this.frameBufferOpen = false;
     /** The loaded pack, kept for the S2 probe's program paths. */
     private org.soutalab.celtium.shaderpack.PackManifest shaderPackManifest;
     /** {@code -Dceltium.shaderpack.drawProbe=true}: draw a triangle with the pack's shaders and record it. */
-    private static final boolean SHADER_PACK_DRAW_PROBE =
-            Boolean.getBoolean("celtium.shaderpack.drawProbe");
+    /** {@code drawProbe=true} draws a triangle, {@code drawProbe=clear} clears the image instead; anything else is off. */
+    private static final String SHADER_PACK_DRAW_PROBE_MODE =
+            System.getProperty("celtium.shaderpack.drawProbe", "false");
+    private static final boolean SHADER_PACK_DRAW_PROBE = !"false".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
+            && !SHADER_PACK_DRAW_PROBE_MODE.isEmpty();
+    private static final boolean SHADER_PACK_DRAW_CLEAR = "clear".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     private ShaderPackDrawProbe shaderPackDrawProbe;
     private int shaderPackDraws;
+    private boolean shaderPackDrawProbeProgramChosen;
 
     /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
     private static final boolean SHADER_COMPILE_PROBE =
@@ -14051,6 +14060,16 @@ this.frameBufferOpen = false;
                 if (program.isComputeOnly() || program.stages().size() < 2) {
                     continue;
                 }
+                // gbuffers_basic first: its vertex stage is the one whose transform the probe can satisfy - an
+                // identity model-view-projection and no shadow-pass uniforms - so a triangle drawn with it lands in
+                // the viewport. The first program the manifest lists is the shadow program, whose vertices depend on
+                // the shadow matrices; with a zeroed uniform block it projects to zero and is clipped away, which is
+                // exactly how the first attempts recorded a draw and showed nothing.
+                if (!this.shaderPackDrawProbeProgramChosen
+                        && !program.name().contains("basic") && !program.name().contains("textured")) {
+                    continue;
+                }
+                this.shaderPackDrawProbeProgramChosen = true;
                 org.soutalab.celtium.shaderpack.PackPath vertexPath =
                         program.stages().get(org.soutalab.celtium.shaderpack.Stage.VERTEX);
                 org.soutalab.celtium.shaderpack.PackPath fragmentPath =
@@ -14156,7 +14175,16 @@ this.frameBufferOpen = false;
         }
         // Every frame, not once: the first frame after the probe is prepared is a loading screen, and a draw recorded
         // there is in a frame nobody captures. One triangle a frame is not a cost worth a flag.
-        this.shaderPackDrawProbe.record(this.commandBuffer, target);
+        if (this.shaderPackDraws < 3) {
+            System.out.println("[Celtium] CELTIUM_PACK_DRAW_HOOK cb=" + Long.toHexString(this.commandBuffer.address())
+                    + " open=" + this.frameBufferOpen + " recording=" + this.commandState.recording()
+                    + " inPass=" + this.commandState.inRenderPass() + " slot=" + this.frameSlot);
+        }
+        if (SHADER_PACK_DRAW_CLEAR) {
+            this.shaderPackDrawProbe.recordClear(this.commandBuffer, target);
+        } else {
+            this.shaderPackDrawProbe.record(this.commandBuffer, target);
+        }
         this.shaderPackDraws++;
         if (this.shaderPackDraws <= 3 || this.shaderPackDraws % 300 == 0) {
             System.out.println("[Celtium] CELTIUM_PACK_DRAW recorded=true draws=" + this.shaderPackDraws);

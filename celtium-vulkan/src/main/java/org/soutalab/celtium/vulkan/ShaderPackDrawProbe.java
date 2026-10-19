@@ -50,6 +50,8 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private final List<VulkanHostBuffer> buffers = new ArrayList<>();
     /** The vertex buffers, in binding order; the uniform buffers are in {@link #buffers} for cleanup only. */
     private final List<VulkanHostBuffer> vertexBuffers = new ArrayList<>();
+    /** The attribute location each vertex buffer belongs to; the pipeline declares binding == location. */
+    private final List<Integer> vertexBufferLocations = new ArrayList<>();
     private final int vertexCount;
 
     private ShaderPackDrawProbe(VulkanContext context, long pipeline, long pipelineLayout, long descriptorPool,
@@ -168,6 +170,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 VulkanHostBuffer vertexBuffer = new VulkanHostBuffer(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
                 buffers.add(vertexBuffer);
                 vertexBuffers.add(vertexBuffer);
+                vertexBufferLocations.add(attribute.getValue());
                 FloatBuffer data = MemoryUtil.memFloatBuffer(vertexBuffer.mappedAddress(), bytes / 4);
                 for (int i = 0; i < 3 * components; i++) {
                     data.put(i, 0.0f);
@@ -193,6 +196,32 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             case "vec3": case "ivec3": return 3;
             case "vec4": case "ivec4": return 4;
             default: return 0;
+        }
+    }
+
+    /**
+     * Clears the delivered image's colour attachment instead of drawing, for the question "is this command buffer the one
+     * the present submits at all". If the picture turns magenta the recording is submitted and the draw is the problem;
+     * if it does not, the hook is recording into a buffer nobody sends.
+     */
+    void recordClear(VkCommandBuffer commandBuffer, GllessFrameTarget target) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkRenderingAttachmentInfoKHR.Buffer colour = VkRenderingAttachmentInfoKHR.calloc(1, stack);
+            colour.get(0).sType$Default().imageView(target.colorView())
+                    .imageLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+            org.lwjgl.vulkan.VkClearValue clear = org.lwjgl.vulkan.VkClearValue.calloc(stack);
+            clear.color().float32(0, 1.0f);
+            clear.color().float32(1, 0.0f);
+            clear.color().float32(2, 1.0f);
+            clear.color().float32(3, 1.0f);
+            colour.get(0).clearValue(clear);
+            org.lwjgl.vulkan.VkRect2D area = org.lwjgl.vulkan.VkRect2D.calloc(stack)
+                    .offset(it -> it.set(0, 0)).extent(it -> it.set(1280, 720));
+            VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
+                    .renderArea(area).layerCount(1).pColorAttachments(colour);
+            vkCmdBeginRenderingKHR(commandBuffer, rendering);
+            vkCmdEndRenderingKHR(commandBuffer);
         }
     }
 
@@ -222,9 +251,12 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                     .x(0.0f).y(0.0f).width(64.0f).height(64.0f).minDepth(0.0f).maxDepth(1.0f));
             vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                     .offset(it -> it.set(0, 0)).extent(it -> it.set(64, 64)));
-            for (int binding = 0; binding < vertexBuffers.size(); binding++) {
-                vkCmdBindVertexBuffers(commandBuffer, binding, stack.longs(vertexBuffers.get(binding).buffer()),
-                        stack.longs(0L));
+            // Bound at the attribute's OWN location. The buffers are created in the attribute map's order, which is
+            // alphabetical, and binding them as 0,1,2,... put position data on whichever location sorted third - the
+            // pipeline asked for it at its location and read zeros, which is why a recorded draw showed nothing.
+            for (int index = 0; index < vertexBuffers.size(); index++) {
+                vkCmdBindVertexBuffers(commandBuffer, vertexBufferLocations.get(index).intValue(),
+                        stack.longs(vertexBuffers.get(index).buffer()), stack.longs(0L));
             }
             vkCmdDraw(commandBuffer, vertexCount, 1, 0, 0);
             vkCmdEndRenderingKHR(commandBuffer);
