@@ -44,6 +44,11 @@ public final class ShadowMapPass {
     /** Draws of real terrain into the map, as opposed to the test triangle. */
     private long terrainPasses;
 
+    /** One shadow pipeline per terrain pipeline: a frame runs more than one variant, and a set bound under one layout is
+     * not compatible with a pipeline created under the other (VUID-vkCmdDrawIndexedIndirect-None-08600, measured when a
+     * single shadow pipeline was reused across variants). */
+    private final java.util.Map<Object, Long> terrainPipelines = new java.util.IdentityHashMap<>();
+
     private long terrainPipeline;
     private long terrainPipelineLayout;
     private long terrainModule;
@@ -214,9 +219,6 @@ public final class ShadowMapPass {
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
         vkCmdEndRenderingKHR(commandBuffer);
         this.passes++;
-        if (this.passes == 2) {
-            sampleDepthOnce();
-        }
     }
 
     /**
@@ -329,6 +331,9 @@ public final class ShadowMapPass {
      * rasteriser writes depth.
      */
     public boolean createTerrainPipeline(org.soutalab.celtium.vulkan.VulkanTerrainPipeline terrain) {
+        if (this.terrainPipelines.containsKey(terrain)) {
+            return true;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             java.nio.LongBuffer handle = stack.mallocLong(1);
             // The terrain's own pipeline layout, not a fresh one: its vertex stage reads the region uniforms through
@@ -404,6 +409,7 @@ public final class ShadowMapPass {
                 return false;
             }
             this.terrainPipeline = handle.get(0);
+            this.terrainPipelines.put(terrain, Long.valueOf(this.terrainPipeline));
             this.terrainModule = module;
             return true;
         } catch (RuntimeException | LinkageError error) {
@@ -421,16 +427,21 @@ public final class ShadowMapPass {
      * @param block the 32-float push block (projection then model view) the terrain vertex stage expects
      * @return whether anything was drawn
      */
-    public boolean recordTerrain(VkCommandBuffer commandBuffer, MemoryStack stack, long vertexBuffer, long indexBuffer,
-                                 long indirectBuffer, long indirectOffset, int indirectCount, float[] block,
-                                 long descriptorSet, int dynamicOffset) {
+    public boolean recordTerrain(org.soutalab.celtium.vulkan.VulkanTerrainPipeline terrain,
+                                 VkCommandBuffer commandBuffer, MemoryStack stack, long vertexBuffer,
+                                 long indexBuffer, long indirectBuffer, long indirectOffset, int indirectCount,
+                                 float[] block, long descriptorSet, int dynamicOffset) {
+        if (!this.terrainPipelines.containsKey(terrain) && !createTerrainPipeline(terrain)) {
+            return false;
+        }
+        long terrainPipelineForThisDraw = this.terrainPipelines.get(terrain).longValue();
         if (System.getProperty("celtium.shadow.diag") != null) {
             System.out.println("[Celtium] CELTIUM_SHADOW_RECORD terrainPipeline=" + this.terrainPipeline
                     + " vertex=" + Long.toHexString(vertexBuffer) + " indirect=" + Long.toHexString(indirectBuffer)
                     + " count=" + indirectCount + " block=" + (block == null ? -1 : block.length)
                     + " set=" + Long.toHexString(descriptorSet));
         }
-        if (this.terrainPipeline == 0L || vertexBuffer == 0L || indirectBuffer == 0L || indirectCount <= 0
+        if (terrainPipelineForThisDraw == 0L || vertexBuffer == 0L || indirectBuffer == 0L || indirectCount <= 0
                 || block == null || block.length < 32) {
             return false;
         }
@@ -447,7 +458,7 @@ public final class ShadowMapPass {
         VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
                 .renderArea(area).layerCount(1).pDepthAttachment(depth.get(0));
         vkCmdBeginRenderingKHR(commandBuffer, rendering);
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.terrainPipeline);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipelineForThisDraw);
         vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
                 .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
         vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
@@ -456,7 +467,7 @@ public final class ShadowMapPass {
             // The terrain pass bound its region's set with a dynamic offset inside its own pass; the frame's later windows
             // bound other sets, so the shadow scope has to bind it again - the same set and the same offset, which is what
             // makes this draw the same region the colour pass drew (seventeen messages in leg shadowTerrain2 without it).
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.terrainPipelineLayout, 0,
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain.pipelineLayout(), 0,
                     stack.longs(descriptorSet), stack.ints(dynamicOffset));
         }
         vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
@@ -467,11 +478,24 @@ public final class ShadowMapPass {
         for (int i = 0; i < 32; i++) {
             push.put(i, block[i]);
         }
-        vkCmdPushConstants(commandBuffer, this.terrainPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, push);
+        vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
         vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, indirectCount, 20);
         vkCmdEndRenderingKHR(commandBuffer);
         this.passes++;
         this.terrainPasses++;
+        if (this.terrainPasses == 60 && Boolean.getBoolean("celtium.shadow.depthSample")) {
+            // Sampled after real terrain has been drawn, not after the test triangle: a varied range here is the evidence
+            // that the map holds the world's geometry, where the triangle's constant 0.5 is not.
+            this.depthSampled = false;
+            sampleDepthOnce();
+            // The line that carries the answer: a constant 0.5 is the test triangle, a varied range is the world's own
+            // geometry in the map.
+            System.out.println("[Celtium] CELTIUM_SHADOW_DEPTH " + statistics());
+        }
+        if (System.getProperty("celtium.shadow.diag") != null && this.terrainPasses % 300 == 1) {
+            System.out.println("[Celtium] CELTIUM_SHADOW_TERRAIN_DRAWN terrainPasses=" + this.terrainPasses
+                    + " count=" + indirectCount + " passes=" + this.passes);
+        }
         return true;
     }
 

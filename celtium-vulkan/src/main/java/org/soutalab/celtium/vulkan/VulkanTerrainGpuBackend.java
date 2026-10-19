@@ -14349,7 +14349,7 @@ this.frameBufferOpen = false;
                         + " block=" + (terrainPipeline == null ? -1 : terrainPipeline.lastPushBlock().length));
             }
             if (terrainPipeline != null && this.shadowMapPass.hasTerrainPipeline()) {
-                drawn = this.shadowMapPass.recordTerrain(this.commandBuffer, stack,
+                drawn = this.shadowMapPass.recordTerrain(terrainPipeline, this.commandBuffer, stack,
                         this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
                         this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
                         this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
@@ -14357,7 +14357,7 @@ this.frameBufferOpen = false;
             } else if (terrainPipeline != null) {
                 drawn = this.shadowMapPass.createTerrainPipeline(terrainPipeline);
                 if (drawn) {
-                    drawn = this.shadowMapPass.recordTerrain(this.commandBuffer, stack,
+                    drawn = this.shadowMapPass.recordTerrain(terrainPipeline, this.commandBuffer, stack,
                             this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
                             this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
                             this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
@@ -14371,6 +14371,12 @@ this.frameBufferOpen = false;
             this.terrain.resetShadowCapture();
         } catch (RuntimeException | LinkageError error) {
             record("native shadow pass failed: " + describe(error));
+            if (System.getProperty("celtium.shadow.diag") != null) {
+                // The failure otherwise only lands in the report list, which is why the counter reading zero and the draw
+                // being attempted at all looked contradictory for a round.
+                System.out.println("[Celtium] CELTIUM_SHADOW_FAILED " + error);
+                error.printStackTrace(System.out);
+            }
         }
         if ((this.frameId % 300) == 0) {
             record("native shadow: " + this.shadowMapPass.statistics());
