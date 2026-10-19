@@ -4603,6 +4603,23 @@ public final class ValidationClient {
      * share, so an entry answers both "which phase" and "how much of it was the upload path".
      */
     private void celtium$recordSlowFrame(double intervalMs, long uploadThisFrameMillis) {
+        // The bound is checked before the entry is built, not after: the entry's renderer debug strings are a JFR
+        // hotspot of their own (Pattern$Slice.match and StringBuilder inside celtium$listedSections, ~5% of the client
+        // thread on the standard scene) and they were being built for every slow frame even once the retained list was
+        // full, only to be thrown away. Only a frame faster than the slowest retained one can displace anything, so
+        // only those are worth the strings.
+        if (celtium$slowFrames.size() >= SLOW_FRAME_MAX) {
+            int fastestRetained = 0;
+            for (int i = 1; i < celtium$slowFrameMillis.size(); i++) {
+                if (celtium$slowFrameMillis.get(i).doubleValue()
+                        < celtium$slowFrameMillis.get(fastestRetained).doubleValue()) {
+                    fastestRetained = i;
+                }
+            }
+            if (intervalMs <= celtium$slowFrameMillis.get(fastestRetained).doubleValue()) {
+                return;
+            }
+        }
         String entry = "worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms "
                 // Which pass produced this frame, from the renderer's own per-frame ring. The viewport and draw
                 // counters below say what the frame looked like; this says where its time went, and the two were
