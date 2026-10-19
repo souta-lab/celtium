@@ -94,7 +94,7 @@ public final class LegacyGlslLowering {
     /** The lowered source and what it declares, so a pipeline can be built against it without re-parsing the text. */
     public record Result(String source, Map<String, Integer> attributes, List<String> varyings, List<String> uniforms,
                          Map<String, Integer> samplers, List<String> unsupported, int originalVersion,
-                         String usedTransformBlock) {
+                         String usedTransformBlock, Map<String, String> attributeTypes) {
     }
 
     private static Map<String, String> builtinAttributes() {
@@ -160,6 +160,7 @@ public final class LegacyGlslLowering {
         List<String> varyings = new ArrayList<>();
         List<String> attributeDeclarations = new ArrayList<>();
         Map<String, String> attributeByBuiltin = new LinkedHashMap<>();
+        Map<String, String> attributeTypes = new LinkedHashMap<>();
         Map<String, Integer> samplerBindings = new LinkedHashMap<>(bindings);
         int nextBinding = 0;
         for (Integer used : samplerBindings.values()) {
@@ -277,6 +278,7 @@ public final class LegacyGlslLowering {
                     if (single.isEmpty()) {
                         continue;
                     }
+                    attributeTypes.put(single, type);
                     int location = assigned.computeIfAbsent(single, key -> Integer.valueOf(-1)).intValue();
                     if (location < 0) {
                         location = nextLocation++;
@@ -468,6 +470,7 @@ public final class LegacyGlslLowering {
                     text.append("layout(location = ").append(location).append(") in ").append(parts[0]).append(' ')
                             .append(parts[1]).append(";\n");
                     assigned.put(parts[1], Integer.valueOf(location));
+                    attributeTypes.put(parts[1], parts[0]);
                 }
                 if (!attributeByBuiltin.isEmpty()) {
                     text.append('\n');
@@ -485,7 +488,7 @@ public final class LegacyGlslLowering {
         Map<String, Integer> attributes = new TreeMap<>(assigned);
         return new Result(text.toString(), attributes, List.copyOf(varyings), List.copyOf(uniforms),
                 new TreeMap<>(samplerBindings), List.copyOf(unsupported), originalVersion,
-                usesTransforms ? TRANSFORM_BLOCK : "");
+                usesTransforms ? TRANSFORM_BLOCK : "", new TreeMap<>(attributeTypes));
     }
 
     /**

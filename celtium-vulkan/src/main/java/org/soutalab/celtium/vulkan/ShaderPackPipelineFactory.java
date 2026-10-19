@@ -2,6 +2,18 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
+import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
+import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
+import org.lwjgl.vulkan.VkPipelineColorBlendStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineDepthStencilStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineInputAssemblyStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineMultisampleStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineRasterizationStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
+import org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineViewportStateCreateInfo;
+import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
+import org.lwjgl.vulkan.VkVertexInputBindingDescription;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
 import org.lwjgl.vulkan.VkPipelineLayoutCreateInfo;
@@ -80,23 +92,169 @@ public final class ShaderPackPipelineFactory {
     }
 
     /**
+     * Creates a graphics pipeline for a pack program using dynamic rendering.
+     * <p>
+     * Dynamic rendering is what makes this possible at all: a pack's fragment stage writes however many colour
+     * attachments its DRAWBUFFERS line asks for, and a pipeline built against a fixed render pass would have to match
+     * that set exactly. The caller passes the formats of the targets it will render into; the pipeline itself comes from
+     * the lowered interface, one vertex binding per attribute (each attribute in its own buffer - the interleaved layout
+     * the game's own batches use is a separate decision, and this pipeline exists to prove the pack's shaders can be
+     * built at all).
+     */
+    public long createPipeline(long pipelineLayout, ModuleHandle vertex, ModuleHandle fragment,
+                               LegacyGlslLowering.Result vertexInterface, int colourFormat, int depthFormat) {
+        if (vertex == null || fragment == null || vertex.stage() != Stage.VERTEX
+                || fragment.stage() != Stage.FRAGMENT) {
+            throw new IllegalArgumentException("a pack pipeline needs one vertex and one fragment module");
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
+            stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertex.module())
+                    .pName(stack.UTF8("main"));
+            stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragment.module())
+                    .pName(stack.UTF8("main"));
+
+            Map<String, Integer> attributes = vertexInterface.attributes();
+            VkVertexInputAttributeDescription.Buffer attributeDescriptions =
+                    VkVertexInputAttributeDescription.calloc(attributes.size(), stack);
+            VkVertexInputBindingDescription.Buffer bindingDescriptions =
+                    VkVertexInputBindingDescription.calloc(attributes.size(), stack);
+            int index = 0;
+            java.util.List<String> ordered = new java.util.ArrayList<>(attributes.keySet());
+            ordered.sort(java.util.Comparator.comparingInt(attributes::get));
+            for (String name : ordered) {
+                String type = vertexInterface.attributeTypes().get(name);
+                int[] format = vertexFormat(type);
+                if (format == null) {
+                    continue;
+                }
+                int location = attributes.get(name).intValue();
+                bindingDescriptions.get(index).binding(location).stride(format[1])
+                        .inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                attributeDescriptions.get(index).location(location).binding(location).format(format[0]).offset(0);
+                index++;
+            }
+            bindingDescriptions.limit(index);
+            attributeDescriptions.limit(index);
+
+            VkPipelineVertexInputStateCreateInfo vertexInput =
+                    VkPipelineVertexInputStateCreateInfo.calloc(stack).sType$Default()
+                            .pVertexBindingDescriptions(bindingDescriptions)
+                            .pVertexAttributeDescriptions(attributeDescriptions);
+            VkPipelineInputAssemblyStateCreateInfo assembly =
+                    VkPipelineInputAssemblyStateCreateInfo.calloc(stack).sType$Default()
+                            .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
+                    .sType$Default().viewportCount(1).scissorCount(1);
+            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                    .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
+                    .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
+            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                    .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                    .sType$Default().depthTestEnable(true).depthWriteEnable(true)
+                    .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+            VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
+                    VkPipelineColorBlendAttachmentState.calloc(1, stack);
+            blendAttachment.get(0).colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                    | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+            VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
+                    .sType$Default().pAttachments(blendAttachment);
+            org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamic =
+                    org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                            .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR));
+
+            // Dynamic rendering: the targets are declared here instead of by a render pass.
+            org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR rendering =
+                    org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR.calloc(stack).sType$Default()
+                            .colorAttachmentCount(1)
+                            .pColorAttachmentFormats(stack.ints(colourFormat))
+                            .depthAttachmentFormat(depthFormat);
+            org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer info =
+                    org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default()
+                    .pStages(stages)
+                    .pVertexInputState(vertexInput)
+                    .pInputAssemblyState(assembly)
+                    .pViewportState(viewport)
+                    .pRasterizationState(raster)
+                    .pMultisampleState(multisample)
+                    .pDepthStencilState(depth)
+                    .pColorBlendState(blend)
+                    .pDynamicState(dynamic)
+                    .layout(pipelineLayout)
+                    .renderPass(VK_NULL_HANDLE)
+                    .pNext(rendering.address());
+            LongBuffer handle = stack.mallocLong(1);
+            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreateGraphicsPipelines failed: " + result);
+            }
+            return handle.get(0);
+        }
+    }
+
+    /** {@return the VkFormat and byte size of a GLSL attribute type}, or null when it cannot be a vertex input. */
+    private static int[] vertexFormat(String type) {
+        if (type == null) {
+            return null;
+        }
+        switch (type) {
+            case "float": return new int[] {VK_FORMAT_R32_SFLOAT, 4};
+            case "vec2": return new int[] {VK_FORMAT_R32G32_SFLOAT, 8};
+            case "vec3": return new int[] {VK_FORMAT_R32G32B32_SFLOAT, 12};
+            case "vec4": return new int[] {VK_FORMAT_R32G32B32A32_SFLOAT, 16};
+            case "int": return new int[] {VK_FORMAT_R32_SINT, 4};
+            case "ivec2": return new int[] {VK_FORMAT_R32G32_SINT, 8};
+            case "ivec3": return new int[] {VK_FORMAT_R32G32B32_SINT, 12};
+            case "ivec4": return new int[] {VK_FORMAT_R32G32B32A32_SINT, 16};
+            default: return null;
+        }
+    }
+
+    /**
      * Builds set 0 from the interface the lowering declared: binding 0 is the transform block, binding 1 the pack's own
      * uniforms, and each sampler takes the binding the lowering assigned to it.
      */
+    /**
+     * Builds set 0 from both stages of one program.
+     * <p>
+     * A binding is only legal when some shader uses it (VUID-VkGraphicsPipelineCreateInfo-layout-07990), and a pack's
+     * two stages do not declare the same things - the fragment stage samples textures the vertex stage has never heard
+     * of. The union is what the pipeline layout has to describe; a layout built from one stage left the other's
+     * bindings out and declared ones nothing used.
+     */
+    public LayoutHandle createLayout(LegacyGlslLowering.Result vertex, LegacyGlslLowering.Result fragment) {
+        boolean transformBlock = !vertex.usedTransformBlock().isEmpty() || !fragment.usedTransformBlock().isEmpty();
+        boolean uniformBlock = !vertex.uniforms().isEmpty() || !fragment.uniforms().isEmpty();
+        java.util.Set<Integer> samplerBindings = new java.util.TreeSet<>();
+        samplerBindings.addAll(vertex.samplers().values());
+        samplerBindings.addAll(fragment.samplers().values());
+        return createLayout(transformBlock, uniformBlock, samplerBindings, vertex.samplers(), fragment.samplers());
+    }
+
     public LayoutHandle createLayout(LegacyGlslLowering.Result lowered) {
+        boolean transformBlock = !lowered.usedTransformBlock().isEmpty();
+        boolean uniformBlock = !lowered.uniforms().isEmpty();
+        return createLayout(transformBlock, uniformBlock,
+                new java.util.TreeSet<>(lowered.samplers().values()), lowered.samplers(), java.util.Map.of());
+    }
+
+    private LayoutHandle createLayout(boolean transformBlock, boolean uniformBlock,
+                                      java.util.Set<Integer> samplerBindings,
+                                      Map<String, Integer> samplersA, Map<String, Integer> samplersB) {
         List<int[]> bindings = new ArrayList<>();
         // Only the bindings the program actually declares: a layout that names a binding no shader uses is what
         // VUID-VkDescriptorSetLayoutCreateInfo-binding-00279 reports, and a fragment stage that touches no
         // fixed-function matrix has no transform block at all.
-        boolean transformBlock = !lowered.usedTransformBlock().isEmpty();
-        int uniformBlockBinding = lowered.uniforms().isEmpty() ? -1 : 1;
+        int uniformBlockBinding = uniformBlock ? 1 : -1;
         if (transformBlock) {
             bindings.add(new int[] {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
         }
         if (uniformBlockBinding >= 0) {
             bindings.add(new int[] {uniformBlockBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
         }
-        for (Integer binding : lowered.samplers().values()) {
+        for (Integer binding : samplerBindings) {
             bindings.add(new int[] {binding.intValue(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1});
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -123,8 +281,10 @@ public final class ShaderPackPipelineFactory {
                 vkDestroyDescriptorSetLayout(context.device(), descriptorLayout.get(0), null);
                 throw new IllegalStateException("vkCreatePipelineLayout failed: " + result);
             }
+            Map<String, Integer> merged = new java.util.TreeMap<>(samplersA);
+            merged.putAll(samplersB);
             return new LayoutHandle(context.device(), descriptorLayout.get(0), pipelineLayout.get(0),
-                    uniformBlockBinding, lowered.samplers());
+                    uniformBlockBinding, merged);
         }
     }
 }

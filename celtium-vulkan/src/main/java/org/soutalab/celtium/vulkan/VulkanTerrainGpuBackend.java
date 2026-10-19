@@ -13981,6 +13981,7 @@ this.frameBufferOpen = false;
                 break;
             }
         }
+        celtium$probePackPipeline(compiler, pack);
         for (org.soutalab.celtium.shaderpack.PackPath path : wanted) {
             String file = path.toString();
             StringBuilder line = new StringBuilder("[Celtium] CELTIUM_PACK_PROGRAM file=").append(file);
@@ -14018,6 +14019,71 @@ this.frameBufferOpen = false;
                 line.append(" result=FAILED error=").append(text.length() > 300 ? text.substring(0, 300) : text);
             }
             System.out.println(line);
+        }
+    }
+
+    /**
+     * The first pack pipeline: one program's two stages, lowered, compiled, and turned into a graphics pipeline that
+     * declares its render targets through dynamic rendering rather than a render pass.
+     * <p>
+     * The formats here are the delivered image's own (R8G8B8A8 colour, D32 depth). They are hard-coded in the probe
+     * because it creates the pipeline without rendering into anything; the draw will take them from the target it draws
+     * to. What the probe is for is the step the rest of the work depends on: that a pack's shaders come out of the
+     * lowering and the compiler as something Vulkan will accept as a pipeline.
+     */
+    private void celtium$probePackPipeline(ShadercGlslCompiler compiler, java.nio.file.Path pack) {
+        if (this.shaderPackManifest == null) {
+            return;
+        }
+        for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : this.shaderPackManifest.dimensions()) {
+            for (org.soutalab.celtium.shaderpack.ProgramEntry program : dimension.programs()) {
+                if (program.isComputeOnly() || program.stages().size() < 2) {
+                    continue;
+                }
+                org.soutalab.celtium.shaderpack.PackPath vertexPath =
+                        program.stages().get(org.soutalab.celtium.shaderpack.Stage.VERTEX);
+                org.soutalab.celtium.shaderpack.PackPath fragmentPath =
+                        program.stages().get(org.soutalab.celtium.shaderpack.Stage.FRAGMENT);
+                if (vertexPath == null || fragmentPath == null) {
+                    continue;
+                }
+                StringBuilder line = new StringBuilder("[Celtium] CELTIUM_PACK_PIPELINE program=")
+                        .append(program.name());
+                ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(this.context);
+                try {
+                    String vertexSource = org.soutalab.celtium.shaderpack.ShaderPackLoader.expand(pack, vertexPath,
+                            java.util.Map.of("MC_VERSION", "11202"));
+                    String fragmentSource = org.soutalab.celtium.shaderpack.ShaderPackLoader.expand(pack, fragmentPath,
+                            java.util.Map.of("MC_VERSION", "11202"));
+                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result vertex =
+                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
+                                    org.soutalab.celtium.shaderpack.Stage.VERTEX, vertexSource, java.util.Map.of());
+                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result fragment =
+                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
+                                    org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragmentSource, java.util.Map.of());
+                    org.soutalab.celtium.shaderpack.SpirvModule vertexModule =
+                            compiler.compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertex.source());
+                    org.soutalab.celtium.shaderpack.SpirvModule fragmentModule =
+                            compiler.compile(org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragment.source());
+                    try (ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
+                         ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
+                         ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(vertex, fragment)) {
+                        long pipeline = factory.createPipeline(layout.pipelineLayout(), vertexHandle, fragmentHandle,
+                                vertex, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                                org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
+                        line.append(" pipeline=").append(pipeline != 0L ? "ok" : "null")
+                                .append(" attributes=").append(vertex.attributes().size())
+                                .append(" result=OK");
+                        org.lwjgl.vulkan.VK10.vkDestroyPipeline(this.context.device(), pipeline, null);
+                    }
+                } catch (Throwable failure) {
+                    String text = String.valueOf(failure);
+                    line.append(" result=FAILED error=")
+                            .append(text.substring(0, Math.min(240, text.length())));
+                }
+                System.out.println(line);
+                return;
+            }
         }
     }
 
