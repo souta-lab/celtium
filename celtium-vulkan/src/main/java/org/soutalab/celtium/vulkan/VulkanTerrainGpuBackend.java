@@ -2636,6 +2636,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
                 + " groupLoopIterations=" + this.immediateStatistics.groupLoopIterations()
                 + " groupLoopCalls=" + this.immediateStatistics.groupLoopCalls()
+                + (this.shadowMapPass == null ? "" : " shadow=[" + this.shadowMapPass.statistics() + "]")
                 + " offerCount=" + this.immediateOfferCount
                 + " offerTotalMillis=" + (this.immediateSubmitNanos / 1000000L)
                 + " offersLastFrame=" + this.immediateOffersLastFrame
@@ -7781,6 +7782,7 @@ this.frameBufferOpen = false;
             // window's pass is exactly that point - the pass has ended, the frame buffer is still open, and the present
             // has not been queued.
             celtium$recordShaderPackDraw();
+            celtium$recordShadowPass();
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
             celtium$finishFrameBuffer();
@@ -13955,6 +13957,9 @@ this.frameBufferOpen = false;
 
     /** The first terrain-shaped batch's vertices, kept for the shaderpack probe's real-geometry draw. */
     private java.nio.ByteBuffer terrainCaptureVertices;
+
+    /** The native shadow map's pass, present only when {@code -Dceltium.shadow.enabled=true}. */
+    private org.soutalab.celtium.vulkan.shadow.ShadowMapPass shadowMapPass;
     private int terrainCaptureStride;
     private int terrainCaptureCount;
     private int terrainCaptureFormat;
@@ -14295,6 +14300,36 @@ this.frameBufferOpen = false;
     }
 
     /** Records the pack's triangle into the delivered image, once, after the window's own pass has ended. */
+    /**
+     * Records the native shadow map's pass for this frame, when the pass was requested.
+     * <p>
+     * The window and the frame boundary are where the frame's own recording is still open, which is the only place a
+     * separate pass can be recorded without a second submission. Nothing about the shaderless path changes when the pass
+     * is off, and when it is on this slice only clears the map: drawing terrain into it from the light's matrix, and
+     * sampling it in the world pass, are the next slices.
+     */
+    private void celtium$recordShadowPass() {
+        if (!org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested()) {
+            return;
+        }
+        if (this.shadowMapPass == null) {
+            this.shadowMapPass = org.soutalab.celtium.vulkan.shadow.ShadowMapPass.create(this.context);
+            if (this.shadowMapPass == null) {
+                record("native shadow map could not be created");
+                return;
+            }
+            record("native shadow map created: " + this.shadowMapPass.statistics());
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            this.shadowMapPass.record(this.commandBuffer, stack);
+        } catch (RuntimeException | LinkageError error) {
+            record("native shadow pass failed: " + describe(error));
+        }
+        if ((this.frameId % 300) == 0) {
+            record("native shadow: " + this.shadowMapPass.statistics());
+        }
+    }
+
     private void celtium$recordShaderPackDraw() {
         if (this.shaderPackDrawProbe == null) {
             return;

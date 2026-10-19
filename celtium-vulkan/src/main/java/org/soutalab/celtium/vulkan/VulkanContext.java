@@ -1618,7 +1618,7 @@ public final class VulkanContext {
      * @param purpose resource description used in the failure message
      * @throws IllegalStateException when no memory type satisfies the request
      */
-    int memoryTypeIndex(int typeBits, int requiredProperties, String purpose) {
+    public int memoryTypeIndex(int typeBits, int requiredProperties, String purpose) {
         requireUsable();
         for (int i = 0; i < this.memoryProperties.memoryTypeCount(); i++) {
             if ((typeBits & (1 << i)) != 0
