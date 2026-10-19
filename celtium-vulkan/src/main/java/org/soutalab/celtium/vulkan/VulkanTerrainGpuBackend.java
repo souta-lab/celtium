@@ -13907,6 +13907,9 @@ this.frameBufferOpen = false;
     /** {@code drawProbe=builtin}: the hard-coded triangle, for separating the draw state from the pack's own shaders. */
     private static final boolean SHADER_PACK_DRAW_BUILTIN = "builtin".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     private ShaderPackDrawProbe shaderPackDrawProbe;
+    /** The delivered image's size, from the frame target; the capture's size is not assumed to be it. */
+    private int frameTargetWidth = 1280;
+    private int frameTargetHeight = 720;
     private int shaderPackDraws;
     private boolean shaderPackDrawProbeProgramChosen;
 
@@ -14193,12 +14196,25 @@ this.frameBufferOpen = false;
                     + " inPass=" + this.commandState.inRenderPass() + " slot=" + this.frameSlot);
         }
         if (SHADER_PACK_DRAW_CLEAR) {
-            this.shaderPackDrawProbe.recordClear(this.commandBuffer, target,
-                    "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE) ? 64 : 1280,
-                    "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE) ? 64 : 720);
+            if ("small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)) {
+                // Two rectangles in one frame, in two colours: a half-size one (the image's real dimensions matter here,
+                // so they are logged) and a 64x64 one at the origin. One leg then answers both "does a partial area
+                // take at all" and "does a small one".
+                int width = this.frameTargetWidth;
+                int height = this.frameTargetHeight;
+                System.out.println("[Celtium] CELTIUM_PACK_DRAW targetSize=" + width + "x" + height);
+                this.shaderPackDrawProbe.recordClear(this.commandBuffer, target, 0, 0,
+                        Math.max(1, width / 2), Math.max(1, height / 2), 1.0f, 0.0f, 1.0f);
+                this.shaderPackDrawProbe.recordClear(this.commandBuffer, target, 0, 0, 64, 64, 0.0f, 1.0f, 0.0f);
+            } else {
+                this.shaderPackDrawProbe.recordClear(this.commandBuffer, target, 0, 0, this.frameTargetWidth,
+                        this.frameTargetHeight, 1.0f, 0.0f, 1.0f);
+            }
         } else {
             this.shaderPackDrawProbe.record(this.commandBuffer, target);
         }
+        this.frameTargetWidth = target.width();
+        this.frameTargetHeight = target.height();
         this.shaderPackDraws++;
         if (this.shaderPackDraws <= 3 || this.shaderPackDraws % 300 == 0) {
             System.out.println("[Celtium] CELTIUM_PACK_DRAW recorded=true draws=" + this.shaderPackDraws);

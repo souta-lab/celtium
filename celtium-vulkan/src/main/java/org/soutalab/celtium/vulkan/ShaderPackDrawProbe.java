@@ -222,19 +222,25 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      * attachment are fine and the draw state is what fails; if it does not, the small-area path itself is broken.
      */
     void recordClear(VkCommandBuffer commandBuffer, GllessFrameTarget target, int width, int height) {
+        recordClear(commandBuffer, target, 0, 0, width, height, 1.0f, 0.0f, 1.0f);
+    }
+
+    /** Clears one rectangle to a colour; the diagnostic that says which areas of the delivered image actually take. */
+    void recordClear(VkCommandBuffer commandBuffer, GllessFrameTarget target, int x, int y, int width, int height,
+                     float red, float green, float blue) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkRenderingAttachmentInfoKHR.Buffer colour = VkRenderingAttachmentInfoKHR.calloc(1, stack);
             colour.get(0).sType$Default().imageView(target.colorView())
                     .imageLayout(VK_IMAGE_LAYOUT_GENERAL)
                     .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
             org.lwjgl.vulkan.VkClearValue clear = org.lwjgl.vulkan.VkClearValue.calloc(stack);
-            clear.color().float32(0, 1.0f);
-            clear.color().float32(1, 0.0f);
-            clear.color().float32(2, 1.0f);
+            clear.color().float32(0, red);
+            clear.color().float32(1, green);
+            clear.color().float32(2, blue);
             clear.color().float32(3, 1.0f);
             colour.get(0).clearValue(clear);
             org.lwjgl.vulkan.VkRect2D area = org.lwjgl.vulkan.VkRect2D.calloc(stack)
-                    .offset(it -> it.set(0, 0)).extent(it -> it.set(width, height));
+                    .offset(it -> it.set(x, y)).extent(it -> it.set(width, height));
             VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
                     .renderArea(area).layerCount(1).pColorAttachments(colour);
             vkCmdBeginRenderingKHR(commandBuffer, rendering);

@@ -544,6 +544,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.colorImage;
     }
 
+    /** {@return the delivered image's width}, which the probe reports instead of assuming the capture's size. */
+    public int width() {
+        return this.width;
+    }
+
+    /** {@return the delivered image's height}. */
+    public int height() {
+        return this.height;
+    }
+
+
     @Override
     public long colorView() {
         checkAlive();
