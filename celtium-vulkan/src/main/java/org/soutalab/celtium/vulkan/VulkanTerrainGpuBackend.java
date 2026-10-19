@@ -9336,7 +9336,9 @@ this.frameBufferOpen = false;
         // A window of its own: its own render pass over the frame target, so the depth it tests against is whatever
         // that pass loads or the game's last clear left there.
         this.immediateDrawSite = "immediate-only-window";
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("wrecLoop");
         drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
+        org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);

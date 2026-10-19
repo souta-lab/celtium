@@ -74,7 +74,11 @@ public final class FramePassTimings {
             // between the begin and the acquire barriers - target resolution, group filtering, the queued clear and
             // the diagnostics. actualFlush minus winRecord left more than half of the flush unaccounted for, and these
             // two names say which side of the pass it is on.
-            "wfpBegin", "wfpMiddle"};
+            "wfpBegin", "wfpMiddle",
+            // The immediate window's group loop on its own: the window's recording is 0.95 ms a frame and the loop's
+            // per-group work is the part the driver-call probes could not explain (skipping the pushes and the draws
+            // changed neither the loop's own timer nor the frame).
+            "wrecLoop"};
 
     private static final int CAPACITY = 512;
 
