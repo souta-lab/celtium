@@ -47,6 +47,84 @@ public final class ShaderPackVertexAdapter {
     }
 
     /**
+     * Converts the renderer's own terrain vertices ({@code CompactChunkVertex}, 24 bytes) to the pack's attributes.
+     * <p>
+     * The terrain format is packed for bandwidth, not for shaders: positions and texture coordinates are split into a
+     * high half in their own 16-bit field and a low half collected in one packed field, and the draw parameters and light
+     * share a 32-bit word. The layout and the encode order are the ones {@code CompactChunkVertex.createEncoder} writes,
+     * which is what makes this a decode rather than a guess:
+     * <pre>
+     *   +0  u16 x &gt;&gt; 5      +2  u16 y &gt;&gt; 5      +4  u16 z &gt;&gt; 5
+     *   +6  u16 (x &amp; 31) | ((y &amp; 31) &lt;&lt; 5) | ((z &amp; 31) &lt;&lt; 10)
+     *   +8  u32 colour     +12 u16 u &gt;&gt; 2      +14 u16 v &gt;&gt; 2
+     *   +16 u32 drawParameters (material | u low &lt;&lt; 4 | v low &lt;&lt; 6 | section &lt;&lt; 8) | light &lt;&lt; 16
+     *   +20 i32 rdhFactor
+     * </pre>
+     * Positions decode to the chunk-local space the encoder quantised (origin 8, range 32); the caller supplies the
+     * section offset when it needs world coordinates.
+     *
+     * @return the pack attributes, or null when the vertex count or stride is not the terrain format
+     */
+    public static Map<String, float[]> adaptTerrain(ByteBuffer source, int stride, int vertexCount) {
+        if (source == null || vertexCount <= 0 || stride < 24) {
+            return null;
+        }
+        int[] counts = components();
+        Map<String, float[]> result = new LinkedHashMap<>();
+        for (int attribute = 0; attribute < ATTRIBUTES.length; attribute++) {
+            result.put(ATTRIBUTES[attribute], new float[vertexCount * counts[attribute]]);
+        }
+        // The quantisation constants of the format: positions are stored as (origin + value) * scale, textures as
+        // round(value * 2^17).
+        final float modelOrigin = 8.0f;
+        final float modelScaleInv = (float) (1 << 21) / 32.0f;
+        final float textureScale = 1.0f / (float) (1 << 17);
+        for (int vertex = 0; vertex < vertexCount; vertex++) {
+            int base = vertex * stride;
+            int xHigh = source.getShort(base) & 0xFFFF;
+            int yHigh = source.getShort(base + 2) & 0xFFFF;
+            int zHigh = source.getShort(base + 4) & 0xFFFF;
+            int low = source.getShort(base + 6) & 0xFFFF;
+            int x = (xHigh << 5) | (low & 0x1F);
+            int y = (yHigh << 5) | ((low >> 5) & 0x1F);
+            int z = (zHigh << 5) | ((low >> 10) & 0x1F);
+            float[] position = result.get("a_Position");
+            position[vertex * 4] = x / modelScaleInv - modelOrigin;
+            position[vertex * 4 + 1] = y / modelScaleInv - modelOrigin;
+            position[vertex * 4 + 2] = z / modelScaleInv - modelOrigin;
+            position[vertex * 4 + 3] = 1.0f;
+
+            int colour = source.getInt(base + 8);
+            float[] colourOut = result.get("a_Colour");
+            // The format stores the colour as the four bytes GL's client array carries, so the byte order is the one the
+            // renderer's own shader reads: red in the low byte.
+            colourOut[vertex * 4] = (colour & 0xFF) / 255.0f;
+            colourOut[vertex * 4 + 1] = ((colour >> 8) & 0xFF) / 255.0f;
+            colourOut[vertex * 4 + 2] = ((colour >> 16) & 0xFF) / 255.0f;
+            colourOut[vertex * 4 + 3] = ((colour >> 24) & 0xFF) / 255.0f;
+
+            int drawParameters = source.getInt(base + 16);
+            int u = ((source.getShort(base + 12) & 0xFFFF) << 2) | ((drawParameters >> 4) & 0x3);
+            int v = ((source.getShort(base + 14) & 0xFFFF) << 2) | ((drawParameters >> 6) & 0x3);
+            float[] tex = result.get("a_TexCoord0");
+            tex[vertex * 4] = u * textureScale;
+            tex[vertex * 4 + 1] = v * textureScale;
+            tex[vertex * 4 + 3] = 1.0f;
+
+            // The packed light rides in the upper half: block light in the low byte, sky light in the next.
+            int light = (drawParameters >>> 16) & 0xFFFF;
+            float[] lm = result.get("mc_midTexCoord");
+            lm[vertex * 4] = (light & 0xFF) / 255.0f;
+            lm[vertex * 4 + 1] = ((light >> 8) & 0xFF) / 255.0f;
+
+            // The format carries no normal; the face-on default is what makes the shader light the surface rather than
+            // blacking it out.
+            result.get("a_Normal")[vertex * 3 + 2] = 1.0f;
+        }
+        return result;
+    }
+
+    /**
      * Converts {@code vertexCount} vertices.
      *
      * @param formatId the immediate format the source vertices use

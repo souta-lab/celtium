@@ -64,4 +64,55 @@ class ShaderPackVertexAdapterTest {
         assertEquals(1.0f, attributes.get("a_Position")[4], 0.0001f);
         assertEquals(3.0f, attributes.get("a_Position")[6], 0.0001f);
     }
+
+    /** Encodes one vertex exactly as CompactChunkVertex.createEncoder does, then checks the decode. */
+    @Test
+    void terrainVerticesDecodeToThePackAttributes() {
+        java.nio.ByteBuffer source = java.nio.ByteBuffer.allocate(24).order(java.nio.ByteOrder.nativeOrder());
+        float xValue = 1.5f;
+        float yValue = 2.25f;
+        float zValue = -3.0f;
+        int x = encodeTerrainPosition(xValue);
+        int y = encodeTerrainPosition(yValue);
+        int z = encodeTerrainPosition(zValue);
+        source.putShort(0, (short) (x >>> 5));
+        source.putShort(2, (short) (y >>> 5));
+        source.putShort(4, (short) (z >>> 5));
+        source.putShort(6, (short) ((x & 31) | ((y & 31) << 5) | ((z & 31) << 10)));
+        source.putInt(8, (0x80) | (0x40 << 8) | (0x20 << 16) | (0xFF << 24));
+        int u = 0x2A5A1;
+        int v = 0x1B2C3;
+        source.putShort(12, (short) (u >>> 2));
+        source.putShort(14, (short) (v >>> 2));
+        int drawParameters = ((u & 3) << 4) | ((v & 3) << 6) | (0x07 << 8);
+        int light = (0x0F) | (0xF0 << 8);
+        source.putInt(16, drawParameters | (light << 16));
+        source.putInt(20, 0);
+
+        Map<String, float[]> attributes = ShaderPackVertexAdapter.adaptTerrain(source, 24, 1);
+        // The quantisation step of the position field is 32 / 2^21, far below these tolerances.
+        assertEquals(xValue, attributes.get("a_Position")[0], 0.001f);
+        assertEquals(yValue, attributes.get("a_Position")[1], 0.001f);
+        assertEquals(zValue, attributes.get("a_Position")[2], 0.001f);
+        assertEquals(1.0f, attributes.get("a_Position")[3], 0.0001f);
+        assertEquals(128.0f / 255.0f, attributes.get("a_Colour")[0], 0.001f);
+        assertEquals(64.0f / 255.0f, attributes.get("a_Colour")[1], 0.001f);
+        assertEquals(32.0f / 255.0f, attributes.get("a_Colour")[2], 0.001f);
+        assertEquals(255.0f / 255.0f, attributes.get("a_Colour")[3], 0.001f);
+        assertEquals(u / (float) (1 << 17), attributes.get("a_TexCoord0")[0], 0.0001f);
+        assertEquals(v / (float) (1 << 17), attributes.get("a_TexCoord0")[1], 0.0001f);
+        assertEquals(15.0f / 255.0f, attributes.get("mc_midTexCoord")[0], 0.001f);
+        assertEquals(240.0f / 255.0f, attributes.get("mc_midTexCoord")[1], 0.001f);
+        assertEquals(1.0f, attributes.get("a_Normal")[2], 0.0001f, "the format has no normal: face-on default");
+    }
+
+    @Test
+    void terrainDecodeRefusesAShortStride() {
+        assertNull(ShaderPackVertexAdapter.adaptTerrain(ByteBuffer.allocate(24), 16, 1));
+    }
+
+    /** {@return the packed position field for a value}, matching CompactChunkVertex's encoder. */
+    private static int encodeTerrainPosition(float value) {
+        return (int) ((8.0f + value) * ((float) (1 << 21) / 32.0f)) & ((1 << 21) - 1);
+    }
 }
