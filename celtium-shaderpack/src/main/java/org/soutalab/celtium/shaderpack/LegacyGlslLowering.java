@@ -180,9 +180,18 @@ public final class LegacyGlslLowering {
         // every opaque uniform needs one, and a later line may sample a sampler declared earlier.
         Map<String, String> samplerRenames = new LinkedHashMap<>();
         Map<String, String> plainUniforms = new LinkedHashMap<>();
+        java.util.Set<String> declaredLocals = new java.util.LinkedHashSet<>();
         GlslComments prescan = new GlslComments();
         for (String line : lines) {
-            String plain = plainUniformDeclaration(prescan.split(line).code());
+            String code = prescan.split(line).code();
+            String local = localDeclarationName(code);
+            if (local != null) {
+                // A local (or global) variable the pack declares shadows any built-in of the same name. Packs really do
+                // this - BSL declares "vec3 fogColor" - and rewriting the declaration produced
+                // "vec3 celtium_uniforms.fogColor", which the compiler reports as "unexpected DOT".
+                declaredLocals.add(local);
+            }
+            String plain = plainUniformDeclaration(code);
             if (plain != null) {
                 for (String one : plain.substring("uniform ".length()).split("\u0000")) {
                     String normalised = one.trim().replaceAll("\\s+", " ");
@@ -369,6 +378,9 @@ public final class LegacyGlslLowering {
                     continue;
                 }
                 for (Map.Entry<String, String> uniform : plainUniforms.entrySet()) {
+                    if (declaredLocals.contains(uniform.getKey())) {
+                        continue;
+                    }
                     if (containsIdentifier(lowered, uniform.getKey())) {
                         lowered = replaceIdentifier(lowered, uniform.getKey(), UNIFORM_INSTANCE + "." + uniform.getKey());
                     }
@@ -412,6 +424,9 @@ public final class LegacyGlslLowering {
                     used = true;
                     break;
                 }
+            }
+            if (declaredLocals.contains(builtin.getKey())) {
+                used = false;
             }
             if (used && !plainUniforms.containsKey(builtin.getKey())) {
                 plainUniforms.put(builtin.getKey(), builtin.getValue());
@@ -481,6 +496,40 @@ public final class LegacyGlslLowering {
      * {@code "vec2 texCoord,"} into the type - which emitted both names under one location and is what
      * "overlapping use of location 1" was.
      */
+    /** GLSL type keywords a variable declaration can start with, for {@link #localDeclarationName}. */
+    private static final java.util.Set<String> TYPE_KEYWORDS = java.util.Set.of(
+            "float", "int", "uint", "bool", "double",
+            "vec2", "vec3", "vec4", "ivec2", "ivec3", "ivec4", "uvec2", "uvec3", "uvec4", "bvec2", "bvec3", "bvec4",
+            "mat2", "mat3", "mat4", "mat2x2", "mat3x3", "mat4x4", "dvec2", "dvec3", "dvec4");
+
+    /** {@return the name a code line declares as a variable}, or null when the line is not a declaration. */
+    private static String localDeclarationName(String code) {
+        String trimmed = code.trim();
+        if (trimmed.isEmpty() || trimmed.startsWith("layout") || trimmed.startsWith("uniform")
+                || trimmed.startsWith("varying") || trimmed.startsWith("attribute") || trimmed.startsWith("in ")
+                || trimmed.startsWith("out ") || trimmed.startsWith("const ") || trimmed.startsWith("struct")
+                || trimmed.startsWith("//") || trimmed.startsWith("#")) {
+            return null;
+        }
+        String[] parts = trimmed.split("\\s+");
+        if (parts.length < 2 || !TYPE_KEYWORDS.contains(parts[0])) {
+            return null;
+        }
+        String name = parts[1];
+        int bracket = name.indexOf('[');
+        if (bracket >= 0) {
+            name = name.substring(0, bracket);
+        }
+        while (name.endsWith(";") || name.endsWith(",") || name.endsWith("=") || name.endsWith(")")) {
+            name = name.substring(0, name.length() - 1);
+        }
+        if (name.isEmpty() || !Character.isJavaIdentifierStart(name.charAt(0))) {
+            return null;
+        }
+        // "vec3 fogColor = ..." and "vec3 a, b;" both declare names; the first is enough for the shadowing rule.
+        return name;
+    }
+
     /** {@return the interpolation qualifier a declaration starts with ({@code flat}, {@code smooth}, ...)}, or null. */
     private static String interpolationQualifier(String trimmed) {
         for (String word : new String[] {"flat", "smooth", "noperspective", "centroid", "sample"}) {

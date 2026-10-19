@@ -85,10 +85,16 @@ public final class ShaderPackPipelineFactory {
      */
     public LayoutHandle createLayout(LegacyGlslLowering.Result lowered) {
         List<int[]> bindings = new ArrayList<>();
+        // Only the bindings the program actually declares: a layout that names a binding no shader uses is what
+        // VUID-VkDescriptorSetLayoutCreateInfo-binding-00279 reports, and a fragment stage that touches no
+        // fixed-function matrix has no transform block at all.
+        boolean transformBlock = !lowered.usedTransformBlock().isEmpty();
         int uniformBlockBinding = lowered.uniforms().isEmpty() ? -1 : 1;
-        bindings.add(new int[] {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
+        if (transformBlock) {
+            bindings.add(new int[] {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
+        }
         if (uniformBlockBinding >= 0) {
-            bindings.add(new int[] {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
+            bindings.add(new int[] {uniformBlockBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1});
         }
         for (Integer binding : lowered.samplers().values()) {
             bindings.add(new int[] {binding.intValue(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1});

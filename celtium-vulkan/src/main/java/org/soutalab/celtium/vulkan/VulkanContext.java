@@ -1961,6 +1961,14 @@ public final class VulkanContext {
     /** The device extensions this context actually enabled, named in the contract line rather than implied. */
     private List<String> enabledDeviceExtensions = new ArrayList<String>();
     /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
+    /** Whether VK_KHR_dynamic_rendering was enabled on the device, which the shaderpack path builds pipelines on. */
+    private boolean dynamicRenderingSupported;
+
+    /** {@return whether dynamic rendering is enabled on this device}. */
+    public boolean dynamicRenderingSupported() {
+        return dynamicRenderingSupported;
+    }
+
     private boolean multiDrawIndirectSupported;
     /** Whether drawIndirectFirstInstance was reported by the device and therefore enabled at creation. */
     private boolean drawIndirectFirstInstanceSupported;
@@ -2275,6 +2283,16 @@ public final class VulkanContext {
                     deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
                 }
             }
+            // Dynamic rendering, for the shaderpack path: a pack's fragment stage writes however many colour attachments
+            // its DRAWBUFFERS line asks for, and a VkPipeline has to be created against render targets whose formats
+            // match. The extension form is used rather than the Vulkan 1.3 core feature because this instance is created
+            // at API 1.2 - the KHR extension works from 1.0 and every driver that has the core feature advertises it.
+            Set<String> advertised = deviceExtensionNames(stack, this.physicalDevice);
+            this.dynamicRenderingSupported = advertised.contains(
+                    org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+            if (this.dynamicRenderingSupported) {
+                deviceExtensions.add(org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+            }
             PointerBuffer names = stack.mallocPointer(deviceExtensions.size());
             for (String extension : deviceExtensions) {
                 names.put(stack.UTF8(extension));
@@ -2301,6 +2319,21 @@ public final class VulkanContext {
                     .pQueueCreateInfos(queues)
                     .ppEnabledExtensionNames(names)
                     .pEnabledFeatures(enabledFeatures);
+            org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRendering = null;
+            if (this.dynamicRenderingSupported) {
+                dynamicRendering = org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR.calloc(stack)
+                        .sType$Default().dynamicRendering(true);
+                org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR supported =
+                        org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 =
+                        org.lwjgl.vulkan.VkPhysicalDeviceFeatures2.calloc(stack).sType$Default().pNext(supported.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
+                this.dynamicRenderingSupported = supported.dynamicRendering();
+                dynamicRendering.dynamicRendering(this.dynamicRenderingSupported);
+                if (this.dynamicRenderingSupported) {
+                    createInfo.pNext(dynamicRendering.address());
+                }
+            }
             PointerBuffer handle = stack.mallocPointer(1);
             check(vkCreateDevice(this.physicalDevice, createInfo, null, handle),
                     "vkCreateDevice(" + this.deviceName + ")");
