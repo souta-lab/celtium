@@ -203,6 +203,51 @@ public final class VulkanContext {
     public static int queueWaitFailures;
     /** Device-wide waits at teardown that did not confirm idle, so quarantined resources were deliberately held. */
     public static int deviceIdleFailures;
+    /**
+     * Readback buffers whose submission was not confirmed complete.
+     * <p>
+     * A fence wait that times out (or cannot confirm completion) quarantines the command buffer, because the queue may
+     * still be reading the buffer it was copying into. The readback path's own buffer and memory are referenced by that
+     * recording too, so freeing them in a finally block - which audit #364 found - is a use-after-free on a live
+     * submission. They are held here and released at teardown instead, after the device-wide wait.
+     */
+    private final java.util.List<long[]> quarantinedReadbackBuffers =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** How many readback buffers were quarantined rather than freed, for the verification line. */
+    private long readbackQuarantines;
+
+    /** Hands a readback buffer and its memory to the teardown list instead of freeing them. */
+    public void quarantineReadbackBuffer(long buffer, long memory, String why) {
+        if (buffer == 0L && memory == 0L) {
+            return;
+        }
+        this.readbackQuarantines++;
+        this.quarantinedReadbackBuffers.add(new long[] {buffer, memory});
+        if (this.readbackQuarantines <= 4) {
+            System.out.println("[Celtium] CELTIUM_READBACK_QUARANTINED buffer=" + Long.toHexString(buffer)
+                    + " memory=" + Long.toHexString(memory) + " why=" + why);
+        }
+    }
+
+    /** {@return how many readback buffers were quarantined instead of freed}. */
+    public long readbackQuarantines() {
+        return this.readbackQuarantines;
+    }
+
+    /** Frees the quarantined readback buffers. Called at teardown, after the device-wide wait. */
+    private void releaseQuarantinedReadbackBuffers() {
+        for (long[] entry : this.quarantinedReadbackBuffers) {
+            if (entry[0] != 0L) {
+                vkDestroyBuffer(this.device, entry[0], null);
+            }
+            if (entry[1] != 0L) {
+                vkFreeMemory(this.device, entry[1], null);
+            }
+        }
+        this.quarantinedReadbackBuffers.clear();
+    }
+
     /** Command buffers whose queue wait failed and whose command buffer was therefore quarantined instead of freed. */
     /** Command buffers and fences whose submission timed out: never freed while the queue may still own them. */
     private final java.util.Set<VkCommandBuffer> quarantinedCommandBuffers = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -1652,6 +1697,9 @@ public final class VulkanContext {
                     vkDestroyFence(this.device, quarantinedFence.longValue(), null);
                 }
                 this.quarantinedFences.clear();
+                // Readback buffers quarantined with them (#364): the same device-wide wait is the point at which the
+                // queue is known to be finished with the copies that were writing into them.
+                releaseQuarantinedReadbackBuffers();
             }
             // Deferred submissions are under the same rule as the quarantine list: released only when the device
             // confirmed idle, otherwise counted as held. The fence pool itself is destroyed either way - on a

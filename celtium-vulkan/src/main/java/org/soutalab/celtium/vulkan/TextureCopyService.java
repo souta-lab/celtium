@@ -1087,9 +1087,47 @@ public final class TextureCopyService {
      * unorm depth is scaled by 1/65535 so both devices report the same 0..1 quantity. Limit: one rectangle per call,
      * and the caller bounds the calls, because this is a full command buffer plus a fence wait.
      */
+    /**
+     * Frees a readback buffer, or hands it to the context's quarantine when its submission was not confirmed.
+     * <p>
+     * Audit #364: the command buffer that copies into this buffer is quarantined when the fence wait times out, because
+     * the queue may still be reading what it was writing - but the destination buffer and its memory were freed in a
+     * finally block regardless, which frees memory a live submission still points at.
+     */
+    /**
+     * {@return what a readback's resources need}: "nothing" when none were allocated, "free" when the submission was
+     * confirmed complete, "quarantine" when it was not. The decision is separate from the Vulkan calls so the ownership
+     * rule can be tested without a device (#364's completion condition).
+     */
+    static String readbackReleaseDecision(long buffer, long memory, boolean confirmed) {
+        if (buffer == 0L && memory == 0L) {
+            return "nothing";
+        }
+        return confirmed ? "free" : "quarantine";
+    }
+
+    private void releaseOrQuarantine(long buffer, long memory, boolean confirmed, String what) {
+        String decision = readbackReleaseDecision(buffer, memory, confirmed);
+        if ("nothing".equals(decision)) {
+            return;
+        }
+        if ("free".equals(decision)) {
+            if (buffer != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                org.lwjgl.vulkan.VK10.vkDestroyBuffer(this.host.context().device(), buffer, null);
+            }
+            if (memory != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                org.lwjgl.vulkan.VK10.vkFreeMemory(this.host.context().device(), memory, null);
+            }
+            return;
+        }
+        this.host.context().quarantineReadbackBuffer(buffer, memory, what + " not confirmed complete");
+    }
+
     public float[] readDepthRectangle(long depthImage, int x, int y, int width, int height, int depthFormat) {
         long buffer = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
         long memory = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+        // Only a confirmed submission may free the buffer: see releaseOrQuarantine (#364).
+        boolean confirmed = false;
         boolean sixteenBit = depthFormat == org.lwjgl.vulkan.VK10.VK_FORMAT_D16_UNORM;
         int bytesPerPixel = sixteenBit ? 2 : 4;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -1162,6 +1200,10 @@ public final class TextureCopyService {
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
             this.host.context().endCommands(commands, "texture-copy");
+            // endCommands waits on the submission's own fence: returning from it is the confirmation that the copy
+            // into this buffer has completed, so the buffer may be freed. A throw - timeout, or a completion the driver
+            // could not confirm - leaves this false and the buffer is quarantined instead (#364).
+            confirmed = true;
             org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
             if (org.lwjgl.vulkan.VK10.vkMapMemory(this.host.context().device(), memory, 0, bytes, 0, mapped)
                     != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
@@ -1180,12 +1222,7 @@ public final class TextureCopyService {
             this.host.record("depth stage read failed: " + this.host.describe(error));
             return null;
         } finally {
-            if (buffer != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkDestroyBuffer(this.host.context().device(), buffer, null);
-            }
-            if (memory != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkFreeMemory(this.host.context().device(), memory, null);
-            }
+            releaseOrQuarantine(buffer, memory, confirmed, "readback");
         }
     }
 
@@ -1205,6 +1242,8 @@ public final class TextureCopyService {
         }
         long buffer = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
         long memory = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+        // Only a confirmed submission may free the buffer: see releaseOrQuarantine (#364).
+        boolean confirmed = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long bytes = (long) width * (long) height * 4L;
             org.lwjgl.vulkan.VkBufferCreateInfo bufferInfo = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
@@ -1283,6 +1322,10 @@ public final class TextureCopyService {
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
             this.host.context().endCommands(commands, "texture-copy");
+            // endCommands waits on the submission's own fence: returning from it is the confirmation that the copy
+            // into this buffer has completed, so the buffer may be freed. A throw - timeout, or a completion the driver
+            // could not confirm - leaves this false and the buffer is quarantined instead (#364).
+            confirmed = true;
 
             org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
             if (org.lwjgl.vulkan.VK10.vkMapMemory(this.host.context().device(), memory, 0, bytes, 0, mapped)
@@ -1312,12 +1355,7 @@ public final class TextureCopyService {
             this.host.record("texture copy read failed: " + this.host.describe(error));
             return null;
         } finally {
-            if (buffer != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkDestroyBuffer(this.host.context().device(), buffer, null);
-            }
-            if (memory != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkFreeMemory(this.host.context().device(), memory, null);
-            }
+            releaseOrQuarantine(buffer, memory, confirmed, "readback");
         }
     }
 }
