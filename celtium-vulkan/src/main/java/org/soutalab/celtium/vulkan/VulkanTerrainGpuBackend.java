@@ -5307,6 +5307,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.frameArena.beginFrame(this.frameId, VulkanContext.completedEpoch());
         }
         celtium$swapBatchReuseFrames();
+        celtium$swapPushComponentFrame();
+        if (PUSH_BLOCK_CACHE && this.pushBlocks.size() >= PUSH_BLOCK_LIMIT) {
+            // The map is full: start over at a frame boundary, where no group is holding a reference to a block.
+            this.pushBlocks.clear();
+            this.pushBlockClears++;
+        }
         this.immediateStatistics.setFrameAccepted(0);
         this.frameDrawn = 0;
         reportOutOfDateState();
@@ -9634,9 +9640,11 @@ this.frameBufferOpen = false;
                 + " windowRecordPerFrameMillis=" + (this.frameId == 0L ? -1.0
                         : Math.round((double) this.windowRecordNanos / 1000000.0 / this.frameId * 100.0) / 100.0)
                 + " drawSites=[" + drawSiteSummary() + "]"
+                + " pushComponents=[" + pushComponentSummary() + "]"
                 + " pushBlockHits=" + this.pushBlockHits
                 + " pushBlockMisses=" + this.pushBlockMisses
                 + " pushBlockEntries=" + this.pushBlocks.size()
+                + " pushBlockClears=" + this.pushBlockClears
                 + " batchReuseHits=" + this.batchReuseHits
                 + " batchReuseMisses=" + this.batchReuseMisses
                 + " batchReuseLastFrameSize=" + this.batchReuseLastFrame.size()
@@ -12224,10 +12232,37 @@ this.frameBufferOpen = false;
      * per group. Memoising it by the group's inputs replaces that with a 216-byte copy.
      */
     private static final boolean PUSH_BLOCK_CACHE = Boolean.getBoolean("celtium.vulkan.pushBlockCache");
+
+    /**
+     * Whether the per-component push census runs: {@code -Dceltium.debug.pushComponentCensus=true}, off by default.
+     * <p>
+     * The push-block memo hit 5% of the time although 95.9% of the batch bytes repeat, so one of the block's inputs
+     * changes every frame. This compares each component - projection, model view, fog, light parameters, light-map
+     * coordinates, state, colour, texture matrix - between consecutive frames, position by position, and prints how
+     * many positions changed. A component near zero is stable and cacheable; a component near the group count is the
+     * one that keeps the whole block from matching, and is then worth removing rather than caching.
+     */
+    private static final boolean PUSH_COMPONENT_CENSUS =
+            Boolean.getBoolean("celtium.debug.pushComponentCensus");
+    /** Component slots: projection, modelView, fog, lightParams, lightmapCoords, state, colour, texMatrix. */
+    private static final int PUSH_COMPONENTS = 12;
+    /** How many groups one frame may census; the first frames are what the line reports. */
+    private static final int PUSH_COMPONENT_LIMIT = 512;
+    private final long[][] pushComponentHashes =
+            new long[PUSH_COMPONENTS][PUSH_COMPONENT_LIMIT];
+    private final long[][] previousPushComponentHashes =
+            new long[PUSH_COMPONENTS][PUSH_COMPONENT_LIMIT];
+    private final long[] pushComponentChanges = new long[PUSH_COMPONENTS];
+    private final long[] pushComponentSamples = new long[1];
+    private int pushComponentCount;
+    private int pushComponentFrames;
+    /** The cap on memoised blocks; a world scene's working set is a few hundred. */
+    private static final int PUSH_BLOCK_LIMIT = 8192;
     /** The memoised push blocks, keyed by the group inputs that produce them. */
     private final java.util.HashMap<Long, byte[]> pushBlocks = new java.util.HashMap<Long, byte[]>();
     private long pushBlockHits;
     private long pushBlockMisses;
+    private long pushBlockClears;
 
     private static final boolean BATCH_REUSE_CENSUS =
             Boolean.getBoolean("celtium.vulkan.batchReuseCensus");
@@ -13495,6 +13530,84 @@ this.frameBufferOpen = false;
      */
     private static final boolean DRAW_SITE_CENSUS = Boolean.getBoolean("celtium.vulkan.drawSiteCensus");
 
+    /** Hashes each push-block component for this group, at its ordinal in the frame. */
+    private void celtium$notePushComponents(ImmediateGroup group) {
+        int index = this.pushComponentCount;
+        if (index >= PUSH_COMPONENT_LIMIT) {
+            return;
+        }
+        long hash = 0xcbf29ce484222325L;
+        for (int i = 0; i < 16; i++) {
+            hash = celtium$mixPushKey(hash, Float.floatToRawIntBits(group.projection[i]));
+        }
+        this.pushComponentHashes[0][index] = hash;
+        hash = 0xcbf29ce484222325L;
+        for (int i = 0; i < 16; i++) {
+            hash = celtium$mixPushKey(hash, Float.floatToRawIntBits(group.modelView[i]));
+        }
+        this.pushComponentHashes[1][index] = hash;
+        this.pushComponentHashes[2][index] = celtium$mixPushFloats(0xcbf29ce484222325L, group.fog);
+        this.pushComponentHashes[3][index] = celtium$mixPushFloats(0xcbf29ce484222325L, group.lightParams);
+        this.pushComponentHashes[4][index] = celtium$mixPushFloats(0xcbf29ce484222325L, group.lightmapCoords);
+        hash = 0xcbf29ce484222325L;
+        if (group.state != null) {
+            for (int value : group.state) {
+                hash = celtium$mixPushKey(hash, value);
+            }
+        }
+        this.pushComponentHashes[5][index] = hash;
+        this.pushComponentHashes[6][index] = celtium$mixPushFloats(0xcbf29ce484222325L, group.color);
+        this.pushComponentHashes[7][index] = celtium$mixPushFloats(0xcbf29ce484222325L, group.texMatrix);
+        // The four identity fields the memo also keys on: if a group's ordinal is stable but its texture, format,
+        // state key or combine colour moves, the block key moves with it - and only these can be doing that, because
+        // the eight components above were measured at zero changes over 774 frames.
+        this.pushComponentHashes[8][index] = celtium$mixPushFloats(0xcbf29ce484222325L, group.combineColor);
+        this.pushComponentHashes[9][index] = celtium$mixPushKey(0xcbf29ce484222325L, group.formatId);
+        this.pushComponentHashes[10][index] = celtium$mixPushKey(0xcbf29ce484222325L, group.texture);
+        this.pushComponentHashes[11][index] = celtium$mixPushKey(0xcbf29ce484222325L, Float.floatToRawIntBits(
+                (float) (group.stateKey ^ (group.stateKey >>> 40))));
+        this.pushComponentCount++;
+    }
+
+    /** Compares this frame's component hashes with the previous frame's, position by position. */
+    private void celtium$swapPushComponentFrame() {
+        if (!PUSH_COMPONENT_CENSUS) {
+            return;
+        }
+        int common = Math.min(this.pushComponentCount, this.pushComponentSamples[0] > 0
+                ? Math.min(this.pushComponentCount, PUSH_COMPONENT_LIMIT) : 0);
+        for (int component = 0; component < PUSH_COMPONENTS; component++) {
+            for (int index = 0; index < common; index++) {
+                this.pushComponentSamples[0]++;
+                if (this.pushComponentHashes[component][index] != this.previousPushComponentHashes[component][index]) {
+                    this.pushComponentChanges[component]++;
+                }
+            }
+        }
+        for (int component = 0; component < PUSH_COMPONENTS; component++) {
+            System.arraycopy(this.pushComponentHashes[component], 0,
+                    this.previousPushComponentHashes[component], 0, PUSH_COMPONENT_LIMIT);
+        }
+        this.pushComponentFrames++;
+        this.pushComponentCount = 0;
+        this.pushComponentSamples[0] = this.pushComponentSamples[0] > 0
+                ? Math.max(1L, this.pushComponentSamples[0]) : 0L;
+    }
+
+    /** {@return the per-component change census, one line} */
+    private String pushComponentSummary() {
+        if (!PUSH_COMPONENT_CENSUS || this.pushComponentFrames == 0) {
+            return "none";
+        }
+        String[] names = {"projection", "modelView", "fog", "lightParams", "lightmapCoords", "state", "color",
+                "texMatrix", "combineColor", "formatId", "texture", "stateKey"};
+        StringBuilder text = new StringBuilder("frames=").append(this.pushComponentFrames);
+        for (int component = 0; component < PUSH_COMPONENTS; component++) {
+            text.append(' ').append(names[component]).append('=').append(this.pushComponentChanges[component]);
+        }
+        return text.toString();
+    }
+
     /** {@return a key over every group input the push block is built from}. */
     private long celtium$pushBlockKey(ImmediateGroup group) {
         long hash = 0xcbf29ce484222325L;
@@ -13549,9 +13662,16 @@ this.frameBufferOpen = false;
         return true;
     }
 
-    /** Remembers the block just built, so the next group with the same inputs copies it instead. */
+    /**
+     * Remembers the block just built, so the next group with the same inputs copies it instead.
+     * <p>
+     * The map is cleared at a frame boundary when it grows past its cap rather than refusing to store: the first
+     * version refused, and the loading/splash frames - whose groups differ every frame - filled all 4096 slots before
+     * the world ever offered a batch, so every world lookup missed. The working set is ~300 blocks, so a clear costs
+     * one frame of misses and the map re-fills from the world's own offers.
+     */
     private void celtium$storePushBlock(long key, java.nio.ByteBuffer push) {
-        if (this.pushBlocks.size() >= 4096) {
+        if (this.pushBlocks.size() >= PUSH_BLOCK_LIMIT) {
             return;
         }
         byte[] copy = new byte[216];
@@ -15753,6 +15873,9 @@ this.frameBufferOpen = false;
                 }
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcResolve");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcPush");
+                if (PUSH_COMPONENT_CENSUS) {
+                    celtium$notePushComponents(group);
+                }
                 long pushBlockKey = PUSH_BLOCK_CACHE ? celtium$pushBlockKey(group) : 0L;
                 boolean pushBlockCached = PUSH_BLOCK_CACHE && celtium$copyPushBlock(pushBlockKey, push);
                 if (!pushBlockCached) {

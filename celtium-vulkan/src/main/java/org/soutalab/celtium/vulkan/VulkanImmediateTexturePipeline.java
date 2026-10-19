@@ -100,6 +100,9 @@ public final class VulkanImmediateTexturePipeline {
     /** Elides a push whose bytes are already in this command buffer (see {@link VulkanPushCache}). */
     private final VulkanPushCache pushCache = VulkanPushCache.SHARED;
 
+    /** Measurement switch: skips only the push-constant call ({@code -Dceltium.debug.skipPushConstants=true}). */
+    private static final boolean SKIP_PUSH_CALLS = Boolean.getBoolean("celtium.debug.skipPushConstants");
+
     private final VulkanContext context;
     private final long renderPass;
     /** Whether this instance takes the colourless POSITION_TEX layout rather than POSITION_TEX_COLOR. */
@@ -350,7 +353,7 @@ public final class VulkanImmediateTexturePipeline {
         // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
         // past the range is a validation error, so only the declared bytes go out.
         clamped.limit(Math.min(clamped.remaining(), PUSH_CONSTANT_BYTES));
-        if (this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, clamped)) {
+        if (!SKIP_PUSH_CALLS && this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, clamped)) {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, clamped);
