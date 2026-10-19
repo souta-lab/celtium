@@ -13968,6 +13968,7 @@ this.frameBufferOpen = false;
     /** The terrain pipeline instance the last pass drew with, which the shadow draw has to match. */
     private VulkanTerrainPipeline shadowTerrainPipeline;
     private int shadowShadowDiag;
+    private boolean shadowProbeReported;
     private org.soutalab.celtium.vulkan.shadow.ShadowMapPass shadowMapPass;
     private int terrainCaptureStride;
     private int terrainCaptureCount;
@@ -14319,6 +14320,20 @@ this.frameBufferOpen = false;
      */
     private void celtium$recordShadowPass() {
         if (!org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested()) {
+            return;
+        }
+        if (Boolean.getBoolean("celtium.shadow.probeScope")) {
+            // The private-submission experiment: the pass records into a command buffer of its own, is submitted with a
+            // fence and waits with a bound, while the frame records nothing of it. A completion here with a healthy frame
+            // loop says carrying the pass in the frame's command buffer is what stalls; a timeout says the pass itself
+            // never finishes on the GPU.
+            if (this.shadowMapPass == null) {
+                this.shadowMapPass = org.soutalab.celtium.vulkan.shadow.ShadowMapPass.create(this.context);
+            }
+            if (this.shadowMapPass != null && !this.shadowProbeReported) {
+                this.shadowProbeReported = true;
+                System.out.println("[Celtium] CELTIUM_SHADOW_PROBE " + this.shadowMapPass.recordAndSubmitOnce());
+            }
             return;
         }
         if (this.shadowMapPass == null) {
