@@ -689,8 +689,10 @@ public final class ShadowMapPass {
     public String recordTerrainAndSubmit(org.soutalab.celtium.vulkan.VulkanTerrainPipeline terrain, long vertexBuffer,
                                          long indexBuffer, long indirectBuffer, long indirectOffset, int indirectCount,
                                          float[] block, long descriptorSet, int dynamicOffset) {
-        if (this.image == VK_NULL_HANDLE || !this.terrainPipelines.containsKey(terrain)
-                && !createTerrainPipeline(terrain)) {
+        if (this.image == VK_NULL_HANDLE || vertexBuffer == 0L || indirectBuffer == 0L
+                || !this.terrainPipelines.containsKey(terrain) && !createTerrainPipeline(terrain)) {
+            // Nothing was captured for this frame (the colour pass has not drawn this region yet), and drawing from a
+            // null buffer is what the layer reports as vkCmdDrawIndexedIndirect ... buffer is VK_NULL_HANDLE.
             return null;
         }
         long terrainPipelineForThisDraw = this.terrainPipelines.get(terrain).longValue();

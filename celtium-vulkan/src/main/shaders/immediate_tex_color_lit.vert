@@ -34,6 +34,12 @@ layout(push_constant) uniform PushConstants {
 layout(set = 0, binding = 0) uniform sampler2D u_Texture;
 layout(set = 0, binding = 1) uniform sampler2D u_Lightmap;
 
+// The native shadow map's eye-space light matrix: the vertices this pipeline draws are already transformed by the model
+// view, so the matrix here is lightWorld * inverse(modelView) and needs no further transform. Binding 3 is the map.
+layout(set = 0, binding = 2) uniform CeltiumShadowUniforms { mat4 u_ShadowMatrix; } celtiumShadow;
+layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
+layout(location = 2) out vec4 v_ShadowCoord;
+
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec2 a_TexCoord;
 layout(location = 2) in vec4 a_Color;
@@ -70,5 +76,6 @@ void main() {
     vec4 groupColour = celtium.u_AlphaRef < 0.0 ? vec4(1.0)
             : vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, celtium.u_TexPad.x);
     v_Color = vec4(a_Color.rgb * lit * lightmap * groupColour.rgb, a_Color.a * groupColour.a);
+    v_ShadowCoord = celtiumShadow.u_ShadowMatrix * vec4(a_Position, 1.0);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

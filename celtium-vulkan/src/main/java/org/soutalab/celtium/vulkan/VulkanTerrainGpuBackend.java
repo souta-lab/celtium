@@ -13999,6 +13999,7 @@ this.frameBufferOpen = false;
     private VulkanTerrainPipeline shadowTerrainPipeline;
     private int shadowShadowDiag;
     private boolean shadowProbeReported;
+    private boolean shadowItemSourcesSet;
     private int shadowOwnPrints;
     private long shadowRecordNanos;
     private int shadowRecordPrints;
@@ -14479,6 +14480,14 @@ this.frameBufferOpen = false;
                 float[] eyeMatrix = new float[16];
                 eyeSpaceLight.get(eyeMatrix);
                 this.shadowMapPass.writeEyeSpaceMatrix(eyeMatrix);
+                // The immediate pipelines draw the blocks and entities that fill the view; they project the map with the
+                // same eye-space matrix, and their cached descriptor sets are pointed at the map the first time it exists.
+                org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.writeShadowMatrix(eyeMatrix);
+                if (!this.shadowItemSourcesSet) {
+                    this.shadowItemSourcesSet = true;
+                    org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.setShadowSources(
+                            this.shadowMapPass.view(), this.shadowMapPass.sampler());
+                }
                 if (!Boolean.getBoolean("celtium.shadow.noSources")) {
                     terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
                             this.shadowMapPass.matrixBuffer().buffer());
