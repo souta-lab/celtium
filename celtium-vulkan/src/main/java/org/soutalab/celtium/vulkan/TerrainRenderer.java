@@ -536,10 +536,14 @@ public final class TerrainRenderer {
             long offsetBytes = this.indirectBatchOffset + (long) first * INDIRECT_COMMAND_BYTES;
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
-            // Captured for the shadow pass: the same commands draw the same geometry into the depth map.
-            this.shadowIndirectBuffer = this.indirectBuffer.buffer();
-            this.shadowIndirectOffset = offsetBytes;
-            this.shadowIndirectCount += count;
+            // Captured for the shadow pass: one batch's commands, offset and count together. Accumulating the counts while
+            // keeping the first offset made the range run past the buffer (VUID-vkCmdDrawIndexedIndirect-drawCount-00540
+            // with drawCount 3246 at offset 800 in leg shadowTerrain5), so only the first batch of the frame is kept.
+            if (this.shadowIndirectCount == 0) {
+                this.shadowIndirectBuffer = this.indirectBuffer.buffer();
+                this.shadowIndirectOffset = offsetBytes;
+                this.shadowIndirectCount = count;
+            }
             this.terrainIndirectCalls++;
             this.terrainIndirectDraws += count;
             this.statistics.addLastDrawCommands(count);

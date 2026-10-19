@@ -325,6 +325,20 @@ public final class VulkanTerrainPipeline {
         return this.lastPushBlock;
     }
 
+    /** The descriptor set and dynamic offset the last bind used, for a second scope drawing the same region. */
+    private long lastDescriptorSet;
+    private int lastDynamicOffset;
+
+    /** {@return the descriptor set the terrain pass last bound}, with {@link #lastDynamicOffset()}. */
+    public long lastDescriptorSet() {
+        return this.lastDescriptorSet;
+    }
+
+    /** {@return the dynamic offset the terrain pass last bound with}. */
+    public int lastDynamicOffset() {
+        return this.lastDynamicOffset;
+    }
+
     /** {@return the pipeline layout}, borrowed by the shadow pass so its pipeline reads the same descriptors. */
     public long pipelineLayout() {
         return this.layout;
@@ -838,6 +852,8 @@ public final class VulkanTerrainPipeline {
                     + passName + "'; the uniform blocks of this buffer must be " + UNIFORM_BLOCK_SIZE + " bytes");
         }
         auditAtlasDraw(uniformBufferOffset);
+        this.lastDescriptorSet = this.descriptorSets[useSlot];
+        this.lastDynamicOffset = (int) uniformBufferOffset;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0,
                     stack.longs(this.descriptorSets[useSlot]), stack.ints((int) uniformBufferOffset));

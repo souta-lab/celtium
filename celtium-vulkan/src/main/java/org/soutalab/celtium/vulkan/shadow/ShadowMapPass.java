@@ -422,7 +422,8 @@ public final class ShadowMapPass {
      * @return whether anything was drawn
      */
     public boolean recordTerrain(VkCommandBuffer commandBuffer, MemoryStack stack, long vertexBuffer, long indexBuffer,
-                                 long indirectBuffer, long indirectOffset, int indirectCount, float[] block) {
+                                 long indirectBuffer, long indirectOffset, int indirectCount, float[] block,
+                                 long descriptorSet, int dynamicOffset) {
         if (this.terrainPipeline == 0L || vertexBuffer == 0L || indirectBuffer == 0L || indirectCount <= 0
                 || block == null || block.length < 32) {
             return false;
@@ -445,6 +446,13 @@ public final class ShadowMapPass {
                 .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
         vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                 .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
+        if (descriptorSet != 0L) {
+            // The terrain pass bound its region's set with a dynamic offset inside its own pass; the frame's later windows
+            // bound other sets, so the shadow scope has to bind it again - the same set and the same offset, which is what
+            // makes this draw the same region the colour pass drew (seventeen messages in leg shadowTerrain2 without it).
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.terrainPipelineLayout, 0,
+                    stack.longs(descriptorSet), stack.ints(dynamicOffset));
+        }
         vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
         if (indexBuffer != 0L) {
             vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);

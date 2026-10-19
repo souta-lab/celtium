@@ -10946,6 +10946,11 @@ this.frameBufferOpen = false;
                     + " size=" + this.lightmapTexture.width() + "x" + this.lightmapTexture.height()
                     + " atlas=" + this.atlasTexture.width() + "x" + this.atlasTexture.height());
         }
+        // The instance this pass draws with: the shadow draw has to borrow this one's layout and descriptor set, because
+        // pipelineFor(lastUiPass) can return a different instance (the vanilla-format variant has a 208-byte push range
+        // where this one has 128), and a set bound under one layout is not compatible with the other - measured in leg
+        // shadowTerrain4 as VUID-vkCmdDrawIndexedIndirect-None-08600.
+        this.shadowTerrainPipeline = pipeline;
         pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size(), this.frameSlot);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
@@ -13959,6 +13964,10 @@ this.frameBufferOpen = false;
     private java.nio.ByteBuffer terrainCaptureVertices;
 
     /** The native shadow map's pass, present only when {@code -Dceltium.shadow.enabled=true}. */
+
+    /** The terrain pipeline instance the last pass drew with, which the shadow draw has to match. */
+    private VulkanTerrainPipeline shadowTerrainPipeline;
+    private int shadowShadowDiag;
     private org.soutalab.celtium.vulkan.shadow.ShadowMapPass shadowMapPass;
     private int terrainCaptureStride;
     private int terrainCaptureCount;
@@ -14329,25 +14338,37 @@ this.frameBufferOpen = false;
             // VUID-VkGraphicsPipelineCreateInfo-layout-07988 and then seventeen messages in leg shadowTerrain2 (the
             // pipeline is created but the draw is not valid). The triangle path below is the verified one.
             boolean terrainShadow = Boolean.getBoolean("celtium.shadow.terrain");
-            VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.terrain.pipelineFor(this.lastUiPass) : null;
+            VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
             boolean drawn = false;
+            if (terrainShadow && this.shadowShadowDiag++ < 3) {
+                System.out.println("[Celtium] CELTIUM_SHADOW_DIAG pipeline=" + (terrainPipeline != null)
+                        + " hasTerrainPipeline=" + this.shadowMapPass.hasTerrainPipeline()
+                        + " vertex=" + Long.toHexString(this.terrain.shadowVertexBuffer())
+                        + " indirect=" + Long.toHexString(this.terrain.shadowIndirectBuffer())
+                        + " count=" + this.terrain.shadowIndirectCount()
+                        + " block=" + (terrainPipeline == null ? -1 : terrainPipeline.lastPushBlock().length));
+            }
             if (terrainPipeline != null && this.shadowMapPass.hasTerrainPipeline()) {
                 drawn = this.shadowMapPass.recordTerrain(this.commandBuffer, stack,
                         this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
                         this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
-                        this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock());
+                        this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
+                        terrainPipeline.lastDescriptorSet(), terrainPipeline.lastDynamicOffset());
             } else if (terrainPipeline != null) {
                 drawn = this.shadowMapPass.createTerrainPipeline(terrainPipeline);
                 if (drawn) {
                     drawn = this.shadowMapPass.recordTerrain(this.commandBuffer, stack,
                             this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
                             this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
-                            this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock());
+                            this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
+                        terrainPipeline.lastDescriptorSet(), terrainPipeline.lastDynamicOffset());
                 }
             }
             if (!drawn) {
                 this.shadowMapPass.record(this.commandBuffer, stack);
             }
+            // The capture is one frame's geometry: the next frame records its own.
+            this.terrain.resetShadowCapture();
         } catch (RuntimeException | LinkageError error) {
             record("native shadow pass failed: " + describe(error));
         }
