@@ -37,10 +37,19 @@ import static org.lwjgl.vulkan.VK10.*;
  */
 final class ShaderPackDrawProbe implements AutoCloseable {
     /** A full-screen triangle in clip space, plus the UVs that reach the same corners. */
-    private static final float[] POSITIONS = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f};
+    /**
+     * A triangle in clip space that covers the whole viewport whatever its size: (-1,-1), (3,-1), (-1,3). The earlier
+     * values were (0,0), (0,1), (1,0) - a small triangle in NDC's upper-right quadrant, which mapped inside the frame
+     * sized viewport and therefore outside the 64x64 render area the probe actually uses. That is why the pack program
+     * drew nothing while the attribute-free constant triangle (full NDC) drew: both pipelines were fine.
+     */
+    private static final float[] POSITIONS = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
     private static final float[] UVS = {0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f};
     private static final int TRANSFORM_BYTES = 752;
     private static final int UNIFORM_BYTES = 4096;
+
+    /** The name the lowering gives the plain uniform block, so its members can be found in the lowered source. */
+    private static final String UNIFORM_BLOCK_NAME = LegacyGlslLowering.UNIFORM_BLOCK;
 
     private final VulkanContext context;
     private final long pipeline;
@@ -55,6 +64,9 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private final int vertexCount;
 
     private long offscreenImage;
+
+    /** The host address of the plain uniform block, for the environment values a pack's vertex stage needs. */
+    private long uniformBlockAddress;
     private long offscreenView;
     private long offscreenMemory;
     private int offscreenSize;
@@ -129,6 +141,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             ShaderPackDrawProbe probe = new ShaderPackDrawProbe(context, pipeline, layout.pipelineLayout(), pool.get(0),
                     set.get(0), 3);
             probe.writeDescriptors(vertex, fragment, layout, whiteTexture);
+            probe.writeEnvironmentValues(vertex.source(), 1280, 720);
             probe.prepareRenderPassPipeline(vertexHandle, fragmentHandle, vertex);
             return probe;
         } finally {
@@ -169,6 +182,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
                 buffers.add(uniforms);
                 MemoryUtil.memSet(uniforms.mappedAddress(), 0, UNIFORM_BYTES);
+                this.uniformBlockAddress = uniforms.mappedAddress();
                 VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
                         .buffer(uniforms.buffer()).offset(0).range(UNIFORM_BYTES);
                 buffer.get(count++).sType$Default().dstSet(descriptorSet)
@@ -497,6 +511,94 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             return "no modules";
         }
         return renderOffscreenAndSample(this.passVertexHandle, this.passFragmentHandle, size);
+    }
+
+    /**
+     * Prints what the pipeline expects from its vertex input and what the bound buffers hold, once, when
+     * {@code celtium.shaderpack.drawProbeDebug=true}. The constant triangle draws and the pack program does not, so the
+     * difference has to be visible: locations, formats, strides and the first position's bytes.
+     */
+    void dumpVertexContract() {
+        if (!Boolean.getBoolean("celtium.shaderpack.drawProbeDebug")) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_PACK_VERTEX_DUMP attributes=" + vertexBuffers.size());
+        for (int index = 0; index < vertexBuffers.size(); index++) {
+            long buffer = vertexBuffers.get(index).buffer();
+            long address = vertexBuffers.get(index).mappedAddress();
+            StringBuilder bytes = new StringBuilder();
+            for (int i = 0; i < 16; i++) {
+                bytes.append(Float.intBitsToFloat(org.lwjgl.system.MemoryUtil.memGetInt(address + i * 4L))).append(' ');
+            }
+            System.out.println("[Celtium] CELTIUM_PACK_VERTEX_DUMP location=" + vertexBufferLocations.get(index)
+                    + " buffer=" + Long.toHexString(buffer) + " firstVertex=[" + bytes.toString().trim() + "]");
+        }
+    }
+
+    /**
+     * Writes the values a pack's vertex stage needs to produce a finite position, into the plain uniform block.
+     * <p>
+     * BSL's gbuffers_basic jitters the clip position with TAAJitter(gl_Position.xy, gl_Position.w), which divides by
+     * viewWidth/viewHeight - zeroed with the rest of the block, so the jitter was 0/0 = NaN, the vertex was NaN, and the
+     * triangle was clipped before rasterisation. That is why a validated pipeline and a bound vertex buffer produced
+     * nothing while an attribute-free shader did. The offsets come from the block declaration in the lowered source
+     * (std140 rules, which is what the emitter writes), so the right members are written rather than guessed.
+     */
+    void writeEnvironmentValues(String loweredSource, int width, int height) {
+        int blockAt = loweredSource.indexOf("uniform " + UNIFORM_BLOCK_NAME);
+        if (blockAt < 0 || this.uniformBlockAddress == 0L) {
+            return;
+        }
+        int braceAt = loweredSource.indexOf('{', blockAt);
+        int endAt = loweredSource.indexOf('}', braceAt);
+        if (braceAt < 0 || endAt < 0) {
+            return;
+        }
+        int offset = 0;
+        for (String line : loweredSource.substring(braceAt + 1, endAt).split("\n")) {
+            String member = line.trim();
+            if (member.isEmpty() || member.startsWith("//")) {
+                continue;
+            }
+            String[] parts = member.replace(";", "").trim().split("\\s+");
+            if (parts.length < 2) {
+                continue;
+            }
+            String type = parts[0];
+            String name = parts[1].replace(";", "");
+            int count = 1;
+            int bracket = name.indexOf('[');
+            if (bracket >= 0) {
+                count = Integer.parseInt(name.substring(bracket + 1, name.indexOf(']')));
+                name = name.substring(0, bracket);
+            }
+            int size = std140Size(type) * count;
+            if ("viewWidth".equals(name)) {
+                org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, (float) width);
+            } else if ("viewHeight".equals(name)) {
+                org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, (float) height);
+            } else if ("near".equals(name)) {
+                org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, 0.05f);
+            } else if ("far".equals(name)) {
+                org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, 256.0f);
+            } else if ("frameTimeCounter".equals(name)) {
+                org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, 0.016f);
+            }
+            offset += size;
+        }
+    }
+
+    /** {@return the std140 size of a declared type}, including the array stride of a vec3. */
+    private static int std140Size(String type) {
+        return switch (type) {
+            case "int", "float", "bool" -> 4;
+            case "ivec2", "vec2", "bvec2" -> 8;
+            case "ivec3", "vec3", "bvec3" -> 16;
+            case "ivec4", "vec4", "bvec4" -> 16;
+            case "mat2", "mat3" -> 48;
+            case "mat4" -> 64;
+            default -> 16;
+        };
     }
 
     /** Keeps the handles and interface the render-pass pipeline is created from on first use. */

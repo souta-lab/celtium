@@ -14198,6 +14198,14 @@ this.frameBufferOpen = false;
                         // The execution evidence that does not depend on the delivery path: the pack's shaders render
                         // into an image this probe owns, and the pixels are read back.
                         line.append(" offscreen=[").append(this.shaderPackDrawProbe.sampleOffscreen(64)).append(']');
+                        this.shaderPackDrawProbe.dumpVertexContract();
+                        if (Boolean.getBoolean("celtium.shaderpack.drawProbeDebug")) {
+                            // What the two stages actually say about gl_Position and the fragment colour: the pipeline
+                            // and the vertex data are now known to be sound (the constant triangle draws), so the next
+                            // fact to read is the shader text itself.
+                            System.out.println("[Celtium] CELTIUM_PACK_SHADER_DUMP vertex=\n"
+                                    + vertex.source() + "\n--- fragment ---\n" + fragment.source());
+                        }
                     } else {
                         try (ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
                              ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
