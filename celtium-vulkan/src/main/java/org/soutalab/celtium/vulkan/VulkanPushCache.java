@@ -39,6 +39,8 @@ final class VulkanPushCache {
     private byte[] bytes = new byte[0];
     /** How many pushes were skipped because the block was unchanged. */
     private int skipped;
+    /** How many pushes were issued, i.e. the run breaks the elision could not cover. */
+    private int issued;
 
     /**
      * {@return whether the caller has to push {@code data}} - true for a new command buffer, a new layout, a block of a
@@ -46,13 +48,20 @@ final class VulkanPushCache {
      */
     boolean shouldPush(long commandBuffer, long pipelineLayout, ByteBuffer data) {
         int length = data.remaining();
+        // Counted here rather than at the call sites: this is the single place that decides, so the ratio the summary
+        // reports is the elision rate of the whole immediate path - and its complement is the number of draw runs an
+        // indirect merge would have to emit (a run ends exactly where the block changes).
         if (commandBuffer != this.commandBuffer || pipelineLayout != this.pipelineLayout
                 || length != this.bytes.length || length == 0) {
+            if (length > 0) {
+                this.issued++;
+            }
             return true;
         }
         int start = data.position();
         for (int i = 0; i < length; i++) {
             if (data.get(start + i) != this.bytes[i]) {
+                this.issued++;
                 return true;
             }
         }
@@ -77,5 +86,10 @@ final class VulkanPushCache {
     /** {@return how many pushes this cache elided} - the counter the summary reports. */
     int skipped() {
         return this.skipped;
+    }
+
+    /** {@return how many pushes were issued}, i.e. how many runs of equal blocks the immediate path walked. */
+    int issued() {
+        return this.issued;
     }
 }

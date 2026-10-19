@@ -9589,6 +9589,8 @@ this.frameBufferOpen = false;
                 + " windowRecordPerFrameMillis=" + (this.frameId == 0L ? -1.0
                         : Math.round((double) this.windowRecordNanos / 1000000.0 / this.frameId * 100.0) / 100.0)
                 + " drawSites=[" + drawSiteSummary() + "]"
+                + " pushElided=" + VulkanPushCache.SHARED.skipped()
+                + " pushIssued=" + VulkanPushCache.SHARED.issued()
                 + " splashSourcedGroups=" + this.targetStatistics.splashSourcedGroups()
                 + " splashCanvasInvalidations=" + this.targetStatistics.splashCanvasInvalidations()
                 + " immediateDrawSiteLogged=" + this.immediateStatistics.immediateDrawSiteLogged()
