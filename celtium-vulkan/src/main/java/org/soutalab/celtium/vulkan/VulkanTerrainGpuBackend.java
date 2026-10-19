@@ -9360,7 +9360,7 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         // Inside the pass the game's own quads draw into, which is the delivery path that is known to paint the screen.
         if (SHADER_PACK_DRAW_PROBE && !SHADER_PACK_DRAW_CLEAR && !SHADER_PACK_DRAW_BUILTIN
-                && !SHADER_PACK_DRAW_BLIT && this.shaderPackDrawProbe != null) {
+                && !SHADER_PACK_DRAW_CONSTANT && !SHADER_PACK_DRAW_BLIT && this.shaderPackDrawProbe != null) {
             this.shaderPackDrawProbe.setFrameSize(this.frameTargetWidth, this.frameTargetHeight);
             try {
                 this.shaderPackDrawProbe.recordInPass(this.commandBuffer, renderPass);
@@ -13929,6 +13929,8 @@ this.frameBufferOpen = false;
             || "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     /** {@code drawProbe=builtin}: the hard-coded triangle, for separating the draw state from the pack's own shaders. */
     private static final boolean SHADER_PACK_DRAW_BUILTIN = "builtin".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
+    /** {@code drawProbe=constant}: an attribute-free full-viewport triangle, for "does a draw rasterise at all". */
+    private static final boolean SHADER_PACK_DRAW_CONSTANT = "constant".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     /** {@code drawProbe=blit}: transfer the pack-rendered image into the delivered frame. */
     private static final boolean SHADER_PACK_DRAW_BLIT = "blit".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     private ShaderPackDrawProbe shaderPackDrawProbe;
@@ -14034,6 +14036,16 @@ this.frameBufferOpen = false;
                 break;
             }
         }
+        if (SHADER_PACK_DRAW_CONSTANT && this.shaderPackDrawProbe == null) {
+            try {
+                this.shaderPackDrawProbe = ShaderPackDrawProbe.createConstant(this.context, compiler,
+                        org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM, org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
+                System.out.println("[Celtium] CELTIUM_PACK_DRAW constant=prepared");
+                System.out.println("[Celtium] CELTIUM_PACK_DRAW constantLeg=");
+            } catch (Throwable failure) {
+                System.out.println("[Celtium] CELTIUM_PACK_DRAW constant=FAILED error=" + failure);
+            }
+        }
         if (SHADER_PACK_DRAW_BUILTIN && this.shaderPackDrawProbe == null) {
             try {
                 this.shaderPackDrawProbe = ShaderPackDrawProbe.createBuiltin(this.context, compiler,
@@ -14043,7 +14055,11 @@ this.frameBufferOpen = false;
                 System.out.println("[Celtium] CELTIUM_PACK_DRAW builtin=FAILED error=" + failure);
             }
         }
-        celtium$probePackPipeline(compiler, pack);
+        if (!SHADER_PACK_DRAW_CONSTANT && !SHADER_PACK_DRAW_BUILTIN) {
+            // A constant or built-in probe was created above for a different question; the pack probe would replace it
+            // and the leg would measure the pack's triangle while believing it measured the constant one.
+            celtium$probePackPipeline(compiler, pack);
+        }
         for (org.soutalab.celtium.shaderpack.PackPath path : wanted) {
             String file = path.toString();
             StringBuilder line = new StringBuilder("[Celtium] CELTIUM_PACK_PROGRAM file=").append(file);
@@ -14069,7 +14085,7 @@ this.frameBufferOpen = false;
                 // the next unit.
                 ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(this.context);
                 try (ShaderPackPipelineFactory.ModuleHandle handle = factory.createModule(module);
-                     ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(lowered)) {
+                     ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayoutRebased(lowered, 2)) {
                     line.append(" module=").append(handle.module() != 0L ? "ok" : "null")
                             .append(" descriptorLayout=").append(layout.descriptorSetLayout() != 0L ? "ok" : "null")
                             .append(" pipelineLayout=").append(layout.pipelineLayout() != 0L ? "ok" : "null")

@@ -292,6 +292,62 @@ public final class ShaderPackPipelineFactory {
         }
     }
 
+    /**
+     * A pipeline whose vertex shader takes no vertex buffers at all, for the question "does a draw rasterise anything".
+     * <p>
+     * The positions come from {@code gl_VertexIndex}, so nothing depends on a buffer binding, a declared attribute or a
+     * stride: if this pipeline draws nothing the problem is the pipeline or the rendering scope, and if it draws something
+     * the problem was the vertex input of the earlier attempts.
+     */
+    public long createAttributeFreeTrianglePipeline(long pipelineLayout, ModuleHandle vertex, ModuleHandle fragment,
+                                                    int colourFormat, int depthFormat) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
+            stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertex.module())
+                    .pName(stack.UTF8("main"));
+            stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragment.module())
+                    .pName(stack.UTF8("main"));
+            VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
+                    .sType$Default();
+            VkPipelineInputAssemblyStateCreateInfo assembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+                    .sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
+                    .sType$Default().viewportCount(1).scissorCount(1);
+            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                    .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
+                    .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
+            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                    .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
+                    VkPipelineColorBlendAttachmentState.calloc(1, stack);
+            blendAttachment.get(0).colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                    | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+            VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
+                    .sType$Default().pAttachments(blendAttachment);
+            org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamic =
+                    org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                            .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR));
+            VkPipelineDepthStencilStateCreateInfo depthState = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                    .sType$Default().depthTestEnable(false).depthWriteEnable(false);
+            org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR rendering =
+                    org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR.calloc(stack).sType$Default()
+                            .colorAttachmentCount(1).pColorAttachmentFormats(stack.ints(colourFormat))
+                            .depthAttachmentFormat(depthFormat);
+            VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
+                    .pInputAssemblyState(assembly).pViewportState(viewport).pRasterizationState(raster)
+                    .pMultisampleState(multisample).pDepthStencilState(depthState).pColorBlendState(blend)
+                    .pDynamicState(dynamic).layout(pipelineLayout).renderPass(VK_NULL_HANDLE)
+                    .pNext(rendering.address());
+            LongBuffer handle = stack.mallocLong(1);
+            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreateGraphicsPipelines(attribute-free) failed: " + result);
+            }
+            return handle.get(0);
+        }
+    }
+
     /** A pipeline for the hard-coded triangle: one vec3 attribute at location 0, no descriptors, no depth. */
     public long createBuiltinTrianglePipeline(long pipelineLayout, ModuleHandle vertex, ModuleHandle fragment,
                                               int colourFormat, int depthFormat) {
@@ -407,6 +463,38 @@ public final class ShaderPackPipelineFactory {
         samplerBindings.addAll(vertex.samplers().values());
         samplerBindings.addAll(fragment.samplers().values());
         return createLayout(transformBlock, uniformBlock, samplerBindings, vertex.samplers(), fragment.samplers());
+    }
+
+    /**
+     * The union layout for a lowering whose own sampler numbering may start at 0.
+     * <p>
+     * The pipeline path lowers with bindings that already avoid the two block bindings; a probe that lowers without them
+     * gets samplers at 0 and 1, and a sampler at binding 1 collides with the plain uniform block
+     * (VUID-VkDescriptorSetLayoutCreateInfo-binding-00279, reported by the validation layer and silent in a leg with the
+     * layer off). This converts the sampler bindings to start at {@code firstSamplerBinding}.
+     */
+    public LayoutHandle createLayoutRebased(LegacyGlslLowering.Result vertex, LegacyGlslLowering.Result fragment,
+                                           int firstSamplerBinding) {
+        java.util.Set<Integer> rebased = new java.util.TreeSet<>();
+        java.util.Map<String, Integer> samplersA = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Integer> samplersB = new java.util.LinkedHashMap<>();
+        int next = firstSamplerBinding;
+        for (java.util.Map<String, Integer> source : java.util.List.of(vertex.samplers(), fragment.samplers())) {
+            for (java.util.Map.Entry<String, Integer> entry : source.entrySet()) {
+                java.util.Map<String, Integer> target = source == vertex.samplers() ? samplersA : samplersB;
+                target.put(entry.getKey(), Integer.valueOf(next));
+                rebased.add(Integer.valueOf(next));
+                next++;
+            }
+        }
+        boolean transformBlock = !vertex.usedTransformBlock().isEmpty() || !fragment.usedTransformBlock().isEmpty();
+        boolean uniformBlock = vertex.usesPlainUniformBlock() || fragment.usesPlainUniformBlock();
+        return createLayout(transformBlock, uniformBlock, rebased, samplersA, samplersB);
+    }
+
+    /** {@link #createLayoutRebased(LegacyGlslLowering.Result, LegacyGlslLowering.Result, int)} for one stage. */
+    public LayoutHandle createLayoutRebased(LegacyGlslLowering.Result lowered, int firstSamplerBinding) {
+        return createLayoutRebased(lowered, lowered, firstSamplerBinding);
     }
 
     public LayoutHandle createLayout(LegacyGlslLowering.Result lowered) {

@@ -100,7 +100,8 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(context);
         ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
         ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
-        ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(vertex, fragment);
+        // Samplers start at 2 so they cannot collide with the transform block (0) or the plain uniform block (1).
+        ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayoutRebased(vertex, fragment, 2);
         // Without depth testing: the frame's depth buffer already holds the world, and a probe triangle drawn with
         // the identity transform sits behind it - measured as a recorded draw that appeared in no screenshot.
         long pipeline = factory.createPipeline(layout.pipelineLayout(), vertexHandle, fragmentHandle, vertex,
@@ -554,6 +555,54 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      * recording, pipeline state, descriptors and vertex setup are all sound and what fails is the pack program's own use
      * of its blocks; if it does not, the draw state is still wrong.
      */
+    /**
+     * The attribute-free probe: a full-viewport triangle whose positions come from gl_VertexIndex, no vertex buffers, no
+     * descriptors. It answers whether a draw through this record path rasterises at all.
+     */
+    static ShaderPackDrawProbe createConstant(VulkanContext context, ShadercGlslCompiler compiler, int colorFormat,
+                                              int depthFormat) throws Exception {
+        String vertexSource = "#version 450\n"
+                + "layout(location = 0) out vec3 v_Colour;\n"
+                + "void main() {\n"
+                + "  vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+                + "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+                + "  v_Colour = vec3(0.0, 1.0, 0.0);\n"
+                + "}\n";
+        String fragmentSource = "#version 450\n"
+                + "layout(location = 0) in vec3 v_Colour;\n"
+                + "layout(location = 0) out vec4 o_Colour;\n"
+                + "void main() { o_Colour = vec4(v_Colour, 1.0); }\n";
+        SpirvModule vertexModule = compiler.compile(Stage.VERTEX, vertexSource);
+        SpirvModule fragmentModule = compiler.compile(Stage.FRAGMENT, fragmentSource);
+        ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(context);
+        ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
+        ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
+        LongBuffer pipelineLayoutHandle = MemoryUtil.memAllocLong(1);
+        LongBuffer pool = MemoryUtil.memAllocLong(1);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            int result = vkCreatePipelineLayout(context.device(), org.lwjgl.vulkan.VkPipelineLayoutCreateInfo
+                    .calloc(stack).sType$Default(), null, pipelineLayoutHandle);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreatePipelineLayout(constant) failed: " + result);
+            }
+            result = vkCreateDescriptorPool(context.device(), VkDescriptorPoolCreateInfo.calloc(stack)
+                    .sType$Default().maxSets(1), null, pool);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreateDescriptorPool(constant) failed: " + result);
+            }
+            long pipeline = factory.createAttributeFreeTrianglePipeline(pipelineLayoutHandle.get(0), vertexHandle,
+                    fragmentHandle, colorFormat, depthFormat);
+            ShaderPackDrawProbe probe = new ShaderPackDrawProbe(context, pipeline, pipelineLayoutHandle.get(0),
+                    pool.get(0), 0L, 3, true);
+            return probe;
+        } finally {
+            vertexHandle.close();
+            fragmentHandle.close();
+            MemoryUtil.memFree(pipelineLayoutHandle);
+            MemoryUtil.memFree(pool);
+        }
+    }
+
     static ShaderPackDrawProbe createBuiltin(VulkanContext context, ShadercGlslCompiler compiler, int colorFormat,
                                              int depthFormat) throws Exception {
         String vertexSource = "#version 450\n"
@@ -622,10 +671,15 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      */
     void record(VkCommandBuffer commandBuffer, GllessFrameTarget target) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            // The area is cleared to magenta first and only then drawn: a clear through this same scope is known to
+            // reach the presented picture (leg flipTest1 sampled the bottom-left corner), so whatever this triangle
+            // covers shows up as non-magenta. That is the difference between "the draw writes" and "the draw is not
+            // recorded", which the LOAD variant could not tell apart from a black frame.
             VkRenderingAttachmentInfoKHR.Buffer colour = VkRenderingAttachmentInfoKHR.calloc(1, stack);
             colour.get(0).sType$Default().imageView(target.colorView())
                     .imageLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+                    .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+            colour.get(0).clearValue(clearValue(stack, 1.0f, 0.0f, 1.0f));
             VkRenderingAttachmentInfoKHR.Buffer depth = VkRenderingAttachmentInfoKHR.calloc(1, stack);
             depth.get(0).sType$Default().imageView(target.depthView())
                     .imageLayout(VK_IMAGE_LAYOUT_GENERAL)
