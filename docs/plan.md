@@ -42,9 +42,7 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 - **同fixture `frameIntervalP50`（RX6400・terrain）**: **Celeritas GL `2.5.0-dev`(`567dcf8a`、pinned `989ebf2e`ではない)=7.87ms**（`perf-cel4-amd` PASSED、2348f）vs **Celtium=32.8-37.7ms**（`loopres2/unified3-amd`）。fixture反射化(`af7ce927e`)で両側に載る。intervalはtick増幅+fixture税で自己平衡する—**renderer作業の比較はbracket**。
 - **bracket内分解**（`passSplit[Cpu]`、loopres2-amd, `batchFrameSubmits`）: frame p50 ~6.2-7.9ms（中: terrain 3.3+setupTerrain 1.4+flush 1.6、wall−cpuはGC+preemption）。`f2f573de6`で~9→~6-8ms（下記unified）。
 - **unified frame buffer**（`4730089a0`+`f2f573de6`、flag `-Dceltium.vulkan.batchFrameSubmits`、既定OFF）: frame全録画を1 buffer+1 deferred submitへ集約（~9録画→1）。同jar A/B（`d8d4d25c`）: frame bracket 9.1→~6.2ms、queueSubmitCalls ~11.9→3.6/frame、warmP50 41.1→28.8、VUID=0（depth-bias dedupはsegment先頭でinvalidate）。present readbackがframe全実行を直列wait（+3.7ms）するのはfixture側のみ。
-- **loop分解**（`gameTickSummary`）: loop mean 34ms = render 10.5 + tick ~6 + displayUpdate 6.6 + scheduledTasks 6.6（integrated-serverのpacket marshalling、vanilla）** + loopOther 4。**intervalの~半分はrenderer到達範囲外**。
 - **swap点分解**: present ~11.7ms/call、周期dump ~9ms（`=0`で3.4ms/call）、readback ~0.6ms（**fixture税**）効の~8割**。
-- **fb renderPass map**（`f3b1beaa7`）: 単一cacheがpass交互で毎pass vkDeviceWaitIdle→`deviceWaitToken 4847→1`。**indirect配線**: 9168 calls（VUID 0）。**host-mapped indirect**（`223c3b644`）: recDraw 3.1→0.3ms。
 - 残荷（出荷構成・入れ子に注意）: **即時パス ~2.2ms**（offer 0.7 + 記録0.95 + window固定~0.4。`terrain` 0.9の0.7は**内側の即時flush**、terrain自身は~0.2/call）、setupTerrain 0.6、gui 0.3、残りloop/present対象外）。`2× Celeritas`はintervalの自平衡性上interval指標では届かない—renderer-work比較で ~6.4 vs ~6.2ms ≈ ほぼparity。
 
 性能測定の正しいキーと残存負荷は [開発・検証手順](<development.md>)。READMEに別の現行性能表を作らない。
