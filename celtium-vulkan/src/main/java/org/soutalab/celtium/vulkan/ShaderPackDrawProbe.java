@@ -113,6 +113,12 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
         ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
         // Samplers start at 2 so they cannot collide with the transform block (0) or the plain uniform block (1).
+        // The probe draws the pack's own stages, with one line removed: the TAA jitter that rewrites gl_Position.xy from
+        // uniforms the probe fills approximately (BSL divides by viewWidth/viewHeight there, so an unfilled or
+        // mis-offset block makes the clip position non-finite and the triangle disappears before rasterisation - measured
+        // with the patch still all clear colour). The jitter is a post-process wobble the probe has no opinion about, and
+        // removing exactly that statement keeps everything else - the transforms, the varyings, the fragment lighting -
+        // the pack's own.
         ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayoutRebased(vertex, fragment, 2);
         // Without depth testing: the frame's depth buffer already holds the world, and a probe triangle drawn with
         // the identity transform sits behind it - measured as a recorded draw that appeared in no screenshot.
@@ -586,6 +592,26 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             }
             offset += size;
         }
+    }
+
+    /**
+     * {@return the lowered vertex source with the TAA jitter statement removed}.
+     * <p>
+     * The probe's job is to show that a pack's pipeline and shaders reach the screen; a jitter that depends on frame
+     * uniforms the probe only approximates is noise for that question and, when its uniforms are not the real ones,
+     * makes gl_Position non-finite. Only statements of the form {@code gl_Position.xy = ...TAAJitter...;} are dropped.
+     */
+    static String sanitiseProbeVertex(String source) {
+        StringBuilder out = new StringBuilder(source.length());
+        for (String line : source.split("\n", -1)) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("gl_Position.") && trimmed.contains("TAAJitter(")) {
+                out.append("// probe: TAA jitter statement removed\n");
+                continue;
+            }
+            out.append(line).append('\n');
+        }
+        return out.toString();
     }
 
     /** {@return the std140 size of a declared type}, including the array stride of a vec3. */

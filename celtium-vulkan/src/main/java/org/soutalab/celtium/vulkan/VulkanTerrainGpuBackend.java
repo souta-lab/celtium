@@ -14190,8 +14190,15 @@ this.frameBufferOpen = false;
                         // triangle with them once. It is created from the same interfaces and modules the pipeline
                         // check above uses, so what it draws is the same program.
                         org.soutalab.celtium.vulkan.VulkanGlTexture white = this.textureRegistry.get(this.whiteTextureId());
+                        // The probe compiles its own vertex module: the pack's TAA jitter rewrites gl_Position.xy from
+                        // frame uniforms a probe only approximates, and a non-finite position there removes the triangle
+                        // before rasterisation while the pipeline check above still passes. Everything except that one
+                        // statement is the pack's own stage.
+                        org.soutalab.celtium.shaderpack.SpirvModule probeVertexModule = compiler.compile(
+                                org.soutalab.celtium.shaderpack.Stage.VERTEX,
+                                ShaderPackDrawProbe.sanitiseProbeVertex(vertex.source()));
                         this.shaderPackDrawProbe = ShaderPackDrawProbe.create(this.context, vertex, fragment,
-                                vertexModule, fragmentModule, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                                probeVertexModule, fragmentModule, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
                                 org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT, white);
                         line.append(" drawProbe=prepared attributes=").append(vertex.attributes().size())
                                 .append(" result=OK");
