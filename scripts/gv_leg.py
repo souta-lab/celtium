@@ -54,6 +54,7 @@ class Plan:
     command: list[str]
     environment: dict[str, str]
     manifest: dict
+    reference_renderer: bool = False
 
 
 def sha256(path: Path) -> str:
@@ -155,11 +156,19 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     headless = require_file(root / "scripts/headless_wayland.py")
     library = require_file(gv / "lib/lwjgl-vulkan-3.4.1.jar")
     jar_dir = require_dir(jar_dir)
-    renderer = one_jar(jar_dir, RENDERER)
+    # The renderer can be replaced by an external jar for a reference arm: the same pack, scene, camera and fixture, with
+    # Celeritas in place of this renderer, so a gate for a modpack world is calibrated from the reference that actually
+    # draws it rather than from the flat fixture scene. The jar is named as it is - the harness only stages it - and the
+    # leg is labelled by the caller (a "glref" prefix), which is what keeps the two arms apart in the evidence.
+    reference_renderer = os.environ.get("CELTIUM_LEG_REFERENCE_RENDERER", "").strip()
+    if reference_renderer:
+        renderer = require_file(Path(reference_renderer))
+    else:
+        renderer = one_jar(jar_dir, RENDERER)
+        # A broader family match catches stale/renamed renderer builds, not only the chosen version family.
+        if len(list(jar_dir.glob("celtium-forge-*.jar"))) != 1:
+            raise LegError(f"multiple or non-packaged renderer JARs in {jar_dir}")
     fixture = one_jar(jar_dir, FIXTURE)
-    # A broader family match catches stale/renamed renderer builds, not only the chosen version family.
-    if len(list(jar_dir.glob("celtium-forge-*.jar"))) != 1:
-        raise LegError(f"multiple or non-packaged renderer JARs in {jar_dir}")
     defaults = {
         "cohort": Path.home() / ".local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha",
         "e2e": root / ".celtium-work/modpack-p0/prism-e2e-private/instances/e2e-1.93a-no-stellar-parallel",
@@ -249,7 +258,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
                 "artifacts": artifacts, "dependencies": dependencies, "git": git_state(root),
                 "instanceModExclusions": instance_exclusions, "jvmArgs": jvm_args, "command": command,
                 "deviceEnvironment": {key: environment.get(key) for key in ("DRI_PRIME", "MESA_VK_DEVICE_SELECT")}}
-    return Plan(root, leg, mode, gpu, duration, paths, renderer, fixture, required_gpu, command, environment, manifest)
+    return Plan(root, leg, mode, gpu, duration, paths, renderer, fixture, required_gpu, command, environment, manifest,
+                bool(reference_renderer))
 
 
 def json_object(path: Path) -> dict:
@@ -268,7 +278,8 @@ def write_json_new(path: Path, value: dict) -> None:
 def copied_artifacts(plan: Plan) -> list[dict]:
     mods = plan.paths["game"] / "mods"
     result = []
-    for role, source, pattern in (("renderer", plan.renderer, "celtium-forge-*.jar"),
+    renderer_pattern = plan.renderer.name if plan.reference_renderer else "celtium-forge-*.jar"
+    for role, source, pattern in (("renderer", plan.renderer, renderer_pattern),
                                   ("fixture", plan.fixture, FIXTURE)):
         matches = list(mods.rglob(pattern)) if mods.is_dir() else []
         if len(matches) != 1 or matches[0].name != source.name:
