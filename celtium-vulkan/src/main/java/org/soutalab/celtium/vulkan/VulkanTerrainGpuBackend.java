@@ -13998,6 +13998,19 @@ this.frameBufferOpen = false;
                 org.soutalab.celtium.shaderpack.SpirvModule module = compiler.compile(stage, lowered.source());
                 line.append(" spirvWords=").append(ShadercGlslCompiler.wordCount(module))
                         .append(" result=OK");
+                // The Vulkan objects the draw will be assembled from: a shader module, and set 0 with the transform
+                // block, the pack's own uniforms and one binding per sampler. Created and released here because this is
+                // a probe; the pipeline itself needs render targets whose formats match the program's outputs, which is
+                // the next unit.
+                ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(this.context);
+                try (ShaderPackPipelineFactory.ModuleHandle handle = factory.createModule(module);
+                     ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(lowered)) {
+                    line.append(" module=").append(handle.module() != 0L ? "ok" : "null")
+                            .append(" descriptorLayout=").append(layout.descriptorSetLayout() != 0L ? "ok" : "null")
+                            .append(" pipelineLayout=").append(layout.pipelineLayout() != 0L ? "ok" : "null")
+                            .append(" uniformBlock=").append(layout.uniformBlockBinding())
+                            .append(" samplers=").append(layout.samplerBindings().size());
+                }
             } catch (Throwable failure) {
                 String text = String.valueOf(failure);
                 line.append(" result=FAILED error=").append(text.length() > 300 ? text.substring(0, 300) : text);

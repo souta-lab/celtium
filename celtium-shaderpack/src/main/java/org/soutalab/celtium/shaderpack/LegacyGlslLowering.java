@@ -166,6 +166,8 @@ public final class LegacyGlslLowering {
             nextBinding = Math.max(nextBinding, used.intValue() + 1);
         }
         boolean usesTransforms = false;
+        /** Whether {@code ftransform()} itself was rewritten, which is what needs the helper function. */
+        boolean usesFtransform = false;
         boolean usesFragmentColour = false;
         boolean usesFragmentData = false;
         int originalVersion = 0;
@@ -311,6 +313,11 @@ public final class LegacyGlslLowering {
             if (!attributeLine && !varyingLine) {
                 if (containsIdentifier(lowered, "ftransform")) {
                     usesTransforms = true;
+                    // The helper is only wanted when ftransform was rewritten. usesTransforms also means "a matrix was
+                    // lowered", and emitting the helper for any matrix produced a function whose body names
+                    // u_ModelViewProjection against a block that has no such member - "no such field in structure
+                    // 'celtium_transforms'", which is how the real pack found this.
+                    usesFtransform = true;
                     if (!uniforms.contains("mat4 u_ModelViewProjection")) {
                         uniforms.add("mat4 u_ModelViewProjection");
                     }
@@ -431,7 +438,7 @@ public final class LegacyGlslLowering {
                     }
                     text.append("} ").append(TRANSFORM_INSTANCE).append(";\n\n");
                 }
-                if (usesTransforms) {
+                if (usesFtransform) {
                     text.append("vec4 celtium_ftransform(vec4 position) {\n")
                             .append("    return ").append(TRANSFORM_INSTANCE).append(".u_ModelViewProjection * position;\n")
                             .append("}\n\n");
