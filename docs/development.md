@@ -93,6 +93,12 @@ wrapperのexit 0は、当該legについて実装された受入条件をすべ�
 | scene・camera・較正・画像verdict・計器 | `.gv-verify/run-<leg>/logs/celtium-validation.json` |
 | device行を含むconsole / 全logs / 画像 | `.gv-verify/run-<leg>/validation-console.log`, `logs/`, `screenshots/` |
 
+**profileを取るleg（JFR）はdumpを切る**。picture dumpは1枚あたり~340ms（1280x720の**GPU sync＋per-pixel変換＋PNG**）かかり、
+1 legで13枚≈4.2秒＝client threadサンプルの**15%**を占めます（`readBackBlock`が最大のleafになる）。
+これはレンダラのworkではなく証拠作成のコストなので、**JFR/profileのlegは `-Dceltium.validation.dumpPresentedImage=false` で走らせ、
+そのlegの`presentedImageVerdict`がFAILEDなのは想定どおり**と扱います。KPI/性能比較のlegはdumpを残してよい
+（比較は**arm別中央値**で行い、数十枚のspikeは中央値を動かさない。平均は動くので使わない）。
+
 **Intel**は `CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"` と `gpuRequirementMet=true`。
 `fixtureStatus=PASSED`でもVulkan validationが失敗すれば受入失敗。古いIntel resize legはまさにその例。
 `validationClean=true`だけでも正しい絵は証明しない。図の対照・画像gateの適用範囲は [検証の罠](<verification-traps.md>)。
