@@ -7729,6 +7729,8 @@ this.frameBufferOpen = false;
                     this.immediateDrawSite = "order-flush-in-pass";
                     drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
                 } else {
+                    // The window's own census, taken before the window so a failure still names its caller.
+                    celtium$noteWindowOpenSite();
                     flushImmediateWindow();
                 }
             } finally {
@@ -9553,6 +9555,7 @@ this.frameBufferOpen = false;
                 + " uniform" + (this.terrain.uniforms() == null ? "=none" : this.terrain.uniforms().growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
+                + " windowOpenSites=[" + windowOpenSiteSummary() + "]"
                 + " splashSourcedGroups=" + this.targetStatistics.splashSourcedGroups()
                 + " splashCanvasInvalidations=" + this.targetStatistics.splashCanvasInvalidations()
                 + " immediateDrawSiteLogged=" + this.immediateStatistics.immediateDrawSiteLogged()
@@ -12098,6 +12101,19 @@ this.frameBufferOpen = false;
     /** Bounded count for {@code CELTIUM_MENU_GROUP}, the menu-phase group texture census. */
     private int menuGroupCensus;
 
+    /**
+     * Which call site opens an immediate window, counted by the first game frame that names it.
+     * <p>
+     * Five windows a frame at ~0.15 ms each is the largest fixed cost left on the standard scene (measured: 4308
+     * windows over 857 frames, winBarrier+winRecord+winSubmit+winEnd), and the question that decides whether any of
+     * them can be removed is <em>who</em> opens them - the game's framebuffer switches, its clears, the terrain pass or
+     * this renderer's own frame boundary. The 33 call sites cannot be told apart from the counters alone, so the
+     * first few windows name their caller and the census counts the rest by that name.
+     */
+    private final java.util.Map<String, Integer> windowOpenSites = new java.util.LinkedHashMap<String, Integer>();
+    /** How many window openings carried a caller census; the rest are counted by site only. */
+    private int windowOpenSiteLogs;
+
     /** The GL name whose uploads {@code CELTIUM_UPLOAD_CALLER} reports without the sixteen-line bound, or -1. */
     public static int uploadCallerId() {
         return Integer.getInteger("celtium.vulkan.uploadCallerId", -1).intValue();
@@ -13282,6 +13298,47 @@ this.frameBufferOpen = false;
      * and that is exactly where the panorama's white lives. The rule is the same: the first frame with no splash
      * upload after one that had them ends the splash, and its canvases must not stay as any texture's content.
      */
+    /** Counts one window opening against the frame that asked for it, printing the first few callers. */
+    private void celtium$noteWindowOpenSite() {
+        String site = "unattributed";
+        StackTraceElement[] frames = Thread.currentThread().getStackTrace();
+        for (int i = 2; i < frames.length; i++) {
+            String name = frames[i].getClassName();
+            if (name.startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")
+                    || name.startsWith("java.lang.Thread")) {
+                continue;
+            }
+            site = name.replaceAll(".*\\.", "") + "." + frames[i].getMethodName() + ":" + frames[i].getLineNumber();
+            break;
+        }
+        Integer seen = this.windowOpenSites.get(site);
+        this.windowOpenSites.put(site, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+        if (this.windowOpenSiteLogs < 12) {
+            this.windowOpenSiteLogs++;
+            System.out.println("[Celtium] CELTIUM_WINDOW_SITE frame=" + this.frameId + " site=" + site
+                    + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
+                    + " groups=" + this.immediateGroups.size());
+        }
+    }
+
+    /** {@return the window-opening census, largest first}, or {@code none} before the first window. */
+    private String windowOpenSiteSummary() {
+        if (this.windowOpenSites.isEmpty()) {
+            return "none";
+        }
+        java.util.List<java.util.Map.Entry<String, Integer>> entries =
+                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.windowOpenSites.entrySet());
+        entries.sort((left, right) -> Integer.compare(right.getValue().intValue(), left.getValue().intValue()));
+        StringBuilder text = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> entry : entries) {
+            if (text.length() > 0) {
+                text.append(" | ");
+            }
+            text.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        return text.toString();
+    }
+
     private void celtium$dropSplashCanvasesAtSplashEnd() {
         if (!this.splashCanvasIds.isEmpty() && !this.splashUploadsThisFrame) {
             for (Integer id : this.splashCanvasIds) {
