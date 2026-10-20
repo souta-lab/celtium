@@ -1118,6 +1118,31 @@ public final class CeltiumGlStub implements FunctionProvider {
         return Integer.getInteger("celtium.glstub.alphaFuncOverride", 0).intValue();
     }
 
+    /**
+     * Reserves {@code range} names from the one window every generated GL name comes from.
+     *
+     * <p>There were two windows: this class's {@code nextName} for calls that arrived through the stub, and a second
+     * counter in the Forge-side hint for calls the transformer rewrote. Both started at 1, so a buffer name handed out
+     * by one could be the same integer as a display-list name handed out by the other - and the mirrors are keyed by
+     * name, so that is a collision rather than a cosmetic duplicate.
+     *
+     * @return the first of {@code range} contiguous names, or {@code -1} when no stub is installed
+     */
+    public static int celtium$reserveNames(int range) {
+        if (range <= 0) {
+            return 0;
+        }
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return -1;
+        }
+        int scalar = stub.nextName.getAndAdd(range);
+        for (int i = 0; i < range; i++) {
+            stub.liveNames.add(scalar + i);
+        }
+        return scalar;
+    }
+
     public static boolean isInstalled() {
         return installed != null;
     }

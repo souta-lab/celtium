@@ -69,7 +69,19 @@ public final class CeltiumGllessHint {
      * created through the GL surface - so all that is required is that they are non-zero and distinct.
      */
     public static int glGenName() {
-        return NEXT_NAME.getAndIncrement();
+        return glGenNames(1);
+    }
+
+    /**
+     * {@return the first of {@code range} contiguous names}, from the one window the stub owns.
+     *
+     * <p>The names the transformer hands out and the names the stub hands out have to come from the same counter: they
+     * are keys into the same mirrors, and two windows both starting at 1 means two different resources can share a name.
+     * The fallback keeps a hybrid run (where no stub is installed) working with this class's own counter.
+     */
+    public static int glGenNames(int range) {
+        int reserved = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$reserveNames(range);
+        return reserved >= 0 ? reserved : NEXT_NAME.getAndAdd(range);
     }
 
     /** The maximum texture size this renderer claims, in one place for every surface that has to answer it. */
