@@ -1,54 +1,79 @@
-# Goal: Celtiumを完成させる
+# Celtium 完成条件と目標（2026-10-21 改訂）
 
-Minecraft 1.12.2 / CleanroomMC 向けの高性能・高互換性**ネイティブ Vulkan レンダラ**を完成させる。
-成果は実際の描画・安定性・性能・互換性であり、PR数、round数、文書量ではない。
+- Goal ID: `goal-8df71681-c0a5-4c71-a8a6-aa13f58f1ac7`
+- 対象: Minecraft 1.12.2 / CleanroomMC 専用 native Vulkan レンダラ
+- 基準環境: Cleanroom 0.6.13-alpha, LWJGL 3.4.1, Java 25, AMD RX 6400 / Intel UHD 630
+- 比較基準: Celeritas 固定参照 `989ebf2e`
+- 現在状態表: [plan.md](<plan.md>)（唯一）
+- 方向性の根拠: [direction-2026-10-21.md](<direction-2026-10-21.md>)
+- 作業規約: [../AGENTS.md](../AGENTS.md)
 
-## 指示と実行状態
+## 目的
 
-- この文書は**製品の目的と完成条件**。作業許可、自動継続、現在の受入を定義しない。
-- 最新の利用者指示（停止・監査限定・優先変更を含む）を優先する。過去の「絶対に止まらない」等を復活させない。
-- セッションのGoal ID・revision・実行状態は正規のgoalツールで確認する。UUIDをリポジトリへ同期しない。
-  paused/disarmed は勝手に再開しない。利用者の再開指示がある場合だけ正規操作を行う。
-- 作業規約は [AGENTS.md](<../AGENTS.md>)、**唯一の現在状態表**は [plan.md](<plan.md>)。
-  過去の指示・識別履歴は [監査前スナップショット](<history/goal-before-process-audit-2026-10-17.md>)。史料であり現行命令ではない。
+Celtium を、Celeritas を明確に上回る実用レンダラとして完成させる。shaderless 描画の正しさ・FPS/frame time・主要 Mod 互換（E2E 1.93a、RLCraft 2.9.3）・配布品質を仕上げ、Native Shadow Map と Shaderpack を実画面と両 GPU で証明する。
 
-## 維持する仕様
+## 現在地（実測済み・再測定しない前提）
 
-- 対象は **Minecraft 1.12.2 / CleanroomMC 専用**。通常Forge / LWJGL2や別のLWJGL3置換構成の起動互換は対象外。
-  Cleanroom上のMinecraft/Forge公開入口・イベント・modelデータなど、既存Modの互換性を維持する。
-- 検証基準は **Cleanroom 0.6.13-alpha / LWJGL 3.4.1 / Java 25**。
-  Celtium自身のモジュールは **Java `--release 21`、class major 65以下**、Java 22+ / preview非依存。
-  ゲーム全体のJava 21起動を検証済みとしない。
-- 通常frameは **GL context / GL-VK bridge / GL fallbackを必要としない**native Vulkan。
-  汎用GLエミュレータやZink組込みではなく、terrain、model/item、entity/TESR、particle、GUI、texture、FBO、postprocess、presentを意味のあるnative passとして実装する。
-- allocator・buffer・descriptor・pipeline・resource registry、描画状態・所有権・寿命を一貫した契約で管理する。
-  有効な変更を保持し、根因に対応したレビュー可能な差分にする。
-- GPUの機能分岐は名前でなく **feature / format / surface能力**。mesh shaderを必須にしない。
-  **AMD RX 6400 / Intel UHD 630**を独立に受け入れ、他GPU / OSは未検証を明示する。
-- 比較基準は **Celeritas `989ebf2e`**。ライセンス・由来を保持する。
-  制限付きの現行Sodiumソースをコピー・翻訳・改名・cherry-pickしない。
+| 項目 | 実測値 |
+|---|---|
+| KPI（検証税OFF, AMD, `scripts/gv-kpi.sh`） | Celtium p50 **3.20ms** / p95 7.95 vs Celeritas **1.40ms** / 1.96 ＝ **2.29x**（3ペア 2.26/2.30/2.29） |
+| GPU（terrain 3 pass） | **1.4ms** ／ frame 8.5ms ⇒ GPU は遊んでいる |
+| 負けの正体 | GL 呼び出し単位の変換 **3.5µs × 約290/frame ≒ 1ms**。hotspot 無し、prepared キャッシュ hit 7.7%、GC は Celeritas と同量 |
+| スタブ残存違反 | `glCallList` **610** 回（モデル display list 再生）、スタブ側 `glDrawArrays` **1024** 回 |
+| コード規模 | celtium-vulkan **71,270** 行、`VulkanTerrainGpuBackend` **18,209** 行 / 980 fields、計器 `CELTIUM_` **309** 種 / println 385 / スイッチ 93 |
 
-## 優先順位と対応範囲
+## 破らない原則
 
-1. **正しさ・安定性**: Vanilla主要描画、UI・loading・video settings、ShaderGroup・spectator・outline、最終合成・提示、reload・resize・復旧。
-2. **FPS / frame time**: 正しさを維持し、同条件のCeleritas比較でp50/p95/p99、CPU/GPU、stall・allocation等を評価する。
-   詳細設計は [性能計画](<performance_plan.md>)。過去の数字を現行性能に流用しない。
-3. **主要Mod互換**: **E2E 1.93a / RLCraft 2.9.3**が最優先の完全Modpack目標。
-   E2EではNothiriumを置換しNaughthiriumを除外する。他の内容Modを保持し、StellarCore等は機能単位で互換化する。
-   entity・TESR・particle・foliage・weather・water・GUI/HUD、保存再読込・world-switch・性能を実worldで確認する。
-   terrain画像ゲート1本の成功はpack全体の受入ではない。
-4. **配布品質**: 設定、F3 device/driver、Java/GPU条件、ライセンス・credits、リブランド、既知問題、再現可能buildを整合させる。
-5. **Native Shadow Map / Shaderpack**: [影計画](<shader-plan.md>)の既存資産を接続し、BSL等の実packで影・composition・性能を確認する。
-   shaderless本体と主要Modの受入を製品化の前提とする。既定OFFの実験の並行可否は利用者の最新指示に従い、実験を完成扱いしない。
+1. **バニラ／Forge の描画 API は GL スタブを通さない。** Java API レベルで捕捉し native Vulkan へ渡す。
+2. **GL スタブの担当は「Mod が直接呼ぶ GL」のみ。** HUD/GUI も例外にしない（未捕捉の残留は欠陥）。
+3. **`VulkanTerrainGpuBackend` への新機能追加は禁止。** 抽出と削除のみ。
+4. **計器を増やさない。** 受入に使うのは ①KPI ペア ②スタブ違反2計器 ③immediate batch 数 ④validation ⑤GPU pass 時間 の5つだけ。
+5. **「呼び出しごとの変換」を速くする最適化は禁止**（余地なしと計測済み）。
+6. **1フレームのパスは十数個以内**（公式 Vulkan の MC-311557「45+ パス」批判の轍を踏まない）。
+7. 参考実装は**設計のみ**（VulkanMod / Sulfide / Rentities / Angelica / ImmediatelyFast）。コード流用をしない。
 
-## 完成条件
+## フェーズと受入
 
-- 上記主要描画・互換範囲が正しく動作し、native swapchainの完成frameが**実window/compositorへ提示**される証拠がある。
-- 両GPUで主要scene・reload・world-switch・resize・失敗復旧が通り、GL参照との画像/状態比較がある。
-- 主要ModとE2E/RLCraftの代表的な実プレイ・UI・保存再読込が成立する。
-- 公平なCeleritas性能比較があり、重要な性能回帰を解消している。
-- 実装・文書・配布物・ライセンス・設定が一致する。
-- 影/Shaderpackは実native描画と両GPU受入で証明する。
+### Phase A — 境界の法定化と計器集約
+- モデルの display list 再生を止める（`VulkanModelQuadCapture` の captured を伸ばす）
+- 即時 batch 経路を `ImmediateBatcher` へ抽出、計器を診断ファサードへ集約
+- **受入**: `glCallList` / スタブ `glDrawArrays` の減少、全 leg PASSED + validationClean、KPI 非悪化
 
-局所CPUテスト、実装済み、AMD成功、Intel成功、両GPU成功、未較正、FAILED、未完を区別する。
-個々の調査・PRの終了で製品Goalを完了しない。一方、**停止指示や権限境界を越えて継続しない**。
+### Phase B — 即時描画のモデル単位バッチ化
+- `(format, texture, blend, matrix)` を粗いキーにパス内蓄積し run あたり 1 draw
+- **受入**: 即時 batch 数 290 → 数十、KPI ペアで 2.29x から有意改善（±6% 超）
+
+### Phase C — フレームを明示パスで取る
+- sky / terrain / entities / block-entities / particles / GUI / post を明示パス化（十数パス以内）。余力で描画スレッド分離
+- **受入**: KPI ペアで **ratio ≤ 1.0**、両 GPU
+
+### Phase D — 互換と目視
+- E2E 1.93a / RLCraft 2.9.3 代表シーン、qmagnets テストマップ
+- 目視4画面（loading / home / game / settings）を画像で確認
+- Entity Culling 1.12.2 など既存最適化 Mod との共存
+- **受入**: 各シーンの画像 + validation clean
+
+### Phase E — 影・Shaderpack・配布
+- Native Shadow Map を実画面で証明（両 GPU）。影の別 mod 化は可
+- Shaderpack（BSL）実機で読み込みと描画反映
+- 配布品質（0.0.6-alpha 系）、既知問題、対応 Mod 一覧
+- **受入**: 影 ON の画像 + 両 GPU、BSL の実機ログ、配布物と実装の一致
+
+## 完成条件（すべて満たした時だけ Goal 完了）
+
+1. KPI が Celeritas 以下（ratio ≤ 1.0、AMD と Intel の両方）
+2. バニラ描画の全経路（sky / terrain / entities / block-entities / particles / GUI / font / loading / settings）が**スタブ非経由**で native に描かれ、validation が clean
+3. 目視4画面（loading / home / game / settings）を画像で確認
+4. E2E 1.93a と RLCraft 2.9.3 の代表シーンが実機で正常
+5. qmagnets テストマップで描画と性能を確認
+6. Native Shadow Map が実画面に出る（両 GPU）
+7. Shaderpack（BSL）が実機で読み込まれ描画に反映される
+8. 配布物（jar・設定・ライセンス・既知問題）が実装と一致
+
+## 検証の規約
+
+- GPU の主張には commit・jar hash・GPU・scene・camera・flags・leg を紐づける
+- **AMD 成功は Intel 成功ではない。** 主要受入は両 GPU
+- KPI は `scripts/gv-kpi.sh` のペアで測る（可能なら REPS=3）。検証税は `-Dceltium.vulkan.presentedDumpEvery=0`
+- 失敗・未較正・欠測を成功に数えない。無音の leg は重複 jar と計器の有効性を先に疑う
+- 目視は画像を残す。数値だけで「見えている」と主張しない
