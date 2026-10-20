@@ -149,12 +149,19 @@ public abstract class GlStateManagerMixin {
      * name). {@code require = 0} as everywhere else in this class: a build whose names differ must degrade to "not
      * hooked", never to a client that will not start.
      */
-    @Inject(method = "func_187423_f", at = @At("HEAD"), require = 0)
+    @Inject(method = "func_187423_f", at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$newList(int list, int mode, CallbackInfo info) {
-        try {
-            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(list);
-        } catch (RuntimeException | LinkageError ignored) {
-            // Never let the capture stop the game's own compile.
+        // One owner for both halves: CeltiumModelCapture tells the model capture a list is starting and publishes the
+        // open list to the stub. Splitting those across two injections on this method is what starved the capture.
+        if (org.taumc.celeritas.core.CeltiumModelCapture.onNewList(list, mode)) {
+            info.cancel();
+        }
+    }
+
+    @Inject(method = "glEndList", at = @At("HEAD"), cancellable = true, require = 0)
+    private static void celtium$endList(CallbackInfo info) {
+        if (org.taumc.celeritas.core.CeltiumModelCapture.onEndList()) {
+            info.cancel();
         }
     }
 
