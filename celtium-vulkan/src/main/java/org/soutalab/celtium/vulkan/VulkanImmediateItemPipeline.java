@@ -455,6 +455,10 @@ public final class VulkanImmediateItemPipeline {
     private static final int DESCRIPTOR_POOL_LIMIT = VulkanImmediateTexturePipeline.DESCRIPTOR_POOL_LIMIT;
 
     public void delete() {
+        // A deleted pipeline must not stay reachable from the static list that fans shadow sources out to live
+        // instances: reload and variant churn left deleted pipelines registered, and a later source change wrote through
+        // their descriptor sets (#400).
+        SHADOW_INSTANCES.remove(this);
         // Capture: the deferred teardown below must not destroy a pipeline this object is rebuilt into.
         long pipelineToDestroy = this.pipeline;
         long setLayoutToDestroy = this.descriptorSetLayout;

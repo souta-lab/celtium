@@ -823,6 +823,35 @@ public final class ShadowMapPass {
 
     /** Frees the pass's resources. */
     public void destroy() {
+        // Everything this pass owns, in one place (#400). It used to release the image, view and memory only: the probe
+        // pipeline and its layout, the per-terrain pipelines, the sampler, the matrix block and the pools of the own
+        // submissions stayed alive, and a context rebuild inherited handles from the old device.
+        if (this.pipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(this.context.device(), this.pipeline, null);
+            this.pipeline = VK_NULL_HANDLE;
+        }
+        if (this.pipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(this.context.device(), this.pipelineLayout, null);
+            this.pipelineLayout = VK_NULL_HANDLE;
+        }
+        for (java.util.Iterator<Long> pipelines = this.terrainPipelines.values().iterator(); pipelines.hasNext();) {
+            vkDestroyPipeline(this.context.device(), pipelines.next().longValue(), null);
+        }
+        this.terrainPipelines.clear();
+        if (this.sampler != VK_NULL_HANDLE) {
+            vkDestroySampler(this.context.device(), this.sampler, null);
+            this.sampler = VK_NULL_HANDLE;
+        }
+        if (this.matrixBuffer != null) {
+            this.matrixBuffer.delete();
+            this.matrixBuffer = null;
+        }
+        while (!this.pendingOwnSubmissions.isEmpty()) {
+            long[] pending = this.pendingOwnSubmissions.poll();
+            vkDestroyFence(this.context.device(), pending[1], null);
+            vkDestroyCommandPool(this.context.device(), pending[0], null);
+        }
+        this.pendingProbePools.releaseAllOnDeviceTeardown(this.context.device());
         if (this.view != VK_NULL_HANDLE) {
             vkDestroyImageView(this.context.device(), this.view, null);
             this.view = VK_NULL_HANDLE;

@@ -10812,6 +10812,12 @@ this.frameBufferOpen = false;
             pipeline.delete();
         }
         this.terrain.releasePipelines();
+        if (this.shadowMapPass != null) {
+            // The pass owns an image, a view, its memory, a sampler, a matrix block, two pipelines and the pools of its own
+            // submissions; without this call a context rebuild leaked all of them (#400).
+            this.shadowMapPass.destroy();
+            this.shadowMapPass = null;
+        }
         if (this.uiRenderPass != 0) {
             org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.uiRenderPass, null);
             this.uiRenderPass = 0;

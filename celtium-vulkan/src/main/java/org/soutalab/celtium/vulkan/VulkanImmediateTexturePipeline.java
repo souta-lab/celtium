@@ -698,6 +698,10 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     public void delete() {
+        // A deleted pipeline must not stay reachable from the static list that fans shadow sources out to live
+        // instances: reload and variant churn left deleted pipelines registered, and a later source change wrote through
+        // their descriptor sets (#400).
+        SHADOW_INSTANCES.remove(this);
         // Capture the handles first. A deferred teardown that read the fields when it finally ran would destroy
         // whatever this object had been rebuilt into by then - measured as the replacement pipeline being destroyed
         // out from under fresh recordings (141 VUIDs, leg uniE7) - so the closure owns these handles and the object is

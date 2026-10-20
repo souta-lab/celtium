@@ -263,6 +263,10 @@ public final class VulkanImmediateBlockPipeline {
     }
 
     public void delete() {
+        // A deleted pipeline must not stay reachable from the static list that fans shadow sources out to live
+        // instances: reload and variant churn left deleted pipelines registered, and a later source change wrote through
+        // their descriptor sets (#400).
+        SHADOW_INSTANCES.remove(this);
         if (this.pipeline != VK_NULL_HANDLE) {
             this.context.celtium$notePipelineDestroy("immediateblockpipeline");
             vkDestroyPipeline(this.context.device(), this.pipeline, null);
