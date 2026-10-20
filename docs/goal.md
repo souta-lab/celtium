@@ -19,7 +19,7 @@ Celtium を、Celeritas を明確に上回る実用レンダラとして完成�
 | KPI（検証税OFF, AMD, `scripts/gv-kpi.sh`） | Celtium p50 **3.20ms** / p95 7.95 vs Celeritas **1.40ms** / 1.96 ＝ **2.29x**（3ペア 2.26/2.30/2.29） |
 | GPU（terrain 3 pass） | **1.4ms** ／ frame 8.5ms ⇒ GPU は遊んでいる |
 | 負けの正体 | GL 呼び出し単位の変換 **3.5µs × 約290/frame ≒ 1ms**。hotspot 無し、prepared キャッシュ hit 7.7%、GC は Celeritas と同量 |
-| スタブ残存違反 | `glCallList` **610** 回（モデル display list 再生）、スタブ側 `glDrawArrays` **1024** 回 |
+| 到着カウンタ（**違反ではない**・2026-10-21 訂正） | `glDrawArrays` **1024** 件のうち **1020 件が native 描画**・拒否 4。display list 再生は捕捉済みリストを引く（census 8/8 `captured=yes`）。**GL フォールバック描画の計器は存在しない**＝バニラは既に stub 非経由で native。残る問題は経路ではなく **per-call コスト**だけ |
 | コード規模 | celtium-vulkan **71,270** 行、`VulkanTerrainGpuBackend` **18,209** 行 / 980 fields、計器 `CELTIUM_` **309** 種 / println 385 / スイッチ 93 |
 
 ## 破らない原則
@@ -34,10 +34,10 @@ Celtium を、Celeritas を明確に上回る実用レンダラとして完成�
 
 ## フェーズと受入
 
-### Phase A — 境界の法定化と計器集約
-- モデルの display list 再生を止める（`VulkanModelQuadCapture` の captured を伸ばす）
-- 即時 batch 経路を `ImmediateBatcher` へ抽出、計器を診断ファサードへ集約
-- **受入**: `glCallList` / スタブ `glDrawArrays` の減少、全 leg PASSED + validationClean、KPI 非悪化
+### Phase A — 前提の確定（**完了 2026-10-21**）
+- 到着カウンタ（`glDrawArrays` / `glCallList`）は native 処理の到着数であり GL フォールバックではない、と実測で確定
+- `glDrawArrays` 1024 件中 1020 件が native 描画・拒否 4、display list 再生は捕捉済みリストを引く（8/8 `captured=yes`）
+- ⇒ 「境界の違反」は存在せず、追加作業なし。以後の主作業は Phase B
 
 ### Phase B — 即時描画のモデル単位バッチ化
 - `(format, texture, blend, matrix)` を粗いキーにパス内蓄積し run あたり 1 draw
