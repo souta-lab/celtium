@@ -37,6 +37,9 @@ final class VulkanPushCache {
     private long pipelineLayout = -1L;
     /** The cached bytes, exactly as many as the layout declared. */
     private byte[] bytes = new byte[0];
+    /** A read-only view of {@link #bytes} for the bulk comparison, rebuilt when the array is replaced. */
+    private java.nio.ByteBuffer cacheBytesView;
+
     /** How many pushes were skipped because the block was unchanged. */
     private int skipped;
     /** How many pushes were issued, i.e. the run breaks the elision could not cover. */
@@ -58,12 +61,12 @@ final class VulkanPushCache {
             }
             return true;
         }
-        int start = data.position();
-        for (int i = 0; i < length; i++) {
-            if (data.get(start + i) != this.bytes[i]) {
-                this.issued++;
-                return true;
-            }
+        // Bulk comparison, not a byte loop: the block is 224 bytes and the immediate path asks this once per group, so
+        // the byte-at-a-time form put ~250 ByteBuffer.get calls on every group's path. ByteBuffer.equals compares the
+        // remaining contents through Bits.equals, which is the vectorised comparison.
+        if (!this.cacheView(data, length).equals(this.cachedBytes(length))) {
+            this.issued++;
+            return true;
         }
         this.skipped++;
         return false;
@@ -75,12 +78,34 @@ final class VulkanPushCache {
         if (this.bytes.length != length) {
             this.bytes = new byte[length];
         }
-        int start = data.position();
-        for (int i = 0; i < length; i++) {
-            this.bytes[i] = data.get(start + i);
-        }
+        // One bulk read into the cache array: the byte loop here was the copy half of the same cost.
+        this.cacheView(data, length).get(this.bytes, 0, length);
         this.commandBuffer = commandBuffer;
         this.pipelineLayout = pipelineLayout;
+    }
+
+    /**
+     * {@return the caller's block as a view over exactly the bytes to compare}.
+     * <p>
+     * A duplicate keeps the caller's buffer untouched; positioned and limited so a bulk comparison sees only the block.
+     */
+    private java.nio.ByteBuffer cacheView(java.nio.ByteBuffer data, int length) {
+        java.nio.ByteBuffer view = data.duplicate();
+        int start = data.position();
+        view.position(start);
+        view.limit(start + length);
+        return view;
+    }
+
+    /** {@return the cached bytes as a buffer over the same range, so the comparison is bulk on both sides}. */
+    private java.nio.ByteBuffer cachedBytes(int length) {
+        if (this.cacheBytesView == null || this.cacheBytesView.capacity() != this.bytes.length) {
+            this.cacheBytesView = java.nio.ByteBuffer.wrap(this.bytes);
+        }
+        java.nio.ByteBuffer view = this.cacheBytesView;
+        view.position(0);
+        view.limit(length);
+        return view;
     }
 
     /** {@return how many pushes this cache elided} - the counter the summary reports. */
