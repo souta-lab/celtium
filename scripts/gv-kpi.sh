@@ -65,25 +65,31 @@ COMMON=(-Dceltium.vulkan.validation=false -Dceltium.vulkan.presentReadback=false
 if [ "${#ARM_ONLY[@]}" -gt 0 ]; then
     echo "note: ${#ARM_ONLY[@]} celtium-only flag(s) - the ratio is reported, no speed verdict is given (#391)."
 fi
-LEG_FAILURES=0
+# The two arms are judged differently on the runner's exit status, and the reason is structural rather than convenient: the
+# reference arm is a GL renderer, so its picture evidence is a GL screenshot and it can never satisfy the runner's
+# native-presented-dump acceptance - it exits non-zero on every leg. That status is therefore information for the
+# reference and a failure for Celtium, whose acceptance is the thing being measured. The reports are checked for both
+# arms, and a reference leg whose reports are unusable is still refused (#390).
+CELTIUM_LEG_FAILURES=0
+REFERENCE_LEG_FAILURES=0
 for rep in $(seq 1 "${CELTIUM_KPI_REPS:-3}"); do
     if ! scripts/gv-leg.sh "${TAG}-celtium-r$rep" "$JARS" "$SCENE" "$GPU" "$SECONDS_" \
             "${COMMON[@]}" "${SHARED[@]}" "${ARM_ONLY[@]}" >/dev/null 2>&1; then
-        echo "leg ${TAG}-celtium-r$rep failed" >&2
-        LEG_FAILURES=$((LEG_FAILURES + 1))
+        echo "leg ${TAG}-celtium-r$rep returned a non-zero status" >&2
+        CELTIUM_LEG_FAILURES=$((CELTIUM_LEG_FAILURES + 1))
     fi
     if ! CELTIUM_LEG_REFERENCE_RENDERER="$REFERENCE" \
             scripts/gv-leg.sh "${TAG}-celeritas-r$rep" "$JARS" "$SCENE" "$GPU" "$SECONDS_" \
             "${COMMON[@]}" "${SHARED[@]}" >/dev/null 2>&1; then
-        echo "leg ${TAG}-celeritas-r$rep failed" >&2
-        LEG_FAILURES=$((LEG_FAILURES + 1))
+        REFERENCE_LEG_FAILURES=$((REFERENCE_LEG_FAILURES + 1))
     fi
 done
 
-python3 - "$TAG" "${CELTIUM_KPI_REPS:-3}" "$LEG_FAILURES" "${#ARM_ONLY[@]}" <<'PY'
+python3 - "$TAG" "${CELTIUM_KPI_REPS:-3}" "$CELTIUM_LEG_FAILURES" "${#ARM_ONLY[@]}" "$REFERENCE_LEG_FAILURES" <<'PY'
 import json, math, os, statistics, sys
 
 tag, reps, leg_failures, arm_only = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+reference_leg_failures = int(sys.argv[5])
 # A p50 below this is not a frame time; it is a report that never recorded one (a FAILED leg, an empty metric, a run
 # that stopped before the window). The old version read a missing metric as 0.0 ms, so a leg with no samples at all
 # became the fastest arm and the pair "passed" (#390).
@@ -140,7 +146,12 @@ def arm(name):
 
 problems = []
 if leg_failures:
-    problems.append('%d leg(s) returned a non-zero status' % leg_failures)
+    problems.append('%d Celtium leg(s) returned a non-zero status' % leg_failures)
+if reference_leg_failures:
+    # Expected for a GL arm; recorded so the run is not silently missing it, and the reports below decide whether the arm
+    # is usable at all.
+    print('  note      the reference arm returned a non-zero status on %d leg(s): it is a GL arm and cannot produce the '
+          'native presented-dump evidence the runner asks for' % reference_leg_failures)
 rows = {}
 for name in ('celtium', 'celeritas'):
     usable, rejected = arm(name)
