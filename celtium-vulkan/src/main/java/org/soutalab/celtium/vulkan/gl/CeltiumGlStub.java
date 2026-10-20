@@ -70,18 +70,18 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final byte A_UINT = 16;
 
     // Semantics ids - what dispatch() does with the call. The enum keeps the table lines short.
-    private static final int SEM_NOOP = 0;            // record only - state the Vulkan side owns or nobody reads
-    private static final int SEM_GEN = 1;             // object-name allocation: returns the next id
+    static final int SEM_NOOP = 0;            // record only - state the Vulkan side owns or nobody reads
+    static final int SEM_GEN = 1;             // object-name allocation: returns the next id
     private static final int SEM_GET_ERROR = 2;       // always GL_NO_ERROR - nothing the stub does can raise one
     private static final int SEM_GET_STRING = 3;      // arg0 pname -> interned ascii
-    private static final int SEM_IS_ENABLED = 4;      // arg0 cap -> recorded enable bit
+    static final int SEM_IS_ENABLED = 4;      // arg0 cap -> recorded enable bit
     private static final int SEM_ENABLE = 5;          // arg0 cap -> set enable bit
     private static final int SEM_DISABLE = 6;         // arg0 cap -> clear enable bit
-    private static final int SEM_GET_INTEGERV = 7;    // arg0 pname, arg1 out[] -> plausible ints
+    static final int SEM_GET_INTEGERV = 7;    // arg0 pname, arg1 out[] -> plausible ints
     private static final int SEM_GET_FLOATV = 8;      // arg0 pname, arg1 out[] -> plausible floats
     private static final int SEM_GET_BOOLEANV = 9;    // arg0 pname, arg1 out[] -> plausible bytes
     private static final int SEM_IS_OBJECT = 10;      // arg0 id -> whether the table generated it
-    private static final int SEM_DELETE = 11;         // id list -> retire names (reissue is the same counter-free)
+    static final int SEM_DELETE = 11;         // id list -> retire names (reissue is the same counter-free)
     private static final int SEM_GET_STRINGI = 12;    // pname, index -> extension string
     private static final int SEM_GET_INTEGER64V = 13; // pname, out64[] -> plausible longs
     private static final int SEM_ROUTE = 14;          // pixel/semantic routing - handled in route()
@@ -636,6 +636,43 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
     /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
     private volatile int lastBoundTexture = -1;
+    /** {@code GL_COMPILE_AND_EXECUTE}: the commands are recorded and also executed as they arrive}. */
+    private static final int GL_COMPILE_AND_EXECUTE = 0x1301;
+
+    /**
+     * {@return whether a command is executed rather than compiled into a display list}.
+     * <p>
+     * The specification lists these: object-name allocation and deletion, the queries, the client-pointer mapping
+     * commands and the status/info-log reads. They are answered immediately even while {@code glNewList} is open,
+     * because the caller uses the answer at that point in the stream (#393).
+     */
+    static boolean notCompiledIntoDisplayList(int semantics) {
+        switch (semantics) {
+            case SEM_GEN:
+            case SEM_DELETE:
+            case SEM_GET_ERROR:
+            case SEM_GET_STRING:
+            case SEM_GET_STRINGI:
+            case SEM_GET_INTEGERV:
+            case SEM_GET_FLOATV:
+            case SEM_GET_BOOLEANV:
+            case SEM_GET_INTEGER64V:
+            case SEM_GET_TEX_ENV_I:
+            case SEM_GET_TEX_ENV_FV:
+            case SEM_IS_ENABLED:
+            case SEM_IS_OBJECT:
+            case SEM_MAP:
+            case SEM_UNMAP:
+            case SEM_STATUS:
+            case SEM_INFO_LOG:
+            case SEM_FBO_COMPLETE:
+            case SEM_SIGNALED:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
     private volatile int compilingListMode;
     /**
@@ -2682,8 +2719,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         // correct when a child is replaced.
         List<Object[]> open = this.openList;
         if (open != null && fn.semantics != SEM_NEW_LIST && fn.semantics != SEM_END_LIST) {
-            open.add(new Object[] { fn, c.clone() });
-            return 0L;
+            if (!notCompiledIntoDisplayList(fn.semantics)) {
+                open.add(new Object[] { fn, c.clone() });
+                if (this.compilingListMode != GL_COMPILE_AND_EXECUTE) {
+                    return 0L;
+                }
+                // GL_COMPILE_AND_EXECUTE: the command is stored *and* runs now. Falling through executes it; the stored
+                // copy is what glCallList later replays. The old code returned here for both modes, so a list compiled
+                // that way drew nothing until it was called - which the spec calls out as the difference between the two
+                // modes (#393).
+            }
+            // Commands the spec does not compile run immediately and are not stored: a caller that asks for a value
+            // during compilation has to get it, and a stored native out pointer would be written later through memory
+            // that may no longer be a caller's (§5.4 of the OpenGL 1.2.1 specification).
         }
         long a0 = fn.args.length > 0 ? c[0] : 0L;
         long a1 = fn.args.length > 1 ? c[1] : 0L;
