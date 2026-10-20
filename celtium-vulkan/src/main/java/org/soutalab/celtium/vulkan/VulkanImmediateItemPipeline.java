@@ -131,7 +131,9 @@ public final class VulkanImmediateItemPipeline {
     /** Every live lit instance, so a later shadow source reaches sets that were built before it. */
     private static final java.util.List<VulkanImmediateItemPipeline> SHADOW_INSTANCES =
             new java.util.ArrayList<VulkanImmediateItemPipeline>();
-    private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
+    // Primitive long keys, as in the texture family: one lookup per immediate batch.
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
 
     private final VulkanColorBlendState colorBlend;
     private final boolean depthTest;
@@ -269,9 +271,8 @@ public final class VulkanImmediateItemPipeline {
             VulkanImmediateTexturePipeline.ZERO_VIEW_REFUSALS++;
             return 0L;
         }
-        Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
-        if (existing != null) {
-            return existing.longValue();
+        if (this.setsByTextureView.containsKey(texture.key())) {
+            return this.setsByTextureView.get(texture.key());
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);
@@ -296,7 +297,7 @@ public final class VulkanImmediateItemPipeline {
                 ensureShadowResources();
                 writeShadowBindings(stack, set);
             }
-            this.setsByTextureView.put(Long.valueOf(texture.key()), Long.valueOf(set));
+            this.setsByTextureView.put(texture.key(), set);
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
@@ -341,9 +342,8 @@ public final class VulkanImmediateItemPipeline {
             return 0L;
         }
         long descriptorKey = (texture.key() * 31L) + lightmap.key();
-        Long existing = this.setsByTextureView.get(Long.valueOf(descriptorKey));
-        if (existing != null) {
-            return existing.longValue();
+        if (this.setsByTextureView.containsKey(descriptorKey)) {
+            return this.setsByTextureView.get(descriptorKey);
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);
@@ -379,7 +379,7 @@ public final class VulkanImmediateItemPipeline {
             // vkCmdDrawIndexed ... descriptor not updated.
             ensureShadowResources();
             writeShadowBindings(stack, set);
-            this.setsByTextureView.put(Long.valueOf(descriptorKey), Long.valueOf(set));
+            this.setsByTextureView.put(descriptorKey, set);
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
@@ -840,8 +840,9 @@ public final class VulkanImmediateItemPipeline {
         for (int i = 0; i < SHADOW_INSTANCES.size(); i++) {
             VulkanImmediateItemPipeline instance = SHADOW_INSTANCES.get(i);
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                for (java.util.Map.Entry<Long, Long> entry : instance.setsByTextureView.entrySet()) {
-                    instance.writeShadowBindings(stack, entry.getValue().longValue());
+                for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry
+                        : instance.setsByTextureView.long2LongEntrySet()) {
+                    instance.writeShadowBindings(stack, entry.getLongValue());
                 }
             }
         }

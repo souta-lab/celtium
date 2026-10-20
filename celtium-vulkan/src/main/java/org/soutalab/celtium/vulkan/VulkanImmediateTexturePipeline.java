@@ -150,7 +150,11 @@ public final class VulkanImmediateTexturePipeline {
      */
     private final java.util.List<Long> descriptorPools = new java.util.ArrayList<Long>();
     private long descriptorSet = VK_NULL_HANDLE;
-    private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
+    // Primitive long keys: this is the hottest map in the renderer - one lookup per immediate batch, ~300 a frame - and
+    // the boxed form showed up in a JFR of the world window as HashMap.getNode/getTreeNode plus Long allocation for
+    // the keys (about a tenth of the client thread together with the texture registry's maps).
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /**
      * The live texture key per GL texture name, so a superseded generation can be retired.
      * <p>
@@ -519,10 +523,9 @@ public final class VulkanImmediateTexturePipeline {
         }
         censusTexture(texture);
         long key = texture.key();
-        Long existing = this.setsByTextureView.get(Long.valueOf(key));
-        if (existing != null) {
+        if (this.setsByTextureView.containsKey(key)) {
             DESCRIPTOR_HITS++;
-            return existing.longValue();
+            return this.setsByTextureView.get(key);
         }
         // A miss retires the eldest entries once the cache is at its limit. The key is view ^ generation, so a
         // generation bump (a mirror refresh, a sampler rebuild, a reallocation) always misses and, before this, always
@@ -532,10 +535,9 @@ public final class VulkanImmediateTexturePipeline {
         // on the retired list, counted, for a completion-gated reset.
         while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && !this.insertionOrder.isEmpty()) {
             Long eldest = this.insertionOrder.remove(0);
-            Long oldSet = this.setsByTextureView.remove(eldest);
-            if (oldSet != null) {
+            if (this.setsByTextureView.containsKey(eldest.longValue())) {
                 this.descriptorSetsRetired++;
-                this.retiredSets.add(oldSet);
+                this.retiredSets.add(Long.valueOf(this.setsByTextureView.remove(eldest.longValue())));
             }
         }
         // A miss allocates and writes a descriptor set. If this fires on almost every batch, the key (the texture's view)
@@ -563,7 +565,7 @@ public final class VulkanImmediateTexturePipeline {
             vkUpdateDescriptorSets(this.context.device(), write, null);
             ensureShadowResources();
             writeShadowBindings(stack, set);
-            this.setsByTextureView.put(Long.valueOf(texture.key()), Long.valueOf(set));
+            this.setsByTextureView.put(texture.key(), set);
             DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
@@ -1079,8 +1081,9 @@ public final class VulkanImmediateTexturePipeline {
         for (int i = 0; i < SHADOW_INSTANCES.size(); i++) {
             VulkanImmediateTexturePipeline instance = SHADOW_INSTANCES.get(i);
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                for (java.util.Map.Entry<Long, Long> entry : instance.setsByTextureView.entrySet()) {
-                    instance.writeShadowBindings(stack, entry.getValue().longValue());
+                for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry
+                        : instance.setsByTextureView.long2LongEntrySet()) {
+                    instance.writeShadowBindings(stack, entry.getLongValue());
                 }
             }
         }

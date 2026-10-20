@@ -89,7 +89,9 @@ public final class VulkanImmediateBlockPipeline {
             new java.util.ArrayList<VulkanImmediateBlockPipeline>();
     private long descriptorPool = VK_NULL_HANDLE;
     private long descriptorSet = VK_NULL_HANDLE;
-    private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
+    // Primitive long keys, as in the texture family: one lookup per immediate batch.
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** How many descriptor sets this pipeline has had to build; a rise means keys stopped matching. */
     public long setsCreated;
     /** Batches refused because the texture or light map they would sample has no view or sampler any more. */
@@ -210,9 +212,8 @@ public final class VulkanImmediateBlockPipeline {
         // view and generation change while the atlas's do not - keyed on the texture alone, a set built for an old
         // light map would be served for a new one.
         long descriptorKey = (texture.key() * 31L) + (lightmap != null ? lightmap.key() : 0L);
-        Long existing = this.setsByTextureView.get(Long.valueOf(descriptorKey));
-        if (existing != null) {
-            return existing.longValue();
+        if (this.setsByTextureView.containsKey(descriptorKey)) {
+            return this.setsByTextureView.get(descriptorKey);
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
@@ -250,7 +251,7 @@ public final class VulkanImmediateBlockPipeline {
             vkUpdateDescriptorSets(this.context.device(), write, null);
             ensureShadowResources();
             writeShadowBindings(stack, set);
-            this.setsByTextureView.put(Long.valueOf(descriptorKey), Long.valueOf(set));
+            this.setsByTextureView.put(descriptorKey, set);
             this.setsCreated++;
             return set;
         } catch (RuntimeException | LinkageError error) {
@@ -609,8 +610,9 @@ vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
         for (int i = 0; i < SHADOW_INSTANCES.size(); i++) {
             VulkanImmediateBlockPipeline instance = SHADOW_INSTANCES.get(i);
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                for (java.util.Map.Entry<Long, Long> entry : instance.setsByTextureView.entrySet()) {
-                    instance.writeShadowBindings(stack, entry.getValue().longValue());
+                for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry
+                        : instance.setsByTextureView.long2LongEntrySet()) {
+                    instance.writeShadowBindings(stack, entry.getLongValue());
                 }
             }
         }
