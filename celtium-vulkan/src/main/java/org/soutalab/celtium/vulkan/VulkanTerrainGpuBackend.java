@@ -14032,7 +14032,57 @@ this.frameBufferOpen = false;
     private VulkanTerrainPipeline shadowTerrainPipeline;
     private int shadowShadowDiag;
     private boolean shadowProbeReported;
+    /**
+     * Snapshots the shadow draw's tuple if the renderer captured a new batch since the last one.
+     * <p>
+     * The geometry half comes from {@link TerrainRenderer#shadowCaptureSerial()}: when the serial changes, the renderer has
+     * just recorded a batch and the vertex, index and indirect values it exposes all belong to that batch. The state half -
+     * pipeline, descriptor set with its dynamic offset, and the 224-byte push block - is taken here, in the same call, so
+     * the two halves cannot describe different regions (#397).
+     *
+     * @param pipeline the terrain pipeline that drew the batch
+     * @return whether a tuple is available
+     */
+    private boolean captureShadowTuple(VulkanTerrainPipeline pipeline) {
+        long serial = this.terrain.shadowCaptureSerial();
+        if (serial == this.shadowTupleSerial) {
+            return this.shadowTuplePipeline != null;
+        }
+        long descriptorSet = pipeline.lastDescriptorSet();
+        if (descriptorSet == 0L || this.terrain.shadowIndirectCount() <= 0) {
+            // Not a drawable batch: leave the previous tuple alone and let the caller fall back.
+            return false;
+        }
+        this.shadowTupleSerial = serial;
+        this.shadowTuplePipeline = pipeline;
+        this.shadowTupleVertexBuffer = this.terrain.shadowVertexBuffer();
+        this.shadowTupleIndexBuffer = this.terrain.shadowIndexBuffer();
+        this.shadowTupleIndirectBuffer = this.terrain.shadowIndirectBuffer();
+        this.shadowTupleIndirectOffset = this.terrain.shadowIndirectOffset();
+        this.shadowTupleIndirectCount = this.terrain.shadowIndirectCount();
+        this.shadowTupleDescriptorSet = descriptorSet;
+        this.shadowTupleDynamicOffset = pipeline.lastDynamicOffset();
+        float[] block = pipeline.lastPushBlock();
+        this.shadowTuplePushBlock = block == null ? null : block.clone();
+        return true;
+    }
+
     private boolean shadowItemSourcesSet;
+
+    // The shadow pass's draw tuple, captured in one place: the renderer supplies the geometry (vertex, index, indirect
+    // range) from the instant its first batch of the frame was recorded, and this side supplies the pipeline, descriptor
+    // set, dynamic offset and push block as they were for that same batch. Reading them separately mixed region A's
+    // commands with region B's buffers and state (#397).
+    private long shadowTupleSerial = -1L;
+    private VulkanTerrainPipeline shadowTuplePipeline;
+    private long shadowTupleVertexBuffer;
+    private long shadowTupleIndexBuffer;
+    private long shadowTupleIndirectBuffer;
+    private long shadowTupleIndirectOffset;
+    private int shadowTupleIndirectCount;
+    private long shadowTupleDescriptorSet;
+    private int shadowTupleDynamicOffset;
+    private float[] shadowTuplePushBlock;
     private long boundarySubmitNanos;
     private long slotWaitNanos;
     private int boundaryFrames;
@@ -14426,21 +14476,28 @@ this.frameBufferOpen = false;
                     && !Boolean.getBoolean("celtium.shadow.noPass");
             VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
             boolean drawn = false;
+            if (terrainPipeline != null && this.captureShadowTuple(terrainPipeline)) {
+                // The tuple this frame draws with is the one captured here; the fields below are read from it, not from
+                // the pipeline's last values.
+                terrainPipeline = this.shadowTuplePipeline;
+            }
             if (terrainPipeline != null && !Boolean.getBoolean("celtium.shadow.inFrame")) {
                 // The pass as its own queue packet, which is the default now: recording it into the frame's command
                 // buffer puts vkCmdBeginRendering inside the frame's render pass, and the validation layer says so on
                 // Intel (VUID-vkCmdBeginRendering-renderpass) - AMD stayed quiet about it. Its own submission has no
                 // enclosing pass, and the queue orders it against the frame's own submissions.
-                String submitted = this.shadowMapPass.recordTerrainAndSubmit(terrainPipeline,
-                        this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
-                        this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
-                        this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
-                        terrainPipeline.lastDescriptorSet(), terrainPipeline.lastDynamicOffset());
+                String submitted = this.shadowMapPass.recordTerrainAndSubmit(this.shadowTuplePipeline,
+                        this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer,
+                        this.shadowTupleIndirectBuffer, this.shadowTupleIndirectOffset,
+                        this.shadowTupleIndirectCount, this.shadowTuplePushBlock,
+                        this.shadowTupleDescriptorSet, this.shadowTupleDynamicOffset);
                 if (submitted != null && this.shadowOwnPrints < 4) {
                     this.shadowOwnPrints++;
                     System.out.println("[Celtium] CELTIUM_SHADOW_OWN " + submitted);
                 }
                 this.terrain.resetShadowCapture();
+                this.shadowTupleSerial = -1L;
+                this.shadowTuplePipeline = null;
                 return;
             }
             if (terrainShadow && (this.frameId < 3 || this.frameId % 300 == 0)) {
@@ -14452,19 +14509,19 @@ this.frameBufferOpen = false;
                         + " block=" + (terrainPipeline == null ? -1 : terrainPipeline.lastPushBlock().length));
             }
             if (terrainPipeline != null && this.shadowMapPass.hasTerrainPipeline()) {
-                drawn = this.shadowMapPass.recordTerrain(terrainPipeline, this.commandBuffer, stack,
-                        this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
-                        this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
-                        this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
-                        terrainPipeline.lastDescriptorSet(), terrainPipeline.lastDynamicOffset());
+                drawn = this.shadowMapPass.recordTerrain(this.shadowTuplePipeline, this.commandBuffer, stack,
+                        this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer,
+                        this.shadowTupleIndirectBuffer, this.shadowTupleIndirectOffset,
+                        this.shadowTupleIndirectCount, this.shadowTuplePushBlock,
+                        this.shadowTupleDescriptorSet, this.shadowTupleDynamicOffset);
             } else if (terrainPipeline != null) {
                 drawn = this.shadowMapPass.createTerrainPipeline(terrainPipeline);
                 if (drawn) {
-                    drawn = this.shadowMapPass.recordTerrain(terrainPipeline, this.commandBuffer, stack,
-                            this.terrain.shadowVertexBuffer(), this.terrain.shadowIndexBuffer(),
-                            this.terrain.shadowIndirectBuffer(), this.terrain.shadowIndirectOffset(),
-                            this.terrain.shadowIndirectCount(), terrainPipeline.lastPushBlock(),
-                        terrainPipeline.lastDescriptorSet(), terrainPipeline.lastDynamicOffset());
+                    drawn = this.shadowMapPass.recordTerrain(this.shadowTuplePipeline, this.commandBuffer, stack,
+                            this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer,
+                            this.shadowTupleIndirectBuffer, this.shadowTupleIndirectOffset,
+                            this.shadowTupleIndirectCount, this.shadowTuplePushBlock,
+                            this.shadowTupleDescriptorSet, this.shadowTupleDynamicOffset);
                 }
             }
             if (!drawn) {
@@ -14534,6 +14591,8 @@ this.frameBufferOpen = false;
             }
             // The capture is one frame's geometry: the next frame records its own.
             this.terrain.resetShadowCapture();
+            this.shadowTupleSerial = -1L;
+            this.shadowTuplePipeline = null;
         } catch (RuntimeException | LinkageError error) {
             record("native shadow pass failed: " + describe(error));
             if (System.getProperty("celtium.shadow.diag") != null) {

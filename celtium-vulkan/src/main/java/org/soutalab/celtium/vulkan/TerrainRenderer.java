@@ -205,19 +205,31 @@ public final class TerrainRenderer {
 
     /** Geometry the shadow pass may draw, captured from the pass's own bindings and indirect range. */
     private long shadowVertexBuffer;
+
+    /** The vertex and index buffers of the captured batch, taken with the range rather than at their bind sites. */
+    private long shadowCapturedVertexBuffer;
+    private long shadowCapturedIndexBuffer;
+
+    /** Incremented each time a frame's batch is captured, so the owner can attach its own state at the same moment. */
+    private long shadowCaptureSerial;
     private long shadowIndexBuffer;
     private long shadowIndirectBuffer;
     private long shadowIndirectOffset;
     private int shadowIndirectCount;
 
+    /** {@return the serial of the captured batch; a change means a new tuple is available}. */
+    public long shadowCaptureSerial() {
+        return this.shadowCaptureSerial;
+    }
+
     /** {@return the vertex buffer the terrain pass bound}, for the shadow pass. */
     public long shadowVertexBuffer() {
-        return this.shadowVertexBuffer;
+        return this.shadowCapturedVertexBuffer;
     }
 
     /** {@return the index buffer the terrain pass bound}. */
     public long shadowIndexBuffer() {
-        return this.shadowIndexBuffer;
+        return this.shadowCapturedIndexBuffer;
     }
 
     /** {@return the indirect command buffer and range the terrain pass issued}. */
@@ -540,9 +552,16 @@ public final class TerrainRenderer {
             // keeping the first offset made the range run past the buffer (VUID-vkCmdDrawIndexedIndirect-drawCount-00540
             // with drawCount 3246 at offset 800 in leg shadowTerrain5), so only the first batch of the frame is kept.
             if (this.shadowIndirectCount == 0) {
+                // The whole tuple is taken here, at one instant: the indirect range *and* the vertex and index buffers
+                // that batch draws from. Capturing the buffers at their bind sites and the range here mixed region A's
+                // indirect commands with region B's geometry whenever a frame drew more than one region - the command
+                // range stayed inside its buffer, but the vertices it pointed at belonged to another region (#397).
                 this.shadowIndirectBuffer = this.indirectBuffer.buffer();
                 this.shadowIndirectOffset = offsetBytes;
                 this.shadowIndirectCount = count;
+                this.shadowCapturedVertexBuffer = this.shadowVertexBuffer;
+                this.shadowCapturedIndexBuffer = this.shadowIndexBuffer;
+                this.shadowCaptureSerial++;
             }
             this.terrainIndirectCalls++;
             this.terrainIndirectDraws += count;
