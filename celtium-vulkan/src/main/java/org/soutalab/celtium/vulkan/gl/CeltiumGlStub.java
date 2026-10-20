@@ -587,6 +587,16 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile int unpackAlignment = 4;
     private volatile int unpackRowLength;
     private volatile int unpackSkipPixels, unpackSkipRows;
+    /**
+     * The size GL was last told a buffer holds, per buffer name.
+     * <p>
+     * The storage below is reused when it is already large enough, so its capacity is not the buffer's size: after
+     * {@code glBufferData(size=16)} then {@code glBufferData(size=4)} the capacity is still 16, and a range check against
+     * it accepted a mapping of bytes 8..12 that the 4-byte buffer does not have (#387). Everything that asks "how big is
+     * this buffer" reads this map; the capacity only decides when the allocation grows.
+     */
+    private final java.util.Map<Integer, Integer> bufferLogicalSize = new java.util.HashMap<Integer, Integer>();
+
     private final java.util.Map<Integer, ByteBuffer> bufferStore =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private final java.util.List<Callback> ownedTrampolines = new ArrayList<>();
@@ -3906,23 +3916,30 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (names == 0L) {
                 return;
             }
+            boolean buffers = "glDeleteBuffers".equals(fn.name);
             for (int i = 0; i < count; i++) {
                 int name = memGetInt(names + (long) i * 4L);
                 this.liveNames.remove(name);
                 if (textures) {
                     forgetTexture(name);
                 }
+                if (buffers) {
+                    forgetBuffer(name);
+                }
             }
             return;
         }
         if ("glDeleteLists".equals(fn.name)) {
             // Display-list names are a range of their own: glDeleteLists(list, range) retires range names, and each one
-            // that this stub compiled owns payload buffers that go with it (#394).
+            // that this stub compiled owns payload buffers that go with it (#394). The name is retired too, so glIsList
+            // answers false afterwards - the audit measured glIsList(L)==1 and displayLists.size()==1 after the delete
+            // (#395).
             int first = (int) c[0];
             int range = (int) c[1];
             for (int i = 0; i < range; i++) {
                 Integer name = Integer.valueOf(first + i);
                 this.displayLists.remove(name);
+                this.liveNames.remove(name.intValue());
                 releaseListPayloads(name);
             }
             this.displayListsDeleted += range;
@@ -3932,7 +3949,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (fn.args[0] == A_LONG) {
                 this.liveSync.remove(c[0]);
             } else {
-                this.liveNames.remove((int) c[0]);
+                int name = (int) c[0];
+                this.liveNames.remove(name);
+                if ("glDeleteBuffers".equals(fn.name)) {
+                    forgetBuffer(name);
+                }
             }
         }
     }
@@ -3946,7 +3967,47 @@ public final class CeltiumGlStub implements FunctionProvider {
      * stale content that looks like a working mirror, which is worse than the null an un-uploaded level answers with.
      * The extents go with the pixels: a level nobody uploaded has no size to report.
      */
+    /**
+     * Retires a buffer's storage and its bindings.
+     * <p>
+     * Deleting a buffer left {@code bufferStore} holding its direct memory and {@code bufferBindings} still naming it, so
+     * a later {@code glMapBuffer} answered with a pointer into the deleted buffer's storage and every delete-then-create
+     * cycle kept another megabyte alive (#386).
+     *
+     * @param name the buffer name being deleted
+     */
+    private void forgetBuffer(int name) {
+        this.bufferStore.remove(Integer.valueOf(name));
+        this.bufferLogicalSize.remove(Integer.valueOf(name));
+        for (int target = 0; target < this.bufferBindings.length; target++) {
+            if (this.bufferBindings[target] == name) {
+                this.bufferBindings[target] = 0;
+            }
+        }
+    }
+
     private void forgetTexture(int name) {
+        // Parameters are recorded per texture name, and TextureUtil.allocateTexture deletes a name and re-uploads to the
+        // same one. Leaving the parameters behind handed the new object the old wrap/filter (measured: WRAP_S stayed
+        // CLAMP_TO_EDGE where the default is REPEAT, #389), and the records are capped, so a long session of reloads would
+        // eventually stop recording new ones.
+        long keySpace = ((long) name) << 32;
+        it.unimi.dsi.fastutil.longs.LongIterator keys = this.texParams.keySet().iterator();
+        while (keys.hasNext()) {
+            long key = keys.nextLong();
+            if ((key & 0xFFFFFFFF00000000L) == keySpace) {
+                keys.remove();
+            }
+        }
+        // Every texture binding that names the deleted object is retired: GL unbinds the target of a deleted texture,
+        // and a later upload to a reused name must not inherit the binding.
+        it.unimi.dsi.fastutil.longs.LongIterator bindingKeys = this.textureBindings.keySet().iterator();
+        while (bindingKeys.hasNext()) {
+            long key = bindingKeys.nextLong();
+            if (this.textureBindings.get(key) == name) {
+                bindingKeys.remove();
+            }
+        }
         for (int level = 0; level < 256; level++) {
             long key = texLevelKey(name, level);
             this.texLevels.remove(key);
@@ -4294,9 +4355,66 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void getBooleans(int pname, long out, Fn fn) {
-        if (out != 0L) {
-            MemoryUtil.memPutByte(out, (byte) 0);
+        if (out == 0L) {
+            return;
         }
+        // The query used to write a single false byte and nothing else, whatever was asked. Callers that save and restore
+        // GL state read the whole vector: glColorMask(true,true,true,true) is recorded here, and the readback answered
+        // [0,85,85,85] because only the first byte was written and it was false (#388).
+        switch (pname) {
+            case 0x0C23: { // GL_COLOR_WRITEMASK
+                int mask = this.colorMaskBits;
+                for (int i = 0; i < 4; i++) {
+                    MemoryUtil.memPutByte(out + i, (byte) (((mask >>> (3 - i)) & 1) != 0 ? 1 : 0));
+                }
+                return;
+            }
+            case 0x0B72: { // GL_DEPTH_WRITEMASK
+                // GL's default is enabled and glDepthMask sets the same value the pipeline reads from the enable record.
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_DEPTH_WRITEMASK_CAP) ? 1 : 0));
+                return;
+            }
+            case 0x0BD0: { // GL_DEPTH_TEST
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_DEPTH_TEST) ? 1 : 0));
+                return;
+            }
+            case 0x0BE2: { // GL_BLEND
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_BLEND) ? 1 : 0));
+                return;
+            }
+            case 0x0B90: { // GL_STENCIL_TEST
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(0x0B90) ? 1 : 0));
+                return;
+            }
+            case 0x0B71: { // GL_DEPTH_WRITEMASK's sibling for the whole depth test is above; this is GL_SCISSOR_TEST
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_SCISSOR_TEST) ? 1 : 0));
+                return;
+            }
+            case 0x0B44: { // GL_CULL_FACE
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_CULL_FACE) ? 1 : 0));
+                return;
+            }
+            case 0x0BC0: { // GL_ALPHA_TEST
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(0x3000) ? 1 : 0));
+                return;
+            }
+            case 0x0DE1: { // GL_TEXTURE_2D
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_TEXTURE_2D) ? 1 : 0));
+                return;
+            }
+            default:
+                // A query this stub has no record for: the spec says the value is undefined, and writing false over the
+                // caller's whole destination would destroy whatever it had laid out next. One byte stays, as before.
+                MemoryUtil.memPutByte(out, (byte) 0);
+        }
+    }
+
+    /** The index the stub uses in {@link #enables} for {@code glDepthMask}, which GL has no capability for. */
+    private static final int GL_DEPTH_WRITEMASK_CAP = 0x0B72;
+
+    /** {@return whether a capability this stub records is enabled}. */
+    private boolean enabledCap(int cap) {
+        return cap >= 0 && cap < this.enables.length && this.enables[cap] != 0;
     }
 
     /** Pixel/semantic routing - the layer the texture path plugs into. Nothing routes yet: calls no-op. */
@@ -4470,7 +4588,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         long size = c[2];
         long data = c[3];
         ByteBuffer storage = this.bufferStore.get(name);
-        if (storage == null || data == 0L || size <= 0 || offset < 0 || offset + size > storage.capacity()) {
+        int logicalSize = this.logicalSizeOf(name, storage == null ? 0 : storage.capacity());
+        if (storage == null || data == 0L || size <= 0 || offset < 0 || offset + size > logicalSize) {
             return;
         }
         ByteBuffer source = MemoryUtil.memByteBuffer(data, (int) size);
@@ -5014,9 +5133,17 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The one buffer-data producer: the dispatch case and the transformer's route both land here. */
     private void bufferDataFor(int name, long size, long data) {
-        if (name == 0 || size <= 0 || size > Integer.MAX_VALUE) {
+        if (name == 0 || size > Integer.MAX_VALUE) {
             return;
         }
+        if (size <= 0) {
+            // glBufferData(size=0) is a legal redefinition that leaves the buffer empty; the old code returned early and
+            // kept the previous storage and size, so the buffer still mapped and still answered the old extent (#387).
+            this.bufferStore.remove(Integer.valueOf(name));
+            this.bufferLogicalSize.put(Integer.valueOf(name), Integer.valueOf(0));
+            return;
+        }
+        this.bufferLogicalSize.put(Integer.valueOf(name), Integer.valueOf((int) size));
         // The storage is reused whenever it is already large enough, rather than replaced. The game's staging buffers
         // are mapped persistently - the mirror this renderer reads its meshes from is one - and a new allocation moves
         // the address the caller is still writing to, which shows up as geometry built from whatever the old storage
@@ -5046,6 +5173,17 @@ public final class CeltiumGlStub implements FunctionProvider {
      * inside the buffer. Anything else is an error the caller has to see, not a range quietly moved to zero (audit #361:
      * offset -1 was answered as 0, and a length running past the end was not looked at).
      */
+    /**
+     * {@return the size GL last gave this buffer, falling back to the storage's capacity when nothing was recorded}.
+     *
+     * @param name     the buffer name
+     * @param capacity the backing storage's size
+     */
+    private int logicalSizeOf(int name, int capacity) {
+        Integer recorded = this.bufferLogicalSize.get(Integer.valueOf(name));
+        return recorded == null ? capacity : recorded.intValue();
+    }
+
     static long mapRangeOffset(long offset, long length, long capacity) {
         if (offset < 0L || length <= 0L || capacity < 0L) {
             return -1L;
@@ -5091,7 +5229,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             // a clamped offset turned an invalid request into a valid-looking mapping (audit #361 measured offset = -1
             // answered as 0, and a length past the end simply ignored), which lets a caller write outside the buffer it
             // thinks it mapped. GL returns NULL for a range that is not within the buffer, and so does this.
-            long offset = mapRangeOffset(c[1], c[2], storage.capacity());
+            long offset = mapRangeOffset(c[1], c[2], this.logicalSizeOf(name, storage.capacity()));
             this.mapBufferCalls++;
             if (offset < 0L) {
                 this.mapBufferRefusals++;
