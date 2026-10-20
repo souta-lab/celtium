@@ -431,6 +431,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int TIMESTAMP_SLOTS = 16;
     private long timestampPool;
     private float timestampPeriod = 1.0f;
+
+    /** Prints the collected GPU pass timings every 200 frames; off by default. */
+    private static final boolean GPU_PASS_TIMINGS = Boolean.getBoolean("celtium.gpuPassTimings");
     private boolean timestampsUsable;
     /**
      * Forces the no-timestamp path, so the behaviour on a device whose queue cannot record timestamps can be measured
@@ -7847,6 +7850,22 @@ this.frameBufferOpen = false;
         if (!this.frameBufferOpen) {
             return;
         }
+        // The GPU pass timings were collected since the timestamp pool was added and then never printed, so the one
+        // question they answer - whether a frame is GPU-bound or waiting on present - could not be asked. The present
+        // counter reports ~6.9 ms of a ~10.1 ms frame on leg gv-tess-census2 with vsync already off (MAILBOX), which
+        // reads as GPU-bound but is not proof: without this line the two cases are indistinguishable. Microseconds per
+        // pass, every 200 frames, off unless -Dceltium.gpuPassTimings=true.
+        if (GPU_PASS_TIMINGS && this.frameId % 200 == 0 && !this.passTimings.isEmpty()) {
+            StringBuilder line = new StringBuilder(192);
+            for (java.util.Map.Entry<TerrainRenderPass, Long> entry : this.passTimings.entrySet()) {
+                if (line.length() > 0) {
+                    line.append(' ');
+                }
+                line.append(entry.getKey()).append('=')
+                        .append(entry.getValue().longValue() / 1000L).append("us");
+            }
+            System.out.println("[Celtium] CELTIUM_PASS_GPU frame=" + this.frameId + " " + line);
+        }
         if (this.shaderPackDraws < 3) {
             System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
                     + " slot=" + this.frameSlot);
@@ -14601,9 +14620,20 @@ this.frameBufferOpen = false;
             // The box follows the camera and covers a short distance around it, which is what makes the shadows both
             // visible and sharp: at +/-48 blocks a 2048-texel map is about 4.7 cm per texel, where the origin-centred
             // +/-256 box texelled 25 cm and left the visible surfaces almost entirely lit.
+            // The eye-space matrix has to describe the transform the *immediate* vertices are expressed under, and that is
+            // the game's own modelview - the one the GL stub mirrors and the immediate path pre-multiplies into its vertices -
+            // not the terrain pass's, which is Celeritas's camera-relative matrix. Using the terrain one put the lookup
+            // coordinate outside the map for 94% of the immediate family's pixels (the bounds probe measured 168,227 out
+            // against 11,211 in), which is why the shadow never appeared on the surfaces a player sees.
+            float[] mirrored = this.celtium$mirroredModelView();
             float[] push = terrainPipeline.lastPushBlock();
-            org.joml.Matrix4f modelViewForCamera = new org.joml.Matrix4f().set(
-                    java.util.Arrays.copyOfRange(push, 16, 32));
+            org.joml.Matrix4f modelViewForCamera;
+            if (mirrored != null && mirrored.length >= 16
+                    && (mirrored[12] != 0.0f || mirrored[13] != 0.0f || mirrored[14] != 0.0f)) {
+                modelViewForCamera = new org.joml.Matrix4f().set(mirrored);
+            } else {
+                modelViewForCamera = new org.joml.Matrix4f().set(java.util.Arrays.copyOfRange(push, 16, 32));
+            }
             org.joml.Vector3f centre = new org.joml.Vector3f();
             new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
             // More oblique than the first attempt, so horizontal surfaces throw longer shadows across the ground.
@@ -14634,10 +14664,17 @@ this.frameBufferOpen = false;
             this.shadowMapPass.writeEyeSpaceMatrix(eyeMatrix);
             // The immediate pipelines draw the blocks and entities that fill the view; they project the map with the
             // same eye-space matrix, and their cached descriptor sets are pointed at the map the first time it exists.
+            // Every immediate family that has the lookup, the texture one included: its position_tint and tex_color variants draw
+            // the surfaces a player actually sees in this scene, and it was the one family the publication forgot - so its
+            // sets kept naming the 1x1 placeholder map and nothing it drew was ever shadowed (the ON/OFF difference stayed at
+            // 0.6% of the frame while the terrain's own palette showed 22%).
             org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.writeShadowMatrix(eyeMatrix);
             org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.writeShadowMatrix(eyeMatrix);
+            org.soutalab.celtium.vulkan.VulkanImmediateTexturePipeline.writeShadowMatrix(eyeMatrix);
             if (!this.shadowItemSourcesSet) {
                 this.shadowItemSourcesSet = true;
+                org.soutalab.celtium.vulkan.VulkanImmediateTexturePipeline.setShadowSources(
+                        this.shadowMapPass.view(), this.shadowMapPass.sampler());
                 org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.setShadowSources(
                         this.shadowMapPass.view(), this.shadowMapPass.sampler());
                 org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.setShadowSources(
