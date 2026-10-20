@@ -76,6 +76,11 @@ public final class VulkanDynamicMesh {
      * their lifetime is not a frame's.
      */
     private final VulkanFrameArena frameArena;
+
+    /** {@return whether this mesh draws from a slice of the frame arena rather than a buffer it owns}. */
+    public boolean isArenaBorrow() {
+        return this.frameArena != null;
+    }
     /** The borrowed slice, or null in owning mode. Its release is what frees the slot for a later frame. */
     private VulkanFrameArena.Region frameRegion;
     private VulkanHostBuffer vertices;

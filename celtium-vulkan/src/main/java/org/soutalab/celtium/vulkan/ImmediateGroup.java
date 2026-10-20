@@ -88,6 +88,29 @@ public final class ImmediateGroup {
     public boolean scissorEnabled;
 
     /**
+     * {@return a hash of the group's viewport and scissor state}.
+     * <p>
+     * Two groups whose rectangles match can share one {@code vkCmdSetViewport}/{@code vkCmdSetScissor}, which is what
+     * decides whether a run of groups is one command in the merge being measured.
+     */
+    public long viewportHash() {
+        int[] viewport = this.viewportValues;
+        long hash = 1469598103934665603L;
+        if (viewport != null) {
+            for (int i = 0; i < Math.min(4, viewport.length); i++) {
+                hash = (hash ^ viewport[i]) * 1099511628211L;
+            }
+        }
+        int[] clip = this.scissorBox;
+        if (clip != null && this.scissorEnabled) {
+            for (int i = 0; i < Math.min(4, clip.length); i++) {
+                hash = (hash ^ clip[i]) * 1099511628211L;
+            }
+        }
+        return hash;
+    }
+
+    /**
      * GL's polygon offset, captured when this group was opened.
      * <p>
      * The draw site used to read the live stub record, but vanilla brackets the break overlay with

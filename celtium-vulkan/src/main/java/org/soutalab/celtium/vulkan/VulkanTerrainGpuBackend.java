@@ -12378,6 +12378,11 @@ this.frameBufferOpen = false;
      * cheaper - it changes what the game does next, so the number is the game's reaction and not the cost that was
      * removed. Kept because a future attempt should not have to rediscover that an empty frame is not a cheap frame.
      */
+    /**
+     * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one
+     * command, and how many of them draw from the frame arena. Off by default.
+     */
+    private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
     private static final boolean SKIP_IMMEDIATE_RECORD =
             Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");
 
@@ -16501,6 +16506,13 @@ this.frameBufferOpen = false;
             // immediateGroups; the moves go to retiredImmediateGroups and recordedImmediateGroups.
             this.keptImmediateGroups.clear();
             java.util.List<ImmediateGroup> groups = this.immediateGroups;
+            // Merge census: how many of this frame's groups could share one command (same pipeline variant, descriptor
+            // set, viewport and scissor) and how many of them borrow their vertices from the frame arena rather than
+            // owning a buffer. That pair is the go/no-go for folding the group loop into one indirect draw, and it costs
+            // a hash lookup per group while the switch is on.
+            long censusStartNanos = MERGE_CENSUS ? System.nanoTime() : 0L;
+            java.util.Map<Long, Integer> censusRuns = MERGE_CENSUS ? new java.util.HashMap<Long, Integer>() : null;
+            int censusArenaBacked = 0;
             for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
                 ImmediateGroup group = groups.get(groupIndex);
                 if (group.target != target) {
@@ -16549,6 +16561,19 @@ this.frameBufferOpen = false;
                     }
                 }
                 VulkanDynamicMesh mesh = group.mesh;
+                if (MERGE_CENSUS) {
+                    // One key per (variant, set, viewport, scissor) run: the number of distinct keys is the number of
+                    // commands the frame would need, and the run count is the number of commands it records today.
+                    // The prepared handle is (pipeline, descriptor set) chosen when the group closed, so it is the
+                    // identity that decides whether two groups can share a command.
+                    long runKey = (((long) System.identityHashCode(group.prepared)) * 31L
+                            + System.identityHashCode(group.target)) * 31L + group.viewportHash();
+                    Integer seen = censusRuns.get(Long.valueOf(runKey));
+                    censusRuns.put(Long.valueOf(runKey), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+                    if (mesh != null && mesh.isArenaBorrow()) {
+                        censusArenaBacked++;
+                    }
+                }
                 if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
                 PreparedImmediate prepared = group.prepared;
                 // The panorama's per-draw line: the id the group recorded, the descriptor key it was prepared with,
@@ -16913,6 +16938,17 @@ this.frameBufferOpen = false;
                 celtium$recordQueuedClearsInPass(group.postClears, group.target);
                 group.postClears = null;
             }
+            if (MERGE_CENSUS) {
+                int largest = 0;
+                for (Integer count : censusRuns.values()) {
+                    largest = Math.max(largest, count.intValue());
+                }
+                System.out.println("[Celtium] CELTIUM_MERGE_CENSUS frame=" + this.frameId
+                        + " groups=" + groups.size() + " mergeableRuns=" + censusRuns.size()
+                        + " largestRun=" + largest + " arenaBackedGroups=" + censusArenaBacked
+                        + " censusMillis=" + ((System.nanoTime() - censusStartNanos) / 1_000_000L));
+            }
+
             // Rebuild immediateGroups as only the kept groups, in order. Drawn and retired groups were moved to their
             // own lists during the pass; what remains in keptImmediateGroups is exactly the other-target groups the
             // old iterator.remove() would have left behind, in the same order.
