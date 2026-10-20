@@ -37,6 +37,9 @@ final class VulkanPushCache {
     private long pipelineLayout = -1L;
     /** The cached bytes, exactly as many as the layout declared. */
     private byte[] bytes = new byte[0];
+    /** The held duplicate of the caller's push buffer, so the comparison does not allocate one per group. */
+    private java.nio.ByteBuffer dataView;
+
     /** A read-only view of {@link #bytes} for the bulk comparison, rebuilt when the array is replaced. */
     private java.nio.ByteBuffer cacheBytesView;
 
@@ -90,7 +93,13 @@ final class VulkanPushCache {
      * A duplicate keeps the caller's buffer untouched; positioned and limited so a bulk comparison sees only the block.
      */
     private java.nio.ByteBuffer cacheView(java.nio.ByteBuffer data, int length) {
-        java.nio.ByteBuffer view = data.duplicate();
+        // The immediate path hands the same buffer in for every group, so the duplicate is kept rather than allocated
+        // per group; only its position and limit change.
+        java.nio.ByteBuffer view = this.dataView;
+        if (view == null || view.isDirect() != data.isDirect()) {
+            view = data.duplicate();
+            this.dataView = view;
+        }
         int start = data.position();
         view.position(start);
         view.limit(start + length);

@@ -404,8 +404,14 @@ public final class VulkanDynamicMesh {
             return false;
         }
         MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
-        for (int i = 0; i < indices.length; i++) {
-            MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
+        if (baseVertex == 0) {
+            // The common case for a mesh that starts empty: the indices need no rebasing, so they go out as one bulk
+            // write instead of an int-at-a-time loop.
+            org.lwjgl.system.MemoryUtil.memIntBuffer(indexTarget, indices.length).put(indices);
+        } else {
+            for (int i = 0; i < indices.length; i++) {
+                MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
+            }
         }
         this.layout = new Layout(stride, 0, -1, -1, -1, -1);
         this.vertexBytes = requiredVertices;
@@ -475,8 +481,14 @@ public final class VulkanDynamicMesh {
             MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
         }
         }
-        for (int i = 0; i < indices.length; i++) {
-            MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
+        if (baseVertex == 0) {
+            // The common case for a mesh that starts empty: the indices need no rebasing, so they go out as one bulk
+            // write instead of an int-at-a-time loop.
+            org.lwjgl.system.MemoryUtil.memIntBuffer(indexTarget, indices.length).put(indices);
+        } else {
+            for (int i = 0; i < indices.length; i++) {
+                MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
+            }
         }
         this.layout = new Layout(stride, 0, -1, -1, -1, -1);
         this.vertexBytes = requiredVertices;
