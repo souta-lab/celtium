@@ -7809,12 +7809,21 @@ this.frameBufferOpen = false;
             }
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
+            // The frame's wall clock split. A sampling profiler cannot see a thread that is waiting, and the gap to the
+            // reference is larger than the CPU the samples account for, so the boundary reports the three parts it can
+            // name: the recording (already bracketed), this submit, and the slot wait at the next frame's start.
             long finishStart = System.nanoTime();
             celtium$finishFrameBuffer();
             long finishNanos = System.nanoTime() - finishStart;
-            if (finishNanos > 50_000_000L) {
-                System.out.println("[Celtium] CELTIUM_FRAME_SUBMIT millis=" + (finishNanos / 1_000_000L)
-                        + " frame=" + this.frameId);
+            this.boundarySubmitNanos += finishNanos;
+            this.boundaryFrames++;
+            if (this.boundaryFrames % 600 == 0) {
+                System.out.println("[Celtium] CELTIUM_BOUNDARY_SPLIT frames=" + this.boundaryFrames
+                        + " submitMillisPerFrame=" + (this.boundarySubmitNanos / 1_000_000L / 600L)
+                        + " slotWaitMillisPerFrame=" + (this.slotWaitNanos / 1_000_000L / 600L));
+                this.boundarySubmitNanos = 0L;
+                this.slotWaitNanos = 0L;
+                this.boundaryFrames = 0;
             }
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
@@ -14018,6 +14027,9 @@ this.frameBufferOpen = false;
     private int shadowShadowDiag;
     private boolean shadowProbeReported;
     private boolean shadowItemSourcesSet;
+    private long boundarySubmitNanos;
+    private long slotWaitNanos;
+    private int boundaryFrames;
     private int shadowOwnPrints;
     private long shadowRecordNanos;
     private int shadowRecordPrints;
@@ -16302,6 +16314,7 @@ this.frameBufferOpen = false;
                 throw new IllegalStateException("pending frame slot command buffer did not complete");
             }
             long waitNanos = System.nanoTime() - waitStart;
+            this.slotWaitNanos += waitNanos;
             if (waitNanos > 50_000_000L) {
                 System.out.println("[Celtium] CELTIUM_SLOT_WAIT millis=" + (waitNanos / 1_000_000L)
                         + " slot=" + this.frameSlot + " frame=" + this.frameId);
