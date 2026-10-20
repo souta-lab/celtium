@@ -40,6 +40,9 @@ final class VulkanPushCache {
     /** The held duplicate of the caller's push buffer, so the comparison does not allocate one per group. */
     private java.nio.ByteBuffer dataView;
 
+    /** The buffer {@link #dataView} was duplicated from; the duplicate is only valid for this one. */
+    private java.nio.ByteBuffer dataViewSource;
+
     /** A read-only view of {@link #bytes} for the bulk comparison, rebuilt when the array is replaced. */
     private java.nio.ByteBuffer cacheBytesView;
 
@@ -93,14 +96,19 @@ final class VulkanPushCache {
      * A duplicate keeps the caller's buffer untouched; positioned and limited so a bulk comparison sees only the block.
      */
     private java.nio.ByteBuffer cacheView(java.nio.ByteBuffer data, int length) {
-        // The immediate path hands the same buffer in for every group, so the duplicate is kept rather than allocated
-        // per group; only its position and limit change.
+        int start = data.position();
         java.nio.ByteBuffer view = this.dataView;
-        if (view == null || view.isDirect() != data.isDirect()) {
+        // A duplicate is only reusable for the buffer it was taken from. The immediate path's callers are not required to
+        // hand the same allocation in - the shared cache is used across the texture, item, block and particle pipelines -
+        // and reusing it across buffers meant every later comparison and remember read the first buffer's bytes, so a
+        // changed constant was elided and its update lost (#385). The capacity term is the second half of the same
+        // mistake: a wider block cannot be expressed through a view built from a narrower buffer, which threw
+        // IllegalArgumentException instead of pushing.
+        if (view == null || this.dataViewSource != data || start + length > view.capacity()) {
             view = data.duplicate();
             this.dataView = view;
+            this.dataViewSource = data;
         }
-        int start = data.position();
         view.position(start);
         view.limit(start + length);
         return view;
