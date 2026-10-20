@@ -31,6 +31,10 @@ public final class ShadowMapPass {
      */
     private final java.util.ArrayDeque<long[]> pendingOwnSubmissions = new java.util.ArrayDeque<>();
 
+    /** Pools whose one-shot probe submission timed out; see #403. */
+    private final org.soutalab.celtium.vulkan.PendingCommandPools pendingProbePools =
+            new org.soutalab.celtium.vulkan.PendingCommandPools();
+
     /** The edge length of the shadow map; a power of two because the depth comparison will filter across it. */
     public static final int SIZE = 2048;
 
@@ -663,6 +667,14 @@ public final class ShadowMapPass {
             vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
                     .pCommandBuffers(stack.pointers(commandBuffer.address())), fence);
             int waited = vkWaitForFences(this.context.device(), fence, true, 2_000_000_000L);
+            if (waited != VK_SUCCESS) {
+                // The probe used to report the timeout and then free the pool in the finally anyway, which is the same
+                // VUID-commandPool-00041 mistake as the placeholder transitions (#403): a timeout proves nothing about
+                // completion, so ownership moves to the pending list and only a signalled fence releases it.
+                this.pendingProbePools.retain(pool, fence);
+                pool = VK_NULL_HANDLE;
+                fence = VK_NULL_HANDLE;
+            }
             return waited == VK_SUCCESS ? "completed" : "did not complete (" + waited + ")";
         } catch (RuntimeException | LinkageError error) {
             return "threw " + error;
@@ -673,6 +685,7 @@ public final class ShadowMapPass {
             if (pool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.context.device(), pool, null);
             }
+            this.pendingProbePools.reclaim(this.context.device());
         }
     }
 

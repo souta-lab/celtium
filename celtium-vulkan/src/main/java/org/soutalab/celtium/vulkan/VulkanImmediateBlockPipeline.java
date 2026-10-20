@@ -85,6 +85,9 @@ public final class VulkanImmediateBlockPipeline {
     private static long shadowPlaceholderSampler;
     private static long shadowPlaceholderImage;
     private static long shadowPlaceholderMemory;
+    /** Pools whose placeholder transition did not complete in time; see #403 and {@link PendingCommandPools}. */
+    private static final org.soutalab.celtium.vulkan.PendingCommandPools PENDING_TRANSITIONS =
+            new org.soutalab.celtium.vulkan.PendingCommandPools();
     private static final java.util.List<VulkanImmediateBlockPipeline> SHADOW_INSTANCES =
             new java.util.ArrayList<VulkanImmediateBlockPipeline>();
     private long descriptorPool = VK_NULL_HANDLE;
@@ -663,14 +666,28 @@ vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barrier);
             org.lwjgl.vulkan.VK10.vkEndCommandBuffer(commandBuffer);
+            PENDING_TRANSITIONS.reclaim(this.context.device());
             java.nio.LongBuffer fence = stack.mallocLong(1);
-            org.lwjgl.vulkan.VK10.vkCreateFence(this.context.device(),
-                    org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(), null, fence);
-            org.lwjgl.vulkan.VK10.vkQueueSubmit(this.context.queue(),
+            if (org.lwjgl.vulkan.VK10.vkCreateFence(this.context.device(),
+                    org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(), null, fence) != VK_SUCCESS) {
+                return;
+            }
+            long transitionFence = fence.get(0);
+            if (org.lwjgl.vulkan.VK10.vkQueueSubmit(this.context.queue(),
                     org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
-                            .pCommandBuffers(stack.pointers(commandBuffer.address())), fence.get(0));
-            org.lwjgl.vulkan.VK10.vkWaitForFences(this.context.device(), fence.get(0), true, 2_000_000_000L);
-            org.lwjgl.vulkan.VK10.vkDestroyFence(this.context.device(), fence.get(0), null);
+                            .pCommandBuffers(stack.pointers(commandBuffer.address())), transitionFence) != VK_SUCCESS) {
+                org.lwjgl.vulkan.VK10.vkDestroyFence(this.context.device(), transitionFence, null);
+                return;
+            }
+            int waited = org.lwjgl.vulkan.VK10.vkWaitForFences(this.context.device(), transitionFence, true,
+                    2_000_000_000L);
+            if (waited == VK_SUCCESS) {
+                org.lwjgl.vulkan.VK10.vkDestroyFence(this.context.device(), transitionFence, null);
+                return;
+            }
+            // A timeout is not a completion (#403): keep the pool with its fence instead of freeing it in the finally.
+            PENDING_TRANSITIONS.retain(pool, transitionFence);
+            pool = VK_NULL_HANDLE;
         } finally {
             if (pool != VK_NULL_HANDLE) {
                 org.lwjgl.vulkan.VK10.vkDestroyCommandPool(this.context.device(), pool, null);
