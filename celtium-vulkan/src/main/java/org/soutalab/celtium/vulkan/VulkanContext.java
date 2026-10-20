@@ -2021,6 +2021,8 @@ public final class VulkanContext {
     /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
     /** Whether VK_KHR_dynamic_rendering was enabled on the device, which the shaderpack path builds pipelines on. */
     private boolean dynamicRenderingSupported;
+    /** {@code VkPhysicalDeviceVulkan11Features.shaderDrawParameters}: gl_DrawID in shaders, Vulkan 1.1. */
+    private boolean shaderDrawParametersSupported;
 
     /** {@return whether dynamic rendering is enabled on this device}. */
     public boolean dynamicRenderingSupported() {
@@ -2392,10 +2394,37 @@ public final class VulkanContext {
                     createInfo.pNext(dynamicRendering.address());
                 }
             }
+            // gl_DrawID is the mechanism the per-group data merge is built on: one command draws many groups and the
+            // shader indexes the group's block by gl_DrawID. It needs the Vulkan 1.1 shaderDrawParameters feature, so the
+            // device is asked for it here and the answer is reported - a device without it can still render, it just
+            // cannot take that path, and the report is what keeps that difference visible instead of inferred.
+            boolean askDrawParameters = deviceProperties.apiVersion() >= org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1;
+            org.lwjgl.vulkan.VkPhysicalDeviceVulkan11Features drawParametersFeatures = null;
+            if (askDrawParameters) {
+                org.lwjgl.vulkan.VkPhysicalDeviceVulkan11Features supported =
+                        org.lwjgl.vulkan.VkPhysicalDeviceVulkan11Features.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 = org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
+                        .calloc(stack).sType$Default().pNext(supported.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
+                this.shaderDrawParametersSupported = supported.shaderDrawParameters();
+                if (this.shaderDrawParametersSupported) {
+                    drawParametersFeatures = org.lwjgl.vulkan.VkPhysicalDeviceVulkan11Features.calloc(stack)
+                            .sType$Default().shaderDrawParameters(true);
+                    // The chain already carries the dynamic-rendering features on some devices, so this one is appended
+                    // to the end of it rather than replacing it.
+                    if (createInfo.pNext() != 0L) {
+                        org.lwjgl.system.MemoryUtil.memPutLong(drawParametersFeatures.address() + 8L, createInfo.pNext());
+                    }
+                    createInfo.pNext(drawParametersFeatures.address());
+                }
+            }
             PointerBuffer handle = stack.mallocPointer(1);
             check(vkCreateDevice(this.physicalDevice, createInfo, null, handle),
                     "vkCreateDevice(" + this.deviceName + ")");
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
+            System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
+                    + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported
+                    + " maxDrawIndirectCount=" + this.maxDrawIndirectCount);
         }
     }
 

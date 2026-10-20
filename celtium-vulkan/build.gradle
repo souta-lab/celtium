@@ -223,8 +223,12 @@ abstract class CeltiumCompileShaders extends DefaultTask {
             def output = new ByteArrayOutputStream()
             def result
             try {
+                // A shader may need a newer SPIR-V environment than the rest: gl_DrawID (which the per-group data merge
+                // is built on) only exists from Vulkan 1.1, and asking for it at vulkan1.0 is a compile error. The marker
+                // is in the name rather than in the source so the toolchain stays one list.
+                def targetEnv = shader.name.contains('_vk11_') ? 'vulkan1.1' : 'vulkan1.0'
                 result = getExecOperations().exec {
-                    commandLine compiler, '-V', '--target-env', 'vulkan1.0', shader.absolutePath,
+                    commandLine compiler, '-V', '--target-env', targetEnv, shader.absolutePath,
                             '-o', new File(directory, shader.name + '.spv').absolutePath
                     standardOutput = output
                     errorOutput = output
