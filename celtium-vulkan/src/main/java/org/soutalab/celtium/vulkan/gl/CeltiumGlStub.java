@@ -673,6 +673,171 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * Copies a compiled command's pointer payload into memory this list owns, and points the recorded argument at it.
+     * <p>
+     * Only the commands whose payload a replay would otherwise re-read from the caller's buffer are covered, and only
+     * when the size is known: an unknown format is left pointing at the caller's address and counted, which is the
+     * previous behaviour and is visible rather than silent (#394).
+     *
+     * @param fn      the command being compiled
+     * @param args    the argument copy that will be stored; the pointer slot is rewritten here
+     * @return the owned buffer, or null when the command carries no payload this class can size
+     */
+    private java.nio.ByteBuffer captureListPayload(Fn fn, long[] args) {
+        int pointerIndex;
+        long bytes;
+        switch (fn.semantics) {
+            case SEM_TEXIMAGE_PIXELS: {
+                // (target, level, internal, w, h, border, fmt, type, pixels)
+                if (args.length < 9 || args[8] == 0L) {
+                    return null;
+                }
+                int width = (int) args[3];
+                int height = (int) args[4];
+                int rowBytes = uploadRowBytes((int) args[6], (int) args[7], width);
+                if (rowBytes < 0 || width <= 0 || height <= 0) {
+                    this.listPayloadsUnsized++;
+                    return null;
+                }
+                pointerIndex = 8;
+                // GL's default GL_UNPACK_ALIGNMENT is 4: each row starts on a four-byte boundary.
+                bytes = (long) ((rowBytes + 3) & ~3) * height;
+                break;
+            }
+            case SEM_TEXSUBIMAGE: {
+                // (target, level, x, y, w, h, fmt, type, pixels)
+                if (args.length < 9 || args[8] == 0L) {
+                    return null;
+                }
+                int width = (int) args[4];
+                int height = (int) args[5];
+                int rowBytes = uploadRowBytes((int) args[6], (int) args[7], width);
+                if (rowBytes < 0 || width <= 0 || height <= 0) {
+                    this.listPayloadsUnsized++;
+                    return null;
+                }
+                pointerIndex = 8;
+                bytes = (long) ((rowBytes + 3) & ~3) * height;
+                break;
+            }
+            case SEM_BUFFER_DATA: {
+                // (target, size, data, usage)
+                if (args.length < 4 || args[2] == 0L) {
+                    return null;
+                }
+                pointerIndex = 2;
+                bytes = args[1];
+                break;
+            }
+            case SEM_BUFFER_SUBDATA: {
+                // (target, offset, size, data)
+                if (args.length < 4 || args[3] == 0L) {
+                    return null;
+                }
+                pointerIndex = 3;
+                bytes = args[2];
+                break;
+            }
+            case SEM_MULT_MATRIX: {
+                if (args.length < 1 || args[0] == 0L) {
+                    return null;
+                }
+                pointerIndex = 0;
+                bytes = 64L;
+                break;
+            }
+            case SEM_TEX_ENV_FV:
+            case SEM_TEX_PARAM_IV: {
+                // (target, pname, values): the widest form the fixed pipeline takes is a four-component parameter.
+                if (args.length < 3 || args[2] == 0L) {
+                    return null;
+                }
+                pointerIndex = 2;
+                bytes = 16L;
+                break;
+            }
+            default:
+                return null;
+        }
+        if (bytes <= 0L || bytes > MAX_LIST_PAYLOAD_BYTES) {
+            this.listPayloadsUnsized++;
+            return null;
+        }
+        int length = (int) bytes;
+        java.nio.ByteBuffer owned = org.lwjgl.system.MemoryUtil.memAlloc(length);
+        org.lwjgl.system.MemoryUtil.memCopy(args[pointerIndex], org.lwjgl.system.MemoryUtil.memAddress(owned),
+                (long) length);
+        args[pointerIndex] = org.lwjgl.system.MemoryUtil.memAddress(owned);
+        this.listPayloadsOwned++;
+        return owned;
+    }
+
+    /**
+     * {@return the bytes in one row of an upload, or -1 when the format/type pair is not one this class sizes}.
+     *
+     * @param format the GL format of the client data
+     * @param type   the GL type of the client data
+     * @param width  the row's pixel count
+     */
+    private static int uploadRowBytes(int format, int type, int width) {
+        if (width <= 0) {
+            return -1;
+        }
+        int components;
+        switch (format) {
+            case GL_RGBA:
+            case GL_BGRA:
+                components = 4;
+                break;
+            case GL_RGB:
+            case GL_BGR_VALUE:
+                components = 3;
+                break;
+            case GL_LUMINANCE_ALPHA_VALUE:
+                components = 2;
+                break;
+            case GL_LUMINANCE_VALUE:
+            case GL_ALPHA_VALUE:
+            case GL_DEPTH_COMPONENT_VALUE:
+                components = 1;
+                break;
+            default:
+                return -1;
+        }
+        int bytesPerComponent;
+        switch (type) {
+            case GL_UNSIGNED_BYTE:
+            case GL_BYTE_VALUE:
+                bytesPerComponent = 1;
+                break;
+            case GL_UNSIGNED_SHORT_VALUE:
+            case GL_SHORT_VALUE:
+                bytesPerComponent = 2;
+                break;
+            case GL_UNSIGNED_INT_VALUE:
+            case GL_INT_VALUE:
+            case GL_FLOAT:
+                bytesPerComponent = 4;
+                break;
+            default:
+                return -1;
+        }
+        return width * components * bytesPerComponent;
+    }
+
+    /** Releases a list's owned payloads; called when the list is replaced or deleted (#394). */
+    private void releaseListPayloads(Integer list) {
+        List<java.nio.ByteBuffer> payloads = this.displayListPayloads.remove(list);
+        if (payloads == null) {
+            return;
+        }
+        for (int i = 0; i < payloads.size(); i++) {
+            org.lwjgl.system.MemoryUtil.memFree(payloads.get(i));
+        }
+        this.listPayloadsReleased += payloads.size();
+    }
+
     /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
     private volatile int compilingListMode;
     /**
@@ -698,6 +863,48 @@ public final class CeltiumGlStub implements FunctionProvider {
      * of zero is not a list: recording under it would file calls where no glCallList can reach them.
      */
     private volatile List<Object[]> openList;
+
+    /**
+     * The pointer payloads of the list being compiled, owned here instead of by the caller (#394).
+     * <p>
+     * A command that reads through a pointer - {@code glTexImage2D}'s pixels, {@code glBufferData}'s bytes,
+     * {@code glMultMatrixf}'s sixteen floats - has to be given what the specification calls a copy of the data at
+     * compile time: the caller is entitled to reuse or free its buffer after {@code glEndList}, and a replay that read
+     * the original address would sample whatever is there then, or freed memory. These buffers live with the list and
+     * are released when the list is replaced or deleted.
+     */
+    private List<java.nio.ByteBuffer> openListPayloads;
+
+    /** Owned payloads per compiled list name, released on replacement or deletion. */
+    private final Map<Integer, List<java.nio.ByteBuffer>> displayListPayloads = new HashMap<>();
+
+    /** Compiled commands whose pointer payload was copied into list-owned memory. */
+    private long listPayloadsOwned;
+
+    /** Compiled commands whose pointer payload could not be sized and was left pointing at the caller's buffer. */
+    private long listPayloadsUnsized;
+
+    /** Payload buffers released with their list. */
+    private long listPayloadsReleased;
+
+    /** Display-list names retired by glDeleteLists. */
+    private long displayListsDeleted;
+
+    /** A payload larger than this is left alone: it is not a constant or an upload this class is meant to own. */
+    private static final long MAX_LIST_PAYLOAD_BYTES = 64L * 1024L * 1024L;
+
+    // The format/type values the payload sizing compares. GL_RGBA, GL_RGB, GL_UNSIGNED_BYTE, GL_BGRA and GL_FLOAT are
+    // already declared by this class; the rest are added here so the sizing stays a pure function.
+    private static final int GL_BYTE_VALUE = 0x1400;
+    private static final int GL_SHORT_VALUE = 0x1402;
+    private static final int GL_UNSIGNED_SHORT_VALUE = 0x1403;
+    private static final int GL_INT_VALUE = 0x1404;
+    private static final int GL_UNSIGNED_INT_VALUE = 0x1405;
+    private static final int GL_DEPTH_COMPONENT_VALUE = 0x1902;
+    private static final int GL_ALPHA_VALUE = 0x1906;
+    private static final int GL_LUMINANCE_VALUE = 0x1909;
+    private static final int GL_LUMINANCE_ALPHA_VALUE = 0x190A;
+    private static final int GL_BGR_VALUE = 0x80E0;
     private final Map<Integer, List<Object[]>> displayLists = new java.util.concurrent.ConcurrentHashMap<>();
     /** Replays and recorded calls per display-list id, for the sky lists' census (RenderGlobal's two of them). */
     private final int[] listReplayCounts = new int[512];
@@ -2720,7 +2927,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         List<Object[]> open = this.openList;
         if (open != null && fn.semantics != SEM_NEW_LIST && fn.semantics != SEM_END_LIST) {
             if (!notCompiledIntoDisplayList(fn.semantics)) {
-                open.add(new Object[] { fn, c.clone() });
+                long[] recorded = c.clone();
+                java.nio.ByteBuffer owned = captureListPayload(fn, recorded);
+                if (owned != null) {
+                    if (this.openListPayloads == null) {
+                        this.openListPayloads = new ArrayList<java.nio.ByteBuffer>();
+                    }
+                    this.openListPayloads.add(owned);
+                }
+                open.add(new Object[] { fn, recorded });
                 if (this.compilingListMode != GL_COMPILE_AND_EXECUTE) {
                     return 0L;
                 }
@@ -3020,9 +3235,20 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // this point; putting the new one in here is that rule, not an optimisation.
                 List<Object[]> compiled = this.openList;
                 if (compiled != null) {
+                    // The spec replaces a name's contents at glEndList, so the payloads of the list this one displaces
+                    // are unreachable from here on and are released now rather than held for the life of the process.
+                    releaseListPayloads(Integer.valueOf(this.compilingList));
                     this.displayLists.put(Integer.valueOf(this.compilingList), compiled);
+                    if (this.openListPayloads != null) {
+                        this.displayListPayloads.put(Integer.valueOf(this.compilingList), this.openListPayloads);
+                    }
                     this.displayListsCompiled++;
+                } else if (this.openListPayloads != null) {
+                    for (int i = 0; i < this.openListPayloads.size(); i++) {
+                        org.lwjgl.system.MemoryUtil.memFree(this.openListPayloads.get(i));
+                    }
                 }
+                this.openListPayloads = null;
                 this.openList = null;
                 this.compilingList = 0;
                 return 0L;
@@ -3687,6 +3913,19 @@ public final class CeltiumGlStub implements FunctionProvider {
                     forgetTexture(name);
                 }
             }
+            return;
+        }
+        if ("glDeleteLists".equals(fn.name)) {
+            // Display-list names are a range of their own: glDeleteLists(list, range) retires range names, and each one
+            // that this stub compiled owns payload buffers that go with it (#394).
+            int first = (int) c[0];
+            int range = (int) c[1];
+            for (int i = 0; i < range; i++) {
+                Integer name = Integer.valueOf(first + i);
+                this.displayLists.remove(name);
+                releaseListPayloads(name);
+            }
+            this.displayListsDeleted += range;
             return;
         }
         if (fn.args.length == 1) {
