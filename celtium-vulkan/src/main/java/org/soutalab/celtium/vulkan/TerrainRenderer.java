@@ -1158,6 +1158,7 @@ public final class TerrainRenderer {
                             + " mid=0x" + Integer.toHexString(midColour));
                 }
                 uploaded += vertexBytes;
+                org.soutalab.celtium.vulkan.DrawCounters.noteUpload(vertexBytes);
 
                 VulkanArena.Segment indexSegment = null;
                 if (mesh.parts.indexBuffer() != null) {
@@ -1167,6 +1168,7 @@ public final class TerrainRenderer {
                     indexSegment = indicesArena.allocate(indexBytes);
                     indicesArena.write(indexSegment.byteOffset(), MemoryUtil.memAddress(indices), indexBytes);
                     uploaded += indexBytes;
+                    org.soutalab.celtium.vulkan.DrawCounters.noteUpload(indexBytes);
                 }
 
                 SectionRenderDataStorage storage = storageForPass(region, mesh.pass, storageByPass);

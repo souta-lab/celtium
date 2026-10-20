@@ -7850,6 +7850,7 @@ this.frameBufferOpen = false;
             return;
         }
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings);
+        DrawCounters.reportIfDue(this.frameId);
         if (this.shaderPackDraws < 3) {
             System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
                     + " slot=" + this.frameSlot);
@@ -12379,6 +12380,8 @@ this.frameBufferOpen = false;
     private int modelDrawRefusals;
     /** Model draws asked for with no display list current: immediate geometry, not a missing list. */
     private int modelNoListCalls;
+    /** Bounded entry lines: whether the model draw path is reached at all, and with which state. */
+    private int modelEntryLogs;
     /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
     /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
     /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
@@ -12639,6 +12642,17 @@ this.frameBufferOpen = false;
         if (listId <= 0) {
             this.modelNoListCalls++;
             return false;
+        }
+        if (VulkanDiagnostics.withinLimit(this.modelEntryLogs, 8)) {
+            this.modelEntryLogs++;
+            System.out.println("[Celtium] CELTIUM_MODEL_ENTRY list=" + listId + " texture=" + boundTextureId
+                    + " modelDraw=" + MODEL_DRAW + " targetKnown=" + this.targetRegistry.targetKnown()
+                    + " frame=" + this.frameId);
+        }
+        if (VulkanDiagnostics.enabled()) {
+            // Phase B sizing: how many model draws share one (list, texture) in a frame, i.e. what an indirect multi-draw
+            // would collapse. The collector reports on the frame change, so nothing new is printed from here.
+            CeltiumModelBatchGroups.note(this.frameId, listId, boundTextureId);
         }
         // Which render target each model replay lands on. The entity-outline pass binds its own framebuffer, sets
         // renderOutlines and re-runs the same display lists through RenderLivingBase.renderModel

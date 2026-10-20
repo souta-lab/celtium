@@ -285,7 +285,8 @@ public final class VulkanDynamicMesh {
                 bindCache[2] = 0L;
                 bindCache[3] = 0L;
             }
-            org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
+            org.soutalab.celtium.vulkan.DrawCounters.noteIndexed();
+        org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
                     (int) (ibo / 4L), (int) (vbo / stride), 0);
             return;
         }
