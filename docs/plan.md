@@ -14,6 +14,8 @@ resize / loading行のみ新規の実機結果。他の行は従来の記録で�
 
 | 優先・項目 | 実装/判定 | AMD受入 | Intel受入 | 根拠と残り |
 |---|---|---|---|---|
+| **主経路をCPU frontend→native Vulkanへ転換（2026-10-20 利用者指示）** | **方針転換・実装開始前** | 未検証 | 未検証 | GL→VKの逐一変換を主経路から外し、Celeritas/Pintonium系CPU frontend→native Vulkanへ移す。GLスタブはHUD/GUIのfallbackへ縮小。既存の計測が根拠：per-batch約3.5us×約290 batch＝frame 3.3msのうち約1ms、hotspot無し（`bcc6abccf`）、batch列はframe間で非再現（`3cde87ebb`）＝「安くする」の余地は尽き、「回数を減らす」しかない |
+| **immediate item pipeline の shadow binding欠落（P0・修正済み）** | 実装済み・**両GPU成功** | PASSED（`gv-fix-vid1`: VUID 0, clean=true） | PASSED（`gv-intel-vid1`: VUID 0, clean=true, UHD 630） | 根因：非lit variant の layout が binding 2/3 を宣言せず（シェーダは無条件宣言）→ `...-layout-07988` と `...-08114`。修正 `22759c413`。修正前は `gv-merge-census1` で VUID 12件・clean=false |
 | GL-less native Vulkan提示 | 実装済み | 成功（記録） | 成功（記録） | 下記E2E legsのnative device・提示画像。scanout未測。全描画の正しさとは別 |
 | cohort terrain画像gate | 実装済み | 成功（記録） | 成功（別artifactの記録） | `reAccCohort1`（AMD, jar `e07e50986`）/ `intelCohort1`（Intel UHD 630, jar `68b6493d`, PASSED） |
 | E2E 1.93a terrain画像gate | **AMD PASSED / Intel FAILED**（`e2eRegress4` black **0.0200** capture窓tick2400・`e2eAudit1` 0.0333） | **PASSED** | FAILED | `ca7cce5a`+pinSections: PASSED black 0.0438/0.0439 @8 sections（2run）。pinSections無しは13 sections（streaming途中）で black 0.055〜0.069＝FAILED。**Intel**（`intelE2E1`/`intelE2E2`, 現行jar）は**安定化captureでも** FAILED（0.0735→**0.0607**, `pinned-deadline`, stable 101, 10 sections, VUID 0）＝AMDの安定化PASSはIntelに移らない。**差は帯1（空/地平）に集中**: オーバーレイ除外でAMD 27.0% vs Intel **39.4%** black、他帯は一致＝**GPU固有**。GL参照（`e2eGlRef3`）black **0.00377** vs 我々0.044＝**安定時も約11倍の残差**（display-list census=空）。**完全pack互換も未完** |
