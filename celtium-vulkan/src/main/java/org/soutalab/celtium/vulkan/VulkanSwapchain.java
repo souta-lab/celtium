@@ -228,6 +228,8 @@ public final class VulkanSwapchain {
      */
     private static long presentAcquireNanos;
     private static long presentReadbackNanos;
+    /** How many readback phase reports have printed; the first few are enough to answer where the cost is. */
+    private static int readbackPhasesPrinted;
     private static long presentQueueNanos;
     private static long presentStageCalls;
     private static long presentCapsNanos;
@@ -435,6 +437,8 @@ public final class VulkanSwapchain {
             int blockWidth, int blockHeight) {
         long buffer = VK_NULL_HANDLE;
         long memory = VK_NULL_HANDLE;
+        long setupStartedNanos = System.nanoTime();
+        long submitFinishedNanos = setupStartedNanos;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int rowBytes = blockWidth * blockHeight * 4;
             org.lwjgl.vulkan.VkBufferCreateInfo bufferInfo = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
@@ -494,23 +498,46 @@ public final class VulkanSwapchain {
             vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, null,
                     null, backToPresent);
             context.endCommands(commands);
+            submitFinishedNanos = System.nanoTime();
 
+            long mapStarted = System.nanoTime();
             PointerBuffer mapped = stack.mallocPointer(1);
             if (vkMapMemory(context.device(), memory, 0, rowBytes, 0, mapped) != VK_SUCCESS) {
                 return null;
             }
+            long mapNanos = System.nanoTime() - mapStarted;
+            long convertStarted = System.nanoTime();
             // The swapchain image is a B8G8R8A8 family format on this surface (the surface reported format 44), so the
             // bytes are B, G, R, A. Reading them as R, G, B left the mean identical - a channel swap cannot move a mean -
             // while 97.55% of the pixels differed from the game's screenshot, which is what named the order.
             int[] pixels = new int[blockWidth * blockHeight];
+            // One bulk copy instead of four reads per pixel. The byte-at-a-time loop was measured at 284 ms for a
+            // 1280x720 dump (CELTIUM_READBACK_PHASES: submit+wait 1 ms, map 0 ms, convert 284 ms), which is where the
+            // ~300 ms a presented dump cost actually went - not the GPU wait it was assumed to be. The mapped memory is
+            // BGRA in int order, so the conversion is a shift on each element of an int[] that arrived in bulk.
+            java.nio.IntBuffer packed = org.lwjgl.system.MemoryUtil
+                    .memByteBuffer(mapped.get(0), rowBytes).asIntBuffer();
+            packed.get(pixels);
             for (int pixel = 0; pixel < pixels.length; pixel++) {
-                long at = mapped.get(0) + (long) pixel * 4L;
-                int b = org.lwjgl.system.MemoryUtil.memGetByte(at) & 0xFF;
-                int g = org.lwjgl.system.MemoryUtil.memGetByte(at + 1) & 0xFF;
-                int r = org.lwjgl.system.MemoryUtil.memGetByte(at + 2) & 0xFF;
-                pixels[pixel] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                int bgra = pixels[pixel];
+                pixels[pixel] = 0xFF000000
+                        | ((bgra & 0xFF) << 16)          // B -> R
+                        | (bgra & 0x0000FF00)            // G stays
+                        | ((bgra >>> 16) & 0xFF);        // R -> B
             }
+            long convertNanos = System.nanoTime() - convertStarted;
             vkUnmapMemory(context.device(), memory);
+            if (readbackPhasesPrinted < 8) {
+                readbackPhasesPrinted++;
+                // Where the ~240 ms a presented dump costs actually goes. The copy is submitted behind the frame's own
+                // work and waited for, so the suspect was the wait; these three numbers say whether it is the wait, the
+                // map or the per-pixel conversion.
+                System.out.println("[Celtium] CELTIUM_READBACK_PHASES submitPlusWaitMillis="
+                        + ((submitFinishedNanos - setupStartedNanos) / 1_000_000L)
+                        + " mapMillis=" + (mapNanos / 1_000_000L)
+                        + " convertMillis=" + (convertNanos / 1_000_000L)
+                        + " pixels=" + (blockWidth * blockHeight));
+            }
             return pixels;
         } catch (RuntimeException | LinkageError error) {
             return null;
