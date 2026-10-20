@@ -933,7 +933,8 @@ public final class VulkanSwapchain {
         // split has an artifact even when F3 is closed and no diagnostics dump happens. It is the only reader of this
         // census; the backend's CELTIUM_PRESENT line belongs to a file this unit must not touch.
         if (this.presentCalls % 300 == 0) {
-            System.out.println("[Celtium] CELTIUM_PRESENT_TIMING " + presentTimingSummary());
+            System.out.println("[Celtium] CELTIUM_PRESENT_TIMING " + presentTimingSummary()
+                    + " " + presentStageSummary());
             this.presentFrames++;
         }
     }
