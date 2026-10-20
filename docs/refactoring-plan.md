@@ -137,7 +137,11 @@
 6. 一つの状態・資源には一人の所有者と一つの正を置く。新旧cacheやmirrorを永久併存させない。抽出用の薄いdelegateは許可するが、責任と撤去段階を明記する。
 7. 汎用OpenGL command stream、GL API全体のエミュレータ、Zink、万能DI/ECS/render graphを新設しない。描画の意味に沿った小さな契約で分ける。
 
-   **GLスタブの担当範囲は「Modが直接呼ぶGL」と「HUD/GUIのフォールバック」に限る。**
+   **GLスタブの担当範囲は「Modが直接呼ぶGL」に限る。** HUD/GUI もバニラ側である以上、原則スタブを通さない
+   （フォールバックとして許すのは、捕捉が未了の経路を計器で特定できている間だけであり、その残留は欠陥として数える）。
+   理由は機構が既にあること：GUI矩形は`GuiScreen.drawTexturedModalRect`等が`Tessellator`経由なので`WorldVertexBufferUploader`
+   mixinが捕捉し、フォントは`CeltiumFontGlyphCapture.fast{Default,Atlas,Unicode}Glyph`がPOSITION_TEX_COLOR quadを
+   直接組んでnativeへ渡している。したがってUI側のスタブ使用は「未捕捉経路の残り」であり、下の2計器と同じ扱いで0へ近づける。
    バニラ／ForgeのレンダリングAPI（`Tessellator`/`BufferBuilder`、`ModelRenderer`のdisplay list、`GlStateManager`、
    `FontRenderer`、`RenderItem`）は**Java APIレベルで捕捉してnative Vulkanへ渡し、GLスタブを通さない**。
    経路の良し悪しは好みではなく計器で判定する。2026-10-20 実測（leg `gv-pcache-hit1`, AMD RX 6400, cohort）の違反は
