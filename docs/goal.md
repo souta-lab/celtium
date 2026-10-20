@@ -1,6 +1,6 @@
 # Celtium 完成条件と目標（2026-10-21 改訂）
 
-- Goal ID: `goal-8df71681-c0a5-4c71-a8a6-aa13f58f1ac7`
+- Goal の状態・識別子は goal API が持つ（本書は製品仕様と完成条件）。
 - 対象: Minecraft 1.12.2 / CleanroomMC 専用 native Vulkan レンダラ
 - 基準環境: Cleanroom 0.6.13-alpha, LWJGL 3.4.1, Java 25, AMD RX 6400 / Intel UHD 630
 - 比較基準: Celeritas 固定参照 `989ebf2e`
