@@ -182,7 +182,33 @@ def verify(path):
                                ("org/soutalab/celtium/vulkan/", "celtium-vulkan")):
             sources = repository / module / "src/main/java" / prefix
             required.update(prefix + source.stem + ".class" for source in sources.glob("*.java"))
+        # Recursive coverage of the packages whose absence still leaves a jar that starts and draws nothing (#392): the GL
+        # stub, the shadow map and the shaderpack frontend are subpackages, and the shaders are resources, so the flat
+        # glob above never saw any of them - 104 entries could be deleted from a distribution jar and this said
+        # verified=true with no errors.
+        # The validation client is deliberately *not* in this list: it is a separate jar and must not ship, which is the
+        # check right below.
+        for prefix, module in (("org/soutalab/celtium/vulkan/", "celtium-vulkan"),
+                               ("org/soutalab/celtium/shaderpack/", "celtium-shaderpack")):
+            sources = repository / module / "src/main/java" / prefix
+            if not sources.is_dir():
+                errors.append(f"Missing source tree for the entry manifest: {sources}")
+                continue
+            for source in sorted(sources.rglob("*.java")):
+                relative = source.relative_to(repository / module / "src/main/java")
+                required.add(str(relative.with_suffix(".class")))
+        # The runtime shaders: every GLSL the build compiles has to be in the jar, because a missing one is a pipeline that
+        # cannot be built for that family - the failure is at run time, in the game, not here.
+        shader_sources = repository / "celtium-vulkan" / "src/main/shaders"
+        for shader in sorted(shader_sources.glob("*")):
+            if shader.suffix in (".vert", ".frag", ".comp", ".geom"):
+                required.add("org/soutalab/celtium/vulkan/spirv/" + shader.name + ".spv")
         errors.extend(f"Missing entry: {name}" for name in sorted(required - names))
+        # The fixture is a test harness, not part of the product: shipping it would put the validation client's mixins in
+        # an ordinary install.
+        leaked = sorted(name for name in names if name.startswith("org/soutalab/celtium/validation/"))
+        if leaked:
+            errors.append("The validation client is in the distribution jar: %s" % leaked[:3])
 
         manifest = read_manifest(jar.read("META-INF/MANIFEST.MF"))
         if manifest.get("Class-Path"):
