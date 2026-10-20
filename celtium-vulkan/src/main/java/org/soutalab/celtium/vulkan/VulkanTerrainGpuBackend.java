@@ -12377,6 +12377,8 @@ this.frameBufferOpen = false;
      */
     private static int modelDraws;
     private int modelDrawRefusals;
+    /** Model draws asked for with no display list current: immediate geometry, not a missing list. */
+    private int modelNoListCalls;
     /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
     /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
     /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
@@ -12629,6 +12631,15 @@ this.frameBufferOpen = false;
      * natively the difference is still 2.10 %, so the model geometry is not right yet. Keep it off until that is 0.
      */
     public boolean celtium$drawModelList(int listId, int boundTextureId) {
+        // A display list name is at least 1 (GL reserves 0 for "no list"), so a non-positive id here means the caller
+        // asked for a model draw when no list was current. That is not a missing mesh and must not be counted as one:
+        // it was logged as CELTIUM_MODEL_MISSING list=-1 with texture=107 on gv-model1, which reads as "this list failed
+        // to capture" when the truth is "there was nothing to replay". Geometry drawn outside any list is immediate
+        // geometry and belongs to the immediate path, which is where the caller should send it.
+        if (listId <= 0) {
+            this.modelNoListCalls++;
+            return false;
+        }
         // Which render target each model replay lands on. The entity-outline pass binds its own framebuffer, sets
         // renderOutlines and re-runs the same display lists through RenderLivingBase.renderModel
         // (`RenderGlobal.java:683-694`), so the mobs' geometry arrives here with a target that is not the main one, and
