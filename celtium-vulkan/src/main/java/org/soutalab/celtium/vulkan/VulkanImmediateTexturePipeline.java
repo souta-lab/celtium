@@ -153,6 +153,11 @@ public final class VulkanImmediateTexturePipeline {
     // Primitive long keys: this is the hottest map in the renderer - one lookup per immediate batch, ~300 a frame - and
     // the boxed form showed up in a JFR of the world window as HashMap.getNode/getTreeNode plus Long allocation for
     // the keys (about a tenth of the client thread together with the texture registry's maps).
+    /** The key and set of the last lookup, so a run of batches on one texture skips the map. */
+    private long lastDescriptorKey = -1L;
+    private long lastDescriptorSet;
+    private long descriptorSlotHits;
+
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /**
@@ -523,9 +528,18 @@ public final class VulkanImmediateTexturePipeline {
         }
         censusTexture(texture);
         long key = texture.key();
+        // Single-slot cache in front of the map: consecutive immediate batches overwhelmingly sample the same texture (the
+        // font atlas, the block atlas), and this is the hottest lookup in the renderer - one per batch, ~300 a frame.
+        if (key == this.lastDescriptorKey && this.lastDescriptorSet != 0L) {
+            DESCRIPTOR_HITS++;
+            this.descriptorSlotHits++;
+            return this.lastDescriptorSet;
+        }
         if (this.setsByTextureView.containsKey(key)) {
             DESCRIPTOR_HITS++;
-            return this.setsByTextureView.get(key);
+            this.lastDescriptorKey = key;
+            this.lastDescriptorSet = this.setsByTextureView.get(key);
+            return this.lastDescriptorSet;
         }
         // A miss retires the eldest entries once the cache is at its limit. The key is view ^ generation, so a
         // generation bump (a mirror refresh, a sampler rebuild, a reallocation) always misses and, before this, always
@@ -566,6 +580,8 @@ public final class VulkanImmediateTexturePipeline {
             ensureShadowResources();
             writeShadowBindings(stack, set);
             this.setsByTextureView.put(texture.key(), set);
+            this.lastDescriptorKey = texture.key();
+            this.lastDescriptorSet = set;
             DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
@@ -717,6 +733,8 @@ public final class VulkanImmediateTexturePipeline {
         this.descriptorPools.clear();
         this.setsByTextureView.clear();
         this.insertionOrder.clear();
+        this.lastDescriptorKey = -1L;
+        this.lastDescriptorSet = 0L;
         this.retiredSets.clear();
         if (this.context.celtium$recordingOpen()) {
             // An open recording can have bound this pipeline and the sets of its pools: destroying either before that

@@ -142,6 +142,11 @@ public final class VulkanImmediateItemPipeline {
     private final java.util.List<Long> retiredSets = new java.util.ArrayList<Long>();
     private int retiredSetsCount;
 
+    /** The key and set of the last lookup, so a run of batches on one texture skips the map. */
+    private long lastDescriptorKey = -1L;
+    private long lastDescriptorSet;
+    private long descriptorSlotHits;
+
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
 
@@ -281,8 +286,15 @@ public final class VulkanImmediateItemPipeline {
             VulkanImmediateTexturePipeline.ZERO_VIEW_REFUSALS++;
             return 0L;
         }
+        if (texture.key() == this.lastDescriptorKey && this.lastDescriptorSet != 0L) {
+            this.descriptorSlotHits++;
+            return this.lastDescriptorSet;
+        }
         if (this.setsByTextureView.containsKey(texture.key())) {
-            return this.setsByTextureView.get(texture.key());
+            long cached = this.setsByTextureView.get(texture.key());
+            this.lastDescriptorKey = texture.key();
+            this.lastDescriptorSet = cached;
+            return cached;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);
@@ -308,6 +320,8 @@ public final class VulkanImmediateItemPipeline {
                 writeShadowBindings(stack, set);
             }
             this.setsByTextureView.put(texture.key(), set);
+            this.lastDescriptorKey = texture.key();
+            this.lastDescriptorSet = set;
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {

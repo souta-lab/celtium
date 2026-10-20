@@ -100,6 +100,11 @@ public final class VulkanImmediateBlockPipeline {
     private final java.util.List<Long> retiredSets = new java.util.ArrayList<Long>();
     private int retiredSetsCount;
 
+    /** The key and set of the last lookup, so a run of batches on one texture skips the map. */
+    private long lastDescriptorKey = -1L;
+    private long lastDescriptorSet;
+    private long descriptorSlotHits;
+
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** How many descriptor sets this pipeline has had to build; a rise means keys stopped matching. */
@@ -222,8 +227,15 @@ public final class VulkanImmediateBlockPipeline {
         // view and generation change while the atlas's do not - keyed on the texture alone, a set built for an old
         // light map would be served for a new one.
         long descriptorKey = (texture.key() * 31L) + (lightmap != null ? lightmap.key() : 0L);
+        if (descriptorKey == this.lastDescriptorKey && this.lastDescriptorSet != 0L) {
+            this.descriptorSlotHits++;
+            return this.lastDescriptorSet;
+        }
         if (this.setsByTextureView.containsKey(descriptorKey)) {
-            return this.setsByTextureView.get(descriptorKey);
+            long cached = this.setsByTextureView.get(descriptorKey);
+            this.lastDescriptorKey = descriptorKey;
+            this.lastDescriptorSet = cached;
+            return cached;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
@@ -262,6 +274,8 @@ public final class VulkanImmediateBlockPipeline {
             ensureShadowResources();
             writeShadowBindings(stack, set);
             this.setsByTextureView.put(descriptorKey, set);
+            this.lastDescriptorKey = descriptorKey;
+            this.lastDescriptorSet = set;
             this.setsCreated++;
             return set;
         } catch (RuntimeException | LinkageError error) {
