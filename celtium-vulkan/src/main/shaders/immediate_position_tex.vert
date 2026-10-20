@@ -29,11 +29,6 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 192) vec4 u_FogRow2;    // row 2 (m20,m21,m22) and tz
 } celtium;
 
-// The native shadow map: the eye-space light matrix for this pipeline's already-transformed vertices, and the map. The
-// layout these shaders are bound with has carried both bindings since the texture family got the lookup.
-layout(set = 0, binding = 2) uniform CeltiumShadowUniforms { mat4 u_ShadowMatrix; } celtiumShadow;
-layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
-layout(location = 4) out vec4 v_ShadowCoord;
 
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec2 a_TexCoord;
@@ -71,7 +66,6 @@ void main() {
     // colour slots carry the constant the fragment mixes toward - applying it here too would double the tint.
     v_Color = celtium.u_AlphaRef < 0.0 ? vec4(1.0)
             : vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, celtium.u_ColorA);
-    v_ShadowCoord = celtiumShadow.u_ShadowMatrix * vec4(a_Position, 1.0);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
     // Mode 0 means "no fog for this batch", and the rows above are then whatever the previous group left in the shared
     // push block, so the coordinate is not computed at all in that case.

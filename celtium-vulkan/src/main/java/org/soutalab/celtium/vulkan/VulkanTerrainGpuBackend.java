@@ -14048,6 +14048,8 @@ this.frameBufferOpen = false;
         if (serial == this.shadowTupleSerial) {
             return this.shadowTuplePipeline != null;
         }
+        // Every batch the renderer captured this frame becomes a caster, not just the first: one region's geometry in the
+        // map meant the objects near the camera cast nothing unless their region happened to be recorded first.
         long descriptorSet = pipeline.lastDescriptorSet();
         if (descriptorSet == 0L || this.terrain.shadowIndirectCount() <= 0) {
             // Not a drawable batch: leave the previous tuple alone and let the caller fall back.
@@ -14064,6 +14066,15 @@ this.frameBufferOpen = false;
         this.shadowTupleDynamicOffset = pipeline.lastDynamicOffset();
         float[] block = pipeline.lastPushBlock();
         this.shadowTuplePushBlock = block == null ? null : block.clone();
+        if (this.shadowTuplePushBlock != null
+                && this.shadowBatches.size() < MAX_SHADOW_BATCHES) {
+            this.shadowBatches.add(new org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch(
+                    this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer, this.shadowTupleIndirectBuffer,
+                    this.shadowTupleIndirectOffset, this.shadowTupleIndirectCount, this.shadowTupleDescriptorSet,
+                    this.shadowTupleDynamicOffset, this.shadowTuplePushBlock));
+        } else if (this.shadowTuplePushBlock != null) {
+            this.shadowBatchesDropped++;
+        }
         return true;
     }
 
@@ -14073,6 +14084,14 @@ this.frameBufferOpen = false;
     // range) from the instant its first batch of the frame was recorded, and this side supplies the pipeline, descriptor
     // set, dynamic offset and push block as they were for that same batch. Reading them separately mixed region A's
     // commands with region B's buffers and state (#397).
+    /** Every terrain batch captured this frame, in recording order; the map is drawn from all of them. */
+    private final java.util.List<org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch> shadowBatches =
+            new java.util.ArrayList<org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch>();
+
+    /** How many batches may be captured per frame; the rest are dropped and counted rather than growing without bound. */
+    private static final int MAX_SHADOW_BATCHES = 64;
+    private int shadowBatchesDropped;
+
     private long shadowTupleSerial = -1L;
     private VulkanTerrainPipeline shadowTuplePipeline;
     private long shadowTupleVertexBuffer;
@@ -14560,11 +14579,8 @@ this.frameBufferOpen = false;
                 // buffer puts vkCmdBeginRendering inside the frame's render pass, and the validation layer says so on
                 // Intel (VUID-vkCmdBeginRendering-renderpass) - AMD stayed quiet about it. Its own submission has no
                 // enclosing pass, and the queue orders it against the frame's own submissions.
-                String submitted = this.shadowMapPass.recordTerrainAndSubmit(this.shadowTuplePipeline,
-                        this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer,
-                        this.shadowTupleIndirectBuffer, this.shadowTupleIndirectOffset,
-                        this.shadowTupleIndirectCount, this.shadowTuplePushBlock,
-                        this.shadowTupleDescriptorSet, this.shadowTupleDynamicOffset);
+                String submitted = this.shadowMapPass.recordTerrainBatchesAndSubmit(this.shadowTuplePipeline,
+                        this.shadowBatches);
                 if (submitted != null && this.shadowOwnPrints < 4) {
                     this.shadowOwnPrints++;
                     System.out.println("[Celtium] CELTIUM_SHADOW_OWN " + submitted);
@@ -14572,6 +14588,7 @@ this.frameBufferOpen = false;
                 this.terrain.resetShadowCapture();
                 this.shadowTupleSerial = -1L;
                 this.shadowTuplePipeline = null;
+                this.shadowBatches.clear();
                 return;
             }
             if (terrainShadow && (this.frameId < 3 || this.frameId % 300 == 0)) {
@@ -14583,19 +14600,13 @@ this.frameBufferOpen = false;
                         + " block=" + (terrainPipeline == null ? -1 : terrainPipeline.lastPushBlock().length));
             }
             if (terrainPipeline != null && this.shadowMapPass.hasTerrainPipeline()) {
-                drawn = this.shadowMapPass.recordTerrain(this.shadowTuplePipeline, this.commandBuffer, stack,
-                        this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer,
-                        this.shadowTupleIndirectBuffer, this.shadowTupleIndirectOffset,
-                        this.shadowTupleIndirectCount, this.shadowTuplePushBlock,
-                        this.shadowTupleDescriptorSet, this.shadowTupleDynamicOffset);
+                drawn = this.shadowMapPass.recordTerrainBatches(this.shadowTuplePipeline, this.commandBuffer, stack,
+                        this.shadowBatches);
             } else if (terrainPipeline != null) {
                 drawn = this.shadowMapPass.createTerrainPipeline(terrainPipeline);
                 if (drawn) {
-                    drawn = this.shadowMapPass.recordTerrain(this.shadowTuplePipeline, this.commandBuffer, stack,
-                            this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer,
-                            this.shadowTupleIndirectBuffer, this.shadowTupleIndirectOffset,
-                            this.shadowTupleIndirectCount, this.shadowTuplePushBlock,
-                            this.shadowTupleDescriptorSet, this.shadowTupleDynamicOffset);
+                    drawn = this.shadowMapPass.recordTerrainBatches(this.shadowTuplePipeline, this.commandBuffer, stack,
+                            this.shadowBatches);
                 }
             }
             if (!drawn) {
@@ -14609,6 +14620,7 @@ this.frameBufferOpen = false;
             this.terrain.resetShadowCapture();
             this.shadowTupleSerial = -1L;
             this.shadowTuplePipeline = null;
+            this.shadowBatches.clear();
         } catch (RuntimeException | LinkageError error) {
             record("native shadow pass failed: " + describe(error));
             if (System.getProperty("celtium.shadow.diag") != null) {

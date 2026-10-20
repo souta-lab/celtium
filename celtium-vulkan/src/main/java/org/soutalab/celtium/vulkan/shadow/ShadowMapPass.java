@@ -508,23 +508,46 @@ public final class ShadowMapPass {
                                  VkCommandBuffer commandBuffer, MemoryStack stack, long vertexBuffer,
                                  long indexBuffer, long indirectBuffer, long indirectOffset, int indirectCount,
                                  float[] block, long descriptorSet, int dynamicOffset) {
+        java.util.List<Batch> one = new java.util.ArrayList<Batch>(1);
+        one.add(new Batch(vertexBuffer, indexBuffer, indirectBuffer, indirectOffset, indirectCount, descriptorSet,
+                dynamicOffset, block));
+        return this.recordTerrainBatches(terrain, commandBuffer, stack, one);
+    }
+
+    /**
+     * Records every captured terrain batch into the map in one rendering scope.
+     * <p>
+     * One scope and one pipeline bind for the whole frame's shadow casters; each batch binds its own descriptor set with its
+     * own dynamic offset, its own vertex and index buffers and its own light-space push block. Everything is checked before
+     * the scope opens, because a return between Begin and End would leave the pass unbalanced (#399).
+     *
+     * @param terrain       the terrain pipeline whose layout and vertex stage the map is drawn with
+     * @param commandBuffer where to record
+     * @param stack         the frame's stack for throwaway structures
+     * @param batches       the frame's captured batches; a batch without a descriptor set is skipped, not drawn
+     * @return whether anything was drawn
+     */
+    public boolean recordTerrainBatches(org.soutalab.celtium.vulkan.VulkanTerrainPipeline terrain,
+                                        VkCommandBuffer commandBuffer, MemoryStack stack,
+                                        java.util.List<Batch> batches) {
+        if (batches == null || batches.isEmpty()) {
+            return false;
+        }
         if (!this.terrainPipelines.containsKey(terrain) && !createTerrainPipeline(terrain)) {
             return false;
         }
         long terrainPipelineForThisDraw = this.terrainPipelines.get(terrain).longValue();
-        if (System.getProperty("celtium.shadow.diag") != null) {
-            System.out.println("[Celtium] CELTIUM_SHADOW_RECORD terrainPipeline=" + this.terrainPipeline
-                    + " vertex=" + Long.toHexString(vertexBuffer) + " indirect=" + Long.toHexString(indirectBuffer)
-                    + " count=" + indirectCount + " block=" + (block == null ? -1 : block.length)
-                    + " set=" + Long.toHexString(descriptorSet));
+        // Preconditions, all before the scope opens.
+        int drawable = 0;
+        for (int i = 0; i < batches.size(); i++) {
+            Batch batch = batches.get(i);
+            if (batch.vertexBuffer != 0L && batch.indirectBuffer != 0L && batch.indirectCount > 0
+                    && batch.pushBlock != null && batch.pushBlock.length >= 32 && batch.descriptorSet != 0L
+                    && !Boolean.getBoolean("celtium.shadow.noDescriptors")) {
+                drawable++;
+            }
         }
-        // Every precondition is checked here, before the scope opens: the descriptor set used to be checked *after*
-        // vkCmdBeginRenderingKHR, so a frame with no set returned with the rendering scope still open and the caller's
-        // fallback opened a second one inside it (#399). The set is only known after the colour pass has drawn the region
-        // once, so the first frames of a run really do take this path.
-        if (terrainPipelineForThisDraw == 0L || vertexBuffer == 0L || indirectBuffer == 0L || indirectCount <= 0
-                || block == null || block.length < 32
-                || descriptorSet == 0L || Boolean.getBoolean("celtium.shadow.noDescriptors")) {
+        if (terrainPipelineForThisDraw == 0L || drawable == 0) {
             return false;
         }
         VkRenderingAttachmentInfoKHR.Buffer depth = VkRenderingAttachmentInfoKHR.calloc(1, stack);
@@ -539,43 +562,43 @@ public final class ShadowMapPass {
                 .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE));
         VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
                 .renderArea(area).layerCount(1).pDepthAttachment(depth.get(0));
-        // The map is read by the world pass of one frame and written by this pass of the next, both in the same command
-        // buffer: the two barriers order the sampling against the write in both directions.
         boolean barriers = !Boolean.getBoolean("celtium.shadow.noBarriers");
         if (barriers) {
             depthBarrier(commandBuffer, stack, VK_ACCESS_SHADER_READ_BIT,
                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
         }
+        int recorded = 0;
         vkCmdBeginRenderingKHR(commandBuffer, rendering);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipelineForThisDraw);
         vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
                 .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
         vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                 .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
-        {
-            // The terrain pipeline's layout statically uses set 0, so drawing without it is undefined and the validation
-            // layer says so (VUID-vkCmdDrawIndexedIndirect-None-08600); that check is above, with the other preconditions.
-            // The terrain pass bound its region's set with a dynamic offset inside its own pass; the frame's later windows
-            // bound other sets, so the shadow scope has to bind it again - the same set and the same offset, which is what
-            // makes this draw the same region the colour pass drew (seventeen messages in leg shadowTerrain2 without it).
+        int maxDraws = Integer.getInteger("celtium.shadow.maxDraws", Integer.MAX_VALUE).intValue();
+        for (int i = 0; i < batches.size(); i++) {
+            Batch batch = batches.get(i);
+            if (batch.vertexBuffer == 0L || batch.indirectBuffer == 0L || batch.indirectCount <= 0
+                    || batch.pushBlock == null || batch.pushBlock.length < 32 || batch.descriptorSet == 0L
+                    || Boolean.getBoolean("celtium.shadow.noDescriptors")) {
+                continue;
+            }
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain.pipelineLayout(), 0,
-                    stack.longs(descriptorSet), stack.ints(dynamicOffset));
-        }
-        vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
-        if (indexBuffer != 0L) {
-            vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
-        }
-        float[] lightBlock = lightSpaceBlock(block);
-        java.nio.FloatBuffer push = stack.mallocFloat(32);
-        for (int i = 0; i < 32; i++) {
-            push.put(i, lightBlock[i]);
-        }
-        vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
-        // A bisection switch: the frame loop stops presenting when the terrain draw runs (3 presents in 60 s against 600
-        // without it), so the draw count is the first thing to vary.
-        int draws = Integer.getInteger("celtium.shadow.maxDraws", indirectCount).intValue();
-        if (!Boolean.getBoolean("celtium.shadow.noDraw")) {
-            vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, Math.min(draws, indirectCount), 20);
+                    stack.longs(batch.descriptorSet), stack.ints(batch.dynamicOffset));
+            vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(batch.vertexBuffer), stack.longs(0L));
+            if (batch.indexBuffer != 0L) {
+                vkCmdBindIndexBuffer(commandBuffer, batch.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+            }
+            float[] lightBlock = lightSpaceBlock(batch.pushBlock);
+            java.nio.FloatBuffer push = stack.mallocFloat(32);
+            for (int k = 0; k < 32; k++) {
+                push.put(k, lightBlock[k]);
+            }
+            vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
+            if (!Boolean.getBoolean("celtium.shadow.noDraw")) {
+                int draws = Math.min(batch.indirectCount, maxDraws);
+                vkCmdDrawIndexedIndirect(commandBuffer, batch.indirectBuffer, batch.indirectOffset, draws, 20);
+                recorded += draws;
+            }
         }
         vkCmdEndRenderingKHR(commandBuffer);
         if (barriers) {
@@ -583,21 +606,10 @@ public final class ShadowMapPass {
                     VK_ACCESS_SHADER_READ_BIT);
         }
         this.passes++;
-        this.terrainPasses++;
-        if (this.terrainPasses == 60 && Boolean.getBoolean("celtium.shadow.depthSample")) {
-            // Sampled after real terrain has been drawn, not after the test triangle: a varied range here is the evidence
-            // that the map holds the world's geometry, where the triangle's constant 0.5 is not.
-            this.depthSampled = false;
-            sampleDepthOnce();
-            // The line that carries the answer: a constant 0.5 is the test triangle, a varied range is the world's own
-            // geometry in the map.
-            System.out.println("[Celtium] CELTIUM_SHADOW_DEPTH " + statistics());
+        if (recorded > 0) {
+            this.terrainPasses++;
         }
-        if (System.getProperty("celtium.shadow.diag") != null && this.terrainPasses % 300 == 1) {
-            System.out.println("[Celtium] CELTIUM_SHADOW_TERRAIN_DRAWN terrainPasses=" + this.terrainPasses
-                    + " count=" + indirectCount + " passes=" + this.passes);
-        }
-        return true;
+        return recorded > 0;
     }
 
     /** One GENERAL-to-GENERAL barrier over the map with the given access masks. */
@@ -910,6 +922,113 @@ public final class ShadowMapPass {
         } catch (RuntimeException | LinkageError error) {
             return false;
         } finally {
+            if (pool != VK_NULL_HANDLE) {
+                vkDestroyCommandPool(this.context.device(), pool, null);
+            }
+        }
+    }
+
+    /**
+     * One terrain draw's worth of state, captured together for the shadow pass.
+     * <p>
+     * A frame draws several regions, each with its own vertex buffer, index buffer, indirect range and descriptor set. The
+     * pass used to draw only the first of those, so the map held whatever region happened to be recorded first - usually a
+     * distant one - and the objects near the camera cast nothing (#397's coverage note).
+     */
+    public static final class Batch {
+        public final long vertexBuffer;
+        public final long indexBuffer;
+        public final long indirectBuffer;
+        public final long indirectOffset;
+        public final int indirectCount;
+        public final long descriptorSet;
+        public final int dynamicOffset;
+        public final float[] pushBlock;
+
+        public Batch(long vertexBuffer, long indexBuffer, long indirectBuffer, long indirectOffset, int indirectCount,
+                     long descriptorSet, int dynamicOffset, float[] pushBlock) {
+            this.vertexBuffer = vertexBuffer;
+            this.indexBuffer = indexBuffer;
+            this.indirectBuffer = indirectBuffer;
+            this.indirectOffset = indirectOffset;
+            this.indirectCount = indirectCount;
+            this.descriptorSet = descriptorSet;
+            this.dynamicOffset = dynamicOffset;
+            this.pushBlock = pushBlock;
+        }
+    }
+
+    /**
+     * Records every batch into the map on a command buffer of its own and submits it, without waiting.
+     * <p>
+     * The own-submission path needs the same coverage as the in-frame one, so both go through
+     * {@link #recordTerrainBatches}: one scope, one clear, every batch's descriptor set and geometry.
+     *
+     * @param terrain the terrain pipeline the map is drawn with
+     * @param batches the frame's captured batches
+     * @return a one-line summary, or null when nothing was recorded
+     */
+    public String recordTerrainBatchesAndSubmit(org.soutalab.celtium.vulkan.VulkanTerrainPipeline terrain,
+                                                java.util.List<Batch> batches) {
+        if (this.image == VK_NULL_HANDLE || batches == null || batches.isEmpty()
+                || !this.terrainPipelines.containsKey(terrain) && !createTerrainPipeline(terrain)) {
+            return null;
+        }
+        reclaimCompletedSubmissions();
+        if (this.pendingOwnSubmissions.size() >= MAX_PENDING_OWN_SUBMISSIONS) {
+            this.failures++;
+            this.lastFailure = "pending own submissions at the limit (" + MAX_PENDING_OWN_SUBMISSIONS + ")";
+            return "pending submissions at the limit";
+        }
+        long pool = VK_NULL_HANDLE;
+        long ownFence = VK_NULL_HANDLE;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.LongBuffer handle = stack.mallocLong(1);
+            if (vkCreateCommandPool(this.context.device(), org.lwjgl.vulkan.VkCommandPoolCreateInfo
+                    .calloc(stack).sType$Default().queueFamilyIndex(this.context.queueFamilyIndex()), null,
+                    handle) != VK_SUCCESS) {
+                return "pool failed";
+            }
+            pool = handle.get(0);
+            org.lwjgl.PointerBuffer buffers = stack.callocPointer(1);
+            if (vkAllocateCommandBuffers(this.context.device(), org.lwjgl.vulkan.VkCommandBufferAllocateInfo
+                    .calloc(stack).sType$Default().commandPool(pool).level(org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                    .commandBufferCount(1), buffers) != VK_SUCCESS) {
+                return "buffer failed";
+            }
+            VkCommandBuffer commandBuffer = new VkCommandBuffer(buffers.get(0), this.context.device());
+            vkBeginCommandBuffer(commandBuffer, org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack)
+                    .sType$Default());
+            if (!this.recordTerrainBatches(terrain, commandBuffer, stack, batches)) {
+                vkEndCommandBuffer(commandBuffer);
+                return "nothing to draw";
+            }
+            vkEndCommandBuffer(commandBuffer);
+            java.nio.LongBuffer fenceHandle = stack.mallocLong(1);
+            if (vkCreateFence(this.context.device(), org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack)
+                    .sType$Default(), null, fenceHandle) != VK_SUCCESS) {
+                return "fence failed";
+            }
+            ownFence = fenceHandle.get(0);
+            int submitResult = vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack)
+                    .sType$Default().pCommandBuffers(stack.pointers(commandBuffer.address())), ownFence);
+            if (submitResult != VK_SUCCESS) {
+                this.failures++;
+                this.lastFailure = "vkQueueSubmit returned " + submitResult;
+                vkDestroyFence(this.context.device(), ownFence, null);
+                ownFence = VK_NULL_HANDLE;
+                return "submit failed (" + submitResult + ")";
+            }
+            this.pendingOwnSubmissions.add(new long[]{pool, ownFence});
+            pool = VK_NULL_HANDLE;
+            ownFence = VK_NULL_HANDLE;
+            return "submitted batches=" + batches.size();
+        } catch (RuntimeException | LinkageError error) {
+            return "threw " + error;
+        } finally {
+            if (ownFence != VK_NULL_HANDLE) {
+                vkDestroyFence(this.context.device(), ownFence, null);
+            }
             if (pool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.context.device(), pool, null);
             }
