@@ -2607,7 +2607,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * counter resolves. This histogram is the counter that resolves it - the highest stage with a non-zero count is
      * where the missing offers stop.
      */
+    /** {@return the per-offer-stage average nanoseconds, for the batch-timing summary}. */
+    private String offerStageNanosSummary() {
+        StringBuilder text = new StringBuilder(" offerStages[nanosPerReached");
+        for (int stage = 1; stage < this.offerStageDeltas.length; stage++) {
+            long[] entry = this.offerStageDeltas[stage];
+            if (entry[1] > 0L) {
+                text.append(" s").append(stage).append('=').append(entry[0] / entry[1]);
+            }
+        }
+        return text.append(']').toString();
+    }
+
     private void celtium$offerStage(int stage) {
+        if (BATCH_TIMINGS && stage > 0) {
+            this.offerStageMarks[stage - 1] = System.nanoTime();
+        }
         this.offerStage = stage;
         if (stage >= 0 && stage < this.offerStageReached.length) {
             this.offerStageReached[stage]++;
@@ -5758,6 +5773,38 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                               int vertexCount, int drawMode) {
+        long batchStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        try {
+            return this.submitImmediateBatchBody(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
+                    drawMode);
+        } finally {
+            if (BATCH_TIMINGS) {
+                long took = System.nanoTime() - batchStartedNanos;
+                this.immediateStatistics.addSubmitBatchNanos(took);
+                long checks = this.batchCheckNanos;
+                if (checks > 0L && checks <= took) {
+                    this.immediateStatistics.addBatchChecksNanos(checks);
+                }
+                this.batchCheckNanos = 0L;
+                // The nine marks say which stage the rest of the batch's time is in; stages are monotonic within a batch.
+                long[][] deltas = this.offerStageDeltas;
+                for (int stage = 1; stage < this.offerStageMarks.length; stage++) {
+                    long from = this.offerStageMarks[stage - 1];
+                    long to = this.offerStageMarks[stage];
+                    if (from > 0L && to >= from) {
+                        deltas[stage][0] += to - from;
+                        deltas[stage][1]++;
+                    }
+                    this.offerStageMarks[stage - 1] = 0L;
+                }
+                this.offerStageMarks[this.offerStageMarks.length - 1] = 0L;
+            }
+        }
+    }
+
+    private boolean submitImmediateBatchBody(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
+                                             int vertexCount, int drawMode) {
+        long afterBatchStartNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
@@ -5874,6 +5921,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
         // controls in practice is which format-2 batches the present path may take; everything else falls through to
         // the immediate path. Recorded so the name is not read as evidence that a present happens.
+        if (BATCH_TIMINGS) {
+            this.batchCheckNanos = System.nanoTime() - afterBatchStartNanos;
+        }
         celtium$offerStage(2);
         if (formatId == 2 && SKIP_GL_COMPOSITE && this.framePresentedFromVulkan > 0
                 && this.targetRegistry.currentIsMain()) {
@@ -6231,7 +6281,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (boundProgram == Integer.MIN_VALUE) {
                 boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
             }
-            if (BATCH_TIMINGS) this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
+            if (BATCH_TIMINGS) {
+                this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
+                this.immediateStatistics.noteBatchTimed();
+            }
             this.immediateStatistics.noteProgramQueryCount();
             if (boundProgram != 0) {
                 // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
@@ -9755,6 +9808,10 @@ this.frameBufferOpen = false;
                 + " actualFlushMillis=" + (this.immediateStatistics.actualFlushNanos() / 1000000L)
                 + " actualFlushWorstMillis=" + (this.immediateStatistics.actualFlushWorstNanos() / 1000000L)
                 + " actualFlushCpuMillis=" + (this.immediateStatistics.actualFlushCpuNanos() / 1000000L)
+                // Where a batch's time goes, per batch, with -Dceltium.vulkan.batchTimings=true. The counters existed but
+                // were never printed, so the question "is the per-batch cost the state capture, the key, the program query or
+                // the preparation" had no answer in a run.
+                + (BATCH_TIMINGS ? this.immediateStatistics.batchTimingSummary() + this.offerStageNanosSummary() : "")
                 // Task-60: the wait facts, so the JSON report names the wait instead of a reader guessing. The
                 // bootstrap path's waits have no API bound at all; the frame path's fence wait has a 5 s one and is
                 // the only place that sets gpuStalled. Worst is the number that says whether either is a hazard.
@@ -12397,6 +12454,20 @@ this.frameBufferOpen = false;
      * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one
      * command, and how many of them draw from the frame arena. Off by default.
      */
+    /** Time the current batch spent in the pre-draw checks, reported by the batch-timing summary. */
+    private long batchCheckNanos;
+
+    /**
+     * Timestamps of the offer stages of the current batch, in nanoseconds.
+     * <p>
+     * Sized to the stage numbering, which runs to 11: the first version had nine entries and an index out of range for the
+     * last two stages, so the measurement stopped exactly where the queueing work begins.
+     */
+    private final long[] offerStageMarks = new long[16];
+
+    /** Per-stage totals and counts: [stage][0] nanos, [stage][1] batches that reached it. */
+    private final long[][] offerStageDeltas = new long[16][2];
+
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
     private static final boolean SKIP_IMMEDIATE_RECORD =
             Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");

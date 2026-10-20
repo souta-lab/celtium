@@ -2011,4 +2011,48 @@ public final class ImmediateStatistics {
     }
 
 
+
+    /**
+     * {@return a one-line per-batch timing breakdown for the summary}, empty when no batch timing was recorded.
+     * <p>
+     * The five counters behind it are written only with {@code -Dceltium.vulkan.batchTimings=true}; the totals divided by the
+     * offer count are what says whether a batch costs its state capture, its key, its program query or its preparation.
+     */
+    String batchTimingSummary() {
+        long offers = this.batchTimedOffers;
+        if (offers <= 0L) {
+            return "";
+        }
+        return " batchTimings[nanosPerOffer total=" + (this.submitBatchNanos / offers)
+                + " checks=" + (this.batchChecksNanos / offers)
+                + " captureState=" + (this.captureStateNanos / offers)
+                + " stateKey=" + (this.stateKeyNanos / offers)
+                + " programQuery=" + (this.programQueryNanos / offers)
+                + " matrixCopy=" + (this.matrixCopyNanos / offers)
+                + " prepare=" + (this.prepareImmediateNanos / offers) + "]";
+    }
+
+    /** Batches whose five timers ran; the denominator of {@link #batchTimingSummary()}. */
+    private long batchTimedOffers;
+
+    /** Time spent inside one batch's submit path, end to end. */
+    private long submitBatchNanos;
+
+    /** Of that, the part spent in the pre-draw checks. */
+    private long batchChecksNanos;
+
+    /** Adds one batch's pre-draw check time. */
+    void addBatchChecksNanos(long value) {
+        this.batchChecksNanos += value;
+    }
+
+    /** Adds one batch's end-to-end submit time. */
+    void addSubmitBatchNanos(long value) {
+        this.submitBatchNanos += value;
+    }
+
+    /** Counts one batch whose timers ran. */
+    void noteBatchTimed() {
+        this.batchTimedOffers++;
+    }
 }
