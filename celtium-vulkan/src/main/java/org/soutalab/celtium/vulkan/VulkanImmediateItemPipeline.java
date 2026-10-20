@@ -315,10 +315,10 @@ public final class VulkanImmediateItemPipeline {
                     .pImageInfo(image);
             celtium$noteDescWrite(write);
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            if (this.lit) {
-                ensureShadowResources();
-                writeShadowBindings(stack, set);
-            }
+            // Both variants' layouts declare the shadow bindings, and a set drawn with a binding it does not have is
+            // VUID-vkCmdDrawIndexed-None-08114 - so a set is filled from whichever texture path allocated it.
+            ensureShadowResources();
+            writeShadowBindings(stack, set);
             this.setsByTextureView.put(texture.key(), set);
             this.lastDescriptorKey = texture.key();
             this.lastDescriptorSet = set;
@@ -534,28 +534,35 @@ public final class VulkanImmediateItemPipeline {
             // fixed-function term it stands in for is a per-draw modulate, and the coordinate arrives as a push constant
             // (see LightmapCoordsMixin). A binding the layout does not declare is a shader-interface error, and one it
             // declares but the set does not fill is a descriptor error, so both variants get exactly theirs.
+            // The shadow bindings (2: the eye-space matrix, 3: the map) are declared by every immediate vertex shader
+            // this family compiles, the non-lit one included, so they cannot be omitted from the layout of any variant:
+            // measured on leg gv-merge-census1 at 3cde87ebb, omitting them for non-lit made
+            // VUID-VkGraphicsPipelineCreateInfo-layout-07988 name "celtiumShadow" at pipeline creation and
+            // VUID-vkCmdDrawIndexed-None-08114 name the missing "u_ShadowMap" on every such draw. Only binding 1 - the
+            // light map - is lit-only, because only that shader samples it.
             org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
-                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(this.lit ? 4 : 1, stack);
-            binding.get(0).binding(0)
+                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(this.lit ? 4 : 3, stack);
+            int slot = 0;
+            binding.get(slot++).binding(0)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(1)
                     .stageFlags(this.lit ? (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                             : VK_SHADER_STAGE_FRAGMENT_BIT);
             if (this.lit) {
-                binding.get(1).binding(1)
+                binding.get(slot++).binding(1)
                         .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-                // The native shadow map's matrix (vertex stage) and the map itself (fragment stage).
-                binding.get(2).binding(2)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .descriptorCount(1)
-                        .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-                binding.get(3).binding(3)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(1)
-                        .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
             }
+            // The native shadow map's matrix (vertex stage) and the map itself (fragment stage).
+            binding.get(slot++).binding(2)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
+            binding.get(slot++).binding(3)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
             org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo layoutInfo =
                     org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
                             .pBindings(binding);
