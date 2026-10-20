@@ -508,8 +508,13 @@ public final class ShadowMapPass {
                     + " count=" + indirectCount + " block=" + (block == null ? -1 : block.length)
                     + " set=" + Long.toHexString(descriptorSet));
         }
+        // Every precondition is checked here, before the scope opens: the descriptor set used to be checked *after*
+        // vkCmdBeginRenderingKHR, so a frame with no set returned with the rendering scope still open and the caller's
+        // fallback opened a second one inside it (#399). The set is only known after the colour pass has drawn the region
+        // once, so the first frames of a run really do take this path.
         if (terrainPipelineForThisDraw == 0L || vertexBuffer == 0L || indirectBuffer == 0L || indirectCount <= 0
-                || block == null || block.length < 32) {
+                || block == null || block.length < 32
+                || descriptorSet == 0L || Boolean.getBoolean("celtium.shadow.noDescriptors")) {
             return false;
         }
         VkRenderingAttachmentInfoKHR.Buffer depth = VkRenderingAttachmentInfoKHR.calloc(1, stack);
@@ -537,13 +542,9 @@ public final class ShadowMapPass {
                 .x(0.0f).y(0.0f).width(SIZE).height(SIZE).minDepth(0.0f).maxDepth(1.0f));
         vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
                 .offset(it -> it.set(0, 0)).extent(it -> it.set(SIZE, SIZE)));
-        if (descriptorSet == 0L || Boolean.getBoolean("celtium.shadow.noDescriptors")) {
+        {
             // The terrain pipeline's layout statically uses set 0, so drawing without it is undefined and the validation
-            // layer says so (VUID-vkCmdDrawIndexedIndirect-None-08600). The set is only known after the colour pass has
-            // drawn the region once, so the first frames of a run have none and this is the branch they take.
-            return false;
-        }
-        if (descriptorSet != 0L) {
+            // layer says so (VUID-vkCmdDrawIndexedIndirect-None-08600); that check is above, with the other preconditions.
             // The terrain pass bound its region's set with a dynamic offset inside its own pass; the frame's later windows
             // bound other sets, so the shadow scope has to bind it again - the same set and the same offset, which is what
             // makes this draw the same region the colour pass drew (seventeen messages in leg shadowTerrain2 without it).
@@ -710,6 +711,12 @@ public final class ShadowMapPass {
         }
         long terrainPipelineForThisDraw = this.terrainPipelines.get(terrain).longValue();
         reclaimCompletedSubmissions();
+        if (this.pendingOwnSubmissions.size() >= MAX_PENDING_OWN_SUBMISSIONS) {
+            // Every retained submission is memory and a fence; a GPU that has stopped signalling must not let this grow.
+            this.failures++;
+            this.lastFailure = "pending own submissions at the limit (" + MAX_PENDING_OWN_SUBMISSIONS + ")";
+            return "pending submissions at the limit";
+        }
         long pool = VK_NULL_HANDLE;
         long ownFence = VK_NULL_HANDLE;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -775,8 +782,17 @@ public final class ShadowMapPass {
                 return "fence failed";
             }
             ownFence = fenceHandle.get(0);
-            vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
-                    .pCommandBuffers(stack.pointers(commandBuffer.address())), ownFence);
+            int submitResult = vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack)
+                    .sType$Default().pCommandBuffers(stack.pointers(commandBuffer.address())), ownFence);
+            if (submitResult != VK_SUCCESS) {
+                // A submit the queue refused owns nothing: counting it as a pass and moving its pool to the pending list
+                // left an unsignalled fence at the head of that list, which then blocked every later reclamation (#402).
+                this.failures++;
+                this.lastFailure = "vkQueueSubmit returned " + submitResult;
+                vkDestroyFence(this.context.device(), ownFence, null);
+                ownFence = VK_NULL_HANDLE;
+                return "submit failed (" + submitResult + ")";
+            }
             this.pendingOwnSubmissions.add(new long[]{pool, ownFence});
             pool = VK_NULL_HANDLE;   // ownership moves to the pending list
             this.passes++;
@@ -822,6 +838,9 @@ public final class ShadowMapPass {
     }
 
     /** Destroys the pools of submissions the queue has finished, and no others. */
+    /** How many own-submissions may wait before a new one is refused: each holds a command pool and a fence. */
+    private static final int MAX_PENDING_OWN_SUBMISSIONS = 64;
+
     private void reclaimCompletedSubmissions() {
         while (!this.pendingOwnSubmissions.isEmpty()) {
             long[] pending = this.pendingOwnSubmissions.peek();
