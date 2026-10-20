@@ -77,3 +77,46 @@
 - スタブ内部の修理（display list/hint）を主作業にすること
 - 方向性が固まる前に計器を増やすこと
 - 「呼び出しごとの変換」を速くする努力（計測で余地が無いと確定済み）
+
+---
+
+# 付録: Phase B「instancing」の実装設計（2026-10-21）
+
+pre-transform（行列キー分割の削減）は KPI 2ペアで 2.28x（基準 2.30x、ノイズ内）と測って棄却済み。
+残るレバーは **同一 `(listId, texture)` を1 draw にまとめる instancing** だけなので、実装前に設計を固定する。
+
+## 実測の前提（再測定不要）
+
+| 事実 | 値 / 出典 |
+|---|---|
+| モデル再生 | `glCallList` 805〜823 回/leg、捕捉メッシュは `ModelGeometryCache` が list 単位で構築 |
+| 統合済みの merges | **10.6/frame** |
+| 行列キーによる分割 | **5.1/frame**（affine bake では動かず） |
+| モデル頂点レイアウト | `VulkanDynamicMesh.Layout(28, 0, 16, 12, 24, -1)`（position, colour, tex, normal, pad） |
+| モデル描画の入口 | `VulkanTerrainGpuBackend.celtium$drawModelList(listId, boundTextureId)` |
+| 再生の呼び出し元 | `GlStateManagerMixin.celtium$countCallList`（MCP名 `callList`、GL本文は cancel） |
+
+## 設計
+
+1. **収集**：`CeltiumModelBatch`（新規, `forge122` ではなく `celtium-vulkan`）が frame 内で
+   `(listId, texture, modelView[16])` を蓄積する。`drawModelList` は即時描画せずここへ積む。
+2. **確定**：パス終端（既存の flush 点）で `(listId, texture)` ごとにグループ化。
+   - 1件なら現行経路（従来の単一 draw）にそのまま流す ＝ 退行リスクゼロのフォールバック。
+   - 2件以上なら instanced draw 1回。
+3. **instance buffer**：`VulkanFrameArena` から frame 単位で確保（既存 arena を使い、新規アロケータを作らない）。
+4. **パイプライン**：ITEM レイアウトに **instance 入力 binding を1本追加**した variant を
+   `VulkanImmediateItemPipeline` に追加。pipeline cache のキーは既存 state key に「instanced」ビットを足すだけ。
+5. **shader**：モデル用 vertex shader の variant を1本追加し、`gl_InstanceIndex` で mat4 を引き position に適用、
+   normal は既存どおり（法線も回転が必要なら mat3 を instance に含める）。
+6. **受入**：
+   - 1frame のモデル draw 数が `(listId, texture)` の異なり数まで落ちる（計器②で観測）
+   - **KPI ペアで 2.30x から −6% 超**の改善、両arm PASSED
+   - 画像ゲート既存と一致（PASSED の維持）
+
+## 実装前に確認する未知（ここを飛ばすと設計が崩れる）
+
+1. **ITEM レイアウトを消費する vertex shader はどれか**（`celtium-vulkan/src/main/shaders/` に item 名のファイルが無いため、
+   `VulkanImmediateItemPipeline` が読むシェーダ名を先に特定する）
+2. **modelView が push constant か、既に頂点へ bake 済みか**（bake 済みなら instancing の代わりに「行列ごとに頂点を複製」になり無意味）
+3. **normal を回転させる必要があるか**（ITEM レイアウトは normal を持つため、回転時に法線変換が要る）
+4. 半透明・`RenderLivingBase` のアウトライン用オフターゲット再生（`modelOffTargetCalls`）が同じグループ化に載ってよいか
