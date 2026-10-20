@@ -5820,6 +5820,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        {
+            // Repeatability: if a frame's batch traffic is byte-for-byte the previous frame's, its recording could be
+            // reused instead of rebuilt. This hashes what decides a batch - format, state, texture, vertex count and the
+            // first and last vertex's bytes - per frame, and compares the result with the previous frame's.
+            long hash = this.frameBatchSignature;
+            hash = (hash ^ formatId) * 1099511628211L;
+            hash = (hash ^ (this.immediateState.boundTextureName())) * 1099511628211L;
+            hash = (hash ^ vertexCount) * 1099511628211L;
+            hash = (hash ^ vertexStride) * 1099511628211L;
+            if (vertexAddress != 0L && vertexCount > 0) {
+                hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress)) * 1099511628211L;
+                hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress + (long) vertexStride
+                        * (vertexCount - 1))) * 1099511628211L;
+            }
+            this.frameBatchSignature = hash;
+        }
+        if ((formatId == 1 || formatId == 2) && this.frameId > 300 && this.batchSiteSamples[formatId] < 3) {
+            // Which caller produces the HUD/text batches, once per format: the counters say how many there are and the
+            // formats say they are POSITION_COLOR and POSITION_TEX_COLOR, but not who draws them - and that decides whether
+            // the cost belongs to the font path, the GUI or the world.
+            this.batchSiteSamples[formatId]++;
+            StackTraceElement[] site = new Throwable().getStackTrace();
+            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_BATCH_SITE format=" + formatId + " frames=");
+            for (int i = 1; i < Math.min(site.length, 9); i++) {
+                line.append(site[i].getClassName()).append('.').append(site[i].getMethodName()).append(' ');
+            }
+            System.out.println(line);
+        }
         celtium$offerStage(1);
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode)) {
@@ -7865,6 +7893,16 @@ this.frameBufferOpen = false;
             // The frame's wall clock split. A sampling profiler cannot see a thread that is waiting, and the gap to the
             // reference is larger than the CPU the samples account for, so the boundary reports the three parts it can
             // name: the recording (already bracketed), this submit, and the slot wait at the next frame's start.
+            {
+                // Close off the frame's signature: a frame that hashes the same as the previous one repeated its batch
+                // traffic exactly, which is the condition a cached recording would have to detect.
+                this.comparedFrameSignatures++;
+                if (this.frameBatchSignature == this.previousFrameBatchSignature && this.frameBatchSignature != 0L) {
+                    this.identicalFrameSignatures++;
+                }
+                this.previousFrameBatchSignature = this.frameBatchSignature;
+                this.frameBatchSignature = 0L;
+            }
             long finishStart = System.nanoTime();
             celtium$finishFrameBuffer();
             long finishNanos = System.nanoTime() - finishStart;
@@ -9812,6 +9850,7 @@ this.frameBufferOpen = false;
                 // were never printed, so the question "is the per-batch cost the state capture, the key, the program query or
                 // the preparation" had no answer in a run.
                 + (BATCH_TIMINGS ? this.immediateStatistics.batchTimingSummary() + this.offerStageNanosSummary() : "")
+                + " identicalFrameSignatures=" + this.identicalFrameSignatures + "/" + this.comparedFrameSignatures
                 // Task-60: the wait facts, so the JSON report names the wait instead of a reader guessing. The
                 // bootstrap path's waits have no API bound at all; the frame path's fence wait has a 5 s one and is
                 // the only place that sets gpuStalled. Worst is the number that says whether either is a hazard.
@@ -12454,6 +12493,15 @@ this.frameBufferOpen = false;
      * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one
      * command, and how many of them draw from the frame arena. Off by default.
      */
+    /** Hash of the current frame's batch traffic, and the previous frame's, to count identical frames. */
+    private long frameBatchSignature;
+    private long previousFrameBatchSignature;
+    private long identicalFrameSignatures;
+    private long comparedFrameSignatures;
+
+    /** How many call-site samples were printed per format; three are enough to name the producer. */
+    private final int[] batchSiteSamples = new int[12];
+
     /** Time the current batch spent in the pre-draw checks, reported by the batch-timing summary. */
     private long batchCheckNanos;
 
