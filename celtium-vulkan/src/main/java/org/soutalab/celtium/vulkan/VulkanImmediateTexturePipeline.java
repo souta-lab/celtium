@@ -1082,15 +1082,28 @@ public final class VulkanImmediateTexturePipeline {
     public static void setShadowSources(long view, long sampler) {
         shadowMapView = view;
         shadowMapSampler = sampler;
+        // The sets already handed out are *not* rewritten. vkUpdateDescriptorSets on a set that a recording or pending
+        // command buffer references invalidates that buffer without the UPDATE_AFTER_BIND layout flag, which this layout
+        // does not use (#401). Instead each pipeline's cache is emptied and its sets are retired: the recorded buffers keep
+        // valid sets (they hold the placeholder map, which is a real image), and the next draws build sets that name the
+        // real map. The retired sets are released by the completion-gated path that already exists for eviction.
         for (int i = 0; i < SHADOW_INSTANCES.size(); i++) {
             VulkanImmediateTexturePipeline instance = SHADOW_INSTANCES.get(i);
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry
-                        : instance.setsByTextureView.long2LongEntrySet()) {
-                    instance.writeShadowBindings(stack, entry.getLongValue());
-                }
-            }
+            instance.retireCachedSets();
         }
+    }
+
+    /**
+     * Moves every cached set to the retirement list and clears the cache, so the next draw builds a set from the current
+     * shadow sources.
+     */
+    private void retireCachedSets() {
+        for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry : this.setsByTextureView.long2LongEntrySet()) {
+            this.descriptorSetsRetired++;
+            this.retiredSets.add(Long.valueOf(entry.getLongValue()));
+        }
+        this.setsByTextureView.clear();
+        this.insertionOrder.clear();
     }
 
     /**

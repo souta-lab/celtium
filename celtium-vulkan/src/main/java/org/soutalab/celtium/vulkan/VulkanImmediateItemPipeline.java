@@ -135,6 +135,13 @@ public final class VulkanImmediateItemPipeline {
     private static final java.util.List<VulkanImmediateItemPipeline> SHADOW_INSTANCES =
             new java.util.ArrayList<VulkanImmediateItemPipeline>();
     // Primitive long keys, as in the texture family: one lookup per immediate batch.
+    /**
+     * Sets the shadow-source change displaced, plus the count: they may still be referenced by recorded or pending command
+     * buffers, so they are released by the same completion-gated path that serves eviction rather than destroyed here.
+     */
+    private final java.util.List<Long> retiredSets = new java.util.ArrayList<Long>();
+    private int retiredSetsCount;
+
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
 
@@ -470,6 +477,9 @@ public final class VulkanImmediateItemPipeline {
         this.descriptorSet = VK_NULL_HANDLE;
         this.descriptorPools.clear();
         this.setsByTextureView.clear();
+        // Retired sets are pools' to free: the pool teardown below releases them with every other set this pipeline
+        // allocated, which is why this list only has to keep them reachable until then.
+        this.retiredSets.clear();
         if (this.context.celtium$recordingOpen()) {
             // The open recording may have bound this pipeline and the sets of its pools; destroying either invalidates
             // it (leg uniEB names site=immediateitempipeline). Deferred to the frame boundary, where the frame's
@@ -844,15 +854,23 @@ public final class VulkanImmediateItemPipeline {
     public static void setShadowSources(long view, long sampler) {
         shadowMapView = view;
         shadowMapSampler = sampler;
+        // Cached sets are retired rather than rewritten: vkUpdateDescriptorSets on a set that a recording or pending command
+        // buffer already references invalidates that buffer unless the layout declares UPDATE_AFTER_BIND, which this one
+        // does not (#401). A retired set is released by the completion-gated path that also serves eviction, and the next
+        // draw builds a set that names the real map.
         for (int i = 0; i < SHADOW_INSTANCES.size(); i++) {
             VulkanImmediateItemPipeline instance = SHADOW_INSTANCES.get(i);
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry
-                        : instance.setsByTextureView.long2LongEntrySet()) {
-                    instance.writeShadowBindings(stack, entry.getLongValue());
-                }
-            }
+            instance.retireCachedSets();
         }
+    }
+
+    /** Moves every cached set to the retirement list and clears the cache. */
+    private void retireCachedSets() {
+        for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry : this.setsByTextureView.long2LongEntrySet()) {
+            this.retiredSets.add(Long.valueOf(entry.getLongValue()));
+        }
+        this.retiredSetsCount += this.setsByTextureView.size();
+        this.setsByTextureView.clear();
     }
 
     /**
