@@ -16,7 +16,10 @@ set -u
 # this allows - the game itself uses a core - so the one-minute load average has to be under the threshold.
 LOAD_LIMIT=${CELTIUM_KPI_LOAD_LIMIT:-2.0}
 LOAD_ONE=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo 0)
-if [ "${CELTIUM_KPI_FORCE:-0}" != "1" ] && awk -v load="$LOAD_ONE" -v limit="$LOAD_LIMIT" 'BEGIN { exit !(load > limit) }'; then
+# The variable is not called "load": gawk reserves that name for its own extension loader and refuses it as a -v name
+# ("gawk: fatal: `load' is not a variable name"), which made the guard exit non-zero in a way the shell read as "do not
+# skip" - so a leg ran under load 5.9 with the guard in place. Measured on the fixed script below.
+if [ "${CELTIUM_KPI_FORCE:-0}" != "1" ] && awk -v oneMinute="$LOAD_ONE" -v limit="$LOAD_LIMIT" 'BEGIN { exit !(oneMinute > limit) }'; then
     echo "refusing to measure: one-minute load average is $LOAD_ONE (limit $LOAD_LIMIT)."
     echo "A loaded machine moves the frame time more than any change being tested; wait for it to settle, raise"
     echo "CELTIUM_KPI_LOAD_LIMIT, or set CELTIUM_KPI_FORCE=1 when a comparison under load is what is wanted."
