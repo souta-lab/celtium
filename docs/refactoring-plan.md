@@ -136,6 +136,15 @@
 5. GPU名ではなく能力で選ぶ。mesh shader、bindless、特殊vendor機能を新しい基盤の必須条件にしない。AMD RX6400とIntel UHD630で成立させる。
 6. 一つの状態・資源には一人の所有者と一つの正を置く。新旧cacheやmirrorを永久併存させない。抽出用の薄いdelegateは許可するが、責任と撤去段階を明記する。
 7. 汎用OpenGL command stream、GL API全体のエミュレータ、Zink、万能DI/ECS/render graphを新設しない。描画の意味に沿った小さな契約で分ける。
+
+   **GLスタブの担当範囲は「Modが直接呼ぶGL」と「HUD/GUIのフォールバック」に限る。**
+   バニラ／ForgeのレンダリングAPI（`Tessellator`/`BufferBuilder`、`ModelRenderer`のdisplay list、`GlStateManager`、
+   `FontRenderer`、`RenderItem`）は**Java APIレベルで捕捉してnative Vulkanへ渡し、GLスタブを通さない**。
+   経路の良し悪しは好みではなく計器で判定する。2026-10-20 実測（leg `gv-pcache-hit1`, AMD RX 6400, cohort）の違反は
+   `glCallList` 610回（1.12.2のモデルがdisplay listにコンパイルされ、その再生がスタブに入っている）と、
+   スタブ側 `glDrawArrays` 1024回。**受入はこの2つを0へ近づけることで判定し、増えたら退行として扱う。**
+   バニラ即時描画そのものは既に `WorldVertexBufferUploader` のmixinで捕捉済み（同legで12,500件、format 6/7が73%）で、
+   これはスタブを通っていない。残る違反は上記2つに限られる。
 8. shader packは本体＋主要modのshaderless成立後。vanillaのShaderGroup、outline、spectatorは本体として残す。将来の拡張口だけを本書に置く。
 
 ## 4. 目標構造
