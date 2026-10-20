@@ -126,6 +126,16 @@ public final class ShadowMapPass {
             pass.destroy();
             return null;
         }
+        // The image is moved to GENERAL once, here, before anything can sample it. The transition used to happen inside the
+        // pass's own recording, which is fine while only the pass touches the image - but the receivers sample it through a
+        // descriptor written with GENERAL, and publishing the sources before the pass records (which the own-submission path
+        // needs, #396) made a receiver draw in this frame sample an image in its initial layout:
+        // VUID-vkCmdDraw-None-09600 "expects ... GENERAL". Starting in GENERAL and staying there removes the ordering
+        // dependency between publication and recording.
+        if (!pass.transitionImageToGeneral()) {
+            pass.destroy();
+            return null;
+        }
         return pass;
     }
 
@@ -555,9 +565,10 @@ public final class ShadowMapPass {
         if (indexBuffer != 0L) {
             vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
         }
+        float[] lightBlock = lightSpaceBlock(block);
         java.nio.FloatBuffer push = stack.mallocFloat(32);
         for (int i = 0; i < 32; i++) {
-            push.put(i, block[i]);
+            push.put(i, lightBlock[i]);
         }
         vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
         // A bisection switch: the frame loop stops presenting when the terrain draw runs (3 presents in 60 s against 600
@@ -766,9 +777,10 @@ public final class ShadowMapPass {
             if (indexBuffer != 0L) {
                 vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
             }
+            float[] lightBlock = lightSpaceBlock(block);
             java.nio.FloatBuffer push = stack.mallocFloat(32);
             for (int i = 0; i < 32; i++) {
-                push.put(i, block[i]);
+                push.put(i, lightBlock[i]);
             }
             vkCmdPushConstants(commandBuffer, terrain.pipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, push);
             vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, indirectCount, 20);
@@ -800,6 +812,103 @@ public final class ShadowMapPass {
             return "submitted draws=" + indirectCount;
         } catch (RuntimeException | LinkageError error) {
             return "threw " + error;
+        } finally {
+            if (pool != VK_NULL_HANDLE) {
+                vkDestroyCommandPool(this.context.device(), pool, null);
+            }
+        }
+    }
+
+    /**
+     * {@return the terrain push block with its two matrices replaced by the light's}.
+     * <p>
+     * The terrain vertex shader computes {@code gl_Position = projection * modelView * worldPosition}, and the block it is
+     * given was captured from the colour pass, so its matrices are the camera's: the map was drawn from the camera's
+     * viewpoint while the receiver compared coordinates from the light's (#398). Replacing the two mat4 slots with the
+     * light's view-projection and the identity keeps everything else - region offset, per-draw translations, fog and
+     * texture fields - exactly as the colour pass had it.
+     *
+     * @param block the captured terrain push block
+     * @return a copy whose first two mat4 slots are the light's view-projection and the identity
+     */
+    private float[] lightSpaceBlock(float[] block) {
+        float[] light = new float[block.length];
+        System.arraycopy(block, 0, light, 0, block.length);
+        if (this.matrixBuffer != null) {
+            java.nio.FloatBuffer matrices = org.lwjgl.system.MemoryUtil.memFloatBuffer(
+                    this.matrixBuffer.mappedAddress(), 16);
+            for (int i = 0; i < 16; i++) {
+                light[i] = matrices.get(i);
+            }
+        }
+        for (int i = 16; i < 32; i++) {
+            light[i] = 0.0f;
+        }
+        light[16] = 1.0f;
+        light[21] = 1.0f;
+        light[26] = 1.0f;
+        light[31] = 1.0f;
+        return light;
+    }
+
+    /**
+     * Moves the depth image from UNDEFINED to GENERAL, once, on its own command buffer.
+     *
+     * @return whether the transition reached the queue
+     */
+    private boolean transitionImageToGeneral() {
+        long pool = VK_NULL_HANDLE;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.LongBuffer handle = stack.mallocLong(1);
+            if (vkCreateCommandPool(this.context.device(), org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack)
+                    .sType$Default().queueFamilyIndex(this.context.queueFamilyIndex()), null, handle) != VK_SUCCESS) {
+                return false;
+            }
+            pool = handle.get(0);
+            org.lwjgl.PointerBuffer buffers = stack.callocPointer(1);
+            if (vkAllocateCommandBuffers(this.context.device(), org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack)
+                    .sType$Default().commandPool(pool).level(org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                    .commandBufferCount(1), buffers) != VK_SUCCESS) {
+                return false;
+            }
+            VkCommandBuffer commandBuffer = new VkCommandBuffer(buffers.get(0), this.context.device());
+            vkBeginCommandBuffer(commandBuffer, org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack)
+                    .sType$Default());
+            // UNDEFINED -> GENERAL explicitly: depthBarrier() declares GENERAL on both sides (it orders accesses for a
+            // pass that already owns the layout), so calling it here left the image in UNDEFINED and the validation layer
+            // reported the receiver's draw as "expects GENERAL ... current layout is UNDEFINED".
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer firstUse =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            firstUse.get(0).sType$Default()
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED)
+                    .newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(this.image).srcAccessMask(0).dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
+            firstUse.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).levelCount(1).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commandBuffer,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, firstUse);
+            vkEndCommandBuffer(commandBuffer);
+            java.nio.LongBuffer fence = stack.mallocLong(1);
+            if (vkCreateFence(this.context.device(), org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack)
+                    .sType$Default(), null, fence) != VK_SUCCESS) {
+                return false;
+            }
+            if (vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
+                    .pCommandBuffers(stack.pointers(commandBuffer.address())), fence.get(0)) != VK_SUCCESS) {
+                vkDestroyFence(this.context.device(), fence.get(0), null);
+                return false;
+            }
+            int waited = vkWaitForFences(this.context.device(), fence.get(0), true, 2_000_000_000L);
+            vkDestroyFence(this.context.device(), fence.get(0), null);
+            if (waited != VK_SUCCESS) {
+                return false;
+            }
+            vkDestroyCommandPool(this.context.device(), pool, null);
+            pool = VK_NULL_HANDLE;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            return false;
         } finally {
             if (pool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.context.device(), pool, null);

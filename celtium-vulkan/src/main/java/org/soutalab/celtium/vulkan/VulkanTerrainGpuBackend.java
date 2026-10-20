@@ -14438,6 +14438,79 @@ this.frameBufferOpen = false;
      * is off, and when it is on this slice only clears the map: drawing terrain into it from the light's matrix, and
      * sampling it in the world pass, are the next slices.
      */
+    /**
+     * Publishes the light matrix and the map's sources to every receiver.
+     * <p>
+     * This used to run at the end of the shadow recording, which the own-submission path returns before - so with the default
+     * flags the pass submitted a draw into the map but no receiver ever pointed at it, and the effect only appeared under
+     * the in-frame switch (#396). The publication is independent of how the caster records, so it happens before either
+     * path records anything.
+     *
+     * @param terrainPipeline the terrain pipeline that draws into the map
+     */
+    private void publishShadowSources(VulkanTerrainPipeline terrainPipeline) {
+        if (this.shadowMapPass == null || this.shadowMapPass.matrixBuffer() == null) {
+            return;
+        }
+            // Arrays, not wrapped FloatBuffers: JOML reads a FloatBuffer through Unsafe at its address, and an
+            // array-backed buffer has none - that SIGSEGV was this line, and it killed the process about eighteen
+            // seconds into every leg with the terrain shadow path on (hs_err: Unsafe.getLong, Matrix4f.set, this
+            // method). The float[] overload copies the values and is what the arrays are anyway.
+            // A real light: the sun's direction with an orthographic box around the world origin, wide enough to
+            // cover the qmagnet map (its centre is at about 217, 48, 217). The camera's own projection was standing in
+            // here before, which put the scene's depth in the map exactly as the camera sees it - so only silhouette
+            // edges darkened, and the pair of legs ON/OFF differed by 0.3 percentage points of dark pixels.
+            // The box follows the camera and covers a short distance around it, which is what makes the shadows both
+            // visible and sharp: at +/-48 blocks a 2048-texel map is about 4.7 cm per texel, where the origin-centred
+            // +/-256 box texelled 25 cm and left the visible surfaces almost entirely lit.
+            float[] push = terrainPipeline.lastPushBlock();
+            org.joml.Matrix4f modelViewForCamera = new org.joml.Matrix4f().set(
+                    java.util.Arrays.copyOfRange(push, 16, 32));
+            org.joml.Vector3f centre = new org.joml.Vector3f();
+            new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
+            // More oblique than the first attempt, so horizontal surfaces throw longer shadows across the ground.
+            // A property, so the sun's direction can be swept in a leg rather than recompiled: shadows are only
+            // convincing when they fall on surfaces the camera can see.
+            String directionText = System.getProperty("celtium.shadow.direction", "-0.7,-1.0,-0.45");
+            String[] directionParts = directionText.split(",");
+            org.joml.Vector3f direction = new org.joml.Vector3f(
+                    Float.parseFloat(directionParts[0].trim()),
+                    Float.parseFloat(directionParts[1].trim()),
+                    Float.parseFloat(directionParts[2].trim())).normalize();
+            float radius = 48.0f;
+            org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
+                    new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
+                    new org.joml.Vector3f(0.0f, 1.0f, 0.0f));
+            org.joml.Matrix4f lightProjection = new org.joml.Matrix4f()
+                    .ortho(-radius, radius, -radius, radius, 0.0f, radius * 6.0f);
+            org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(lightProjection).mul(lightView);
+            java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
+                    this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
+            lightViewProjection.get(0, matrix);
+            // The immediate path's vertices are already in eye space, so its shadow lookup needs
+            // lightWorld * inverse(modelView); it reads that from the second half of the same block.
+            org.joml.Matrix4f eyeSpaceLight = new org.joml.Matrix4f(lightViewProjection)
+                    .mul(new org.joml.Matrix4f(modelViewForCamera).invert());
+            float[] eyeMatrix = new float[16];
+            eyeSpaceLight.get(eyeMatrix);
+            this.shadowMapPass.writeEyeSpaceMatrix(eyeMatrix);
+            // The immediate pipelines draw the blocks and entities that fill the view; they project the map with the
+            // same eye-space matrix, and their cached descriptor sets are pointed at the map the first time it exists.
+            org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.writeShadowMatrix(eyeMatrix);
+            org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.writeShadowMatrix(eyeMatrix);
+            if (!this.shadowItemSourcesSet) {
+                this.shadowItemSourcesSet = true;
+                org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.setShadowSources(
+                        this.shadowMapPass.view(), this.shadowMapPass.sampler());
+                org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.setShadowSources(
+                        this.shadowMapPass.view(), this.shadowMapPass.sampler());
+            }
+            if (!Boolean.getBoolean("celtium.shadow.noSources")) {
+                terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
+                        this.shadowMapPass.matrixBuffer().buffer());
+            }
+    }
+
     private void celtium$recordShadowPass() {
         if (!org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested()) {
             return;
@@ -14481,6 +14554,7 @@ this.frameBufferOpen = false;
                 // the pipeline's last values.
                 terrainPipeline = this.shadowTuplePipeline;
             }
+            this.publishShadowSources(terrainPipeline);
             if (terrainPipeline != null && !Boolean.getBoolean("celtium.shadow.inFrame")) {
                 // The pass as its own queue packet, which is the default now: recording it into the frame's command
                 // buffer puts vkCmdBeginRendering inside the frame's render pass, and the validation layer says so on
@@ -14530,65 +14604,7 @@ this.frameBufferOpen = false;
             // The world pass of the next frame reads the map through this matrix. The camera's own projection and model
             // view stand in for a light's for this first visible step: the map is then the scene depth as the camera sees
             // it, which is exactly what makes the shading difference appear without a light rig.
-            if (terrainPipeline != null && this.shadowMapPass.matrixBuffer() != null) {
-                // Arrays, not wrapped FloatBuffers: JOML reads a FloatBuffer through Unsafe at its address, and an
-                // array-backed buffer has none - that SIGSEGV was this line, and it killed the process about eighteen
-                // seconds into every leg with the terrain shadow path on (hs_err: Unsafe.getLong, Matrix4f.set, this
-                // method). The float[] overload copies the values and is what the arrays are anyway.
-                // A real light: the sun's direction with an orthographic box around the world origin, wide enough to
-                // cover the qmagnet map (its centre is at about 217, 48, 217). The camera's own projection was standing in
-                // here before, which put the scene's depth in the map exactly as the camera sees it - so only silhouette
-                // edges darkened, and the pair of legs ON/OFF differed by 0.3 percentage points of dark pixels.
-                // The box follows the camera and covers a short distance around it, which is what makes the shadows both
-                // visible and sharp: at +/-48 blocks a 2048-texel map is about 4.7 cm per texel, where the origin-centred
-                // +/-256 box texelled 25 cm and left the visible surfaces almost entirely lit.
-                float[] push = terrainPipeline.lastPushBlock();
-                org.joml.Matrix4f modelViewForCamera = new org.joml.Matrix4f().set(
-                        java.util.Arrays.copyOfRange(push, 16, 32));
-                org.joml.Vector3f centre = new org.joml.Vector3f();
-                new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
-                // More oblique than the first attempt, so horizontal surfaces throw longer shadows across the ground.
-                // A property, so the sun's direction can be swept in a leg rather than recompiled: shadows are only
-                // convincing when they fall on surfaces the camera can see.
-                String directionText = System.getProperty("celtium.shadow.direction", "-0.7,-1.0,-0.45");
-                String[] directionParts = directionText.split(",");
-                org.joml.Vector3f direction = new org.joml.Vector3f(
-                        Float.parseFloat(directionParts[0].trim()),
-                        Float.parseFloat(directionParts[1].trim()),
-                        Float.parseFloat(directionParts[2].trim())).normalize();
-                float radius = 48.0f;
-                org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
-                        new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
-                        new org.joml.Vector3f(0.0f, 1.0f, 0.0f));
-                org.joml.Matrix4f lightProjection = new org.joml.Matrix4f()
-                        .ortho(-radius, radius, -radius, radius, 0.0f, radius * 6.0f);
-                org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(lightProjection).mul(lightView);
-                java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
-                        this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
-                lightViewProjection.get(0, matrix);
-                // The immediate path's vertices are already in eye space, so its shadow lookup needs
-                // lightWorld * inverse(modelView); it reads that from the second half of the same block.
-                org.joml.Matrix4f eyeSpaceLight = new org.joml.Matrix4f(lightViewProjection)
-                        .mul(new org.joml.Matrix4f(modelViewForCamera).invert());
-                float[] eyeMatrix = new float[16];
-                eyeSpaceLight.get(eyeMatrix);
-                this.shadowMapPass.writeEyeSpaceMatrix(eyeMatrix);
-                // The immediate pipelines draw the blocks and entities that fill the view; they project the map with the
-                // same eye-space matrix, and their cached descriptor sets are pointed at the map the first time it exists.
-                org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.writeShadowMatrix(eyeMatrix);
-                org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.writeShadowMatrix(eyeMatrix);
-                if (!this.shadowItemSourcesSet) {
-                    this.shadowItemSourcesSet = true;
-                    org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.setShadowSources(
-                            this.shadowMapPass.view(), this.shadowMapPass.sampler());
-                    org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.setShadowSources(
-                            this.shadowMapPass.view(), this.shadowMapPass.sampler());
-                }
-                if (!Boolean.getBoolean("celtium.shadow.noSources")) {
-                    terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
-                            this.shadowMapPass.matrixBuffer().buffer());
-                }
-            }
+
             // The capture is one frame's geometry: the next frame records its own.
             this.terrain.resetShadowCapture();
             this.shadowTupleSerial = -1L;
