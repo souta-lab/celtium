@@ -432,8 +432,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long timestampPool;
     private float timestampPeriod = 1.0f;
 
-    /** Prints the collected GPU pass timings every 200 frames; off by default. */
-    private static final boolean GPU_PASS_TIMINGS = Boolean.getBoolean("celtium.gpuPassTimings");
+    // The GPU pass timings are reported by GpuPassTimingReport, which owns the format and the interval.
     private boolean timestampsUsable;
     /**
      * Forces the no-timestamp path, so the behaviour on a device whose queue cannot record timestamps can be measured
@@ -7850,22 +7849,7 @@ this.frameBufferOpen = false;
         if (!this.frameBufferOpen) {
             return;
         }
-        // The GPU pass timings were collected since the timestamp pool was added and then never printed, so the one
-        // question they answer - whether a frame is GPU-bound or waiting on present - could not be asked. The present
-        // counter reports ~6.9 ms of a ~10.1 ms frame on leg gv-tess-census2 with vsync already off (MAILBOX), which
-        // reads as GPU-bound but is not proof: without this line the two cases are indistinguishable. Microseconds per
-        // pass, every 200 frames, off unless -Dceltium.gpuPassTimings=true.
-        if (GPU_PASS_TIMINGS && this.frameId % 200 == 0 && !this.passTimings.isEmpty()) {
-            StringBuilder line = new StringBuilder(192);
-            for (java.util.Map.Entry<TerrainRenderPass, Long> entry : this.passTimings.entrySet()) {
-                if (line.length() > 0) {
-                    line.append(' ');
-                }
-                line.append(entry.getKey()).append('=')
-                        .append(entry.getValue().longValue() / 1000L).append("us");
-            }
-            System.out.println("[Celtium] CELTIUM_PASS_GPU frame=" + this.frameId + " " + line);
-        }
+        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings);
         if (this.shaderPackDraws < 3) {
             System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
                     + " slot=" + this.frameSlot);
