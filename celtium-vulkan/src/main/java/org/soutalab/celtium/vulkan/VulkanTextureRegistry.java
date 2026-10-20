@@ -602,15 +602,15 @@ public final class VulkanTextureRegistry {
         // was being entered.
         int[] pixels = new int[w * h];
         image.getRGB(0, 0, w, h, pixels, 0, w);
-        long address = org.lwjgl.system.MemoryUtil.memAddress(out);
+        // Pack into the RGBA byte order the Vulkan image wants with one bulk put: the per-component form wrote four bytes
+        // per pixel through memPutByte, which is the same pattern that made the presented dump cost 284 ms.
+        int[] rgba = new int[pixels.length];
         for (int pixel = 0; pixel < pixels.length; pixel++) {
             int argb = pixels[pixel];
-            long at = address + (long) pixel * 4L;
-            org.lwjgl.system.MemoryUtil.memPutByte(at, (byte) ((argb >> 16) & 0xFF));
-            org.lwjgl.system.MemoryUtil.memPutByte(at + 1L, (byte) ((argb >> 8) & 0xFF));
-            org.lwjgl.system.MemoryUtil.memPutByte(at + 2L, (byte) (argb & 0xFF));
-            org.lwjgl.system.MemoryUtil.memPutByte(at + 3L, (byte) ((argb >>> 24) & 0xFF));
+            // Little-endian int order in memory is r,g,b,a, so the byte that lands first is the red one.
+            rgba[pixel] = ((argb >>> 16) & 0xFF) | (argb & 0xFF00) | ((argb & 0xFF) << 16) | (argb & 0xFF000000);
         }
+        org.lwjgl.system.MemoryUtil.memIntBuffer(org.lwjgl.system.MemoryUtil.memAddress(out), rgba.length).put(rgba);
         out.position(0).limit(w * h * 4);
         return out;
     }

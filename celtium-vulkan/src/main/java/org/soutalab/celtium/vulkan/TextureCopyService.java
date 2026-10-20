@@ -1351,12 +1351,17 @@ public final class TextureCopyService {
             // The owned colour image is VK_FORMAT_R8G8B8A8_UNORM, so the bytes are R, G, B, A in that order - the ARGB
             // int the mirror's patch path expects packs R in bits 16..23.
             int[] pixels = new int[width * height];
+            // One bulk get, then a shift per pixel: the byte-at-a-time form did four memGetByte calls per pixel and was
+            // the largest single cost in a JFR of the world window (16.4% of the client thread in this method alone,
+            // found the same week the presented-image dump turned out to pay 284 ms for the same pattern). The mapped
+            // bytes are R,G,B,A, which a little-endian int reads as 0xAABBGGRR.
+            org.lwjgl.system.MemoryUtil.memIntBuffer(mapped.get(0), pixels.length).get(pixels);
             for (int pixel = 0; pixel < pixels.length; pixel++) {
-                long at = mapped.get(0) + (long) pixel * 4L;
-                int r = MemoryUtil.memGetByte(at) & 0xFF;
-                int g = MemoryUtil.memGetByte(at + 1) & 0xFF;
-                int b = MemoryUtil.memGetByte(at + 2) & 0xFF;
-                int a = MemoryUtil.memGetByte(at + 3) & 0xFF;
+                int rgba = pixels[pixel];
+                int r = rgba & 0xFF;
+                int g = (rgba >>> 8) & 0xFF;
+                int b = (rgba >>> 16) & 0xFF;
+                int a = (rgba >>> 24) & 0xFF;
                 pixels[pixel] = (a << 24) | (r << 16) | (g << 8) | b;
             }
             org.lwjgl.vulkan.VK10.vkUnmapMemory(this.host.context().device(), memory);
