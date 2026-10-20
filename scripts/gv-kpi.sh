@@ -11,6 +11,18 @@
 # Sets CELTIUM_LEG_REFERENCE_RENDERER for the second arm. Prints both p50/p95 and the ratio, and exits 1 if Celtium is
 # slower than the reference (that is the KPI failing, not the script failing).
 set -u
+# The numbers only mean something on an idle machine: run back to back under load average 9 the same jar measured 33.7 ms
+# where it measures 3.0 ms idle, and a 10x move swamps every optimisation being tested. One core of headroom is the most
+# this allows - the game itself uses a core - so the one-minute load average has to be under the threshold.
+LOAD_LIMIT=${CELTIUM_KPI_LOAD_LIMIT:-2.0}
+LOAD_ONE=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo 0)
+if [ "${CELTIUM_KPI_FORCE:-0}" != "1" ] && awk -v load="$LOAD_ONE" -v limit="$LOAD_LIMIT" 'BEGIN { exit !(load > limit) }'; then
+    echo "refusing to measure: one-minute load average is $LOAD_ONE (limit $LOAD_LIMIT)."
+    echo "A loaded machine moves the frame time more than any change being tested; wait for it to settle, raise"
+    echo "CELTIUM_KPI_LOAD_LIMIT, or set CELTIUM_KPI_FORCE=1 when a comparison under load is what is wanted."
+    exit 3
+fi
+
 TAG=${1:?usage: scripts/gv-kpi.sh TAG [SECONDS] [flags...]}
 SECONDS_=${2:-100}
 shift 2 2>/dev/null || shift

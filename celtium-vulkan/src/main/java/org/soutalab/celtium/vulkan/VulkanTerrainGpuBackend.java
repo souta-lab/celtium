@@ -9402,7 +9402,9 @@ this.frameBufferOpen = false;
         // that pass loads or the game's last clear left there.
         this.immediateDrawSite = "immediate-only-window";
         org.soutalab.celtium.vulkan.FramePassTimings.begin("wrecLoop");
-        drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
+        if (!SKIP_IMMEDIATE_RECORD) {
+            drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
+        }
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         // Inside the pass the game's own quads draw into, which is the delivery path that is known to paint the screen.
         if (SHADER_PACK_DRAW_PROBE && !SHADER_PACK_DRAW_CLEAR && !SHADER_PACK_DRAW_BUILTIN
@@ -12367,6 +12369,17 @@ this.frameBufferOpen = false;
      * per group. Memoising it by the group's inputs replaces that with a 216-byte copy.
      */
     private static final boolean PUSH_BLOCK_CACHE = Boolean.getBoolean("celtium.vulkan.pushBlockCache");
+    /**
+     * Measurement switch, off by default: drops the immediate group recording entirely.
+     * <p>
+     * It does not measure what it was added for. The intent was the ceiling of the per-group work the merge is meant to
+     * remove, and the measurement says the opposite: with the recording dropped the frame goes from 3.9 ms to 124 ms
+     * (legs ceilBase2 / ceilSkip2, same flags back to back). Dropping every immediate draw does not make the renderer
+     * cheaper - it changes what the game does next, so the number is the game's reaction and not the cost that was
+     * removed. Kept because a future attempt should not have to rediscover that an empty frame is not a cheap frame.
+     */
+    private static final boolean SKIP_IMMEDIATE_RECORD =
+            Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");
 
     /**
      * Whether the per-component push census runs: {@code -Dceltium.debug.pushComponentCensus=true}, off by default.
