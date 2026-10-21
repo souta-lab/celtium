@@ -14541,6 +14541,10 @@ this.frameBufferOpen = false;
     private boolean shadowProbeReported;
     /** How many times the light setup has been logged; a bounded diagnostic, not a per-frame cost. */
     private int shadowLightsLogged;
+    private int shadowMatrixComparePrints;
+    /** The matrix the terrain receiver read while it drew, snapshotted so the caster's copy can be compared to it. */
+    private final float[] shadowReceiverMatrixAtDraw = new float[16];
+    private boolean shadowReceiverMatrixAtDrawSeen;
     /** The camera position as the world pass saw it; the light is built around this. */
     private final org.joml.Vector3f shadowCentre = new org.joml.Vector3f();
     /**
@@ -14605,6 +14609,14 @@ this.frameBufferOpen = false;
                 this.shadowCentre.set(captured);
                 this.shadowCentreCaptured = true;
             }
+        }
+        // Refreshed every frame: the first version snapshotted once and caught frame 0, where the matrix is still all
+        // zeros because publication happens after the terrain pass. The lag is one frame by design (the receivers read
+        // what the previous frame's boundary published), so the comparison below accounts for it.
+        if (this.shadowMapPass != null && this.shadowMapPass.matrixBuffer() != null) {
+            org.lwjgl.system.MemoryUtil.memFloatBuffer(
+                    this.shadowMapPass.matrixBuffer().mappedAddress(), 16).get(this.shadowReceiverMatrixAtDraw);
+            this.shadowReceiverMatrixAtDrawSeen = true;
         }
         this.shadowTuplePipeline = pipeline;
         this.shadowTupleDescriptorSet = descriptorSet;
@@ -15227,6 +15239,34 @@ this.frameBufferOpen = false;
                 // buffer puts vkCmdBeginRendering inside the frame's render pass, and the validation layer says so on
                 // Intel (VUID-vkCmdBeginRendering-renderpass) - AMD stayed quiet about it. Its own submission has no
                 // enclosing pass, and the queue orders it against the frame's own submissions.
+                if (this.shadowMatrixComparePrints < 2 && this.frameId > 400 && this.shadowReceiverMatrixAtDrawSeen
+                        && this.shadowMapPass.matrixBuffer() != null
+                        && !this.shadowBatches.isEmpty()
+                        && this.shadowBatches.get(0).pushBlock != null
+                        && this.shadowBatches.get(0).pushBlock.length >= 16) {
+                    this.shadowMatrixComparePrints++;
+                    // The one thing eleven eliminated candidates left open: is the matrix the caster pushes the same one
+                    // the receiver reads? Both are printed from the objects that actually go to the GPU.
+                    // The receiver's matrix as it was when the receivers drew (snapshotted during the pass), against the
+                    // matrix the caster will push. Comparing the raw captured block was wrong: the caster's copy is
+                    // converted to light space at record time, so the two are different fields by construction.
+                    float[] receiver = this.shadowReceiverMatrixAtDraw.clone();
+                    float[] caster = new float[16];
+                    org.lwjgl.system.MemoryUtil.memFloatBuffer(
+                            this.shadowMapPass.matrixBuffer().mappedAddress(), 16).get(caster);
+                    boolean same = true;
+                    for (int i = 0; i < 16; i++) {
+                        if (Math.abs(receiver[i] - caster[i]) > 1.0e-5f) {
+                            same = false;
+                            break;
+                        }
+                    }
+                    System.out.println("[Celtium] CELTIUM_SHADOW_MATRICES same=" + same
+                            + " receiver=[" + receiver[0] + "," + receiver[1] + "," + receiver[2] + "," + receiver[3]
+                            + " ... " + receiver[12] + "," + receiver[13] + "," + receiver[14] + "," + receiver[15] + "]"
+                            + " caster=[" + caster[0] + "," + caster[1] + "," + caster[2] + "," + caster[3]
+                            + " ... " + caster[12] + "," + caster[13] + "," + caster[14] + "," + caster[15] + "]");
+                }
                 String submitted = this.shadowMapPass.recordTerrainBatchesAndSubmit(this.shadowTuplePipeline,
                         this.shadowBatches);
                 // What actually landed in the map: a CPU-side argument about the matrix cannot see this, and the map being
