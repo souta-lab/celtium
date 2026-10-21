@@ -23,6 +23,8 @@ public final class SwapchainCreateArguments {
     public static final int FORMAT_UNDEFINED = 0;
     /** The format this renderer wants, BGRA first because it is the one every desktop WSI in play offers. */
     public static final int FORMAT_B8G8R8A8_UNORM = 44;
+    /** The same byte order, sRGB encoding. Named because the presented-image dump decides its channel swap from it. */
+    public static final int FORMAT_B8G8R8A8_SRGB = 50;
     /** The other acceptable 8-bit format. */
     public static final int FORMAT_R8G8B8A8_UNORM = 37;
 

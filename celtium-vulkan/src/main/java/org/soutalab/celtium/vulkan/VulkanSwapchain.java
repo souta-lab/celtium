@@ -380,7 +380,8 @@ public final class VulkanSwapchain {
             return false;
         }
         long writeStartedNanos = System.nanoTime();
-        int[] pixels = readBackBlock(this.context, image, this.width, this.height, 0, 0, this.width, this.height);
+        int[] pixels = readBackBlock(this.context, image, this.format, this.width, this.height, 0, 0, this.width,
+                this.height);
         presentDumpWrites++;
         if (presentDumpWrites <= 12 || presentDumpWrites % 50 == 0) {
             System.out.println("[Celtium] CELTIUM_DUMP_WRITE count=" + presentDumpWrites
@@ -430,7 +431,9 @@ public final class VulkanSwapchain {
     /** {@return the mean of the centre 8x8 block of this image}, or -1 when it could not be read. */
     private static float readBackMean(VulkanContext context, long image, int width, int height) {
         int size = 8;
-        int[] pixels = readBackBlock(context, image, width, height, Math.max(0, (width / 2) - (size / 2)),
+        // -1 for the format: this call wants a mean, and a channel swap cannot move a mean. It is also why the order
+        // below is irrelevant here and why this site does not have to know the swapchain's format.
+        int[] pixels = readBackBlock(context, image, -1, width, height, Math.max(0, (width / 2) - (size / 2)),
                 Math.max(0, (height / 2) - (size / 2)), size, size);
         if (pixels == null) {
             return -1.0f;
@@ -451,7 +454,7 @@ public final class VulkanSwapchain {
      * exactly right (presentable to transfer source and back, or the validation layer reports the present layout at the
      * next draw), so there is one place that does them.
      */
-    private static int[] readBackBlock(VulkanContext context, long image, int width, int height, int x, int y,
+    private static int[] readBackBlock(VulkanContext context, long image, int format, int width, int height, int x, int y,
             int blockWidth, int blockHeight) {
         long buffer = VK_NULL_HANDLE;
         long memory = VK_NULL_HANDLE;
@@ -525,23 +528,33 @@ public final class VulkanSwapchain {
             }
             long mapNanos = System.nanoTime() - mapStarted;
             long convertStarted = System.nanoTime();
-            // The swapchain image is a B8G8R8A8 family format on this surface (the surface reported format 44), so the
-            // bytes are B, G, R, A. Reading them as R, G, B left the mean identical - a channel swap cannot move a mean -
-            // while 97.55% of the pixels differed from the game's screenshot, which is what named the order.
             int[] pixels = new int[blockWidth * blockHeight];
             // One bulk copy instead of four reads per pixel. The byte-at-a-time loop was measured at 284 ms for a
             // 1280x720 dump (CELTIUM_READBACK_PHASES: submit+wait 1 ms, map 0 ms, convert 284 ms), which is where the
-            // ~300 ms a presented dump cost actually went - not the GPU wait it was assumed to be. The mapped memory is
-            // BGRA in int order, so the conversion is a shift on each element of an int[] that arrived in bulk.
+            // ~300 ms a presented dump cost actually went - not the GPU wait it was assumed to be.
             java.nio.IntBuffer packed = org.lwjgl.system.MemoryUtil
                     .memByteBuffer(mapped.get(0), rowBytes).asIntBuffer();
             packed.get(pixels);
-            for (int pixel = 0; pixel < pixels.length; pixel++) {
-                int bgra = pixels[pixel];
-                pixels[pixel] = 0xFF000000
-                        | ((bgra & 0xFF) << 16)          // B -> R
-                        | (bgra & 0x0000FF00)            // G stays
-                        | ((bgra >>> 16) & 0xFF);        // R -> B
+            // The channel order follows the swapchain's format, and only the R8G8B8A8 family needs the swap.
+            //
+            // B8G8R8A8 in memory is B, G, R, A, and an int read little-endian from those bytes is 0xAARRGGBB - which is
+            // exactly what BufferedImage.setRGB wants. Swapping it turns a correct picture into its red/blue negative.
+            // This code did swap unconditionally, on the reading that "no swap" had left 97.55% of pixels different from
+            // the game's screenshot; comparing the two arms at the same camera and the same pinned world time
+            // (-Dceltium.validation.fixedWorldTime=true, both reports worldTimeAtCapture=6000) showed the dumped sky at
+            // (207,180,165) where the reference has (165,179,207) and a stone block at (36,45,61) where it has (61,45,36)
+            // - the same picture with red and blue exchanged, which is this swap, not the renderer.
+            boolean bgraInMemory = format < 0
+                    || format == SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM
+                    || format == SwapchainCreateArguments.FORMAT_B8G8R8A8_SRGB;
+            if (!bgraInMemory) {
+                for (int pixel = 0; pixel < pixels.length; pixel++) {
+                    int rgba = pixels[pixel];
+                    pixels[pixel] = 0xFF000000
+                            | ((rgba & 0xFF) << 16)          // R -> B
+                            | (rgba & 0x0000FF00)            // G stays
+                            | ((rgba >>> 16) & 0xFF);        // B -> R
+                }
             }
             long convertNanos = System.nanoTime() - convertStarted;
             vkUnmapMemory(context.device(), memory);
