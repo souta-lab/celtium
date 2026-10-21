@@ -33,22 +33,42 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def inputs(jars: Path, reference: Path) -> dict:
-    """No default historical stage, and no inference that the current git HEAD produced an arbitrary jar."""
+def stage_inputs(jars: Path, role: str) -> tuple[Path, Path, dict]:
+    """Resolves one staged renderer/fixture pair and checks it against that stage's own build provenance."""
     renderer = gv_leg.one_jar(jars, "celtium-forge-mc1.12.2-*.jar")
     fixture = gv_leg.one_jar(jars, "celtium-validation-client-*.jar")
     provenance_path = jars / "build-provenance.json"
     provenance = object_at(provenance_path)
     if provenance.get("buildExitCode") != 0 or not re.fullmatch(r"[0-9a-f]{40}", str(provenance.get("head", ""))):
         raise KpiError("stage needs successful build provenance with its source revision")
-    pinned = {}
-    for role, path in (("renderer", renderer), ("fixture", fixture), ("reference", reference)):
+    checked = {}
+    for name, path in (("renderer", renderer), ("fixture", fixture)):
         sha = digest(path)
-        if role != "reference" and provenance.get("artifacts", {}).get(path.name, {}).get("sha256") != sha:
-            raise KpiError(f"{role} does not match the stage's build provenance")
-        pinned[role] = {"source": str(path.resolve()), "sha256": sha}
+        if provenance.get("artifacts", {}).get(path.name, {}).get("sha256") != sha:
+            raise KpiError(f"{role} {name} does not match the stage's build provenance")
+        checked[name] = {"source": str(path.resolve()), "sha256": sha}
+    return renderer, fixture, checked
+
+
+def inputs(jars: Path, reference: Path, control: Path | None = None) -> dict:
+    """No default historical stage, and no inference that the current git HEAD produced an arbitrary jar."""
+    renderer, fixture, checked = stage_inputs(jars, "stage")
+    pinned = dict(checked)
+    pinned["reference"] = {"source": str(reference.resolve()), "sha256": digest(reference)}
+    provenance_path = jars / "build-provenance.json"
+    provenance = object_at(provenance_path)
     pinned["buildProvenance"] = {"source": str(provenance_path.resolve()), "sha256": digest(provenance_path),
                                  "gitHead": provenance["head"], "dirtyFiles": provenance.get("dirtyFiles", [])}
+    if control is not None:
+        controlRenderer, controlFixture, controlChecked = stage_inputs(control, "control stage")
+        # A rebuilt fixture jar never has the same bytes as the candidate's, so identity cannot be required - but the
+        # comparison only holds if both fixtures report the same window, and that is checked when each report is read
+        # (warmFromTick/warmToTick/sample count/completion). The difference is recorded rather than waved through.
+        if controlFixture.name != fixture.name:
+            raise KpiError("the control stage's fixture file name differs from the candidate's")
+        pinned["control"] = controlChecked["renderer"]
+        pinned["controlFixture"] = controlChecked["fixture"]
+        pinned["controlFixtureDiffers"] = controlChecked["fixture"]["sha256"] != checked["fixture"]["sha256"]
     return pinned
 
 
@@ -59,14 +79,17 @@ def finite_time(report: dict, key: str) -> float:
     return float(value)
 
 
-def warm_metric(report: dict, process: dict, result: dict, manifest: dict, pinned: dict, reference: bool) -> dict:
+def warm_metric(report: dict, process: dict, result: dict, manifest: dict, pinned: dict, reference: bool,
+                renderer_key: str = None) -> dict:
     if result.get("accepted") is not True or result.get("exitCode") != 0:
         raise KpiError(f"leg was not accepted: {result.get('problems')}")
     if (type(process.get("exitCode")) is not int or process["exitCode"] != 0
             or process.get("fixtureStatus") != "PASSED" or report.get("status") != "PASSED"
             or process.get("gpuRequirementMet") is not True):
         raise KpiError("missing/failed process, fixture, or actual GPU evidence")
-    for role, expected in (("renderer", pinned["reference" if reference else "renderer"]), ("fixture", pinned["fixture"])):
+    expected_renderer = pinned[renderer_key if renderer_key else ("reference" if reference else "renderer")]
+    expected_fixture = pinned["controlFixture"] if renderer_key == "control" else pinned["fixture"]
+    for role, expected in (("renderer", expected_renderer), ("fixture", expected_fixture)):
         if manifest.get("artifacts", {}).get(role, {}).get("sha256") != expected["sha256"]:
             raise KpiError(f"measured {role} differs from the pinned input")
     if report.get("frameIntervalWarmFromTick") != 400 or report.get("frameIntervalWarmToTick") != 600:
@@ -97,6 +120,7 @@ def same_conditions(pair: dict) -> None:
 
 
 def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
+    control_ratios = [p["celtium"]["p50Ms"] / p["control"]["p50Ms"] for p in pairs if "control" in p]
     ratios = [p["celtium"]["p50Ms"] / p["celeritas"]["p50Ms"] for p in pairs]
     ratio = statistics.median(ratios)
     # A single pair, asymmetrical flags, or a frame limiter cannot establish the product's performance KPI.
@@ -104,10 +128,19 @@ def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
                 or p[name]["conditions"].get("framerateLimitSetting") != 260
                 for p in pairs for name in ("celtium", "celeritas"))
     verdict = "NO_SPEED_VERDICT" if len(pairs) < 3 or arm_only or paced else ("NOT_SLOWER" if ratio <= 1 else "SLOWER")
-    return {"metric": "frameIntervalWarmP50Ms", "windowWorldTicks": [400, 600], "pairs": pairs,
+    summary = {"metric": "frameIntervalWarmP50Ms", "windowWorldTicks": [400, 600], "pairs": pairs,
             "pairRatios": ratios, "medianPairRatio": ratio, "verdict": verdict,
             "scope": "fixture frame intervals; startup/build reported separately; includes simulation, GUI and limiter; "
                      "no automatic noise margin or significance claim"}
+    if control_ratios:
+        # Candidate against a control renderer measured in the same window: the same jar family, same arm, same legs -
+        # so a machine that drifts between legs moves both and the ratio survives it. This is the number that can rank
+        # two builds; the reference ratio answers a different question (how far from Celeritas are we).
+        summary["controlRatios"] = control_ratios
+        summary["medianControlRatio"] = statistics.median(control_ratios)
+        summary["controlScope"] = ("candidate against the control build, interleaved in the same repetitions; "
+                                  "cancels between-leg machine drift, does not compare against the reference")
+    return summary
 
 
 def main(argv: list[str]) -> int:
@@ -125,11 +158,15 @@ def main(argv: list[str]) -> int:
         raise KpiError("positive duration and 1..20 repetitions required")
     if not os.environ.get("CELTIUM_KPI_JARS") or not os.environ.get("CELTIUM_KPI_REFERENCE"):
         raise KpiError("set CELTIUM_KPI_JARS to an explicit build stage and CELTIUM_KPI_REFERENCE to the reference jar")
+    # Optional third stage: a fixed build measured in the same repetitions as the candidate. Its ratio to the
+    # candidate is same-arm and same-window, so machine drift between legs moves both legs and cancels - which the
+    # reference ratio cannot do, because the reference is a different renderer with a different cost profile.
+    control = Path(os.environ["CELTIUM_KPI_CONTROL_JARS"]).resolve() if os.environ.get("CELTIUM_KPI_CONTROL_JARS") else None
     root = Path(__file__).resolve().parent.parent
     os.chdir(root)
     jars = Path(os.environ["CELTIUM_KPI_JARS"]).resolve()
     reference = Path(os.environ["CELTIUM_KPI_REFERENCE"]).resolve()
-    pinned = inputs(jars, reference)
+    pinned = inputs(jars, reference, control)
     load = os.getloadavg()[0]
     load_limit = float(os.environ.get("CELTIUM_KPI_LOAD_LIMIT", "2"))
     if os.environ.get("CELTIUM_KPI_FORCE") != "1" and load > load_limit:
@@ -146,12 +183,14 @@ def main(argv: list[str]) -> int:
     try:
         for rep in range(1, reps + 1):
             pair = {}
-            for name in ("celtium", "celeritas"):
+            arms = ["celtium", "celeritas"] + (["control"] if control is not None else [])
+            for name in arms:
                 if name == "celeritas":
                     os.environ["CELTIUM_LEG_REFERENCE_RENDERER"] = str(reference)
                 else:
                     os.environ.pop("CELTIUM_LEG_REFERENCE_RENDERER", None)
-                pair[name] = gv_leg.make_plan(f"{tag}-{name}-r{rep}", jars, scene, gpu, duration,
+                stage = control if name == "control" else jars
+                pair[name] = gv_leg.make_plan(f"{tag}-{name}-r{rep}", stage, scene, gpu, duration,
                                              common + shared + (arm_only if name == "celtium" else []) + window, root=root)
             plans.append(pair)
     finally:
@@ -167,12 +206,16 @@ def main(argv: list[str]) -> int:
     for rep, plans_for_pair in enumerate(plans, 1):
         pair = {"repetition": rep}
         # Alternate order to expose order/thermal/JIT drift rather than always giving one renderer the second run.
-        for name in (("celtium", "celeritas") if rep % 2 else ("celeritas", "celtium")):
+        order = ["celtium", "celeritas"] + (["control"] if control is not None else [])
+        if rep % 2 == 0:
+            order.reverse()
+        for name in order:
             plan = plans_for_pair[name]
             result = gv_leg.execute(plan)
             report = object_at(plan.paths["game"] / "logs/celtium-validation.json")
             process = object_at(plan.paths["game"] / "validation-process.json")
-            metric = warm_metric(report, process, result, plan.manifest, pinned, name == "celeritas")
+            metric = warm_metric(report, process, result, plan.manifest, pinned, name == "celeritas",
+                                 "control" if name == "control" else None)
             metric["leg"] = plan.leg
             pair[name] = metric
             print(f"{plan.leg}: warm p50={metric['p50Ms']:.3f}ms p95={metric['p95Ms']:.3f}ms "
@@ -192,6 +235,9 @@ def main(argv: list[str]) -> int:
     with (root / ".gv-verify" / f"{tag}-kpi-result.json").open("x") as out:
         json.dump({"inputs": pinned, **summary}, out, indent=2)
     print(f"median paired ratio={summary['medianPairRatio']:.3f}x verdict={summary['verdict']}")
+    if "medianControlRatio" in summary:
+        print(f"median control ratio={summary['medianControlRatio']:.3f}x "
+              f"(candidate vs the control build, interleaved in the same repetitions)")
     return {"NOT_SLOWER": 0, "SLOWER": 1, "NO_SPEED_VERDICT": 2}[summary["verdict"]]
 
 

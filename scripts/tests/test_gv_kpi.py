@@ -89,6 +89,24 @@ class KpiTests(unittest.TestCase):
             pairs.append(pair)
         self.assertEqual(kpi.summarize(pairs, [])["medianPairRatio"], 2)
 
+    def test_a_control_build_is_compared_same_arm_so_machine_drift_cancels(self):
+        # The reference ratio answers "how far from Celeritas are we"; the control ratio answers "is this build faster
+        # than that build", and it is the only one that can rank two builds: both legs are the same renderer family in
+        # the same window, so a machine that slows down moves both.
+        def metric(p50):
+            pair = {"celtium": self.metric(), "celeritas": self.metric()}
+            pair["control"] = self.metric()
+            pair["celtium"]["p50Ms"] = p50
+            pair["control"]["p50Ms"] = 1.0
+            return pair
+
+        pairs = [metric(1.10), metric(1.30), metric(1.20)]
+        summary = kpi.summarize(pairs, [])
+        self.assertEqual([round(x, 2) for x in summary["controlRatios"]], [1.10, 1.30, 1.20])
+        self.assertEqual(summary["medianControlRatio"], 1.20)
+        # A pair set without a control still summarises; it simply has no control ratio.
+        self.assertNotIn("medianControlRatio", kpi.summarize([{"celtium": self.metric(), "celeritas": self.metric()}] * 3, []))
+
     def test_stage_artifacts_are_bound_to_explicit_successful_build_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:
             stage = Path(tmp)

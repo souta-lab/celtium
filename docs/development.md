@@ -138,6 +138,7 @@ provenance/sha不一致、`warmSampleCount<50`、`worldTicksAtEnd<600`、両arm�
 さらにframeDumpDir経由のdumpは別経路なので、必要なら **`-Dceltium.vulkan.frameDumpEvery=0`** も使う。
 それでもfixtureの要求capture、presentReadback、validation、計器、world生成などの負荷が残る。**「全fixture税を除去」とは呼ばない**。
 
+- **2つのビルドを比べるときは制御armを使う**（2026-10-21 追加）。`CELTIUM_KPI_CONTROL_JARS=<固定ビルドのstage>` を渡すと、各repetitionが **candidate → celeritas → control** の順（偶数repは逆順）で走り、`medianControlRatio` が**同一arm・同一窓**の比として出る。参照armとの比は「Celeritasからどれだけ離れているか」を答えるが、**マシンドリフトは相殺しない**（別レンダラなので負荷応答が違う）。ビルド同士の優劣は control 比で判定する。control側のfixtureは再ビルドでbytesが変わるため同一性は要求せず、**窓の契約（warmFrom/To・サンプル数・完走）**で検証し、差は `inputs.controlFixtureDiffers` に記録する。
 - **`java.util.function` のlambdaは確保されているとは限らない**（2026-10-21 実測）。`celtium$mirror(b -> ...)` 形式の
   ホット変換を専用呼び出しに置き換えても比が動かなかったので単体で測った: lambda経由 0.6-1.2ns/call、
   直接呼び出し 0-0.2ns/call。**HotSpotのescape analysisが非脱出のlambdaを消しており、確保は起きていない**。
