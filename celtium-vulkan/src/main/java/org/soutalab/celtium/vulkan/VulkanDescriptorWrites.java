@@ -25,19 +25,49 @@ final class VulkanDescriptorWrites {
     private VulkanDescriptorWrites() {
     }
 
-    /** Prints the layout of one descriptor write about to be issued, bounded, with the caller's class name. */
+    /** Writes whose image info could not be read, so a silent miss is a number rather than nothing. */
+    private static int unreadable;
+
+    /**
+     * Prints the layout of one descriptor write about to be issued, with the caller's class name.
+     * <p>
+     * The first forty writes are printed as a sample, and beyond that only the transfer layouts are: the violation this
+     * exists for declares {@code TRANSFER_DST_OPTIMAL}, which no sampling descriptor should ever declare, and a sample
+     * that stops at forty writes never reaches the menu phase where it happens.
+     */
     static void note(VkWriteDescriptorSet.Buffer write, String owner) {
-        if (!ENABLED || printed >= 40 || write == null || write.remaining() == 0) {
+        if (!ENABLED) {
+            return;
+        }
+        if (write == null || write.remaining() == 0) {
+            unreadable++;
             return;
         }
         VkDescriptorImageInfo.Buffer images = write.get(0).pImageInfo();
         if (images == null || images.remaining() == 0) {
+            unreadable++;
             return;
+        }
+        int layout = images.get(0).imageLayout();
+        boolean transfer = layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                || layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        if (!transfer && printed >= 40) {
+            return;
+        }
+        if (transfer && transferPrinted >= 20) {
+            return;
+        }
+        if (transfer) {
+            transferPrinted++;
         }
         printed++;
         System.out.println("[Celtium] CELTIUM_DESC_LAYOUT_WRITE owner=" + owner + " writes=" + write.remaining()
-                + " layout=" + nameOf(images.get(0).imageLayout()));
+                + " layout=" + nameOf(layout) + " image=" + Long.toHexString(images.get(0).imageView())
+                + " unreadable=" + unreadable);
     }
+
+    /** How many transfer-layout writes were printed, which are the anomaly this census is for. */
+    private static int transferPrinted;
 
     /** {@return the layout's name}, for a line that can be read without a table. */
     private static String nameOf(int layout) {

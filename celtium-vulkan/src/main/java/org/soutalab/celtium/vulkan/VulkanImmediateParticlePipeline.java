@@ -239,6 +239,7 @@ public final class VulkanImmediateParticlePipeline {
                     .descriptorCount(1)
                     .pImageInfo(image);
             celtium$noteDescWrite(write);
+            VulkanDescriptorWrites.note(write, "VulkanImmediateParticlePipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(Long.valueOf(descriptorKey), Long.valueOf(set));
             this.setsCreated++;

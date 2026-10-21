@@ -320,6 +320,7 @@ public final class VulkanImmediateItemPipeline {
                     .descriptorCount(1)
                     .pImageInfo(image);
             celtium$noteDescWrite(write);
+            VulkanDescriptorWrites.note(write, "VulkanImmediateItemPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             // Both variants' layouts declare the shadow bindings, and a set drawn with a binding it does not have is
             // VUID-vkCmdDrawIndexed-None-08114 - so a set is filled from whichever texture path allocated it.
@@ -403,6 +404,7 @@ public final class VulkanImmediateItemPipeline {
                     .descriptorCount(1)
                     .pImageInfo(lightImage);
             celtium$noteDescWrite(write);
+            VulkanDescriptorWrites.note(write, "VulkanImmediateItemPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             // The lit variant's layout also carries the shadow map (binding 2: its eye-space matrix, binding 3: the map),
             // and every set that is drawn with has to have both written - the layer reports the ones that do not as
@@ -857,6 +859,7 @@ public final class VulkanImmediateItemPipeline {
         writes.get(1).sType$Default().dstSet(set).dstBinding(3)
                 .descriptorType(org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                 .descriptorCount(1).pImageInfo(image);
+        VulkanDescriptorWrites.note(writes, "VulkanImmediateItemPipeline");
         vkUpdateDescriptorSets(this.context.device(), writes, null);
     }
 
