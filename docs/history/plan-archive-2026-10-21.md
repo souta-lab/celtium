@@ -167,4 +167,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 ### sweep試行の詳細（2026-10-22）
 
+### sweepとネザー（2026-10-22）
 
+| **ネザー次元（2026-10-22 実測・欠陥ではない）** | **両armとも暗い＝場面側** | 実測 | 問題なし | `-Dceltium.validation.scene=nether` だけでは次元が切り替わらない（＝私のフラグ誤用、正しくは `-Dceltium.validation.dimension=-1 -Dceltium.validation.dimensionAtTick=60`）。遷移後の presented PNG は**ほぼ真っ黒**（Celtium distinct **274**、gate FAILED、validation 0件）だったが、**同じ条件で参照arm（Celeritas）を回すと distinct **406** でやはりほぼ真っ黒・gate FAILED**（`sc-nether-ref`）。⇒ **両レンダラで同じ絵が出るので、これは我々の描画欠陥ではなくこのテストマップのネザー面が暗いだけ**。「ネザーが壊れている」という前ラウンドの主張は**撤回**。ネザーの校正下限は両armとも満たさないため、この場面では回帰の主張に使えない（Intelや別mapで再校正が必要） |
+| **hot path sweep（2026-10-22）** | **ロック除去は採用／fastutil置換は不可** | 実測 | — | **採用**: `VulkanDescriptorFault.shouldFail` の `synchronized`＋文字列処理を未armed時は静的boolean読みに（texture faultと同じ形）。announce経路は空テーブル時に短絡。leg `sweep1-v`/`sweep3-v`（jar `c322d70e…`）は PASSED・画像gate PASSED・validation clean。**fastutil置換は不可と確定**: `announcedImages`/`announcedGeneration`/`consumedGeneration` をprimitive化したところ、**別クラス（CeltiumNativeDraw→VertexBuffer draw）で `NoSuchMethodError: Int2ObjectOpenHashMap.get(java.lang.Integer)`** が発生し起動不能。これは**2回目の同一故障**（以前は `VulkanTextureRegistry.entries`）。⇒ **このコードベースでは boxed `Map<Integer,X>` を fastutil に置換しない**（規則）。**構造の実測**: groups 183/frame に対し offers 279/frame ＝ **1.5 offer/group**。バッチングは描画数を34%減らすだけで、per-offer の記帳コストは払い続ける＝**コストはgroup数ではなくoffer数に比例**している |
