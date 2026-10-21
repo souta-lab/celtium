@@ -345,6 +345,20 @@ shadercのバインディングは**LWJGLの版に固定**されており、「m
 2. **`_draw_id` の供給を1行ログ**（メイン経路と影経路で同じ値か）。
 3. 上記で一致が確認できたら、次に深度の比較（bias・近平面）へ進む。
 
+### レシーバ側のバインドは毎回書かれている（2026-10-22 確認）
+`VulkanTerrainPipeline.bindTextures(...)` は**呼ばれるたびに** binding 1-4 を書いており、
+`shadowView`/`shadowSampler` が 0 でなければ影マップを、0 ならライトマップを差し込む。
+`setShadowSources` は `publishShadowSources` から毎フレーム呼ばれる（`celtium.shadow.noSources` が無い限り）ので、
+**「初回に作った set が古いまま」という候補も消えた**。
+
+### 残るデバッグ手段（この粒度の計器では追えない）
+ここまでで消した候補: `_draw_id`、Y反転、region offset、深度remap、行列の合成、光源中心、
+descriptor の更新漏れ、バッチ数、マップの充填とスケール。
+**残っているのは「キャスタが実際にどこへ描いているか」だけ**で、これは数値の計器ではなく
+**捕獲ツール（RenderDoc / gfxreconstruct）で影マップの描画を1フレーム捕まえる**のが最短。
+無い場合は、キャスタの `gl_Position` を影マップではなく**フレーム画像へ**書く一時パスを作る
+（影マップへの記録関数を流用し、attachment をフレーム画像に差し替える）。
+
 ### 触ってはいけないもの
 `lightSpaceBlock` のidentity、`lightVP*T(centre)`、Vulkan深度remap（`cameraDepth=0.5` で検証済み）は
 **いずれも実測で正しい**。ここを再度いじると、検証済みの土台を崩すだけになる。
