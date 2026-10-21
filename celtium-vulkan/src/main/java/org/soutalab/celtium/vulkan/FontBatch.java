@@ -270,6 +270,9 @@ public final class FontBatch {
     private long pendingTargetIdentity;
 
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
+    /** Flush invocations, including the ones that found no pending run - the classified counters below do not. */
+    private long flushCalls;
+
     private int flushedIntervening;
     private int flushedBoundary;
     private int flushedStateChange;
@@ -546,6 +549,10 @@ public final class FontBatch {
     private float[] lastRunModelView;
 
     public void celtium$flushPendingFontBatch(String how) {
+        // Every call is counted, before any early return: the classified counters below only move when a run was
+        // actually open, so a stream of calls that find nothing to submit was invisible - which is the shape the
+        // profile shows (4.5% of the warm window's self time against ~9.5 started runs a frame).
+        this.flushCalls++;
         // The capture's own per-string buffer flushes through the same point as this pending run: whatever is about to
         // happen - an intervening submission, a boundary, a state change - every glyph the capture is holding belongs
         // before it, in the run this method is about to submit. Invoked unconditionally: the capture can hold a
@@ -641,6 +648,11 @@ public final class FontBatch {
             this.retainedBytes -= run.vertexCount * run.stride;
             org.lwjgl.system.MemoryUtil.memFree(run.vertices);
         }
+    }
+
+    /** {@return every flush asked for, including those that found no pending run}. */
+    public long fontFlushCalls() {
+        return this.flushCalls;
     }
 
     /** The font batching's own census, for the report: how much was coalesced and how each run went out. */

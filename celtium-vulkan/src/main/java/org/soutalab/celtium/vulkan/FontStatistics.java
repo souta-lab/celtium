@@ -25,6 +25,9 @@ public final class FontStatistics {
         StringBuilder out = new StringBuilder();
         out.append(" fontStripSeparators=").append(this.fontBatch.fontStripSeparators());
         out.append(" fontRunsStarted=").append(this.fontBatch.fontRunsStarted());
+        // Every flush asked for, against the runs actually started: the difference is the per-call cost the
+        // profile sees and the classified counters cannot.
+        out.append(" fontFlushCalls=").append(this.fontBatch.fontFlushCalls());
         out.append(" fontQuadsAppended=").append(this.fontBatch.fontQuadsAppended());
         return out.toString();
     }
