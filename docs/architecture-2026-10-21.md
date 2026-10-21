@@ -269,6 +269,16 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
 **結果**: 影ON/OFFの差はログ帯外で **mean 0.17 のまま**（変わらず）。leg `shadowcam`（jar `c02eb627…`）は PASSED・
 validation clean。効果が無く、`worldPosition` が既にworld空間なら**二重変換のバグ**になるため**revert**（jarは`046b8bf2…`に復帰）。
 
+**配線の確認（2026-10-22、消去法）**: 「行列が未バインド」という候補は**否定された**。
+- `terrainPipeline.setShadowSources(view, sampler, matrixBuffer)` が呼ばれ（`VulkanTerrainGpuBackend:15090`）、
+- `VulkanTerrainPipeline` は bind 時に **binding 3（マップ）と binding 4（行列）**を `shadowView`/`shadowUniform` から書く
+  （`VulkanTerrainPipeline:699-729`、`SHADOW_MAP_BINDING=3`/`SHADOW_UNIFORM_BINDING=4`）、
+- 行列は毎フレーム `matrixBuffer` のオフセット0に、eye空間版はオフセット64に書かれる（`ShadowMapPass:63-72`）＝シェーダの読み手と一致。
+- 即時系も binding 2（行列）/3（マップ）で同じ規約。
+
+**したがって残る未知は「マップの中身」か「座標のin/out比」**のどちらかで、これは画素に依存するため
+**GPU側の2カウンタSSBO**（§8.1の3）でしか決まらない。CPU側の推論はここで尽きた。
+
 **これで言えること**: 地形レシーバの行列は（少なくともこの変更の範囲では）律速ではない。
 次の候補は (a) `worldPosition` が実際にworld空間かどうかを読み切る（`translation` の作られ方を追う）、
 (b) 地形シェーダの `u_ShadowMatrix` が**書かれている場所**（binding 4 のUBO）が実際に更新されているかを確認、
