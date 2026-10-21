@@ -61,7 +61,9 @@ Celtium を、Celeritas を明確に上回る実用レンダラとして完成�
 
 ## 完成条件（すべて満たした時だけ Goal 完了）
 
-1. KPI が Celeritas 以下（ratio ≤ 1.0、AMD と Intel の両方）
+1. KPI が Celeritas 以下（**warm window** の `frameIntervalWarmP50Ms` で ratio ≤ 1.0、AMD と Intel の両方）
+   - 必須条件: `frameIntervalWarmSampleCount > 0`（cold window の `frameIntervalP50Ms` は判定に使わない）
+   - 必須条件: 測定した JAR の `sha256` と `git.head`/`dirty` が、その leg のビルドと一致していること
 2. バニラ描画の全経路（sky / terrain / entities / block-entities / particles / GUI / font / loading / settings）が**スタブ非経由**で native に描かれ、validation が clean
 3. 目視4画面（loading / home / game / settings）を画像で確認
 4. E2E 1.93a と RLCraft 2.9.3 の代表シーンが実機で正常
@@ -75,5 +77,7 @@ Celtium を、Celeritas を明確に上回る実用レンダラとして完成�
 - GPU の主張には commit・jar hash・GPU・scene・camera・flags・leg を紐づける
 - **AMD 成功は Intel 成功ではない。** 主要受入は両 GPU
 - KPI は `scripts/gv-kpi.sh` のペアで測る（可能なら REPS=3）。検証税は `-Dceltium.vulkan.presentedDumpEvery=0`
+- **`CELTIUM_KPI_JARS` に、その HEAD から build した JAR を stage したディレクトリを明示する。** 既定の固定ディレクトリを使うと別ビルドを測る（2026-10-21 に4 leg が同一 sha を測定して判明）。leg の `-manifest.json` で `artifacts.renderer.sha256` と `git.head` を照合し、不一致なら測定を破棄する
+- draw 数は**全発行点の合計**で読む（`VulkanDynamicMesh` の2点だけを数えた値を全体の結論にしない）
 - 失敗・未較正・欠測を成功に数えない。無音の leg は重複 jar と計器の有効性を先に疑う
 - 目視は画像を残す。数値だけで「見えている」と主張しない
