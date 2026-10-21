@@ -155,6 +155,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         final byte ret;
         final byte[] args;
         final int semantics;
+        /**
+         * Whether this is one of the DSA {@code *Named*} entry points, whose first argument is the object name rather
+         * than a target whose binding is used.
+         * <p>
+         * Decided once, here: the buffer-data, sub-data and map entry points used to ask
+         * {@code fn.name.contains("NamedBuffer")} on every call, and vanilla uploads through them for every entity and
+         * tile entity batch - the profile put {@code String.contains} at 2.1% of the warm window's samples inside
+         * block-entity rendering.
+         */
+        final boolean namedObject;
         /** Per-function arrival count, under {@link #FN_CENSUS}: the distribution of the trampoline's producers. */
         long calls;
 
@@ -163,6 +173,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.ret = ret;
             this.args = args;
             this.semantics = semantics;
+            this.namedObject = name.contains("Named");
         }
     }
 
@@ -5168,7 +5179,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private int bufferFor(Fn fn, long[] c) {
-        return fn.name.contains("NamedBuffer") ? (int) c[0] : boundBuffer((int) c[0]);
+        return fn.namedObject ? (int) c[0] : boundBuffer((int) c[0]);
     }
 
     private void bufferData(Fn fn, long[] c) {

@@ -48,3 +48,12 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 | **モデル連続マージの上限（2026-10-21 計測・棄却）** | **棄却** | 実測 | — | モデルreplayが直前replayと**同一packet条件**（texture・stateKey・projection・modelView）かを計器化（`modelRepeatsPrev`/`modelRepeatsPercent`）。leg `model-merge-1`（jar `9c80654f…`）: **524,640 replays中84,214＝16%のみ**。⇒ 連続マージで減らせるのはモデル128→約107 packet、全体183→162（**12%減**）に過ぎない。**仮説を棄却**し、残るpacket削減は「同一状態の連続」では届かない（MDI/bindlessのように**非同一状態を跨ぐ**手段か、packet単価そのもの） |
 | **残るスプリット（2026-10-21）** | **次の標的** | — | — | `affine-scope-1` の内訳: **texture=97,043（23.6/frame）**、format=40,289（9.8）、matrix=36,945（9.0）、state_key=22,488（5.5）、retained=12,332（3.0）、colour=3,882（0.9）。次は**バインドテクスチャの切替**（本物のper-draw状態）とformat変更。またグループ描画183/frameに対しグループ生成55.8/frameで**約3.3倍**＝1グループが複数passで再描画されている |
+
+### バッチ実費とモデル経路（2026-10-21）
+
+| **バッチ種別ごとの実費（2026-10-21 実測）** | **特定済み** | 実測 | 未測定 | `-Dceltium.vulkan.batchTimings=true` + `passSplit[Cpu]`、leg `batch-timings-1`（jar `f9337863…`）: `groupDraw` **1.91-2.30ms/frame**（flushの大半）、`batchCall` 受理 0.41ms（166.8/frame＝2.5µs）、`prepareImmediate` 0.07ms（55.9/frame）、`regAnnounced` 0.17ms。**モデルenqueueは計器が無かったので追加**（`modelEnqueueMillis/Calls/MicrosPerCall`）: leg `model-enq-2` で **0.159ms/frame・1.24µs/call・127.8 call/frame**。⇒ CPU側の内訳は把握でき、最大は**draw packet数**（183/frame＝モデル128＋即時56） |
+| **モデル経路の死んだ行列合成を除去（2026-10-21 実装・実測）** | **効果確認（小）** | 実測 | 未測定 | `VulkanModelQuadCapture.matrixForList(listId)` は**存在するlistに対し常に identity を clone して返す**。呼び出し側はそれを joml で `Matrix4f`×3生成＋逆行列して `V·I⁻¹` を計算し `modelViewNow` に書き戻していた＝**128回/frameの完全な無駄**。`ModelViewRelativizer`（scratch再利用・list/世代別の逆行列キャッシュ・identity短絡）へ置換し、`matrixForList` の clone も廃止。leg `model-rel-1`（jar `0df3439f…`）: モデルenqueue **0.159→0.141ms/frame（−11%）**、warm p50 5.020→4.996ms（同一flags・validation ON）。一般形（実compile行列が来た場合）は保持しユニットテストで固定。**残り1.1µs/callは状態snapshot本体**で、per-draw状態チャネル無しには削れない |
+
+### JFR初回（全体）の記録（2026-10-21）
+
+| **JFRプロファイル（2026-10-21・次の標的）** | **計測済み** | 実測 | — | harness に `-XX:` 許可を追加してJFRを有効化。**warm区間だけ**を録るため `delay=30s,duration=20s` を使用（leg `jfr-warm-1`、jar `d5fa0f38…`、validation OFF、**1,110 samples**）。自己時間: `HashMap$TreeNode` 6.3%・`HashMap.putVal` 3.0%・`getNode` 2.3%・fastutil `Long2ObjectOpenHashMap` 2.9%＝**map操作で約14.5%**、Celtium所有では **`FontBatch.celtium$flushPendingFontBatch` 4.5%**、`submitImmediateBatchBody` 3.5%、`drawPendingImmediate` 1.0%、`GlStateManager.celtium$mirror` 1.0%、`copyVertices` 1.0%、`VulkanGlState.multiplyMatrixBuffer` 0.8%。全体プロファイル（起動込み）では font 2.69%・classgraph 1.76%・asm 1.33% で、**起動を含むと比が歪むので区間を限定した**。証拠 `.gv-verify/jfr-warm-1-self-time.json` |

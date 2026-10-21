@@ -319,7 +319,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179137_b", at = @At("HEAD"), require = 0)
     private static void celtium$translate(double x, double y, double z, CallbackInfo info) {
-        celtium$mirror(backend -> backend.translate(x, y, z));
+        celtium$translate((float) x, (float) y, (float) z);
     }
 
     /**
@@ -334,7 +334,7 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179109_b", at = @At("HEAD"), require = 0)
     private static void celtium$translateFloat(float x, float y, float z, CallbackInfo info) {
-        celtium$mirror(backend -> backend.translate(x, y, z));
+        celtium$translate((float) x, (float) y, (float) z);
     }
 
     /**
@@ -343,7 +343,7 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179139_a", at = @At("HEAD"), require = 0)
     private static void celtium$scaleDouble(double x, double y, double z, CallbackInfo info) {
-        celtium$mirror(backend -> backend.scale((float) x, (float) y, (float) z));
+        celtium$scale((float) x, (float) y, (float) z);
     }
 
     /**
@@ -371,7 +371,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179114_b", at = @At("HEAD"), require = 0)
     private static void celtium$rotate(float angle, float x, float y, float z, CallbackInfo info) {
-        celtium$mirror(backend -> backend.rotate(angle, x, y, z));
+        celtium$rotate(angle, x, y, z);
     }
 
     /**
@@ -442,12 +442,12 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179152_a", at = @At("HEAD"), require = 0)
     private static void celtium$scale(float x, float y, float z, CallbackInfo info) {
-        celtium$mirror(backend -> backend.scale(x, y, z));
+        celtium$scale(x, y, z);
     }
 
     @Inject(method = "func_179110_a", at = @At("HEAD"), require = 0)
     private static void celtium$multiplyMatrix(java.nio.FloatBuffer buffer, CallbackInfo info) {
-        celtium$mirror(backend -> backend.multiplyMatrix(buffer));
+        celtium$multMatrix(buffer);
     }
 
     /**
@@ -592,6 +592,64 @@ public abstract class GlStateManagerMixin {
             }
         } catch (Throwable ignored) {
             // A stub that is not there yet is a call that must pass through.
+        }
+    }
+
+    /**
+     * The mirror's hot transforms, called without a lambda.
+     * <p>
+     * {@code translate}, {@code scale}, {@code rotate} and {@code multMatrix} run once per entity, tile entity, item
+     * and camera offset - hundreds to thousands of times a frame - and the consumer form allocated a capturing lambda
+     * on every one of them. The profile put {@code translateFloat}'s lambda at 2.7% of the samples inside
+     * block-entity rendering. These do the same null check and the same swallow as {@link #celtium$mirror}, without
+     * building an object to carry three floats.
+     */
+    private static TerrainGpuBackend celtium$backendOrNull() {
+        return TerrainGpuBackends.current();
+    }
+
+    private static void celtium$translate(float x, float y, float z) {
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend == null) {
+            return;
+        }
+        try {
+            backend.translate(x, y, z);
+        } catch (Throwable ignored) {
+            // The backend records its own diagnostics; nothing here may break vanilla rendering.
+        }
+    }
+
+    private static void celtium$scale(float x, float y, float z) {
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend == null) {
+            return;
+        }
+        try {
+            backend.scale(x, y, z);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void celtium$rotate(float angle, float x, float y, float z) {
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend == null) {
+            return;
+        }
+        try {
+            backend.rotate(angle, x, y, z);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void celtium$multMatrix(java.nio.FloatBuffer buffer) {
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend == null) {
+            return;
+        }
+        try {
+            backend.multiplyMatrix(buffer);
+        } catch (Throwable ignored) {
         }
     }
 
