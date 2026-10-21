@@ -15105,7 +15105,16 @@ this.frameBufferOpen = false;
                     new org.joml.Vector3f(0.0f, 1.0f, 0.0f));
             org.joml.Matrix4f lightProjection = new org.joml.Matrix4f()
                     .ortho(-radius, radius, -radius, radius, 0.0f, radius * 6.0f);
-            org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(lightProjection).mul(lightView);
+            // JOML's ortho produces OpenGL clip depth in [-1, 1] where a point 144 units out - the distance to the centre -
+            // comes out at z = 0, and the measured cameraDepth of 1.2e-7 was exactly that. Vulkan clip depth is [0, 1], and
+            // the rest of this renderer remaps it with remapClipDepth; the light projection has to be remapped the same way
+            // or every texel of the map lands at depth zero and the depth test reads "lit" everywhere.
+            float[] glLightProjection = new float[16];
+            lightProjection.get(glLightProjection);
+            float[] vkLightProjection = new float[16];
+            remapClipDepth(glLightProjection, vkLightProjection);
+            org.joml.Matrix4f lightProjectionVulkan = new org.joml.Matrix4f().set(vkLightProjection);
+            org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(lightProjectionVulkan).mul(lightView);
             // The same matrix feeds both ends: the caster's push block (ShadowMapPass.lightSpaceBlock copies these sixteen
             // floats) and the terrain receiver's uniform at binding 4. Both work on camera-relative positions - the terrain
             // vertex stage's worldPosition is what the camera-relative model view then transforms - so a world-space light
