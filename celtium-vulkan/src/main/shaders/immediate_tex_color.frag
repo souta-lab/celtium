@@ -6,6 +6,7 @@ layout(set = 0, binding = 0) uniform sampler2D u_Texture;
 layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
 layout(location = 5) in vec4 v_ShadowCoord;
 layout(constant_id = 0) const bool CELTIUM_SHADOW_ENABLED = false;
+layout(constant_id = 1) const bool CELTIUM_SHADOW_DEBUG = false;
 
 layout(location = 0) in vec2 v_TexCoord;
 layout(location = 1) in vec4 v_Color;
@@ -106,7 +107,11 @@ void main() {
                     lit += shadowCoord.z - bias > depth ? 0.0 : 1.0;
                 }
             }
-            colour.rgb *= mix(0.2, 1.0, lit / 9.0);
+            if (CELTIUM_SHADOW_DEBUG) {
+                fragColor = vec4(lit > 4.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
+            } else {
+                colour.rgb *= mix(0.2, 1.0, lit / 9.0);
+            }
         }
     }
     fragColor = colour;
