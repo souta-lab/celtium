@@ -35,7 +35,7 @@ while true; do
 done
 trap 'rm -f "$lock"' EXIT
 
-export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-25-openjdk-amd64}"
+export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
 # A default has to be two arguments, not one string: `"${@:-a b}"` passes "a b" as a single task name and Gradle answers
 # "project 'packageJar ' not found".
 if [ "$#" -eq 0 ]; then

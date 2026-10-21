@@ -40,7 +40,7 @@ GL を置き換えるのではなく、Minecraft の描画の意味（camera / t
 
 ```bash
 cd /home/s0u7a/projects/celtium
-export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64; export PATH="$JAVA_HOME/bin:$PATH"
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64; export PATH="$JAVA_HOME/bin:$PATH"
 ./gradlew -p build-1122 :forge122:packageJar :forge122:validationRemapJar --console=plain --no-daemon \
   "-Porg.gradle.java.installations.paths=$JAVA_HOME,$PWD/.celtium-work/jdks/21/jdk-21.0.12.1+1,$PWD/.celtium-work/jdks/8/jdk8u504-b01" \
   2>&1 | grep -E "BUILD (SUCCESSFUL|FAILED)|エラー|error:"

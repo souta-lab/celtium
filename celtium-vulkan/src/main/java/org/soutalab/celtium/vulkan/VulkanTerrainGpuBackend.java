@@ -1715,7 +1715,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * (and the reference written beside it at 112) is what lets one leg say "the property restored the function"
      * rather than "the mirror holds the function".
      */
-    private final java.util.Map<Integer, Long> alphaSelectorCounts = new java.util.LinkedHashMap<Integer, Long>();
+    /**
+     * Per-alpha-selector group counts, keyed primitively.
+     * <p>
+     * The draw loop counted these with {@code LinkedHashMap.merge(Integer, Long, ...)}: a Boxing Integer key, a fresh
+     * Long per group and a lambda to add one, on every group of every window (~180 a frame). The map exists to print a
+     * histogram, so the boxing is the entire cost of the instrument.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap alphaSelectorCounts =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
     private int lastAlphaSelector = -1;
     /** Distinct references written to the push block, bounded: the game uses a handful (0.1, 0.5, 1/255, 0). */
     private final java.util.Set<Integer> alphaReferenceValues = new java.util.LinkedHashSet<Integer>();
@@ -9985,12 +9993,12 @@ this.frameBufferOpen = false;
         }
         StringBuilder text = new StringBuilder("[");
         boolean first = true;
-        for (java.util.Map.Entry<Integer, Long> entry : this.alphaSelectorCounts.entrySet()) {
+        for (it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry : this.alphaSelectorCounts.int2LongEntrySet()) {
             if (!first) {
                 text.append(' ');
             }
-            text.append("0x").append(Integer.toHexString(entry.getKey().intValue())).append(':')
-                    .append(entry.getValue());
+            text.append("0x").append(Integer.toHexString(entry.getIntKey())).append(':')
+                    .append(entry.getLongValue());
             first = false;
         }
         return text.append(']').toString();
@@ -17257,8 +17265,7 @@ this.frameBufferOpen = false;
                 // never reads it (a negative alpha reference selects the mix path before the comparison).
                 int alphaSelector = celtium$alphaFuncSelector(state);
                 push.putFloat(100, alphaSelector);
-                this.alphaSelectorCounts.merge(Integer.valueOf(alphaSelector), Long.valueOf(1L), (a, b) ->
-                        Long.valueOf(a.longValue() + b.longValue()));
+                this.alphaSelectorCounts.addTo(alphaSelector, 1L);
                 this.lastAlphaSelector = alphaSelector;
                 this.immediateStatistics.setLastAlphaPushReference(state.length > 6 ? Float.intBitsToFloat(state[6]) : Float.NaN);
                 if (this.alphaReferenceValues.size() < 12) {

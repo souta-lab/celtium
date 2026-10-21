@@ -62,8 +62,8 @@ WORK = ROOT / ".celtium-work" / "bench"
 PINNED_JARS = WORK / "jars"
 
 DEFAULT_INSTANCE = Path("/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha")
-DEFAULT_JAVA = Path("/usr/lib/jvm/java-25-openjdk-amd64/bin/java")
-DEFAULT_JAVAC = Path("/usr/lib/jvm/java-25-openjdk-amd64/bin/javac")
+DEFAULT_JAVA = Path("/usr/lib/jvm/java-21-openjdk-amd64/bin/java")
+DEFAULT_JAVAC = Path("/usr/lib/jvm/java-21-openjdk-amd64/bin/javac")
 DEFAULT_RENDER_NODE = Path("/dev/dri/renderD129")  # AMD RX 6400; renderD128 is the Intel UHD 630
 # The Vulkan bindings the renderer's native backend needs. Every configuration adds this jar to the test
 # classpath, including the GL reference, so the classpaths stay identical; the reference never loads it.

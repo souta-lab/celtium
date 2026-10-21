@@ -36,7 +36,7 @@ extract() {
 mc-sources: the decompiled sources are not built yet.
   expected: $JAR
   produce it with:
-    JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64 ./gradlew -p build-1122 :forge122:decompileSrgJar --console=plain --no-daemon \\
+    JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew -p build-1122 :forge122:decompileSrgJar --console=plain --no-daemon \\
       "-Porg.gradle.java.installations.paths=\$JAVA_HOME,\$PWD/.celtium-work/jdks/21/jdk-21.0.12.1+1,\$PWD/.celtium-work/jdks/8/jdk8u504-b01"
   (RFG writes that jar as part of an ordinary :forge122:packageJar as well, so a normal
    build usually leaves it in place.)

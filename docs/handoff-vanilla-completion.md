@@ -36,7 +36,7 @@ The GL-less leg (`-Dceltium.vulkan.glless=true`) is what you are fixing.
 
 ```sh
 cd /home/s0u7a/projects/celtium
-export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ./gradlew -p build-1122 :forge122:packageJar :forge122:validationRemapJar --console=plain --no-daemon \
   "-Porg.gradle.java.installations.paths=$JAVA_HOME,$PWD/.celtium-work/jdks/21/jdk-21.0.12.1+1,$PWD/.celtium-work/jdks/8/jdk8u504-b01"
 

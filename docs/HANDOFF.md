@@ -69,7 +69,7 @@ JDK 8：`.celtium-work/jdks/8/jdk8u504-b01`。
 Minecraft側はRFG 2.0.4のclass version 69のため、GradleをJDK 25で実行する。既存のシステムJDKをビルドへ使って成功したコマンド：
 
 ```sh
-export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export PATH="$JAVA_HOME/bin:$PATH"
 ./gradlew -p build-1122 :forge122:packageJar --console=plain --stacktrace --no-daemon \
   "-Porg.gradle.java.installations.paths=$JAVA_HOME,$PWD/.celtium-work/jdks/21/jdk-21.0.12.1+1,$PWD/.celtium-work/jdks/8/jdk8u504-b01"
