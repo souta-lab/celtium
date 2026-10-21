@@ -331,6 +331,14 @@ shadercのバインディングは**LWJGLの版に固定**されており、「m
 - **キャスタが実際に描いている Geometry**: 4バッチのみ・それぞれ1 regionの範囲。レシーバの75%がin範囲でも、
   キャスタが別セクションを描いていれば重ならない。
 
+### 2026-10-22 に消去した候補（コードを読んで否定）
+- **`_draw_id` の供給**: 地形シェーダの `_draw_id` は `packed_draw_params`（**per-vertex属性**）の
+  `(packed >> 8) & 0xFF` で決まる（`terrain_solid.vert:223`）。uniformでもinstance indexでもないので、
+  **キャスタとレシーバで同じ頂点なら同じ値**になる。間接パケットの `firstInstance=0` は無関係。
+- **Y反転**: メインの地形パスは `height(targetHeight)` 正値（`VulkanTerrainGpuBackend.setViewportAndScissor`）、
+  影パスも `height(SIZE)` 正値（`ShadowMapPass:625`）。**どちらも反転していない**ので上下ミラーではない。
+- **region offset**: バッチとともに `block.clone()` で捕まえており、レシーバ側も同じ `u_RegionOffset` を使う。
+
 ### 次の判別手段（推測を避ける）
 1. **キャスタ側のシェーダに同じ判定を出す**: 影マップへ描く際の `gl_Position` を、`-Dceltium.shadow.debug` のとき
    フレームバッファへも書く（または影マップの代わりに画面へ描く）と、キャスタの被覆が1枚で見える。
