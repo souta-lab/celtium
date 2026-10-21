@@ -21,7 +21,15 @@ import java.util.Map;
  */
 public final class VulkanDisplayListCensus {
 
-    private static final Map<Integer, Integer> REPLAYS = new LinkedHashMap<Integer, Integer>();
+    /**
+     * Per-list replay counts.
+     * <p>
+     * Primitive-keyed: this is written on every display-list replay - a tile entity renderer replays dozens per part -
+     * and the boxed {@code LinkedHashMap} it replaced was measured at 4.4% of the block-entity path in the warm
+     * profile, between the {@code Integer} allocations and the tree-binned buckets the boxed keys produced.
+     */
+    private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap REPLAYS =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
     private static long total;
     private static int distinctLists;
     private static boolean reportedFirst;
@@ -71,6 +79,11 @@ public final class VulkanDisplayListCensus {
             return;
         }
         ORIGINS.put(Integer.valueOf(list), origin);
+        // The cancellation rule's predicate, decided where the origin arrives rather than re-searched on every cancel.
+        if (origin != null && (origin.contains("ItemRenderer") || origin.contains("ModelPlayer")
+                || origin.contains("ModelBiped"))) {
+            ITEM_LIKE.add(list);
+        }
         if (ORIGINS.size() <= 6) {
             System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_ORIGIN list=" + list + " origin=" + origin);
         }
@@ -281,7 +294,18 @@ public final class VulkanDisplayListCensus {
     }
     private static long cancelled;
     /** Cancelled replays per list, paired with {@link #REPLAYS} so the lists nothing drew can be named. */
-    private static final Map<Integer, Integer> CANCELLED_PER_LIST = new LinkedHashMap<Integer, Integer>();
+    /** Per-list cancelled replay counts; primitive for the same reason as {@link #REPLAYS}. */
+    private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap CANCELLED_PER_LIST =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+
+    /**
+     * Lists whose origin names a renderer the cancellation rule treats alike.
+     * <p>
+     * Recorded once when the origin arrives, so {@link #cancelled(int)} does not run three {@code String.contains}
+     * searches per cancelled replay - the shape the profile showed as 2.1% of the block-entity path.
+     */
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet ITEM_LIKE =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /** How many new lists have printed their first replay, so the line cannot flood the log. */
     private static final java.util.Set<Integer> REPLAY_TRACED = new java.util.HashSet<Integer>();
     private static int replayTraces;
@@ -303,12 +327,9 @@ public final class VulkanDisplayListCensus {
             // Per list as well as in total: whether a list's replay was taken over by the native path is the difference
             // between a draw that happened and one that reached a GL body with no context, and only the pair
             // (replays, cancels) says which lists those are.
-            Integer seen = CANCELLED_PER_LIST.get(Integer.valueOf(list));
-            CANCELLED_PER_LIST.put(Integer.valueOf(list), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+            CANCELLED_PER_LIST.addTo(Integer.valueOf(list).intValue(), 1);
         }
-        String origin = ORIGINS.get(Integer.valueOf(list));
-        if (origin != null && (origin.contains("ItemRenderer") || origin.contains("ModelPlayer")
-                || origin.contains("ModelBiped"))) {
+        if (ITEM_LIKE.contains(list)) {
             originCancels++;
         }
         if (cancelled <= 3) {
@@ -361,8 +382,8 @@ public final class VulkanDisplayListCensus {
             }
         }
         noteReplayTexture(list);
-        Integer seen = REPLAYS.get(Integer.valueOf(list));
-        if (seen == null) {
+        boolean first = !REPLAYS.containsKey(list);
+        if (first) {
             distinctLists++;
             if (!reportedFirst) {
                 reportedFirst = true;
@@ -370,7 +391,7 @@ public final class VulkanDisplayListCensus {
             }
             celtium$traceFirstReplay(list);
         }
-        REPLAYS.put(Integer.valueOf(list), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+        REPLAYS.addTo(list, 1);
     }
 
     /**
@@ -494,15 +515,15 @@ public final class VulkanDisplayListCensus {
         if (REPLAYS.isEmpty() && replaysWithUnknownList == 0) {
             return "none";
         }
-        java.util.List<Map.Entry<Integer, Integer>> entries =
-                new java.util.ArrayList<Map.Entry<Integer, Integer>>(REPLAYS.entrySet());
-        entries.sort((a, b) -> b.getValue().intValue() - a.getValue().intValue());
+        java.util.List<it.unimi.dsi.fastutil.ints.Int2IntMap.Entry> entries =
+                new java.util.ArrayList<it.unimi.dsi.fastutil.ints.Int2IntMap.Entry>(REPLAYS.int2IntEntrySet());
+        entries.sort((a, b) -> b.getIntValue() - a.getIntValue());
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < Math.min(entries.size(), 8); i++) {
             if (i > 0) {
                 text.append(' ');
             }
-            text.append(entries.get(i).getKey()).append(':').append(entries.get(i).getValue());
+            text.append(entries.get(i).getIntKey()).append(':').append(entries.get(i).getIntValue());
         }
         if (entries.size() > 8) {
             text.append(" +").append(entries.size() - 8).append(" more");
@@ -518,10 +539,9 @@ public final class VulkanDisplayListCensus {
         // missing" into a list id and its capture state.
         StringBuilder notDrawn = new StringBuilder();
         int shown = 0;
-        for (Map.Entry<Integer, Integer> entry : REPLAYS.entrySet()) {
-            int list = entry.getKey().intValue();
-            Integer drawn = CANCELLED_PER_LIST.get(Integer.valueOf(list));
-            int missing = entry.getValue().intValue() - (drawn == null ? 0 : drawn.intValue());
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry : REPLAYS.int2IntEntrySet()) {
+            int list = entry.getIntKey();
+            int missing = entry.getIntValue() - CANCELLED_PER_LIST.get(list);
             if (missing <= 0) {
                 continue;
             }
