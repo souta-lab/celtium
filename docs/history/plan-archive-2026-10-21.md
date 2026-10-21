@@ -105,3 +105,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### 計測・履歴（2026-10-21）
 
 | **alphaSelectorCountsのprimitive化（2026-10-21 実装・順位付け不能）** | **検証済み** | 検証PASSED | — | 描画ループはgroup毎に `LinkedHashMap.merge(Integer, Long, lambda)` で**boxing付きヒストグラム更新**をしていた（約180回/frame、計器のためのコスト）。fastutil `Int2LongOpenHashMap.addTo` に置換。leg `alpha-prim-1`（jar `ed29ec92…`、validation ON）で画像gate PASSED（distinct 54,837 / nonBg 0.943）・validation clean。**順位付けは不能**: 制御arm比 0.975 / 1.037 / 1.133（ばらつき12pp）で、同時刻のマシン負荷が高く判定に使えない。変更は仕事を減らす方向のみ（boxingとlambdaの除去） |
+
+### JVM統一と計測（2026-10-21）
+
+| **JVM構成の統一（2026-10-21）** | **完了（ビルドのみ25）** | 実測 | — | 利用者指示でPCのJVMを21/27へ統一。**JDK 27をTemurin 27+35で導入**し、ゲーム(cleanroom 2instanceと`celtium-world-accept`)を27へ、NIGHTFALL/FOを21へ、`default-java`と`java`/`javac`/`jar`/`jfr`を21へ。JDK 21はJREのみだったので**JDKへ入れ替え**、Prism同梱の`nightfall-java17`と`java-runtime-delta`(21.0.7)は削除。Gradle wrapperを**9.7.1→9.8.2**（9.8.0がJava 27実行対応の最初）。**実機確認**: leg `jvm-a-1`（jar `61c9d358…`）で `Java is ... version 27 ... /usr/lib/jvm/java-27-openjdk-amd64`、画像gate PASSED、validation clean。**例外はビルドのみ**: RFG 2.0.4が「JDK 25以上」を要求し（21で実行を拒否）、jvmdowngrader 2.0.1（最新）は27で`:common:downgradeJar`に失敗するため、Gradleデーモンだけ25のまま。⇒ **アプリ実行系は21/27、ビルドだけ25**。**注意: 過去の性能測定はすべてJava 25上なので、以後の数値と直接比較できない** |
