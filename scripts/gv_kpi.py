@@ -129,8 +129,11 @@ def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
     # the throughput each leg actually achieved, so a wide gap inside one repetition is disturbance, not a result: a run
     # whose control legs managed 1072 and 1365 samples against the candidate's 4461 reported the control as 36% slower
     # when the machine had simply starved it.
+    # Only the arm names: iterating the pair dict would include "repetition", which is an int and has no samples.
+    arms = ("celtium", "celeritas", "control")
     disturbed = [p.get("repetition", index + 1) for index, p in enumerate(pairs)
-                 if max(name_samples(p, n) for n in p) > 1.5 * min(name_samples(p, n) for n in p)]
+                 if max(name_samples(p, n) for n in arms if n in p) > 1.5 * min(
+                     name_samples(p, n) for n in arms if n in p)]
     ratios = [p["celtium"]["p50Ms"] / p["celeritas"]["p50Ms"] for p in pairs]
     ratio = statistics.median(ratios)
     # A single pair, asymmetrical flags, or a frame limiter cannot establish the product's performance KPI.

@@ -12507,7 +12507,7 @@ this.frameBufferOpen = false;
         if (texture == 0) {
             return false;
         }
-        int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        int fbo = drawFramebufferBinding();
         if (fbo == 0) {
             return false;
         }
