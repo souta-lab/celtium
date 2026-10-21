@@ -14539,6 +14539,8 @@ this.frameBufferOpen = false;
     private VulkanTerrainPipeline shadowTerrainPipeline;
     private int shadowShadowDiag;
     private boolean shadowProbeReported;
+    /** How many times the light setup has been logged; a bounded diagnostic, not a per-frame cost. */
+    private int shadowLightsLogged;
     /**
      * Snapshots the shadow draw's tuple if the renderer captured a new batch since the last one.
      * <p>
@@ -15064,6 +15066,15 @@ this.frameBufferOpen = false;
             // belowOne=0.0, i.e. empty. lightVP * T(centre) maps a camera-relative position where lightVP maps the world
             // position it stands for.
             org.joml.Matrix4f terrainShadowMatrix = new org.joml.Matrix4f(lightViewProjection).translate(centre);
+            if (this.shadowLightsLogged < 3) {
+                this.shadowLightsLogged++;
+                org.joml.Vector4f cameraMapped = new org.joml.Vector4f(0.0f, 0.0f, 0.0f, 1.0f)
+                        .mul(terrainShadowMatrix);
+                System.out.println("[Celtium] CELTIUM_SHADOW_LIGHT centre=" + centre.x + "," + centre.y + "," + centre.z
+                        + " direction=" + direction.x + "," + direction.y + "," + direction.z
+                        + " cameraDepth=" + (cameraMapped.w == 0.0f ? Float.NaN : cameraMapped.z / cameraMapped.w)
+                        + " radius=" + radius);
+            }
             java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
                     this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
             terrainShadowMatrix.get(0, matrix);
