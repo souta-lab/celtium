@@ -212,6 +212,7 @@ public class MinecraftMixin {
     private static boolean celtium$vsyncPushed;
     /** The value last pushed, so a change made after startup is honoured too. */
     private static boolean celtium$vsyncPushedValue;
+    /** The value last pushed, so a change made after startup is honoured too. */
     @Unique
     private static boolean celtium$windowRendererCreated;
     @Unique
@@ -434,10 +435,11 @@ public class MinecraftMixin {
         // early point the window renderer is created, which is before the first present - so the first swapchain is
         // built with the player's own value. Measured need: task-56's `vsync-toggle2` leg, where the row's press was
         // the only thing that reached the policy.
-        // Pushed when it changes, not once: the one-shot push missed a value set after the renderer was created - the
-        // validation fixture turns VSync off for its timing legs and says so in its report, and a renderer that kept
-        // presenting FIFO would be measuring a different present path than the one it claims. A boolean compare per
-        // frame is what honouring a runtime setting costs.
+        // Pushed when it changes, not once. With only the startup push, whether the renderer sees the saved value
+        // depended on where the value was set relative to the renderer's creation: the validation fixture's legs
+        // reported `vsyncEnabled=false` while the renderer's own log said `requested=vsync-on(FIFO)` in some runs and
+        // `vsync-off(MAILBOX)` in others, which makes the present path a race rather than a setting. A boolean compare
+        // per frame is what honouring a runtime setting costs.
         if (mc != null && (!celtium$vsyncPushed || celtium$vsyncPushedValue != mc.gameSettings.enableVsync)) {
             celtium$vsyncPushed = true;
             celtium$vsyncPushedValue = mc.gameSettings.enableVsync;
