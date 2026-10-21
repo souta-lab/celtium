@@ -56,7 +56,7 @@ void main() {
                 }
             }
             if (CELTIUM_SHADOW_DEBUG) {
-                fragColor = vec4(lit > 4.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
+                fragColor = vec4(1.0, 1.0, 0.0, 1.0);   // the block family is yellow
             } else {
                 colour.rgb *= mix(0.2, 1.0, lit / 9.0);
             }

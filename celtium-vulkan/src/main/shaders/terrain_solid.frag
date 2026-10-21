@@ -238,7 +238,7 @@ void main() {
         // strength (0.45) left ON and OFF within 0.13 percentage points of dark pixels of each other.
         float shadow = lit / 9.0;
         if (CELTIUM_SHADOW_DEBUG) {
-            fragColor = vec4(lit > 4.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
+            fragColor = vec4(0.0, 0.0, 1.0, 1.0);   // terrain is blue
         } else {
             fragColor.rgb *= mix(0.2, 1.0, shadow);
         }

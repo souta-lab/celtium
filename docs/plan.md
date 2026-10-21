@@ -37,7 +37,7 @@
 | **state所有のnative化** | **未完（次の境界）** | — | — | GlStateManagerのproducer/queryとraw GL adapterのconsumerを同一native ownerへ。現状backendのstate snapshot/queued groupを経由しており、native側から互換状態を参照する残りがある。state push/pop・query・順序の回帰が必要 |
 | **terrain upload とframe実行** | **未完** | — | — | dirty bytes/copy/submit/可視判定の実費分離（warm＋streaming）、worker→render owner引渡し、pass/barrierの資源依存からの編成、旧GL handoff分岐の除去 |
 | **受理経路の再設計（2026-10-22 設計・前提訂正）** | **転写は遅延不可** | 未実装 | — | `architecture` §6。**`vertexAddress` はゲームの`BufferBuilder`内部バッファで次のdrawで再利用**されるため**頂点転写は受理時必須**（遅延すると壊れる）＝遅延できるのは境界判定とgroup生成だけで、判定は既に安く**5%には届かない見込み**。1.7µs/offerは数十個の5-50nsに散る（**長い尾**）ので、次は**まとめたsweepを5%基準**で測る |
-| **互換・目視（4画面 / E2E / RLCraft / BSL / 配布）** | **4画面取得済／影は判定可視化で追跡中** | 実測 | 一部未完 | 4画面は色順修正後に取得（loading/game/settings/home、settingsは gate PASSED・validation 0、homeに VUID-09600 が1件）。影の詳細・BSL・互換の現状は [history](<history/plan-archive-2026-10-21.md>) の「視覚受入の詳細（2026-10-22）」に集約 |
+| **互換・目視（4画面 / E2E / RLCraft / BSL / 配布）** | **4画面取得済／影は描画系統の特定中** | 実測 | 一部未完 | 4画面は色順修正後に取得（settings は gate PASSED・validation 0、home に VUID-09600 が1件）。**影の系統特定（2026-10-22）**: デバッグ定数で系統ごとに色を塗らせたところ、**塗られたのは地形の青5.24%のみ**で、即時系4種（item/position_tex/block/tex_color）は**すべて0.00%**。**前回の「緑3.35%」は地形のlit色だった**（＝即時系が塗ったのではなかった）と訂正。⇒ 画面の約95%を描くシェーダは**未計器の地形フラグメント変種**（`terrain_solid` 以外のcutout/translucent等）である可能性が高い。次は**地形の全フラグメント変種に同じ定数**を入れ、壁の持ち主を特定する。詳細は [history](<history/plan-archive-2026-10-21.md>) |
 | **影・BSL・配布** | **未完** | — | — | native shadow mapの両GPU実画面、BSLの描画反映、配布物と実装の一致 |
 
 ## 撤回した前提（再入条件つき）
