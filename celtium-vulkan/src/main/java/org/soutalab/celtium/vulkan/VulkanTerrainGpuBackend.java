@@ -6351,9 +6351,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 boundTexture = whiteTextureId();
             }
             long matrixCopyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-            if (MIRRORED_MATRICES) {
+            if (MIRRORED_MATRICES && this.matricesDirty) {
                 // peekMatrix: matrix() returns a sixteen-float copy that is fed straight to arraycopy here - an
                 // allocation made only to be copied again. The stack's own array is the same sixteen floats.
+                //
+                // Gated on the dirty flag, which every matrix operation sets (loadIdentity, loadMatrix, ortho,
+                // translate, rotate, scale, multiplyMatrix, push and pop): a batch offered without a matrix change since
+                // the last one does not need the two 64-byte copies, and the merge predicate below still compares the
+                // same values because nothing can have moved them. At ~280 batches a frame that is 560 copies and 560
+                // sixteen-float comparisons removed whenever a tile entity draws several parts under one transform.
                 System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
                         this.glProjection, 0, 16);
                 System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
