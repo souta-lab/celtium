@@ -900,6 +900,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
 
+        FrameCoordinator.Submission progress = FrameCoordinator.Submission.SKIPPED;
         boolean submitted = false;
         try {
             org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainBegin");
@@ -917,9 +918,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainRecord");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainSubmit");
-            this.frameCoordinator.submitCommands();
+            progress = this.frameCoordinator.submitCommands();
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSubmit");
-            submitted = true;
+            submitted = progress != FrameCoordinator.Submission.SKIPPED;
             this.terrainStatistics.notePassSubmissions();
             if (this.readbackPending) {
 
@@ -949,21 +950,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 beginCommands();
                 this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-                this.frameCoordinator.submitCommands();
+                progress = this.frameCoordinator.submitCommands();
             } catch (RuntimeException | LinkageError error) {
                 record("frame recovery failed: " + describe(error));
             }
         }
 
         try {
-            if (!this.frameSubmitReachedQueue) {
-                // Neither the submission nor its recovery reached the queue, so nothing signalled the Vulkan-to-GL
-                // semaphore that endFrame makes GL wait on. Ending the frame would stall the render thread on that wait
-                // and hand the game a frame nobody finished; leaving it unended keeps the failure visible, which is the
-                // fail-closed behaviour the audit asks for here.
+            if (!progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
+                // An external owner requires its semaphore packet to have been queued. A native same-queue target
+                // does not: its accepted recording intentionally stays open until the real frame boundary. Do not
+                // pretend RECORDED means QUEUED, or count every native terrain pass as a failed GL handoff.
                 this.terrainStatistics.notePassErrors();
-                record("no submission reached the queue this frame, so the frame is not ended and GL is not left waiting"
-                        + " on a semaphore that was never signalled");
+                record("terrain target cannot close: progress=" + progress
+                        + " externalSemaphores=" + this.frameTarget.needsFrameSemaphores());
                 return;
             }
             long handoffStart = System.nanoTime();
@@ -2064,6 +2064,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private final java.util.List<ImmediateGroup> immediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanDynamicMesh currentImmediateMesh;
+    private RetainedGeometryCache retainedGeometry;
+    private LeasedResource.Lease<VulkanDynamicMesh> currentGeometryLease;
     /**
      * The immediate path's vertex and index memory for the frame being recorded (OPT-05).
      * <p>
@@ -5664,6 +5666,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
+        return submitGeometryBatch(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount, drawMode, null);
+    }
+
+    /** Minecraft/Forge retained geometry enters with its layout and ownership already known, not through GL arrays. */
+    public boolean submitRetainedGeometry(NativeGeometryBuffer geometry, int drawMode) {
+        if (geometry.vertexCount() == 0) {
+            return true;
+        }
+        return submitGeometryBatch(null, geometry.stride(), geometry.formatId(), geometry.address(),
+                geometry.vertexCount(), drawMode, geometry);
+    }
+
+    private boolean submitGeometryBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
+                                        int vertexCount, int drawMode, NativeGeometryBuffer retained) {
         // The entry flush of the font batching (task-59): anything submitted while a glyph run is held means the run
         // came before this batch, so it goes out now - before this one is appended. This is the whole ordering
         // argument; without it a held quad would land after content that vanilla drew before it.
@@ -5742,7 +5758,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
         try {
             boolean taken = submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress,
-                    vertexCount, drawMode);
+                    vertexCount, drawMode, retained);
             if (!taken && !this.targetRegistry.currentIsMain()) {
                 // Refused in this very call: attribute the reason now, because the offers arrive in one burst at the end of a
                 // run and there is no later call to sample from.
@@ -5774,11 +5790,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
-                                              int vertexCount, int drawMode) {
+                                              int vertexCount, int drawMode, NativeGeometryBuffer retained) {
         long batchStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
         try {
             return this.submitImmediateBatchBody(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
-                    drawMode);
+                    drawMode, retained);
         } finally {
             if (BATCH_TIMINGS) {
                 long took = System.nanoTime() - batchStartedNanos;
@@ -5805,7 +5821,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private boolean submitImmediateBatchBody(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
-                                             int vertexCount, int drawMode) {
+                                             int vertexCount, int drawMode, NativeGeometryBuffer retained) {
         long afterBatchStartNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
@@ -6389,7 +6405,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     boundTexture == 0 ? null : celtium$registry().get(boundTexture);
             org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
-            boolean fastMerged = this.currentImmediateMesh != null
+            boolean fastMerged = retained == null && this.currentImmediateMesh != null
                     && this.currentGroupFormatId == formatId
                     && this.currentGroupTexture == boundTexture
                     && this.currentGroupStateKey == stateKey
@@ -6505,7 +6521,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (lightParamsMoved) {
                 this.immediateStatistics.noteLightParamBoundarySplits();
             }
-            if (this.currentImmediateMesh == null
+            if (retained != null || this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
                     || this.currentGroupStateKey != stateKey || !samePass
                     || scissorMoved
@@ -6531,7 +6547,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 closeCurrentImmediateGroup();
                 long groupCreateStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 long groupCreateCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
-                this.currentImmediateMesh = celtium$newImmediateMesh();
+                if (retained == null) {
+                    this.currentImmediateMesh = celtium$newImmediateMesh();
+                } else {
+                    if (this.retainedGeometry == null) {
+                        this.retainedGeometry = new RetainedGeometryCache(this.context);
+                    }
+                    this.currentGeometryLease = this.retainedGeometry.acquire(retained, drawMode, indices);
+                    this.currentImmediateMesh = this.currentGeometryLease.value();
+                }
                 long groupCreateCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupCreateNanos(System.nanoTime() - groupCreateStart);
                 if (groupCreateCpuStart >= 0 && groupCreateCpuEnd >= 0) this.groupCreateCpuNanos += groupCreateCpuEnd - groupCreateCpuStart;
@@ -6563,7 +6587,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // identity, so a batch drawn under a different GUI matrix can still join this group: the transform it
                 // would have had is baked into its vertices instead of being carried in the group's push constants.
                 // Everything else keeps the matrix as part of the key exactly as before.
-                this.currentGroupPreTransformed = celtium$preTransformable(formatId, state);
+                this.currentGroupPreTransformed = retained == null && celtium$preTransformable(formatId, state);
                 if (this.currentGroupPreTransformed) {
                     this.immediateStatistics.notePreTransformedGroups();
                     java.util.Arrays.fill(this.currentGroupModelView, 0.0f);
@@ -6742,10 +6766,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (BATCH_REUSE_CENSUS) {
                 celtium$noteBatchReuse(vertexAddress, vertexCount, vertexStride, formatId, drawMode, state);
             }
-            boolean appended = this.currentGroupPreTransformed
+            boolean appended = retained != null || (this.currentGroupPreTransformed
                     ? this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
                             indices, this.glModelView)
-                    : this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices);
+                    : this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices));
             long appendCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (BATCH_TIMINGS) this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
             if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
@@ -6764,6 +6788,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.currentGroupUsed = true;
             this.currentGroupBatches++;
             this.pendingImmediateIndices += indices.length;
+            if (retained != null) {
+                // A retained mesh is immutable and may be used by many queued draws. Seal this draw now so a later
+                // transient batch can never append into it; ordering/state capture still use the shared queue.
+                closeCurrentImmediateGroup();
+            }
 
             this.immediateStatistics.noteImmediateTaken();
 
@@ -6815,11 +6844,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     }
                     this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                     this.recordedImmediateGroups.clear();
-                    int retained = 0;
+                    int retainedBatches = 0;
                     for (ImmediateGroup group : this.immediateGroups) {
-                        retained += group.batches;
+                        retainedBatches += group.batches;
                     }
-                    this.targetStatistics.addWindowFlushRetainedBatches(retained);
+                    this.targetStatistics.addWindowFlushRetainedBatches(retainedBatches);
                     // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
                     // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
 // An abandoned frame is not "the frame is still recording": the flag must not route the
@@ -6827,7 +6856,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 this.frameBufferOpen = false;
                     this.frameTarget.abandonFrame("immediate window submit failure");
                     record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
-                            + "); retained " + retained + " accepted batches, none dropped, the next frame retries"
+                            + "); retained " + retainedBatches + " accepted batches, none dropped, the next frame retries"
                             + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
                 }
             }
@@ -9717,7 +9746,10 @@ this.frameBufferOpen = false;
             group.polygonOffsetFactor = this.currentGroupPolygonOffsetFactor;
             group.polygonOffsetUnits = this.currentGroupPolygonOffsetUnits;
             celtium$noteFogCaptureDrift(group);
-            group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), false, this.worldEpoch);
+            group.geometryLease = this.currentGeometryLease;
+            this.currentGeometryLease = null;
+            group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(),
+                    group.geometryLease != null, this.worldEpoch);
             this.immediateGroups.add(group);
             if (this.currentGroupTarget != this.targetRegistry.mainIdentity()
                     && this.groupCloseDebugLines < 12) {
@@ -9737,6 +9769,9 @@ this.frameBufferOpen = false;
                 // reaches stdout or the report, so runs on the default flags stay comparable with older artifacts.
                 reportGroupBounds(group);
             }
+        } else if (this.currentGeometryLease != null) {
+            this.currentGeometryLease.close();
+            this.currentGeometryLease = null;
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -9763,7 +9798,11 @@ this.frameBufferOpen = false;
         }
         this.immediateGroups.clear();
         this.pendingImmediateIndices = 0;
-        if (this.currentImmediateMesh != null) {
+        if (this.currentGeometryLease != null) {
+            this.currentGeometryLease.close();
+            this.currentGeometryLease = null;
+            this.currentImmediateMesh = null;
+        } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
             this.currentImmediateMesh = null;
         }
@@ -9893,6 +9932,7 @@ this.frameBufferOpen = false;
                 + " pushBlockMisses=" + this.pushBlockMisses
                 + " pushBlockEntries=" + this.pushBlocks.size()
                 + " pushBlockClears=" + this.pushBlockClears
+                + " retainedGeometry=[" + (this.retainedGeometry == null ? "unused" : this.retainedGeometry.summary()) + "]"
                 + " batchReuseHits=" + this.batchReuseHits
                 + " batchReuseMisses=" + this.batchReuseMisses
                 + " batchReuseLastFrameSize=" + this.batchReuseLastFrame.size()
@@ -10975,6 +11015,10 @@ this.frameBufferOpen = false;
             record("teardown: held groups could not be released: " + describe(error));
         }
         int pendingCopies = 0;
+        if (this.retainedGeometry != null) {
+            this.retainedGeometry.close();
+            this.retainedGeometry = null;
+        }
 
         released += releaseImmediateMesh(this.currentImmediateMesh);
         this.currentImmediateMesh = null;

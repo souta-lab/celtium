@@ -29,26 +29,10 @@ public final class FrameCoordinator {
     private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();
 
     /**
-     * Route frame submissions through the batched deferred queue instead of an immediate vkQueueSubmit: every
-     * recording of the frame becomes a VkSubmitInfo inside the batch's single driver call. Order is preserved
-     * because the flush submits the entries in the order they were queued. Requires
-     * {@code celtium.vulkan.batchedSubmits} (the deferred machinery's own switch); off by default until a leg
-     * measures it.
-     */
-    /**
-     * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
-     * boundary. OFF by default: with it the flush wall time falls from 3.82 to 2.35-2.41 ms per frame (AMD RX 6400,
-     * 4.55 flushes/frame) and queue submissions per frame from 12.7 to 4.6, but the E2E 1.93a pack produces
-     * command-buffer state validation errors under it (legs unife2e1 and uniE1, 8 VUIDs of the
-     * vkCmd*-commandBuffer-recording family, then the process ended with no report). The validation text names the
-     * mechanism exactly: the open command buffer "is now in an invalid state ... because the following objects bound
-     * to the command buffer were invalidated: VkBuffer ... was destroyed, VkDescriptorSet ... was destroyed or
-     * updated without UPDATE_AFTER_BIND". A long-lived open recording holds references to buffers and descriptor
-     * sets that the E2E pack's world load and mod framebuffer paths grow, replace or rewrite mid-frame, so the
-     * resource-lifetime contract has to become "nothing an open recording references is destroyed or rewritten
-     * before that recording is submitted" (the OPT-07 ownership contract the upload path already names) before this
-     * can be the default. Take the win only then: {@code -Dceltium.vulkan.batchFrameSubmits=true} is the measured
-     * A/B (flush 3.82 -> 2.35 ms/frame, submits 12.7 -> 4.6) for that work.
+     * Coalesce accepted recordings into an open command buffer until the real frame boundary (default on).
+     * A RECORDED result is not a submission packet and must not be treated as a failed external-GL handoff.
+     * Every referenced buffer, image and descriptor generation must remain valid from recording through completion;
+     * retained geometry uses draw leases for that contract. Other resource domains require the same lifetime audit.
      */
     private static final boolean BATCH_FRAME_SUBMITS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
@@ -146,15 +130,23 @@ public final class FrameCoordinator {
         }
     }
 
-    /** Submits the frame with the GL-Vulkan semaphore pair, which is the ordinary path. */
-    void submitCommands() {
-        submitCommands(true);
+    /** Recording acceptance is not queue submission, and neither means GPU completion. */
+    enum Submission {
+        SKIPPED, RECORDED, QUEUED;
+
+        boolean canCloseTarget(boolean needsExternalSemaphores) {
+            return this == QUEUED || (this == RECORDED && !needsExternalSemaphores);
+        }
+    }
+
+    Submission submitCommands() {
+        return submitCommands(true);
     }
 
     /** Bounded probe counter for the submit entry (2026-10-15). */
     private static int celtium$submitEntryLogs;
 
-    void submitCommands(boolean withFrameSemaphores) {
+    Submission submitCommands(boolean withFrameSemaphores) {
         // Temporary probe: the present skips with "no completed frame waiting" and the frame-queued setter is never
         // called with true, while gpuStalled is false. This line says whether the submit is entered at all, which
         // splits "never called" from "returns early" in one leg.
@@ -165,7 +157,7 @@ public final class FrameCoordinator {
         if (this.host.gpuStalled()) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
             // reported, after the pass-level ones.
-            return;
+            return Submission.SKIPPED;
         }
         // The owned target's semaphore pair synchronizes the renderer with itself on one queue, which is ordering
         // the queue already has: when the target says the contract does not apply the submission takes no semaphore
@@ -180,7 +172,7 @@ public final class FrameCoordinator {
             // once at the frame boundary via celtium$finishFrameBuffer. A frame that switched to a semaphore-carrying
             // target mid-recording falls through instead and takes the direct path below.
             if (!frameSemaphores && BATCH_FRAME_SUBMITS) {
-                return;
+                return Submission.RECORDED;
             }
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -261,6 +253,7 @@ public final class FrameCoordinator {
 
             this.host.celtium$noteDirectSubmit();
             celtium$noteSubmissionBookkeeping(frameSemaphores);
+            return Submission.QUEUED;
         }
     }
 

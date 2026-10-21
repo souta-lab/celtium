@@ -1,107 +1,110 @@
-# Celtium アーキテクチャ転換計画（2026-10-21）
+# Celtium — native所有権への転換
 
-> この文書は**計画**であり、実装済みの主張ではない。現在の実装・受入は [plan.md](<plan.md>) が唯一。
-> 製品の完成条件は [goal.md](<goal.md>)。判断の根拠は本文中に実測・コード位置として示す。
+2026-10-21、利用者の全面変更許可に基づく再設計。**唯一の描画制約はnative VK-only、GL変換はMod専用**。
+これは設計であり、現在の達成度は [plan.md](<plan.md>)、製品の出口は [goal.md](<goal.md>)。
+同日早朝のS0–S5固定計画、S0以外の実装禁止、SSBO/multi-drawの義務付けは本書で置き換える。
 
-## 0. なぜ転換するのか（この1週間で否定された前提）
+## 1. 捨てる前提
 
-| 前提 | 実際 | 根拠 |
+- 古いKPI、hotspot不在、per-call最適化の余地なし、GC/GPU/同期の根因断定を設計入力にしない。
+  source・artifact・区間が一致した比較から再構築する。同じJARの再測定は変更のA/Bではない。
+- 「nativeという名前の入口」「GL到着counterが少ない」「validation clean」は境界の証明ではない。
+  旧 `CeltiumNativeDraw` はスタブを直接呼んでいた。GPU実行がVulkanでもfrontendの所有権はnativeになっていなかった。
+- **論理draw数、Vulkan command数、render-pass数、submit数は別物**。どの数も単独の最適化目標にしない。
+  2件なら必ずindirect、十数pass以内、CPU bake禁止、全計器完成まで実装停止、といった固定則を置かない。
+- 既存の巨大backendを横に分割して相互に数百getterを生やすだけでは設計改善ではない。
+  正しさを握るownerと契約を移す。移行接続のbackend変更は許すが、新しい資源所有者を中へ埋め込まない。
+
+## 2. 設計軸：GL呼出しの変換ではなく、更新頻度と所有権
+
+```text
+Minecraft / Forge API                      Modのraw GL
+  ├─ chunk CPU mesh / model / VBO              │
+  ├─ Tessellator / GUI / glyph                 ▼
+  ├─ texture / framebuffer / post          compatibility adapter
+  └─ state / matrices / queries                │
+               └──────────┬───────────────────┘
+                          ▼
+       typed native resources + immutable draw-state / target generations
+                          ▼
+       ordered frame records + resource dependencies + bounded transient arena
+                          ▼
+       native pass execution / pipeline & descriptor cache / submission scheduler
+                          ▼
+       Vulkan queue / swapchain / completion epochs → resource retirement
+```
+
+矢印は一方向。**native側がGL互換層へqueryして状態や資源を取り戻す構造を終わらせる。**
+共通のnative state/resource ownerをfrontendとMod adapterが更新し、必要なGL queryだけadapterがそこから答える。
+既存CPU chunk engineは使える部分を残すが、そのGL buffer/staging APIをnative転送の主入口にしない。
+CPU engine自体の置換も、機能・仕事量・throughputの証拠で有利なら許す。
+
+### 資源ごとの扱い
+
+| domain | 所有と更新単位 | 実行時の契約 |
 |---|---|---|
-| 「per-call 変換が 3.5µs × 290/frame ≒ 1ms の主因」 | 即時パスの内訳は prepare 0.42 + branch 0.38 + append 0.17 ≒ **0.97ms/frame**。主因ではあるが、`flush` 区間全体でも 1.1ms | `physplit1` 系 leg の `CELTIUM_*Millis` |
-| 「draw は 6〜9/frame なので 1:1 変換は無い」 | **部分計数**。`DrawCounters` は `VulkanDynamicMesh` の2点のみで、地形の逐次 draw・terrain/shadow の indirect を数えていない | `VulkanDynamicMesh.java:288,526`、`TerrainRenderer.java:549`、`ShadowMapPass.java:599,798` |
-| 「KPI 2.29x は変更後の比較」 | `gv-kpi.sh` の既定 JAR は **2026-10-20 21:34** の固定物。4 leg がすべて同一 sha `ca77e4a5…` を測定 | 各 leg の `-manifest.json` |
-| 「2.29x が FPS の判定」 | `frameIntervalP50Ms` は **cold window（worldTicks 120..200＝チャンク構築中）**。steady state は `frameIntervalWarmP50Ms` だが `warmSampleCount=0` | `ValidationClient.java:5245`、`physplit1` の report |
+| 地形 | section/region mesh世代、dirty range、upload ticket | 変更分だけ転送。可視listとgeometry lifetimeを分ける。不要なcopy/waitをなくす |
+| 保持型geometry | public VBO、モデル、固定GUI等の内容世代 | upload/rebuild時だけ頂点・indexを作る。各drawは既存meshとstateを参照 |
+| transient geometry | glyph、動的GUI、particles等のframe-local領域 | 範囲と寿命を明示。毎drawのheap objectやbuffer確保を避ける |
+| texture/material | image世代、sampler、descriptor世代 | bound/recordedなdescriptorを途中で書換えない。reload時は旧世代をretire |
+| render target | color/depth attachment、clear/load、layout、サイズの世代 | 複数wrapperが同じimageを指すことと、別世代への差替えを区別 |
+| frame/submission | recording、submission packet、fence/sequence | 記録受理とqueue送信とGPU完了を別状態にする |
 
-⇒ **この間の「効果なし/退行なし」の結論は測定として無効**。まず測定を直さない限り、どの最適化も判定できない。
+資源IDはopaqueなnative identity。Modが数値handleを保存・復元しても同じ資源を指せるようadapterにviewを持たせるが、
+native drawがGL名検索・client-array decode・GL storage mirrorを経由する必要はない。
 
-## 1. 転換の骨格
+### draw-stateと順序
 
-現行: **GL 呼び出し → スタブ/ヒント → Java で1件ずつ Vulkan draw へ変換**（`CeltiumNativeDraw.drawArrays` は今も
-`CeltiumGlStub.celtium$drawArrays` を直接呼ぶ＝スタブ経由が残っている）。
+- 描画を受理した時点のmatrix、texture世代、blend/depth/stencil/cull/color mask、fog/lighting、viewport/scissor、targetを保持する。
+  後でglobal stateを読み直して別の状態で実行しない。target切替、clear、copy、readback、Mod callbackは必要な順序境界。
+- UIとtranslucentの観測順を保持する。不透明物の並べ替えも、同じresource依存と描画結果を保証できる範囲だけ。
+  粗い `(format, texture, blend, matrix)` キーだけではcolor mask・clip・destination等が落ちる。
+- batchingはこの契約の上の実行選択。小さいtransient頂点のCPU連結、retained draw、instancing、indirect multi-drawのどれも候補。
+  SSBOのmatrix配列はCPU/GPUの実費と対応featureを両GPUで比較して採否を決める。
+  **描画が1件でも資源再利用で改善できるし、draw数が減っても総時間が悪化しうる。**
 
-転換後: **Java の描画意図をデータとして集め、順序を保ったまま、少数の native 実行単位にする。**
+## 3. 最初の実装単位：VertexBufferのnative資源化
 
-```
-Minecraft / Forge の描画API（Tessellator, ModelRenderer, FontRenderer, GlStateManager, RenderItem）
-        │  ← Java API レベルで捕捉（GL スタブを通さない）
-        ▼
-  DrawIntent 収集        1件 = 1 draw ではない。{頂点範囲, 状態, 行き先, 順序番号} の記録
-        │
-        ▼
-  順序保存バッチ化       「隣接し、状態が同一」な intent だけを run にまとめる（順序を跨がない）
-        │
-        ▼
-  native 実行            run ごとに 1 つの draw / indirect multi-draw。状態は SSBO・push constant で供給
-```
+[VertexBufferMixin](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/VertexBufferMixin.java>) が
+Minecraftのpublic `VertexBuffer` の生成・bind・upload・draw・unbind・deleteを所有する。
+Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer storeの再decodeから切り離す。
 
-**multi-draw はこの構造の実行方式**であって目的ではない。run が1件なら通常の `vkCmdDraw*`、2件以上なら indirect。
-どちらも「intent を貯めてから出す」という同じ構造の上に乗る。
+- [NativeGeometryBuffer](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeGeometryBuffer.java>)：
+  callerのremaining bytesをupload時にコピー。CPU内容とnative identityを所有し、device再生成に必要な内容を保持。
+- [RetainedGeometryCache](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/RetainedGeometryCache.java>)：
+  deviceごと・内容世代/primitive topologyごとのGPU mesh。毎frameの頂点copyをしない。
+  現在のmesh memoryはmapped host-visibleであり、device-local配置へ移行済みという意味ではない。
+- [LeasedResource](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/LeasedResource.java>)：
+  cache ownerとは別に、受理したdrawがleaseを持つ。upload/deleteでownerを外しても、未記録・記録中・in-flightのdrawは生存。
+  group破棄か対応sequenceの完了後にleaseを解放。**「2回waitしたから安全」とは判定しない。**
+- retained drawは前後のtransient groupと混ぜずsealする。同じmeshをdepth-only/colorなど異なるstateで再利用し、頂点をappendしない。
+- Modがpublic VBO APIとraw GLを混用する場合はadapterで同じidentity/内容を解決する。
+  bind/query、data/subdata、transient map/unmap、deleteのCPU契約をテストする。persistent mappingはここでは広告しない。
+- 形式はstrideだけで推測せず、element・offset・UV indexをupload時に解決。未知形式は無言で誤描画しない。
 
-### 1.1 なぜ GL スタブを主経路から外すのか
-GL スタブは「GL の意味論を Java で再現する層」であり、`glDrawArrays` 1回ごとに状態の読み直し・descriptor 解決・
-グループ管理を払う。バニラの意図は Java API の時点で分かっているので、GL の意味論を経由する必要がない。
-**スタブは「Mod が直接 GL11 を叩く」場合の互換層に限定する**（[refactoring-plan §3-7](<refactoring-plan.md>)）。
+**限界**：この単位はnative frontend全体の完成ではない。既存state、texture、FBO、モデル入口には旧GL couplingが残る。
+共通backendのstate snapshot/ordered queueを移行用に再利用しており、まだnative側からの互換state参照を全廃していない。
+この残りを完了扱いせず次の移行境界にする。
 
-## 2. 実装段階（順序固定）
+## 4. 次に移すowner（固定フェーズでなく、依存関係）
 
-各段階は「受入が測れる」ことを出口にする。**測れない段階は開始しない。**
+| 未完領域 | 直近の判別・変更 | 出口 |
+|---|---|---|
+| native state | GlStateManagerのproducer/query、raw GL adapterのconsumerを同一native ownerへ | 通常vanilla/Forge stackにadapter逆呼出しなし。state push/pop・query・順序テスト |
+| texture / target | TextureManager、TextureUtil、Framebufferのpublic lifecycleと世代をnative化 | reload/resize/Mod FBOの旧世代がqueued/recorded/in-flightでも安全。pixel対照 |
+| モデル / glyph / GUI | モデル内容の保持、native material、transient arenaを共通寿命契約へ | display-list互換の再decodeや二重copyが主経路にない。4画面・entity/TESR対照 |
+| frame execution | native resource依存からpass/barrierを編成。旧GL handoff分岐を主経路から除去 | 記録/送信/完了が一致。failure/retry/world切替/長時間で欠落・VUIDなし |
+| terrain upload | dirty bytes・copy・submit・可視判定の実費をwarm/streamingで分離 | 機能同一でtransfer/CPU/tailを改善。worker→render ownerの引渡し明示 |
+| grouping方式 | native資源/state境界が安全な範囲でmerge/instancing/MDIを比較 | 全仕事量と画像を揃えたpaired測定で利益。draw数だけを出口にしない |
+| 互換・影・BSL・配布 | 完全packの代表場面、native shadows、shaderpack effect、配布導線 | [製品完成条件](<goal.md>)の実機証拠 |
 
-### S0 — 測定の修復（最優先・コードは計器と検証のみ）
-1. **JAR 固定**: KPI は `CELTIUM_KPI_JARS` に、その HEAD から build した JAR を明示 stage したディレクトリを渡す。
-   `-manifest.json` の `artifacts.renderer.sha256` と `git.head`/`git.dirty` が**そのビルドと一致**することを確認する。
-   一致しなければ測定を破棄する（今回の罠）。
-2. **warm window で判定**: `frameIntervalWarmSampleCount > 0` を必須にし、`frameIntervalWarmP50Ms` を KPI にする。
-   `warmToTick`（既定 600）に届く leg 長を確保する。
-3. **draw 計数を全発行点へ**: `VulkanDynamicMesh`（2点）に加え、`TerrainRenderer.celtium$drawIndexedRun`、
-   `tryIndirectBatch`、`ShadowMapPass` の indirect を数える。合計を `CELTIUM_DRAWS` に出す。
-4. **陽性対照**: 各計器は「必ず出る条件」を1つ持つ（今回 `CELTIUM_MODEL_GROUPS` が出ない原因究明に時間を溶かした）。
+計測修復は各変更と並行して行う。JARを固定できない・区間が空・画像が比較不能なら**性能の結論を出さない**のであって、
+依存しない正しさの修正や資源ownerの移行を一律停止する理由にはしない。
 
-**受入**: 同じ JAR を2回測って warm p50 の比が ±3% 以内。draw 数が全経路の合計として出る。
+## 5. 測定と撤回の運用
 
-### S1 — Java frontend を主経路にする（バニラ即時描画）
-1. `Tessellator`/`BufferBuilder`/`GlStateManager`/フォント/モデルを **Java API で捕捉**（既存 mixin を拡張）。
-2. 捕捉結果を `DrawIntent`（頂点範囲・状態スナップショット・行き先・順序）として記録し、
-   `VulkanTerrainGpuBackend.submitImmediateBatch` を**直接呼ばない**。収集器に渡す。
-3. スタブ経由の到着数を計器で 0 に近づける（`CeltiumNativeDraw` がスタブを呼ぶ実装を、収集器呼び出しへ置換）。
-
-**受入**: バニラ描画の到着が `CeltiumGlStub` を経由しない（スタック計器で確認）。画像ゲート PASSED。
-
-### S2 — 順序保存バッチ実行
-1. intent を「隣接し、状態が同一」な run にまとめる。**順序を跨ぐ並べ替えはしない**（blend・depth の前後関係を壊さない）。
-2. run が2件以上なら indirect multi-draw。行列・状態は SSBO（`set=0, binding=6` の `u_ModelView[]`、
-   `immediate_tex_color_vk11_groupid.vert` が既にこの形を宣言）と push constant で供給する。
-3. 1件の run は通常 draw（退行リスクを負わない）。
-
-**受入**: draw 数（全経路合計）が S1 比で有意に減る。warm p50 が Celeritas 比で改善。画像ゲート PASSED。
-
-### S3 — フレーム予算とパス編成
-1. warm window の frame を「ゲームロジック／チャンク構築／アップロード／即時／記録＋submit／present」に分解する
-   （既存 `FramePassTimings` の区間を warm window で出す）。
-2. 最大区間だけを攻める。パス数は十数個以内を維持。
-
-**受入**: warm p50 が **ratio ≤ 1.0**（AMD・Intel）。
-
-### S4 — 互換と目視
-E2E 1.93a、RLCraft 2.9.3、qmagnets、目視4画面（loading / home / game / settings）、Entity Culling 共存。
-
-### S5 — 影・Shaderpack・配布
-Native Shadow Map の両 GPU 実画面、BSL 実機、配布物と実装の一致。
-
-## 3. やらないこと（今回の失敗から）
-
-- **測定を直さずに最適化を実装しない。** 同一 JAR を測っていた間の結論は無効。
-- **部分計数を全体の結論に使わない。** 「draw が 6〜9」は2点だけの計数だった。
-- **cold window の数字で FPS を語らない。** 120..200 tick はチャンク構築中。
-- **スタブに新しい入口を足さない。** スタブは Mod 互換専用。
-- **`VulkanTerrainGpuBackend` に機能を足さない**（抽出と削除のみ）。18,209 行の god class をこれ以上育てない。
-- 参考実装は設計のみ（VulkanMod = LGPL-3.0、ImmediatelyFast = LGPL-3.0、Sulfide = LGPL-3.0）。**コード流用はしない。**
-  一次資料: [Vulkan 仕様の描画章](https://raw.githubusercontent.com/KhronosGroup/Vulkan-Docs/main/chapters/drawing.adoc)、
-  [Khronos multi-draw indirect サンプル](https://github.com/KhronosGroup/Vulkan-Samples/tree/main/samples/performance/multi_draw_indirect)
-  （`VkDrawIndexedIndirectCommand` は firstIndex/vertexOffset を持つため、**1頂点バッファ＋1 index バッファに詰めて
-  バインドを1回にする**のが本質。draw 数の削減自体が目的ではない）。
-
-## 4. 直近の1手
-
-**S0 のみ**を実施する（コードは計器と検証スクリプトだけ、描画経路は触らない）。
-これが通るまで S1 以降に進まない。理由: 現状の KPI は測定として成立していないため、
-S1 以降の効果を判定する手段が存在しない。
+- hash固定のfresh stageとbuild provenanceを使用。warm区間を採るにはfixtureの早期finishを `holdUntilTick` で延ばす。
+- 完全な区間・十分なsamples・両armの同じscene/camera/featuresを確認。最低3ペア、順序を交互にしてpairごとのratioを見る。
+- correctness runはvalidation ON。performance runは計測負荷を明記し、CPU/GPUの仕事とframe pacingを混同しない。
+- partial draw counterを全面の仕事量にしない。新しい計器も必要なら追加するが、所有範囲と陽性対照を持たせる。
+- 既存実装・外部設計は比較材料。最適解を宣言して固定せず、製品の観測可能な契約と測定から選ぶ。

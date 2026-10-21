@@ -51,10 +51,6 @@ public final class CeltiumGllessHint {
         }
     }
 
-    /** The next object name this renderer hands out; starts at 1 because 0 means "none" to every caller. */
-    private static final java.util.concurrent.atomic.AtomicInteger NEXT_NAME =
-            new java.util.concurrent.atomic.AtomicInteger(1);
-
     /**
      * A fresh, non-zero object name for the {@code glGen*} and {@code glCreate*} families.
      * <p>
@@ -77,11 +73,11 @@ public final class CeltiumGllessHint {
      *
      * <p>The names the transformer hands out and the names the stub hands out have to come from the same counter: they
      * are keys into the same mirrors, and two windows both starting at 1 means two different resources can share a name.
-     * The fallback keeps a hybrid run (where no stub is installed) working with this class's own counter.
+     * Before provider installation, reserve from the same native identity allocator to avoid an early-name collision.
      */
     public static int glGenNames(int range) {
         int reserved = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$reserveNames(range);
-        return reserved >= 0 ? reserved : NEXT_NAME.getAndAdd(range);
+        return reserved >= 0 ? reserved : org.soutalab.celtium.vulkan.RenderObjectIds.reserve(range);
     }
 
     /** The maximum texture size this renderer claims, in one place for every surface that has to answer it. */

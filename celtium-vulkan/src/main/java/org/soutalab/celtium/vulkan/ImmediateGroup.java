@@ -16,6 +16,8 @@ public final class ImmediateGroup {
 
     /** The geometry: borrowed meshes (captured model groups) are owned by their lender and are not freed on retire. */
     public VulkanDynamicMesh mesh;
+    /** Retained geometry generation held until this group is discarded or its submission completes. */
+    LeasedResource.Lease<?> geometryLease;
     /** Column-major projection matrix captured at accept time. */
     public float[] projection;
     /** Column-major model-view matrix captured at accept time. */
@@ -193,11 +195,18 @@ public final class ImmediateGroup {
     }
 
     /**
-     * Returns a retired group to the freelist, clearing the references that would retain its mesh and stamp.
-     * A no-op with the pool off, so the death sites do not need their own flag check.
+     * Releases a retired group's geometry lease, then optionally returns the group to the freelist.
+     * Resource lifetime is independent of whether object pooling is enabled or the freelist is full.
      */
     public static void recycle(ImmediateGroup group) {
-        if (!POOL || group == null || FREELIST.size() >= FREELIST_CAP) {
+        if (group == null) {
+            return;
+        }
+        if (group.geometryLease != null) {
+            group.geometryLease.close();
+            group.geometryLease = null;
+        }
+        if (!POOL || FREELIST.size() >= FREELIST_CAP) {
             return;
         }
         group.clearForReuse();

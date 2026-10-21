@@ -87,13 +87,16 @@ if scenario == 'bad_png': png = png[:28]
 name = 'Intel(R) UHD Graphics 630 (CFL GT2)' if 'UHD' in a.require_gpu else 'AMD Radeon RX 6400'
 if scenario == 'wrong_gpu': name = 'AMD Radeon RX 6400' if 'UHD' in a.require_gpu else 'Intel(R) UHD Graphics 630 (CFL GT2)'
 native_uuid = 'a' * 32
+reference = scenario.startswith('gl_reference')
 native = '[Celtium] CELTIUM_NATIVE_DEVICE name="' + name + '" uuid=' + native_uuid + ' matchedOpenGl=false\n'
-(game / 'validation-console.log').write_text('' if scenario == 'missing_device' else native)
+(game / 'validation-console.log').write_text('' if scenario == 'missing_device' or reference else native)
 (game / 'logs/latest.log').write_text('')
 status = 'UNCALIBRATED_PRESENTED_IMAGE' if scenario.startswith('uncalibrated') else 'PASSED'
 fixture = {'status': status, 'presentedImageVerdict': status, 'sceneGateCalibrated': True,
     'sceneGateFloorsEnforced': True, 'sceneCalibrationKeyMatches': True, 'sceneGuiStage': False,
     'pictureEvidenceSource': 'presented-dump', 'pictureFile_world': 'screenshots/picture.png'}
+if reference:
+    fixture.update(glRenderer=name, pictureEvidenceSource='gl-screenshot')
 if scenario == 'missing_gate': fixture.pop('sceneGateFloorsEnforced')
 if scenario == 'false_gate': fixture['sceneCalibrationKeyMatches'] = False
 if scenario == 'missing_verdict': fixture.pop('presentedImageVerdict')
@@ -106,6 +109,10 @@ process = {'exitCode': 0, 'endedBy': 'process-exit', 'validationExitCode': code,
     'nativeDeviceUuid': native_uuid, 'gpuRequirementMet': True, 'gpuRequirementSource': 'nativeDeviceName',
     'pictureEvidenceSource': 'presented-dump', 'pictureStage': 'world',
     'pictureFile': fixture['pictureFile_world'], 'picturePresent': True}
+if reference:
+    process.update(nativeDeviceName=None, nativeDeviceUuid=None, gpuRequirementSource='glRendererPreflight',
+                   glRendererPreflight=name, pictureEvidenceSource='gl-screenshot')
+    if scenario == 'gl_reference_wrong_gpu': process['glRendererPreflight'] = 'wrong device'
 if scenario == 'dirty': process.update(validationClean=False, validationMessageCount=1)
 if scenario == 'missing_clean': process.pop('validationClean')
 if scenario == 'preflight_gpu': process['gpuRequirementSource'] = 'glRendererPreflight'
@@ -135,7 +142,8 @@ class LegRunnerTests(unittest.TestCase):
         (self.instance / "instance.cfg").write_text("[General]\nJavaPath=/not-used\n")
         self.environment = {"CELTIUM_ROOT": str(self.root), "CELTIUM_INSTANCE_COHORT": str(self.instance),
                             "CELTIUM_INSTANCE_E2E": str(self.instance), "CELTIUM_INSTANCE_RECIPE": str(self.instance),
-                            "FAKE_SCENARIO": "passed", "E2E_EXCLUDE": "", "CLASH_DIR": ""}
+                            "FAKE_SCENARIO": "passed", "E2E_EXCLUDE": "", "CLASH_DIR": "",
+                            "CELTIUM_LEG_REFERENCE_RENDERER": ""}
         self.env_patch = patch.dict(os.environ, self.environment)
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
@@ -146,6 +154,27 @@ class LegRunnerTests(unittest.TestCase):
     def execute(self, scenario="passed", **kwargs):
         os.environ["FAKE_SCENARIO"] = scenario
         return runner.execute(self.plan(**kwargs), timeout=5, terminate_grace=.1)
+
+    def test_explicit_gl_reference_uses_its_real_gpu_and_screenshot_evidence(self):
+        reference = self.root / "celeritas-reference.jar"
+        reference.write_bytes(b"GL reference")
+        os.environ["CELTIUM_LEG_REFERENCE_RENDERER"] = str(reference)
+        result = self.execute("gl_reference")
+        self.assertTrue(result["accepted"], result)
+        self.assertEqual(result["rendererKind"], "opengl-reference")
+        self.assertEqual(result["referenceGlRenderer"], "AMD Radeon RX 6400")
+        self.assertIsNone(result["nativeDeviceName"])
+
+    def test_gl_evidence_never_substitutes_for_native_acceptance(self):
+        result = self.execute("gl_reference")
+        self.assertFalse(result["accepted"], result)
+
+    def test_wrong_gpu_reference_is_not_accepted(self):
+        reference = self.root / "celeritas-reference.jar"
+        reference.write_bytes(b"GL reference")
+        os.environ["CELTIUM_LEG_REFERENCE_RENDERER"] = str(reference)
+        result = self.execute("gl_reference_wrong_gpu")
+        self.assertFalse(result["accepted"], result)
 
     def test_leg_and_duration_rejected_before_output_creation(self):
         for leg in ("", "../escape", "x/../../escape", "a.b", "-dash", "x" * 65, "é"):

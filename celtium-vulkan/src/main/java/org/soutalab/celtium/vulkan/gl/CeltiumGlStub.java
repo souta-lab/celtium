@@ -7,6 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
+import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
+import org.soutalab.celtium.vulkan.RenderObjectIds;
 import org.lwjgl.system.APIUtil;
 import org.lwjgl.system.Callback;
 import org.lwjgl.system.FunctionProvider;
@@ -31,12 +33,12 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_uint32;
 import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
 
 /**
- * The OpenGL function surface Minecraft 1.12.2 calls, answered without a GL context.
+ * Raw-GL compatibility adapter, answered without a GL context or GL driver drawing.
  * <p>
- * This is the seam a context-less window hangs on: {@code GL.create(provider)} accepts any
- * {@link FunctionProvider}, so the game's {@code GL11.*} calls can run against trampolines owned by the renderer
- * instead of a real driver. It is deliberately not a GL emulator - the semantic classes are the ones the game
- * actually uses:
+ * {@code GL.create(provider)} routes supported GL entry points to recorded state and native resources. Minecraft/Forge
+ * APIs are being migrated to native owners; residual vanilla arrivals here are migration debt, not proof of a native
+ * frontend. The adapter emulates supported GL semantics; missing/refused/no-op calls do not establish a correct image.
+ * The compatibility records include:
  * <ul>
  *   <li>Object names - {@code glGenTextures}, {@code glGenFramebuffers} and kin return real, distinct ids, because
  *   texture lookup, framebuffer identity and every cached descriptor key on the names being unique.</li>
@@ -47,8 +49,8 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
  *   be built from the bytes the game handed over. {@link #textureUploadRgba8} is that record and
  *   {@link #textureCaptureSummary} is its census; an upload whose format is not understood is counted and dropped
  *   rather than stored wrong.</li>
- *   <li>Everything else records and no-ops - drawing, blending and state setting the Vulkan side already mirrors
- *   or owns, so dropping them loses nothing the frame needed.</li>
+ *   <li>Supported draws/state feed the native backend. Unsupported calls are counted or refused; they can lose visible
+ *   work and must not be described as a successful fallback.</li>
  * </ul>
  */
 public final class CeltiumGlStub implements FunctionProvider {
@@ -504,7 +506,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     // ---- runtime state ---------------------------------------------------------------
 
     private final Map<String, Callback> trampolines = new HashMap<>();
-    private final java.util.concurrent.atomic.AtomicInteger nextName = new java.util.concurrent.atomic.AtomicInteger(1);
     private final java.util.concurrent.atomic.AtomicLong nextSync = new java.util.concurrent.atomic.AtomicLong(1);
     /** The serial every filed level write takes its number from; see {@link TexCapture#serial}. */
     private final java.util.concurrent.atomic.AtomicLong texUploadSerial =
@@ -1136,7 +1137,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return -1;
         }
-        int scalar = stub.nextName.getAndAdd(range);
+        int scalar = RenderObjectIds.reserve(range);
         for (int i = 0; i < range; i++) {
             stub.liveNames.add(scalar + i);
         }
@@ -1437,6 +1438,9 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records the array-buffer binding, as the stub's own {@code glBindBuffer} case does. */
     public static void celtium$bindBuffer(int target, int name) {
+        if (target == GL_ARRAY_BUFFER) {
+            NativeGeometryBuffer.bindId(name);
+        }
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
@@ -1563,8 +1567,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        int name = target >= 0 && target < stub.bufferBindings.length ? stub.bufferBindings[target] : 0;
-        stub.bufferDataFor(name, size, address);
+        stub.bufferDataFor(stub.boundBuffer(target), size, address);
     }
 
     /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
@@ -2995,7 +2998,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_MAP:
                 return mapBuffer(fn, c);
             case SEM_UNMAP:
-                return 1L; // GL_TRUE - contents already live in the storage
+                NativeGeometryBuffer mapped = NativeGeometryBuffer.find(bufferFor(fn, c));
+                return mapped == null || mapped.unmap() ? 1L : 0L;
             case SEM_BUFFER_DATA:
                 bufferData(fn, c);
                 return 0L;
@@ -3140,12 +3144,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 getBooleans((int) a0, a1, fn);
                 return 0L;
             case SEM_IS_OBJECT:
-                return this.liveNames.contains((int) a0)
-                        || this.liveSync.contains(a0) ? 1L : 0L;
+                return this.liveNames.contains((int) a0) || this.liveSync.contains(a0)
+                        || "glIsBuffer".equals(fn.name) && NativeGeometryBuffer.find((int) a0) != null ? 1L : 0L;
             case SEM_DELETE:
                 delete(fn, c);
                 return 0L;
             case SEM_BIND_BUFFER:
+                if ((int) a0 == GL_ARRAY_BUFFER) {
+                    NativeGeometryBuffer.bindId((int) a1);
+                }
                 if ((int) a0 >= 0 && (int) a0 < this.bufferBindings.length) {
                     this.bufferBindings[(int) a0] = (int) a1;
                 }
@@ -3880,7 +3887,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     return 0; // The spec: a range of zero (or less) generates nothing and returns 0.
                 }
             }
-            int scalar = this.nextName.getAndAdd(range);
+            int scalar = RenderObjectIds.reserve(range);
             for (int i = 0; i < range; i++) {
                 this.liveNames.add(scalar + i);
             }
@@ -3897,7 +3904,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // int immediately before it.
         int outIndex = lastPointerArg(fn);
         if (outIndex < 0) {
-            int scalar = this.nextName.getAndIncrement();
+            int scalar = RenderObjectIds.reserve(1);
             this.liveNames.add(scalar);
             return scalar;
         }
@@ -3907,7 +3914,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int n = countFromArgs(fn, c, outIndex);
         for (int i = 0; i < n; i++) {
-            int name = this.nextName.getAndIncrement();
+            int name = RenderObjectIds.reserve(1);
             this.liveNames.add(name);
             memPutInt(out + (long) i * 4L, name);
         }
@@ -4002,6 +4009,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      * @param name the buffer name being deleted
      */
     private void forgetBuffer(int name) {
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+        if (nativeBuffer != null) nativeBuffer.close();
+        if (NativeGeometryBuffer.boundId() == name) NativeGeometryBuffer.unbind();
         this.bufferStore.remove(Integer.valueOf(name));
         this.bufferLogicalSize.remove(Integer.valueOf(name));
         for (int target = 0; target < this.bufferBindings.length; target++) {
@@ -4161,6 +4171,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
     private int getIntegerValue(int pname) {
         switch (pname) {
+            case 0x8894: // GL_ARRAY_BUFFER_BINDING, including a native API resource's opaque identity
+                return NativeGeometryBuffer.boundId();
             case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
                 int bound = this.textureBindings.get(texBindKey(0x0DE1));
                 return bound < 0 ? 0 : bound;
@@ -4607,11 +4619,18 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Writes into the storage {@code glBufferData} allocated, which is what the mirrored meshes are read from. */
     private void bufferSubData(Fn fn, long[] c) {
-        int name = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
-                ? this.bufferBindings[(int) c[0]] : 0;
+        int name = bufferFor(fn, c);
         long offset = c[1];
         long size = c[2];
         long data = c[3];
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+        if (nativeBuffer != null) {
+            if (data != 0L && size > 0 && offset >= 0 && size <= nativeBuffer.byteSize()
+                    && offset <= nativeBuffer.byteSize() - size) {
+                nativeBuffer.write(offset, MemoryUtil.memByteBuffer(data, (int) size));
+            }
+            return;
+        }
         ByteBuffer storage = this.bufferStore.get(name);
         int logicalSize = this.logicalSizeOf(name, storage == null ? 0 : storage.capacity());
         if (storage == null || data == 0L || size <= 0 || offset < 0 || offset + size > logicalSize) {
@@ -5143,13 +5162,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The buffer whose storage an operation applies to: the bound name for {@code glBufferData}, or the name arg
      * itself for {@code glNamedBufferData}.
      */
+    private int boundBuffer(int target) {
+        return target == GL_ARRAY_BUFFER ? NativeGeometryBuffer.boundId()
+                : target >= 0 && target < this.bufferBindings.length ? this.bufferBindings[target] : 0;
+    }
+
     private int bufferFor(Fn fn, long[] c) {
-        if ("glNamedBufferData".equals(fn.name) || "glNamedBufferStorage".equals(fn.name)) {
-            return (int) c[0];
-        }
-        int bound = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
-                ? this.bufferBindings[(int) c[0]] : 0;
-        return bound < 0 ? 0 : bound;
+        return fn.name.contains("NamedBuffer") ? (int) c[0] : boundBuffer((int) c[0]);
     }
 
     private void bufferData(Fn fn, long[] c) {
@@ -5158,10 +5177,15 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The one buffer-data producer: the dispatch case and the transformer's route both land here. */
     private void bufferDataFor(int name, long size, long data) {
-        if (name == 0 || size > Integer.MAX_VALUE) {
+        if (name == 0 || size < 0 || size > Integer.MAX_VALUE) {
             return;
         }
-        if (size <= 0) {
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+        if (nativeBuffer != null) {
+            nativeBuffer.replaceStorage(data == 0L ? null : MemoryUtil.memByteBuffer(data, (int) size), (int) size);
+            return;
+        }
+        if (size == 0) {
             // glBufferData(size=0) is a legal redefinition that leaves the buffer empty; the old code returned early and
             // kept the previous storage and size, so the buffer still mapped and still answered the old extent (#387).
             this.bufferStore.remove(Integer.valueOf(name));
@@ -5234,13 +5258,16 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private long mapBuffer(Fn fn, long[] c) {
-        int name;
-        if (fn.name.startsWith("glMapNamedBuffer")) {
-            name = (int) c[0];
-        } else {
-            int bound = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
-                ? this.bufferBindings[(int) c[0]] : 0;
-            name = bound;
+        int name = bufferFor(fn, c);
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+        if (nativeBuffer != null) {
+            this.mapBufferCalls++;
+            // VertexBuffer API storage is transiently mappable, not persistent/coherent mapped storage.
+            long address = fn.args.length == 4 && (c[3] & 0xC0L) != 0L ? 0L
+                    : nativeBuffer.map(fn.args.length == 4 ? c[1] : 0,
+                            fn.args.length == 4 ? c[2] : nativeBuffer.byteSize());
+            if (address == 0L) this.mapBufferRefusals++;
+            return address;
         }
         ByteBuffer storage = this.bufferStore.get(name);
         if (storage == null) {
@@ -5932,9 +5959,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             celtium$reportDrawArrays();
             return;
         }
-        int boundName = this.bufferBindings[GL_ARRAY_BUFFER];
+        // A mod can bind through Minecraft's VertexBuffer API and issue the draw through raw GL. Only that raw call
+        // enters this decoder; the native API draw uses the retained mesh directly and never mirrors a GL buffer.
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.bound();
+        int boundName = NativeGeometryBuffer.boundId();
         int buffer = boundName;
-        ByteBuffer storage = buffer == 0 ? null : this.bufferStore.get(buffer);
+        ByteBuffer storage = nativeBuffer != null ? nativeBuffer.compatibilityView()
+                : buffer == 0 ? null : this.bufferStore.get(buffer);
         // No array buffer bound means the pointer glVertexPointer was handed is a **client address**, not an offset
         // into GL-owned storage: the vertices are process memory the game wrote, and under a stub there is no GL object
         // to mirror them from. That is the main menu, the loading screen and every GUI-only frame - measured in the
@@ -6873,13 +6904,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (fn.name.startsWith("glGetBufferParameter")) {
             if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
-                int bound = ((int) c[0] >= 0 && (int) c[0] < this.bufferBindings.length)
-                ? this.bufferBindings[(int) c[0]] : 0;
+                int bound = boundBuffer((int) c[0]);
+                NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(bound);
                 ByteBuffer storage = bound == 0 ? null : this.bufferStore.get(bound);
+                int size = nativeBuffer != null ? nativeBuffer.byteSize()
+                        : logicalSizeOf(bound, storage == null ? 0 : storage.capacity());
                 if ("glGetBufferParameteri64v".equals(fn.name)) {
-                    memPutLong(out, storage == null ? 0L : storage.capacity());
+                    memPutLong(out, size);
                 } else {
-                    memPutInt(out, storage == null ? 0 : storage.capacity());
+                    memPutInt(out, size);
                 }
                 return;
             }

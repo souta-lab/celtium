@@ -6305,6 +6305,8 @@ public final class ValidationClient {
         report.addProperty("frameIntervalP95Ms", frameIntervals.isEmpty() ? -1.0D : percentile(0.95));
         report.addProperty("frameIntervalP99Ms", frameIntervals.isEmpty() ? -1.0D : percentile(0.99));
         Collections.sort(warmFrameIntervals);
+        report.addProperty("frameIntervalWarmFromTick", Integer.getInteger("celtium.validation.warmFromTick", 400));
+        report.addProperty("frameIntervalWarmToTick", Integer.getInteger("celtium.validation.warmToTick", 600));
         report.addProperty("frameIntervalWarmSampleCount", warmFrameIntervals.size());
         report.addProperty("frameIntervalWarmP50Ms", percentile(warmFrameIntervals, 0.50));
         report.addProperty("frameIntervalWarmP95Ms", percentile(warmFrameIntervals, 0.95));
@@ -6313,10 +6315,13 @@ public final class ValidationClient {
                 "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this"
                         + " one) warm=worldTicks " + Integer.getInteger("celtium.validation.warmFromTick", 400) + ".."
                         + Integer.getInteger("celtium.validation.warmToTick", 600)
-                        + " (after the world is built; compare this one with a warmed benchmark, never the cold one)");
-        report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a"
-                + " performance benchmark; the cold window is the chunk-build window, the warm window is the steady"
-                + " state");
+                        + " (post-startup tick window; tick number alone does not establish idle chunk loading)");
+        net.minecraft.client.settings.GameSettings timingSettings = Minecraft.getMinecraft().gameSettings;
+        report.addProperty("framerateLimitSetting", timingSettings.limitFramerate);
+        report.addProperty("vsyncEnabled", timingSettings.enableVsync);
+        report.addProperty("timingScope", "consecutive render tick ends; includes simulation, GUI, fixture and frame"
+                + " pacing; framerate setting=" + timingSettings.limitFramerate + " vsync=" + timingSettings.enableVsync
+                + "; cold and post-startup windows are separate, neither is an isolated renderer CPU/GPU timer");
         // The spike capture was collected but never written: a counter that is built and then not reported is the same
         // defect as one that is never built, and the p95/p99 pair is what the user's complaint is measured against.
         report.addProperty("slowFrameThresholdMs", Integer.getInteger("celtium.validation.slowFrameMs", 50));

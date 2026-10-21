@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Run a fresh native GL-less GPU leg; zero means complete, calibrated acceptance.
+"""Run a fresh GPU leg; zero means the requested renderer's calibrated scene gates passed.
 
-CLI: gv-leg.sh LEG JAR_DIR {cohort,plain,e2e,recipe} {amd,intel} [SECONDS] [-D...|-X...]
+CLI: gv-leg.sh LEG JAR_DIR {cohort,plain,e2e,recipe,world} {amd,intel} [SECONDS] [-D...|-X...]
+Native Vulkan is the default. CELTIUM_LEG_REFERENCE_RENDERER explicitly selects a GL reference,
+whose GPU and screenshot evidence are checked as GL, never as native acceptance.
 The tracked Prism harness owns the only game-slot lock. This wrapper never deletes
 old artifacts, never changes the source instance, and never resumes a paused goal.
 """
@@ -260,7 +262,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
                  (("renderer", renderer), ("fixture", fixture), ("harness", harness), ("headless", headless))}
     dependencies = [{"path": f"mods/{p.name}", "source": str(p.resolve()), "sha256": sha256(p)} for p in mods]
     dependencies.append({"path": f"test-libraries/{library.name}", "source": str(library), "sha256": sha256(library)})
-    manifest = {"schemaVersion": 1, "scope": "native GL-less input provenance; not an acceptance verdict",
+    manifest = {"schemaVersion": 1, "scope": "renderer input provenance; not an acceptance verdict",
+                "rendererKind": "opengl-reference" if reference_renderer else "native-vulkan",
                 "leg": leg, "mode": mode, "gpu": gpu, "durationSeconds": duration, "slotWaitSeconds": SLOT_WAIT,
                 "sourceInstance": str(instance), "isolatedGameDirectory": str(paths["game"]),
                 "artifacts": artifacts, "dependencies": dependencies, "git": git_state(root),
@@ -411,23 +414,33 @@ def postcheck(plan: Plan, harness_code: int) -> dict:
         console = (plan.paths["game"] / "validation-console.log").read_text(errors="replace")
         devices = NATIVE_DEVICE.findall(console)
         name, device_uuid = devices[-1] if devices else (None, None)
-        if (not devices or any(plan.required_gpu.lower() not in item[0].lower() for item in devices)
-                or process.get("nativeDeviceName") != name or process.get("nativeDeviceUuid") != device_uuid
-                or process.get("gpuRequirementMet") is not True
-                or process.get("gpuRequirementSource") != "nativeDeviceName"):
+        if plan.reference_renderer:
+            gl_name = fixture.get("glRenderer")
+            if (devices or not isinstance(gl_name, str) or plan.required_gpu.lower() not in gl_name.lower()
+                    or process.get("glRendererPreflight") != gl_name
+                    or process.get("gpuRequirementMet") is not True
+                    or process.get("gpuRequirementSource") != "glRendererPreflight"):
+                problems.append("reference GL evidence does not establish the requested GPU")
+            result["referenceGlRenderer"] = gl_name
+        elif (not devices or any(plan.required_gpu.lower() not in item[0].lower() for item in devices)
+              or process.get("nativeDeviceName") != name or process.get("nativeDeviceUuid") != device_uuid
+              or process.get("gpuRequirementMet") is not True
+              or process.get("gpuRequirementSource") != "nativeDeviceName"):
             problems.append("native device evidence does not establish the requested GPU")
         result["nativeDeviceName"] = name
+        result["rendererKind"] = "opengl-reference" if plan.reference_renderer else "native-vulkan"
         if not (plan.paths["game"] / "logs/latest.log").is_file():
             problems.append("the game validation log is missing")
         if type(fixture.get("sceneGuiStage")) is not bool:
             problems.append("fixture does not identify whether the judged scene has a GUI stage")
         stage = "gui" if fixture.get("sceneGuiStage") else "world"
         picture_file = fixture.get(f"pictureFile_{stage}")
-        if (fixture.get("pictureEvidenceSource") != "presented-dump"
-                or process.get("pictureEvidenceSource") != "presented-dump"
+        expected_source = "gl-screenshot" if plan.reference_renderer else "presented-dump"
+        if (fixture.get("pictureEvidenceSource") != expected_source
+                or process.get("pictureEvidenceSource") != expected_source
                 or process.get("pictureStage") != stage or process.get("pictureFile") != picture_file
                 or process.get("picturePresent") is not True or not isinstance(picture_file, str)):
-            raise LegError("missing/inconsistent native presented-picture evidence")
+            raise LegError(f"missing/inconsistent {expected_source} picture evidence")
         relative = Path(picture_file)
         picture = plan.paths["game"] / relative
         if (relative.is_absolute() or ".." in relative.parts or picture.is_symlink()

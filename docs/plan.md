@@ -1,48 +1,50 @@
 # Celtium 現状表（唯一の現在状態表）
 
 開発ベース **0.0.6-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
-2026-10-17更新。再監査基点 `c46474aee`、resize追試ソース `f0e02f8a3`、loading追試ソース `438266524`（artifactは各証拠を参照）。
-resize / loading行のみ新規の実機結果。他の行は従来の記録であり、一括再受入ではない。
-以下は特記なき限り**各leg当時のartifactでの記録**であり、最新HEAD全体の再受入ではない。
+2026-10-21 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
+製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
-## 現在状態・優先順・受入
+## 現在の優先順
 
-「実装済み」は実機成功と別。AMD成功 / Intel成功の両方が、同じ変更の必要な範囲で揃った場合だけ両GPU成功。
-未較正は判定不能、FAILEDは失敗、未完・未検証は成功でない。
-証拠の抜粋・full hash・flags・cameraは [監査証拠](<evidence/process-audit-2026-10-17.json>)。
+| 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
+|---|---|---|---|---|
+| **最初の有効なCeleritas比較（2026-10-21 実測）** | **SLOWER 1.70x** | 実測 | 未測定 | hash固定・warm区間・3ペア交互順。Celtium `frameIntervalWarmP50` **2.124 / 2.095 / 2.108 ms**（jar `25668c4e…`）vs Celeritas **1.249 / 1.262 / 1.241 ms**（`567dcf8a…`）。pair ratio **1.701 / 1.659 / 1.699**＝中央値**1.699x**。**p95は 5.81-6.02 vs 1.53-1.61＝約3.8倍**でtailが本体。Celtium 4098-4140 samples、Celeritas 7540-7686。scene/camera/解像度/雲/pacing一致を機械確認（`sceneCalibrationKey` 等）。leg `native-v3b`、`.gv-verify/native-v3b-kpi-result.json`。負荷は初期1.53・最終3.15（limit 3.0、bypassなし、CPU6）＝**比のみ有効、絶対msは床を含む** |
+| **描画制約の確定（2026-10-21 利用者指示）** | **制約は1つだけ** | — | — | native VK-only、GL変換は**Modが直接使うGL専用**。それ以外（エンジン、状態所有、資源配置、shader、順序表現、パッケージ構成、計器、スレッド分担）は性能と正しさのため自由に置換する。旧「計器追加禁止」「per-call最適化禁止」「backend機能追加禁止」「S0以外実装禁止」「必ずmulti-draw」は撤回 |
+| **VertexBuffer保持型データのnative所有（2026-10-21 実装）** | **実装済み・実機PASSED** | PASSED/clean | 未測定 | `VertexBufferMixin` が `VertexBuffer` の生成/bind/upload/draw/unbind/delete を所有し、`NativeGeometryBuffer`（CPU内容＋opaque identity）と `RetainedGeometryCache`（device別・内容世代別mesh）へ渡す。`LeasedResource` で受理済みdrawが未記録/記録中/in-flightの旧世代を保持。sky/stars/horizon/Forge cloudがGL buffer store再decodeから外れる。AMD leg `native-v3-valid-amd`（jar `25668c4e…`）で確認 |
+| **terrain targetの不要な失敗計上（2026-10-21 修正）** | **修正済み・実機確認** | 確認 | 未測定 | `FrameCoordinator.Submission`（SKIPPED/RECORDED/QUEUED）を導入。native同一queue targetのRECORDEDを「GLへ同期通知できなかった失敗」と数えていた。修正前は`errors=17310`／`no submission reached the queue`が3324件、修正後は**errors=0**・当該断片0（`native-v2/v3`）。記録受理・queue送信・GPU完了を別状態として扱う |
+| **Mod向けbuffer互換の一本化（2026-10-21 実装）** | **実装済み・CPUテスト済み** | 実機確認済 | 未測定 | `RenderObjectIds` に単一の名前空間（stub/hint/native）。`NativeGeometryBuffer` のidentityをraw GL adapterが解決し、bind/query・data/subdata・transient map/unmap・delete をCPU回帰で固定。native描画はGL storage mirrorを必要としない。persistent mappingは広告しない |
+| **測定系の修復（2026-10-21）** | **実装済み・未使用** | — | — | `gv_kpi.py` が build provenance（build成功＋source revision＋sha一致）を要求し、`frameIntervalWarmP50Ms`＋`warmSampleCount>=50`＋`worldTicksAtEnd>=600`＋両armのscene/camera/resolution/clouds/pacing一致を検証。**3ペア未満・Celtium専用flag・fps上限/vsyncはNO_SPEED_VERDICT**。warm区間はearly finishするため `holdUntilTick=620` が必須 |
+| **state所有のnative化** | **未着手（次の境界）** | — | — | GlStateManagerのproducer/queryとraw GL adapterのconsumerを同一native ownerへ。現状backendのstate snapshot/queued groupを経由しており、native側から互換状態を参照する残りがある。state push/pop・query・順序の回帰が必要 |
+| **texture / render target所有** | **未完** | — | — | `TextureManager`/`TextureUtil`/`Framebuffer` のpublic lifecycleと世代をnative化。reload/resize/Mod FBOで旧世代がqueued/recorded/in-flightでも安全であること、pixel対照での一致が必要 |
+| **モデル/glyph/GUI/particles** | **未完** | — | — | モデル内容の保持、native material、transient arena。display-list互換の再decodeや二重copyを主経路から外す。4画面・entity/TESR対照 |
+| **terrain upload とframe実行** | **未完** | — | — | dirty bytes/copy/submit/可視判定の実費分離（warm＋streaming）、worker→render owner引渡し、pass/barrierの資源依存からの編成、旧GL handoff分岐の除去 |
+| **互換・目視（E2E 1.93a / RLCraft 2.9.3 / qmagnets / 4画面）** | **未完** | — | — | 完全packの代表場面。mod数や起動だけで互換を主張しない |
+| **影・BSL・配布** | **未完** | — | — | native shadow mapの両GPU実画面、BSLの描画反映、配布物と実装の一致 |
 
-| 優先・項目 | 実装/判定 | AMD受入 | Intel受入 | 根拠と残り |
-|---|---|---|---|---|| **P1 FPS の内訳確定（2026-10-20実測）** | **p95/スパイクの主因はG1 GCと確定** | 診断値 | 未検証 | 検証税OFFのKPIペア: celtium p50/p95 **3.201/8.014ms** vs celeritas **1.416/2.029ms** = **2.26x**。棄却済み: present律速（acquire28ms/601・queue38ms/601）✗ / GPU律速（1.4〜2.5ms）✗ / arena枯渇（8MiBで比2.30）✗ / descriptor pool成長（ログ無し）✗。確定: present 6.9msの実体は**readback+dump＝検証税**（`presentedDumpEvery=0`で11.2→8.5ms）。**`-Xlog:gc`（`gv-gc1`）で131停止・合計2165ms・max404ms・p95 24.9ms＝frame p95 18.6msを上回る** ⇒ tailはアロケーション由来。次はホットパスのallocation除去 追記(GC量): 131停止/180s、停止間隔 **median 0.46s**、1停止で **251M->17M** 回収 ⇒ **≈5MB/frame のゴミ**。`celtium$fogSnapshot()` の float[8]/group は ~9KB/frame（全体の0.2%）で**効果なし**と判明、標的は mesh/buffer/一時イメージ級の大きな確保 追記(KPI再現性): 3ペアで ratio **2.26 / 2.30 / 2.29**（p50 celtium 3.20-3.74 vs celeritas 1.40-1.62）。マシン状態が違っても比は安定 ⇒ **以後の最適化はこの2.29xを基準に有意差判定できる**。アロケーション源はモデルキャプチャ(114 quad)・即時グループ(16/frame)では桁が足りず**依然未特定** 【訂正 2026-10-20 23:04】GCは**両arm共通**と判明：同一run・同一sceneで celtium 128停止/2018ms/max313.6/p95 27.7 に対し **celeritas 128停止/1925ms/max280.5/p95 24.0**（ほぼ同一）。⇒ **GCはCeltium固有でなく、2.29xの説明にならない**（前述のGC主因説を撤回）。差はGC以外のCPU作業＝GLスタブ/即時batch経路に由来 | 【棄却 2026-10-20 23:3x】`prepareImmediate` のワンスロットキャッシュは**ヒット率7.7%（1384/17889, gv-pcache-hit1）**で成立せず撤回。連続バッチは format/テクスチャ/stateKey/pass の5項目が揃って一致しない（記述子キャッシュが効いたのはキーが「テクスチャのみ」で粗かったため）。KPIも 2.29→2.42x でノイズ帯、改善なし。
-| **転換計画を architecture-2026-10-21.md に固定（2026-10-21）** | **計画** | — | — | [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。Java frontend→DrawIntent収集→順序保存バッチ→native の4層。S0=測定の修復（JAR固定・warm window・全発行点のdraw計数）、S1=バニラ捕捉をスタブ非経由へ、S2=順序保存バッチ実行、S3=フレーム予算、S4=互換/目視、S5=影/BSL/配布。**S0 が通るまで S1 以降へ進まない**（現KPIは測定として不成立） |
-| **KPI が同一jarの再測定だった（2026-10-21 判明）** | **測定無効** | 4 leg のmanifest | — | `scripts/gv-kpi.sh` の既定 `CELTIUM_KPI_JARS=.gv-verify/jars/batchfs` の中身は **2026-10-20 21:34 の jar**（sha `ca77e4a5…`）で、実際のビルド出力は `forge122/build/libs/` の **2026-10-21 08:09**。`kpicheck1` / `affine2` / `pcache1` / `physplit1` の4 leg は**すべて同じ sha** を測っており、**変更後JARのA/Bが成立していない**。⇒ 「seam群の非退行 2.30x」「affine bake 2.28x=効果なし」は**同一物の再測定＝ノイズ**であり結論を撤回。以後KPIは `CELTIUM_KPI_JARS` に**そのHEADのビルドを明示stageしたディレクトリ**を渡し、manifest の `artifacts.renderer.sha256` と `git.head`/`dirty` を記録して一致を確認する |
-| **KPI は cold window（チャンク構築中）で判定している（2026-10-21 判明）** | **判定条件の欠陥** | fixture 実装 | — | `frameIntervalP50Ms` は `worldTicks 120..200`＝**チャンク構築ウィンドウ**での採取（`ValidationClient.java:5245`）。steady state は `frameIntervalWarmP50Ms`（`warmFromTick=400..600`）だが、100秒legでは 400 tick に届かず**`frameIntervalWarmSampleCount=0`**（`physplit1-celtium-r1` で実測）。⇒ 現在の 2.29x は**起動直後の値**であり、「FPSがCeleritasを上回る」の判定には使えない。受入は warm window で取り、leg 時間を warmTo に届く長さへ伸ばす |
-| **計数の範囲を訂正（2026-10-21）** | **前提を撤回** | 計器付きleg | — | `DrawCounters` は `VulkanDynamicMesh.bindAndDraw`/`draw` の**2点だけ**を数えており、`TerrainRenderer.celtium$drawIndexedRun`（地形の逐次draw）と `tryIndirectBatch`、`ShadowMapPass` の `vkCmdDrawIndexedIndirect` は**計数していない**。したがって「1フレーム6〜9 draw」「1:1変換は存在しない」は**部分計数**であり結論に使えない（撤回）。`multiDrawGroups=0` も同じjar・同条件の再測定。全面のdraw数は『計器を全発行点へ広げてから』でなければ語らない |
-| **主経路をCPU frontend→native Vulkanへ転換（2026-10-20 利用者指示）** | **方針転換・実装開始前** | 未検証 | 未検証 | GL→VKの逐一変換を主経路から外し、Celeritas/Pintonium系CPU frontend→native Vulkanへ移す。GLスタブはHUD/GUIのfallbackへ縮小。既存の計測が根拠：per-batch約3.5us×約290 batch＝frame 3.3msのうち約1ms、hotspot無し（`bcc6abccf`）、batch列はframe間で非再現（`3cde87ebb`）＝「安くする」の余地は尽き、「回数を減らす」しかない |
-| **GLスタブの担当範囲を確定（2026-10-20 利用者指示）** | **方針確定・実装は未完** | 未検証 | 未検証 | スタブが受けてよいのは「Modが直接呼ぶGL」だけ。**HUD/GUIもバニラ側なので原則スタブ非経由**で、未捕捉経路の残留は欠陥として数える（GUI矩形は`Tessellator`経由で`WorldVertexBufferUploader` mixinが捕捉、フォントは`CeltiumFontGlyphCapture`のfast glyph経路がquadを直接nativeへ渡す＝機構は既にある）。バニラ／Forge APIはJavaレベルで捕捉してnativeへ渡し、スタブを通さない（[refactoring-plan §3-7](<refactoring-plan.md>)）。実測（`gv-pcache-hit1`, AMD, cohort, PASSED clean）：バニラ即時描画は `WorldVertexBufferUploader` mixin が **12,500件**捕捉しスタブ非経由（format 6:4691 / 7:4476 / 4:1927 が主）。**残る違反は `glCallList` 610回（モデルのdisplay list再生）とスタブ側 `glDrawArrays` 1024回**。次の単位＝モデルのdisplay list再生を止める（`VulkanModelQuadCapture` の captured が114件に留まる理由を計器で特定して埋める）。受入は上記2計器を0へ近づけること |
-| **方向性の見直し（2026-10-21）** | **分析完了・実装は次段** | — | — | [direction-2026-10-21.md](<direction-2026-10-21.md>)。god class 18,209行/980 fields、計器 `CELTIUM_` 309種・println 385・スイッチ93。実測は「GPU 1.4ms で余り、負けは呼び出し単位変換（3.5µs×290≒1ms）」を指す。転換＝①エミュレータ凍結と境界法定化 ②地形以外をモデル単位batching（Sulfide/Rentities 設計）③フレームを明示パスで取る（MC-311557 の轍を避け十数パス以内） |
-| **捕捉したバニラ即時描画をパス単位でまとめる（次の実装単位）** | **未着手** | 未検証 | 未検証 | 現状は `Tessellator.draw()` 1回ごとに1グループ（実測 約3.5µs/batch × 約290/frame ≒ 1ms）を作っており、捕捉はできていても**呼び出し単位の変換コストを払い続けている**。対策は (format, texture, blend, matrix) を粗いキーにしたパス内アキュムレータへ頂点を積み、run あたり1 draw にすること。参考設計（コード流用はしない）：VulkanMod の `render/gui/GuiBatchRenderer`（GUIを自前バッチで描く）と `LevelRendererMixin` の `submitBlockEntities` cancel、ImmediatelyFast の `avoid_redundant_framebuffer_switching`。受入は KPI ペア（基準2.29x）と、「1フレームの即時batch数」の低下で判定する |
-| **Phase B 試行1: 一般アフィン bake（2026-10-21）** | **判断不能→revert** | — | — | `copyVerticesTransformed` を軸平行限定から**一般アフィン**へ拡張し、回転する entity も pre-transformed グループに統合できるようにした（`celtium$affineModelView`）。leg `gv-affine1` は PASSED/clean だったが、frame 数と scene が基準legと異なり（512 vs 400 frame）比較不能。frame正規化で matrixSplits 5.15→5.97、fastMerged 12.4→13.7 と方向が割れた。⇒ **未実証のため revert**。再試行するなら同一duration・同一sceneでA/Bしてから入れる |
-| — | 過去の行（確定済み6件）は [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>) に移した | — | — | plan.md の入口予算16KiBのため |
-## 性能の観測（受入・原因確定ではない）
+## 撤回した前提（再入条件つき）
 
-- **同fixture `frameIntervalP50`（RX6400・terrain）**: **Celeritas GL `2.5.0-dev`(`567dcf8a`、pinned `989ebf2e`ではない)=7.87ms**（`perf-cel4-amd` PASSED、2348f）vs **Celtium=32.8-37.7ms**（`loopres2/unified3-amd`）。fixture反射化(`af7ce927e`)で両側に載る。intervalはtick増幅+fixture税で自己平衡する—**renderer作業の比較はbracket**。
-- **bracket内分解**（`passSplit[Cpu]`、loopres2-amd, `batchFrameSubmits`）: frame p50 ~6.2-7.9ms（中: terrain 3.3+setupTerrain 1.4+flush 1.6、wall−cpuはGC+preemption）。`f2f573de6`で~9→~6-8ms（下記unified）。
-- **unified frame buffer**（flag `-Dceltium.vulkan.batchFrameSubmits`）: frame全録画を1 buffer+1 deferred submitへ。同jar A/B（`d8d4d25c`）: frame bracket 9.1→~6.2ms、queueSubmitCalls ~11.9→3.6/frame、warmP50 41.1→28.8、VUID=0（depth-bias dedupはsegment先頭でinvalidate）。present readbackがframe全実行を直列wait（+3.7ms）するのはfixture側のみ。
-- **swap点分解**: present ~11.7ms/call、周期dump ~9ms（`=0`で3.4ms/call）、readback ~0.6ms（**fixture税**）効の~8割**。
-- 残荷（出荷構成・入れ子に注意）: **即時パス ~2.2ms**（offer 0.7 + 記録0.95 + window固定~0.4。`terrain` 0.9の0.7は**内側の即時flush**、terrain自身は~0.2/call）、setupTerrain 0.6、gui 0.3、残りloop/present対象外）。`2× Celeritas`はintervalの自平衡性上interval指標では届かない—renderer-work比較で ~6.4 vs ~6.2ms ≈ ほぼparity。
+| 主張 | 判定 | 再入条件 |
+|---|---|---|
+| KPI 2.29x が変更後の比較 | **無効**。4 legが同一 sha `ca77e4a5…`（2026-10-20 21:34）を測定 | 今回の`gv_kpi.py`でprovenance一致を確認してから |
+| 2.29x が FPS 判定 | **無効**。`frameIntervalP50Ms` はworldTicks 120..200＝チャンク構築中 | warm区間を完走したlegのみ |
+| 「draw 6〜9/frame＝1:1変換なし」 | **無効**。`VulkanDynamicMesh` の2点だけの部分計数 | 全発行点の合計を計数してから |
+| 「per-call最適化の余地は尽きた」 | **撤回**。同一条件のA/Bが成立していない | provenance一致のpaired測定 |
+| 「GCがp95の主因」 | **撤回**。両armほぼ同一（停止数・時間） | 同一scene・同一区間での再測 |
+| 「GLスタブ経由は解消済み」 | **撤回**。`CeltiumNativeDraw` はスタブを直接呼んでいた。今回owner移行を開始 | 各入口の所有者がnativeになった時点で個別に判定 |
 
-性能測定の正しいキーと残存負荷は [開発・検証手順](<development.md>)。READMEに別の現行性能表を作らない。
+## 未確定（数値を前提にしない）
+
+- **Intel性能は未測定**（AMDのみ）。同一hash・同一条件のIntel paired測定を取るまで両GPU優位を主張しない。
+- tail（p95）が3.8倍なのにp50が1.70倍という差は、平均的な変換コストより**スパイク源**が競争力を決めることを示す。次の判別はwarm区間のframe毎内訳とアップロード/GC/待ちの同時記録であり、推測で1つに絞らない。
+- GPU pass時間、present/readback、アップロード量、GC、フレーム内訳の旧値は、artifact/区間が今回のビルドと一致しないため参考値としても使わない。
+- validation clean・`exitCode=0`・色数gateは、それぞれ描画不存在・正しい絵・画像一致を証明しない。
 
 ## 更新と参照
 
 - この表は実装・根因・受入の意味が変わった時だけ更新する。round日記・毎回のPR作成は不要。
-  途中経過はローカルか既存Issue/PRへ。失敗・未較正・欠測を説明で成功に変えない。
-- [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [手順](<development.md>) /
-  [計器索引](<instruments.md>) / [検証の罠](<verification-traps.md>) / [再監査](<audit-2026-10-17-sol-review.md>)。
-- 旧表は [snapshot](<history/plan-state-snapshot-2026-10-17.md>)、旧日記は [diary](<history/plan-diary.md>)。
-  再監査以前の「確定」「税なし」「両GPU成功」には訂正がある。履歴を現在の命令/判定として読み戻さない。
-- 古い「plan §0.xxx」は現行の節ではない。[旧handoff](<handoff-2026-10-10-next-model.md>)や履歴を必要な箇所だけ参照する。
-  現行判断は原典・artifact・実測結果へ戻す。
-
-<!-- 2026-10-21 の詳細な試行記録は各commitメッセージと docs/direction-2026-10-21.md に移した（plan.md は現在表のみ）。 -->
+- [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [設計](<architecture-2026-10-21.md>) /
+  [手順](<development.md>) / [計器索引](<instruments.md>) / [検証の罠](<verification-traps.md>)。
+- 旧表・旧日記は [snapshot](<history/plan-state-snapshot-2026-10-17.md>)、
+  [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)、[diary](<history/plan-diary.md>)。
+  履歴を現在の命令・判定として読み戻さない。

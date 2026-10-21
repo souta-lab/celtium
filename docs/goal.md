@@ -1,83 +1,49 @@
-# Celtium 完成条件と目標（2026-10-21 改訂）
+# Celtium — 製品目標と完成条件
 
-- Goal の状態・識別子は goal API が持つ（本書は製品仕様と完成条件）。
-- 対象: Minecraft 1.12.2 / CleanroomMC 専用 native Vulkan レンダラ
-- 基準環境: Cleanroom 0.6.13-alpha, LWJGL 3.4.1, Java 25, AMD RX 6400 / Intel UHD 630
-- 比較基準: Celeritas 固定参照 `989ebf2e`
-- 現在状態表: [plan.md](<plan.md>)（唯一）
-- 方向性の根拠: [direction-2026-10-21.md](<direction-2026-10-21.md>)
-- 作業規約: [../AGENTS.md](../AGENTS.md)
+2026-10-21 再定義。以前の性能値・原因断定・完了宣言は前提にしない。
+現在の実装と受入は [plan.md](<plan.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)、
+実行手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
 
-## 目的
+## 目的と唯一の描画制約
 
-Celtium を、Celeritas を明確に上回る実用レンダラとして完成させる。shaderless 描画の正しさ・FPS/frame time・主要 Mod 互換（E2E 1.93a、RLCraft 2.9.3）・配布品質を仕上げ、Native Shadow Map と Shaderpack を実画面と両 GPU で証明する。
+Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性能と実用的なMod互換性**を持つレンダラを作る。
 
-## 現在地（実測済み・再測定しない前提）
+- **native Vulkan-only。Minecraft/Forgeの描画・資源・状態をnative frontendが所有する。**
+- GL変換は**Modが直接使うGL APIの互換アダプタだけ**に限定し、同じnative rendererへ接続する。
+  バニラのGL呼出しをスタブへ転送して「native化」と呼ばない。HUD/GUI/loadingも例外ではない。
+- GLコンテキスト・GLによる描画fallbackに頼らない。拒否された描画は欠落であり、成功ではない。
 
-| 項目 | 実測値 |
-|---|---|
-| KPI（検証税OFF, AMD, `scripts/gv-kpi.sh`） | Celtium p50 **3.20ms** / p95 7.95 vs Celeritas **1.40ms** / 1.96 ＝ **2.29x**（3ペア 2.26/2.30/2.29） |
-| GPU（terrain 3 pass） | **1.4ms** ／ frame 8.5ms ⇒ GPU は遊んでいる |
-| 負けの正体 | GL 呼び出し単位の変換 **3.5µs × 約290/frame ≒ 1ms**。hotspot 無し、prepared キャッシュ hit 7.7%、GC は Celeritas と同量 |
-| 到着カウンタ（**違反ではない**・2026-10-21 訂正） | `glDrawArrays` **1024** 件のうち **1020 件が native 描画**・拒否 4。display list 再生は捕捉済みリストを引く（census 8/8 `captured=yes`）。**GL フォールバック描画の計器は存在しない**＝バニラは既に stub 非経由で native。残る問題は経路ではなく **per-call コスト**だけ |
-| コード規模 | celtium-vulkan **71,270** 行、`VulkanTerrainGpuBackend` **18,209** 行 / 980 fields、計器 `CELTIUM_` **309** 種 / println 385 / スイッチ 93 |
+それ以外の実装方式は固定しない。既存CPUエンジン、公開内部API、shader、資源配置、描画順の表現、
+パッケージ構成、キャッシュ、スレッド分担、設定・互換方式は、性能と正しさに必要なら置き換える。
+過去文書の「計器追加禁止」「per-call最適化禁止」「backend変更禁止」「S0以外禁止」「必ずmulti-draw」は撤回する。
+ただしMinecraft/Forgeの観測可能な描画・イベント契約を壊す変更は、互換性向上と取り違えない。
 
-## 破らない原則
+## 完成条件（すべて必要）
 
-1. **バニラ／Forge の描画 API は GL スタブを通さない。** Java API レベルで捕捉し native Vulkan へ渡す。
-2. **GL スタブの担当は「Mod が直接呼ぶ GL」のみ。** HUD/GUI も例外にしない（未捕捉の残留は欠陥）。
-3. **`VulkanTerrainGpuBackend` への新機能追加は禁止。** 抽出と削除のみ。
-4. **計器を増やさない。** 受入に使うのは ①KPI ペア ②スタブ違反2計器 ③immediate batch 数 ④validation ⑤GPU pass 時間 の5つだけ。
-5. **「呼び出しごとの変換」を速くする最適化は禁止**（余地なしと計測済み）。
-6. **1フレームのパスは十数個以内**（公式 Vulkan の MC-311557「45+ パス」批判の轍を踏まない）。
-7. 参考実装は**設計のみ**（VulkanMod / Sulfide / Rentities / Angelica / ImmediatelyFast）。コード流用をしない。
+1. **性能**：同一条件・hash固定のCeleritas対照に、AMD RX 6400とIntel UHD 630の双方で優位。
+   完全なpost-startup区間のp50だけでなくp95/p99、起動・移動・チャンク更新、CPU/GPU時間、メモリと長時間安定性を確認する。
+   最低限のKPIは3組以上のpaired ratio中央値 ≤ 1.0。明確な優位の宣言には再現性・分布・tailも必要。
+   描画機能や距離を削って得た比率を同条件の勝利にしない。
+2. **native境界**：sky / terrain / entities / block entities / particles / hand / GUI / font / loading / settingsを含む
+   Minecraft/Forge経路が、GL互換層を逆呼出しせずnativeに描画される。状態query・texture・framebufferも含めて監査する。
+3. **画質**：loading / home / game / settingsの4画面とQMAGNET's Test Mapを、原寸画像・参照・機能別の対照で確認する。
+   粗い色数gateとvalidation cleanだけで画質一致とはしない。
+4. **互換**：E2E 1.93a、RLCraft 2.9.3、主要描画/GUI/最適化Modの代表場面で、欠落・ちらつき・順序・状態漏れがない。
+   公開描画APIとraw GLを混用するMod、resize、resource reload、world切替、GUI/FBOの寿命も検証する。
+   依存Modを削除した別packの起動を、完全packの受入にしない。
+5. **影とshaderpack**：native shadow mapを両GPUの実画面で確認し、BSLの読み込みだけでなく描画反映・主要効果・破綻を確認する。
+   実装済みという理由だけで既存shaderpack経路を完成扱いしない。
+6. **配布**：packaged JARとテスト済み実装が一致し、対応環境・依存・ライセンス・設定・既知の非対応・導入手順が正確。
+   初回導入と長時間プレイでdriver/device lost・資源リーク・受入外の無言の欠落がない。
 
-## フェーズと受入
+## 証拠の最低条件
 
-### Phase A — 前提の確定（**完了 2026-10-21**）
-- 到着カウンタ（`glDrawArrays` / `glCallList`）は native 処理の到着数であり GL フォールバックではない、と実測で確定
-- `glDrawArrays` 1024 件中 1020 件が native 描画・拒否 4、display list 再生は捕捉済みリストを引く（8/8 `captured=yes`）
-- ⇒ 「境界の違反」は存在せず、追加作業なし。以後の主作業は Phase B
-
-### Phase B — 即時描画のモデル単位バッチ化
-- `(format, texture, blend, matrix)` を粗いキーにパス内蓄積し run あたり 1 draw
-- **受入**: 即時 batch 数 290 → 数十、KPI ペアで 2.29x から有意改善（±6% 超）
-
-### Phase C — フレームを明示パスで取る
-- sky / terrain / entities / block-entities / particles / GUI / post を明示パス化（十数パス以内）。余力で描画スレッド分離
-- **受入**: KPI ペアで **ratio ≤ 1.0**、両 GPU
-
-### Phase D — 互換と目視
-- E2E 1.93a / RLCraft 2.9.3 代表シーン、qmagnets テストマップ
-- 目視4画面（loading / home / game / settings）を画像で確認
-- Entity Culling 1.12.2 など既存最適化 Mod との共存
-- **受入**: 各シーンの画像 + validation clean
-
-### Phase E — 影・Shaderpack・配布
-- Native Shadow Map を実画面で証明（両 GPU）。影の別 mod 化は可
-- Shaderpack（BSL）実機で読み込みと描画反映
-- 配布品質（0.0.6-alpha 系）、既知問題、対応 Mod 一覧
-- **受入**: 影 ON の画像 + 両 GPU、BSL の実機ログ、配布物と実装の一致
-
-## 完成条件（すべて満たした時だけ Goal 完了）
-
-1. KPI が Celeritas 以下（**warm window** の `frameIntervalWarmP50Ms` で ratio ≤ 1.0、AMD と Intel の両方）
-   - 必須条件: `frameIntervalWarmSampleCount > 0`（cold window の `frameIntervalP50Ms` は判定に使わない）
-   - 必須条件: 測定した JAR の `sha256` と `git.head`/`dirty` が、その leg のビルドと一致していること
-2. バニラ描画の全経路（sky / terrain / entities / block-entities / particles / GUI / font / loading / settings）が**スタブ非経由**で native に描かれ、validation が clean
-3. 目視4画面（loading / home / game / settings）を画像で確認
-4. E2E 1.93a と RLCraft 2.9.3 の代表シーンが実機で正常
-5. qmagnets テストマップで描画と性能を確認
-6. Native Shadow Map が実画面に出る（両 GPU）
-7. Shaderpack（BSL）が実機で読み込まれ描画に反映される
-8. 配布物（jar・設定・ライセンス・既知問題）が実装と一致
-
-## 検証の規約
-
-- GPU の主張には commit・jar hash・GPU・scene・camera・flags・leg を紐づける
-- **AMD 成功は Intel 成功ではない。** 主要受入は両 GPU
-- KPI は `scripts/gv-kpi.sh` のペアで測る（可能なら REPS=3）。検証税は `-Dceltium.vulkan.presentedDumpEvery=0`
-- **`CELTIUM_KPI_JARS` に、その HEAD から build した JAR を stage したディレクトリを明示する。** 既定の固定ディレクトリを使うと別ビルドを測る（2026-10-21 に4 leg が同一 sha を測定して判明）。leg の `-manifest.json` で `artifacts.renderer.sha256` と `git.head` を照合し、不一致なら測定を破棄する
-- draw 数は**全発行点の合計**で読む（`VulkanDynamicMesh` の2点だけを数えた値を全体の結論にしない）
-- 失敗・未較正・欠測を成功に数えない。無音の leg は重複 jar と計器の有効性を先に疑う
-- 目視は画像を残す。数値だけで「見えている」と主張しない
+- full JAR SHA-256、fixture SHA-256、ビルド成功とsource revision/dirty差分、実GPU、scene、camera、flags、測定区間、legを紐づける。
+  **実行時のgit HEADはJARの出自の証明ではない。** build provenanceとstageのbytesを照合する。
+- 性能と画質/validationのrunを分ける。計測負荷を明記し、fixtureを含むframe intervalをrenderer単体時間と呼ばない。
+- 既定のcold区間はworldTicks [120,200)、post-startup区間は [400,600)。後者は50以上のサンプルと区間完了が必要。
+  fixtureは通常約200tickで終了するため、**起動時間の延長だけでなく `holdUntilTick` が必要**。
+  tick番号だけではチャンク構築完了やsteady stateを証明しない。
+- 部分計数から全draw数を断定しない。GPUの成功を別GPUへ、1sceneの成功を全Modへ拡張しない。
+  失敗・未較正・欠測・hash不一致を成功から除外し、画像と診断の不一致を調べる。
+- 過去の否定・肯定は再入条件を持つ仮説として扱い、対象artifactと有効な計器から再評価する。

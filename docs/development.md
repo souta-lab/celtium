@@ -119,11 +119,29 @@ wrapperのexit 0は、当該legについて実装された受入条件をすべ�
 
 ## 6. 性能測定は画像受入と区別する
 
+正典は **`scripts/gv-kpi.sh` → `scripts/gv_kpi.py`**（paired・hash固定・warm区間）。
+`CELTIUM_KPI_JARS`（そのHEADのbuildをstageしたディレクトリ、`build-provenance.json`必須）と
+`CELTIUM_KPI_REFERENCE`（対照JAR）を明示する。CLIは `gv-kpi.sh TAG [SECONDS=240] [共有-D...] [-- Celtium専用-D...]`。
+
+```sh
+CELTIUM_KPI_JARS=.gv-verify/jars/<tag> CELTIUM_KPI_REFERENCE=<celeritas.jar> \
+  CELTIUM_KPI_REPS=3 scripts/gv-kpi.sh <unique-tag> 240
+```
+
+判定は `frameIntervalWarmP50Ms`（worldTicks 400..600）。fixtureは通常約200tickで終了するため、
+**`holdUntilTick=620` を渡さないとwarm区間は空**（スクリプトが自動で付ける）。以下は自動で拒否される:
+provenance/sha不一致、`warmSampleCount<50`、`worldTicksAtEnd<600`、両armのscene/camera/解像度/雲/pacing差、
+3ペア未満、Celtium専用flag（`--`以降）、fps上限・vsync。終了コードは 0=NOT_SLOWER / 1=SLOWER / 2=NO_SPEED_VERDICT。
+
 周期presented dumpを止めるキーは **`-Dceltium.vulkan.presentedDumpEvery=0`**。
 `celtium.validation.presentedDumpEvery`は実装されていない。旧`gv-notax-*`のeffective argsにもこの誤指定がある。
 さらにframeDumpDir経由のdumpは別経路なので、必要なら **`-Dceltium.vulkan.frameDumpEvery=0`** も使う。
 それでもfixtureの要求capture、presentReadback、validation、計器、world生成などの負荷が残る。**「全fixture税を除去」とは呼ばない**。
 
+- `CELTIUM_KPI_LOAD_LIMIT`（既定2.0）は**下げて測定しない**。上げる場合は結果JSONに
+  `environment.initialLoadAverage`/`loadLimit`/`guardBypassed` が残るので、その数値を根拠と一緒に書く。
+  常駐負荷（ブラウザ等）はpaired交互順で両armから相殺されるが、**絶対msは床を引きずる**。絶対値の断定に使わない。
+- 高速化の効果は同一jarの再測定では出ない。**変更前後で別stageを作り、同じ条件で測る**。
 - warm/cold・tick/frame範囲・サンプル数を揃え、全frame interval、render bracket、tick、CPU/GPUを分ける。
 - 平均・p50からp99を説明しない。別区間のGPU debug値をCPU p50から引き算しない。
 - whole-runのtick合計にはstartupが含まれる。warm costやどのmod由来かは別に判別する。
