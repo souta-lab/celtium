@@ -6557,6 +6557,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (lightParamsMoved) {
                 this.immediateStatistics.noteLightParamBoundarySplits();
             }
+            // The texture affine is per-draw state only for a layout that samples a texture. POSITION_COLOR (1),
+            // POSITION (7) and POSITION_NORMAL (10) have no texture-coordinate attribute and their vertex shaders do
+            // not even declare the affine's push slots (immediate_color.vert, immediate_position.vert), so splitting a
+            // group because the mirror happened to hold a different texture matrix would change nothing the batch
+            // draws - and format 1 alone is 52% of the offered batches. Measured before this: texture_affine was 71%
+            // of all group splits.
+            boolean affineRelevant = VulkanImmediateFormats.samplesTexture(formatId);
             if (retained != null || this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
                     || this.currentGroupStateKey != stateKey || !samePass
@@ -6576,7 +6583,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // to the open group and drawn with the earlier value - the glint's scrolling affine and a quad drawn
                     // under a different fog bracket are the two shapes this closes. Both comparisons are null-safe:
                     // null means "identity affine" and "fog off" respectively, and those are states to compare too.
-                    || this.celtium$textureAffineMoved()
+                    || (affineRelevant && this.celtium$textureAffineMoved())
                     || this.celtium$fogMoved()
                     || lightParamsMoved) {
                 // Which term refused the open group, counted. Asked only where a group is actually created (a few
@@ -6767,8 +6774,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
-                this.currentGroupTexMatrix = celtium$textureAffine();
-                this.groupSplitCensus.noteTextureAffine(this.currentGroupTexMatrix);
+                // Only a layout that samples a texture carries the affine: the colour- and position-only vertex
+                // shaders have no texture coordinate and do not declare the push slots, so recording whatever the
+                // mirror last held would put a value in the group's identity that no batch in it can draw with.
+                this.currentGroupTexMatrix = affineRelevant ? celtium$textureAffine() : null;
+                if (affineRelevant) {
+                    this.groupSplitCensus.noteTextureAffine(this.currentGroupTexMatrix);
+                }
                 // The registry records this group was built against: the fast path asks "is the offer's image
                 // still this object" instead of repeating the descriptor lookup the record decides. A re-created
                 // texture is a different object, which is the slow path's `descriptor != prepared.descriptor` term.
@@ -7347,8 +7359,12 @@ this.frameBufferOpen = false;
                 && this.colorMirrorHasValue && this.celtium$colourDiffers()) {
             return false;
         }
-        // BH-04's other halves: texture affine and fog, captured once at open.
-        if (this.celtium$textureAffineMoved() || this.celtium$fogMoved()) {
+        // BH-04's other halves: texture affine and fog, captured once at open. The affine only exists for a layout
+        // that samples a texture - the colour and position-only shaders have no texture coordinate at all, so holding
+        // a group open across a changed mirror value is not a correctness risk for them (and format 1 is half the
+        // offered batches).
+        if (VulkanImmediateFormats.samplesTexture(formatId) && this.celtium$textureAffineMoved()
+                || this.celtium$fogMoved()) {
             return false;
         }
         // BH-05: a moved light payload splits only a lit group - the enable is in the state key already.
