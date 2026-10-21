@@ -14541,6 +14541,9 @@ this.frameBufferOpen = false;
     private boolean shadowProbeReported;
     /** How many times the light setup has been logged; a bounded diagnostic, not a per-frame cost. */
     private int shadowLightsLogged;
+    /** The camera position as the world pass saw it; the light is built around this. */
+    private final org.joml.Vector3f shadowCentre = new org.joml.Vector3f();
+    private boolean shadowCentreCaptured;
     /**
      * Snapshots the shadow draw's tuple if the renderer captured a new batch since the last one.
      * <p>
@@ -14568,6 +14571,19 @@ this.frameBufferOpen = false;
         long descriptorSet = pipeline.lastDescriptorSet();
         if (descriptorSet == 0L) {
             return;
+        }
+        // The light has to be built around the camera, and the only moment the camera's model view is available is while
+        // the world is being drawn: at the frame boundary celtium$mirroredModelView() holds something else entirely
+        // (measured centre was (0,0,2000) against a camera at (217.5,48,217.5)), which put the light 1,800 blocks away and
+        // the +/-48 box off the visible terrain. Captured here, used by publishShadowSources.
+        float[] cameraModelView = this.celtium$mirroredModelView();
+        if (cameraModelView != null && cameraModelView.length >= 16) {
+            org.joml.Vector3f captured = new org.joml.Vector3f();
+            new org.joml.Matrix4f().set(cameraModelView).invert().getTranslation(captured);
+            if (captured.lengthSquared() > 1.0e-6f) {
+                this.shadowCentre.set(captured);
+                this.shadowCentreCaptured = true;
+            }
         }
         this.shadowTuplePipeline = pipeline;
         this.shadowTupleDescriptorSet = descriptorSet;
@@ -15043,6 +15059,11 @@ this.frameBufferOpen = false;
             }
             org.joml.Vector3f centre = new org.joml.Vector3f();
             new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
+            if (this.shadowCentreCaptured) {
+                // Taken while the world was drawn (see celtium$queueShadowBatches); the mirror at this boundary point is
+                // some other transform.
+                centre.set(this.shadowCentre);
+            }
             // More oblique than the first attempt, so horizontal surfaces throw longer shadows across the ground.
             // A property, so the sun's direction can be swept in a leg rather than recompiled: shadows are only
             // convincing when they fall on surfaces the camera can see.
