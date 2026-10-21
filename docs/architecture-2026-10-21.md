@@ -351,6 +351,12 @@ shadercのバインディングは**LWJGLの版に固定**されており、「m
 `setShadowSources` は `publishShadowSources` から毎フレーム呼ばれる（`celtium.shadow.noSources` が無い限り）ので、
 **「初回に作った set が古いまま」という候補も消えた**。
 
+### さらに消去（2026-10-22）
+- **頂点モジュール**: キャスタは `terrain.vertexModuleName()` のモジュールをそのまま使う（`ShadowMapPass:491`）＝
+  レシーバと**同一のシェーダ**。vanilla変種ではない。
+- **uniform（`u_RegionOffset`）**: キャスタは `batch.descriptorSet` を `batch.dynamicOffset` で bind する＝
+  レシーバと同じ領域ブロックを読む。
+
 ### 残るデバッグ手段（この粒度の計器では追えない）
 ここまでで消した候補: `_draw_id`、Y反転、region offset、深度remap、行列の合成、光源中心、
 descriptor の更新漏れ、バッチ数、マップの充填とスケール。
