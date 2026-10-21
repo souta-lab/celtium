@@ -237,3 +237,25 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
 ### リスク
 - バッチ毎の descriptor set を保持すると、セットが再利用/退役したときの寿命管理が要る（`#401` の退役規則に従う）。
 - 64バッチ×push block 224B＝14KB/フレームのコピーが増える（CPU律速なので無視できない量。計測してから上限を決める）。
+
+### 8.1 行列の当たりを取る（2026-10-22 時点の観測と次の一手）
+
+キャスタ側は整っている: `recordTerrainBatches` は `lightSpaceBlock(batch.pushBlock)` を作り
+（`ShadowMapPass:611`/`866`）、地形のパイプラインレイアウトでpushして `vkCmdDrawIndexedIndirect` する
+（同:616-620）。つまり**マップには光源空間の深度が入る**。
+レシーバ側は `eyeSpaceLight = lightVP * inverse(modelView)` を即時系へ、
+`lightViewProjection`（world空間）を地形系から読む2系統がある（`VulkanTerrainGpuBackend:15063-15072`）。
+
+**疑い**: 地形の頂点は**カメラ相対**（Celeritasの`push`ブロック）で、マップは**world空間の光源行列**。
+地形シェーダがカメラ相対位置をworld行列で投影しているなら、ルックアップは定数オフセット（カメラ位置）だけ
+ずれる。同じ理由で「94%の画素がマップ外」という過去の観測とも整合する。
+
+**次の判別手段**（推測で行列をいじらない）:
+1. 地形シェーダ（`terrain_solid.frag` の shadow 部）が、どの座標にどの行列を掛けているかを読み、
+   **カメラ相対→world変換**（`+ cameraPosition`）が入っているかを確認する。
+2. 入っていなければ、`lightVP` の前にカメラ平行移動を掛けた行列を**第3のブロック**として渡し、
+   地形レシーバだけそれを読む。
+3. 計器: マップ座標のin/out比をGPU側で数えるには、シェーダに
+   `atomicAdd` するSSBO（in/outの2カウンタ）を1つ足すのが最小。CPUでは再現できない。
+
+**判別条件**: in比が支配的（>80%）になり、かつ影ON/OFFの presented 差がログ帯外で mean 1.0 以上。
