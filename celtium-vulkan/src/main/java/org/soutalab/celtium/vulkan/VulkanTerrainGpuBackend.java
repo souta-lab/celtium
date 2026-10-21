@@ -15110,7 +15110,9 @@ this.frameBufferOpen = false;
             // belowOne=0.0, i.e. empty. lightVP * T(centre) maps a camera-relative position where lightVP maps the world
             // position it stands for.
             org.joml.Matrix4f terrainShadowMatrix = new org.joml.Matrix4f(lightViewProjection).translate(centre);
-            if (this.shadowLightsLogged < 3) {
+            // Only once the game has said where the camera is: the first frames run before that push, and printing then
+            // reported the boundary mirror's (0,0,2000) as if it were the position the light had been built around.
+            if (this.shadowLightsLogged < 3 && cameraWorldKnown) {
                 this.shadowLightsLogged++;
                 org.joml.Vector4f cameraMapped = new org.joml.Vector4f(0.0f, 0.0f, 0.0f, 1.0f)
                         .mul(terrainShadowMatrix);
