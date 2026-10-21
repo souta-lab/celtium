@@ -160,3 +160,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 | **`presentFromComposite=false` は測定不能（2026-10-22）** | — | 実測 | — | Intelで制御arm比較を試したが、presented dumpが壊れて `missing/inconsistent presented-dump picture evidence` で不成立。この経路は測定用としては使えない（doc にも「証拠が presented image になる」と書かれている） |
 | **CPU内訳の追加計測（2026-10-22）** | **rebase 4.35k int/frame≒0.5%** | 実測 | — | offer毎のインデックス再ベース（`baseVertex`≠0で `memPutInt` のint毎ループ）を計測: **4,351 int/frame**、試算8.7µs/frame＝**0.5%**。計器は撤回（jar `675997d5…`に復帰）。**受理経路の候補はほぼ尽きた**: capture(79%)・prepare(26%)・行列比較(100%)・rebase(全部) のどれを削ってもwall時間が動かない。残る説明は**キャッシュ/メモリ局所性**で、構造変更（group境界をflushで決める）以外に手が無い |
+
+### CPU律速の確定（2026-10-22）
+
+| **CPU律速の確定（2026-10-22 決定的）** | **GPU律速ではない** | 実測 | 方針転換 | 640x360（画素1/4）で **1.863ms** ＝1280x720の1.85msとほぼ同じ ⇒ **CPU律速**。GPUタイマーの `wholeFrameGpu`（AMD 1.18ms）等は**待ちを含む**値で、「GPUが忙しい」と読んだのは誤り。GPU側最適化（フィルレート/シェーダ）はAMDに効かない。`CELTIUM_LEG_WINDOW_SIZE` を新設（較正は1280x720） |
