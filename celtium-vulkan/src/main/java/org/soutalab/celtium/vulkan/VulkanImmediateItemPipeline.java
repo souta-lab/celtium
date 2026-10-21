@@ -646,10 +646,12 @@ public final class VulkanImmediateItemPipeline {
                 // The shadow lookup is behind a specialisation constant: absent unless the pass is enabled, so the
                 // default configuration compiles the derivative pair, the nine taps and the multiply out.
                 org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer shadowEntry =
-                        org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(1, stack);
+                        org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
                 shadowEntry.get(0).constantID(0).offset(0).size(4);
-                java.nio.ByteBuffer shadowValue = stack.calloc(4);
+                shadowEntry.get(1).constantID(1).offset(4).size(4);
+                java.nio.ByteBuffer shadowValue = stack.calloc(8);
                 shadowValue.putInt(0, Boolean.getBoolean("celtium.shadow.enabled") ? 1 : 0);
+                shadowValue.putInt(4, Boolean.getBoolean("celtium.shadow.debug") ? 1 : 0);
                 org.lwjgl.vulkan.VkSpecializationInfo shadowSpecialization =
                         org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(shadowEntry, shadowValue);
                 stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
