@@ -197,3 +197,43 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
 - GPU側のフィルレート/シェーダ最適化（CPU律速なのでAMDには効かない）
 - boxed `Map<Integer,X>` → fastutil（**2回とも実行時 `NoSuchMethodError`**。このコードベースでは不可）
 - 1%未満の単品削減を「改善」として報告すること（分解能以下）
+
+## 8. 影のキャスタ捕捉を地形パス内へ移す（2026-10-22 設計・未実装）
+
+### なぜ
+影の描画側は完成している（マップ生成 `size=2048`・shaderc不要の埋め込みSPIR-V・地形1バッチの描画提出・
+レシーバの実マップバインド・シェーダは3x3 PCFで0.2倍まで暗くする）。しかし**絵の差は mean 0.17**で見えない。
+原因は捕捉側: `captureShadowTuple` がフレーム境界で**1回**呼ばれ、`TerrainRenderer` も**最初の1バッチ**しか保持しない
+（`if (this.shadowIndirectCount == 0)`、`TerrainRenderer:554`）。影マップの大半がクリア深度のままなので、
+深度テストが「lit」を返し暗くならない。
+
+### 素朴な修正が壊れる理由（実測済みの失敗）
+「範囲のリストを貯めて全部描く」だけでは足りない。`TerrainRenderer` は indirect の範囲と頂点/インデックスバッファを
+**同一瞬間に**取っている（`#397`）。範囲だけを貯めてバッファをbind地点で取ると、**リージョンAのindirectコマンドが
+リージョンBの頂点を指す**。過去に counts を累積して offset を固定した版は `drawCount 3246 at offset 800` で
+`VUID-vkCmdDrawIndexedIndirect-drawCount-00540` を出した（leg shadowTerrain5）。
+さらに影の描画には **pipeline・descriptor set・dynamic offset・224バイトのpush block** も要り、
+これらは**バッチ毎に違う**ので、境界時点の値を使うと同じ混在が再発する。
+
+### 変更案
+1. `TerrainRenderer` の indirect 記録ループ内で、バッチ毎に
+   `(offset, count, vertexBuffer, indexBuffer, descriptorSet, dynamicOffset, pushBlock)` を**1つの不変レコード**として
+   リング（上限64）に積む。押さえるのは記録のその瞬間。
+2. backend は境界で**リングを丸ごと**消費し、`ShadowMapPass.Batch` をバッチ数だけ作る。
+3. 影マップは1フレームに1回だけクリアする（バッチ毎にクリアしない）。
+
+### 不変条件
+- 1レコードの全フィールドは**同一記録時点**のもの（範囲とバッファと状態を混ぜない、#397）。
+- リングはフレーム境界で必ず空にする（次フレームの記録に持ち越さない）。
+- 上限超過は**落とした数を数える**（黙って捨てない）。
+- 影の描画は既存の own-submission 経路（フレームのrender pass外）を維持する。
+
+### 判別条件
+- `CELTIUM_SHADOW_OWN submitted batches=N` の **N が terrain のバッチ数に近づく**こと。
+- 影ON/OFFの presented 画像差が、ログ帯外で **mean 1.0 以上**（現在0.17）になること。
+  0.2倍まで暗くするシェーダが入っているので、入力が揃えば桁で変わるはず。
+- validation clean（`VUID-vkCmdDrawIndexedIndirect-drawCount-00540` を再発させない）。
+
+### リスク
+- バッチ毎の descriptor set を保持すると、セットが再利用/退役したときの寿命管理が要る（`#401` の退役規則に従う）。
+- 64バッチ×push block 224B＝14KB/フレームのコピーが増える（CPU律速なので無視できない量。計測してから上限を決める）。
