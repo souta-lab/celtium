@@ -5359,6 +5359,13 @@ public final class ValidationClient {
                 } else if ("resourcepacks".equalsIgnoreCase(screenRequest)) {
                     requested = new net.minecraft.client.gui.GuiScreenResourcePacks(
                             (net.minecraft.client.gui.GuiScreen) null);
+                } else if ("mainmenu".equalsIgnoreCase(screenRequest)) {
+                    // The main menu is the fourth of the screens the picture acceptance names, and it is the one screen
+                    // that draws the panorama: the game renders the world into a 256x256 texture and upscales it, so a
+                    // leg that opens it exercises the off-target render, the texture copy and the full-screen draw in
+                    // one picture. Nothing else in the fixture could open it - the screen request knew only the two
+                    // GuiSlot screens it was added for.
+                    requested = new net.minecraft.client.gui.GuiMainMenu();
                 }
                 if (requested != null) {
                     mc.displayGuiScreen(requested);
