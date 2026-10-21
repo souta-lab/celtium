@@ -120,3 +120,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 | **0.7 profileと分割理由（2026-10-22 実測＝次の根拠）** | **提出経路が約28%** | 実測 | — | JFR inclusive: `submitImmediateBatch` **14.2%** + `submitGeometryBatch` **13.9%**（99%が同じ受理経路）＝**フレームの約28%**で差0.58msとほぼ一致。offer 約5,517/frame、group 3,600/frame、split内訳は **texture 46%** / format 18% / matrix 18% / state_key 10% / retained 6%。**per-groupコストは0.17µs**なので分割削減では届かず、**「1 offerあたりの固定コスト」か「offer数」**が次の標的 |
 | **state snapshot cache（2026-10-22 試行→revert）** | **効果なし・撤回** | 実測 | — | setterに「値が変わった時だけ進むstamp」を入れ、同一stamp/formatでstate配列とkeyを再利用（**79.3%再利用**を実測）。制御arm3ペア **1.026 / 0.999 / 1.007＝中央値1.007x＝効果なし** → 79%のcaptureを消しても差が無い＝**captureStateは律速ではない**。revert |
+
+### GPU計器と分割（2026-10-22）
+
+
