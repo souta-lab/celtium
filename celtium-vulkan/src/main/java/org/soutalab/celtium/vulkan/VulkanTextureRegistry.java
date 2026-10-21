@@ -1757,7 +1757,9 @@ public final class VulkanTextureRegistry {
         }
         // The ownership path: when the upload hook has handed over the image this texture is being filled with, and the
         // mirrors are not copying GL's mip levels (which would need the readback), the mirror is built from those pixels.
-        java.awt.image.BufferedImage announced = this.announcedImages.get(id);
+        // Nothing announced means nothing to look up: the three boxed map reads below ran once per offered batch (197 a
+        // frame measured as skips alone) for the common case where no announcement is pending at all.
+        java.awt.image.BufferedImage announced = this.announcedImages.isEmpty() ? null : this.announcedImages.get(id);
         if (announced != null) {
             // The conversion is 1.17 ms per call and it ran on almost every batch: the announcement stayed pending, so the
             // same image was turned into RGBA again and again. A consumed generation means the mirror already holds these
