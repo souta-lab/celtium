@@ -127,12 +127,16 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
 5. 切れれば `ImmediateGroup` を作り直し、mesh を group に紐付け
 6. flush で group を回して記録（`wrecLoop`）
 
-### 変更案
+### 変更案（および、そのうち実装できない部分）
 - offer時は**(sourceAddress, stride, count, drawMode, formatId, textureId, stateKey, pass, scissor, matrixCopyId)** を
   追記専用の配列に書くだけ（数十ns）。group構造・mesh・descriptorには**触れない**。
-- meshへの転写（`memCopy`/indices）とgroup生成は **flush の1パス**でまとめて行う。転写は記録順に走査するので
-  ソースもデスティネーションも前進のみ＝局所性が最良。
 - group境界判定は現行の述語を**そのままflushで評価**（受理時の値は配列に保存済みなので意味は変わらない）。
+- **頂点の転写（`memCopy`/indices）は遅延できない**（2026-10-22 実装前提の確認で判明）。
+  `WorldVertexBufferUploader`/`Tessellator` が渡す `vertexAddress` はゲームの `BufferBuilder` の内部バッファで、
+  **次のdrawで再利用される**。受理時にコピーしないと中身が別のバッチで上書きされ、flush時には壊れている。
+  ⇒ 転写は受理時に残す。**遅延できるのは境界判定とgroup生成だけ**。
+- したがって §6 の見込み（5%）は、**境界判定の分だけでは届かない可能性が高い**。判定自体は既に安い（実測）。
+  この設計は「per-offerでgroup構造に触らない」ことが主目的で、**転写はそのまま残る**。
 
 ### 保たねばならない不変条件（実コードで確認済み）
 - `state[]`は受理時のsnapshot（groupが所有）。配列に `state` のコピーを持たせるか、`stateStamp`方式で参照を固定する。
@@ -145,6 +149,14 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
 - 判別条件: **flushの1パス化後、`warm p50` が 5%以上下がる**（1%は本機の分解能以下）。
 - 制御arm付きKPI（同一jar・交互3ペア）で判定し、`scripts/gv-kpi.sh` の `medianControlRatio` を使う。
 - 画質は通常のleg（validation ON・画像gate）で確認。
+
+### 長い尾（2026-10-22 追加の実測）
+- 受理経路の1.7µsは**数十個の小さな操作（各5-50ns）に散っている**。例: announce経路はoffer毎に
+  `announcedImages.get(id)`（boxed HashMap）、pending時はさらに `announcedGeneration`/`consumedGeneration` の
+  boxed get 2回と `Integer.equals`（`regAnnouncedSkips=2,043,897` ≒ 197/frame）。
+- 本機の分解能は**1-2%（1 offerあたり5-10ns）**なので、**個別の5-30nsは測定できない**。
+  ⇒ 次は「1つ消す」ではなく、**hot pathのboxed map・冗長チェックをまとめて掃除するsweep**として設計し、
+  合計が5%を超える形で一度に測る。
 
 ### リスク
 - `state`/matrixのsnapshotを配列側に持つため、**メモリ使用量が増える**（279 offer × 数百バイト/フレーム）。
