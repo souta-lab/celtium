@@ -4484,6 +4484,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (target == 0x8D40 || target == 0x8CA8) {
             this.readFbo = name;
         }
+        this.framebufferBindSerial++;
+    }
+
+    /** Bumped by every framebuffer bind, which is the only thing that can change a draw-framebuffer query. */
+    private long framebufferBindSerial;
+
+    /**
+     * {@return how many framebuffer binds this stub has recorded}.
+     * <p>
+     * A caller that has to know the bound draw framebuffer can cache its answer against this number instead of asking
+     * GL per draw: the answer cannot change without a bind, and the bind is what bumps the serial.
+     */
+    public static long celtium$framebufferBindSerial() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? -1L : stub.framebufferBindSerial;
     }
 
     /**

@@ -89,6 +89,14 @@ class KpiTests(unittest.TestCase):
             pairs.append(pair)
         self.assertEqual(kpi.summarize(pairs, [])["medianPairRatio"], 2)
 
+    def test_an_unaccepted_leg_is_named_before_any_report_is_parsed(self):
+        # A leg that never produced a report must fail with its own problems, not with a JSON parse error.
+        values = self.records()
+        values[2] = {"accepted": False, "exitCode": 1, "problems": ["harness exited 1"]}
+        with self.assertRaises(kpi.KpiError) as caught:
+            self.metric(values)
+        self.assertIn("not accepted", str(caught.exception))
+
     def test_a_control_build_is_compared_same_arm_so_machine_drift_cancels(self):
         # The reference ratio answers "how far from Celeritas are we"; the control ratio answers "is this build faster
         # than that build", and it is the only one that can rank two builds: both legs are the same renderer family in

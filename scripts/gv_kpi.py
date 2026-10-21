@@ -212,6 +212,11 @@ def main(argv: list[str]) -> int:
         for name in order:
             plan = plans_for_pair[name]
             result = gv_leg.execute(plan)
+            # The leg's own verdict first: a run that never reached the fixture leaves no report to parse, and reading
+            # it anyway reported "Expecting value: line 1 column 1" instead of the harness's actual problem (a missing
+            # validation-process.json on one control leg). A failed leg names itself now.
+            if result.get("accepted") is not True or result.get("exitCode") != 0:
+                raise KpiError(f"{plan.leg} was not accepted: {result.get('problems')}")
             report = object_at(plan.paths["game"] / "logs/celtium-validation.json")
             process = object_at(plan.paths["game"] / "validation-process.json")
             metric = warm_metric(report, process, result, plan.manifest, pinned, name == "celeritas",

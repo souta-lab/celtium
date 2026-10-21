@@ -8786,11 +8786,36 @@ this.frameBufferOpen = false;
 
     /** Bounded fallback counter for the light map mirror. */
     private int celtium$lightmapFallbacks;
+    /** The last answer to the draw-framebuffer query, and the bind serial it was taken at. */
+    private int cachedDrawFramebuffer;
+    private long cachedDrawFramebufferSerial = Long.MIN_VALUE;
+
+    /**
+     * {@return the bound draw framebuffer}, asked of GL only when a bind has happened since the last answer.
+     * <p>
+     * This is asked once per offered batch (~280 a frame) and each answer is a {@code glGetInteger} - a driver query
+     * taken through the stub's trampoline under GL-less, and profiled at 7.6% of everything that runs inside the accept
+     * path. The answer cannot change without a {@code glBindFramebuffer}, so the stub's bind serial is the cache key:
+     * a stale answer is impossible while the serial is unchanged, and one bind invalidates it.
+     */
+    private int drawFramebufferBinding() {
+        long serial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferBindSerial();
+        if (serial < 0L) {
+            // No stub installed: the bridge owns a real GL context and there is nothing to cache against.
+            return org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        }
+        if (serial != this.cachedDrawFramebufferSerial) {
+            this.cachedDrawFramebuffer = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+            this.cachedDrawFramebufferSerial = serial;
+        }
+        return this.cachedDrawFramebuffer;
+    }
+
     private boolean supportedImmediateTarget() {
         // Every condition names itself. One shared message covered all five and could not say which one refused, which is
         // how 870 format-2 refusals in a run stayed unnamed (measured: the stage marker said this gate, and the tally
         // still read "unrecorded").
-        int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        int fbo = drawFramebufferBinding();
         boolean sharedComposite = false;
         if (fbo == 0 && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             // No GL framebuffers exist under the stub, so every default-framebuffer draw - the world pass, menus, the
