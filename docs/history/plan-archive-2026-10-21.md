@@ -138,3 +138,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### 現行ビルドのプロファイル（2026-10-22）
 
 | **現行ビルドのAMDプロファイル（2026-10-22）** | **受理経路26%** | 実測 | — | leg `cur-jfr-amd`（jar `675997d5…`、world、validation off）: `submitImmediateBatch` **13.2%** + `submitGeometryBatch` **12.9%**（＝同じ受理経路、地形もここを通る）+ `flushImmediateWindow` **6.5%** + `CeltiumGlStub` 4.6%、`renderBlockEntities` 41.9%。自己時間の最大は `submitImmediateBatchBody` 4.2%、次いで `copyVerticesTransformed` 0.9%、`ensureBufferedCapacity` 0.8%、`build` 0.8%、`drawPendingImmediate` 0.8%。⇒ AMDの差0.54msのうち**約0.48msが受理経路**。state captureを79%スキップしても効かなかった（既測）ので、次に削るべきは**per-offerの判定と追記の本体**（＝merge判定をflush側へ遅延させ、offerは範囲追記だけにする設計） |
+
+### QMAGNET画像統計（2026-10-22）
+
+| **QMAGNET(world)の両arm画像統計（2026-10-22 実測）** | **色数 54,923 vs 80,505** | 実測 | 要調査 | 同じscene・同じcamera・同じflagsの `world`（＝QMAGNET's Test Map）legで、presented画像の統計を両armで比較: **Celtium distinct 54,923 / nonBg 0.9466**（`cur-amd-celtium-r1`、status PASSED）、**Celeritas distinct 80,505 / nonBg 0.9684**（`cur-amd-celeritas-r1`、status PASSED）。**我々の絵は色数が約32%少なく、背景/単色寄りが2pp多い**。どちらも画像gateはPASSEDなので「欠陥」の証明ではない（AA・mipmap・ガンマ・雲の有無など設定差で変わる）が、**同一シーンで測れる差がある**ことは事実で、画質受入（機能別対照）の最初の定量根拠。次は差分の可視化（同一座標の画素比較） |
