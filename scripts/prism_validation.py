@@ -183,6 +183,12 @@ def inspect(instance, java):
         if not path.is_file() and descriptor.get("path"):
             path = prism / "libraries" / descriptor["path"]
         if not path.is_file():
+            # A pack may ship its own copies beside the instance (Cleanroom 0.7 does: it drops vanilla libraries by
+            # overriding them with "999999.0-empty" jars that only exist under the instance's libraries/).
+            local = instance / "libraries" / coordinate_path(lib["name"]).name
+            if local.is_file():
+                path = local
+        if not path.is_file():
             raise FileNotFoundError(f"Missing cached library: {path}")
         if descriptor.get("sha1") and digest(path, "sha1") != descriptor["sha1"]:
             raise ValueError(f"Library does not match the profile SHA-1: {path}")
