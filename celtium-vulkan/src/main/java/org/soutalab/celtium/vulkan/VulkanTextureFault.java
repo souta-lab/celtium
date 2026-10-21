@@ -26,7 +26,22 @@ public final class VulkanTextureFault {
      *
      * @param site a short label identifying the call site, for the substring form and for the log line
      */
-    public static synchronized boolean shouldFail(String site) {
+    /**
+     * Whether any injection was configured at all. Resolved once, because the switch is a JVM argument.
+     * <p>
+     * {@link #shouldFail} is asked on every texture upload, and it was a {@code synchronized} static method doing a
+     * counter increment and up to two {@code String} operations - a global lock in the middle of the accept path, for a
+     * feature that is off in every shipping configuration. The profile put it at 2.3% of what runs inside
+     * {@code submitImmediateBatchBody}. When nothing is armed there is nothing to count either, so the early return is
+     * also honest: {@code requests} is the number of uploads the injector looked at, which is zero when it is not armed.
+     */
+    private static final boolean ARMED = FAIL_AT > 0 || !FAIL_SITE.isEmpty();
+
+    public static boolean shouldFail(String site) {
+        return ARMED && shouldFailArmed(site);
+    }
+
+    private static synchronized boolean shouldFailArmed(String site) {
         requests++;
         boolean fail = false;
         if (FAIL_AT > 0 && requests == FAIL_AT) {

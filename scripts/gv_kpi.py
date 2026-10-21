@@ -119,19 +119,34 @@ def same_conditions(pair: dict) -> None:
         raise KpiError("the arms have missing/different scene, camera, resolution, distance, clouds, time or pacing settings")
 
 
+def name_samples(pair: dict, name: str) -> int:
+    return pair[name]["samples"]
+
+
 def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
     control_ratios = [p["celtium"]["p50Ms"] / p["control"]["p50Ms"] for p in pairs if "control" in p]
+    # A warm window that produced far fewer frames than its peers did not run on the same machine. Sample counts are
+    # the throughput each leg actually achieved, so a wide gap inside one repetition is disturbance, not a result: a run
+    # whose control legs managed 1072 and 1365 samples against the candidate's 4461 reported the control as 36% slower
+    # when the machine had simply starved it.
+    disturbed = [p.get("repetition", index + 1) for index, p in enumerate(pairs)
+                 if max(name_samples(p, n) for n in p) > 1.5 * min(name_samples(p, n) for n in p)]
     ratios = [p["celtium"]["p50Ms"] / p["celeritas"]["p50Ms"] for p in pairs]
     ratio = statistics.median(ratios)
     # A single pair, asymmetrical flags, or a frame limiter cannot establish the product's performance KPI.
     paced = any(p[name]["conditions"].get("vsyncEnabled") is not False
                 or p[name]["conditions"].get("framerateLimitSetting") != 260
                 for p in pairs for name in ("celtium", "celeritas"))
-    verdict = "NO_SPEED_VERDICT" if len(pairs) < 3 or arm_only or paced else ("NOT_SLOWER" if ratio <= 1 else "SLOWER")
+    verdict = ("NO_SPEED_VERDICT" if len(pairs) < 3 or arm_only or paced or disturbed
+               else ("NOT_SLOWER" if ratio <= 1 else "SLOWER"))
     summary = {"metric": "frameIntervalWarmP50Ms", "windowWorldTicks": [400, 600], "pairs": pairs,
             "pairRatios": ratios, "medianPairRatio": ratio, "verdict": verdict,
             "scope": "fixture frame intervals; startup/build reported separately; includes simulation, GUI and limiter; "
                      "no automatic noise margin or significance claim"}
+    summary["disturbedRepetitions"] = disturbed
+    if disturbed:
+        summary["scope"] += ("; repetitions " + str(disturbed) + " produced fewer than two thirds of their peers' "
+                             "frames, so the arms did not run on the same machine - no verdict from them")
     if control_ratios:
         # Candidate against a control renderer measured in the same window: the same jar family, same arm, same legs -
         # so a machine that drifts between legs moves both and the ratio survives it. This is the number that can rank

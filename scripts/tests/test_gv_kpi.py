@@ -71,6 +71,22 @@ class KpiTests(unittest.TestCase):
         right["conditions"]["captureWidth"] = None
         with self.assertRaises(kpi.KpiError): kpi.same_conditions({"celtium": left, "celeritas": right})
 
+    def test_pairs_whose_arms_produced_very_different_frame_counts_have_no_verdict(self):
+        # The frames each arm completed is the throughput it actually got. A control leg that managed a quarter of the
+        # candidate's frames was starved by something else, and its millisecond figure is not a measurement of the build.
+        starved = {"celtium": self.metric(), "celeritas": self.metric(), "control": self.metric()}
+        starved["celtium"]["samples"] = 4461
+        starved["celeritas"]["samples"] = 4381
+        starved["control"]["samples"] = 1072
+        summary = kpi.summarize([starved] * 3, [])
+        self.assertEqual(summary["verdict"], "NO_SPEED_VERDICT")
+        self.assertEqual(summary["disturbedRepetitions"], [1, 2, 3])
+        # A healthy spread keeps its verdict.
+        healthy = {"celtium": self.metric(), "celeritas": self.metric()}
+        healthy["celtium"]["samples"] = 4461
+        healthy["celeritas"]["samples"] = 4381
+        self.assertEqual(kpi.summarize([healthy] * 3, [])["verdict"], "NOT_SLOWER")
+
     def test_a_run_overtaken_by_load_reports_no_verdict(self):
         # This is not hypothetical: one ranking run started at load 2.69 and ended at 7.34, and its pairs compared
         # different machine states. A median across those is not a measurement, whatever it reads.
