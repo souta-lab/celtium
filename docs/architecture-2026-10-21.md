@@ -259,3 +259,17 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
    `atomicAdd` するSSBO（in/outの2カウンタ）を1つ足すのが最小。CPUでは再現できない。
 
 **判別条件**: in比が支配的（>80%）になり、かつ影ON/OFFの presented 差がログ帯外で mean 1.0 以上。
+
+### 8.2 地形行列のカメラ補正は測って効かなかった（2026-10-22 試行→revert）
+
+`terrain_solid.vert:229-237` を読むと、シェーダは `v_ShadowCoord = u_ShadowMatrix * vec4(worldPosition,1.0)` を計算し、
+`worldPosition` はその後**カメラ相対の model view**で描画に使われる。そこで
+`lightVP * T(centre)`（`centre`＝mirror modelviewの逆行列の平行移動）を渡す修正を実装した。
+
+**結果**: 影ON/OFFの差はログ帯外で **mean 0.17 のまま**（変わらず）。leg `shadowcam`（jar `c02eb627…`）は PASSED・
+validation clean。効果が無く、`worldPosition` が既にworld空間なら**二重変換のバグ**になるため**revert**（jarは`046b8bf2…`に復帰）。
+
+**これで言えること**: 地形レシーバの行列は（少なくともこの変更の範囲では）律速ではない。
+次の候補は (a) `worldPosition` が実際にworld空間かどうかを読み切る（`translation` の作られ方を追う）、
+(b) 地形シェーダの `u_ShadowMatrix` が**書かれている場所**（binding 4 のUBO）が実際に更新されているかを確認、
+(c) GPU側のin/outカウンタ（§8.1の3）。推測で行列をいじる段階は終わり、**観測を足す段階**に入っている。
