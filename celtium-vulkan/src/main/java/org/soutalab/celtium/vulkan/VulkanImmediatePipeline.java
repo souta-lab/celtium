@@ -150,7 +150,9 @@ public final class VulkanImmediatePipeline {
         // dedup'd against the flush's bind cache. A pipeline switch disturbs descriptor bindings, so the
         // descriptor slot resets on every rebind even though this variant binds none of its own.
         if (bindCache[4] != this.pipeline) {
+            long pipelineStart = PacketCost.beginPipelineBind();
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            PacketCost.notePipelineBind(PacketCost.endPush(pipelineStart));
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }

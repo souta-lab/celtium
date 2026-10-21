@@ -34,6 +34,35 @@ final class PacketCost {
         return ENABLED ? System.nanoTime() : 0L;
     }
 
+    /** The pipeline-bind half: how often the packet's pipeline differs from what is already bound. */
+    private static long pipelineBindNanos;
+    private static long pipelineBinds;
+
+    static long beginPipelineBind() {
+        return ENABLED ? System.nanoTime() : 0L;
+    }
+
+    static void notePipelineBind(long nanos) {
+        if (ENABLED) {
+            pipelineBindNanos += nanos;
+            pipelineBinds++;
+        }
+    }
+
+    static long pipelineBindMillis() {
+        return pipelineBindNanos / 1000000L;
+    }
+
+    /** {@return microseconds per pipeline bind, or -1 before the first one}. */
+    static long pipelineBindMicros() {
+        return pipelineBinds == 0L ? -1L : pipelineBindNanos / pipelineBinds / 1000L;
+    }
+
+    /** {@return how many packets had to bind a pipeline, i.e. how often consecutive packets changed it}. */
+    static long pipelineBinds() {
+        return pipelineBinds;
+    }
+
     /** The push-constant half: the cache comparison plus the driver call that follows it. */
     private static long pushNanos;
 

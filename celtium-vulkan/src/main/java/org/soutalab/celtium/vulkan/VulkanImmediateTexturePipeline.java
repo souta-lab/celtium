@@ -358,7 +358,9 @@ public final class VulkanImmediateTexturePipeline {
         // A pipeline switch disturbs the sets bound under the old layout, so the descriptor slot is invalidated on
         // every rebind rather than trusted across layouts.
         if (bindCache[4] != this.pipeline) {
+            long pipelineStart = PacketCost.beginPipelineBind();
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            PacketCost.notePipelineBind(PacketCost.endPush(pipelineStart));
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }

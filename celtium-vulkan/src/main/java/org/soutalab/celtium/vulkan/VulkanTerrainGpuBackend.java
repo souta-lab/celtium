@@ -10172,6 +10172,9 @@ this.frameBufferOpen = false;
                 + " groupSplits[" + this.groupSplitCensus.summary() + "]"
                 // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
                 // caller's total; pushing is what remains after the bind and draw halves below are taken out.
+                + " packetPipelineMillis=" + PacketCost.pipelineBindMillis()
+                + " packetPipelineBinds=" + PacketCost.pipelineBinds()
+                + " packetPipelineMicros=" + PacketCost.pipelineBindMicros()
                 + " packetPushMillis=" + PacketCost.pushMillis()
                 + " packetPushMicros=" + PacketCost.pushMicros()
                 + " packetBindMillis=" + PacketCost.bindMillis()

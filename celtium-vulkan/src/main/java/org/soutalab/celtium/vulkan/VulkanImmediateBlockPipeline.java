@@ -169,7 +169,9 @@ public final class VulkanImmediateBlockPipeline {
         // OPT-12: pipeline and descriptor binds dedup against the flush's bind cache; a pipeline rebind
         // disturbs the set bound under the old layout, so the descriptor slot resets whenever this re-emits.
         if (bindCache[4] != this.pipeline) {
+            long pipelineStart = PacketCost.beginPipelineBind();
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            PacketCost.notePipelineBind(PacketCost.endPush(pipelineStart));
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }
