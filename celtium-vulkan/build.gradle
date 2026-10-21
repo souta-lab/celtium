@@ -63,13 +63,13 @@ dependencies {
     testImplementation 'org.lwjgl:lwjgl-opengl'
     // Version pinned: testRuntimeOnly does not extend testImplementation, so the BOM declared there does not constrain
     // this configuration and the unversioned form silently resolved to nothing.
-    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:3.4.1'
+    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion
     // Four-part notation: the three-part form is group:name:version, so "natives-linux" there was read as a version and
     // the natives jar never resolved - the test then failed on the binding being present without its library.
     // The core natives are required as well: the shaderc binding's initialiser needs liblwjgl.so first, and its absence
     // was what the load failure actually said once the diagnosis printed the cause chain instead of the first message.
-    testRuntimeOnly 'org.lwjgl:lwjgl:3.4.1:natives-linux'
-    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:3.4.1:natives-linux'
+    testRuntimeOnly 'org.lwjgl:lwjgl:' + lwjglVersion + ':natives-linux'
+    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':natives-linux'
     testImplementation 'org.lwjgl:lwjgl-vulkan'
     testImplementation 'com.google.code.gson:gson:2.10.1'
     // The replay transform's composition is matrix arithmetic, and its unit tests have to be able to check it; the
