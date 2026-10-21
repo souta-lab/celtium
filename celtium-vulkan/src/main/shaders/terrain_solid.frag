@@ -223,10 +223,19 @@ void main() {
     vec3 shadowDy = dFdy(shadowCoord);
     float slopeTerm = abs(normalize(cross(shadowDx, shadowDy)).z);
     if (CELTIUM_SHADOW_DEBUG) {
-        // The lookup's in/out ratio, measured rather than argued: green inside the map's [0,1] range, red outside. The
-        // rest of the shader is skipped so the frame is a map of that ratio.
-        bool inside = all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)));
-        fragColor = vec4(inside ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
+        // Which component of the lookup is out of range. The box extent was ruled out by measurement (widening it left
+        // the ratio unchanged), so the colours name the component: green all inside, magenta the xy range, red z below
+        // the near plane, blue z beyond the far plane.
+        bool xyIn = all(greaterThanEqual(shadowCoord.xy, vec2(0.0))) && all(lessThanEqual(shadowCoord.xy, vec2(1.0)));
+        if (!xyIn) {
+            fragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        } else if (shadowCoord.z < 0.0) {
+            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+        } else if (shadowCoord.z > 1.0) {
+            fragColor = vec4(0.0, 0.0, 1.0, 1.0);
+        } else {
+            fragColor = vec4(0.0, 1.0, 0.0, 1.0);
+        }
         return;
     }
     if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
