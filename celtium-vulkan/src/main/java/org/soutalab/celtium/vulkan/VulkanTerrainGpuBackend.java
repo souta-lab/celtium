@@ -1315,6 +1315,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The immediate domain's counters (refactoring plan R2). */
     private final ImmediateStatistics immediateStatistics = new ImmediateStatistics();
 
+    /**
+     * Why accepted batches open new groups, by cause. The frame pays per group, so "too many groups" is only
+     * actionable together with which term of the merge predicate is binding.
+     */
+    private final ImmediateGroupSplitCensus groupSplitCensus = new ImmediateGroupSplitCensus();
+
+    /** Live unit-0 texture affine, read without allocating: see {@code celtium$textureAffineMoved}. */
+    private final float[] textureAffineScratch = new float[6];
+
     /** The submission domain's counters (refactoring plan R2). */
     private final SubmissionStatistics submissionStatistics = new SubmissionStatistics();
 
@@ -3707,12 +3716,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * identity is a change like any other.
      */
     private boolean celtium$textureAffineMoved() {
-        float[] now = celtium$textureAffine();
+        // Compared through the scratch rather than by building the affine twice: this runs once per offered batch
+        // (~280 a frame), and the old form allocated a float[6] on every call to answer a yes/no question.
+        boolean live = celtium$readTextureAffine(this.textureAffineScratch);
         float[] captured = this.currentGroupTexMatrix;
-        if (now == null || captured == null) {
-            return (now == null) != (captured == null);
+        if (!live || captured == null) {
+            return live != (captured != null);
         }
-        return !java.util.Arrays.equals(now, captured);
+        for (int i = 0; i < 6; i++) {
+            if (this.textureAffineScratch[i] != captured[i]) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -3758,22 +3774,42 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean FORCE_IDENTITY_TEXMAT = Boolean.getBoolean("celtium.forceIdentityTexmat");
 
     private float[] celtium$textureAffine() {
-        if (FORCE_IDENTITY_TEXMAT) {
+        if (!celtium$readTextureAffine(this.textureAffineScratch)) {
             return null;
+        }
+        // Copied here and nowhere else: a group keeps its own snapshot, and capturing is a few hundred times a frame
+        // rather than once per offer.
+        return this.textureAffineScratch.clone();
+    }
+
+    /**
+     * Reads unit 0's texture affine into {@code out}.
+     *
+     * @return whether the live affine is anything other than the identity
+     */
+    private boolean celtium$readTextureAffine(float[] out) {
+        if (FORCE_IDENTITY_TEXMAT) {
+            return false;
         }
         try {            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
             // and reading the shared stack would return whichever unit was last active.
             float[] matrix = this.immediateState.peekTextureMatrix(0);
             if (matrix == null) {
-                return null;
+                return false;
             }
             float a = matrix[0], b = matrix[1], c = matrix[4], d = matrix[5], tx = matrix[12], ty = matrix[13];
             if (a == 1.0f && b == 0.0f && c == 0.0f && d == 1.0f && tx == 0.0f && ty == 0.0f) {
-                return null;
+                return false;
             }
-            return new float[] {a, b, c, d, tx, ty};
+            out[0] = a;
+            out[1] = b;
+            out[2] = c;
+            out[3] = d;
+            out[4] = tx;
+            out[5] = ty;
+            return true;
         } catch (RuntimeException | LinkageError error) {
-            return null;
+            return false;
         }
     }
 
@@ -6543,6 +6579,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     || this.celtium$textureAffineMoved()
                     || this.celtium$fogMoved()
                     || lightParamsMoved) {
+                // Which term refused the open group, counted. Asked only where a group is actually created (a few
+                // hundred times a frame, not per offer), and asked with the same live state the predicate just read.
+                this.groupSplitCensus.note(ImmediateGroupSplitCensus.classify(retained != null,
+                        this.currentImmediateMesh == null,
+                        this.currentImmediateMesh != null && this.currentGroupFormatId != formatId,
+                        this.currentImmediateMesh != null && this.currentGroupTexture != boundTexture,
+                        this.currentImmediateMesh != null && this.currentGroupStateKey != stateKey,
+                        samePass, scissorMoved, this.currentPreparedImmediate == null,
+                        this.currentPreparedImmediate != null && this.currentPreparedImmediate.pipeline != prepared.pipeline,
+                        this.currentPreparedImmediate != null && this.currentPreparedImmediate.descriptor != prepared.descriptor,
+                        !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection),
+                        this.currentGroupPreTransformed && !this.celtium$axisAlignedModelView(),
+                        !this.currentGroupPreTransformed
+                                && !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView),
+                        GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
+                                && this.colorMirrorHasValue && this.celtium$colourDiffers(),
+                        this.celtium$textureAffineMoved(), this.celtium$fogMoved(), lightParamsMoved));
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
                 long groupCreateStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -6715,6 +6768,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupTexMatrix = celtium$textureAffine();
+                this.groupSplitCensus.noteTextureAffine(this.currentGroupTexMatrix);
                 // The registry records this group was built against: the fast path asks "is the offer's image
                 // still this object" instead of repeating the descriptor lookup the record decides. A re-created
                 // texture is a different object, which is the slow path's `descriptor != prepared.descriptor` term.
@@ -10088,6 +10142,8 @@ this.frameBufferOpen = false;
                 + " presentedDumpFailure=" + (this.swapchain == null ? "none" : this.swapchain.lastDumpFailure())
                 + " " + celtium$pairLayoutSummary()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
+                + " groupSplits[" + this.groupSplitCensus.summary() + "]"
+                + " " + this.groupSplitCensus.affineSummary()
                 + " fastMergedBatches=" + this.immediateStatistics.fastMergedBatches()
                 + " prepLookupMillis=" + (this.immediateStatistics.prepLookupNanos() / 1000000L)
                 + " prepTerrainPipelineMillis=" + (this.immediateStatistics.prepTerrainPipelineNanos() / 1000000L)
