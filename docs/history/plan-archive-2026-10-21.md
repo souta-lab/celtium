@@ -155,3 +155,8 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### prepareメモの撤回（2026-10-22）
 
 | **prepareImmediateのメモ化（2026-10-22 試行→revert）** | **1.005x＝効果なし** | 実測 | — | 同一 (format,texture,key,lightmap,pass) なら前回の `PreparedImmediate` を返す1エントリメモ。**ヒット率25.9%**、leg PASSED。制御arm3ペア **1.005/0.980/1.006＝1.005x** → revert。**6連続で個別削減がwall時間に出ない**（capture -79%、prepare -26%、行列比較 -100% いずれも0〜0.7%）。 |
+
+### CPU内訳の追加計測（2026-10-22）
+
+| **`presentFromComposite=false` は測定不能（2026-10-22）** | — | 実測 | — | Intelで制御arm比較を試したが、presented dumpが壊れて `missing/inconsistent presented-dump picture evidence` で不成立。この経路は測定用としては使えない（doc にも「証拠が presented image になる」と書かれている） |
+| **CPU内訳の追加計測（2026-10-22）** | **rebase 4.35k int/frame≒0.5%** | 実測 | — | offer毎のインデックス再ベース（`baseVertex`≠0で `memPutInt` のint毎ループ）を計測: **4,351 int/frame**、試算8.7µs/frame＝**0.5%**。計器は撤回（jar `675997d5…`に復帰）。**受理経路の候補はほぼ尽きた**: capture(79%)・prepare(26%)・行列比較(100%)・rebase(全部) のどれを削ってもwall時間が動かない。残る説明は**キャッシュ/メモリ局所性**で、構造変更（group境界をflushで決める）以外に手が無い |
