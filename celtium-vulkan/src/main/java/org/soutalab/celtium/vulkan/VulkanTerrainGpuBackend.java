@@ -11629,6 +11629,14 @@ this.frameBufferOpen = false;
             boolean indirect = false;
             if (TERRAIN_INDIRECT_ENABLED) {
                 indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer, stack, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType);
+                if (indirect
+                        && org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested()
+                        && !Boolean.getBoolean("celtium.shadow.noPass")) {
+                    // Every range of this batch becomes a caster, with the state this draw uses - taken here, where the
+                    // pipeline's set, dynamic offset and push block are the ones the batch was recorded with. The ranges
+                    // come from the renderer because a range and the buffers it reads have to be one tuple (#397).
+                    this.celtium$queueShadowBatches(pipeline);
+                }
             } else {
                 this.terrain.noteTerrainIndirectFallback();
                 this.terrain.setLastTerrainIndirectFallback("the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
@@ -14542,6 +14550,42 @@ this.frameBufferOpen = false;
      * @param pipeline the terrain pipeline that drew the batch
      * @return whether a tuple is available
      */
+    /**
+     * Queues this batch's recorded ranges for the shadow pass, paired with the state the draw is using.
+     * <p>
+     * The tuple is complete here: the ranges and their buffers come from the renderer's recording of this batch, and the
+     * pipeline, descriptor set, dynamic offset and push block are the ones bound for it. Nothing is read later at the
+     * frame boundary, which is where the previous version kept only the last batch - and where taking the state would mix
+     * it with a different batch's geometry.
+     */
+    private void celtium$queueShadowBatches(VulkanTerrainPipeline pipeline) {
+        java.util.List<long[]> ranges = this.terrain.shadowRecordedRanges();
+        if (ranges.isEmpty()) {
+            return;
+        }
+        long descriptorSet = pipeline.lastDescriptorSet();
+        if (descriptorSet == 0L) {
+            return;
+        }
+        this.shadowTuplePipeline = pipeline;
+        this.shadowTupleDescriptorSet = descriptorSet;
+        this.shadowTupleDynamicOffset = pipeline.lastDynamicOffset();
+        float[] block = pipeline.lastPushBlock();
+        if (block == null) {
+            return;
+        }
+        for (int i = 0; i < ranges.size(); i++) {
+            long[] range = ranges.get(i);
+            if (this.shadowBatches.size() >= MAX_SHADOW_BATCHES) {
+                this.shadowBatchesDropped++;
+                continue;
+            }
+            this.shadowBatches.add(new org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch(
+                    range[2], range[3], this.terrain.shadowIndirectBuffer(), range[0], (int) range[1], descriptorSet,
+                    this.shadowTupleDynamicOffset, block.clone()));
+        }
+    }
+
     private boolean captureShadowTuple(VulkanTerrainPipeline pipeline) {
         long serial = this.terrain.shadowCaptureSerial();
         if (serial == this.shadowTupleSerial) {

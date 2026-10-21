@@ -212,10 +212,32 @@ public final class TerrainRenderer {
 
     /** Incremented each time a frame's batch is captured, so the owner can attach its own state at the same moment. */
     private long shadowCaptureSerial;
+    /**
+     * Every indirect range this call recorded, with the vertex and index buffers it draws from, taken at the same instant.
+     * <p>
+     * The shadow pass used to keep only the first batch of the frame ({@code if (this.shadowIndirectCount == 0)}), which
+     * left most of the shadow map at clear depth and the picture unchanged. The ranges are kept here rather than in the
+     * backend so that the range and the buffers stay one tuple (#397); the caller pairs them with the pipeline, descriptor
+     * set, dynamic offset and push block it is drawing with, which are also its own values at this moment.
+     */
+    private final java.util.List<long[]> shadowRecordedRanges = new java.util.ArrayList<long[]>();
     private long shadowIndexBuffer;
     private long shadowIndirectBuffer;
     private long shadowIndirectOffset;
     private int shadowIndirectCount;
+
+    /** Ranges the shadow pass could not be told about because the cap was reached; counted, never dropped silently. */
+    private int shadowRangesDropped;
+
+    /** {@return the ranges the last indirect batch recorded}, each {offset, count, vertexBuffer, indexBuffer}. */
+    java.util.List<long[]> shadowRecordedRanges() {
+        return this.shadowRecordedRanges;
+    }
+
+    /** {@return how many shadow ranges were dropped at the cap}. */
+    int shadowRangesDropped() {
+        return this.shadowRangesDropped;
+    }
 
     /** {@return the serial of the captured batch; a change means a new tuple is available}. */
     public long shadowCaptureSerial() {
@@ -457,6 +479,7 @@ public final class TerrainRenderer {
             RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
             ChunkPrimitiveType primitiveType) {
+        this.shadowRecordedRanges.clear();
         this.terrainIndirectOffers++;
         if (!context.multiDrawIndirectEnabled()) {
             this.terrainIndirectFallbacks++;
@@ -548,6 +571,13 @@ public final class TerrainRenderer {
             long offsetBytes = this.indirectBatchOffset + (long) first * INDIRECT_COMMAND_BYTES;
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
+            // The tuple for the shadow pass: this range and the buffers it reads, captured together.
+            if (this.shadowRecordedRanges.size() < 64) {
+                this.shadowRecordedRanges.add(new long[] {offsetBytes, count,
+                        this.shadowVertexBuffer, this.shadowIndexBuffer});
+            } else {
+                this.shadowRangesDropped++;
+            }
             // Captured for the shadow pass: one batch's commands, offset and count together. Accumulating the counts while
             // keeping the first offset made the range run past the buffer (VUID-vkCmdDrawIndexedIndirect-drawCount-00540
             // with drawCount 3246 at offset 800 in leg shadowTerrain5), so only the first batch of the frame is kept.
