@@ -140,10 +140,10 @@ public final class VulkanGlState {
     public static final int SHADE_SMOOTH = 1;
 
     public VulkanGlState() {
-        this.modelViewStack.push(identity());
-        this.projectionStack.push(identity());
-        this.textureStack0.push(identity());
-        this.textureStack1.push(identity());
+        this.modelViewStack.push(newIdentity());
+        this.projectionStack.push(newIdentity());
+        this.textureStack0.push(newIdentity());
+        this.textureStack1.push(newIdentity());
     }
 
     /** Pushes the current matrix of the active mode; paired with {@link #popMatrix()}. */
@@ -160,7 +160,7 @@ public final class VulkanGlState {
 
     /** Replaces the active matrix with the identity, the {@code glLoadIdentity} case. */
     public void loadIdentity() {
-        System.arraycopy(identity(), 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        System.arraycopy(IDENTITY, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
     }
 
     /**
@@ -169,7 +169,7 @@ public final class VulkanGlState {
      * numerically what the GL call would have produced.
      */
     public void translate(double x, double y, double z) {
-        float[] matrix = identity();
+        float[] matrix = identityScratch();
         matrix[12] = (float) x;
         matrix[13] = (float) y;
         matrix[14] = (float) z;
@@ -177,7 +177,7 @@ public final class VulkanGlState {
     }
 
     public void scale(double x, double y, double z) {
-        float[] matrix = identity();
+        float[] matrix = identityScratch();
         matrix[0] = (float) x;
         matrix[5] = (float) y;
         matrix[10] = (float) z;
@@ -196,7 +196,7 @@ public final class VulkanGlState {
         float c = (float) Math.cos(radians);
         float s = (float) Math.sin(radians);
         float t = 1.0f - c;
-        float[] matrix = identity();
+        float[] matrix = identityScratch();
         // Column-major rotation matrix around the normalised axis, as glRotatef builds it.
         matrix[0] = (float) ((nx * nx * t) + c);
         matrix[1] = (float) ((ny * nx * t) + (nz * s));
@@ -858,13 +858,38 @@ public final class VulkanGlState {
         return stack(mode).peek();
     }
 
-    private static float[] identity() {
+    /**
+     * The identity, column-major, never written to.
+     * <p>
+     * {@code identity()} used to build a fresh sixteen-float array on every call, and it is called by
+     * {@code glLoadIdentity} and by every translate, scale and rotate - the calls a tile entity renderer makes per
+     * part. On the warm profile the method itself was 3.4% of the frame's samples, all of it allocation. Anything that
+     * needs to modify a matrix copies from here into its own array.
+     */
+    private static final float[] IDENTITY = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+
+    /**
+     * Scratch for building one transform. Only ever filled, mutated and handed straight to
+     * {@link #multiplyMatrix}, which reads it - nothing retains it, which is why it can be reused across calls.
+     */
+    private final float[] transformScratch = new float[MATRIX_FLOATS];
+
+    /** {@return a fresh identity matrix}, for the stack entries, which are written to and so cannot share one. */
+    private static float[] newIdentity() {
         float[] matrix = new float[MATRIX_FLOATS];
-        matrix[0] = 1.0f;
-        matrix[5] = 1.0f;
-        matrix[10] = 1.0f;
-        matrix[15] = 1.0f;
+        System.arraycopy(IDENTITY, 0, matrix, 0, MATRIX_FLOATS);
         return matrix;
+    }
+
+    /** {@return the scratch reset to the identity}, for a caller that is about to overwrite parts of it. */
+    private float[] identityScratch() {
+        System.arraycopy(IDENTITY, 0, this.transformScratch, 0, MATRIX_FLOATS);
+        return this.transformScratch;
     }
 
     private static float[] copy(float[] source) {
