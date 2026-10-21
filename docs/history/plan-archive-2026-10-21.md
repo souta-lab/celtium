@@ -61,3 +61,8 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### block entity の比率（2026-10-21）
 
 | **block entity がフレームの46.6%（2026-10-21 実測）** | **視点の訂正** | 実測 | — | warm区間のJFRを**inclusive**（メソッドがスタックのどこかに現れる）で集計: `renderBlockEntities` 系が **46.6%**（`renderSectionBlockEntities`/`renderBlockEntityList` も同率）、その中で `submitGeometryBatch` 14.7%、font flush 8.7%、map操作（TreeNode/putVal/getNode/fastutil）約14%。**フレームの約半分はblock entity描画**で、我々のVulkan経路はその中の一部。この視点で見えた per-call の実害2件を修正（下の行）。**注意: inclusiveは親の分を含む**ので、これ単独で「我々のコスト」を意味しない |
+
+### affine スコープ修正の詳細（2026-10-21）
+
+| **グループ分割の原因はテクスチャaffine（2026-10-21 実測）** | **特定→修正済み** | 実測 | 未測定 | `ImmediateGroupSplitCensus` を追加（`groupSplits[...]`）。leg `affine-bounds-1`（jar `1b6310c3…`）: 全スプリット**610,554**（177.7/frame）の内訳は **texture_affine=431,615（71%）**、texture=81,211、format=34,116、matrix=30,819、state_key=19,137、retained=10,310、colour=3,346。scissor/pass/light/preparedは0。**affineの値域**は `affineNonIdentity=506,997/624,321`、`affineTx=[-2.144..4.348] affineTy=[-3.883..3.163] affineScale=[-1.973..2.381]`＝有界（ミラーのドリフトではない） |
+| **affine分割のスコープ修正（2026-10-21 実装・実測）** | **効果確認** | 実測 | 未測定 | **原因はaffineではなくその適用範囲**だった。`POSITION_COLOR`(1)・`POSITION`(7)・`POSITION_NORMAL`(10) は**テクスチャ座標属性を持たず**、`immediate_color.vert`/`immediate_position.vert` は affine のpushスロットすら宣言していない。それでもミラーのstale値で分割していた。`VulkanImmediateFormats.samplesTexture(formatId)` で限定（slow pathとfast pathの両方、groupのcaptureもnull）。leg `affine-scope-1`（jar `f9337863…`、同一flags・validation ON）で **affineスプリット 431,615→0**、`texMatrixGroups` **147.5→2.0/frame**、グループ生成 **181.7→55.8/frame**、マージ **97.5→223.4/frame**、グループ描画 **307.5→183.0/frame**、warm p50 **5.795→4.992ms**（−14%）、warm p95 12.59→11.50、run内frame 3437→4111。両leg PASSED・validation clean。**ただし同一条件の別jar比較でありpaired KPIではない**（下の行で正式測定） |

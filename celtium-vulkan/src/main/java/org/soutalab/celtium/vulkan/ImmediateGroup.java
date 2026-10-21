@@ -29,6 +29,15 @@ public final class ImmediateGroup {
     /** The pipeline-state key the group was accepted under. */
     public long stateKey;
     /** The decoded GL state (blend, depth, cull and friends) used to build the push block. */
+    /**
+     * This group's own copy of the captured draw state.
+     * <p>
+     * Owned, not borrowed: the accept path captures into one reusable scratch array, and a group that kept the
+     * reference was overwritten by every later capture - so every pending model group drew with whichever state the
+     * last one left behind. The model path hands its capture straight in ({@code celtium$enqueueModelMesh}), which is
+     * exactly the shape that aliased. Copied on assignment instead, so a pooled group allocates nothing after its
+     * first use and no group can see another's state.
+     */
     public int[] state;
     /** The render target this group was accepted for: a pass retires only its own target's groups. */
     public long target;
@@ -151,7 +160,7 @@ public final class ImmediateGroup {
         this.formatId = formatId;
         this.texture = texture;
         this.stateKey = stateKey;
-        this.state = state;
+        this.state = copyState(state);
         this.target = target;
     }
 
@@ -239,12 +248,26 @@ public final class ImmediateGroup {
         this.formatId = formatId;
         this.texture = texture;
         this.stateKey = stateKey;
-        this.state = state;
+        this.state = copyState(state);
         this.target = target;
         clearForReuse();
     }
 
     /** Clears the fields the accept path may set after construction; {@link #reset} and {@link #recycle} share it. */
+    /** {@return this group's array holding {@code source}'s values}, reusing the existing one when it is long enough. */
+    private int[] copyState(int[] source) {
+        if (source == null) {
+            return null;
+        }
+        int[] owned = this.state;
+        if (owned == null || owned.length != source.length) {
+            owned = new int[source.length];
+            this.state = owned;
+        }
+        System.arraycopy(source, 0, owned, 0, source.length);
+        return owned;
+    }
+
     private void clearForReuse() {
         this.color = null;
         this.combineColor = null;
