@@ -87,7 +87,9 @@ class KpiTests(unittest.TestCase):
         # candidate's frames was starved by something else, and its millisecond figure is not a measurement of the build.
         starved = {"celtium": self.metric(), "celeritas": self.metric(), "control": self.metric()}
         starved["celtium"]["samples"] = 4461
-        starved["celeritas"]["samples"] = 4381
+        # The reference legitimately produces far more frames in the same window - a faster renderer completes more of
+        # them - so only the same-family pair may be compared.
+        starved["celeritas"]["samples"] = 6768
         starved["control"]["samples"] = 1072
         summary = kpi.summarize([starved] * 3, [])
         self.assertEqual(summary["verdict"], "NO_SPEED_VERDICT")
@@ -95,8 +97,14 @@ class KpiTests(unittest.TestCase):
         # A healthy spread keeps its verdict.
         healthy = {"celtium": self.metric(), "celeritas": self.metric()}
         healthy["celtium"]["samples"] = 4461
-        healthy["celeritas"]["samples"] = 4381
-        self.assertEqual(kpi.summarize([healthy] * 3, [])["verdict"], "NOT_SLOWER")
+        healthy["celeritas"]["samples"] = 6768
+        self.assertEqual(kpi.summarize([healthy] * 3, [])["verdict"], "NOT_SLOWER",
+                         "a 1.67x frame-count gap against the reference is normal and must not be called starvation")
+        # Two same-family arms that disagree by 1.67x are starved, reference or none.
+        skewed = {"celtium": self.metric(), "control": self.metric()}
+        skewed["celtium"]["samples"] = 4461
+        skewed["control"]["samples"] = 2600
+        self.assertEqual(kpi.summarize([skewed] * 3, [])["verdict"], "NO_SPEED_VERDICT")
 
     def test_a_run_overtaken_by_load_reports_no_verdict(self):
         # This is not hypothetical: one ranking run started at load 2.69 and ended at 7.34, and its pairs compared

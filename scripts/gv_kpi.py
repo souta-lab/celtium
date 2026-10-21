@@ -132,11 +132,14 @@ def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
     # the throughput each leg actually achieved, so a wide gap inside one repetition is disturbance, not a result: a run
     # whose control legs managed 1072 and 1365 samples against the candidate's 4461 reported the control as 36% slower
     # when the machine had simply starved it.
-    # Only the arm names: iterating the pair dict would include "repetition", which is an int and has no samples.
-    arms = ("celtium", "celeritas", "control")
-    disturbed = [p.get("repetition", index + 1) for index, p in enumerate(pairs)
-                 if max(name_samples(p, n) for n in arms if n in p) > 1.5 * min(
-                     name_samples(p, n) for n in arms if n in p)]
+    # Only the two same-family arms: a control build renders at the candidate's speed, so their frame counts have to
+    # agree. The reference is a different renderer and legitimately completes 1.4-1.7x as many frames in the same
+    # window - comparing against it flagged every healthy run as starved, which is what happened to ref-md.
+    def starved(pair: dict) -> bool:
+        same_family = [pair[name]["samples"] for name in ("celtium", "control") if name in pair]
+        return len(same_family) == 2 and max(same_family) > 1.5 * min(same_family)
+
+    disturbed = [p.get("repetition", index + 1) for index, p in enumerate(pairs) if starved(p)]
     reference_pairs = [p for p in pairs if "celeritas" in p]
     ratios = [p["celtium"]["p50Ms"] / p["celeritas"]["p50Ms"] for p in reference_pairs]
     ratio = statistics.median(ratios) if ratios else None
