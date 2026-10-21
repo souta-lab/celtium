@@ -275,8 +275,11 @@ public final class VulkanDynamicMesh {
         // firstIndex conversion below is lossless on every path.
         boolean drawForm = stride > 0 && (vbo % stride) == 0L;
         org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+        boolean timed = PacketCost.enabled();
+        long bindStart = timed ? PacketCost.start() : 0L;
         if (drawForm) {
-            if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L) {
+            boolean bound = !(bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L);
+            if (!bound) {
                 org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(0L));
                 org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, 0L,
                         org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
@@ -285,9 +288,15 @@ public final class VulkanDynamicMesh {
                 bindCache[2] = 0L;
                 bindCache[3] = 0L;
             }
+            if (timed) PacketCost.noteBind(PacketCost.start() - bindStart);
             org.soutalab.celtium.vulkan.DrawCounters.noteIndexed();
-        org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
-                    (int) (ibo / 4L), (int) (vbo / stride), 0);
+            long drawStart = timed ? PacketCost.start() : 0L;
+            org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
+                        (int) (ibo / 4L), (int) (vbo / stride), 0);
+            if (timed) {
+                PacketCost.noteDraw(PacketCost.start() - drawStart);
+                PacketCost.notePacket(bound);
+            }
             return;
         }
         if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != vbo || bindCache[3] != ibo) {

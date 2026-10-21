@@ -77,6 +77,8 @@ public final class VulkanImmediateItemPipeline {
 
     /** Elides a push whose bytes are already in this command buffer (see {@link VulkanPushCache}). */
     private final VulkanPushCache pushCache = VulkanPushCache.SHARED;
+    /** One duplicate per source buffer, instead of one per packet: see {@link ReusableDuplicate}. */
+    private final ReusableDuplicate clampedView = new ReusableDuplicate();
     /**
      * The lit variant's block: the shared 128 plus five vec4 - two model-space light directions, the scene ambient,
      * and each light's diffuse - plus the light-map coordinate pair at 208, matching the layout
@@ -247,14 +249,16 @@ public final class VulkanImmediateItemPipeline {
         }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
-        ByteBuffer view = pushConstants.duplicate();
+        ByteBuffer view = this.clampedView.view(pushConstants, pushBytes());
         // The shared block may be wider than this layout's declared range (the lit variant's block is) - pushing past
         // the range is a validation error, so the view is clamped to what this pipeline declared.
-        view.limit(Math.min(view.remaining(), pushBytes()));
+        
+        long pushStart = PacketCost.beginPush();
         if (this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, view)) {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, view);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, view);
+        PacketCost.notePush(PacketCost.endPush(pushStart));
         }
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a

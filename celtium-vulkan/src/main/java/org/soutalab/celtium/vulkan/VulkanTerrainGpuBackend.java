@@ -10170,6 +10170,16 @@ this.frameBufferOpen = false;
                 + " " + celtium$pairLayoutSummary()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " groupSplits[" + this.groupSplitCensus.summary() + "]"
+                // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
+                // caller's total; pushing is what remains after the bind and draw halves below are taken out.
+                + " packetPushMillis=" + PacketCost.pushMillis()
+                + " packetPushMicros=" + PacketCost.pushMicros()
+                + " packetBindMillis=" + PacketCost.bindMillis()
+                + " packetDrawMillis=" + PacketCost.drawMillis()
+                + " packetCalls=" + PacketCost.packets()
+                + " packetBindMicros=" + PacketCost.bindMicros()
+                + " packetDrawMicros=" + PacketCost.drawMicros()
+                + " packetBindSkips=" + PacketCost.bindSkips()
                 + " " + this.groupSplitCensus.affineSummary()
                 + " fastMergedBatches=" + this.immediateStatistics.fastMergedBatches()
                 + " prepLookupMillis=" + (this.immediateStatistics.prepLookupNanos() / 1000000L)

@@ -99,6 +99,8 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Elides a push whose bytes are already in this command buffer (see {@link VulkanPushCache}). */
     private final VulkanPushCache pushCache = VulkanPushCache.SHARED;
+    /** One duplicate per source buffer, instead of one per packet: see {@link ReusableDuplicate}. */
+    private final ReusableDuplicate clampedView = new ReusableDuplicate();
 
     /** Measurement switch: skips only the push-constant call ({@code -Dceltium.debug.skipPushConstants=true}). */
     private static final boolean SKIP_PUSH_CALLS = Boolean.getBoolean("celtium.debug.skipPushConstants");
@@ -372,10 +374,10 @@ public final class VulkanImmediateTexturePipeline {
         }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
-        ByteBuffer clamped = pushConstants.duplicate();
+        ByteBuffer clamped = this.clampedView.view(pushConstants, PUSH_CONSTANT_BYTES);
         // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
         // past the range is a validation error, so only the declared bytes go out.
-        clamped.limit(Math.min(clamped.remaining(), PUSH_CONSTANT_BYTES));
+        
         if (!SKIP_PUSH_CALLS && !abSkipPush
                 && this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, clamped)) {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
