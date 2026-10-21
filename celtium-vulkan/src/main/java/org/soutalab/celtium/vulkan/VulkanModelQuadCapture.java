@@ -757,7 +757,9 @@ public final class VulkanModelQuadCapture {
      * {@link #compileMatrixForList(int)}.
      */
     public static synchronized float[] matrixForList(int listId) {
-        return LISTS.containsKey(Integer.valueOf(listId)) ? IDENTITY.clone() : null;
+        // The shared constant, not a copy: this is the identity for every list that exists, callers only read it or
+        // hand it to a matrix parser, and cloning it per model replay allocated a float[16] ~128 times a frame.
+        return LISTS.containsKey(Integer.valueOf(listId)) ? IDENTITY : null;
     }
 
     /**

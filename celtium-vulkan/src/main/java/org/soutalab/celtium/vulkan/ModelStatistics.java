@@ -14,14 +14,45 @@ package org.soutalab.celtium.vulkan;
 public final class ModelStatistics {
 
     private final ModelGeometryCache modelGeometry;
+    /** Nanoseconds spent in the model enqueue path, and how many enqueues it covers. */
+    private long enqueueNanos;
+    private long enqueueCalls;
 
     ModelStatistics(ModelGeometryCache modelGeometry) {
         this.modelGeometry = modelGeometry;
     }
 
-    /** {@return run 0 of the line's model fields: modelDraws}. */
+    /** Records one model enqueue attempt and the time it took. */
+    public void noteEnqueue(long nanos) {
+        this.enqueueNanos += nanos;
+        this.enqueueCalls++;
+    }
+
+    /** {@return milliseconds spent in the model enqueue path}. */
+    public long enqueueMillis() {
+        return this.enqueueNanos / 1000000L;
+    }
+
+    /** {@return how many model enqueues the timing covers}. */
+    public long enqueueCalls() {
+        return this.enqueueCalls;
+    }
+
+    /** {@return microseconds per model enqueue, or -1 when the switch is off}. */
+    public long enqueueMicrosPerCall() {
+        return this.enqueueCalls == 0L ? -1L : this.enqueueNanos / this.enqueueCalls / 1000L;
+    }
+
+    /** {@return run 0 of the line's model fields: modelDraws and where the enqueue path's time goes}. */
     public String run0(long modelDraws) {
-        return " modelDraws=" + modelDraws;
+        return " modelDraws=" + modelDraws
+                // Zero means the switch is off, which the report already treats as a missing measurement - not a
+                // measurement of zero cost. The per-call figure is the one that says whether a model replay is
+                // expensive enough to be worth attacking, or whether its draws alone are what the frame pays for.
+                + " modelEnqueueMillis=" + (this.enqueueNanos / 1000000L)
+                + " modelEnqueueCalls=" + this.enqueueCalls
+                + " modelEnqueueMicrosPerCall=" + (this.enqueueCalls == 0L ? -1L
+                        : this.enqueueNanos / this.enqueueCalls / 1000L);
     }
 
     /** {@return run 1: the draw census, the mesh table and the display-list census, in the line's order}. */

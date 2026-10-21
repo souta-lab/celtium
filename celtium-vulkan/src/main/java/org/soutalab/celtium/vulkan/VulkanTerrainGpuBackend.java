@@ -1336,6 +1336,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
     private final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
+    /** The replay transform's composition, with its matrices and its cached inverse. */
+    private final ModelViewRelativizer modelViewRelativizer = new ModelViewRelativizer();
+
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
     private java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
     private final int[] postAcceptDroppedByFormat = new int[8];
@@ -10252,6 +10255,9 @@ this.frameBufferOpen = false;
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
                 + " modelDraws=" + this.modelDraws
+                + " modelEnqueueMillis=" + this.modelStats.enqueueMillis()
+                + " modelEnqueueCalls=" + this.modelStats.enqueueCalls()
+                + " modelEnqueueMicrosPerCall=" + this.modelStats.enqueueMicrosPerCall()
                 + " texMatrixGroups=" + this.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
@@ -12832,6 +12838,9 @@ this.frameBufferOpen = false;
             }
             return false;
         }
+        // Declared outside the try because the finally below measures it: a local declared inside a try block is not
+        // in scope in its finally.
+        long modelEnqueueStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
         try {
             // The texture the model is actually bound to, asked of GL at the moment of the replay: a player model samples
             // its own skin, not the block atlas the immediate path last used.
@@ -12886,10 +12895,9 @@ this.frameBufferOpen = false;
             // put them somewhere else. What the remaining difference is belongs to the capture's side of the pairing, not to
             // the live state.
             float[] projectionNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION).clone();
-            // The matrix the list was compiled under, which is the one its model-space vertices pair with (measured: a part
-            // ranges over about +/-0.6 while the captured translation is the entity's placement at that moment). This is
-            // what the capture has always stored and never used.
-            float[] compileMatrix = org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixForList(listId);
+            // A list's stored vertices are model space, so the replay transform is the camera's change since the list
+            // was captured: V_now * C_compile^-1 (ModelViewRelativizer, which short-circuits the identity the capture
+            // currently reports for every list).
             // Identity was tried as an experiment - if the captured vertices carried their own placement, no model-view at all
             // would be right - and it measured worse than the mirror (8.08 % against 5.80 % of the entity frame), so the
             // camera rotation the mirror holds is needed. The mirror stays until the vertex space itself is settled.
@@ -12899,15 +12907,14 @@ this.frameBufferOpen = false;
             // moment they were captured in - so what has to be applied is the change of camera since then, which is exactly
             // V_now * C_compile^-1. Both halves are in hand: the mirror is V_now, the capture kept C_compile.
             float[] modelViewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
-            if (compileMatrix != null) {
-                try {
-                    org.joml.Matrix4f now = new org.joml.Matrix4f().set(modelViewNow);
-                    org.joml.Matrix4f compileView = new org.joml.Matrix4f().set(compileMatrix);
-                    org.joml.Matrix4f relative = now.mul(compileView.invert(), new org.joml.Matrix4f());
-                    relative.get(modelViewNow);
-                } catch (RuntimeException | LinkageError error) {
-                    this.modelLastRefusal = "relative view failed: " + error;
-                }
+            // V_now * C_compile^-1, with the matrices and the inverse reused and the identity short-circuited: the
+            // three Matrix4f temporaries and an inversion per replay were ~128 allocations a frame, and the capture
+            // answers the identity for every list, so nearly all of that work composed the live view with itself.
+            try {
+                this.modelViewRelativizer.makeRelative(modelViewNow, listId,
+                        org.soutalab.celtium.vulkan.VulkanModelQuadCapture.generationOf(listId));
+            } catch (RuntimeException | LinkageError error) {
+                this.modelLastRefusal = "relative view failed: " + error;
             }
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
             // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
@@ -12954,6 +12961,10 @@ this.frameBufferOpen = false;
             this.modelDrawRefusals++;
             this.modelLastRefusal = String.valueOf(error);
             return false;
+        } finally {
+            // Timed only with the switch on: the question is whether a model replay's own CPU work is worth
+            // attacking, or whether its drawn packet is all the frame pays for.
+            if (BATCH_TIMINGS) this.modelStats.noteEnqueue(System.nanoTime() - modelEnqueueStart);
         }
     }
 

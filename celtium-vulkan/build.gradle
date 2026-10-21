@@ -69,6 +69,9 @@ dependencies {
     testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:3.4.1:natives-linux'
     testImplementation 'org.lwjgl:lwjgl-vulkan'
     testImplementation 'com.google.code.gson:gson:2.10.1'
+    // The replay transform's composition is matrix arithmetic, and its unit tests have to be able to check it; the
+    // mod still gets joml from the installation (compileOnly above) and nothing is bundled by this.
+    testImplementation 'org.joml:joml:1.10.5'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
