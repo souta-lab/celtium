@@ -14543,6 +14543,27 @@ this.frameBufferOpen = false;
     private int shadowLightsLogged;
     /** The camera position as the world pass saw it; the light is built around this. */
     private final org.joml.Vector3f shadowCentre = new org.joml.Vector3f();
+    /**
+     * The world-space camera position, pushed from the game once a frame.
+     * <p>
+     * Nothing in the Vulkan path knows it: the terrain is drawn camera-relative and the GL matrix mirror holds a
+     * camera-relative model view in every place it was read (measured: the inverted translation is about zero at both the
+     * frame boundary and the terrain draw). That left the light built around whatever the boundary mirror happened to
+     * hold - (-0.0, -0.0, 2000.0) against a camera at (217.5, 48, 217.5) - so the +/-48 box covered almost none of the
+     * scene. The game knows the position, so it says it rather than the renderer inferring it.
+     */
+    private static volatile double cameraWorldX;
+    private static volatile double cameraWorldY;
+    private static volatile double cameraWorldZ;
+    private static volatile boolean cameraWorldKnown;
+
+    /** Called by the game each frame with the view entity's position; the shadow light is built around it. */
+    public static void setCameraWorldPosition(double x, double y, double z) {
+        cameraWorldX = x;
+        cameraWorldY = y;
+        cameraWorldZ = z;
+        cameraWorldKnown = true;
+    }
     private boolean shadowCentreCaptured;
     /**
      * Snapshots the shadow draw's tuple if the renderer captured a new batch since the last one.
@@ -15059,7 +15080,9 @@ this.frameBufferOpen = false;
             }
             org.joml.Vector3f centre = new org.joml.Vector3f();
             new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
-            if (this.shadowCentreCaptured) {
+            if (cameraWorldKnown) {
+                centre.set((float) cameraWorldX, (float) cameraWorldY, (float) cameraWorldZ);
+            } else if (this.shadowCentreCaptured) {
                 // Taken while the world was drawn (see celtium$queueShadowBatches); the mirror at this boundary point is
                 // some other transform.
                 centre.set(this.shadowCentre);
