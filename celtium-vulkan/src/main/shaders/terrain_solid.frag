@@ -222,6 +222,13 @@ void main() {
     vec3 shadowDx = dFdx(shadowCoord);
     vec3 shadowDy = dFdy(shadowCoord);
     float slopeTerm = abs(normalize(cross(shadowDx, shadowDy)).z);
+    if (CELTIUM_SHADOW_DEBUG) {
+        // The lookup's in/out ratio, measured rather than argued: green inside the map's [0,1] range, red outside. The
+        // rest of the shader is skipped so the frame is a map of that ratio.
+        bool inside = all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)));
+        fragColor = vec4(inside ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
+        return;
+    }
     if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
         float bias = 0.0008 + 0.002 * (1.0 - slopeTerm);
         float lit = 0.0;
@@ -237,11 +244,7 @@ void main() {
         // 0.2 at full shadow: the map's effect has to be obvious in a scene that is mostly a lit wall, and the first
         // strength (0.45) left ON and OFF within 0.13 percentage points of dark pixels of each other.
         float shadow = lit / 9.0;
-        if (CELTIUM_SHADOW_DEBUG) {
-            fragColor = vec4(0.0, 0.0, 1.0, 1.0);   // terrain is blue
-        } else {
-            fragColor.rgb *= mix(0.2, 1.0, shadow);
-        }
+        fragColor.rgb *= mix(0.2, 1.0, shadow);
     }
     }
 }

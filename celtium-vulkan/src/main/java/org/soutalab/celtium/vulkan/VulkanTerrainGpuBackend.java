@@ -15099,7 +15099,12 @@ this.frameBufferOpen = false;
                     Float.parseFloat(directionParts[0].trim()),
                     Float.parseFloat(directionParts[1].trim()),
                     Float.parseFloat(directionParts[2].trim())).normalize();
-            float radius = 48.0f;
+            // The box the map covers. Measured with the debug paint: at 48 blocks only 6.6% of the terrain's lookup
+            // coordinates fall inside [0,1] - the far half of an 8-chunk view is outside the box entirely, and the shader
+            // skips those fragments, which is why almost nothing is ever judged shadowed. Widened by property so the
+            // trade against texel size can be measured rather than argued: 2048 texels over +/-128 blocks is 12.5 cm a
+            // texel against 4.7 cm at +/-48.
+            float radius = Float.parseFloat(System.getProperty("celtium.shadow.radius", "48"));
             org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
                     new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
                     new org.joml.Vector3f(0.0f, 1.0f, 0.0f));
