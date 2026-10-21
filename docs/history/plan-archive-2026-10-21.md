@@ -151,3 +151,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### offer単価の訂正（2026-10-22）
 
 | **offer単価（2026-10-22 訂正）** | **1 offer ≈ 1.7µs** | 実測 | 要改善 | 実カウンタ（10,558 frame）: **279 offer/frame**、183 group/frame。受理経路26%（0.48ms/frame）÷279＝**1.7µs/offer**。以前の「5,517 offer/frame」は別環境の取り違えで、それに基づく「44nsだから削れない」は**誤り**だった（撤回済み）。内訳: prepare 256ns / append 248ns / groupCreate 113ns / capture 99ns / key 74ns。Celeritasの1バッチは0.2-0.3µs。 |
+
+### prepareメモの撤回（2026-10-22）
+
+| **prepareImmediateのメモ化（2026-10-22 試行→revert）** | **1.005x＝効果なし** | 実測 | — | 同一 (format,texture,key,lightmap,pass) なら前回の `PreparedImmediate` を返す1エントリメモ。**ヒット率25.9%**、leg PASSED。制御arm3ペア **1.005/0.980/1.006＝1.005x** → revert。**6連続で個別削減がwall時間に出ない**（capture -79%、prepare -26%、行列比較 -100% いずれも0〜0.7%）。 |
