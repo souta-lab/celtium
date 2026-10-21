@@ -130,9 +130,15 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     if mode not in ("cohort", "plain", "e2e", "recipe", "world") or gpu not in ("amd", "intel"):
         raise LegError("unknown mode or GPU")
     for arg in extras:
+        # -XX: is part of the allowlist because profiling needs it: a JFR recording is started with
+        # -XX:StartFlightRecording=..., and attributing sub-microsecond work with homemade brackets stopped working
+        # once the brackets' own cost was the size of the thing being measured. The shape is still checked - a complete
+        # option with a value, never a bare flag - so a typo cannot silently be passed to the JVM as something else.
         if "\0" in arg or not (re.fullmatch(r"-D[A-Za-z0-9_.-]+(?:=.*)?", arg, re.DOTALL)
-                                 or (arg.startswith("-X") and len(arg) > 2)):
-            raise LegError(f"extra JVM argument must be a complete -Dname[=value] or -X... argument: {arg!r}")
+                                 or (arg.startswith("-X") and len(arg) > 2 and not arg.startswith("-XX:"))
+                                 or re.fullmatch(r"-XX:(?:[+-][A-Za-z][A-Za-z0-9_]+|[A-Za-z][A-Za-z0-9_]+=.+)", arg, re.DOTALL)):
+            raise LegError(f"extra JVM argument must be a complete -Dname[=value], -X... or -XX:Name=value "
+                           f"argument: {arg!r}")
         key, _, value = arg.partition("=")
         if key == "-Dceltium.validation.presentedDumpEvery":
             raise LegError("unknown celtium.validation.presentedDumpEvery; use -Dceltium.vulkan.presentedDumpEvery=0")

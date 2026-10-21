@@ -176,6 +176,16 @@ class LegRunnerTests(unittest.TestCase):
         result = self.execute("gl_reference_wrong_gpu")
         self.assertFalse(result["accepted"], result)
 
+    def test_jfr_recording_option_is_allowed_and_bare_or_malformed_XX_is_not(self):
+        # Profiling is the reason -XX: is allowed at all: a JFR recording cannot be started with -D/-X.
+        self.plan(extras=["-XX:StartFlightRecording=filename=/tmp/x.jfr,settings=profile,dumponexit=true"])
+        # The strict form also admits flags: -XX:+UnlockDiagnosticVMOptions is a legitimate companion of a recording.
+        self.plan(extras=["-XX:+UnlockDiagnosticVMOptions"])
+        for bad in ("-XX:", "-XX:Name", "-XX:=value", "-XX:StartFlightRecording", "-XX:Name="):
+            with self.subTest(bad=bad):
+                with self.assertRaises(runner.LegError):
+                    self.plan(extras=[bad])
+
     def test_leg_and_duration_rejected_before_output_creation(self):
         for leg in ("", "../escape", "x/../../escape", "a.b", "-dash", "x" * 65, "é"):
             with self.subTest(leg=leg), self.assertRaises(runner.LegError):
