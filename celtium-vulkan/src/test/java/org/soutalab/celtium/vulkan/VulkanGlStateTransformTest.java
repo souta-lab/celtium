@@ -91,6 +91,39 @@ class VulkanGlStateTransformTest {
     }
 
     @Test
+    void threeLevelsOfPushAndPopReturnToEachLevelsMatrix() {
+        // The tops are cached references refreshed on push/pop, so nesting is the case that breaks a cache that is
+        // refreshed in the wrong place.
+        VulkanGlState state = state();
+        state.translate(1, 0, 0);
+        state.pushMatrix();
+        state.translate(10, 0, 0);
+        state.pushMatrix();
+        state.translate(100, 0, 0);
+        assertEquals(111.0f, topModelView(state)[12], 1.0e-5f);
+        state.popMatrix();
+        assertEquals(11.0f, topModelView(state)[12], 1.0e-5f, "one level down");
+        state.popMatrix();
+        assertEquals(1.0f, topModelView(state)[12], 1.0e-5f, "back at the bottom");
+    }
+
+    @Test
+    void eachMatrixModeAndTextureUnitKeepsItsOwnTop() {
+        VulkanGlState state = state();
+        state.matrixMode(VulkanGlState.MATRIX_MODE_TEXTURE);
+        state.translate(4, 0, 0);
+        state.matrixMode(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        state.translate(7, 0, 0);
+        assertEquals(7.0f, topModelView(state)[12], 1.0e-5f);
+        state.matrixMode(VulkanGlState.MATRIX_MODE_TEXTURE);
+        assertEquals(4.0f, state.peekTextureMatrix(0)[12], 1.0e-5f,
+                "the texture matrix kept its own translation");
+        // Unit 1 has its own stack: switching the active unit must not read unit 0's matrix.
+        state.activeTextureUnit(1);
+        assertEquals(0.0f, state.peekTextureMatrix(1)[12], 1.0e-5f, "unit 1 is still untouched");
+    }
+
+    @Test
     void pushAndPopStillGiveEachStackEntryItsOwnArray() {
         VulkanGlState state = state();
         state.translate(5, 0, 0);
