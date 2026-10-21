@@ -6555,6 +6555,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // cause. For a pre-transformed group the stored modelView is identity by construction - the batches it
             // holds are baked on append - so the only thing asked of the live matrix is the shape the appender can
             // still bake exactly: axis-aligned. A rotated batch opens its own ordinary group instead of joining.
+            // Compared by value, not by a version counter: a version bumped by the matrix operations counts a
+            // pushMatrix/popMatrix round trip as a change even though the values come back identical, and a tile entity
+            // renderer does that between most of its parts. Measured: replacing these two comparisons with a counter
+            // made the build 6.2% SLOWER (control ratio 1.062x over four clean repetitions), because the groups it
+            // split were ones this comparison correctly kept together.
             boolean matrixMoved = !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
                     || (this.currentGroupPreTransformed
                             ? !celtium$axisAlignedModelView()

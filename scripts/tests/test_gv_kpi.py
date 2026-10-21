@@ -71,6 +71,27 @@ class KpiTests(unittest.TestCase):
         right["conditions"]["captureWidth"] = None
         with self.assertRaises(kpi.KpiError): kpi.same_conditions({"celtium": left, "celeritas": right})
 
+    def test_a_starved_repetition_is_dropped_from_the_statistics_not_just_named(self):
+        # A median that keeps the starved pair is a number about the machine. Three clean pairs must survive with their
+        # ratio, and the starved one must not move it - nor be counted toward the three the verdict needs.
+        clean = []
+        for ratio in (1.10, 1.20, 1.30):
+            pair = {"celtium": self.metric(), "control": self.metric()}
+            pair["celtium"]["p50Ms"] = ratio
+            pair["control"]["p50Ms"] = 1.0
+            pair["celtium"]["samples"] = 4400
+            pair["control"]["samples"] = 4300
+            clean.append(pair)
+        starved = {"celtium": self.metric(), "control": self.metric()}
+        starved["celtium"]["p50Ms"] = 99.0
+        starved["control"]["p50Ms"] = 1.0
+        starved["celtium"]["samples"] = 4400
+        starved["control"]["samples"] = 1200
+        summary = kpi.summarize(clean + [starved], [])
+        self.assertEqual([round(x, 2) for x in summary["controlRatios"]], [1.10, 1.20, 1.30])
+        self.assertEqual(summary["medianControlRatio"], 1.20)
+        self.assertEqual(len(summary["disturbedRepetitions"]), 1)
+
     def test_ranking_mode_without_a_reference_still_reports_the_control_ratio(self):
         # Dropping the reference arm halves the number of legs a ranking needs; the control ratio is what ranks builds
         # and the reference ratio is what answers "how far from Celeritas", which needs a quiet machine anyway.
