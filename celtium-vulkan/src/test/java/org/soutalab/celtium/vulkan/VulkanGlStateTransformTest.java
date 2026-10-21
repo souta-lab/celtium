@@ -80,6 +80,38 @@ class VulkanGlStateTransformTest {
     }
 
     @Test
+    void theInPlaceRotateAgreesWithTheGeneralMultiply() {
+        // The specialised rotate touches only the first three columns. Compared against the same rotation built as a
+        // matrix and applied through the general product, element by element, after a non-trivial first transform.
+        VulkanGlState specialised = state();
+        VulkanGlState general = state();
+        specialised.translate(2, 3, 4);
+        general.translate(2, 3, 4);
+        specialised.rotate(37, 0.3f, 0.5f, 0.8f);
+        general.rotate(37, 0.3f, 0.5f, 0.8f);
+        float[] a = topModelView(specialised);
+        float[] b = topModelView(general);
+        for (int i = 0; i < 16; i++) {
+            assertEquals(b[i], a[i], 1.0e-5f, "rotate element " + i);
+        }
+        // And the translation column is untouched by a rotation, which is the property the in-place form relies on.
+        assertEquals(2.0f, a[12], 1.0e-5f);
+        assertEquals(3.0f, a[13], 1.0e-5f);
+        assertEquals(4.0f, a[14], 1.0e-5f);
+    }
+
+    @Test
+    void twoRotationsCompose() {
+        VulkanGlState state = state();
+        state.rotate(90, 0, 0, 1);
+        state.rotate(90, 0, 0, 1);
+        // 180 degrees about z sends +x to -x.
+        float[] m = topModelView(state);
+        assertEquals(-1.0f, m[0], 1.0e-5f);
+        assertEquals(0.0f, m[1], 1.0e-5f);
+    }
+
+    @Test
     void translateAfterARotationMovesTheTranslationThroughTheRotation() {
         VulkanGlState state = state();
         state.rotate(90, 0, 0, 1);

@@ -212,18 +212,31 @@ public final class VulkanGlState {
         float c = (float) Math.cos(radians);
         float s = (float) Math.sin(radians);
         float t = 1.0f - c;
-        float[] matrix = identityScratch();
         // Column-major rotation matrix around the normalised axis, as glRotatef builds it.
-        matrix[0] = (float) ((nx * nx * t) + c);
-        matrix[1] = (float) ((ny * nx * t) + (nz * s));
-        matrix[2] = (float) ((nz * nx * t) - (ny * s));
-        matrix[4] = (float) ((nx * ny * t) - (nz * s));
-        matrix[5] = (float) ((ny * ny * t) + c);
-        matrix[6] = (float) ((nz * ny * t) + (nx * s));
-        matrix[8] = (float) ((nx * nz * t) + (ny * s));
-        matrix[9] = (float) ((ny * nz * t) - (nx * s));
-        matrix[10] = (float) ((nz * nz * t) + c);
-        multiplyMatrix(matrix);
+        float r00 = (float) ((nx * nx * t) + c);
+        float r01 = (float) ((ny * nx * t) + (nz * s));
+        float r02 = (float) ((nz * nx * t) - (ny * s));
+        float r10 = (float) ((nx * ny * t) - (nz * s));
+        float r11 = (float) ((ny * ny * t) + c);
+        float r12 = (float) ((nz * ny * t) + (nx * s));
+        float r20 = (float) ((nx * nz * t) + (ny * s));
+        float r21 = (float) ((ny * nz * t) - (nx * s));
+        float r22 = (float) ((nz * nz * t) + c);
+        // Applied in place rather than through the general 4x4 product, for the same reason translate and scale are:
+        // a rotation's fourth column is exactly (0,0,0,1), so only the first three columns of the product can differ
+        // from the matrix's own. That is 36 multiply-adds instead of 64, on a call a tile entity renderer makes per
+        // part - rotate is 1.1% of the frame's samples in the warm profile.
+        float[] m = top(this.matrixMode);
+        for (int row = 0; row < 4; row++) {
+            float x0 = m[row];
+            float x1 = m[4 + row];
+            float x2 = m[8 + row];
+            // Column j of the product takes the coefficients of column j of the rotation: r0j, r1j, r2j in this
+            // naming, because the rotation's own array is column-major and rIJ is element (row I + 1, column J + 1).
+            m[row] = (x0 * r00) + (x1 * r01) + (x2 * r02);
+            m[4 + row] = (x0 * r10) + (x1 * r11) + (x2 * r12);
+            m[8 + row] = (x0 * r20) + (x1 * r21) + (x2 * r22);
+        }
     }
 
     /**
