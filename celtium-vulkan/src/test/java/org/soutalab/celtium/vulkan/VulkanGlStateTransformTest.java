@@ -59,6 +59,38 @@ class VulkanGlStateTransformTest {
     }
 
     @Test
+    void theSpecialisedTranslateAndScaleAgreeWithTheGeneralMultiply() {
+        // The specialised paths exist to skip the 4x4 multiply. They have to produce exactly what multiplying by the
+        // constructed transform matrix would, including when the matrix already holds a transform.
+        VulkanGlState specialised = state();
+        VulkanGlState general = state();
+        specialised.translate(1.5f, -2.0f, 0.25f);
+        general.loadMatrix(new float[] {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1.5f, -2.0f, 0.25f, 1});
+        for (int i = 0; i < 16; i++) {
+            assertEquals(topModelView(general)[i], topModelView(specialised)[i], 1.0e-5f, "translate element " + i);
+        }
+        specialised.scale(2.0f, 3.0f, 0.5f);
+        general.scale(2.0f, 3.0f, 0.5f);
+        // `general` reaches the same state through the multiply path, so the two must still agree after a scale.
+        float[] a = topModelView(specialised);
+        float[] b = topModelView(general);
+        for (int i = 0; i < 16; i++) {
+            assertEquals(b[i], a[i], 1.0e-5f, "scale element " + i);
+        }
+    }
+
+    @Test
+    void translateAfterARotationMovesTheTranslationThroughTheRotation() {
+        VulkanGlState state = state();
+        state.rotate(90, 0, 0, 1);
+        state.translate(1, 0, 0);
+        float[] m = topModelView(state);
+        // Rotating the +x axis by 90 degrees about z lands on +y; the translation column carries that.
+        assertEquals(0.0f, m[12], 1.0e-5f);
+        assertEquals(1.0f, m[13], 1.0e-5f);
+    }
+
+    @Test
     void pushAndPopStillGiveEachStackEntryItsOwnArray() {
         VulkanGlState state = state();
         state.translate(5, 0, 0);

@@ -169,19 +169,35 @@ public final class VulkanGlState {
      * numerically what the GL call would have produced.
      */
     public void translate(double x, double y, double z) {
-        float[] matrix = identityScratch();
-        matrix[12] = (float) x;
-        matrix[13] = (float) y;
-        matrix[14] = (float) z;
-        multiplyMatrix(matrix);
+        // Applied directly rather than by building a translation matrix and running the 4x4 multiply: in column-major
+        // order a translation only rewrites column 3, and the three columns before it are unchanged. This is the call a
+        // tile entity renderer makes per part, so the 64 multiply-adds it used to spend are worth not spending.
+        float[] m = top(this.matrixMode);
+        float tx = (float) x;
+        float ty = (float) y;
+        float tz = (float) z;
+        float m12 = (m[0] * tx) + (m[4] * ty) + (m[8] * tz) + m[12];
+        float m13 = (m[1] * tx) + (m[5] * ty) + (m[9] * tz) + m[13];
+        float m14 = (m[2] * tx) + (m[6] * ty) + (m[10] * tz) + m[14];
+        float m15 = (m[3] * tx) + (m[7] * ty) + (m[11] * tz) + m[15];
+        m[12] = m12;
+        m[13] = m13;
+        m[14] = m14;
+        m[15] = m15;
     }
 
     public void scale(double x, double y, double z) {
-        float[] matrix = identityScratch();
-        matrix[0] = (float) x;
-        matrix[5] = (float) y;
-        matrix[10] = (float) z;
-        multiplyMatrix(matrix);
+        // Same argument as translate: M * S with a diagonal S scales each of the first three columns and leaves the
+        // fourth alone, so the product is three column writes per column rather than a full multiply.
+        float[] m = top(this.matrixMode);
+        float sx = (float) x;
+        float sy = (float) y;
+        float sz = (float) z;
+        for (int row = 0; row < 4; row++) {
+            m[row] *= sx;
+            m[4 + row] *= sy;
+            m[8 + row] *= sz;
+        }
     }
 
     public void rotate(double angleDegrees, double x, double y, double z) {
