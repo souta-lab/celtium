@@ -34,9 +34,40 @@ public final class FrameCoordinator {
      * Every referenced buffer, image and descriptor generation must remain valid from recording through completion;
      * retained geometry uses draw leases for that contract. Other resource domains require the same lifetime audit.
      */
-    private static final boolean BATCH_FRAME_SUBMITS =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
-                    && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
+    /**
+     * Whether a frame's command buffer is ended and submitted once, at the frame boundary, instead of per segment.
+     * <p>
+     * On a discrete card that is the cheaper arrangement and it has been the default since it was measured. On an
+     * integrated Intel part it is not: the same build, the same scene and the same three alternating pairs read
+     * 3.69 / 3.60 / 3.66 ms with the batched path off and 31.4 / 9.6 / 10.0 ms with it on - a median ratio of 0.374x, and
+     * a spread on the batched side that says the frame is waiting for something rather than working. On the discrete
+     * AMD card the same flag costs 10% (1.102x), so this is a per-device decision, not a better default.
+     * <p>
+     * The property still wins when it is set, so a leg can choose either path on either device.
+     */
+    private static final Boolean BATCH_FRAME_SUBMITS_OVERRIDE = batchFrameSubmitsOverride();
+
+    private static Boolean batchFrameSubmitsOverride() {
+        String value = System.getProperty("celtium.vulkan.batchFrameSubmits",
+                System.getProperty("celtium.vulkan.batchedSubmits"));
+        if (value == null) {
+            return null;
+        }
+        return Boolean.valueOf(!"false".equalsIgnoreCase(value));
+    }
+
+    /**
+     * {@return whether this device's frames are submitted in one batch}.
+     * <p>
+     * The property, when set, decides. Otherwise the device does: batching is kept on the discrete parts where it was
+     * measured cheaper, and turned off on Intel's integrated parts where it was measured 2.7x slower.
+     */
+    private boolean batchFrameSubmits() {
+        if (BATCH_FRAME_SUBMITS_OVERRIDE != null) {
+            return BATCH_FRAME_SUBMITS_OVERRIDE.booleanValue();
+        }
+        return !this.host.isIntelDevice();
+    }
 
     /** What the coordinator needs from the renderer that owns the frame. */
     public interface Host {
@@ -50,6 +81,9 @@ public final class FrameCoordinator {
          * waits for it.
          */
         void recordFrameEndTimestamp();
+
+        /** {@return whether the device is an Intel one}, where batched frame submits were measured 2.7x slower. */
+        boolean isIntelDevice();
         /** Stamps the direct submit path for the submit-to-fence distribution the summary reports. */
         void celtium$noteDirectSubmit();
         VulkanCommandBufferState commandState();
@@ -180,7 +214,7 @@ public final class FrameCoordinator {
             // Unified frame buffer: the segment's commands stay recorded; end, submission and bookkeeping all happen
             // once at the frame boundary via celtium$finishFrameBuffer. A frame that switched to a semaphore-carrying
             // target mid-recording falls through instead and takes the direct path below.
-            if (!frameSemaphores && BATCH_FRAME_SUBMITS) {
+            if (!frameSemaphores && this.batchFrameSubmits()) {
                 return Submission.RECORDED;
             }
         }
@@ -205,7 +239,7 @@ public final class FrameCoordinator {
                 signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
             }
             VkSubmitInfo submit = null;
-            if (!BATCH_FRAME_SUBMITS) {
+            if (!this.batchFrameSubmits()) {
             this.host.check(vkResetFences(this.host.context().device(), this.host.fence()), "vkResetFences");
             submit = VkSubmitInfo.calloc(stack).sType$Default();
             LongBuffer waitSemaphores = null;
@@ -252,7 +286,7 @@ public final class FrameCoordinator {
                 // touched. That is the property this switch exists to check.
                 this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
-            if (BATCH_FRAME_SUBMITS) {
+            if (this.batchFrameSubmits()) {
                 // One vkQueueSubmit arms ONE fence, so ~9 recordings a frame were ~9 driver calls. The batch keeps
                 // every VkSubmitInfo and submits them together at the frame's flush points: same queue order, one
                 // call, and the shared batch fence stands in for the slot's own fence via the reclaim callback.

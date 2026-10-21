@@ -89,6 +89,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         @Override public void recordFrameEndTimestamp() {
             VulkanTerrainGpuBackend.this.recordFrameEndTimestamp();
         }
+        @Override public boolean isIntelDevice() {
+            // Decided once, from the device that was actually chosen: the submission strategy is per GPU, not global.
+            String name = VulkanTerrainGpuBackend.this.context == null ? null
+                    : VulkanTerrainGpuBackend.this.context.deviceName();
+            return name != null && name.startsWith("Intel");
+        }
         @Override public VulkanCommandBufferState commandState() { return VulkanTerrainGpuBackend.this.commandState; }
         @Override public VulkanContext context() { return VulkanTerrainGpuBackend.this.context; }
         @Override public long fence() { return VulkanTerrainGpuBackend.this.fence; }
@@ -455,6 +461,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The whole frame's last measured GPU time, in nanoseconds, and whether this frame recorded it. */
     private long frameGpuNanos;
     private boolean frameGpuTimed;
+    /** Whether this frame's end timestamp has been written, so a frame that takes both end paths writes it once. */
+    private boolean frameEndTimestampWritten;
     /**
      * The part of the frame's GPU time that happens before the first pass starts and after the last one ends.
      * <p>
@@ -9685,7 +9693,8 @@ this.frameBufferOpen = false;
                 record(probeLine);
             }
         }
-        boolean timeImmediatePass = this.timestampsUsable && this.timestampPool != 0L;
+        boolean timeImmediatePass = this.timestampsUsable && this.timestampPool != 0L
+                && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled();
         if (timeImmediatePass) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
                     IMMEDIATE_TIMESTAMP_SLOT * 2);
@@ -10774,9 +10783,17 @@ this.frameBufferOpen = false;
      * recorded - both the passes and the work between them that no pass bracket owns.
      */
     void recordFrameEndTimestamp() {
-        if (this.timestampPool == 0L || !this.timestampsUsable) {
+        if (this.timestampPool == 0L || !this.timestampsUsable
+                || !org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
             return;
         }
+        // One write per frame: the batched path ends the buffer in the coordinator's finish, the direct path ends it in
+        // submit(), and a frame that took both - which is what a validation leg reported as ten
+        // VUID-vkCmdWriteTimestamp-00830 errors on the discrete card - would write the same query twice.
+        if (this.frameEndTimestampWritten) {
+            return;
+        }
+        this.frameEndTimestampWritten = true;
         vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
                 (FRAME_TIMESTAMP_SLOT * 2) + 1);
         this.frameGpuTimed = true;
@@ -16960,9 +16977,13 @@ this.frameBufferOpen = false;
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
                 vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0, TIMESTAMP_SLOTS);
-                if (this.timestampsUsable) {
+                if (this.timestampsUsable && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
+                    // Written only while the report is collecting: they are the report's own numbers, and a validation leg
+                    // that is not asking for them should not carry extra query writes (measured: ten
+                    // VUID-vkCmdWriteTimestamp-00830 errors on the discrete card when the batched end path also wrote one).
                     vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
                             FRAME_TIMESTAMP_SLOT * 2);
+                    this.frameEndTimestampWritten = false;
                 }
             }
         }

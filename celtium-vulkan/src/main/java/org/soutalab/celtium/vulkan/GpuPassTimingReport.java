@@ -23,6 +23,11 @@ public final class GpuPassTimingReport {
 
     private static final boolean ENABLED = Boolean.getBoolean("celtium.gpuPassTimings");
 
+    /** {@return whether the GPU pass report is collecting}, which is also when its extra timestamps are written. */
+    public static boolean enabled() {
+        return ENABLED;
+    }
+
     private GpuPassTimingReport() {
     }
 
