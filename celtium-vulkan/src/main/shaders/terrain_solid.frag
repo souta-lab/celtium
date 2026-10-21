@@ -93,6 +93,9 @@ layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
 
 // false in the shipping pipeline, true when the native shadow pass runs.
 layout(constant_id = 0) const bool CELTIUM_SHADOW_ENABLED = false;
+// Diagnostic only: paints the shadow verdict (green lit, red shadowed) so the picture says where the map and the
+// lookup actually put the shadows, instead of leaving it to a pixel count that varies twofold between runs.
+layout(constant_id = 1) const bool CELTIUM_SHADOW_DEBUG = false;
 
 layout(location = 0) out vec4 fragColor; // The output fragment for the color framebuffer
 
@@ -234,7 +237,11 @@ void main() {
         // 0.2 at full shadow: the map's effect has to be obvious in a scene that is mostly a lit wall, and the first
         // strength (0.45) left ON and OFF within 0.13 percentage points of dark pixels of each other.
         float shadow = lit / 9.0;
-        fragColor.rgb *= mix(0.2, 1.0, shadow);
+        if (CELTIUM_SHADOW_DEBUG) {
+            fragColor = vec4(lit > 4.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
+        } else {
+            fragColor.rgb *= mix(0.2, 1.0, shadow);
+        }
     }
     }
 }
