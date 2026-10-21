@@ -138,6 +138,11 @@ provenance/sha不一致、`warmSampleCount<50`、`worldTicksAtEnd<600`、両arm�
 さらにframeDumpDir経由のdumpは別経路なので、必要なら **`-Dceltium.vulkan.frameDumpEvery=0`** も使う。
 それでもfixtureの要求capture、presentReadback、validation、計器、world生成などの負荷が残る。**「全fixture税を除去」とは呼ばない**。
 
+- **分解能の実測**（2026-10-21、同条件の3回の3ペア測定）: ペア内の比のばらつきは 1.4 / 2.5 / 4.8pp、
+  3ペア中央値のrun間ばらつきは **1.4pp**（1.4928 / 1.4789 / 1.4811）。⇒ **中央値で約1-1.5%の差まで判別できる**。
+  それ未満の改善は「測れない」ので、1%未満を狙う変更は**複数回の測定か、より大きな構造変更と同じ便に載せる**。
+  逆に、JFRや自作bracketが示す数%の「ホットスポット」を修正して比が動かない場合、それは**その計器の分解能・帰属の問題**を
+  先に疑う（このセッションで3件連続そうだった）。
 - `CELTIUM_KPI_LOAD_LIMIT`（既定2.0）は**下げて測定しない**。上げる場合は結果JSONに
   `environment.initialLoadAverage`/`loadLimit`/`guardBypassed` が残るので、その数値を根拠と一緒に書く。
   常駐負荷（ブラウザ等）はpaired交互順で両armから相殺されるが、**絶対msは床を引きずる**。絶対値の断定に使わない。

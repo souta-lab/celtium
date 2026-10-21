@@ -57,3 +57,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### JFR初回（全体）の記録（2026-10-21）
 
 | **JFRプロファイル（2026-10-21・次の標的）** | **計測済み** | 実測 | — | harness に `-XX:` 許可を追加してJFRを有効化。**warm区間だけ**を録るため `delay=30s,duration=20s` を使用（leg `jfr-warm-1`、jar `d5fa0f38…`、validation OFF、**1,110 samples**）。自己時間: `HashMap$TreeNode` 6.3%・`HashMap.putVal` 3.0%・`getNode` 2.3%・fastutil `Long2ObjectOpenHashMap` 2.9%＝**map操作で約14.5%**、Celtium所有では **`FontBatch.celtium$flushPendingFontBatch` 4.5%**、`submitImmediateBatchBody` 3.5%、`drawPendingImmediate` 1.0%、`GlStateManager.celtium$mirror` 1.0%、`copyVertices` 1.0%、`VulkanGlState.multiplyMatrixBuffer` 0.8%。全体プロファイル（起動込み）では font 2.69%・classgraph 1.76%・asm 1.33% で、**起動を含むと比が歪むので区間を限定した**。証拠 `.gv-verify/jfr-warm-1-self-time.json` |
+
+### block entity の比率（2026-10-21）
+
+| **block entity がフレームの46.6%（2026-10-21 実測）** | **視点の訂正** | 実測 | — | warm区間のJFRを**inclusive**（メソッドがスタックのどこかに現れる）で集計: `renderBlockEntities` 系が **46.6%**（`renderSectionBlockEntities`/`renderBlockEntityList` も同率）、その中で `submitGeometryBatch` 14.7%、font flush 8.7%、map操作（TreeNode/putVal/getNode/fastutil）約14%。**フレームの約半分はblock entity描画**で、我々のVulkan経路はその中の一部。この視点で見えた per-call の実害2件を修正（下の行）。**注意: inclusiveは親の分を含む**ので、これ単独で「我々のコスト」を意味しない |
