@@ -41,6 +41,15 @@ public final class FrameCoordinator {
     /** What the coordinator needs from the renderer that owns the frame. */
     public interface Host {
         org.lwjgl.vulkan.VkCommandBuffer commandBuffer();
+
+        /**
+         * Writes the frame's end-of-frame GPU timestamp, the pair to the start written when its command buffer opened.
+         * <p>
+         * The frame coordinator owns where the buffer ends, which is why this lives on the host interface rather than in
+         * the recorder: only the pair together answers whether the GPU is busy for the whole frame or idle while the host
+         * waits for it.
+         */
+        void recordFrameEndTimestamp();
         /** Stamps the direct submit path for the submit-to-fence distribution the summary reports. */
         void celtium$noteDirectSubmit();
         VulkanCommandBufferState commandState();
@@ -176,6 +185,8 @@ public final class FrameCoordinator {
             }
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            // The frame's own GPU-time pair closes here, so it spans both the passes and everything between them.
+            this.host.recordFrameEndTimestamp();
             this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer");
             this.host.commandState().end();
             if (this.host.frameBufferOpen()) {
@@ -281,6 +292,8 @@ public final class FrameCoordinator {
         }
         boolean frameSemaphores = withFrameSemaphores && this.host.frameTarget().needsFrameSemaphores();
         this.host.context().flushUploads();
+        // The batched path ends the buffer here rather than in submit(), so the frame's GPU-time pair closes here too.
+        this.host.recordFrameEndTimestamp();
         long[] waitArray = null;
         int[] stageArray = null;
         long[] signalArray = null;

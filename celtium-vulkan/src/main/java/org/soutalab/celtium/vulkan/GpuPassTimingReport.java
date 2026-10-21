@@ -32,7 +32,8 @@ public final class GpuPassTimingReport {
      * @param frameId  the frame the timings were collected in
      * @param timings  nanoseconds per pass, as the timestamp pool recorded them
      */
-    public static void printIfDue(long frameId, Map<TerrainRenderPass, Long> timings) {
+    public static void printIfDue(long frameId, Map<TerrainRenderPass, Long> timings, long immediatePassNanos,
+            long frameNanos) {
         if (!ENABLED || frameId % EVERY_FRAME != 0 || timings.isEmpty()) {
             return;
         }
@@ -42,6 +43,14 @@ public final class GpuPassTimingReport {
                 line.append(' ');
             }
             line.append(entry.getKey()).append('=').append(entry.getValue().longValue() / 1000L).append("us");
+        }
+        // The immediate window is not a TerrainRenderPass, so it is printed separately: it is the pass the terrain numbers
+        // left unexplained, and it is the one this report exists to localise on the integrated GPU.
+        if (immediatePassNanos > 0L) {
+            line.append(' ').append("immediateWindow=").append(immediatePassNanos / 1000L).append("us");
+        }
+        if (frameNanos > 0L) {
+            line.append(' ').append("wholeFrameGpu=").append(frameNanos / 1000L).append("us");
         }
         System.out.println("[Celtium] CELTIUM_PASS_GPU frame=" + frameId + " " + line);
     }

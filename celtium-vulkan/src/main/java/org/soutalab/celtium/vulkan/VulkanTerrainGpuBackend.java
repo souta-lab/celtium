@@ -86,6 +86,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The submit sequence's view of this renderer. One owner per fact: the frame state stays here. */
     private final FrameCoordinator frameCoordinator = new FrameCoordinator(new FrameCoordinator.Host() {
         @Override public VkCommandBuffer commandBuffer() { return VulkanTerrainGpuBackend.this.commandBuffer; }
+        @Override public void recordFrameEndTimestamp() {
+            VulkanTerrainGpuBackend.this.recordFrameEndTimestamp();
+        }
         @Override public VulkanCommandBufferState commandState() { return VulkanTerrainGpuBackend.this.commandState; }
         @Override public VulkanContext context() { return VulkanTerrainGpuBackend.this.context; }
         @Override public long fence() { return VulkanTerrainGpuBackend.this.fence; }
@@ -429,7 +432,29 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int MAX_UNIFORM_PASSES = 6;
 
     private static final int TIMESTAMP_SLOTS = 16;
+    /**
+     * The slot the immediate window pass measures itself with, kept out of the terrain passes' range.
+     * <p>
+     * The terrain passes are timed one by one and account for about 1.8 ms of the frame on the integrated GPU, while
+     * the frame itself is nine: the rest is this renderer's own immediate window, and without a number for it the
+     * six missing milliseconds can only be guessed at. One reserved pair is enough - the pass is one per frame.
+     */
+    private static final int IMMEDIATE_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 1;
+    /**
+     * The slot that measures the whole frame's GPU time, from the start of the command buffer to its end.
+     * <p>
+     * The terrain passes and the immediate window together account for under two milliseconds on the integrated GPU
+     * while the frame takes nine, so the question the per-pass numbers cannot answer is whether the GPU is busy for
+     * the rest or idle while the host waits. This one pair answers exactly that.
+     */
+    private static final int FRAME_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 2;
     private long timestampPool;
+    /** The immediate window pass's last measured GPU time, in nanoseconds. */
+    private long immediatePassGpuNanos;
+    private boolean immediatePassTimed;
+    /** The whole frame's last measured GPU time, in nanoseconds, and whether this frame recorded it. */
+    private long frameGpuNanos;
+    private boolean frameGpuTimed;
     private float timestampPeriod = 1.0f;
 
     // The GPU pass timings are reported by GpuPassTimingReport, which owns the format and the interval.
@@ -8000,7 +8025,7 @@ this.frameBufferOpen = false;
         if (!this.frameBufferOpen) {
             return;
         }
-        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings);
+        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos);
         DrawCounters.reportIfDue(this.frameId);
         if (this.shaderPackDraws < 3) {
             System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
@@ -9649,6 +9674,11 @@ this.frameBufferOpen = false;
                 record(probeLine);
             }
         }
+        boolean timeImmediatePass = this.timestampsUsable && this.timestampPool != 0L;
+        if (timeImmediatePass) {
+            vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
+                    IMMEDIATE_TIMESTAMP_SLOT * 2);
+        }
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
         this.commandState.beginPass(this.activeImmediateTarget);
@@ -9700,6 +9730,11 @@ this.frameBufferOpen = false;
             }
         }
         vkCmdEndRenderPass(this.commandBuffer);
+        if (timeImmediatePass) {
+            vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
+                    (IMMEDIATE_TIMESTAMP_SLOT * 2) + 1);
+            this.immediatePassTimed = true;
+        }
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
     }
@@ -10721,12 +10756,28 @@ this.frameBufferOpen = false;
     }
 
     /** The original timing update, called once per frame from the wrapper above. */
+    /**
+     * Writes the frame's end-of-frame GPU timestamp, the pair to the start written when its command buffer opened.
+     * <p>
+     * Called from the frame coordinator immediately before the buffer ends, so the pair spans everything the frame
+     * recorded - both the passes and the work between them that no pass bracket owns.
+     */
+    void recordFrameEndTimestamp() {
+        if (this.timestampPool == 0L || !this.timestampsUsable) {
+            return;
+        }
+        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
+                (FRAME_TIMESTAMP_SLOT * 2) + 1);
+        this.frameGpuTimed = true;
+    }
+
     private void updateTimingsBody() {
-        if (this.timestampPool == 0 || this.timestampSlots == 0 || !this.timestampsUsable) {
+        if (this.timestampPool == 0 || !this.timestampsUsable
+                || (this.timestampSlots == 0 && !this.immediatePassTimed && !this.frameGpuTimed)) {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            int queries = this.timestampSlots * 2;
+            int queries = (this.immediatePassTimed || this.frameGpuTimed) ? TIMESTAMP_SLOTS : this.timestampSlots * 2;
             LongBuffer data = stack.mallocLong(queries * 2);
             int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, 0, queries, data,
                     Long.BYTES * 2, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
@@ -10746,6 +10797,30 @@ this.frameBufferOpen = false;
                     this.passTimings.put(this.timestampPasses.get(slot),
                             (long) ((end - start) * this.timestampPeriod));
                 }
+            }
+            if (this.frameGpuTimed) {
+                long startAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 1);
+                long endAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 3);
+                if (startAvailable != 0 && endAvailable != 0) {
+                    long start = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2);
+                    long end = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 2);
+                    if (end >= start) {
+                        this.frameGpuNanos = (long) ((end - start) * this.timestampPeriod);
+                    }
+                }
+                this.frameGpuTimed = false;
+            }
+            if (this.immediatePassTimed) {
+                long startAvailable = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2 + 1);
+                long endAvailable = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2 + 3);
+                if (startAvailable != 0 && endAvailable != 0) {
+                    long start = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2);
+                    long end = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2 + 2);
+                    if (end >= start) {
+                        this.immediatePassGpuNanos = (long) ((end - start) * this.timestampPeriod);
+                    }
+                }
+                this.immediatePassTimed = false;
             }
         }
         this.timestampPasses.clear();
@@ -11327,7 +11402,7 @@ this.frameBufferOpen = false;
                 .framebuffer(ensureFramebuffer(renderPass));
         begin.renderArea().offset().set(0, 0);
         begin.renderArea().extent().set(this.targetWidth, this.targetHeight);
-        timestampSlot = this.timestampsUsable && this.timestampSlots < (TIMESTAMP_SLOTS / 2)
+        timestampSlot = this.timestampsUsable && this.timestampSlots < FRAME_TIMESTAMP_SLOT
                 ? this.timestampSlots : -1;
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
@@ -16855,6 +16930,10 @@ this.frameBufferOpen = false;
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
                 vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0, TIMESTAMP_SLOTS);
+                if (this.timestampsUsable) {
+                    vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
+                            FRAME_TIMESTAMP_SLOT * 2);
+                }
             }
         }
         // The indirect packet pages are slot-owned: the slot's prior fence already completed above (or it never
