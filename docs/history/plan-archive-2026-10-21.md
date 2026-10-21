@@ -187,3 +187,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### Intelのフレーム内訳（2026-10-22）
 
 | **Intelのフレーム内訳（2026-10-22 実測）** | **地形0.84ms/合成0.14ms/CPU約2.4ms** | 実測 | Intel限定の余地 | 同一フラグ・同一ビルド（jar `65ca8ad3…`）で切り分け: **基準 3.388ms** → **`refuseTerrainPass` で 2.552ms ＝ 地形パス 0.84ms（24.7%）**、**`skipGlComposite` で 3.245ms ＝ 合成 0.14ms（4.2%）**。残り**約2.4msはCPU**。**解像度**: 640x360で 2.937ms（19%減）＝減った0.7msはほぼ地形のフィル仕事と整合（AMDは平坦＝CPU律速）。⇒ IntelのGPU仕事は**地形が主**（0.84ms）で、Celeritasも同じ地形を描くため**差の主因ではない**。差＝CPU約2.4ms vs 参照の総計1.87msで、**AMDと同じ結論（受理経路）**に戻る。次は (a)CPU側の構造改善、(b)地形の早期Z/オーバードロー削減（両arm共通コストの圧縮）。**注意**: Intelの基準値はrun間で3.39-3.66とばらつくので比較は同一フラグ・複数runで |
+
+### 提出バッチングGPU別（2026-10-22）
+
+| **提出バッチングをGPU別に（2026-10-22 実装・大幅改善）** | **Intel 4.6-5x → 1.982x** | 実測 | 改善 | `celtium.vulkan.batchFrameSubmits=false` を**同一jar・同一sceneの制御armペア**で測ったところ、**Intel: ON 31.4/9.6/10.0ms vs OFF 3.69/3.60/3.66ms＝中央値0.374x（2.7倍高速）**、**AMD: OFF は1.102x（10%遅い）**。⇒ バッチ提出はAMDでは安く、Intelでは病理的（spreadも巨大）。**実装**: プロパティ未指定時は「**Intel以外はバッチ、Intelは非バッチ**」をデバイス名で決める（`FrameCoordinator`が`Host.isIntelDevice()`を参照）。検証: 両GPUでvalidation ON・`accepted=true`/PASSED・validation clean。**新KPI（`cr07-dev-*`、jar `647b2120…`）: AMD 1.391x（1.391/1.371/1.362）／Intel 1.982x（1.942/2.005/1.981）**。計器の副作用も修正: 追加したGPUタイムスタンプを計器ON時のみ書き、二重書きのVUID-00830（AMDで10件）を解消 |
