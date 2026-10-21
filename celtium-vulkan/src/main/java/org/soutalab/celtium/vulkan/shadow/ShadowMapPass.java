@@ -352,7 +352,7 @@ public final class ShadowMapPass {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            final int edge = 64;
+            final int edge = SIZE;
             int bytes = edge * edge * 4;
             LongBuffer handle = stack.mallocLong(1);
             LongBuffer memory = stack.mallocLong(1);
@@ -403,7 +403,7 @@ public final class ShadowMapPass {
             copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
             copy.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).mipLevel(0)
                     .baseArrayLayer(0).layerCount(1);
-            copy.get(0).imageOffset().set((SIZE - edge) / 2, (SIZE - edge) / 2, 0);
+            copy.get(0).imageOffset().set(0, 0, 0);
             copy.get(0).imageExtent().set(edge, edge, 1);
             vkCmdCopyImageToBuffer(commandBuffer, this.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, copy);
             barrier.get(0).oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)

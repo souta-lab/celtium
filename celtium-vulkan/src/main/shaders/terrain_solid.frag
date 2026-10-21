@@ -223,19 +223,17 @@ void main() {
     vec3 shadowDy = dFdy(shadowCoord);
     float slopeTerm = abs(normalize(cross(shadowDx, shadowDy)).z);
     if (CELTIUM_SHADOW_DEBUG) {
-        // Which component of the lookup is out of range. The box extent was ruled out by measurement (widening it left
-        // the ratio unchanged), so the colours name the component: green all inside, magenta the xy range, red z below
-        // the near plane, blue z beyond the far plane.
-        bool xyIn = all(greaterThanEqual(shadowCoord.xy, vec2(0.0))) && all(lessThanEqual(shadowCoord.xy, vec2(1.0)));
+        // Does the lookup land where a caster actually wrote? Green when the sampled texel holds depth (< 1, so something
+        // was drawn there), red when it holds the cleared value. The map is only 12% covered, so this separates "the map
+        // is empty where we look" from "the depth comparison is wrong" - the two remaining candidates.
+        bool xyIn = all(greaterThanEqual(shadowCoord.xy, vec2(0.0)))
+                && all(lessThanEqual(shadowCoord.xy, vec2(1.0)));
         if (!xyIn) {
-            fragColor = vec4(1.0, 0.0, 1.0, 1.0);
-        } else if (shadowCoord.z < 0.0) {
-            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-        } else if (shadowCoord.z > 1.0) {
             fragColor = vec4(0.0, 0.0, 1.0, 1.0);
-        } else {
-            fragColor = vec4(0.0, 1.0, 0.0, 1.0);
+            return;
         }
+        float sampled = texture(u_ShadowMap, shadowCoord.xy).r;
+        fragColor = vec4(sampled < 0.9999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
         return;
     }
     if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
