@@ -108,3 +108,45 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
 - correctness runはvalidation ON。performance runは計測負荷を明記し、CPU/GPUの仕事とframe pacingを混同しない。
 - partial draw counterを全面の仕事量にしない。新しい計器も必要なら追加するが、所有範囲と陽性対照を持たせる。
 - 既存実装・外部設計は比較材料。最適解を宣言して固定せず、製品の観測可能な契約と測定から選ぶ。
+
+## 6. 受理経路の再設計：offerは範囲を記録し、group境界はflushで決める（2026-10-22 設計・未実装）
+
+### なぜ
+- フレームは **CPU律速**（640x360でも1.863ms、1280x720の1.85msとほぼ同じ／`CELTIUM_LEG_WINDOW_SIZE`）。
+  したがってGPU側のフィルレートやシェーダを削っても AMD の差は動かない。
+- 受理経路はフレームの **26%（0.48ms）**、**279 offer/frame** なので **1.7µs/offer**。Celeritas の1バッチは0.2-0.3µs。
+- しかし**名前の付いた内訳を1つずつ消しても wall時間が動かない**: capture 79%減→0.7%、prepare 26%減→0.0%、
+  行列比較 100%減→0.0%、インデックス再ベース全廃→上限0.5%。
+  ⇒ コストは**group/mesh構造へのキャッシュ・メモリ局所性**に散っており、アトリビューションに名前で出ない。
+
+### 現在の流れ（実コード順）
+1. `WorldVertexBufferUploader` の mixin → `submitImmediateBatch` → `submitImmediateBatchBody`
+2. `celtium$mergeRecordedDrawState()` → `celtium$captureState()` → `celtium$stateKey()`
+3. merge判定（format/texture/stateKey/pass/scissor/pipeline/descriptor/matrix/colour/affine/fog/light）
+4. 通れば **その場で** `VulkanDynamicMesh` へ追記: 頂点 `memCopy`、インデックスは `baseVertex` 再加算、カウンタ更新、`sealFrameSlice()`
+5. 切れれば `ImmediateGroup` を作り直し、mesh を group に紐付け
+6. flush で group を回して記録（`wrecLoop`）
+
+### 変更案
+- offer時は**(sourceAddress, stride, count, drawMode, formatId, textureId, stateKey, pass, scissor, matrixCopyId)** を
+  追記専用の配列に書くだけ（数十ns）。group構造・mesh・descriptorには**触れない**。
+- meshへの転写（`memCopy`/indices）とgroup生成は **flush の1パス**でまとめて行う。転写は記録順に走査するので
+  ソースもデスティネーションも前進のみ＝局所性が最良。
+- group境界判定は現行の述語を**そのままflushで評価**（受理時の値は配列に保存済みなので意味は変わらない）。
+
+### 保たねばならない不変条件（実コードで確認済み）
+- `state[]`は受理時のsnapshot（groupが所有）。配列に `state` のコピーを持たせるか、`stateStamp`方式で参照を固定する。
+- 行列は**受理時の値**（`glProjection`/`glModelView` のコピー）で判定する。後から書き換わるので参照を保持しない。
+- `textureId` は受理時のbound name。flush時点のboundとは違い得る。
+- scissor矩形・polygonOffset・fog・affine・colour・light は受理時の値（現行もgroupにcaptureしている）。
+- 描画順は受理順を厳守（並べ替え禁止）。
+
+### 測り方
+- 判別条件: **flushの1パス化後、`warm p50` が 5%以上下がる**（1%は本機の分解能以下）。
+- 制御arm付きKPI（同一jar・交互3ペア）で判定し、`scripts/gv-kpi.sh` の `medianControlRatio` を使う。
+- 画質は通常のleg（validation ON・画像gate）で確認。
+
+### リスク
+- `state`/matrixのsnapshotを配列側に持つため、**メモリ使用量が増える**（279 offer × 数百バイト/フレーム）。
+- 転写をflushへ遅らせると、**arenaの寿命**がgroup閉じまで延びる。`LeasedResource` のlease契約に合わせる必要がある。
+- 途中で例外が出た場合の部分適用（記録だけしてflushしていない状態）をどう巻き戻すかを決める必要がある。
