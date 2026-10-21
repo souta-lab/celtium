@@ -1336,6 +1336,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
     private final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
+    /** Consecutive packets that share a pipeline and descriptor set: what a multi-draw run could cover. */
+    private final PacketRunCensus packetRunCensus = new PacketRunCensus();
+
     /** The replay transform's composition, with its matrices and its cached inverse. */
     private final ModelViewRelativizer modelViewRelativizer = new ModelViewRelativizer();
 
@@ -10180,6 +10183,7 @@ this.frameBufferOpen = false;
                 + " packetBindMillis=" + PacketCost.bindMillis()
                 + " packetDrawMillis=" + PacketCost.drawMillis()
                 + " packetCalls=" + PacketCost.packets()
+                + " packetRuns[" + this.packetRunCensus.summary() + "]"
                 + " packetBindMicros=" + PacketCost.bindMicros()
                 + " packetDrawMicros=" + PacketCost.drawMicros()
                 + " packetBindSkips=" + PacketCost.bindSkips()
@@ -17291,6 +17295,9 @@ this.frameBufferOpen = false;
                     // the group loop's 0.7 ms p50 for ~334 groups is close to that floor, and cutting it further means
                     // offering fewer groups rather than drawing them more cheaply.
                     Object pipeline = prepared.pipeline;
+                    // How long a run of packets shares pipeline and descriptor: the ceiling on what one indirect
+                    // multi-draw could collapse, measured before anything is built to exploit it.
+                    this.packetRunCensus.observe(pipeline, prepared.descriptor);
                     // grpPrep/grpDraw split the flush's per-group cost: the flush is 3.3 ms p50 for ~334 groups on
                     // the dense scene (winRecord 2.8 of it), and the questions are "which half" and "is it the
                     // driver call or our own state preparation". Both brackets nest inside winRecord.

@@ -15,7 +15,16 @@ package org.soutalab.celtium.vulkan;
  */
 final class PacketCost {
 
-    private static final boolean ENABLED = VulkanTerrainGpuBackend.BATCH_TIMINGS;
+    /**
+     * Its own switch, not the batch-timing one.
+     * <p>
+     * {@code celtium.vulkan.batchTimings} also enables the per-batch CPU-time reads on the accept path, and
+     * {@code ThreadMXBean.getCurrentThreadCpuTime()} is not a cheap call: two of them per accepted batch inflated the
+     * frame from 1.87 to 5.16 ms warm p50. A measurement of the packet loop must not pay for a measurement of a
+     * different path, so this bracket set has its own property and costs ~6 {@code System.nanoTime()} calls per packet
+     * (17 ns each on this machine, measured).
+     */
+    private static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.packetTimings");
 
     private static long bindNanos;
     private static long drawNanos;
