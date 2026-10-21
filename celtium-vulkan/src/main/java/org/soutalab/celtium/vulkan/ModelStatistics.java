@@ -17,9 +17,30 @@ public final class ModelStatistics {
     /** Nanoseconds spent in the model enqueue path, and how many enqueues it covers. */
     private long enqueueNanos;
     private long enqueueCalls;
+    /** Replays and how many of them repeated the previous replay's group identity, i.e. could have shared its packet. */
+    private long replays;
+    private long repeatReplays;
 
     ModelStatistics(ModelGeometryCache modelGeometry) {
         this.modelGeometry = modelGeometry;
+    }
+
+    /** Records one replay, and whether it repeated the previous one's texture, state key, target and matrices. */
+    public void noteReplay(boolean repeatsPrevious) {
+        this.replays++;
+        if (repeatsPrevious) {
+            this.repeatReplays++;
+        }
+    }
+
+    /** {@return replays that could have joined the previous replay's draw packet}. */
+    public long repeatReplays() {
+        return this.repeatReplays;
+    }
+
+    /** {@return the mergeable share of model replays, in percent, or -1 before any replay}. */
+    public long repeatPercent() {
+        return this.replays == 0L ? -1L : this.repeatReplays * 100L / this.replays;
     }
 
     /** Records one model enqueue attempt and the time it took. */

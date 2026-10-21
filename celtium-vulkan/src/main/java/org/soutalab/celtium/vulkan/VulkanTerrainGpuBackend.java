@@ -1339,6 +1339,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The replay transform's composition, with its matrices and its cached inverse. */
     private final ModelViewRelativizer modelViewRelativizer = new ModelViewRelativizer();
 
+    /** The previous model replay's packet identity, so a replay that repeats it can be counted as mergeable. */
+    private final float[] lastModelProjection = new float[16];
+    private final float[] lastModelViewMatrix = new float[16];
+    private int lastModelTexture;
+    private long lastModelStateKey;
+    private int lastModelFormat;
+    private boolean lastModelSeen;
+
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
     private java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
     private final int[] postAcceptDroppedByFormat = new int[8];
@@ -10258,6 +10266,8 @@ this.frameBufferOpen = false;
                 + " modelEnqueueMillis=" + this.modelStats.enqueueMillis()
                 + " modelEnqueueCalls=" + this.modelStats.enqueueCalls()
                 + " modelEnqueueMicrosPerCall=" + this.modelStats.enqueueMicrosPerCall()
+                + " modelRepeatsPrev=" + this.modelStats.repeatReplays()
+                + " modelRepeatsPercent=" + this.modelStats.repeatPercent()
                 + " texMatrixGroups=" + this.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
@@ -12952,6 +12962,15 @@ this.frameBufferOpen = false;
             }
             // Queued, not drawn: the draw happens in the window's pass, and the group counters (submitted/completed) are
             // what show that the queued batch was actually drawn. The caller cancels the GL replay on this basis.
+            this.modelStats.noteReplay(this.lastModelSeen
+                    && this.lastModelTexture == texture && this.lastModelStateKey == key
+                    && java.util.Arrays.equals(this.lastModelProjection, projectionRemapped)
+                    && java.util.Arrays.equals(this.lastModelViewMatrix, modelViewNow));
+            System.arraycopy(projectionRemapped, 0, this.lastModelProjection, 0, 16);
+            System.arraycopy(modelViewNow, 0, this.lastModelViewMatrix, 0, 16);
+            this.lastModelTexture = texture;
+            this.lastModelStateKey = key;
+            this.lastModelSeen = true;
             this.modelDraws++;
             if (offTargetCall) {
                 this.modelOffTargetDraws++;
