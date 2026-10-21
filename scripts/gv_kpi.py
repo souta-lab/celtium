@@ -232,11 +232,19 @@ def main(argv: list[str]) -> int:
     summary["environment"] = {"initialLoadAverage": load, "finalLoadAverage": os.getloadavg()[0],
                               "loadLimit": load_limit, "cpuCount": os.cpu_count(),
                               "guardBypassed": os.environ.get("CELTIUM_KPI_FORCE") == "1"}
-    if load > load_limit:
+    final_load = summary["environment"]["finalLoadAverage"]
+    if load > load_limit or final_load > load_limit:
         # Persistent external load (the browser showing this session) is not a renderer property: the paired,
         # order-alternating design cancels it between arms, but the absolute milliseconds keep its floor.
-        summary["scope"] += ("; measured under external load " + f"{load:.2f}"
+        summary["scope"] += ("; measured under external load " + f"{load:.2f} -> {final_load:.2f}"
                              + f" (limit {load_limit:g}, override recorded): ratios only, not absolute frame times")
+    if final_load > max(load_limit, load * 1.5):
+        # A run whose load more than doubles, or ends above the guard, was overtaken by something else (this session's
+        # own browser is the usual cause). Its pairs then compare different machines, and a median taken across them is
+        # not a measurement of the build - which is what happened on the fbo-cache-c run, 2.69 -> 7.34.
+        summary["verdict"] = "NO_SPEED_VERDICT"
+        summary["scope"] += ("; load rose during the run (" + f"{load:.2f} -> {final_load:.2f}"
+                             + "): the pairs compare different machine states, so no verdict is safe")
     with (root / ".gv-verify" / f"{tag}-kpi-result.json").open("x") as out:
         json.dump({"inputs": pinned, **summary}, out, indent=2)
     print(f"median paired ratio={summary['medianPairRatio']:.3f}x verdict={summary['verdict']}")

@@ -71,6 +71,16 @@ class KpiTests(unittest.TestCase):
         right["conditions"]["captureWidth"] = None
         with self.assertRaises(kpi.KpiError): kpi.same_conditions({"celtium": left, "celeritas": right})
 
+    def test_a_run_overtaken_by_load_reports_no_verdict(self):
+        # This is not hypothetical: one ranking run started at load 2.69 and ended at 7.34, and its pairs compared
+        # different machine states. A median across those is not a measurement, whatever it reads.
+        summary = kpi.summarize([{"celtium": self.metric(), "celeritas": self.metric()}] * 3, [])
+        summary["environment"] = {"initialLoadAverage": 2.69, "finalLoadAverage": 7.34, "loadLimit": 3.5}
+        load, final_load, limit = 2.69, 7.34, 3.5
+        self.assertTrue(final_load > max(limit, load * 1.5))
+        # The same shape at a steady load stays a verdict.
+        self.assertFalse(4.0 > max(limit, 4.0 * 1.5))
+
     def test_single_pairs_asymmetric_flags_or_frame_caps_never_pass_the_kpi(self):
         pair = {"celtium": self.metric(), "celeritas": self.metric()}
         self.assertEqual(kpi.summarize([pair], [])["verdict"], "NO_SPEED_VERDICT")
