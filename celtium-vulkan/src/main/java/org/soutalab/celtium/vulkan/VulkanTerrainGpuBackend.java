@@ -15068,7 +15068,8 @@ this.frameBufferOpen = false;
         if (this.shadowMapPass == null) {
             this.shadowMapPass = org.soutalab.celtium.vulkan.shadow.ShadowMapPass.create(this.context);
             if (this.shadowMapPass == null) {
-                record("native shadow map could not be created");
+                record("native shadow map could not be created: "
+                        + org.soutalab.celtium.vulkan.shadow.ShadowMapPass.lastFailure());
                 return;
             }
             record("native shadow map created: " + this.shadowMapPass.statistics());

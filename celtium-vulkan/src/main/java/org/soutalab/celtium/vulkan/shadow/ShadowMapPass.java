@@ -107,6 +107,20 @@ public final class ShadowMapPass {
     }
 
     /** {@return whether the pass is requested for this process}; a JVM argument, resolved once. */
+    /**
+     * Why {@link #create} last returned null, or null when it did not fail.
+     * <p>
+     * The caller used to log only that the map could not be created, which is the same message for three different
+     * failures: no memory, no pipeline, or no transition. The reason the pass recorded on itself was discarded with
+     * the object, so the log named the symptom and never the cause.
+     */
+    private static volatile String LAST_FAILURE;
+
+    /** {@return why the last {@link #create} failed, or null} */
+    public static String lastFailure() {
+        return LAST_FAILURE;
+    }
+
     public static boolean requested() {
         return Boolean.getBoolean("celtium.shadow.enabled");
     }
@@ -120,9 +134,11 @@ public final class ShadowMapPass {
     public static ShadowMapPass create(VulkanContext context) {
         ShadowMapPass pass = new ShadowMapPass(context);
         if (!pass.allocate()) {
+            LAST_FAILURE = pass.lastFailure == null ? "allocate failed" : pass.lastFailure;
             return null;
         }
         if (!pass.createPipeline()) {
+            LAST_FAILURE = pass.lastFailure == null ? "createPipeline failed" : pass.lastFailure;
             pass.destroy();
             return null;
         }
@@ -133,9 +149,11 @@ public final class ShadowMapPass {
         // VUID-vkCmdDraw-None-09600 "expects ... GENERAL". Starting in GENERAL and staying there removes the ordering
         // dependency between publication and recording.
         if (!pass.transitionImageToGeneral()) {
+            LAST_FAILURE = pass.lastFailure == null ? "transitionImageToGeneral failed" : pass.lastFailure;
             pass.destroy();
             return null;
         }
+        LAST_FAILURE = null;
         return pass;
     }
 
