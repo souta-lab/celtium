@@ -1373,8 +1373,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      * keeps repeat binds cheap), so the common hot binds cost a contains-key and nothing else.
      */
     private void noteBindSite(int texture) {
-        if (texture == 0 || this.firstBindSites.containsKey(Integer.valueOf(texture))
-                || this.firstBindSites.size() >= MAX_BIND_SITES) {
+        // The table-full test first: once it has reached its cap this method is asked on every texture bind and can
+        // only ever answer "already full", so the map probe must not be paid for. The order is also what keeps the
+        // cost bounded - a bind is one of the most frequent GL calls in the frame, and this is a diagnostic, not
+        // state the draw reads.
+        if (texture == 0 || this.firstBindSites.size() >= MAX_BIND_SITES
+                || this.firstBindSites.containsKey(Integer.valueOf(texture))) {
             return;
         }
         this.firstBindSites.put(Integer.valueOf(texture), celtium$callSite() + " unit=" + this.activeTexture);
