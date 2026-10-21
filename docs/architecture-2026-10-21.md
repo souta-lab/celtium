@@ -283,3 +283,28 @@ validation clean。効果が無く、`worldPosition` が既にworld空間なら*
 次の候補は (a) `worldPosition` が実際にworld空間かどうかを読み切る（`translation` の作られ方を追う）、
 (b) 地形シェーダの `u_ShadowMatrix` が**書かれている場所**（binding 4 のUBO）が実際に更新されているかを確認、
 (c) GPU側のin/outカウンタ（§8.1の3）。推測で行列をいじる段階は終わり、**観測を足す段階**に入っている。
+
+## 9. shadercのはLWJGL版に固定される（2026-10-22 判明・同梱は単純ではない）
+
+### 事実
+- `celtium-vulkan/build.gradle` は `compileOnly 'org.lwjgl:lwjgl-shaderc'`、テストは3.4.3に揃えた（2026-10-22）。
+- `forge122/build.gradle.kts` は **LWJGL 3.4.1** でコンパイルする（`compileOnly("org.lwjgl:lwjgl:3.4.1")`、validationも3.4.1）。
+- 実行環境のLWJGLは**ローダ次第**で、0.7は 3.4.3、0.6は別版。
+- 実測: 3.4.1のshaderc jarを3.4.3ランタイムに置くと
+  `ClassNotFoundException: Found org.lwjgl.util.shaderc.Shaderc in invalid classes` で**ロードに失敗**する。
+  3.4.3を置くと通る。
+
+### だから何が言えるか
+shadercのバインディングは**LWJGLの版に固定**されており、「modに同梱すれば解決」ではない。
+同梱した版が実行時のLWJGLと食い違えば、**同梱しないより悪い**（無い場合の graceful degradation が、
+「クラスはあるが壊れている」状態になる）。したがって選択肢は:
+
+1. **パック利用時のみ、実行時LWJGLに合うshadercを要求する**（instance側の依存として文書化）。
+   影は既に**埋め込みSPIR-V**でshaderc不要にしてあるので、影響はパックだけ。
+2. **per-version の同梱**（3.4.1用・3.4.3用を両方入れ、実行時に選ぶ）。jarサイズと
+   ネイティブのパス解決（`<os>/<arch>/...` が衝突）の問題があり、雑にやると壊れる。
+3. **shadercを使わない**（glslangの外部プロセス、またはパックのSPIR-Vを事前生成）。配布の複雑さは増すが版依存は消える。
+
+### 現状の判断
+影は回避済み。パック（BSL）は②か③が必要で、①は利用者への依存追加になる。
+**「shadercを同梱する」を単純な作業として計画に置かない**。
