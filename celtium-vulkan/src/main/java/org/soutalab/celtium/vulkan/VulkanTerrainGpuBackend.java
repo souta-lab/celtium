@@ -15143,6 +15143,9 @@ this.frameBufferOpen = false;
                 // enclosing pass, and the queue orders it against the frame's own submissions.
                 String submitted = this.shadowMapPass.recordTerrainBatchesAndSubmit(this.shadowTuplePipeline,
                         this.shadowBatches);
+                // What actually landed in the map: a CPU-side argument about the matrix cannot see this, and the map being
+                // entirely 1.0 (casters nowhere) is a different failure from a map with content that receivers miss.
+                this.shadowMapPass.sampleDepthReport();
                 if (submitted != null && this.shadowOwnPrints < 4) {
                     this.shadowOwnPrints++;
                     System.out.println("[Celtium] CELTIUM_SHADOW_OWN " + submitted);

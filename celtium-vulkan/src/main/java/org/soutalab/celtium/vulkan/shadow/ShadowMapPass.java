@@ -82,6 +82,9 @@ public final class ShadowMapPass {
     /** Whether the map's depth has been sampled once, and what the corner held. */
     private boolean depthSampled;
     private float sampledDepthMin = -1.0f;
+    private long depthSampleCalls;
+    private float depthMean = -1.0f;
+    private float depthBelowOneFraction = -1.0f;
     private float sampledDepthMax = -1.0f;
 
     private long pipeline;
@@ -326,13 +329,30 @@ public final class ShadowMapPass {
      * the depth-only pipeline is writing depth, which is what the terrain draw will depend on. Run once, on the frame after
      * the first pass, so a frame's cost does not carry it.
      */
+    /**
+     * Reads back a 64x64 block from the middle of the map and reports what is in it.
+     * <p>
+     * The question this answers is the one CPU reasoning cannot: whether the casters wrote anything into the map at all
+     * (a map that is entirely 1.0 means they landed nowhere) and, if they did, how much of the region around the camera is
+     * covered. It used to sample an 8x8 corner once and was never called, which is why the verification line never carried
+     * a depth report.
+     */
+    public void sampleDepthReport() {
+        sampleDepthOnce();
+    }
+
     private void sampleDepthOnce() {
-        if (this.depthSampled || this.image == VK_NULL_HANDLE) {
+        if (this.image == VK_NULL_HANDLE) {
             return;
         }
-        this.depthSampled = true;
+        // Called once a frame from the own-submission path, which does not increment the pass counters: the cadence is its
+        // own count rather than a pass number that stays zero there.
+        this.depthSampleCalls++;
+        if (this.depthSampleCalls % 300 != 1) {
+            return;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            final int edge = 8;
+            final int edge = 64;
             int bytes = edge * edge * 4;
             LongBuffer handle = stack.mallocLong(1);
             LongBuffer memory = stack.mallocLong(1);
@@ -383,7 +403,7 @@ public final class ShadowMapPass {
             copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
             copy.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).mipLevel(0)
                     .baseArrayLayer(0).layerCount(1);
-            copy.get(0).imageOffset().set(0, 0, 0);
+            copy.get(0).imageOffset().set((SIZE - edge) / 2, (SIZE - edge) / 2, 0);
             copy.get(0).imageExtent().set(edge, edge, 1);
             vkCmdCopyImageToBuffer(commandBuffer, this.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, copy);
             barrier.get(0).oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
@@ -407,14 +427,25 @@ public final class ShadowMapPass {
             vkMapMemory(this.context.device(), memory.get(0), 0, bytes, 0, mapped);
             float min = Float.MAX_VALUE;
             float max = -Float.MAX_VALUE;
+            double sum = 0.0;
+            int belowOne = 0;
             for (int i = 0; i < edge * edge; i++) {
                 float value = org.lwjgl.system.MemoryUtil.memGetFloat(mapped.get(0) + (long) i * 4L);
                 min = Math.min(min, value);
                 max = Math.max(max, value);
+                sum += value;
+                if (value < 1.0f) {
+                    belowOne++;
+                }
             }
+            this.depthMean = (float) (sum / (edge * edge));
+            this.depthBelowOneFraction = (float) belowOne / (float) (edge * edge);
             vkUnmapMemory(this.context.device(), memory.get(0));
             this.sampledDepthMin = min;
             this.sampledDepthMax = max;
+            System.out.println("[Celtium] CELTIUM_SHADOW_MAP_DEPTH min=" + min + " max=" + max
+                    + " mean=" + this.depthMean + " belowOne=" + this.depthBelowOneFraction
+                    + " atCall=" + this.depthSampleCalls);
             vkFreeMemory(this.context.device(), memory.get(0), null);
             vkDestroyBuffer(this.context.device(), readback, null);
         } catch (RuntimeException | LinkageError error) {
@@ -1064,8 +1095,9 @@ public final class ShadowMapPass {
     public String statistics() {
         return "shadowPasses=" + this.passes + " terrainPasses=" + this.terrainPasses + " size=" + SIZE
                 + " failures=" + this.failures + (this.lastFailure.isEmpty() ? "" : " lastFailure=[" + this.lastFailure + "]")
-                + (this.sampledDepthMin < 0.0f ? "" : " depthCorner=[" + this.sampledDepthMin + ","
-                        + this.sampledDepthMax + "]")
+                + (this.sampledDepthMin < 0.0f ? "" : " mapDepth[min=" + this.sampledDepthMin
+                        + ",max=" + this.sampledDepthMax + ",mean=" + this.depthMean
+                        + ",belowOne=" + this.depthBelowOneFraction + "]")
 ;
     }
 
