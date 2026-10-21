@@ -33,7 +33,7 @@ public final class GpuPassTimingReport {
      * @param timings  nanoseconds per pass, as the timestamp pool recorded them
      */
     public static void printIfDue(long frameId, Map<TerrainRenderPass, Long> timings, long immediatePassNanos,
-            long frameNanos) {
+            long frameNanos, long headNanos, long tailNanos) {
         if (!ENABLED || frameId % EVERY_FRAME != 0 || timings.isEmpty()) {
             return;
         }
@@ -50,7 +50,9 @@ public final class GpuPassTimingReport {
             line.append(' ').append("immediateWindow=").append(immediatePassNanos / 1000L).append("us");
         }
         if (frameNanos > 0L) {
-            line.append(' ').append("wholeFrameGpu=").append(frameNanos / 1000L).append("us");
+            line.append(' ').append("wholeFrameGpu=").append(frameNanos / 1000L).append("us")
+                    .append(" headGpu=").append(headNanos / 1000L).append("us")
+                    .append(" tailGpu=").append(tailNanos / 1000L).append("us");
         }
         System.out.println("[Celtium] CELTIUM_PASS_GPU frame=" + frameId + " " + line);
     }

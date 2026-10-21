@@ -455,6 +455,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The whole frame's last measured GPU time, in nanoseconds, and whether this frame recorded it. */
     private long frameGpuNanos;
     private boolean frameGpuTimed;
+    /**
+     * The part of the frame's GPU time that happens before the first pass starts and after the last one ends.
+     * <p>
+     * The passes are timed, and so is the whole frame; the difference between those two numbers is what the integrated
+     * GPU spends outside any pass, and it is several milliseconds there. Splitting it into "before the first draw" and
+     * "after the last draw" says whether it is the handoff and acquire at the head of the frame or the composite and
+     * present preparation at its tail - two different problems with different fixes.
+     */
+    private long frameHeadNanos;
+    private long frameTailNanos;
     private float timestampPeriod = 1.0f;
 
     // The GPU pass timings are reported by GpuPassTimingReport, which owns the format and the interval.
@@ -8025,7 +8035,8 @@ this.frameBufferOpen = false;
         if (!this.frameBufferOpen) {
             return;
         }
-        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos);
+        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
+                this.frameHeadNanos, this.frameTailNanos);
         DrawCounters.reportIfDue(this.frameId);
         if (this.shaderPackDraws < 3) {
             System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
@@ -10809,6 +10820,25 @@ this.frameBufferOpen = false;
                     }
                 }
                 this.frameGpuTimed = false;
+            }
+            if (this.frameGpuNanos > 0L && !this.timestampPasses.isEmpty()) {
+                // The first and last pass of this frame, by the slot they were recorded in: slot order is recording order.
+                int firstSlot = Integer.MAX_VALUE;
+                int lastSlot = -1;
+                for (Integer slot : this.timestampPasses.keySet()) {
+                    firstSlot = Math.min(firstSlot, slot.intValue());
+                    lastSlot = Math.max(lastSlot, slot.intValue());
+                }
+                if (lastSlot >= 0) {
+                    long frameStart = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2);
+                    long frameEnd = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 2);
+                    long firstPassStart = data.get(firstSlot * 2 * 2);
+                    long lastPassEnd = data.get(lastSlot * 2 * 2 + 2);
+                    if (frameEnd >= frameStart && firstPassStart >= frameStart && frameEnd >= lastPassEnd) {
+                        this.frameHeadNanos = (long) ((firstPassStart - frameStart) * this.timestampPeriod);
+                        this.frameTailNanos = (long) ((frameEnd - lastPassEnd) * this.timestampPeriod);
+                    }
+                }
             }
             if (this.immediatePassTimed) {
                 long startAvailable = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2 + 1);
