@@ -210,6 +210,8 @@ public class MinecraftMixin {
     /** Latched after the saved VSync option has been handed to the present policy once (task-56). */
     @Unique
     private static boolean celtium$vsyncPushed;
+    /** The value last pushed, so a change made after startup is honoured too. */
+    private static boolean celtium$vsyncPushedValue;
     @Unique
     private static boolean celtium$windowRendererCreated;
     @Unique
@@ -432,11 +434,14 @@ public class MinecraftMixin {
         // early point the window renderer is created, which is before the first present - so the first swapchain is
         // built with the player's own value. Measured need: task-56's `vsync-toggle2` leg, where the row's press was
         // the only thing that reached the policy.
-        if (!celtium$vsyncPushed) {
+        // Pushed when it changes, not once: the one-shot push missed a value set after the renderer was created - the
+        // validation fixture turns VSync off for its timing legs and says so in its report, and a renderer that kept
+        // presenting FIFO would be measuring a different present path than the one it claims. A boolean compare per
+        // frame is what honouring a runtime setting costs.
+        if (mc != null && (!celtium$vsyncPushed || celtium$vsyncPushedValue != mc.gameSettings.enableVsync)) {
             celtium$vsyncPushed = true;
-            if (mc != null) {
-                org.soutalab.celtium.vulkan.VulkanSwapchain.setVSyncRequested(mc.gameSettings.enableVsync);
-            }
+            celtium$vsyncPushedValue = mc.gameSettings.enableVsync;
+            org.soutalab.celtium.vulkan.VulkanSwapchain.setVSyncRequested(mc.gameSettings.enableVsync);
         }
         if (mc != null && mc.world != null) {
             // Past the menu already; the world-time creation is the right path there.

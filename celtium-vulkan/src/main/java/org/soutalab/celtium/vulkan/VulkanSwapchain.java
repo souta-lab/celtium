@@ -152,9 +152,27 @@ public final class VulkanSwapchain {
                 + " (the swapchain is rebuilt on the next present)");
     }
 
+    /**
+     * The VSync the game asked for, or a forced value from {@code -Dceltium.vulkan.vsync}.
+     * <p>
+     * With nothing set by the game the answer is "on", which is the safe default: presenting FIFO cannot tear. The
+     * property exists because the request is measured rather than assumed - a leg whose scene reports VSync off but
+     * whose renderer still chose FIFO is a leg measuring the wrong present path, and the two are worth comparing.
+     */
     public static boolean vsyncRequested() {
+        if (VSYNC_OVERRIDE != null) {
+            return VSYNC_OVERRIDE.booleanValue();
+        }
         Boolean requested = vsyncRequested;
         return requested == null ? true : requested.booleanValue();
+    }
+
+    /** {@code -Dceltium.vulkan.vsync=true|false} forces the request; unset means "whatever the game asked for". */
+    private static final Boolean VSYNC_OVERRIDE = parseVsyncOverride();
+
+    private static Boolean parseVsyncOverride() {
+        String value = System.getProperty("celtium.vulkan.vsync");
+        return value == null ? null : Boolean.valueOf(!"false".equalsIgnoreCase(value));
     }
 
     /** {@return whether this swapchain was built for a different VSync request than the current one}. */
