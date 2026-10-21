@@ -17,7 +17,7 @@ tasks.withType(JavaCompile).configureEach {
 // The mod-side Vulkan code is compiled against the LWJGL version the validated Cleanroom installation ships.
 // It is never bundled: the installation provides the bindings, and when they are missing every entry point
 // reports a diagnostic instead of failing.
-def lwjglVersion = providers.gradleProperty('celtium_mod_lwjgl_version').getOrElse('3.4.1')
+def lwjglVersion = providers.gradleProperty('celtium_mod_lwjgl_version').getOrElse('3.4.3')
 
 // The Vulkan terrain backend implements the mod's own interfaces, so it compiles against the shared core.
 // The core classes are provided by the mod at runtime; nothing is bundled here.
@@ -45,7 +45,10 @@ dependencies {
     compileOnly 'org.lwjgl:lwjgl-shaderc'
     // The swapchain needs the window's native handles, which GLFW exposes; like the other LWJGL modules this is
     // never bundled and the module reports a diagnostic when it is missing.
+    // Cleanroom 0.7 replaced the GLFW window with SDL 3 and provides GLFW through its LWJGLY shim at runtime,
+    // so the compile classpath keeps GLFW until the surface is moved to SDL explicitly.
     compileOnly 'org.lwjgl:lwjgl-glfw'
+    compileOnly 'org.lwjgl:lwjgl-sdl'
     compileOnly 'com.google.code.gson:gson:2.10.1'
     // The mod's core API exposes joml matrices. They are relocated into the mod's own namespace by the shadow
     // step, and this module goes through that same step, so it compiles against the original coordinates.

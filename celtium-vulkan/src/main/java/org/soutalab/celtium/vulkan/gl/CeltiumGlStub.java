@@ -2596,6 +2596,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * entirely. The widest function in the table is {@code glTexImage3D} at ten arguments.
      */
     private static final Callback.Descriptor UNIFORM_DESCRIPTOR = new Callback.Descriptor(
+            GlTrampolineI.class,
             java.lang.invoke.MethodHandles.lookup(),
             apiCreateCIF(ffi_type_pointer, new FFIType[] {
                     ffi_type_pointer, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer,
@@ -2621,7 +2622,31 @@ public final class CeltiumGlStub implements FunctionProvider {
             key.append((char) ('a' + arg));
         }
         return SIGNATURE_DESCRIPTORS.computeIfAbsent(key.toString(), ignored ->
-                new Callback.Descriptor(java.lang.invoke.MethodHandles.lookup(), cifFor(args)));
+                new Callback.Descriptor(trampolineType(args), java.lang.invoke.MethodHandles.lookup(), cifFor(args)));
+    }
+
+    /**
+     * {@return the trampoline interface a signature's arguments are read by}.
+     * <p>
+     * LWJGL 3.4.3's {@code Callback.Descriptor} carries the callback type as well as the CIF, because the trampoline is
+     * built from the descriptor rather than from the interface alone. Which interface it is follows from where the
+     * arguments actually land: an x86-64 caller passes floats and doubles in the SSE registers, so those signatures
+     * need the upcalls whose abstract method declares them - the same reason {@link #ffiTypeFor} distinguishes them.
+     */
+    private static Class<? extends org.lwjgl.system.CallbackI> trampolineType(byte[] args) {
+        boolean floats = false;
+        boolean doubles = false;
+        for (byte arg : args) {
+            if (arg == A_FLOAT) {
+                floats = true;
+            } else if (arg == A_DOUBLE) {
+                doubles = true;
+            }
+        }
+        if (doubles) {
+            return GlTrampolineDoubleI.class;
+        }
+        return floats ? GlTrampolineFloatI.class : GlTrampolineI.class;
     }
 
     /** The signature's call interface itself, so the FFM binder can see the CIF the Callback descriptor wraps. */
@@ -2690,12 +2715,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      * eight slots, which is every float-argument row's width; the dispatcher's wider slots stay zero for these.
      */
     private static final Callback.Descriptor FLOAT4_DESCRIPTOR = new Callback.Descriptor(
+            GlTrampolineFloatI.class,
             java.lang.invoke.MethodHandles.lookup(),
             apiCreateCIF(ffi_type_pointer, new FFIType[] {
                     ffi_type_float, ffi_type_float, ffi_type_float, ffi_type_float,
                     ffi_type_pointer, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer }));
 
     private static final Callback.Descriptor DOUBLE1_DESCRIPTOR = new Callback.Descriptor(
+            GlTrampolineDoubleI.class,
             java.lang.invoke.MethodHandles.lookup(),
             apiCreateCIF(ffi_type_pointer, new FFIType[] {
                     ffi_type_double, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer,
@@ -2785,7 +2812,17 @@ public final class CeltiumGlStub implements FunctionProvider {
      * runtime property, not a compile-time one: {@code invoke} serves the FFM backend, {@code callback} the
      * legacy libffi one.
      */
-    private static final class CeltiumGlTrampoline extends Callback implements GlTrampolineI {
+    /**
+     * The upcall object, implementing every trampoline interface.
+     * <p>
+     * LWJGL 3.4.3's {@code Callback} casts the instance to the type its descriptor names, so one object has to satisfy
+     * whichever interface the signature's descriptor was built with - the uniform long upcall for pointers and
+     * integers, and the float and double upcalls for the signatures whose arguments a caller passes in the SSE
+     * registers. The float and double entries convert to raw bits and hand them to the same dispatch, which is what
+     * the uniform upcall received before the descriptor carried a type at all.
+     */
+    private static final class CeltiumGlTrampoline extends Callback
+            implements GlTrampolineI, GlTrampolineFloatI, GlTrampolineDoubleI {
         private final int functionId;
         private final CeltiumGlStub stub;
         private final Callback.Descriptor descriptor;
@@ -2810,6 +2847,28 @@ public final class CeltiumGlStub implements FunctionProvider {
                 System.out.println("[Celtium] GLSTUB entry=ffm (the uniform long-argument upcall)");
             }
             return this.stub.dispatch(this.functionId, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
+        }
+
+        /** The float-argument entry: four floats, converted to raw bits for the uniform dispatch. */
+        @Override
+        public long invoke(float a0, float a1, float a2, float a3, long a4, long a5, long a6, long a7) {
+            if (ENTRY_LOGGED.compareAndSet(false, true)) {
+                System.out.println("[Celtium] GLSTUB entry=ffm (the float-argument upcall)");
+            }
+            return this.stub.dispatch(this.functionId,
+                    Float.floatToRawIntBits(a0), Float.floatToRawIntBits(a1),
+                    Float.floatToRawIntBits(a2), Float.floatToRawIntBits(a3),
+                    a4, a5, a6, a7, 0L, 0L, 0L, 0L);
+        }
+
+        /** The double-argument entry: one double, converted to raw bits for the uniform dispatch. */
+        @Override
+        public long invoke(double a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7) {
+            if (ENTRY_LOGGED.compareAndSet(false, true)) {
+                System.out.println("[Celtium] GLSTUB entry=ffm (the double-argument upcall)");
+            }
+            return this.stub.dispatch(this.functionId, Double.doubleToRawLongBits(a0),
+                    a1, a2, a3, a4, a5, a6, a7, 0L, 0L, 0L, 0L);
         }
 
         /**
