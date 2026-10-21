@@ -582,6 +582,41 @@ public final class VulkanSwapchain {
         // hand-written compositor paths below are only needed for the GLFW line.
         if (CeltiumWindow.sdl()) {
             String compositor = CeltiumWindow.sdlCompositor();
+            String where = compositor == null ? "sdl" : compositor.toLowerCase();
+            // X11 goes through vkCreateXlibSurfaceKHR with the window id, exactly as the GLFW line does: the ids are what
+            // Vulkan needs, and a Display opened here is a second connection to the same server. The alternative,
+            // SDL_Vulkan_CreateSurface on Cleanroom's window, was measured to bring the process down - SIGSEGV inside
+            // libSDL3, 15 seconds in - because that call runs against an SDL library instance the loader is still using
+            // from its own thread. Wayland has no such detour: its surface must be SDL's own, so SDL stays in that path.
+            long nativeWindow = CeltiumWindow.sdlNativeHandle();
+            if (compositor != null && compositor.equalsIgnoreCase("X11")) {
+                if (nativeWindow == 0L) {
+                    reasons.add("SDL reported X11 but no window id was available");
+                    return null;
+                }
+                if (!context.hasInstanceExtension("VK_KHR_xlib_surface")) {
+                    reasons.add("the device does not expose VK_KHR_xlib_surface");
+                    return null;
+                }
+                long display = org.lwjgl.system.linux.X11.XOpenDisplay((java.nio.ByteBuffer) null);
+                if (display == 0L) {
+                    reasons.add("could not open an X11 display for the SDL window");
+                    return null;
+                }
+                long surface;
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    LongBuffer handle = stack.mallocLong(1);
+                    VkXlibSurfaceCreateInfoKHR create = VkXlibSurfaceCreateInfoKHR.calloc(stack).sType$Default()
+                            .dpy(display).window(nativeWindow);
+                    int result = KHRXlibSurface.vkCreateXlibSurfaceKHR(context.instance(), create, null, handle);
+                    if (result != VK_SUCCESS) {
+                        reasons.add("vkCreateXlibSurfaceKHR on the SDL window failed with VkResult " + result);
+                        return null;
+                    }
+                    surface = handle.get(0);
+                }
+                return buildForSurface(context, surface, where, width, height, reasons);
+            }
             long sdlWindow = CeltiumWindow.sdlWindowPointer();
             if (sdlWindow == 0L) {
                 reasons.add("SDL reports no window handle for a Vulkan surface");
@@ -597,8 +632,7 @@ public final class VulkanSwapchain {
                 }
                 surface = handle.get(0);
             }
-            return buildForSurface(context, surface, compositor == null ? "sdl" : compositor.toLowerCase(), width, height,
-                    reasons);
+            return buildForSurface(context, surface, where, width, height, reasons);
         }
         int platformId = GLFW.glfwGetPlatform();
         String platform;
