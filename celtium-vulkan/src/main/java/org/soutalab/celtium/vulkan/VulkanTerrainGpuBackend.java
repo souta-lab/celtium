@@ -6699,7 +6699,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
                 long cloneStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-                this.currentGroupState = state.clone();
+                // Copied into the field's own array rather than cloned into a new one: the group takes its own copy when
+                // it is closed (ImmediateGroup owns its state), so this array only has to stay stable while the group is
+                // open - one arraycopy, no allocation per group (~180 a frame).
+                if (this.currentGroupState.length != state.length) {
+                    this.currentGroupState = new int[state.length];
+                }
+                System.arraycopy(state, 0, this.currentGroupState, 0, state.length);
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupCloneNanos(System.nanoTime() - cloneStart);
                 this.immediateStatistics.noteGroupCloneCount();
                 // The fog this batch was offered under, taken here for the same reason the state above is: at this

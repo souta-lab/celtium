@@ -138,6 +138,11 @@ provenance/sha不一致、`warmSampleCount<50`、`worldTicksAtEnd<600`、両arm�
 さらにframeDumpDir経由のdumpは別経路なので、必要なら **`-Dceltium.vulkan.frameDumpEvery=0`** も使う。
 それでもfixtureの要求capture、presentReadback、validation、計器、world生成などの負荷が残る。**「全fixture税を除去」とは呼ばない**。
 
+- **`java.util.function` のlambdaは確保されているとは限らない**（2026-10-21 実測）。`celtium$mirror(b -> ...)` 形式の
+  ホット変換を専用呼び出しに置き換えても比が動かなかったので単体で測った: lambda経由 0.6-1.2ns/call、
+  直接呼び出し 0-0.2ns/call。**HotSpotのescape analysisが非脱出のlambdaを消しており、確保は起きていない**。
+  JFRがそのlambdaフレームを数%と表示しても、それは**インラインした本体がそこで走っていた**という意味で、
+  確保のコストではない。プロファイルの数%を見て「確保を消す」変更を入れ、比が動かない場合はこれを先に疑う。
 - **分解能の実測**（2026-10-21、同条件の3回の3ペア測定）: ペア内の比のばらつきは 1.4 / 2.5 / 4.8pp、
   3ペア中央値のrun間ばらつきは **1.4pp**（1.4928 / 1.4789 / 1.4811）。⇒ **中央値で約1-1.5%の差まで判別できる**。
   それ未満の改善は「測れない」ので、1%未満を狙う変更は**複数回の測定か、より大きな構造変更と同じ便に載せる**。
