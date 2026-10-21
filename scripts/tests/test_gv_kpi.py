@@ -71,6 +71,17 @@ class KpiTests(unittest.TestCase):
         right["conditions"]["captureWidth"] = None
         with self.assertRaises(kpi.KpiError): kpi.same_conditions({"celtium": left, "celeritas": right})
 
+    def test_ranking_mode_without_a_reference_still_reports_the_control_ratio(self):
+        # Dropping the reference arm halves the number of legs a ranking needs; the control ratio is what ranks builds
+        # and the reference ratio is what answers "how far from Celeritas", which needs a quiet machine anyway.
+        pair = {"celtium": self.metric(), "control": self.metric()}
+        pair["celtium"]["p50Ms"] = 1.16
+        pair["control"]["p50Ms"] = 1.0
+        summary = kpi.summarize([pair] * 3, [])
+        self.assertIsNone(summary["medianPairRatio"])
+        self.assertEqual(summary["verdict"], "NO_SPEED_VERDICT", "no reference, no KPI verdict")
+        self.assertEqual(summary["medianControlRatio"], 1.16)
+
     def test_pairs_whose_arms_produced_very_different_frame_counts_have_no_verdict(self):
         # The frames each arm completed is the throughput it actually got. A control leg that managed a quarter of the
         # candidate's frames was starved by something else, and its millisecond figure is not a measurement of the build.

@@ -50,11 +50,14 @@ def stage_inputs(jars: Path, role: str) -> tuple[Path, Path, dict]:
     return renderer, fixture, checked
 
 
-def inputs(jars: Path, reference: Path, control: Path | None = None) -> dict:
+def inputs(jars: Path, reference: Path | None, control: Path | None = None) -> dict:
     """No default historical stage, and no inference that the current git HEAD produced an arbitrary jar."""
     renderer, fixture, checked = stage_inputs(jars, "stage")
     pinned = dict(checked)
-    pinned["reference"] = {"source": str(reference.resolve()), "sha256": digest(reference)}
+    if reference is not None:
+        pinned["reference"] = {"source": str(reference.resolve()), "sha256": digest(reference)}
+    else:
+        pinned["reference"] = None
     provenance_path = jars / "build-provenance.json"
     provenance = object_at(provenance_path)
     pinned["buildProvenance"] = {"source": str(provenance_path.resolve()), "sha256": digest(provenance_path),
@@ -134,13 +137,14 @@ def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
     disturbed = [p.get("repetition", index + 1) for index, p in enumerate(pairs)
                  if max(name_samples(p, n) for n in arms if n in p) > 1.5 * min(
                      name_samples(p, n) for n in arms if n in p)]
-    ratios = [p["celtium"]["p50Ms"] / p["celeritas"]["p50Ms"] for p in pairs]
-    ratio = statistics.median(ratios)
+    reference_pairs = [p for p in pairs if "celeritas" in p]
+    ratios = [p["celtium"]["p50Ms"] / p["celeritas"]["p50Ms"] for p in reference_pairs]
+    ratio = statistics.median(ratios) if ratios else None
     # A single pair, asymmetrical flags, or a frame limiter cannot establish the product's performance KPI.
     paced = any(p[name]["conditions"].get("vsyncEnabled") is not False
                 or p[name]["conditions"].get("framerateLimitSetting") != 260
-                for p in pairs for name in ("celtium", "celeritas"))
-    verdict = ("NO_SPEED_VERDICT" if len(pairs) < 3 or arm_only or paced or disturbed
+                for p in pairs for name in ("celtium", "celeritas") if name in p)
+    verdict = ("NO_SPEED_VERDICT" if len(pairs) < 3 or arm_only or paced or disturbed or not ratios
                else ("NOT_SLOWER" if ratio <= 1 else "SLOWER"))
     summary = {"metric": "frameIntervalWarmP50Ms", "windowWorldTicks": [400, 600], "pairs": pairs,
             "pairRatios": ratios, "medianPairRatio": ratio, "verdict": verdict,
@@ -174,17 +178,26 @@ def main(argv: list[str]) -> int:
     reps = int(os.environ.get("CELTIUM_KPI_REPS", "3"))
     if not 1 <= reps <= 20 or duration <= 0:
         raise KpiError("positive duration and 1..20 repetitions required")
-    if not os.environ.get("CELTIUM_KPI_JARS") or not os.environ.get("CELTIUM_KPI_REFERENCE"):
-        raise KpiError("set CELTIUM_KPI_JARS to an explicit build stage and CELTIUM_KPI_REFERENCE to the reference jar")
+    if not os.environ.get("CELTIUM_KPI_JARS"):
+        raise KpiError("set CELTIUM_KPI_JARS to an explicit build stage")
+    if not os.environ.get("CELTIUM_KPI_REFERENCE") and not os.environ.get("CELTIUM_KPI_SKIP_REFERENCE") == "1":
+        raise KpiError("set CELTIUM_KPI_REFERENCE to the reference jar, or CELTIUM_KPI_SKIP_REFERENCE=1 with a control")
     # Optional third stage: a fixed build measured in the same repetitions as the candidate. Its ratio to the
     # candidate is same-arm and same-window, so machine drift between legs moves both legs and cancels - which the
     # reference ratio cannot do, because the reference is a different renderer with a different cost profile.
     control = Path(os.environ["CELTIUM_KPI_CONTROL_JARS"]).resolve() if os.environ.get("CELTIUM_KPI_CONTROL_JARS") else None
+    # The reference arm answers "how far from Celeritas are we"; the control arm answers "is this build faster than
+    # that build". Ranking a change only needs the second, and dropping the reference arm cuts a run from nine legs to
+    # six - which matters when the machine is loaded and every leg is a chance to be starved.
+    skip_reference = os.environ.get("CELTIUM_KPI_SKIP_REFERENCE") == "1"
+    if skip_reference and control is None:
+        raise KpiError("CELTIUM_KPI_SKIP_REFERENCE needs CELTIUM_KPI_CONTROL_JARS: without either arm there is nothing "
+                       "to compare")
     root = Path(__file__).resolve().parent.parent
     os.chdir(root)
     jars = Path(os.environ["CELTIUM_KPI_JARS"]).resolve()
-    reference = Path(os.environ["CELTIUM_KPI_REFERENCE"]).resolve()
-    pinned = inputs(jars, reference, control)
+    reference = Path(os.environ["CELTIUM_KPI_REFERENCE"]).resolve() if os.environ.get("CELTIUM_KPI_REFERENCE") else None
+    pinned = inputs(jars, None if skip_reference else reference, control)
     load = os.getloadavg()[0]
     load_limit = float(os.environ.get("CELTIUM_KPI_LOAD_LIMIT", "2"))
     if os.environ.get("CELTIUM_KPI_FORCE") != "1" and load > load_limit:
@@ -201,7 +214,7 @@ def main(argv: list[str]) -> int:
     try:
         for rep in range(1, reps + 1):
             pair = {}
-            arms = ["celtium", "celeritas"] + (["control"] if control is not None else [])
+            arms = ["celtium"] + ([] if skip_reference else ["celeritas"]) + (["control"] if control is not None else [])
             for name in arms:
                 if name == "celeritas":
                     os.environ["CELTIUM_LEG_REFERENCE_RENDERER"] = str(reference)
@@ -224,7 +237,7 @@ def main(argv: list[str]) -> int:
     for rep, plans_for_pair in enumerate(plans, 1):
         pair = {"repetition": rep}
         # Alternate order to expose order/thermal/JIT drift rather than always giving one renderer the second run.
-        order = ["celtium", "celeritas"] + (["control"] if control is not None else [])
+        order = ["celtium"] + ([] if skip_reference else ["celeritas"]) + (["control"] if control is not None else [])
         if rep % 2 == 0:
             order.reverse()
         for name in order:
@@ -243,7 +256,7 @@ def main(argv: list[str]) -> int:
             pair[name] = metric
             print(f"{plan.leg}: warm p50={metric['p50Ms']:.3f}ms p95={metric['p95Ms']:.3f}ms "
                   f"samples={metric['samples']} renderer={metric['rendererSha256']}", flush=True)
-        if not arm_only:
+        if not arm_only and "celeritas" in pair:
             same_conditions(pair)
         pairs.append(pair)
     summary = summarize(pairs, arm_only)
@@ -265,7 +278,10 @@ def main(argv: list[str]) -> int:
                              + "): the pairs compare different machine states, so no verdict is safe")
     with (root / ".gv-verify" / f"{tag}-kpi-result.json").open("x") as out:
         json.dump({"inputs": pinned, **summary}, out, indent=2)
-    print(f"median paired ratio={summary['medianPairRatio']:.3f}x verdict={summary['verdict']}")
+    if summary.get("medianPairRatio") is not None:
+        print(f"median paired ratio={summary['medianPairRatio']:.3f}x verdict={summary['verdict']}")
+    else:
+        print(f"no reference arm (ranking mode); verdict={summary['verdict']}")
     if "medianControlRatio" in summary:
         print(f"median control ratio={summary['medianControlRatio']:.3f}x "
               f"(candidate vs the control build, interleaved in the same repetitions)")
