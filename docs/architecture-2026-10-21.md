@@ -162,3 +162,38 @@ Vanillaのsky/stars/horizonとForge cloudの保持型データを、GL buffer st
 - `state`/matrixのsnapshotを配列側に持つため、**メモリ使用量が増える**（279 offer × 数百バイト/フレーム）。
 - 転写をflushへ遅らせると、**arenaの寿命**がgroup閉じまで延びる。`LeasedResource` のlease契約に合わせる必要がある。
 - 途中で例外が出た場合の部分適用（記録だけしてflushしていない状態）をどう巻き戻すかを決める必要がある。
+
+## 7. 受理経路のコストは「長い尾」で、Java側の書き換えでは届かない（2026-10-22 実測の総括）
+
+### 数字
+- フレームは **CPU律速**（640x360でも 1.863ms、1280x720の 1.85ms とほぼ同じ）。
+- **279 offer/frame、183 group/frame（1.5 offer/group）**、受理経路はフレームの **26%（0.48ms）**＝**1.7µs/offer**。
+- Celeritas の同等処理（`glBufferData`＋`glDrawArrays`）は **0.2-0.3µs/offer**。
+- 現行比: **AMD 1.408x / Intel 1.939x**（0.7.11-alpha + Java 27、jar `c322d70e…`、3ペア交互順）。
+
+### 何を消しても動かなかったか（すべて実測・制御arm付き）
+| 消したもの | 削減率 | wall時間 |
+|---|---|---|
+| state capture | 79% | 0.7%（誤差） |
+| prepare のルックアップ | 26% | 0.0% |
+| 行列比較（32 float×2） | 100% | 0.0% |
+| インデックス再ベース | 100%相当 | 上限0.5% |
+| 診断側の `synchronized`＋文字列 | 100% | 測定不能（<1%） |
+
+⇒ **名前の付いたコストの合計は約0.7µs/offer で、残り約1µsは名前の無いもの**（オブジェクト生成・分岐・
+キャッシュミス・呼び出し規約）。個々は5-50nsで、本機の分解能（1-2%＝5-10ns/offer）以下。
+
+### 生き残っている方針は2つだけ
+1. **hot pathをnativeへ移す**：accept経路の周辺（状態の取り出し・キー計算・述語・descriptor解決）を
+   FFM/JNIの1回の呼び出しにまとめ、Java側は引数を並べるだけにする。現在の `CeltiumGlStub` が
+   同じ手法でGL呼び出しを1回のtrampolineに畳んでいるので、前例はこのコードベース内にある。
+   見込み: 1.7µs → 0.6-0.9µs（Java の per-offer 記帳が消える）。**ただし実装量が大きく、1ラウンドでは終わらない。**
+2. **capture モデルを変える**：`WorldVertexBufferUploader` 単位ではなく、`BufferBuilder` が書く
+   バッファそのものを所有してしまう（ゲームが我々のメモリに書く）。per-offer の転写が消え、
+   状態は「描画時に1回」で済む。**ただしMinecraftの内部に踏み込むため互換リスクが高い。**
+
+### やらないこと（実測で否定済み）
+- group数を減らす最適化（コストはgroup数ではなく**offer数**に比例。1.5 offer/group）
+- GPU側のフィルレート/シェーダ最適化（CPU律速なのでAMDには効かない）
+- boxed `Map<Integer,X>` → fastutil（**2回とも実行時 `NoSuchMethodError`**。このコードベースでは不可）
+- 1%未満の単品削減を「改善」として報告すること（分解能以下）
