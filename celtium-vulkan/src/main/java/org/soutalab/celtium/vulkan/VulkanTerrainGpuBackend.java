@@ -15138,7 +15138,12 @@ this.frameBufferOpen = false;
             terrainShadowMatrix.get(0, matrix);
             // The immediate path's vertices are already in eye space, so its shadow lookup needs
             // lightWorld * inverse(modelView); it reads that from the second half of the same block.
-            org.joml.Matrix4f eyeSpaceLight = new org.joml.Matrix4f(lightViewProjection)
+            // The immediate families' vertices are eye space and their model view is camera-relative, so the eye-space light
+            // matrix has to be the same camera-relative one the terrain receiver uses: lightVP * T(centre) * inverse(MV).
+            // Leaving T(centre) out - which is what lightVP * inverse(MV) is - put the immediate lookup off by the camera
+            // position in exactly the way the earlier "94% outside the map" reading described, and the immediate path draws
+            // most of the visible surfaces in this scene.
+            org.joml.Matrix4f eyeSpaceLight = new org.joml.Matrix4f(terrainShadowMatrix)
                     .mul(new org.joml.Matrix4f(modelViewForCamera).invert());
             float[] eyeMatrix = new float[16];
             eyeSpaceLight.get(eyeMatrix);
