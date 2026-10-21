@@ -147,3 +147,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 | **現在のCeleritas比較（2026-10-22・検証済みビルド）** | **SLOWER AMD 1.407x / Intel 1.920x** | 実測 | 未達 | 現行jar **`675997d5…`** で両GPUを同日測定（0.7.11-alpha + Java 27、world、warm 400..600、3ペア交互順、参照 `567dcf8a…`）。**AMD RX 6400: Celtium 1.849 / 1.869 / 1.837 ms vs Celeritas 1.314 / 1.316 / 1.310 ＝中央値 1.407x**、**Intel UHD 630: 3.664 / 3.513 / 3.656 vs 1.873 / 1.861 / 1.904 ＝中央値 1.920x**。p95 は AMD 3.5-5.3 vs 1.9-2.0、Intel 7.1-7.7 vs 2.7-3.0。経緯: 1.699x（旧環境）→ 1.431x（0.7校正）→ **1.407x（現行）**、Intelは 4.6-5x → **1.920x**（提出バッチングのGPU別化による）。この2値が受入（両GPU ≤1.0）に対する現在地 |
 | **Cleanroom 0.7への移行（2026-10-22 完了）** | **0.7で受入legが通る** | 実測 | — | 0.7はGLFW無し（実測 `NoClassDefFoundError: org/lwjgl/glfw/GLFW`）。`CeltiumWindow` がCleanroomのSDLを3classloaderで解決し、surfaceは **X11ウィンドウID＋`vkCreateXlibSurfaceKHR`**（`SDL_Vulkan_CreateSurface`は**SIGSEGV**のためX11では不採用、Wayland用に残置）。leg `cr07-world-10`（jar `2721aeed…`、0.7.11-alpha+Java27）: `accepted=true`/`PASSED`、画像gate PASSED（distinct 56,658 / nonBg 0.943）、validation 0件、世界340frame |
+
+### offer単価の訂正（2026-10-22）
+
+| **offer単価（2026-10-22 訂正）** | **1 offer ≈ 1.7µs** | 実測 | 要改善 | 実カウンタ（10,558 frame）: **279 offer/frame**、183 group/frame。受理経路26%（0.48ms/frame）÷279＝**1.7µs/offer**。以前の「5,517 offer/frame」は別環境の取り違えで、それに基づく「44nsだから削れない」は**誤り**だった（撤回済み）。内訳: prepare 256ns / append 248ns / groupCreate 113ns / capture 99ns / key 74ns。Celeritasの1バッチは0.2-0.3µs。 |

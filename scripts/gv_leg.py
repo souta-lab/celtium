@@ -255,6 +255,13 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     ]
     command = [sys.executable, "-B", "-E", str(harness), str(instance), "--output", str(paths["runtimeLock"]),
                "--game-dir", str(paths["game"]), "--library", str(library), "--slot-wait", str(SLOT_WAIT)]
+    # A different drawable size, for asking whether a frame is bound by the GPU or by the render thread: the calibration
+    # is 1280x720, so this is for legs that measure rather than accept, and unset keeps the calibrated size.
+    window_size = os.environ.get("CELTIUM_LEG_WINDOW_SIZE", "").strip()
+    if window_size:
+        if not re.fullmatch(r"[0-9]{3,4}x[0-9]{3,4}", window_size):
+            raise LegError("CELTIUM_LEG_WINDOW_SIZE must look like 1280x720")
+        command.extend(["--window-size", window_size])
     for extra in extra_libraries:
         command.extend(["--library", str(extra)])
     for pattern in instance_exclusions:
