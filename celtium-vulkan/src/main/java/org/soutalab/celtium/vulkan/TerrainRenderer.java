@@ -212,6 +212,29 @@ public final class TerrainRenderer {
 
     /** Incremented each time a frame's batch is captured, so the owner can attach its own state at the same moment. */
     private long shadowCaptureSerial;
+    /** The camera's world position as the last uniform write saw it; the shadow light is built around it. */
+    private double cameraWorldX;
+    private double cameraWorldY;
+    private double cameraWorldZ;
+    private boolean cameraWorldKnown;
+
+    /** {@return whether a camera position has been seen yet}. */
+    boolean cameraWorldKnown() {
+        return this.cameraWorldKnown;
+    }
+
+    double cameraWorldX() {
+        return this.cameraWorldX;
+    }
+
+    double cameraWorldY() {
+        return this.cameraWorldY;
+    }
+
+    double cameraWorldZ() {
+        return this.cameraWorldZ;
+    }
+
     /**
      * Every indirect range this call recorded, with the vertex and index buffers it draws from, taken at the same instant.
      * <p>
@@ -774,6 +797,14 @@ public final class TerrainRenderer {
         ByteBuffer block = this.uniforms.mapped();
         int base = (int) offset;
 
+        // The camera's world position, kept because it is the only place in this renderer that knows it: the region offset
+        // below is computed from it, and nothing else on the path carries a world-space camera (the GL matrix mirror is
+        // camera-relative wherever it is read, and the game's own per-frame hook does not run on the headless path). The
+        // shadow light is built around this.
+        this.cameraWorldX = camera.intX + camera.fracX;
+        this.cameraWorldY = camera.intY + camera.fracY;
+        this.cameraWorldZ = camera.intZ + camera.fracZ;
+        this.cameraWorldKnown = true;
         block.putFloat(base + 0, (region.getOriginX() - camera.intX) - camera.fracX);
         block.putFloat(base + 4, (region.getOriginY() - camera.intY) - camera.fracY);
         block.putFloat(base + 8, (region.getOriginZ() - camera.intZ) - camera.fracZ);
