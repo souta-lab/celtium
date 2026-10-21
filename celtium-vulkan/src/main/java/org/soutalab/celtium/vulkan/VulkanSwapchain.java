@@ -576,6 +576,30 @@ public final class VulkanSwapchain {
             reasons.add("the device was not created with VK_KHR_swapchain enabled (the swapchain probe enables it)");
             return null;
         }
+        // SDL first: Cleanroom 0.7 owns the window through SDL 3 and has no GLFW on the runtime classpath at all, so
+        // asking GLFW there is a NoClassDefFoundError rather than a fallback. SDL_Vulkan_CreateSurface takes the
+        // SDL_Window directly and answers with the surface for whatever compositor it opened, which is why the two
+        // hand-written compositor paths below are only needed for the GLFW line.
+        if (CeltiumWindow.sdl()) {
+            String compositor = CeltiumWindow.sdlCompositor();
+            long sdlWindow = CeltiumWindow.sdlWindowPointer();
+            if (sdlWindow == 0L) {
+                reasons.add("SDL reports no window handle for a Vulkan surface");
+                return null;
+            }
+            long surface;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                LongBuffer handle = stack.mallocLong(1);
+                if (!org.lwjgl.sdl.SDLVulkan.SDL_Vulkan_CreateSurface(sdlWindow, context.instance(), null, handle)) {
+                    reasons.add("SDL_Vulkan_CreateSurface failed for compositor " + compositor
+                            + ": " + org.lwjgl.sdl.SDLError.SDL_GetError());
+                    return null;
+                }
+                surface = handle.get(0);
+            }
+            return buildForSurface(context, surface, compositor == null ? "sdl" : compositor.toLowerCase(), width, height,
+                    reasons);
+        }
         int platformId = GLFW.glfwGetPlatform();
         String platform;
         long surface;
@@ -627,6 +651,12 @@ public final class VulkanSwapchain {
             }
         }
 
+        return buildForSurface(context, surface, platform, width, height, reasons);
+    }
+
+    /** Builds the swapchain for an already-created surface; the platform name is for diagnostics. */
+    private static VulkanSwapchain buildForSurface(VulkanContext context, long surface, String platform, int width,
+            int height, List<String> reasons) {
         // BH-19: the present-support contract, and the ownership/sharing decision behind it.
         //
         // The decision, written down because the audit asks for a decision rather than an omission: **one queue is

@@ -162,7 +162,9 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     require_dir(gv)
     harness = require_file(root / "scripts/prism_validation.py")
     headless = require_file(root / "scripts/headless_wayland.py")
-    library = require_file(gv / "lib/lwjgl-vulkan-3.4.1.jar")
+    # The Vulkan bindings jar must be the LWJGL version the instance actually runs: Cleanroom 0.7 ships 3.4.3 and
+    # exposes no GL, while 0.6 ships 3.4.1. The default is the version the validated 0.6 cohort uses.
+    library = require_file(Path(os.environ.get("CELTIUM_LEG_LWJGL_VULKAN", str(gv / "lib/lwjgl-vulkan-3.4.1.jar"))))
     # Extra classpath jars for one leg, for features whose bindings the validated installation does not ship yet (the
     # in-process GLSL compiler is the first): `CELTIUM_LEG_EXTRA_LIBS` is a colon-separated list, kept out of the
     # standard set so a normal leg's classpath stays exactly what the product would have.

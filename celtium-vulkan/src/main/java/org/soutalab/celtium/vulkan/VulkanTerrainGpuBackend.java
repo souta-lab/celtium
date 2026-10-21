@@ -12325,7 +12325,11 @@ this.frameBufferOpen = false;
         }
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
         // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
-        long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+        //
+        // On Cleanroom 0.7 the window is SDL's and the GLFW class is not on the runtime classpath at all: the call
+        // below is a NoClassDefFoundError there, so SDL answers first and the GLFW branch is never reached.
+        long window = CeltiumWindow.sdl() ? CeltiumWindow.sdlWindowPointer()
+                : org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
         if (window == 0L) {
             try {
                 Class<?> display = Class.forName("org.lwjgl.opengl.Display");
@@ -12335,7 +12339,7 @@ this.frameBufferOpen = false;
             }
         }
         if (window == 0L) {
-            record("swapchain unavailable: no current GLFW window");
+            record("swapchain unavailable: no current " + (CeltiumWindow.sdl() ? "SDL" : "GLFW") + " window");
             return false;
         }
         // Through the cached read: this runs on every present (and every frame that ensures the swapchain), and
@@ -15400,7 +15404,11 @@ this.frameBufferOpen = false;
     /** Polls the window's events. The caller skips Display.update when a frame was presented, and that call polls them. */
     public void celtium$pollEvents() {
         try {
-            org.lwjgl.glfw.GLFW.glfwPollEvents();
+            if (!CeltiumWindow.sdl()) {
+                // SDL pumps its own events in the loader's frame loop; calling GLFW there would be a
+                // NoClassDefFoundError on 0.7.
+                org.lwjgl.glfw.GLFW.glfwPollEvents();
+            }
         } catch (RuntimeException | LinkageError ignored) {
             // Polling is not worth failing a frame over.
         }
@@ -16420,6 +16428,14 @@ this.frameBufferOpen = false;
     }
 
     private static int[] windowFramebufferSize() {
+        // SDL first: on Cleanroom 0.7 the GLFW classes are not on the runtime classpath, so this method used to throw
+        // NoClassDefFoundError the first time the swap chain asked how large the drawable is.
+        if (CeltiumWindow.sdl()) {
+            int[] pixels = new int[] {0, 0};
+            if (CeltiumWindow.sdlPixelSize(pixels)) {
+                return pixels;
+            }
+        }
         long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
         if (window == 0L) {
             try {
