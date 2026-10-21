@@ -24,7 +24,7 @@
 | **テクスチャaffine比較のallocation除去（2026-10-21 実装）** | **実装済み** | 実測（uncontrolled） | 未測定 | `celtium$textureAffineMoved()` が毎offer `float[6]` を確保していた（約280/frame）。scratch配列＋6要素比較に変更し、群のsnapshot取得時だけclone。validation ONの同一条件legで warm p50 6.24→5.69ms だが**これはpaired測定ではないので改善と主張しない** |
 | **state所有のnative化** | **未完（次の境界）** | — | — | GlStateManagerのproducer/queryとraw GL adapterのconsumerを同一native ownerへ。現状backendのstate snapshot/queued groupを経由しており、native側から互換状態を参照する残りがある。state push/pop・query・順序の回帰が必要 |
 | **terrain upload とframe実行** | **未完** | — | — | dirty bytes/copy/submit/可視判定の実費分離（warm＋streaming）、worker→render owner引渡し、pass/barrierの資源依存からの編成、旧GL handoff分岐の除去 |
-| **互換・目視（E2E 1.93a / RLCraft 2.9.3 / qmagnets / 4画面）** | **未完** | — | — | 完全packの代表場面。mod数や起動だけで互換を主張しない |
+| **互換・目視（E2E 1.93a / RLCraft 2.9.3 / qmagnets / 4画面）** | **一部前進** | — | 未完 | 0.7環境で **メニュー(plain) PASSED**（画像gate PASSED、distinct 2,831 / nonBg 0.803）、**影: AMD/Intel両方で PASSED**（`-Dceltium.shadow.enabled=true -Dceltium.shadow.terrain=true`、validation clean、distinct AMD 54,602 / Intel 55,001・nonBg 0.942）。**未完**: 4画面(loading/home/game/settings)の原寸対照、QMAGNET、E2E 1.93a、RLCraft 2.9.3（0.7インスタンスへのpack移植が必要）、BSL、配布物 |
 | **影・BSL・配布** | **未完** | — | — | native shadow mapの両GPU実画面、BSLの描画反映、配布物と実装の一致 |
 
 ## 撤回した前提（再入条件つき）
