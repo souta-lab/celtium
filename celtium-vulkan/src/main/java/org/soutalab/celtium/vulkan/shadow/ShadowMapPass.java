@@ -165,13 +165,16 @@ public final class ShadowMapPass {
      */
     private boolean createPipeline() {
         try {
-            String vertexSource = "#version 450\n"
-                    + "void main() {\n"
-                    + "  vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
-                    + "  gl_Position = vec4(p * 2.0 - 1.0, 0.5, 1.0);\n"
-                    + "}\n";
-            org.soutalab.celtium.shaderpack.SpirvModule module = new org.soutalab.celtium.vulkan.ShadercGlslCompiler()
-                    .compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertexSource);
+            // Built by the build, not by a runtime compiler. This was a shaderc compile, and it made the whole pass depend
+            // on a binding that is absent from most installs and version-matched on the rest: the leg environment carried
+            // lwjgl-shaderc 3.4.1 against an LWJGL 3.4.3 runtime, the binding refused to load, and the map was silently
+            // never created. The module is now a build input (src/main/shaders/shadow_depth_only.vert) like the terrain
+            // shaders, so a missing compiler fails the build instead of the feature.
+            org.soutalab.celtium.shaderpack.SpirvModule module =
+                    org.soutalab.celtium.shaderpack.SpirvModule.inspect(
+                            org.soutalab.celtium.shaderpack.Stage.VERTEX,
+                            org.soutalab.celtium.vulkan.SpirvShaders.loadBytes(
+                                    org.soutalab.celtium.vulkan.SpirvShaders.SHADOW_DEPTH_ONLY_VERTEX));
             org.soutalab.celtium.vulkan.ShaderPackPipelineFactory factory =
                     new org.soutalab.celtium.vulkan.ShaderPackPipelineFactory(this.context);
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -213,8 +216,7 @@ public final class ShadowMapPass {
                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
             org.lwjgl.system.MemoryUtil.memSet(this.matrixBuffer.mappedAddress(), 0, 128L);
             return true;
-        } catch (RuntimeException | LinkageError | org.soutalab.celtium.shaderpack.SpirvStageCompiler.CompileFailure
-                 error) {
+        } catch (RuntimeException | LinkageError error) {
             this.failures++;
             this.lastFailure = "depth-only pipeline: " + error;
             return false;

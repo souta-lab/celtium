@@ -30,6 +30,9 @@ import java.nio.ByteOrder;
  */
 public final class SpirvShaders {
     /** Classpath name of the SOLID terrain pass vertex module. */
+    /** The shadow map's depth-only vertex stage: one triangle over the whole map at clip depth 0.5. */
+    public static final String SHADOW_DEPTH_ONLY_VERTEX = "shadow_depth_only.vert";
+
     public static final String SOLID_VERTEX = "terrain_solid.vert";
     /** Vertex module for the uncompressed VanillaLikeChunkVertex layout (stride 32). */
     public static final String SOLID_VERTEX_VANILLA = "terrain_solid_vanilla.vert";
@@ -135,6 +138,11 @@ public final class SpirvShaders {
             MemoryUtil.memFree(buffer);
             throw failure;
         }
+    }
+
+    /** {@return the embedded module's words}, for a caller that builds its own module rather than a buffer. */
+    public static byte[] loadBytes(String name) {
+        return read(RESOURCE_DIRECTORY + name + ".spv");
     }
 
     private static byte[] read(String resource) {
