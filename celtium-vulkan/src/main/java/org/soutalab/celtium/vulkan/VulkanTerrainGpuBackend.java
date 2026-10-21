@@ -15057,9 +15057,16 @@ this.frameBufferOpen = false;
             org.joml.Matrix4f lightProjection = new org.joml.Matrix4f()
                     .ortho(-radius, radius, -radius, radius, 0.0f, radius * 6.0f);
             org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(lightProjection).mul(lightView);
+            // The same matrix feeds both ends: the caster's push block (ShadowMapPass.lightSpaceBlock copies these sixteen
+            // floats) and the terrain receiver's uniform at binding 4. Both work on camera-relative positions - the terrain
+            // vertex stage's worldPosition is what the camera-relative model view then transforms - so a world-space light
+            // matrix clips the casters out of the map entirely. Measured: the map read back as min=1.0 max=1.0 mean=1.0
+            // belowOne=0.0, i.e. empty. lightVP * T(centre) maps a camera-relative position where lightVP maps the world
+            // position it stands for.
+            org.joml.Matrix4f terrainShadowMatrix = new org.joml.Matrix4f(lightViewProjection).translate(centre);
             java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
                     this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
-            lightViewProjection.get(0, matrix);
+            terrainShadowMatrix.get(0, matrix);
             // The immediate path's vertices are already in eye space, so its shadow lookup needs
             // lightWorld * inverse(modelView); it reads that from the second half of the same block.
             org.joml.Matrix4f eyeSpaceLight = new org.joml.Matrix4f(lightViewProjection)
