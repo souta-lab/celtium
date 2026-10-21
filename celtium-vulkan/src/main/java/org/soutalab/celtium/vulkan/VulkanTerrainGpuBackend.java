@@ -1873,6 +1873,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void celtium$setFontPreFlush(Runnable hook) {
         this.fontPreFlush = hook;
     }
+
+    /** Wires the capture's "holding glyphs" probe so the state-change boundary can skip a flush that cannot matter. */
+    public void celtium$setFontCaptureWork(java.util.function.BooleanSupplier probe) {
+        this.fontBatch.celtium$setFontCaptureWork(probe);
+    }
     /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
     /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
@@ -2900,9 +2905,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.fontDrawStateBoundary", "true"));
 
     private void celtium$fontDrawStateBoundary() {
-        if (FONT_DRAW_STATE_BOUNDARY_ENABLED) {
-            celtium$flushPendingFontBatch("state-change");
+        if (!FONT_DRAW_STATE_BOUNDARY_ENABLED) {
+            return;
         }
+        // The GlStateManager setters call this on their own cache misses, ~4,000 times a frame, and 9 of those calls
+        // have a run to submit. With neither a pending run nor glyphs held by the capture, the flush would run its
+        // pre-flush hook (which finds nothing), find nothing pending and return - so the answer is known without
+        // asking. Measured before this: fontFlushCalls 3,961.8/frame against fontRunsStarted 9.0.
+        if (!this.fontBatch.celtium$hasWork()) {
+            return;
+        }
+        celtium$flushPendingFontBatch("state-change");
     }
 
     @Override

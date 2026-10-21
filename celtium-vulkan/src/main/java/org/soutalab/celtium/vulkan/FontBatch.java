@@ -270,8 +270,19 @@ public final class FontBatch {
     private long pendingTargetIdentity;
 
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
-    /** Flush invocations, including the ones that found no pending run - the classified counters below do not. */
-    private long flushCalls;
+    /**
+     * Flush invocations per caller-declared reason, including the ones that found no pending run.
+     * <p>
+     * The total alone said 3,962 calls a frame against 9 runs, but not which call site produced them - and the
+     * state-change boundary turned out to be only 8% of it. Split by reason so the next reading names the site.
+     */
+    /** Which half of the work probe said yes, so a gate that does not reduce the calls can be read, not guessed. */
+    private long workBecausePending;
+    private long workBecauseCapture;
+
+    private long flushCallsIntervening;
+    private long flushCallsBoundary;
+    private long flushCallsStateChange;
 
     private int flushedIntervening;
     private int flushedBoundary;
@@ -315,6 +326,16 @@ public final class FontBatch {
      */
     private Runnable preFlush;
 
+    /**
+     * Whether the capture is holding glyphs this run has not seen yet.
+     * <p>
+     * The pre-flush hook above can only be asked by running it, and running it is what makes
+     * {@code celtium$flushPendingFontBatch} cost something (~20 ns) at the ~4,000 calls a frame the GlStateManager
+     * setters produce. This answers the same question as one boolean read, so a caller can skip the call entirely
+     * when there is neither a pending run nor anything buffered.
+     */
+    private java.util.function.BooleanSupplier captureWork;
+
     /** The owner's state view; called once at wiring time, never per glyph. */
     public void celtium$setFontRunState(FontRunState state) {
         this.state = state;
@@ -326,6 +347,32 @@ public final class FontBatch {
     }
 
     /** Registers the capture's pre-flush hook; invoked with {@code null} to clear it. */
+    /** Wires the capture's "am I holding glyphs" probe, so a flush with nothing to do can be skipped. */
+    public void celtium$setFontCaptureWork(java.util.function.BooleanSupplier probe) {
+        this.captureWork = probe;
+    }
+
+    /**
+     * {@return whether a flush would have anything to do} - a pending run, or glyphs the capture is still holding.
+     */
+    public boolean celtium$hasWork() {
+        if (this.pendingActive) {
+            this.workBecausePending++;
+            return true;
+        }
+        java.util.function.BooleanSupplier probe = this.captureWork;
+        if (probe != null && probe.getAsBoolean()) {
+            this.workBecauseCapture++;
+            return true;
+        }
+        return false;
+    }
+
+    /** {@return which half of the work probe said yes}. */
+    public String fontWorkSummary() {
+        return "pending=" + this.workBecausePending + " capture=" + this.workBecauseCapture;
+    }
+
     public void celtium$setFontPreFlush(Runnable hook) {
         this.preFlush = hook;
     }
@@ -443,6 +490,13 @@ public final class FontBatch {
      * every quad with the matrices it was written for.
      */
     public void celtium$fontMatrixBoundary() {
+        // Called on every matrix change in the game - thousands a frame - and 9 of those have a run to submit. With
+        // neither a pending run nor glyphs held by the capture there is nothing to flush and nothing whose ordering a
+        // skip could change, so the answer is known without asking. Measured before this gate: 3,280 of the 3,641
+        // flushes in a frame came from here.
+        if (!celtium$hasWork()) {
+            return;
+        }
         celtium$flushPendingFontBatch("state-change");
     }
 
@@ -552,7 +606,13 @@ public final class FontBatch {
         // Every call is counted, before any early return: the classified counters below only move when a run was
         // actually open, so a stream of calls that find nothing to submit was invisible - which is the shape the
         // profile shows (4.5% of the warm window's self time against ~9.5 started runs a frame).
-        this.flushCalls++;
+        if ("intervening".equals(how)) {
+            this.flushCallsIntervening++;
+        } else if ("boundary".equals(how)) {
+            this.flushCallsBoundary++;
+        } else {
+            this.flushCallsStateChange++;
+        }
         // The capture's own per-string buffer flushes through the same point as this pending run: whatever is about to
         // happen - an intervening submission, a boundary, a state change - every glyph the capture is holding belongs
         // before it, in the run this method is about to submit. Invoked unconditionally: the capture can hold a
@@ -652,7 +712,13 @@ public final class FontBatch {
 
     /** {@return every flush asked for, including those that found no pending run}. */
     public long fontFlushCalls() {
-        return this.flushCalls;
+        return this.flushCallsIntervening + this.flushCallsBoundary + this.flushCallsStateChange;
+    }
+
+    /** {@return flush calls by reason, for the report}. */
+    public String fontFlushCallSummary() {
+        return "intervening=" + this.flushCallsIntervening + " boundary=" + this.flushCallsBoundary
+                + " stateChange=" + this.flushCallsStateChange;
     }
 
     /** The font batching's own census, for the report: how much was coalesced and how each run went out. */

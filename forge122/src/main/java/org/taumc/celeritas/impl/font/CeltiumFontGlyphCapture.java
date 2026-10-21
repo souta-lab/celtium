@@ -902,11 +902,18 @@ public final class CeltiumFontGlyphCapture {
         }
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$setFontPreFlush(CeltiumFontGlyphCapture::bufferedPreFlush);
+            // The same wiring for the cheap question: whether this capture is holding glyphs at all.
+            vulkan.celtium$setFontCaptureWork(CeltiumFontGlyphCapture::hasBufferedQuads);
             bufferedHookBackend = backend;
         }
     }
 
     /** The hook's shape: a {@code Runnable} that takes no backend and flushes on the current one. */
+    /** {@return whether glyph quads are buffered here, i.e. whether a flush of this capture would move anything}. */
+    public static boolean hasBufferedQuads() {
+        return bufferedOpen;
+    }
+
     private static void bufferedPreFlush() {
         flushBufferedQuads(null);
     }
