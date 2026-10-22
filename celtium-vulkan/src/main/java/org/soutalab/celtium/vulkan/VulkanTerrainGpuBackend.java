@@ -2208,6 +2208,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
     private static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
     private long skippedPresents;
+    /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
+    private static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
+            Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
+    private int debugFramesPresented;
+    private boolean debugFullscreenAsked;
     private int currentGroupTextureIndex = -1;
     private long textureIndexHits;
     private long textureIndexMisses;
@@ -15223,7 +15228,25 @@ this.frameBufferOpen = false;
         }
     }
 
+    private void celtium$debugMaybeGoFullscreen() {
+        if (DEBUG_FULLSCREEN_AFTER_FRAMES < 0 || this.debugFullscreenAsked) {
+            return;
+        }
+        if (++this.debugFramesPresented < DEBUG_FULLSCREEN_AFTER_FRAMES) {
+            return;
+        }
+        this.debugFullscreenAsked = true;
+        long window = CeltiumWindow.sdlWindowPointer();
+        if (window != 0L) {
+            boolean ok = org.lwjgl.sdl.SDLVideo.SDL_SetWindowFullscreen(window, true);
+            System.out.println("[Celtium] CELTIUM_DEBUG_FULLSCREEN frames=" + this.debugFramesPresented
+                    + " window=0x" + Long.toHexString(window) + " ok=" + ok
+                    + " (the launcher's fatal transition, asked for deliberately)");
+        }
+    }
+
     private boolean celtium$presentFrameImpl() {
+        celtium$debugMaybeGoFullscreen();
         // Isolation switch for the Wayland fault: with the swapchain out of the picture the frame is recorded and
         // submitted but never presented, which separates "the swapchain's own wl_display use is the fault" from
         // "something else in the present path is". Off by default; a leg that sets it draws nothing to the window.

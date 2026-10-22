@@ -377,3 +377,15 @@ ERROR: Wayland display connection closed by server (fatal)
 
 **回避（実施済み）**: インスタンスの `options.txt` を `fullscreen:false` / `overrideWidth:854` / `overrideHeight:480` に変更
 （バックアップ `options.txt.bak-fullscreen`）。フルスクリーンは後で直す（explicit sync の扱い、またはサーフェス再作成）。
+
+**present blit を swapchain extent へスケール（2026-10-22）**: 1:1・左下アンカーだったため、サーフェスが先に1920x1080へ広がり
+ゲームのframebufferがまだ854x480の遷移フレームでは、**メニューが左下に寄り右と下が切れて表示**された（利用者のスクショと一致）。
+srcは全面・dstは `this.width x this.height` 全面へblitするよう変更（同サイズ時は従来と同一）。検証leg `scale-1`
+（jar `005fe6ad73a6`・AMD・world・validation ON）は **PASSED / gate PASSED**。
+
+**fullscreen遷移の再現試験**: `-Dceltium.vulkan.debugFullscreenAfterFrames=N` を追加し、present直後にSDLへfullscreenを要求。
+N=3 と N=1 の両方で **syncobjエラーなし・presented 894/1192・PASSED**。つまり**実行中のfullscreen遷移は落ちない**。
+利用者の起動時fullscreen（`options.txt fullscreen:true`）だけが `wp_linux_drm_syncobj ... error 4` で接続を切られる再現不能の別経路で、
+当面は**ウィンドウ起動**（options: fullscreen:false / 854x480）が回避策。次段は起動時のSDL fullscreen を再現する手段（options事前seed）を作ること。
+
+**ENOSPC**: `.gv-verify/run-*` の古い149件を削除し **17G空き**（runディレクトリは直近のみ保持）。

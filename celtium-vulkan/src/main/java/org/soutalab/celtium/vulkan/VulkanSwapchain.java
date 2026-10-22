@@ -1549,10 +1549,15 @@ public final class VulkanSwapchain {
             if (vkAllocateCommandBuffers(this.context.device(), alloc, handles) != VK_SUCCESS) {
                 return VK_NULL_HANDLE;
             }
-            // The GL-composite semantics the per-frame record used: 1:1 blit, lower-left anchored, no scaling, and
-            // the source read bottom-to-top so the presented image lands upright.
-            int blitWidth = Math.min(width, this.width);
-            int blitHeight = Math.min(height, this.height);
+            // The source is read bottom-to-top so the presented image lands upright, and it is blitted over the whole
+            // swapchain image rather than 1:1. A 1:1 lower-left-anchored blit was what the GL composite did, but the
+            // swapchain extent follows the *surface*, and the surface is resized before the game resizes its own
+            // framebuffer: the transitional frames then blitted an 854x480 frame into a 1920x1080 image and showed it
+            // in the lower left with its right side and bottom cut off - the shifted-and-clipped menu the launcher
+            // reported, still shifted after going fullscreen. Scaling closes that gap; when both sizes agree the
+            // scaling is the identity the old path performed.
+            int blitWidth = width;
+            int blitHeight = height;
             this.preRecordedBlits = new long[this.images.length];
             for (int i = 0; i < this.images.length; i++) {
                 long handle = handles.get(i);
@@ -1572,8 +1577,8 @@ public final class VulkanSwapchain {
                 region.get(0).srcOffsets().get(1).set(blitWidth, 0, 1);
                 region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
                         .layerCount(1);
-                region.get(0).dstOffsets().get(0).set(0, this.height - blitHeight, 0);
-                region.get(0).dstOffsets().get(1).set(blitWidth, this.height, 1);
+                region.get(0).dstOffsets().get(0).set(0, 0, 0);
+                region.get(0).dstOffsets().get(1).set(this.width, this.height, 1);
                 if (PRESENT_MARKER) {
                     transitionToTransferDst(stack, commands, this.images[i]);
                     org.lwjgl.vulkan.VkClearColorValue marker = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
