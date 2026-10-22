@@ -33,8 +33,6 @@ public final class SpirvShaders {
     private static final boolean LOG_MODULES = Boolean.getBoolean("celtium.vulkan.shaderModules");
     private static final java.util.Set<String> LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Classpath name of the SOLID terrain pass vertex module. */
-    /** The shadow map's depth-only vertex stage: one triangle over the whole map at clip depth 0.5. */
-    public static final String SHADOW_DEPTH_ONLY_VERTEX = "shadow_depth_only.vert";
 
     public static final String SOLID_VERTEX = "terrain_solid.vert";
     /** Vertex module for the uncompressed VanillaLikeChunkVertex layout (stride 32). */

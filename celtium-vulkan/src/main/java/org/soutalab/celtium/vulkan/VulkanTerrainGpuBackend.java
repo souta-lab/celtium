@@ -14664,8 +14664,6 @@ this.frameBufferOpen = false;
     // set, dynamic offset and push block as they were for that same batch. Reading them separately mixed region A's
     // commands with region B's buffers and state (#397).
     /** Every terrain batch captured this frame, in recording order; the map is drawn from all of them. */
-    private final java.util.List<org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch> shadowBatches =
-            new java.util.ArrayList<org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch>();
 
 
     private long boundarySubmitNanos;

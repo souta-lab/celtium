@@ -1217,34 +1217,9 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             vertexModule = createShaderModule(stack, device, vertexCode, "vertex");
             fragmentModule = createShaderModule(stack, device, fragmentCode, "fragment");
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
-            // The vertex stage's own specialisation map: the shadow warp and whether this draw is the caster. A pipeline hands
-            // specialisation constants to one stage at a time, which is why the fragment constants below could not carry these.
-            org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer warpEntry =
-                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
-            warpEntry.get(0).constantID(0).offset(0).size(4);
-            warpEntry.get(1).constantID(1).offset(4).size(4);
-            java.nio.ByteBuffer warpValue = stack.calloc(8);
-            warpValue.putFloat(0, Float.parseFloat(System.getProperty("celtium.shadow.warp", "0.5")));
-            warpValue.putInt(4, 0);
-            org.lwjgl.vulkan.VkSpecializationInfo warpSpecialization =
-                    org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(warpEntry, warpValue);
             stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
-                    .pSpecializationInfo(warpSpecialization)
                     .pName(stack.UTF8("main"));
-            // The shadow path is behind a specialisation constant, so the pipeline for the default configuration compiles
-            // it out rather than paying for the derivative pairs and nine taps on every terrain fragment. The JVM argument is
-            // the same one that enables the shadow pass, and it is a start-up switch either way.
-            org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer shadowEntry =
-                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
-            shadowEntry.get(0).constantID(0).offset(0).size(4);
-            shadowEntry.get(1).constantID(1).offset(4).size(4);
-            java.nio.ByteBuffer shadowValue = stack.calloc(8);
-            shadowValue.putInt(0, org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested() ? 1 : 0);
-            shadowValue.putInt(4, Boolean.getBoolean("celtium.shadow.debug") ? 1 : 0);
-            org.lwjgl.vulkan.VkSpecializationInfo shadowSpecialization =
-                    org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(shadowEntry, shadowValue);
             stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
-                    .pSpecializationInfo(shadowSpecialization)
                     .pName(stack.UTF8("main"));
 
             VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
@@ -1390,13 +1365,11 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     }
 
     private void createDescriptorPool(MemoryStack stack, VkDevice device) {
-        // The pool has to name every descriptor type the set layout uses: the shadow map adds a combined image sampler
-        // and a plain uniform buffer, and a pool that does not list them allocates sets of the wrong type
-        // (WARNING-CoreValidation-AllocateDescriptorSets-WrongType, five of them in leg shadowVisible4).
-        VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(3, stack);
+        // The pool has to name every descriptor type the set layout uses, or the allocation makes sets of the wrong type
+        // (WARNING-CoreValidation-AllocateDescriptorSets-WrongType).
+        VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(2, stack);
         sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(DESCRIPTOR_SLOTS);
-        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(3 * DESCRIPTOR_SLOTS);
-        sizes.get(2).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(DESCRIPTOR_SLOTS);
+        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(2 * DESCRIPTOR_SLOTS);
         VkDescriptorPoolCreateInfo create = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                 .maxSets(DESCRIPTOR_SLOTS)
                 .pPoolSizes(sizes);

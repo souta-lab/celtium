@@ -643,19 +643,8 @@ public final class VulkanImmediateItemPipeline {
                 VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
                 stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                         .pName(stack.UTF8("main"));
-                // The shadow lookup is behind a specialisation constant: absent unless the pass is enabled, so the
-                // default configuration compiles the derivative pair, the nine taps and the multiply out.
-                org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer shadowEntry =
-                        org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
-                shadowEntry.get(0).constantID(0).offset(0).size(4);
-                shadowEntry.get(1).constantID(1).offset(4).size(4);
-                java.nio.ByteBuffer shadowValue = stack.calloc(8);
-                shadowValue.putInt(0, org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested() ? 1 : 0);
-                shadowValue.putInt(4, Boolean.getBoolean("celtium.shadow.debug") ? 1 : 0);
-                org.lwjgl.vulkan.VkSpecializationInfo shadowSpecialization =
-                        org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(shadowEntry, shadowValue);
                 stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
-                        .pName(stack.UTF8("main")).pSpecializationInfo(shadowSpecialization);
+                        .pName(stack.UTF8("main"));
 
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
                 binding.get(0).binding(0).stride(VERTEX_BYTES).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
