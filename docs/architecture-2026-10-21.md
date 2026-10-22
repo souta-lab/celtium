@@ -790,3 +790,15 @@ p の候補は 0.4/0.5/0.6 を掃引し、被覆とノイズのトレードで�
 `immediate_position_tex` の fragment が未変換のため画像gateが FAILED（`arrayDraws=5434`・49件）。
 
 **4回目の条件**: `immediate_position_tex.{vert,frag}` も配列indexへ変換してから family 全体を array mode に統一する。
+
+**4回目の試行（2026-10-22）**: `immediate_position_tex` も配列index化し、family全体を array mode に統一。
+結果 **PASSED・画像gate PASSED・`arrayDraws=126919`**（全テクスチャgroupが配列経由）。残るvalidation 20件は依然:
+
+```
+VUID-vkCmdBindDescriptorSets-pDescriptorSets-00358 / VUID-vkCmdDrawIndexed-None-08600
+  array set 0x2a... is not compatible with pipeline layout 0x24... setLayout 0x21...
+```
+
+⇒ **残る唯一の条件**: 配列setのlayoutとpipeline layoutの**完全一致**（binding flags / set layout flags / descriptorCount）。
+`VulkanTextureArray` 側の layout は `UPDATE_AFTER_BIND|PARTIALLY_BOUND` + `variableDescriptorCount` を宣言しているので、
+family側も **`descriptorBindingVariableDescriptorCount` を同じ値で宣言**する必要がある可能性が高い。
