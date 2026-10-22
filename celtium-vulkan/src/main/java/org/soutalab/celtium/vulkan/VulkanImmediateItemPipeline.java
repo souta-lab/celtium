@@ -650,7 +650,7 @@ public final class VulkanImmediateItemPipeline {
                 shadowEntry.get(0).constantID(0).offset(0).size(4);
                 shadowEntry.get(1).constantID(1).offset(4).size(4);
                 java.nio.ByteBuffer shadowValue = stack.calloc(8);
-                shadowValue.putInt(0, Boolean.getBoolean("celtium.shadow.enabled") ? 1 : 0);
+                shadowValue.putInt(0, org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested() ? 1 : 0);
                 shadowValue.putInt(4, Boolean.getBoolean("celtium.shadow.debug") ? 1 : 0);
                 org.lwjgl.vulkan.VkSpecializationInfo shadowSpecialization =
                         org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(shadowEntry, shadowValue);

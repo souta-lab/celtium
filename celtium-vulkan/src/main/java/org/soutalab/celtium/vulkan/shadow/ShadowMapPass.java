@@ -124,6 +124,14 @@ public final class ShadowMapPass {
         return LAST_FAILURE;
     }
 
+    /**
+     * {@return whether the native shadow pass runs}.
+     * <p>
+     * Off by default, deliberately: with it on, Intel reports ten {@code VUID-vkUpdateDescriptorSets-None-03047} messages in the
+     * world leg - descriptor sets updated while a frame that names them may still be in flight - while AMD stays clean. The pass
+     * itself renders on both cards (AMD darkens 0.92% of the frame by more than six levels, Intel 2.17%), so the gate is that
+     * descriptor-lifetime defect, not the shadow. Ask for it with {@code -Dceltium.shadow.enabled=true}.
+     */
     public static boolean requested() {
         return Boolean.getBoolean("celtium.shadow.enabled");
     }
