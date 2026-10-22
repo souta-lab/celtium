@@ -91,4 +91,4 @@ scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
 - パック: `-Dceltium.shaderpack.path=<zip>` ＋ `-Dceltium.shaderpack.compileProbe=true`、shaderc は `CELTIUM_LEG_EXTRA_LIBS=.gv-verify/lib/lwjgl-shaderc-3.4.3.jar`
 - ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
 
-最新リリース: **v0.0.10-alpha**（fullscreen修正。asset sha256 `9dab7c39b8ef3a9f…`, 3,168,442 bytes、AMD/Intel とも PASSED・gate PASSED・0違反） / 前版 v0.0.9-alpha（Wayland修正。`2253837d4364e30c`, 3,162,834 bytes）
+最新リリース: **v0.0.11-alpha**（性能: `Display.sync`スキップで30→62fps（メニュー1080p）・ネイティブコピーのidle待ち除去。asset sha256 `b2af8d4d0569e5cd…`、AMD/Intel とも PASSED・gate PASSED・0違反） / 前版 v0.0.10-alpha（fullscreen修正。`9dab7c39…`）
