@@ -254,3 +254,13 @@ libSDL3 が1つだけマップされているかも確認する。
 `SIGSEGV in libwayland-client.so.0 wl_display_read_events` で落ちた（前回の `SDL_PollEvent` とは別箇所）。
 同じビルドが検証ハーネス（X11）では完走するため、ラッパーで **`SDL_VIDEODRIVER=x11`** を既定にした
 （instance直下に `wayland` ファイルを置くとSDLに任せる）。
+
+**Waylandクラッシュの解析状況（2026-10-22）**:
+- hs_err は `Current thread is native thread` ＋ `libwayland-client.so.0 wl_display_read_events` のみで**Javaフレーム無し**
+  ＝Javaからの呼び出しではなく**ネイティブスレッド**が落ちている（スレッド名はhs_errに無い）。
+- こちらの `CeltiumWindow` は SDL ウィンドウを**新規作成しない**（既存の Cleanroom ウィンドウを反射でラップ）ので二重display説は否定。
+- `gdb -batch ... --args java ...` は **JVM起動直後（`VM_Version::get_processor_features`）でSIGSEGV**し、目的の地点に届かなかった
+  （gdbとJVMの相性。`set disable-randomization off` 等を試す必要がある）。
+- 次の手段: `ulimit -c unlimited` ＋ `-XX:+CreateCoredumpOnCrash` でコアを保存し、`gdb <java> <core>` で
+  **ネイティブスレッドのスタック**を取る（`thread apply all bt`）。それが判れば、SDLが立てたスレッドかこちらかを確定できる。
+
