@@ -529,3 +529,7 @@ JFRの HashMap 探索 ~97/1056 サンプルの一部を狙ったが、**frame 6.
 次の候補: (a) フォントバッチ未保持時の早期分岐を**フィールド1回の読み**に落とす、(b) 受理メタデータを
 1つの int パックへ畳む、(c) 計測用の nanoTime/スナップショットを `BATCH_TIMINGS` 有効時のみに限定。
 いずれも per-batch の固定費で、JFR上位がこの関数群であることと整合する。
+
+**KPI変更後の受入（2026-10-23・実測）**: `kpi-2` jar（ARGBテクスチャ高速化＋世代配列化＋互換コホート入り）で
+world scene を受入: **PASSED・problems 0**（AMD RX 6400・validation ON・leg `kpi-acc`）。
+性能変更は受入の絵を壊していない。KPIは frame 6.8〜7.0ms（300fps目標に対し未達）。
