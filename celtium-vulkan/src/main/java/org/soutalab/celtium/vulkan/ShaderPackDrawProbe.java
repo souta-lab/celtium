@@ -836,6 +836,65 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             }
             offset += size;
         }
+        writeIdentityTransforms(loweredSource);
+    }
+
+    /**
+     * Writes identity into every matrix member of the transform block, by parsing the block the lowering emitted.
+     * <p>
+     * The probe used fixed byte offsets for u_ModelView/u_Projection/u_ModelViewProjection, copied from a comment. The
+     * member order of this block is whatever the lowering collected, so on gbuffers_terrain those offsets address other
+     * members: the program multiplies by u_Projection * gbufferModelView, and with u_Projection written somewhere else it
+     * stayed zero and the position collapsed. Positions are baked into clip space, so identity is the right value for
+     * every transform here.
+     */
+    private void writeIdentityTransforms(String loweredSource) {
+        if (this.transformBlockAddress == 0L) {
+            return;
+        }
+        int blockAt = loweredSource.indexOf("uniform " + LegacyGlslLowering.TRANSFORM_BLOCK);
+        if (blockAt < 0) {
+            return;
+        }
+        int braceAt = loweredSource.indexOf('{', blockAt);
+        int endAt = loweredSource.indexOf('}', braceAt);
+        if (braceAt < 0 || endAt < 0) {
+            return;
+        }
+        int offset = 0;
+        for (String line : loweredSource.substring(braceAt + 1, endAt).split("\n")) {
+            String member = line.trim();
+            if (member.isEmpty() || member.startsWith("//")) {
+                continue;
+            }
+            String[] parts = member.replace(";", "").trim().split("\\s+");
+            if (parts.length < 2) {
+                continue;
+            }
+            String type = parts[0];
+            String name = parts[1];
+            int count = 1;
+            int bracket = name.indexOf('[');
+            if (bracket >= 0) {
+                count = Integer.parseInt(name.substring(bracket + 1, name.indexOf(']')));
+                name = name.substring(0, bracket);
+            }
+            int alignment = "mat4".equals(type) ? 16 : "mat3".equals(type) ? 16 : "vec4".equals(type) ? 16
+                    : "vec3".equals(type) ? 16 : "vec2".equals(type) ? 8 : 4;
+            offset = (offset + alignment - 1) / alignment * alignment;
+            int size = std140Size(type) * count;
+            if (type.startsWith("mat")) {
+                int floats = "mat4".equals(type) ? 16 : 9;
+                for (int matrix = 0; matrix < count; matrix++) {
+                    for (int element = 0; element < floats; element++) {
+                        boolean diagonal = floats == 16 ? element % 5 == 0 : element % 4 == 0;
+                        org.lwjgl.system.MemoryUtil.memPutFloat(this.transformBlockAddress + offset
+                                + (long) matrix * floats * 4L + (long) element * 4L, diagonal ? 1.0f : 0.0f);
+                    }
+                }
+            }
+            offset += size;
+        }
     }
 
     /**

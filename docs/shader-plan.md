@@ -675,3 +675,20 @@ gl_Position.xy = TAAJitter(gl_Position.xy, gl_Position.w);
 実測: 上記2点を入れても `gbuffers_terrain` の提示画像は**依然クリア色**（`packblit-25`, `packblit-26`）。
 未確定要素として残るのは (a) `celtium_transforms.u_Projection` の実オフセット（プログラムごとに
 interface順が変わりうる）、(b) `TAAJitter` の分母（viewWidth/viewHeight）の実値、(c) フラグメント段の discard 条件。
+
+### S3達成4: gbuffers_terrain で実地形が描けた（2026-10-23・実画像）
+
+`docs/evidence/pack-terrain-program-2026-10-23.png`（1280×720・**39色**）:
+```
+提示画像: clear 580,840px / (21,13,8) 159,060px / (34,21,13) 78,980px /
+          (26,16,10) 47,280px / (42,26,16) 25,240px … 計39色
+```
+**原因は変換ブロックのオフセットだった**。probe は u_ModelView/u_Projection/u_ModelViewProjection を
+固定バイト位置に書いていたが、このブロックの並びは lowering が集めた順であり、`gbuffers_terrain` では
+`u_Projection` が別メンバーを指していた（＝ゼロのまま→位置が潰れていた）。
+低下ソースのブロック宣言を**パースして std140 で単位行列を書き込む**方式に変えたところ、
+`gl_Position = u_Projection * gbufferModelView * position` が成立し、**テクスチャ付きの地形（土の茶色など）**が提示画像に出た。
+
+- 変更: `ShaderPackDrawProbe.writeIdentityTransforms()`（ブロック解析＋std140アラインメント）
+- 併せて `gbufferModelView`/`gbufferModelViewInverse` も同一ブロック内で単位行列に
+- 検証leg: `packblit-27`（AMD・BSL v10.1.8・world・validation ON、画像gateは意図通りFAILED=pack出力が画面）
