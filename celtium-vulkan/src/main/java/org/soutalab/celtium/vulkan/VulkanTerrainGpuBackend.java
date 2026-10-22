@@ -14984,7 +14984,7 @@ this.frameBufferOpen = false;
     private static int terrainCaptureSeen;
     /** How many vertices the capture accumulates before it closes; about eight sections' worth. */
     private static final int CELTIUM_PACK_CAPTURE_VERTICES =
-            Integer.getInteger("celtium.shaderpack.captureVertices", 4096);
+            Integer.getInteger("celtium.shaderpack.captureVertices", 1024);
 
     /**
      * Records the first terrain batch's vertices for the shader-pack probe, from the terrain renderer rather than from
@@ -15006,7 +15006,7 @@ this.frameBufferOpen = false;
         // batches have gone by that waiting longer cannot help.
         if (terrainCaptureVertices != null
                 && (formatId != terrainCaptureFormat || stride != terrainCaptureStride)) {
-            if (terrainCaptureSeen > 600 && terrainCaptureCount > 0) {
+            if (terrainCaptureSeen > 200 && terrainCaptureCount > 0) {
                 terrainCaptureFinalized = true;
                 System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
                         + " vertices=" + terrainCaptureCount + " seen=" + terrainCaptureSeen

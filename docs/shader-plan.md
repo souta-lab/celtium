@@ -586,3 +586,26 @@ fitの書き込み先と一致していない**可能性を示す。頂点自体
 実測: この変更後の leg `packblit-14` は **キャプチャが確定せず**（`CELTIUM_PACK_CAPTURE` 行なし）、
 提示画像は生成時三角形の緑一色だった ⇒ **可視性は未検証**。次は同じlegを再実行して
 `CELTIUM_PACK_CAPTURE finalized` と `PACK_GEOMETRY` が出ることを先に確認し、そのうえで提示画像を見る。
+
+### S3達成: 実地形がpackのシェーダで描かれ、提示画像に出た（2026-10-23・実画像）
+
+`docs/evidence/pack-terrain-visible-2026-10-23.png`（1280×720, kept）の色分布:
+```
+(0,0,255)   797,040 px   クリア色
+(199,199,199) 92,160 px  石の面（明るい）
+(113,113,113) 28,800 px  石の面（暗い＝ライティング差）
+(156,156,156)  3,600 px  中間
+```
+ログ:
+```
+CELTIUM_PACK_CAPTURE finalized format=3 vertices=4248 stride=32 (multiple terrain batches)
+CELTIUM_PACK_GEOMETRY terrain vertices=4248 format=3 attributes=7
+CELTIUM_PACK_RERENDER_GEOMETRY vertices=4248 indices=6372 pipeline=0x2b5...
+```
+⇒ **地形4,248頂点/6,372インデックスがBSLのステージで描画され、ブリットで提示画像に到達**。
+面ごとの明暗差（199/156/113）はpackのフラグメントシェーディングが効いている証拠。
+
+**判明した可視性の条件**: fit変換を**頂点へ焼き込む**こと（行列のuniformオフセット経由では地形が可視にならなかった）。
+読み戻し（`probeSample`）はレイアウトを変えるため既定off。
+
+残り: 実カメラ行列（現在はfitによる画面フィット）、パス構成（gbuffer→composite）、影パス。
