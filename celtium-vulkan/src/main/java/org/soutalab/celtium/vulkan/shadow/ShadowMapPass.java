@@ -440,6 +440,33 @@ public final class ShadowMapPass {
             }
             this.depthMean = (float) (sum / (edge * edge));
             this.depthBelowOneFraction = (float) belowOne / (float) (edge * edge);
+            // The map as a picture, when asked for. Whether the casters project where the receivers look is a question
+            // about a shape, and percentages have not answered it: the map's fill (12.2%) and its depth scale were both
+            // verified and the two ends still disagree. Every eighth texel is sampled so the write stays cheap, and
+            // the whole block is guarded because a frame must not fail over a diagnostic.
+            String dumpPath = System.getProperty("celtium.shadow.dumpMap", "");
+            if (!dumpPath.isEmpty()) {
+                try {
+                    final int dumpStep = 8;
+                    final int dumpEdge = SIZE / dumpStep;
+                    int[] pixels = new int[dumpEdge * dumpEdge];
+                    for (int y = 0; y < dumpEdge; y++) {
+                        for (int x = 0; x < dumpEdge; x++) {
+                            float value = org.lwjgl.system.MemoryUtil.memGetFloat(
+                                    mapped.get(0) + ((long) (y * dumpStep) * SIZE + x * dumpStep) * 4L);
+                            int grey = value >= 1.0f ? 0 : Math.max(8, (int) (255.0f * (1.0f - value) * 2.0f));
+                            pixels[y * dumpEdge + x] = (grey << 16) | (grey << 8) | grey;
+                        }
+                    }
+                    java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(dumpEdge, dumpEdge,
+                            java.awt.image.BufferedImage.TYPE_INT_RGB);
+                    out.setRGB(0, 0, dumpEdge, dumpEdge, pixels, 0, dumpEdge);
+                    javax.imageio.ImageIO.write(out, "png", new java.io.File(dumpPath));
+                    System.out.println("[Celtium] CELTIUM_SHADOW_MAP_PNG " + dumpPath + " edge=" + dumpEdge);
+                } catch (Exception | LinkageError failure) {
+                    System.out.println("[Celtium] CELTIUM_SHADOW_MAP_PNG_FAILED " + failure);
+                }
+            }
             vkUnmapMemory(this.context.device(), memory.get(0));
             this.sampledDepthMin = min;
             this.sampledDepthMax = max;
