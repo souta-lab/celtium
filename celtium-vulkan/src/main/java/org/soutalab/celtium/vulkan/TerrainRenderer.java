@@ -253,6 +253,13 @@ public final class TerrainRenderer {
     private int shadowRangesDropped;
     /** Time inside {@code vkCmdDrawIndexedIndirect} itself, against the whole pass's recording bracket. */
     private long indirectDrawNanos;
+    /** Time spent writing the indirect command packets into mapped memory. */
+    private long indirectPacketNanos;
+
+    /** {@return nanoseconds spent writing the indirect packets}. */
+    long indirectPacketNanos() {
+        return this.indirectPacketNanos;
+    }
 
     /** {@return nanoseconds spent inside the indirect draw calls since the last reset}. */
     long indirectDrawNanos() {
@@ -564,6 +571,7 @@ public final class TerrainRenderer {
         // replaces was the dominating cost of the indirect path (measured: recDraw ~3 ms/frame while the draw call
         // itself is ~1 vkCmd).
         long packets = this.indirectBuffer.mappedAddress() + this.indirectBatchOffset;
+        long packetStarted = System.nanoTime();
         for (int i = 0; i < size; i++) {
             long byteOffset = batch.indexByteOffset(i);
             long packet = packets + (long) i * INDIRECT_COMMAND_BYTES;
@@ -575,6 +583,7 @@ public final class TerrainRenderer {
             // path never needs anything but 0.
             MemoryUtil.memPutInt(packet + 16, 0);
         }
+        this.indirectPacketNanos += System.nanoTime() - packetStarted;
         if (TERRAIN_INDIRECT_COMPARE) {
             // Compare the encoded CPU packet with the direct enumeration, not the same CPU values twice. This is
             // an encoder check, not a GPU readback or proof of the packet's resource lifetime.

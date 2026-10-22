@@ -10188,6 +10188,8 @@ this.frameBufferOpen = false;
                 + " targetStages=[" + this.celtium$targetStagesSummary() + "]"
                 + " framePassSplit=[" + FramePassTimings.summary() + "]"
                 + " terrainDrawCallMillis=" + (this.terrain.indirectDrawNanos() / 1_000_000L)
+                + " terrainBindMillis=" + (this.terrainBindNanos / 1_000_000L)
+                + " terrainPacketMillis=" + (this.terrain.indirectPacketNanos() / 1_000_000L)
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
                 // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
@@ -11542,7 +11544,9 @@ this.frameBufferOpen = false;
             }
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
             long uniformOffset = this.terrain.writeUniforms(region, pass, camera);
+            long bindStarted = System.nanoTime();
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset, this.frameSlot);
+            this.terrainBindNanos += System.nanoTime() - bindStarted;
             if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
                 // Which pipeline and descriptor set the draw will actually use, next to the views the backend handed
                 // bindTextures. If the set printed here is not the one that was written, the terrain samples another
@@ -14543,6 +14547,7 @@ this.frameBufferOpen = false;
     /** How many times the light setup has been logged; a bounded diagnostic, not a per-frame cost. */
     private int shadowLightsLogged;
     private int shadowMatrixComparePrints;
+    private long terrainBindNanos;
     /** The matrix the terrain receiver read while it drew, snapshotted so the caster's copy can be compared to it. */
     private final float[] shadowReceiverMatrixAtDraw = new float[16];
     private boolean shadowReceiverMatrixAtDrawSeen;
