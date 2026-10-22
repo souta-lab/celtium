@@ -15803,9 +15803,9 @@ this.frameBufferOpen = false;
     public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
             int x, int y, int width, int height, int readFbo) {
         // Thin delegate: the copy path lives in TextureCopyService, and this signature is what the GL-less stub calls.
-        return long copyStarted = System.nanoTime();
-        String copyResult = this.textureCopyService.serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
-                readFbo);
+        long copyStarted = System.nanoTime();
+        String copyResult = this.textureCopyService.serveTextureCopy(destName, level, xoffset, yoffset, x, y, width,
+                height, readFbo);
         this.textureCopyNanos += System.nanoTime() - copyStarted;
         this.textureCopyCalls++;
         return copyResult;
