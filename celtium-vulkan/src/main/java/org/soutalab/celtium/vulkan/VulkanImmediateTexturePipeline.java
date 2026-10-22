@@ -95,7 +95,6 @@ public final class VulkanImmediateTexturePipeline {
     // size the lit ITEM pipeline has required of the device since the lighting block arrived, so it asks for nothing
     // the tree did not already. This class carries the POSITION (sky dome, horizon plane) and POSITION_TEX (water
     // surface, sun, moon, clouds) layouts, which is where the fog is visible.
-    private static final int PUSH_CONSTANT_BYTES_ARRAY = 212;
     private static final int PUSH_CONSTANT_BYTES = 208;
 
     /** Elides a push whose bytes are already in this command buffer (see {@link VulkanPushCache}). */
@@ -112,7 +111,6 @@ public final class VulkanImmediateTexturePipeline {
     private final VulkanContext context;
     private final long renderPass;
     /** Whether this instance takes the colourless POSITION_TEX layout rather than POSITION_TEX_COLOR. */
-    private boolean arrayMode;
     private boolean positionOnly;
     /** Position-and-nothing-else: twelve bytes, one attribute, and no texture coordinate to sample. */
     private boolean positionNoTexture;
@@ -338,7 +336,6 @@ public final class VulkanImmediateTexturePipeline {
         // injected-failure leg proved it was the one stage sequence still outside the transaction -
         // pipelineBuildRollbacks stayed 0 while the fault fired. A failure in the pipeline stage therefore left the
         // descriptor set layout and the pipeline layout behind, exactly as the finding says.
-        this.arrayMode = this.context.textureArraySupported();
         try {
             this.createPipelineLayout();
             this.createPipeline();
@@ -379,8 +376,7 @@ public final class VulkanImmediateTexturePipeline {
         }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
-        ByteBuffer clamped = this.clampedView.view(pushConstants,
-                this.arrayMode ? PUSH_CONSTANT_BYTES_ARRAY : PUSH_CONSTANT_BYTES);
+        ByteBuffer clamped = this.clampedView.view(pushConstants, PUSH_CONSTANT_BYTES);
         // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
         // past the range is a validation error, so only the declared bytes go out.
         
@@ -395,8 +391,6 @@ public final class VulkanImmediateTexturePipeline {
         // slice at 0 and drawing another group's vertices (OPT-05).
         mesh.bindAndDraw(commandBuffer, bindCache);
     }
-
-    public boolean arrayMode() { return this.arrayMode; }
 
     public int vertexBytes() {
         return VERTEX_BYTES;
@@ -517,7 +511,6 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     public long descriptorSetFor(VulkanGlTexture texture) {
-        if (this.arrayMode) return VulkanTextureArray.currentSet();
         if (this.descriptorPools.isEmpty() || texture == null) {
             return 0L;
         }
@@ -654,13 +647,10 @@ public final class VulkanImmediateTexturePipeline {
             org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
                     org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
             poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                    .descriptorCount(this.arrayMode ? VulkanTextureArray.CAPACITY : DESCRIPTOR_SETS_PER_POOL);
+                    .descriptorCount(DESCRIPTOR_SETS_PER_POOL);
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
                     org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                            .flags(this.arrayMode
-                                    ? org.lwjgl.vulkan.EXTDescriptorIndexing.VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT
-                                    : 0)
-                            .maxSets(this.arrayMode ? 1 : DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
+                            .maxSets(DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
             LongBuffer poolHandle = stack.mallocLong(1);
             if (vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle) != VK_SUCCESS) {
                 return VK_NULL_HANDLE;
@@ -761,7 +751,7 @@ public final class VulkanImmediateTexturePipeline {
                     this.context.celtium$noteDescriptorDestroy("texture.delete.deferred");
                     vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
                 }
-                if (setLayoutToDestroy != VK_NULL_HANDLE && !this.arrayMode) {
+                if (setLayoutToDestroy != VK_NULL_HANDLE) {
                     vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
                 }
                 if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
@@ -787,22 +777,19 @@ public final class VulkanImmediateTexturePipeline {
 
     private void createPipelineLayout() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (this.arrayMode) {
-                VulkanTextureArray.ensure(this.context);
-                this.descriptorSetLayout = VulkanTextureArray.currentLayout();
-                if (this.descriptorSetLayout == VK_NULL_HANDLE) throw new IllegalStateException("texture array layout unavailable");
-            } else {
-                org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
-                        org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(1, stack);
-                binding.get(0).binding(0).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
-                org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo layoutInfo =
-                        org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default().pBindings(binding);
-                LongBuffer handle = stack.mallocLong(1);
-                check(vkCreateDescriptorSetLayout(this.context.device(), layoutInfo, null, handle),
-                        "vkCreateDescriptorSetLayout(immediate textured)");
-                this.descriptorSetLayout = handle.get(0);
-            }
+            org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
+                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(1, stack);
+            binding.get(0).binding(0)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
+            org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo layoutInfo =
+                    org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
+                            .pBindings(binding);
+            LongBuffer layoutHandle = stack.mallocLong(1);
+            check(vkCreateDescriptorSetLayout(this.context.device(), layoutInfo, null, layoutHandle),
+                    "vkCreateDescriptorSetLayout(immediate textured)");
+            this.descriptorSetLayout = layoutHandle.get(0);
             // BH-20's acceptance hook: a failure *inside* the transaction, after the first handle exists, so the
             // rollback is exercised rather than assumed. The fault is one-shot (VulkanAllocationFault), so the first
             // build fails and the rollback runs; the next build - the one the acceptance requires to succeed - is
@@ -830,7 +817,7 @@ public final class VulkanImmediateTexturePipeline {
             // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
             // stages: declaring it for the vertex stage alone is a shader-interface mismatch.
             range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                    .offset(0).size(this.arrayMode ? PUSH_CONSTANT_BYTES_ARRAY : PUSH_CONSTANT_BYTES);
+                    .offset(0).size(PUSH_CONSTANT_BYTES);
             VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
                     .pSetLayouts(stack.longs(this.descriptorSetLayout))
                     .pPushConstantRanges(range);

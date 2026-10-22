@@ -26,7 +26,6 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 160) vec4 u_FogRow0;    // the model view's row 0 (m00,m01,m02) and its translation tx
     layout(offset = 176) vec4 u_FogRow1;
     layout(offset = 192) vec4 u_FogRow2;
-    layout(offset = 208) int u_TextureIndex;
 } celtium;
 
 

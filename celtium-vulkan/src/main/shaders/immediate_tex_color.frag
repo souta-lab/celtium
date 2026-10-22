@@ -1,6 +1,6 @@
 #version 450
 
-layout(set = 0, binding = 0) uniform sampler2D u_Textures[4096];
+layout(set = 0, binding = 0) uniform sampler2D u_Texture;
 
 
 layout(location = 0) in vec2 v_TexCoord;
@@ -31,7 +31,6 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 160) vec4 u_FogRow0;
     layout(offset = 176) vec4 u_FogRow1;
     layout(offset = 192) vec4 u_FogRow2;
-    layout(offset = 208) int u_TextureIndex;
 } celtium;
 
 /** How much fog this fragment gets: 0 for none, 1 for the fog colour entirely. Mode 0 is "fog off for this batch". */
@@ -70,7 +69,7 @@ bool celtiumAlphaPass(int func, float alpha, float reference) {
 }
 
 void main() {
-    vec4 colour = texture(u_Textures[celtium.u_TextureIndex], v_TexCoord) * v_Color;
+    vec4 colour = texture(u_Texture, v_TexCoord) * v_Color;
     if (celtium.u_AlphaRef < 0.0) {
         // The GL_COMBINE interpolate the fixed pipeline applies for the hurt flash and the team outline: a negative
         // alpha reference marks the combine (alpha tests use non-negative references only), the constant sits in the

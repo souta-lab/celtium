@@ -49,23 +49,6 @@ final class VulkanTextureArray {
     private long descriptorsWritten;
     private long writesCoalesced;
     private boolean fullReported;
-    private static VulkanTextureArray singleton;
-    private static long currentSet;
-    private static long currentLayout;
-
-    static long currentSet() { return currentSet; }
-    static long currentLayout() { return currentLayout; }
-
-    static VulkanTextureArray ensure(VulkanContext context) {
-        if (singleton != null) return singleton;
-        if (!context.textureArraySupported()) return null;
-        VulkanTextureArray array = new VulkanTextureArray(context);
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (!array.create(stack)) return null;
-        }
-        singleton = array;
-        return singleton;
-    }
 
     VulkanTextureArray(VulkanContext context) {
         this.context = context;
@@ -127,8 +110,6 @@ final class VulkanTextureArray {
                 return false;
             }
             this.set = handle.get(0);
-            currentSet = this.set;
-            currentLayout = this.layout;
             return true;
         } catch (RuntimeException | LinkageError error) {
             System.out.println("[Celtium] CELTIUM_TEXTURE_ARRAY create failed: " + error);
@@ -209,8 +190,6 @@ final class VulkanTextureArray {
             this.layout = VK_NULL_HANDLE;
         }
         this.set = VK_NULL_HANDLE;
-        currentSet = VK_NULL_HANDLE;
-        currentLayout = VK_NULL_HANDLE;
         this.indexByKey.clear();
         this.nextIndex = 0;
     }
