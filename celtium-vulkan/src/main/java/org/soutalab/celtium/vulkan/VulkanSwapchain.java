@@ -656,6 +656,33 @@ public final class VulkanSwapchain {
             long surface;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 LongBuffer handle = stack.mallocLong(1);
+                // Wayland: build the surface from SDL's own wl_display and wl_surface instead of asking SDL to do it.
+                // SDL_Vulkan_CreateSurface installs SDL-side handlers on that display, and on this stack the present then
+                // dies inside SDL's dispatch (isolated by -Dceltium.vulkan.skipPresent, which does not crash). Taking the
+                // two pointers from the window properties leaves the surface to Vulkan alone.
+                long waylandDisplay = 0L;
+                long waylandSurface = 0L;
+                if (compositor != null && compositor.toLowerCase().contains("wayland")) {
+                    int properties = org.lwjgl.sdl.SDLVideo.SDL_GetWindowProperties(sdlWindow);
+                    if (properties != 0) {
+                        waylandDisplay = org.lwjgl.sdl.SDLProperties.SDL_GetPointerProperty(properties,
+                                "SDL.window.wayland.display", 0L);
+                        waylandSurface = org.lwjgl.sdl.SDLProperties.SDL_GetPointerProperty(properties,
+                                "SDL.window.wayland.surface", 0L);
+                    }
+                }
+                if (waylandDisplay != 0L && waylandSurface != 0L
+                        && context.hasInstanceExtension("VK_KHR_wayland_surface")) {
+                    VkWaylandSurfaceCreateInfoKHR create = VkWaylandSurfaceCreateInfoKHR.calloc(stack).sType$Default()
+                            .display(waylandDisplay).surface(waylandSurface);
+                    int result = KHRWaylandSurface.vkCreateWaylandSurfaceKHR(context.instance(), create, null, handle);
+                    if (result != VK_SUCCESS) {
+                        reasons.add("vkCreateWaylandSurfaceKHR on SDL's display failed with VkResult " + result);
+                        return null;
+                    }
+                    surface = handle.get(0);
+                    return buildForSurface(context, surface, where + "-wayland-raw", width, height, reasons);
+                }
                 if (!org.lwjgl.sdl.SDLVulkan.SDL_Vulkan_CreateSurface(sdlWindow, context.instance(), null, handle)) {
                     reasons.add("SDL_Vulkan_CreateSurface failed for compositor " + compositor
                             + ": " + org.lwjgl.sdl.SDLError.SDL_GetError());

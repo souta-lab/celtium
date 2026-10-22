@@ -328,3 +328,30 @@ Javaログコールバック自体を登録させない。これで libffi ク�
 X11 では起きないことと整合）。
 **次の検証**: present 中の Vulkan WSI 呼び出しと SDL ポンプを**同一スレッドに固定**する（または WAYLAND 用の
 `wl_display` を Celtium 側で別に持つ）。まず `-Dceltium.vulkan.presentReadback=true` 等で present 経路を変えて再現が消えるかを見る。
+
+**Wayland present の切り分け（2026-10-22・決定的）**
+- `-Dceltium.vulkan.skipPresent=true`（記録・提出するが present しない）で **クラッシュしない**（25秒完走、hs_err無し）
+  ⇒ 引き金は **swapchain の present（Vulkan WSI）**。
+- `-Dceltium.vulkan.pumpBeforePresent=true`（present直前に SDL キューを処理）→ **効かず**（14秒でクラッシュ）。
+- `-Dceltium.vulkan.freshPresentSemaphores=true` → **効かず**（11.7秒）。
+⇒ セマフォ再利用でも「タイミングをずらす」でもなく、**present 自体が Wayland 上で SDL の状態を壊す**。
+
+**次の一手**: Wayland のサーフェス生成を `SDL_Vulkan_CreateSurface` ではなく、
+**SDL の window properties から `wl_display`/`wl_surface` を取って `vkCreateWaylandSurfaceKHR` で自前生成**する
+（コード内コメントにも「SDL_Vulkan_CreateSurface は X11 で落ちた実測がある」とある）。SDL側リスナを介在させないのが狙い。
+取得は `SDL_GetWindowProperties` ＋ `SDL_GetPointerProperty("SDL.window.wayland.display"/"…surface")` を反射で。
+
+**修正（2026-10-22・Wayland 実機で25秒完走）**: Wayland では `SDL_Vulkan_CreateSurface` を使わず、
+**SDL の window properties から `wl_display`/`wl_surface` を取り `vkCreateWaylandSurfaceKHR` で自前生成**する。
+```
+properties = SDL_GetWindowProperties(sdlWindow);
+display  = SDL_GetPointerProperty(properties, "SDL.window.wayland.display", 0);
+surface  = SDL_GetPointerProperty(properties, "SDL.window.wayland.surface", 0);
+vkCreateWaylandSurfaceKHR(instance, {display, surface})
+```
+結果: **クラッシュ消失**。同一条件で
+`CELTIUM_PRESENT hookCalls=3 attempts=2 presented=2 failures=0`（実際に present できている）、
+`CELTIUM_FRAME_QUEUED reached=true call=12` まで進行。X11 分岐は未変更（`compositor == X11` は従来どおり `vkCreateXlibSurfaceKHR`）。
+
+切り分けの根拠: `skipPresent=true` でクラッシュしない／`pumpBeforePresent`・`freshPresentSemaphores` は無効。
+SDL 側のサーフェス生成が display にリスナを足し、こちらの present（Vulkan WSI）と衝突していた。

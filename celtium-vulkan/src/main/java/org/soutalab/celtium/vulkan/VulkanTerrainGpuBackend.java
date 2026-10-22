@@ -2197,6 +2197,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private VulkanTextureArray textureArray;
     private int textureArrayLogs;
     /** Index the group being accepted will carry into the shared array; -1 when it has none. */
+    /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
+    private static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
+    private long pumpedBeforePresent;
+    /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
+    private static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
+    private long skippedPresents;
     private int currentGroupTextureIndex = -1;
     private long textureIndexHits;
     private long textureIndexMisses;
@@ -15213,6 +15219,28 @@ this.frameBufferOpen = false;
     }
 
     private boolean celtium$presentFrameImpl() {
+        // Isolation switch for the Wayland fault: with the swapchain out of the picture the frame is recorded and
+        // submitted but never presented, which separates "the swapchain's own wl_display use is the fault" from
+        // "something else in the present path is". Off by default; a leg that sets it draws nothing to the window.
+        if (SKIP_PRESENT) {
+            this.skippedPresents++;
+            return true;
+        }
+        if (PUMP_BEFORE_PRESENT) {
+            // Serialise the two users of the wayland display: SDL services its queue here, on this thread, immediately
+            // before the swapchain's own dispatch runs. The fault measured on Wayland happens inside SDL's dispatch
+            // reached from SDL itself, and it disappears when the present is skipped, so the experiment is whether
+            // having nothing pending for SDL while the WSI works removes it.
+            try {
+                // Reflective: this module does not compile against LWJGL's GLFW-era Display, and Cleanroom's window
+                // bridge answers it on the SDL line.
+                Class<?> display = Class.forName("org.lwjgl.opengl.Display");
+                display.getMethod("processMessages").invoke(null);
+                this.pumpedBeforePresent++;
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+                // A pump that fails must not stop the frame from being presented.
+            }
+        }
         long presentStart = System.nanoTime();
         try {
             return celtium$presentFrameBody();
