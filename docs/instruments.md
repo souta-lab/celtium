@@ -267,10 +267,10 @@
 | `celtium.shadow.inFrame` | `Boolean.getBoolean` | [VulkanTerrainGpuBackend.java:15446](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15446>) |
 | `celtium.shadow.mapSize` | `Integer.getInteger` | [ShadowMapPass.java:44](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L44>) |
 | `celtium.shadow.maxAge` | `Integer.getInteger` | [VulkanTerrainGpuBackend.java:15348](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15348>) |
-| `celtium.shadow.maxDraws` | `Integer.getInteger` | [ShadowMapPass.java:692](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L692>) |
-| `celtium.shadow.noBarriers` | `Boolean.getBoolean` | [ShadowMapPass.java:680](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L680>) |
-| `celtium.shadow.noDescriptors` | `Boolean.getBoolean` | [ShadowMapPass.java:661](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L661>), [ShadowMapPass.java:697](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L697>) |
-| `celtium.shadow.noDraw` | `Boolean.getBoolean` | [ShadowMapPass.java:712](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L712>) |
+| `celtium.shadow.maxDraws` | `Integer.getInteger` | [ShadowMapPass.java:705](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L705>) |
+| `celtium.shadow.noBarriers` | `Boolean.getBoolean` | [ShadowMapPass.java:693](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L693>) |
+| `celtium.shadow.noDescriptors` | `Boolean.getBoolean` | [ShadowMapPass.java:674](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L674>), [ShadowMapPass.java:710](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L710>) |
+| `celtium.shadow.noDraw` | `Boolean.getBoolean` | [ShadowMapPass.java:725](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L725>) |
 | `celtium.shadow.noPass` | `Boolean.getBoolean` | [VulkanTerrainGpuBackend.java:11757](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11757>), [VulkanTerrainGpuBackend.java:15437](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15437>) |
 | `celtium.shadow.noSources` | `Boolean.getBoolean` | [VulkanTerrainGpuBackend.java:15341](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15341>) |
 | `celtium.shadow.probeScope` | `Boolean.getBoolean` | [VulkanTerrainGpuBackend.java:15382](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15382>) |
@@ -278,7 +278,7 @@
 | `celtium.shadow.refreshEvery` | `Integer.getInteger` | [VulkanTerrainGpuBackend.java:15351](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15351>) |
 | `celtium.shadow.sampleDepth` | `Boolean.getBoolean` | [ShadowMapPass.java:379](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L379>) |
 | `celtium.shadow.terrain` | `System.getProperty` | [VulkanTerrainGpuBackend.java:15436](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15436>) |
-| `celtium.shadow.warp` | `System.getProperty` | [VulkanTerrainPipeline.java:1312](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L1312>) |
+| `celtium.shadow.warp` | `System.getProperty` | [VulkanTerrainPipeline.java:1312](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L1312>), [ShadowMapPass.java:577](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shadow/ShadowMapPass.java#L577>) |
 
 <a id="group-celtium-stub"></a>
 ## `celtium.stub.*`

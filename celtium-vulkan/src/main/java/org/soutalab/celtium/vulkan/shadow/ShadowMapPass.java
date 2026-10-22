@@ -566,7 +566,20 @@ public final class ShadowMapPass {
                 return false;
             }
             long module = handle.get(0);
+            // The caster's clip position is the light space, so this pipeline tells the shared vertex shader to warp gl_Position while the main
+            // pass warps only the coordinate it samples with (CELTIUM_LIGHT_PASS). Both use the same exponent, so the map and the lookups stay
+            // consistent by construction.
+            org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer warpEntry =
+                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
+            warpEntry.get(0).constantID(0).offset(0).size(4);
+            warpEntry.get(1).constantID(1).offset(4).size(4);
+            java.nio.ByteBuffer warpValue = stack.calloc(8);
+            warpValue.putFloat(0, Float.parseFloat(System.getProperty("celtium.shadow.warp", "1.0")));
+            warpValue.putInt(4, 1);
+            org.lwjgl.vulkan.VkSpecializationInfo warpSpecialization =
+                    org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(warpEntry, warpValue);
             stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(module)
+                    .pSpecializationInfo(warpSpecialization)
                     .pName(stack.UTF8("main"));
             VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
                     .sType$Default().pVertexBindingDescriptions(bindings)
