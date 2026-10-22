@@ -484,3 +484,15 @@ gate が動かない理由の候補は次の2つに絞られる:
 blit領域 (0,0)-(256,256) の画素を「パック無し」と「パック有り」で比較する。緑(#00FF00)が出ていれば配達は成功し、
 gate側の問題。出ていなければ `blitToFrame` の実装側。
 
+### 可視性の決着（2026-10-22 深夜・実画像）
+
+`drawProbe=blit` の leg（jar `80e3d8b3…` 派生・AMD・BSL v10.1.8・headless隔離sway・world）で、
+**packのシェーダ出力が提示画像に到達していることを実画像で確認した**。
+
+- ログ: `CELTIUM_PACK_DRAW blit=true frameId=0 wroteImage=0x170000000017 frameTargetImage=0x170000000017 sameImage=true rect=0,0 256x256`
+  → ブリット先は**フレームターゲット＝提示される画像**と同一。
+- 画像: `run-packblit-2/screenshots/celtium-presented-early-run-*.png` の **左下 256×256 が一色 `(0,255,0)`（65536/65536 緑）**
+  → `gbuffers_basic` のオフスクリーン出力（probe時 centre=#00FF00）がそのまま提示画像に乗っている。
+
+つまり `drawProbe=constant` で画像gateがPASSEDだったのは「描画が届いていない」ではなく、**constantモードはブリット経路を使わない**ため。
+**pack出力の可視性は `blit` モードで証明済み**。S3の残りは「probeの固定三角形」を実地形ジオメトリ／実パスに置き換えること。

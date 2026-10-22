@@ -15344,7 +15344,15 @@ this.frameBufferOpen = false;
             if (target.colorImage() != 0L) {
                 this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), 0, 0, 256, 256);
                 if (this.shaderPackDraws++ <= 2) {
-                    System.out.println("[Celtium] CELTIUM_PACK_DRAW blit=true draws=" + this.shaderPackDraws);
+                    // Which image the blit wrote, and which image the present will read: the delivery question is a
+                    // question about identities, and the answer belongs in the log rather than in an inference from a
+                    // picture that has several ways of not changing.
+                    System.out.println("[Celtium] CELTIUM_PACK_DRAW blit=true draws=" + this.shaderPackDraws
+                            + " frameId=" + this.frameId
+                            + " wroteImage=0x" + Long.toHexString(target.colorImage())
+                            + " frameTargetImage=0x" + Long.toHexString(this.frameTarget.colorImage())
+                            + " sameImage=" + (target.colorImage() == this.frameTarget.colorImage())
+                            + " rect=0,0 256x256 layout=GENERAL");
                 }
             }
             return;
