@@ -433,3 +433,22 @@ leg: PASSED
 **確定**: BSL 10.1.8 の**実シェーダが lower→compile→Vulkanパイプライン作成まで通る**（unsupported=0）。
 **未確定**: その程序を使った**描画と可視性**（次は gbuffers_basic で実ジオメトリを描き、`sampleOffscreen` の画素を証拠にする）。
 
+### 実測（2026-10-22・パックのシェーダがGPUで実行され、画素が出た）
+
+`compileProbe=true` **と** `drawProbe=true` を併用（shaderc有効・jar `706002c2…`・AMD・validation ON）:
+
+```
+CELTIUM_PACK_PIPELINE program=gbuffers_basic pipeline=ok attributes=7 result=OK
+drawProbe=prepared attributes=7 result=OK offscreen=[centre=#00FF00 sampledColours=1]
+CELTIUM_PACK_DRAW_SUBMIT cb=... slot=0
+CELTIUM_PACK_DRAW inPass=true draws=1
+leg: PASSED  画像gate: PASSED
+```
+
+**確定**: BSL 10.1.8 の `gbuffers_basic` が **lower→compile→pipeline→実ジオメトリ描画→画素読み戻し**まで通り、
+中心画素が `#00FF00`（sampledColours=1）。**パックのコードがGPUで動いて画素を出した**、という証拠。
+（`drawProbe=true` 単独では `compileProbe` 経路に入らず、ビルトイン三角形だけが動くので両方必要。）
+
+**未確定**: その出力が**表示画像に可視**か（probeは自前オフスクリーンimageに描いている）。
+次は `final`/`composite` を表示画像へ書く経路。
+
