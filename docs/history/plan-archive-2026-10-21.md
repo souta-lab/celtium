@@ -269,4 +269,6 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 ### 影の3ch計器（2026-10-22・撤回済み含む）
 
+### JFRの受理経路内訳（2026-10-22）
 
+| **JFR: 受理経路は「本体」が重い（2026-10-22）** | **leaf内で本体5.4%** | 実測 | 構造変更のみ | AMD leg（`28ab830c…`）のJFR定常半（1,215サンプル）で `submitImmediateBatch` を含むスタックは **15.9%**。そのleaf内訳: **本体 `submitImmediateBatchBody` 5.4%**、`captureState` 1.0%、**`copyVerticesTransformed` 0.9%＋`copyVertices` 0.8%＝頂点コピー1.7%**、`ArraysSupport.mismatch` 0.7%、`closeCurrentImmediateGroupBody` 0.7%、`stateKey` 0.7%、`submitImmediateBatch` 0.6%、`expandIndices` 0.5%、HashMap.getNode 0.4%。inclusive上位は submitImmediateBatchBody 14.9%、drawModelList 4.9%、recordRenderPass 4.1%、flush系 3.0。⇒ **特定の子メソッドが重いのではなく、本体のインライン仕事が最大**（フィールド書込み・判定・境界計算）。**個別修正では削れない**ので、次は**構造**（受理時の判断をflushへ遅延、または受理を別スレッドへ）に進む。**JFR共有は2件連続でA/Bで消えた**（1.1%→0.999x、1.8%→0.993x）ので、共有値は探索にのみ使う |

@@ -47,7 +47,6 @@
 | **per-offer診断の除去も効果なし（2026-10-22 実測）** | **1.015x＝わずかに遅い** | 実測 | 撤回 | 受理本体の冒頭で**毎offer無条件に走っていた診断**（`frameBatchSignature`＝ネイティブ読み2回＋乗算5回）を既定OFFにしてA/B: 旧jar `24d31f69` 対照・交互3ペアで **1.643/1.635/1.636 vs 1.625/1.607/1.612ms＝1.015x**（3ペアとも遅い）。作業を**減らしたのに遅くなった**ので、これは利得ではなく**巨大メソッドのJITレイアウト変化**とみられ、**撤回**してjarは `24d31f69` に戻した。⇒ **per-offer経路の変更は1.5%精度でA/Bしないと判断できない**（中立8件・悪化1件の実績） |
 
 
-| **JFR: 受理経路は「本体」が重い（2026-10-22）** | **leaf内で本体5.4%** | 実測 | 構造変更のみ | AMD leg（`28ab830c…`）のJFR定常半（1,215サンプル）で `submitImmediateBatch` を含むスタックは **15.9%**。そのleaf内訳: **本体 `submitImmediateBatchBody` 5.4%**、`captureState` 1.0%、**`copyVerticesTransformed` 0.9%＋`copyVertices` 0.8%＝頂点コピー1.7%**、`ArraysSupport.mismatch` 0.7%、`closeCurrentImmediateGroupBody` 0.7%、`stateKey` 0.7%、`submitImmediateBatch` 0.6%、`expandIndices` 0.5%、HashMap.getNode 0.4%。inclusive上位は submitImmediateBatchBody 14.9%、drawModelList 4.9%、recordRenderPass 4.1%、flush系 3.0。⇒ **特定の子メソッドが重いのではなく、本体のインライン仕事が最大**（フィールド書込み・判定・境界計算）。**個別修正では削れない**ので、次は**構造**（受理時の判断をflushへ遅延、または受理を別スレッドへ）に進む。**JFR共有は2件連続でA/Bで消えた**（1.1%→0.999x、1.8%→0.993x）ので、共有値は探索にのみ使う |
 
 
 
