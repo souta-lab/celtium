@@ -15268,10 +15268,11 @@ this.frameBufferOpen = false;
             // skips those fragments, which is why almost nothing is ever judged shadowed. Widened by property so the
             // trade against texel size can be measured rather than argued: 2048 texels over +/-128 blocks is 12.5 cm a
             // texel against 4.7 cm at +/-48.
-            // 48 blocks, not the pack's own distance: measured with BSL loaded, a 128 block box on the 2048 map darkens 0.49% of the frame against
-            // 0.61% at 48, because widening without the pack's half-plane distortion spends texel density it has not got. The declared value is
-            // logged by CELTIUM_SHADOW_PACK and will be applied once the distortion is in.
-            float radius = Float.parseFloat(System.getProperty("celtium.shadow.radius", "48"));
+            // 128 blocks, with the half-plane distortion that makes it affordable (celtium.shadow.warp, default 0.5): measured on the same camera with
+            // shadows off as the control, a 128 block box at warp 1.0 darkens 0.34% of the frame and at warp 0.5 darkens 0.66%, reaching further down the
+            // frame (rows 17..696 against 17..662) - more than the 0.61% the 48 block box gave, and 2.7 times the distance. Without the warp a wider box
+            // loses coverage, which is why the two moved together.
+            float radius = Float.parseFloat(System.getProperty("celtium.shadow.radius", "128"));
             org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
                     new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
                     new org.joml.Vector3f(0.0f, 1.0f, 0.0f));

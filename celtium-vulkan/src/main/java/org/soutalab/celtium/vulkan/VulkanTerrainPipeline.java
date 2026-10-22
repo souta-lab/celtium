@@ -1309,7 +1309,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             warpEntry.get(0).constantID(0).offset(0).size(4);
             warpEntry.get(1).constantID(1).offset(4).size(4);
             java.nio.ByteBuffer warpValue = stack.calloc(8);
-            warpValue.putFloat(0, Float.parseFloat(System.getProperty("celtium.shadow.warp", "1.0")));
+            warpValue.putFloat(0, Float.parseFloat(System.getProperty("celtium.shadow.warp", "0.5")));
             warpValue.putInt(4, 0);
             org.lwjgl.vulkan.VkSpecializationInfo warpSpecialization =
                     org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(warpEntry, warpValue);

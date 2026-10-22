@@ -151,10 +151,11 @@ public final class ShadowMapPass {
     }
 
     public static boolean requested() {
-        // On by default. The pass renders on both cards (AMD darkens 0.92% of the frame by more than six levels, Intel 2.17%), and since
-        // the terrain pipeline stopped rewriting its descriptor set on every bind, a world leg with it on reports no validation messages
-        // on either GPU. -Dceltium.shadow.enabled=false turns it off for the performance legs, whose numbers describe the frame without it.
-        return Boolean.parseBoolean(System.getProperty("celtium.shadow.enabled", "true"));
+        // Off by default: shadows belong to the shader pack, and this pass is a scaffold that proved the native depth target and the
+        // projection end to end. The pack's own shadow programs are what the product ships (docs/shader-plan.md), implemented in the
+        // shader-pack mod rather than here. The pass stays available for that work with -Dceltium.shadow.enabled=true, and its
+        // measurements (AMD 0.92% and Intel 2.17% of the frame darkening by more than six levels) describe the scaffold, not the product.
+        return Boolean.parseBoolean(System.getProperty("celtium.shadow.enabled", "false"));
     }
 
     /**
@@ -574,7 +575,7 @@ public final class ShadowMapPass {
             warpEntry.get(0).constantID(0).offset(0).size(4);
             warpEntry.get(1).constantID(1).offset(4).size(4);
             java.nio.ByteBuffer warpValue = stack.calloc(8);
-            warpValue.putFloat(0, Float.parseFloat(System.getProperty("celtium.shadow.warp", "1.0")));
+            warpValue.putFloat(0, Float.parseFloat(System.getProperty("celtium.shadow.warp", "0.5")));
             warpValue.putInt(4, 1);
             org.lwjgl.vulkan.VkSpecializationInfo warpSpecialization =
                     org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(warpEntry, warpValue);

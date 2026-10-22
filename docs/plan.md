@@ -5,14 +5,11 @@
 製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
-## 次の作業単位（2026-10-22）
+## 次の作業単位（2026-10-22 改訂・利用者指示）
 
-1. **受理経路を native へ**: Java 側の補足ではなく所有権ごと移す（規模の算術は `architecture` §12）。影ONの尾（p95）も同じ作業で扱う。
-2. **影の品質と尾**: distortion は実装済み（warp=0.5/128 で被覆0.58%・距離2.7倍）。**既定化の判断には校正gateを通さない比較legが必要**
-   （`celtium.validation.camera*` で画角を変えるとleg自体がFAILEDになるため）。その後 `shader-plan.md` の方針で品質を詰め、尾は二重バッファ化か cadence で削る。
-3. **シェーダパック**: `celtium$probePackProgram` からワールド描画へ接続（S0/S1 の設計に従う）。
-4. **測定**: 機械が空いたら出荷構成（影ON）で `gv_kpi.py` を再実行し、5ペア以上で比を取る。
-
+1. **性能（最優先）**: 出荷構成は影なし。参照実装に対する 1.387x（AMD・影OFF）を 1.0 に近づける。Java 側の補足ではなく native へ所有権を移す（`architecture` §11/§12）。
+2. **シェーダパックを実際に動かす**: BSL 等を読み、ワールドの地形描画を pack のプログラムで行う。**実装は別mod**（`docs/shader-plan.md`）。影も pack の `shadow`/`shadowtex` プログラムで行う。
+3. **組込影は scaffold に降格（既定OFF）**: `ShadowMapPass` は native の深度ターゲットと投影の検証用。既定 `false`、`-Dceltium.shadow.enabled=true` で起動。
 
 ## 現在の優先順
 
@@ -21,7 +18,7 @@
 | **v0.0.7-alpha をリリース（2026-10-22）** | **影の既定ONが主題** | 実測 | 公開済み・両GPU検証済 | https://github.com/souta-lab/celtium/releases/tag/v0.0.7-alpha 。asset `celtium-forge-mc1.12.2-0.0.7-alpha.jar`（3,201,172 bytes）は**ダウンロードしたsha256がローカルビルドと一致**（`7e3b6783…`）。梱包 `verified: true`・版数整合 `verified: True`・内容ハッシュ1079エントリ。ノートに**影ON/OFFの実測（AMD 0.92%・Intel 2.17%）**、アロケーション−41%、S0/S1/S2のパック状況、既知の問題（性能1.674xと尾・パック未接続・RLCraftはFugue待ち）を明記。**公開jarを両GPUで検証**: AMD/Intel とも world leg **PASSED・画像ゲート PASSED・validation 0件**（Intel は jar hash `7e3b6783…` 一致を確認）。**公開jarの測定**（負荷3.2-4.7・強制・交互5ペア）: **AMD 1.400x**（中央値。影OFF構成は1.387x＝この負荷帯では影の上乗せは小さい） |
 
 | **性能（現状）** | **AMD 1.387x / Intel 1.738x（影OFF）／影ONはAMD 1.674x** | 実測 | 未達 | 参照 `567dcf8a…`・交互ペア。影OFFのAMDは 1.373-1.387x で安定、Intelは `e4622406…` で 1.738x。**影ON（出荷既定）は 1.674x**（影の実コスト約0.32ms、`noPass` 2.132／`noshadow` 2.123 で切り分け済み）。**Java名付き最適化9件は全て中立**＝Java補足では動かない（`architecture` §11/§12）。**アロケーションは13.8GB→8.1GB/run（−41%）**、GC 50→39（行列プール・fog比較・モデル幾何の再利用） |
-| **影（既定ON）** | **両GPU可視・validation 0件** | 実測＋画像 | 受入 | 同一scene・worldTime固定のON/OFFで **AMD 0.92%（平均19.1）/ Intel 2.17%（平均48.6）** の画素が>6レベル暗くなる。既定ONでもAMD/Intel とも **PASSED・gate PASSED・validation 0件**。**IntelのVUID-03047は地形`bindTextures`の毎bind再書き込みが原因で、変更分のみ書く方式にして解消**。スキップ時にキャスタを片付けない**蓄積バグも修正**。残課題は**尾**（p95 5.5-14ms）。**「既存modベース」の具体化**: リポジトリ同梱の Iris 実装（`modern/.../iris/shadows/`）と要素単位で対応表を作成（`architecture` §13.1）。現状は**自前実装**で、**パック宣言値の読み取りを実装**: `CELTIUM_SHADOW_PACK declared resolution=3072 distance=512.0 applied resolution=2048 distance=48`＝BSLの上限（ULTRA）を読み、現状との差を毎回ログ（`ShaderPackLoader.shadowSettings`）。**適用は実測で却下**: BSLをロードして距離を48→128に広げると**被覆が0.61%→0.49%に減少**（同解像度では密度が落ちるため）＝**distortionが先**という順序を実測で裏づけ。既定は48のまま。優先順は①distortion（half-plane）②解像度・距離の適用③entity casters④shadowtex color target ／ **warp0.5/128 を目視**: アクネは見当たらないが、近接ブロック中心の画角では影の改善も判別できない⇒**既定化は保留**（次は距離の出る画角で判定） ／ **画角変更での判定は不可**: `celtium.validation.camera*` で仰角12°・yaw45°にするとleg自体がFAILEDになり（gateが校正済みカメラ前提）、dumpの信頼性が落ちる。差は0.10%（対称）で判定不能 ⇒ 判定には**gateを伴わない比較用leg**か、fixture側の画角プリセットが必要 |
+| **影（組込は既定OFF・packへ移行）** | **scaffoldに降格** | 実測＋画像 | 方針変更 | 利用者指示により**影はpackに任せる**。組込 `ShadowMapPass` は native 深度ターゲットと投影の検証用で**既定 `false`**。scaffoldの実測は残す（AMD 0.92%・Intel 2.17% の画素が>6レベル暗く、両GPUで validation 0件）。pack側の影（`shadow`/`shadowtex`）は**別modで実装**する。なお冪乗ワープ（`celtium.shadow.warp`）は**Iris/OptiFine に存在しない自前発明**と判明したため製品経路では使わない |
 | **互換・画質・配布** | **4画面＋qmagnet／RLCraftは環境制約／配布物検証済み** | 実測 | 一部未完 | 空(165,180,207)vs(165,179,207)・石は完全一致・草±4（worldTime=6000）。settings はHEADで再合格、**home のVUID-09600は再現せず**、mainMenuのgate FAILは**影OFFでも同一**（既存）。**RLCraft 2.9.3 は0.6.13でも0.7.11でも `com.cleanroommc.hackery.ReflectionHackery` 欠落で起動不能（Fugue更新待ち）**。配布物は `verify_forge_jar` verified・版数一致・内容ハッシュ一致。**BSLはワールド描画に未接続**（`shader-plan.md` S0/S1） |
 | **シェーダパック: S0/S1/S2パイプラインまで（2026-10-22）** | **S2のパイプライン生成OK** | 実測 | 残りは描画接続 | S0: `files=292 programs=94 options=402 errors=0 loadMillis=515`。**フラグ必須**: `-Dceltium.shaderpack.compileProbe=true`（未設定だとprobeが呼ばれない）。S1: **6プログラム全て `result=OK`**（`gbuffers_basic.vsh` lowered=14,248 `spirvWords=1402`、module/descriptorLayout/pipelineLayout すべてok）。**S2**: **`CELTIUM_PACK_PIPELINE program=gbuffers_basic pipeline=ok attributes=7 result=OK`**＝**実フレームのformat（R8G8B8A8+D32）向けのグラフィックスパイプライン生成に成功**。残りは**ワールド描画への接続**（このパイプラインでterrain/immediateを描き、set 0のuniformを供給する） |
 
