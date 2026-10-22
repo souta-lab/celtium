@@ -394,3 +394,21 @@ probe の描画先が表示画像でない（別target/オフスクリーン）�
 
 次の判別: probeが実際にどの image に描いているか（`slot=0` が指す先＝swapchain image か、frame image か）を
 ログに出す。表示画像に書いているのに見えないなら、描画が present の後／別imageへの書き込み。
+
+### 訂正2（同日・`compiler=false` で判明）
+
+world leg のログは次を出していた:
+
+```
+CELTIUM_PACK_PROGRAM skipped path=true compiler=false
+shaderc available=false reason=the shaderc binding could not be loaded
+  (ClassNotFoundException: org.lwjgl.util.shaderc.Shaderc ... invalid classes)
+```
+
+⇒ **このleg環境ではGLSL→SPIR-Vコンパイラ（shaderc）がロードできず、パックのシェーダは一度も実行されていない**。
+したがって `drawProbe=blit` / `constant` で出た `CELTIUM_PACK_DRAW_SUBMIT` は**ビルトインの三角形probe**のもので、
+**パックのプログラム実行の証拠は現時点でゼロ**。前2回の記述（実フレームで動いた／コマンド提出まで）は取り消す。
+
+**次の必要条件**: 検証環境に `lwjgl-shaderc` とそのnativesを追加し、`CELTIUM_PACK_PROGRAM` が
+`compiler=true` で実行される状態にする（`scripts/gv-leg.sh` のライブラリ集合に足す）。そのうえで
+`sampleOffscreen` の読み戻し値（画素）を証拠にする。可視性はさらにその後（final programから表示画像へ）。
