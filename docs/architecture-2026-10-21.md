@@ -450,6 +450,37 @@ JFR定常（1,215サンプル）とpassSplitから、受理経路を**構造変�
 それは最適化ではなく**per-draw のJava仕事をほぼ全廃する再設計**（描画をGPU側で駆動し、offer ごとの capture/コピー/判定を
 持たない形）を意味する。1セッションの最適化で埋まる差ではない、というのが現時点の結論。
 
+### 11.1 出荷構成のフレーム内訳（2026-10-22 実測・jar `a78b1f53…`・影OFF）
+
+leg `perf-struct-1`（AMD RX 6400・world・固定カメラ・`-Dceltium.vulkan.passSplit=true -Dceltium.vulkan.passSplitCpu=true`、
+`CELTIUM_FRAME_PASS_SPLIT clock=cpu frames=512`）のp50:
+
+| 区間 | p50 (ms) | 備考 |
+|---|---|---|
+| frame | **2.5** | 参照実装は約1.2 |
+| world | 2.4-2.5 | |
+| └ flush | 0.7 | **内側の winRecord 0.6** |
+| └ terrain | 0.8 | 内側 terrainRecord 0.2・terrainSubmit 0.0 |
+| └ gui / clouds / hand / particles | 0.1 / 0.1 / 0.0 / 0.1 | |
+| world の残差 | **約0.8** | bracket されていない世界パスのCPU仕事 |
+
+**読み方**: 我々の記録仕事（winRecord＋terrainRecord＝0.8ms）と、未bracketの世界パス仕事（0.8ms）が二大項目。
+受入（≤1.0）には frame 2.5 → 1.2 が必要で、**記録仕事の削減だけでは足りない**（§12 の結論と同じ）。
+
+### 11.2 到達経路: GPU駆動の描画リング（§12 の「置き換え」の具体形）
+
+§12 の結論（per-offer の Java 仕事をほぼ全廃）を、次の形で実装する。
+
+1. **record リング**: host-visible・永続マップの固定長レコード配列（例 64B/record、8192 records/frame）。
+   GLスタブは offer ごとに「状態index・descriptor index・頂点範囲・index範囲・push定数index」を**書き込んで index を1つ進める**だけ。
+   Java のオブジェクト生成・比較・分岐は offer 経路から消える。
+2. **状態表**: push定数・descriptor・pipeline を**フレーム先頭で一度だけ**配列に書き、record は index で参照する。
+3. **実行**: 1パスにつき `vkCmdDrawIndexedIndirect` を**1本**発行（`VkDrawIndexedIndirectCommand` は record からGPU側で組むか、
+   CPUで1回だけ詰める）。group 概念は「連続する同一状態の範囲」に退化し、bind は範囲先頭でのみ行う。
+4. **計測**: `winRecord`/`terrainRecord`/残差を同じ bracket で測り、record 数（offer数）と bind 回数を併記する。
+
+移行は**immediate（window）経路から**行う（最大の 0.6ms）。terrain は既に indirect なので、record 形式を共有したうえで後段で移す。
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）

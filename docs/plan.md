@@ -32,7 +32,7 @@
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①**受理経路をnativeへ**（Java補足ではなく所有権移動。`architecture` §12が規模の算術）②影の尾の削減（二重バッファ化 or cadenceと品質のトレード）③`shader-plan.md` の既存modベースでBSL接続 ④state/texture/render target所有のnative化（未完） |
-| **測定の現状** | **フレーム時間は保留** | — | 欠測 | 機械負荷が5-8でKPI閾値2.0を大きく超え、単発比較は負荷を測ってしまう。**JFR（アロケーション・共有）とvalidation/gate/画像は有効**。共有値はA/Bで2件連続否定済み＝探索にのみ使う ／ **`-Dceltium.vulkan.passSplit` が現ビルドで無出力**（leg `perf-struct-1` のログに `CELTIUM_PASS_SPLIT` が1行も無い）。計器の有効性を先に確認する（無出力を根因にしない）。 |
+| **測定の現状** | **出荷構成のフレーム内訳を実測** | 実測 | 継続 | leg `perf-struct-1`（jar `a78b1f53…`・影OFF・CPUクロック・instrument ON）: `frame p50 2.5ms / world 2.4-2.5`、内訳は **winRecord 0.6（flush 0.7 の内側）・terrainRecord 0.2（terrain 0.8 の内側）**、`terrainSubmit 0.0・present 0.0・gui 0.1・clouds 0.1`、**worldの残差 約0.8msは未bracket**。※以前「passSplitが無出力」と書いたのは私のgrepミス（正しくは `CELTIUM_FRAME_PASS_SPLIT`）。計器は正常。 |
 
 ## 撤回した前提（再入条件つき）
 
