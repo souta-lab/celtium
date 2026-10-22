@@ -55,8 +55,8 @@ stageにはそれぞれ正しいfamilyのJARを**ちょうど1個**置く。既�
 正典は [gv-leg.sh](<../scripts/gv-leg.sh>) → [gv_leg.py](<../scripts/gv_leg.py>) → [prism_validation.py](<../scripts/prism_validation.py>)。
 未追跡の `.gv-verify/` 内の古いrunner/harnessは使わない。CLIは `scripts/gv-leg.sh --help`。
 
-前提: Linux x86_64、Sway/swaymsg/Xwayland、対応するrender nodeとVulkan validation layer、LWJGL 3.4.1 Vulkan binding JAR、
-Cleanroom 0.6.13-alphaのPrism profileとlibrary/asset cache。source instanceは読み取り専用で、隔離copyを使う。
+前提: Linux x86_64、Sway/swaymsg/Xwayland、対応するrender nodeとVulkan validation layer、**LWJGL 3.4.3** の Vulkan binding JAR（natives も 3.4.3 で揃える）、
+**Cleanroom 0.7.11-alpha**（GLFW ではなく **SDL3**、ゲーム JVM は **Java 27**）の Prism profileとlibrary/asset cache。source instanceは読み取り専用で、隔離copyを使う。
 既定のGPU名・PCI path・instance配置はこの検証機向けであり、他環境でそのまま動作する保証ではない。
 
 ```sh
