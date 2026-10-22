@@ -205,3 +205,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### 記録経路の切り分け（2026-10-22）
 
 | **記録経路の切り分けは不能（2026-10-22 試行）** | **スイッチが測定を壊す** | 実測 | — | `-Dceltium.vulkan.skipImmediateRecord=true` で測ると **warm p50 58.4ms（通常1.87msの31倍）**＝記録しないとフレームが完了せず、**帰属測定に使えない**。よって受理vs記録の分解能は BATCH_TIMINGS（prepare 256ns / append 248ns / capture 99ns / key 74ns）とプロファイル26%以上には上がらず、**§7の結論（残りの大半は名前の無いコスト）は変わらない** |
+
+### Intelの計器制約（2026-10-22）
+
+| **Intelの内訳計測は計器の制約に当たる（2026-10-22）** | **GPU時刻が取れない** | 実測 | 計器の制約 | Intelで `-Dceltium.gpuPassTimings=true`（正しいキー名。`.vulkan.` 付きは効かない）を付けて回しても **`CELTIUM_PASS_GPU` が1行も出ない**＝`passTimings` が空。理由はGPUタイムスタンプクエリが無いため（`timestampSlots` が0、`celtium.vulkan.forceNoTimestamps` 系の分岐）。代わりにCPU側の境界計器は動いており **`CELTIUM_BOUNDARY_SPLIT frames=600 submitMillisPerFrame=0 slotWaitMillisPerFrame=0`**＝Intelでも境界のsubmit待ちは0ms/frame。⇒ 非地形1.13msは**記録側（CPU）かドライバ内**で、次は `FramePassTimings`（recBind/recDraw等のCPUブラケット）をIntelで集計する |
