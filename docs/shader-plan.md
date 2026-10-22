@@ -383,3 +383,14 @@ CELTIUM_PACK_DRAW_SUBMIT cb=... slot=0
 probe の描画先が表示画像でない（別target/オフスクリーン）可能性が残る。次の判別は
 「packの出力を final として表示画像に書く」経路（S3本体）を実装し、**画像が変わること**を差分で示すこと。
 
+### 訂正（同日・`drawProbe=constant` で判別）
+
+`-Dceltium.shaderpack.drawProbe=constant`（属性なしの全画面三角形を単色で描く）でも
+**leg PASSED・画像gate PASSED・validation 0件**だった。単色の全画面三角形が表示画像に乗っていれば
+画像gateは落ちるはずなので、**probeの描画は最終表示画像に届いていない**と判定できる。
+
+⇒ 先の `drawProbe=blit` の PASSED も「packの出力が画面に出た」証拠にはならない（同じくオフスクリーン）。
+`CELTIUM_PACK_DRAW_SUBMIT` が証明するのは**コマンドが記録・提出されたこと**までで、**可視性は未証明**。
+
+次の判別: probeが実際にどの image に描いているか（`slot=0` が指す先＝swapchain image か、frame image か）を
+ログに出す。表示画像に書いているのに見えないなら、描画が present の後／別imageへの書き込み。
