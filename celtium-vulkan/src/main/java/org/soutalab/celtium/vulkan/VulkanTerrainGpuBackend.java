@@ -7913,10 +7913,10 @@ this.frameBufferOpen = false;
     /**
      * Opens a window for the pending immediate groups at the point that produced them.
      * <p>
-     * Off by default ({@code -Dceltium.vulkan.immediateWindows=true} enables it) so the shipped behaviour is
-     * unchanged while this is being finished. Measurements so far: the copies are sound - the game framebuffer's mean
-     * is 150.47656 both before and after a window - and the frame is nonetheless black at capture time in every run
-     * that uses it, which is what the fixture-side sampling below is for.
+     * On by default, and {@code -Dceltium.vulkan.immediateWindows=false} turns it off; the note that used to sit here
+     * described the state while the feature was being finished, and by the time it shipped the default had been flipped
+     * and the black frame it warned about was gone - the picture gate passes with windows on. Measured with them off
+     * (world leg, AMD): 1.637 ms warm p50 against 1.586-1.642 with them on, so the mechanism is not a cost either way.
      */
 
     /**
