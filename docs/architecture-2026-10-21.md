@@ -616,6 +616,21 @@ AMD/Intel とも PASSED・画像gate PASSED・validation 0件（jar `75bea5b3…
 → §11.7 の残作業のうち「テクスチャ配列セット」は完了。次は**シェーダを配列indexへ**（indexは当面push定数、次にSSBO `gl_DrawID`）、
 その後に**pipelineソート＋geometry arena＋indirect**で 11 draw/window へ。
 
+### 11.9 最初の変換試行は失敗した（2026-10-22・記録）
+
+texture系1 familyを配列indexへ変換する最初の実装を試し、**NO_CAPTURE・validation 20件**で失敗した（`arrayDraws=0`）。
+失敗から確定した**必要条件**（次回はこれを満たしてから書く）:
+
+1. **配列は `prepare` より前に生成・充填されること**。現状の登録は受理経路（submit側、`currentGroupTextureImage` 解決時）で、
+   `prepareImmediate` の後に走るため、記録時に `textureArray` が null のままだった。
+   → 配列の生成を device 初期化直後に、`VulkanGlTexture` の生成点（registry）で登録する形にする。
+2. **変換した family は per-texture set を作らせないこと**。layout の `descriptorCount` を4096にした状態で
+   従来の pool-backed set を確保すると、1 set あたり4096 descriptor を要求して確保に失敗し、descriptor=0 → 全group拒否になる。
+   → 変換時は `descriptorSetFor` 経路を **array 経路に置き換え**、pool も配列用に分離する。
+3. push範囲は 208→**212**（index 4バイト）。ITEM familyが208/212にlightmapを持つが、groupはどちらか一方の family でしか描かれないため衝突しない。
+
+失敗した実装は revert 済みで、再ビルドは検証済みjar `0b3b49d8…` と**バイト一致**（ツリーが緑に戻ったことの確認）。
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）
