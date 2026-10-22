@@ -200,57 +200,20 @@ public final class TerrainRenderer {
         java.nio.LongBuffer offsets = stack.mallocLong(1);
         offsets.put(0, 0L);
         org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
-        this.shadowVertexBuffer = resources.vertexArena.buffer().buffer();
     }
 
-    /** Geometry the shadow pass may draw, captured from the pass's own bindings and indirect range. */
-    private long shadowVertexBuffer;
 
     /** The vertex and index buffers of the captured batch, taken with the range rather than at their bind sites. */
-    private long shadowCapturedVertexBuffer;
-    private long shadowCapturedIndexBuffer;
 
     /** Incremented each time a frame's batch is captured, so the owner can attach its own state at the same moment. */
-    private long shadowCaptureSerial;
-    /** The camera's world position as the last uniform write saw it; the shadow light is built around it. */
-    private double cameraWorldX;
-    private double cameraWorldY;
-    private double cameraWorldZ;
     private boolean cameraWorldKnown;
 
-    /** {@return whether a camera position has been seen yet}. */
-    boolean cameraWorldKnown() {
-        return this.cameraWorldKnown;
-    }
 
-    double cameraWorldX() {
-        return this.cameraWorldX;
-    }
 
-    double cameraWorldY() {
-        return this.cameraWorldY;
-    }
 
-    double cameraWorldZ() {
-        return this.cameraWorldZ;
-    }
 
-    /**
-     * Every indirect range this call recorded, with the vertex and index buffers it draws from, taken at the same instant.
-     * <p>
-     * The shadow pass used to keep only the first batch of the frame ({@code if (this.shadowIndirectCount == 0)}), which
-     * left most of the shadow map at clear depth and the picture unchanged. The ranges are kept here rather than in the
-     * backend so that the range and the buffers stay one tuple (#397); the caller pairs them with the pipeline, descriptor
-     * set, dynamic offset and push block it is drawing with, which are also its own values at this moment.
-     */
-    private final java.util.List<long[]> shadowRecordedRanges = new java.util.ArrayList<long[]>();
-    private long shadowIndexBuffer;
-    private long shadowIndirectBuffer;
     private long shadowIndirectOffset;
-    private int shadowIndirectCount;
 
-    /** Ranges the shadow pass could not be told about because the cap was reached; counted, never dropped silently. */
-    private int shadowRangesDropped;
     /** Time inside {@code vkCmdDrawIndexedIndirect} itself, against the whole pass's recording bracket. */
     private long indirectDrawNanos;
     /** Time spent writing the indirect command packets into mapped memory. */
@@ -273,55 +236,19 @@ public final class TerrainRenderer {
         return this.indirectDrawNanos;
     }
 
-    /** {@return the ranges the last indirect batch recorded}, each {offset, count, vertexBuffer, indexBuffer}. */
-    java.util.List<long[]> shadowRecordedRanges() {
-        return this.shadowRecordedRanges;
-    }
 
-    /** {@return how many shadow ranges were dropped at the cap}. */
-    int shadowRangesDropped() {
-        return this.shadowRangesDropped;
-    }
 
-    /** {@return the serial of the captured batch; a change means a new tuple is available}. */
-    public long shadowCaptureSerial() {
-        return this.shadowCaptureSerial;
-    }
 
-    /** {@return the vertex buffer the terrain pass bound}, for the shadow pass. */
-    public long shadowVertexBuffer() {
-        return this.shadowCapturedVertexBuffer;
-    }
 
-    /** {@return the index buffer the terrain pass bound}. */
-    public long shadowIndexBuffer() {
-        return this.shadowCapturedIndexBuffer;
-    }
 
-    /** {@return the indirect command buffer and range the terrain pass issued}. */
-    public long shadowIndirectBuffer() {
-        return this.shadowIndirectBuffer;
-    }
 
-    public long shadowIndirectOffset() {
-        return this.shadowIndirectOffset;
-    }
 
-    public int shadowIndirectCount() {
-        return this.shadowIndirectCount;
-    }
 
-    /** Clears the capture, so each frame's shadow draw is the geometry of that frame. */
-    public void resetShadowCapture() {
-        this.shadowIndirectCount = 0;
-        this.shadowIndirectBuffer = 0L;
-    }
 
     /** Binds a 32-bit index buffer, for the same reason the vertex binding takes the command buffer. */
     void bindIndexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, VulkanBuffer buffer) {
         org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, buffer.buffer(), 0L,
                 org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
-        this.shadowIndexBuffer = buffer.buffer();
     }
 
 
@@ -538,7 +465,6 @@ public final class TerrainRenderer {
             RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
             ChunkPrimitiveType primitiveType) {
-        this.shadowRecordedRanges.clear();
         this.terrainIndirectOffers++;
         if (!context.multiDrawIndirectEnabled()) {
             this.terrainIndirectFallbacks++;
@@ -634,28 +560,6 @@ public final class TerrainRenderer {
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
             this.indirectDrawNanos += System.nanoTime() - drawStarted;
-            // The tuple for the shadow pass: this range and the buffers it reads, captured together.
-            if (this.shadowRecordedRanges.size() < 64) {
-                this.shadowRecordedRanges.add(new long[] {offsetBytes, count,
-                        this.shadowVertexBuffer, this.shadowIndexBuffer});
-            } else {
-                this.shadowRangesDropped++;
-            }
-            // Captured for the shadow pass: one batch's commands, offset and count together. Accumulating the counts while
-            // keeping the first offset made the range run past the buffer (VUID-vkCmdDrawIndexedIndirect-drawCount-00540
-            // with drawCount 3246 at offset 800 in leg shadowTerrain5), so only the first batch of the frame is kept.
-            if (this.shadowIndirectCount == 0) {
-                // The whole tuple is taken here, at one instant: the indirect range *and* the vertex and index buffers
-                // that batch draws from. Capturing the buffers at their bind sites and the range here mixed region A's
-                // indirect commands with region B's geometry whenever a frame drew more than one region - the command
-                // range stayed inside its buffer, but the vertices it pointed at belonged to another region (#397).
-                this.shadowIndirectBuffer = this.indirectBuffer.buffer();
-                this.shadowIndirectOffset = offsetBytes;
-                this.shadowIndirectCount = count;
-                this.shadowCapturedVertexBuffer = this.shadowVertexBuffer;
-                this.shadowCapturedIndexBuffer = this.shadowIndexBuffer;
-                this.shadowCaptureSerial++;
-            }
             this.terrainIndirectCalls++;
             this.terrainIndirectDraws += count;
             this.statistics.addLastDrawCommands(count);
@@ -837,14 +741,6 @@ public final class TerrainRenderer {
         ByteBuffer block = this.uniforms.mapped();
         int base = (int) offset;
 
-        // The camera's world position, kept because it is the only place in this renderer that knows it: the region offset
-        // below is computed from it, and nothing else on the path carries a world-space camera (the GL matrix mirror is
-        // camera-relative wherever it is read, and the game's own per-frame hook does not run on the headless path). The
-        // shadow light is built around this.
-        this.cameraWorldX = camera.intX + camera.fracX;
-        this.cameraWorldY = camera.intY + camera.fracY;
-        this.cameraWorldZ = camera.intZ + camera.fracZ;
-        this.cameraWorldKnown = true;
         block.putFloat(base + 0, (region.getOriginX() - camera.intX) - camera.fracX);
         block.putFloat(base + 4, (region.getOriginY() - camera.intY) - camera.fracY);
         block.putFloat(base + 8, (region.getOriginZ() - camera.intZ) - camera.fracZ);
