@@ -34,6 +34,9 @@ public final class ImmediateGroup {
      */
     public VulkanGlTexture textureImage;
     public long textureMutations;
+
+    /** Index of {@link #textureImage} in the shared texture array, or -1 when the group has none (section 11.8). */
+    public int textureArrayIndex;
     /** The pipeline-state key the group was accepted under. */
     public long stateKey;
     /** The decoded GL state (blend, depth, cull and friends) used to build the push block. */

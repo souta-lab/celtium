@@ -2191,6 +2191,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private VulkanTextureArray textureArray;
     private int textureArrayLogs;
+    /** Index the group being accepted will carry into the shared array; -1 when it has none. */
+    private int currentGroupTextureIndex = -1;
+    private long textureIndexHits;
+    private long textureIndexMisses;
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
     /**
      * The fog state at the moment the group was opened, beside {@code currentGroupState} and
@@ -6975,7 +6979,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.currentGroupTextureImage = celtium$registry().get(boundTexture);
                 // Fill the shared array as batches are accepted: the index this returns is what a converted pipeline will
                 // put in its push block, and registering here means a texture is written once per wrapper, not per group.
-                celtium$registerTexture(currentGroupTextureImage);
+                this.currentGroupTextureIndex = celtium$registerTexture(currentGroupTextureImage);
                 this.currentGroupLightmapImage = this.lightmapTexture;
             }
             // Only a layout that samples a texture needs its bound name to have a mirror. Asked without that, this
@@ -10021,6 +10025,9 @@ this.frameBufferOpen = false;
             // Resolved when the batch was accepted; the draw site re-resolves only if the registry moved since.
             group.textureImage = this.currentGroupTextureImage;
             group.textureMutations = this.textureRegistry == null ? 0L : this.textureRegistry.mutations();
+            // The index this group's texture occupies in the shared array, or -1 when it has none. A converted pipeline
+            // reads it instead of binding a set of its own; the field exists now so the conversion has its input.
+            group.textureArrayIndex = this.currentGroupTextureIndex;
             group.viewportValues = this.currentGroupViewportValues;
             group.texMatrix = this.currentGroupTexMatrix;
             // BH-05: the payload captured when this group was opened, not one rebuilt from the live light state now.
@@ -10194,6 +10201,7 @@ this.frameBufferOpen = false;
                 + " immediateState=" + this.immediateStatistics.immediateStateCalls() + " immediateOffered=" + this.immediateStatistics.immediateBatchesOffered()
                 + " frameId=" + this.frameId + " flushCount=" + this.immediateStatistics.flushCount()
                 + " textureArray=" + (this.textureArray == null ? "absent" : this.textureArray.report())
+                + " textureIndex=hit" + this.textureIndexHits + "/miss" + this.textureIndexMisses
                 + " orderPreservingFlushes=" + this.immediateStatistics.orderPreservingFlushes()
                 + " actualFlushes=" + this.immediateStatistics.actualFlushes()
                 + " actualFlushMillis=" + (this.immediateStatistics.actualFlushNanos() / 1000000L)
@@ -12813,20 +12821,28 @@ this.frameBufferOpen = false;
      * is what says how many textures a window actually needs. The array is skipped entirely on a device without the
      * features, so the per-group path is what runs there.
      */
-    private void celtium$registerTexture(org.soutalab.celtium.vulkan.VulkanGlTexture texture) {
+    private int celtium$registerTexture(org.soutalab.celtium.vulkan.VulkanGlTexture texture) {
         if (texture == null || !this.context.textureArraySupported()) {
-            return;
+            this.textureIndexMisses++;
+            return -1;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (this.textureArray == null) {
                 VulkanTextureArray array = new VulkanTextureArray(this.context);
                 if (!array.create(stack)) {
                     this.textureArray = null;
-                    return;
+                    this.textureIndexMisses++;
+                    return -1;
                 }
                 this.textureArray = array;
             }
-            this.textureArray.indexFor(stack, texture, 0);
+            int index = this.textureArray.indexFor(stack, texture, 0);
+            if (index < 0) {
+                this.textureIndexMisses++;
+            } else {
+                this.textureIndexHits++;
+            }
+            return index;
         }
     }
 

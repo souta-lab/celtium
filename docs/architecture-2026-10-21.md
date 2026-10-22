@@ -609,6 +609,10 @@ textureArray set=0x2b000000002b entries=35/4096 descriptorWrites=35
 - **descriptor書き込みは35回/プロセス**（group 159回ではない）。受理時の登録なので定常フレームでは0回。
 - **AMD PASSED・画像gate PASSED・validation 0件**。Intel も同ビルドで PASSED・0件（`91a458c4` 時点の同一配列コード）。
 
+**次段の入力を実測**: 受理時にgroupへ配列indexを持たせた（`ImmediateGroup.textureArrayIndex`）。
+世界legで **`textureIndex=hit178407/miss0`（AMD）・`hit114673/miss0`（Intel）**＝**全テクスチャgroupがindexを持つ**（fallback無し）。
+AMD/Intel とも PASSED・画像gate PASSED・validation 0件（jar `75bea5b3…`）。
+
 → §11.7 の残作業のうち「テクスチャ配列セット」は完了。次は**シェーダを配列indexへ**（indexは当面push定数、次にSSBO `gl_DrawID`）、
 その後に**pipelineソート＋geometry arena＋indirect**で 11 draw/window へ。
 
