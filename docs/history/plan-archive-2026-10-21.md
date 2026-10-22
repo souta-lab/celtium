@@ -231,3 +231,8 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### Intelの差は全域に分散（2026-10-22）
 
 | **Intelの1.3ms超過は全域に分散（2026-10-22 決定的）** | **ホットスポット無し** | 実測 | 方針確定 | 既存の細分ブラケットを両GPUで比較（同一jar・p50 ms）: **frame Intel 2.6 / AMD 1.3（+1.3）**。内訳の差は **terrain +0.8 / flush +0.6** だが、terrain内は**terrainRecord +0.1・recordPrepare +0.1・prepDescriptors +0.1・recDraw +0.1**、flush内は **winRecord +0.2・wrecLoop +0.2・grpDraw +0.2・winSubmit +0.2**、さらに **gui/hand/clouds が各 +0.1**。⇒ **ほぼ全てのブラケットが一律 +0.1ms**で、**単一のホットスポットは存在しない**＝Intelドライバ呼び出し1回あたりの固定オーバーヘッドが支配的。**したがってレバーは「ドライバとのやり取り回数を減らす」**（draw・submit・barrier・window数）であり、個別関数の最適化ではない。認容: 各ブラケットが+0.1msなので、10回のやり取りを削れば1ms級になる |
+
+### 2026-10-21 に完了した実装（現在表から移動）
+
+| **VertexBuffer保持型データのnative所有（2026-10-21 実装）** | **実装済み・実機PASSED** | PASSED/clean | 未測定 | `VertexBufferMixin` が `VertexBuffer` の生成/bind/upload/draw/unbind/delete を所有し、`NativeGeometryBuffer`（CPU内容＋opaque identity）と `RetainedGeometryCache`（device別・内容世代別mesh）へ渡す。`LeasedResource` で受理済みdrawが未記録/記録中/in-flightの旧世代を保持。sky/stars/horizon/Forge cloudがGL buffer store再decodeから外れる。AMD leg `native-v3-valid-amd`（jar `25668c4e…`）で確認 |
+| **terrain targetの不要な失敗計上（2026-10-21 修正）** | **修正済み・実機確認** | 確認 | 未測定 | `FrameCoordinator.Submission`（SKIPPED/RECORDED/QUEUED）を導入。native同一queue targetのRECORDEDを「GLへ同期通知できなかった失敗」と数えていた。修正前は`errors=17310`／`no submission reached the queue`が3324件、修正後は**errors=0**・当該断片0（`native-v2/v3`）。記録受理・queue送信・GPU完了を別状態として扱う |
