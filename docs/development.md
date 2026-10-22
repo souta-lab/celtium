@@ -210,3 +210,10 @@ JvmArgs=-Dorg.lwjgl.librarypath=<instance>/natives-3.4.3
 
 `org.lwjgl.librarypath` は LWJGL が最初に探す場所なので、クラスパス上の 3.3.1 natives は読まれない。
 検証ハーネス（`scripts/gv-leg.sh`）は自前でこの引数と `CELTIUM_LEG_LWJGL_VULKAN` を渡すため、この設定に依存しない。
+
+#### 手動起動で白画面になる場合（実測 2026-10-22）
+
+`CELTIUM_WINDOW_RENDERER failed: ... NoClassDefFoundError: org/lwjgl/vulkan/VkDebugUtilsMessengerCallbackEXTI` が出て
+白画面になるのは、Prism の classpath に **LWJGL Vulkan モジュールが入っていない**ため（検証ハーネスは `CELTIUM_LEG_LWJGL_VULKAN`
+で自前に入れるので気づかない）。インスタンス側の `java-celtium.sh` が `-cp` の値に `libs/lwjgl-vulkan-3.4.3.jar` を
+追記し、`-Dorg.lwjgl.librarypath` で 3.4.3 natives を指す。Prism の「Javaのパス」にこのスクリプトを指定する。

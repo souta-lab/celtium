@@ -551,6 +551,25 @@ frame=10156 groups=159 mergeableRuns=159 largestRun=1 arenaBackedGroups=37
 これは Sodium / Celeritas が採っている描画マネージャ方式そのもので、利用者指示③の「既存modの手法を取り入れ、実装は自前」に沿う。
 必要機能は既に有効（`CELTIUM_DEVICE_FEATURES shaderDrawParameters=true`、`multiDrawIndirect`）。
 
+### 11.6 distinct pipeline数（2026-10-22 実測・census拡張）
+
+`-Dceltium.vulkan.mergeCensusPipelines=true` は census の run key から descriptor を外し、
+**window内のdistinct pipeline数**も出す（runが1のままでも「交互配置」で説明できるかを切り分けるため）。
+
+```
+groups=159  distinctPipelines=11  mergeableRuns=159  largestRun=1
+```
+
+**読み方**:
+- **distinct pipeline は11**。159 group が11種類の pipeline に収まる＝**状態の種類は少ない**。
+- 一方 **run はすべて1**＝**隣接groupが交互に状態を変えている**。だから「隣接runをまとめる」案は効かない（§11.5の実測）。
+- したがって §11.5 の設計は**「並べ替え＋状態の共通化」**で成立する: descriptorを全group共通にし、
+  pipelineで**ソートして描く**と、window あたり **11 draw**（現状159）まで落ちる。
+  不透明は順序自由、translucentは順序保持の制約下で pipeline ごとにまとめる。
+
+見積り: draw 0.2ms + push 0.1 + viewport 0.1 + prep 0.1 のうち、group数に比例する分（≒0.4ms）がほぼ消える。
+per-drawデータは SSBO（`gl_DrawID`）に移すので push定数も不要。**パリティ到達の本命**。
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）

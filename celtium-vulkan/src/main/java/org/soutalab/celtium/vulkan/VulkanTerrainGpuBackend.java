@@ -12968,6 +12968,8 @@ this.frameBufferOpen = false;
     private final long[][] offerStageDeltas = new long[16][2];
 
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
+    /** Keys the census run by pipeline alone, the ceiling a shared-descriptor design would reach (section 11.5). */
+    private static final boolean CENSUS_BY_PIPELINE = Boolean.getBoolean("celtium.vulkan.mergeCensusPipelines");
     /** Refusals by the term that actually fired, filled only when {@link #MERGE_CENSUS} is on. */
     private final java.util.Map<String, Integer> mergeRefusals = new java.util.TreeMap<>();
 
@@ -17026,6 +17028,7 @@ this.frameBufferOpen = false;
             // a hash lookup per group while the switch is on.
             long censusStartNanos = MERGE_CENSUS ? System.nanoTime() : 0L;
             java.util.Map<Long, Integer> censusRuns = MERGE_CENSUS ? new java.util.HashMap<Long, Integer>() : null;
+            java.util.Set<Integer> censusPipelines = MERGE_CENSUS ? new java.util.HashSet<Integer>() : null;
             int censusArenaBacked = 0;
             for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
                 ImmediateGroup group = groups.get(groupIndex);
@@ -17080,8 +17083,18 @@ this.frameBufferOpen = false;
                     // commands the frame would need, and the run count is the number of commands it records today.
                     // The prepared handle is (pipeline, descriptor set) chosen when the group closed, so it is the
                     // identity that decides whether two groups can share a command.
-                    long runKey = (((long) System.identityHashCode(group.prepared)) * 31L
+                    // Identity of what a run would have to share. With CENSUS_BY_PIPELINE the key drops the descriptor
+                    // and keeps only the pipeline, which is the run count a design that makes every group share one
+                    // descriptor set would reach - the number section 11.5 needs before anyone builds it.
+                    Object runIdentity = CENSUS_BY_PIPELINE ? group.prepared.pipeline : group.prepared;
+                    long runKey = (((long) System.identityHashCode(runIdentity)) * 31L
                             + System.identityHashCode(group.target)) * 31L + group.viewportHash();
+                    if (CENSUS_BY_PIPELINE) {
+                        // Distinct pipelines in this window: the draw count a design that sorts by pipeline and shares one
+                        // descriptor set would reach, which adjacency alone cannot show (alternating states keep runs at 1
+                        // however few pipelines they come from).
+                        censusPipelines.add(Integer.valueOf(System.identityHashCode(group.prepared.pipeline)));
+                    }
                     Integer seen = censusRuns.get(Long.valueOf(runKey));
                     censusRuns.put(Long.valueOf(runKey), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
                     if (mesh != null && mesh.isArenaBorrow()) {
@@ -17469,7 +17482,9 @@ this.frameBufferOpen = false;
                     largest = Math.max(largest, count.intValue());
                 }
                 System.out.println("[Celtium] CELTIUM_MERGE_CENSUS frame=" + this.frameId
-                        + " groups=" + groups.size() + " mergeableRuns=" + censusRuns.size()
+                        + " groups=" + groups.size() + " distinctPipelines="
+                        + (censusPipelines == null ? -1 : censusPipelines.size())
+                        + " mergeableRuns=" + censusRuns.size()
                         + " largestRun=" + largest + " arenaBackedGroups=" + censusArenaBacked
                         + " censusMillis=" + ((System.nanoTime() - censusStartNanos) / 1_000_000L));
             }
