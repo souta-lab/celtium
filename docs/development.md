@@ -488,3 +488,24 @@ passSplit: frame 6.8 / world 6.8（terrain 4.5 / flush 3.3）/ hand 0.1 / clouds
 注意（この計測で判明）: `CELTIUM_FRAME_STATS` の `prepare[perFrameMs]` と `accept[...]` は**累積値**で、
 `debugFrameReports`（レポート回数）で割っているため**フレーム毎コストとして読めない**。判定には `passSplit` の
 `clock=cpu` 行を使うこと（この行は 512 フレームの p50/p95/worst を出す）。
+
+**fps300 KPI: ワールド中のJFR（2026-10-23・実測）**
+
+`-Dceltium.validation.holdUntilTick=1200 -Dceltium.vulkan.paceToRefresh=false`、
+`-XX:StartFlightRecording=delay=13s,duration=25s,settings=profile` で**ワールド滞在中**を採取（1056サンプル）。
+トップ（self, samples）:
+```
+63  submitImmediateBatchTimed (VulkanTerrainGpuBackend:6107)
+53  submitGeometryBatch        (:6071)
+51  submitImmediateBatch       (:5980)
+49  java.util.HashMap.get + 24 getNode + 24 TreeNode  ≒97（HashMap探索が最大の単一要因）
+33  BufferedImage.getRGB
+30x3 TextureUtil upload経路（機能: アニメーションテクスチャの再アップロード）
+28x2 ChunkBuilderMeshingTask（ワーカーのチャンク構築）
+25  World.func_175726_f / 25 WorldVertexBufferUploader.offerBatch
+```
+⇒ 300fpsへの第一手は **即時バッチ受理経路のHashMap探索排除**（primitive/配列キャッシュ化）と、
+その次に**アニメーションテクスチャの再アップロード**（毎tickのBufferedImage経路）と**チャンク構築**。
+
+計測の注意: fixtureはワールド入室後 約5秒でキャプチャ→終了する。JFRは `delay=13s,duration=25s` のように
+**起動からの経過秒**で合わせる（`holdUntilTick` を増やしても滞在は延びない）。
