@@ -545,3 +545,16 @@ CELTIUM_PACK_RERENDER_GEOMETRY vertices=68 indices=102 pipeline=0x2170000000217
 
 次の判別: 撮影フレームを特定し、そのフレームで `renderOffscreen` 後の `sampled` を出す
 （現在は初回のみログ）。撮影時の `frameId` と突き合わせて、再描画が毎フレーム走っているかを確認する。
+
+### S3達成: packの出力が「最終画面」になった（2026-10-23・実画像）
+
+`drawProbe=blit` + 全画面ブリット（`-Dceltium.shaderpack.probeFullscreen=true` 既定）で leg を実行:
+
+- 提示画像（`docs/evidence/pack-world-2026-10-23.png`）は **probe画像そのもの**:
+  `(0,0,255)` のクリア色 + `(199,199,199)` の石ブロック（地形ジオメトリが描いた領域）
+- **画像gate が FAILED** ＝ 表示画像が参照ワールドと一致しなくなった
+  ⇒ これまでの「pack出力が最終画面に届いていない」状態を**実画像で反証**した（S3の判別条件を満たす）
+
+意味: packのSPIR-V・パイプライン・ユニフォーム・頂点変換・描画・提示までが一本につながり、
+**最終画面をpackのシェーダが描いた**。残りは probe の固定フィット変換を実カメラ行列へ置き換え、
+フレーム全体を pack のパス構成（gbuffer→composite）で描くこと。
