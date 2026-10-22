@@ -869,3 +869,19 @@ flush 0.6   winRecord 0.6   world 2.1
 
 **次の性能候補**: ①3パスを1パスへ統合（begin/end/barrier の重複除去）②`winRecord` 0.6ms の per-group 記録を
 描画マージ（§11.5 のソート＋間接）で削る。どちらも「呼び出し回数×ドライバ単価」の削減であり、§11/§12 の結論と一致する。
+
+### 11.11 per-group のドライバ呼び出しは全体の 0.13ms/フレーム（2026-10-22 実測）
+
+`-Dceltium.vulkan.packetTimings=true`（jar `0325739011cc`・AMD）で、パケット単位の内訳を取った:
+
+```
+packets=1795602  packetCalls=1701514  bindSkips=276847
+packetDrawMillis=796  packetPipelineMillis=277  packetBindMillis=228  packetPushMillis=139
+```
+
+1パケットあたり: draw 0.47µs / pipeline 0.16µs / bind 0.13µs / push 0.08µs ＝ **合計 ~0.84µs**。
+159 group/フレームならドライバ呼び出しは **約0.13ms/フレーム**にしかならない。
+
+⇒ **`winRecord` 0.6ms の大半はドライバ呼び出しではなく、group ごとのJava側処理**（push block 構築・状態判定・台帳更新）。
+したがって削るべきは「1 group あたりのJava仕事」か「group数そのもの」であり、後者が §11.5 のソート＋描画マージ。
+「bind/push を速くする」系のmicro-optimisationは、この実測から言って無意味。
