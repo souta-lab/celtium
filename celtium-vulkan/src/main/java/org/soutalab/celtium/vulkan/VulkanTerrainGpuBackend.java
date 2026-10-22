@@ -2220,6 +2220,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
     private final long[] frameIntervals = new long[120];
+    /** How many frame-statistic lines this run has printed, so per-frame means can be reported. */
+    private long debugFrameReports;
     private int frameIntervalCount;
     private long lastFrameBoundaryNanos;
 
@@ -2246,7 +2248,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " max=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[sorted.length - 1] / 1e6) + "]"
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
-                + (BATCH_TIMINGS ? offerStageNanosSummary() : ""));
+                + (BATCH_TIMINGS ? offerStageNanosSummary() : "")
+                + " prepare[nanos=" + this.immediateStatistics.prepareImmediateNanos()
+                + " calls=" + this.immediateStatistics.prepareImmediateCalls()
+                + " perFrameMs=" + String.format(java.util.Locale.ROOT, "%.2f",
+                        this.immediateStatistics.prepareImmediateNanos() / 1e6
+                                / Math.max(1L, this.debugFrameReports))
+                + "]"
+                + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " skips=" + this.lazyMirrorRetrySkips
+                + " failures=" + this.lazyMirrorFailures + "]");
+        this.debugFrameReports++;
         this.frameIntervalCount = 0;
     }
 
