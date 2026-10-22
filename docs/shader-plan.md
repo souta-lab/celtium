@@ -692,3 +692,12 @@ interface順が変わりうる）、(b) `TAAJitter` の分母（viewWidth/viewHe
 - 変更: `ShaderPackDrawProbe.writeIdentityTransforms()`（ブロック解析＋std140アラインメント）
 - 併せて `gbufferModelView`/`gbufferModelViewInverse` も同一ブロック内で単位行列に
 - 検証leg: `packblit-27`（AMD・BSL v10.1.8・world・validation ON、画像gateは意図通りFAILED=pack出力が画面）
+
+### 未検証: ライト視点レンダ（2026-10-23）
+
+`-Dceltium.shaderpack.probeView=light` に、キャプチャ地形のboundsから作る**正射影×ルックアット**（太陽方向）を追加した。
+実測leg `packblit-28` は**クリア色のみ**（描画なし）で、ライト視点の行列（基底ベクトルの構成）が未確定。
+地形プログラム自体はカメラ視点で可視（`packblit-27`）なので、次は
+(a) lookAt基底の検算（right = normalize(cross(up, dir)) 等を明示的に計算する）、
+(b) 影パスは色ではなく**深度**へ書くため、可視性の判定は深度読み戻しで行う、の順に進める。
+この機能は既定off（プロパティ指定時のみ）で、受入経路には影響しない。

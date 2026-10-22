@@ -939,8 +939,18 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         float centreY = (minY + maxY) * 0.5f;
         // With the game's camera the vertices go to clip space through the real projection and model-view; without it
         // the picture-fitting transform below still applies, which is what the earlier legs measured.
-        float[] clipMatrix = this.worldProjection != null && this.worldModelView != null
-                ? multiplyColumnMajor(this.worldProjection, this.worldModelView) : null;
+        boolean lightView = "light".equalsIgnoreCase(System.getProperty("celtium.shaderpack.probeView", ""));
+        float[] clipMatrix;
+        if (lightView) {
+            // The shadow pass's viewpoint: an orthographic camera looking along the sun so the captured casters can be
+            // seen from the light. It uses the geometry's own bounds, like the fit, because the real light frustum lives
+            // in the pack's shadow matrices, which this probe does not have yet.
+            float[] light = lightClipMatrix(positions);
+            clipMatrix = light;
+        } else {
+            clipMatrix = this.worldProjection != null && this.worldModelView != null
+                    ? multiplyColumnMajor(this.worldProjection, this.worldModelView) : null;
+        }
         if (clipMatrix != null && this.positionsBufferIndex >= 0) {
             java.nio.FloatBuffer positionsBuffer = MemoryUtil.memFloatBuffer(
                     this.vertexBuffers.get(this.positionsBufferIndex).mappedAddress(), positions.length);
@@ -1009,6 +1019,49 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                     + positions[4] + "," + positions[5] + "][" + positions[8] + "," + positions[9] + "]");
         }
         return String.format(java.util.Locale.ROOT, "bounds=%.1fx%.1f scale=%.4f", extentX, extentY, scale);
+    }
+
+    /**
+     * {@return an orthographic clip matrix seen from the sun, fitted to the given positions}.
+     * <p>
+     * A shadow pass draws the casters from the light. Without the pack's own shadow matrices the frustum is derived from
+     * the captured geometry: centre it on the bounds, look along a fixed sun direction, and make it wide enough to hold
+     * everything. The result is a real light-space render, which is what the shadow pass needs to be proven with.
+     */
+    private static float[] lightClipMatrix(float[] positions) {
+        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+        int vertices = positions.length / 4;
+        for (int vertex = 0; vertex < vertices; vertex++) {
+            float x = positions[vertex * 4], y = positions[vertex * 4 + 1], z = positions[vertex * 4 + 2];
+            if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)) {
+                continue;
+            }
+            minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+            maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+        }
+        float centreX = (minX + maxX) * 0.5f, centreY = (minY + maxY) * 0.5f, centreZ = (minZ + maxZ) * 0.5f;
+        float extent = Math.max(1.0f, Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ)));
+        // Sun direction: high and to one side, the angle BSL's default path uses.
+        float dx = 0.4f, dy = -0.8f, dz = 0.45f;
+        float length = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        dx /= length; dy /= length; dz /= length;
+        float distance = extent * 2.0f;
+        float eyeX = centreX - dx * distance, eyeY = centreY - dy * distance, eyeZ = centreZ - dz * distance;
+        float[] view = {
+                dz, 0.0f, -dx, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                dx, 0.0f, dz, 0.0f,
+                -(dx * eyeX + dz * eyeZ), -eyeY, -(dz * eyeX - dx * eyeZ), 1.0f
+        };
+        float half = extent * 0.75f + 1.0f;
+        float[] ortho = {
+                1.0f / half, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f / half, 0.0f, 0.0f,
+                0.0f, 0.0f, -2.0f / (distance * 3.0f), 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f
+        };
+        return multiplyColumnMajor(ortho, view);
     }
 
     /** {@return the column-major product of two 4x4 matrices}. */
