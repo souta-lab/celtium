@@ -766,3 +766,11 @@ validation errors: 0
 ⇒ 影マップ（深度）が実際に生成されている。次は (a) 深度範囲 0.0 の確認（正射影のnear/far）、
 (b) このマップを pack の `shadow` プログラムの出力に置き換え、(c) `shadowModelView/shadowProjection` を
 実値で供給して gbuffers から影を参照、の順。
+
+### 深度レンジの修正（2026-10-23・未検証）
+
+ライトの正射影が `z_ndc = z_view * scale` だけで**平行移動項を持たず**、near が 0 に落ちていなかった（前回 `depth=[0,1]`）。
+Vulkan の [0,1] 深度に合わせ `m[10] = 1/(near-far)`, `m[14] = near/(near-far)`（near = distance*0.1, far = distance*3）へ修正。
+
+実測: 修正後の leg `packblit-33` は**キャプチャが走らず**（`CELTIUM_PACK_CAPTURE` 行なし、ゲームが早期終了）、
+影マップの数値は**未取得**。次は同じlegを再実行して `packblit-32` と同じ条件で `depth=[...]` を比較する。

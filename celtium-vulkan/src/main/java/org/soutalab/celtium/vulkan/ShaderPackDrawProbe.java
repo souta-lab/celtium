@@ -1240,11 +1240,16 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 -dotR, -dotU, dotF, 1.0f
         };
         float half = extent * 0.75f + 1.0f;
+        // Vulkan's depth range is [0, 1] and the view space looks down -Z, so with z_view = -d the map is
+        // z_ndc = d * 1/(near-far) + near/(near-far): near lands on 0 and far on 1. The first version used a single
+        // scale with no translation, which put everything near 0 and left the range meaningless as a distance.
+        float near = Math.max(0.05f, distance * 0.1f);
+        float far = distance * 3.0f;
         float[] ortho = {
                 1.0f / half, 0.0f, 0.0f, 0.0f,
                 0.0f, 1.0f / half, 0.0f, 0.0f,
-                0.0f, 0.0f, -2.0f / (distance * 3.0f), 0.0f,
-                0.0f, 0.0f, 0.0f, 1.0f
+                0.0f, 0.0f, 1.0f / (near - far), 0.0f,
+                0.0f, 0.0f, near / (near - far), 1.0f
         };
         return multiplyColumnMajor(ortho, view);
     }
