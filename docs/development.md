@@ -544,3 +544,19 @@ terrainPerFrame[calls=5 draws=48 drawsPerCall=9]
 ⇒ **1フレームあたり間接ドローは48個だけ**（5回の indirect call に9個ずつ）。描画コマンド数は律速ではない。
 terrain 4.5ms の内訳は**ドロー記録の前段のCPU処理**（セクション走査・行列・パス開始/終了・バインド）にある。
 次の判別: terrain bracket 内をさらに分割（region走査 / バインド / push constant / パス開始終了）して計測する。
+
+**fps300 KPI: terrain 3.4ms の内訳が判明（2026-10-23・実測）**
+
+`CELTIUM_FRAME_PASS_SPLIT` のネストbracket（`(inside world)` として出る）を読むと:
+```
+terrain(inside world)   p50=3.4ms
+terrainRecord           p50=0.5ms
+terrainSubmit           p50=0.0ms
+terrainSetup/Target/Begin/End/Handoff/Close  p50=0.0ms
+```
+⇒ **名前付きサブbracketの合計は約0.5ms**で、terrainの3.4msのうち**約2.9msが未計測区間**にある。
+描画コマンドは48個/フレームなので、この未計測区間は**レンダーリスト/リージョンの走査・ユニフォーム容量確保と
+行列アップロード・リージョン資源解決**などの、bracketの外側にある毎フレーム処理。
+
+次の判別: `celtium$renderPass` のリージョンループとuniformアップロードを新しいbracket（例 `terrainRegions`,
+`terrainUniforms`, `terrainLists`）で囲み、2.9msの所在を特定する。
