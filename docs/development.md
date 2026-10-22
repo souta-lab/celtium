@@ -264,3 +264,13 @@ libSDL3 が1つだけマップされているかも確認する。
 - 次の手段: `ulimit -c unlimited` ＋ `-XX:+CreateCoredumpOnCrash` でコアを保存し、`gdb <java> <core>` で
   **ネイティブスレッドのスタック**を取る（`thread apply all bt`）。それが判れば、SDLが立てたスレッドかこちらかを確定できる。
 
+**デバッガ経路は塞がっている（2026-10-22）**:
+- `kernel.core_pattern = /dev/null` → **コアダンプは保存されない**（`coredumpctl` も空）。有効化には root 設定変更が要る。
+- `gdb --args <java> ...` は **JVM起動直後**（`VM_Version::get_processor_features`）で SIGSEGV し、ゲームまで到達しない
+  （`set disable-randomization off` でも同じ）。この環境のgdbではJVMを起動できない。
+
+**次の仮説（コードで検証可能）**: Wayland の `wl_display` は**スレッド安全ではない**。SDL(Wayland) のイベント読み取りと、
+Celtium の present（Vulkan WSI が同じ `wl_surface`/`wl_display` を触る）が**別スレッド**で走ると、
+`wl_display_read_events` 内で SEGV しうる。クラッシュが「ネイティブスレッド」で起きていること、Javaフレームが無いことと整合する。
+確認方法: present と SDL ポンプの**スレッドIDをログに出し**、両者が同一かを実測する（`Thread.currentThread()` と
+`SDL_GetCurrentThreadID` 相当）。同一でなければ、present をSDLスレッドへ寄せる設計変更が本命。
