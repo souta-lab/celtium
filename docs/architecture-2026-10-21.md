@@ -393,7 +393,18 @@ descriptor の更新漏れ、バッチ数、マップの充填とスケール。
 **残る唯一の差は `u_RegionOffset` の供給**。キャスタは `batch.descriptorSet` + `batch.dynamicOffset` をbindするが、これは
 **そのバッチを記録した時点の最後のリージョン**の値で、バッチが**複数リージョンを跨ぐ**なら大部分のコマンドでoffsetが食い違う。
 ⇒ **次の計器**: 1バッチが覆うリージョン数を数える（`regionsPerBatch`）と、キャスタの（descriptor/dynamicOffset）が
-**そのバッチの先頭リージョンと一致しているか**をログする。
+そのバッチの先頭リージョンと一致しているか**をログする。
+
+### 2026-10-22 追記: descriptor/dynamicOffset も「記録時点のもの」と書かれている
+`celtium$queueShadowBatches` の呼び出しは地形パス内（`11737`）で、コメントは
+「the pipeline's set, dynamic offset and push block are the ones the batch was recorded with」と明言している。
+`lastPushBlock` は**行列32個のみ**（`pushMatrices` が `2 * MATRIX_FLOATS` をコピー）で、`u_RegionOffset` は
+descriptorのuniform buffer側にある。⇒ **入力はすべて「記録時のもの」で揃っている**はず。
+
+**したがって残る可能性は間接コマンドの中身**: キャスタが描く範囲（`batch.indirectOffset`/`indirectCount`）が、
+レシーバが描いた範囲と**ずれている**（別バッチ・別オフセット・別パス）。次の計器は
+**両経路で `indirectOffset`・`indirectCount`・先頭コマンドの `indexCount`/`firstIndex`/`baseVertex` をログ**し、
+同じ範囲を指しているかを確かめること。
 
 ### 触ってはいけないもの
 `lightSpaceBlock` のidentity、`lightVP*T(centre)`、Vulkan深度remap（`cameraDepth=0.5` で検証済み）は
