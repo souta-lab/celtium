@@ -244,3 +244,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### Intel関連の確定事項（2026-10-22）
 
 | **Intel固有のコストは非地形側（2026-10-22 実測）** | **非地形で1.13ms差** | 実測 | Intel限定の余地 | 同一jar・同一scene・同一フラグで両GPUを比較（`-Dceltium.vulkan.refuseTerrainPass=true`）: **AMD 1.593-1.628 → 1.422ms（地形 約0.19ms＝12%）**、**Intel 3.14 → 2.552ms（地形 0.59-0.84ms）**。非地形どうしでは **Intel 2.55 vs AMD 1.42＝1.13ms差**で、CPUは同一マシン＝**Intel固有のGPU仕事**（合成・提示・チェーン）。`skipGlComposite` は0.14msのみなので残りは提示/blit/チェーン側。⇒ Intel比1.738xの主成分は地形ではなく**提示系** |
+
+### モデル経路・ウィンドウ・flushの測定（2026-10-22）
+
+| **モデル経路は世代キャッシュ済み（2026-10-22）** | **新規capture分のみ** | 実読 | 対象外 | `drawModelList` 4.9%・`ModelGeometryCache.build` 2.6%・`buildModelMeshes` 2.5% が目立つので実装を確認: **メッシュはdisplay-listの世代で再利用**（世代不変なら再構築しない）、ビルドは**新capture毎に1回**に制限（draw側がcaptureVersionを記録して1回だけ要求）。⇒ **残るのは実際に必要な仕事**。削るなら**遅延ビルド**（描くリストだけ）だが未測定。**ウィンドウ機構も中立**: `-Dceltium.vulkan.immediateWindows=false` で **1.637ms**（既定 1.586-1.642）＝差なし、gate PASSED。なお当該コードのコメントが「既定OFF」と書いていたが**実際は既定ON**（古い記述）だったので修正した。**`flushPendingBeforeGlDraw` も疑いを晴らした**: JFRで2.8%あったので「refused=0なのに毎回走っている」と疑ったが、カウンタを追加して測ると **20.0回/frame・うち保留グループありは5.0回**＝大半は空振りで安く、コストは**正当な5回のflush**（ウィンドウ境界）。**隠れた冗長呼び出しではない** |
