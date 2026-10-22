@@ -66,7 +66,6 @@ layout(location = 3) in vec2 v_TexCoord;
 layout(location = 4) in float v_FragDistance;
 layout(location = 5) flat in float v_MaterialMipBias;
 layout(location = 6) flat in float v_MaterialAlphaCutoff;
-layout(location = 7) in vec4 v_ShadowCoord;
 
 // --------------------------------------------------------------------------------------------
 // Descriptor set 0
@@ -87,15 +86,6 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
 } celtium;
 
 layout(set = 0, binding = 2) uniform sampler2D u_BlockTex; // The block texture
-// The native shadow map: a D32 depth image sampled as a plain float. The comparison is done here rather than with a
-// comparison sampler so the same view can be read back for diagnostics.
-layout(set = 0, binding = 3) uniform sampler2D u_ShadowMap;
-
-// false in the shipping pipeline, true when the native shadow pass runs.
-layout(constant_id = 0) const bool CELTIUM_SHADOW_ENABLED = false;
-// Diagnostic only: paints the shadow verdict (green lit, red shadowed) so the picture says where the map and the
-// lookup actually put the shadows, instead of leaving it to a pixel count that varies twofold between runs.
-layout(constant_id = 1) const bool CELTIUM_SHADOW_DEBUG = false;
 
 layout(location = 0) out vec4 fragColor; // The output fragment for the color framebuffer
 
@@ -207,59 +197,4 @@ void main() {
 
     }
 
-    // Native shadow map. The world position projected by the light matrix is divided here; the bias grows with the
-    // distance to the fragment so a surface at a grazing angle does not shadow itself. Three by three taps give the
-    // soft edge, and a coordinate outside the map reads as lit - an unrendered map leaves the terrain exactly as the
-    // shaderless path drew it.
-    // The whole shadow path is behind a specialisation constant: with the pass off the compiler removes the derivative
-    // pairs, the cross product and the nine taps, so the shipping fragment shader costs what it did before the feature
-    // existed. A uniform branch would leave all of that in place for the default configuration.
-    if (CELTIUM_SHADOW_ENABLED) {
-    // No y flip: measured in one valid frame on the AMD RX 6400, 82.25% of in-range lookups already sample a caster with these
-    // coordinates, against 6.91% with y mirrored. Earlier readings that suggested a flip came from legs whose frame was captured
-    // outside the warm window, where the same pixels paint something else entirely.
-    vec3 shadowCoord = v_ShadowCoord.xyz / v_ShadowCoord.w;
-    // The derivatives are taken unconditionally: inside the branch below they are in non-uniform control flow, which is
-    // undefined in GLSL and made the frame loop stall on this driver (3 presents in 60 s against 600 without the
-    // sampling). Computing the slope term first costs one derivative pair on every fragment and removes the hazard.
-    vec3 shadowDx = dFdx(shadowCoord);
-    vec3 shadowDy = dFdy(shadowCoord);
-    float slopeTerm = abs(normalize(cross(shadowDx, shadowDy)).z);
-    if (CELTIUM_SHADOW_DEBUG) {
-        // Does the lookup land where a caster actually wrote? Green when the sampled texel holds depth (< 1, so something
-        // was drawn there), red when it holds the cleared value. The map is only 12% covered, so this separates "the map
-        // is empty where we look" from "the depth comparison is wrong" - the two remaining candidates.
-        bool xyIn = all(greaterThanEqual(shadowCoord.xy, vec2(0.0)))
-                && all(lessThanEqual(shadowCoord.xy, vec2(1.0)));
-        if (!xyIn) {
-            fragColor = vec4(0.0, 0.0, 1.0, 1.0);
-            return;
-        }
-        float sampled = texture(u_ShadowMap, shadowCoord.xy).r;
-        // The lookup's own position, painted as colour: red is x, green is y, in light-map space. The caster map came out as a
-        // single blob at x 89..245, y 64..187 of 256, so a screenshot of this tells whether the receivers look at that blob or
-        // somewhere else entirely - the one question the coverage counts could not settle.
-        float inside = (shadowCoord.x >= 0.3477 && shadowCoord.x <= 0.9570
-                && shadowCoord.y >= 0.25 && shadowCoord.y <= 0.7305) ? 1.0 : 0.0;
-        fragColor = vec4(shadowCoord.xy, inside, 1.0);
-        return;
-    }
-    if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
-        float bias = 0.0008 + 0.002 * (1.0 - slopeTerm);
-        float lit = 0.0;
-        for (int y = -1; y <= 1; y++) {
-            for (int x = -1; x <= 1; x++) {
-                // Two texels per step: the map is 4.7 cm per texel at a +/-48 block radius, so a 3x3 pattern two
-                // texels apart reads as a soft edge rather than a stair-stepped one, without doubling the tap count.
-                vec2 offset = vec2(float(x), float(y)) * (2.0 / 2048.0);
-                float depth = texture(u_ShadowMap, shadowCoord.xy + offset).r;
-                lit += shadowCoord.z - bias > depth ? 0.0 : 1.0;
-            }
-        }
-        // 0.2 at full shadow: the map's effect has to be obvious in a scene that is mostly a lit wall, and the first
-        // strength (0.45) left ON and OFF within 0.13 percentage points of dark pixels of each other.
-        float shadow = lit / 9.0;
-        fragColor.rgb *= mix(0.2, 1.0, shadow);
-    }
-    }
 }
