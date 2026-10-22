@@ -15615,6 +15615,15 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.shaderpack.PackManifest manifest =
                     org.soutalab.celtium.shaderpack.ShaderPackLoader.load(path);
             this.shaderPackManifest = manifest;
+            // What the pack asks its shadow to be, logged rather than applied: the light box stays where it is until the half-plane distortion
+            // that makes a wider one affordable lands (architecture section 13.2 has BSL's numbers).
+            org.soutalab.celtium.shaderpack.ShaderPackLoader.ShadowSettings declared =
+                    org.soutalab.celtium.shaderpack.ShaderPackLoader.shadowSettings(
+                            java.nio.file.Paths.get(SHADER_PACK_PATH));
+            System.out.println("[Celtium] CELTIUM_SHADOW_PACK declared resolution=" + declared.resolution()
+                    + " distance=" + declared.distance()
+                    + " applied resolution=" + org.soutalab.celtium.vulkan.shadow.ShadowMapPass.SIZE
+                    + " distance=" + System.getProperty("celtium.shadow.radius", "48"));
             // After the manifest, not before: the program probe reads the manifest to find the pack's own paths, and the
             // first version ran it first, so it returned early with nothing to report.
             celtium$probeShaderCompile();

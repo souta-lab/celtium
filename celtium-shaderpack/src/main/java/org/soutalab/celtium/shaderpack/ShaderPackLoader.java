@@ -52,6 +52,50 @@ public final class ShaderPackLoader {
      * @param file  the file to expand, under {@code shaders/}
      * @param seeds object-like macros to define before expansion, e.g. the pack's own enabled options
      */
+    /**
+     * The shadow settings a pack declares in its own {@code shaders/shaders.properties}.
+     * <p>
+     * Iris reads these from the pack's {@code const} directives; BSL declares them per profile instead
+     * ({@code profile.HIGH=... shadowMapResolution=2048 shadowDistance=256.0}), which is why this scans the whole file and keeps the largest of
+     * each - the pack's own upper bound. The renderer does not act on the values yet: widening the light box without the half-plane distortion the
+     * pack's design assumes would trade texel density for reach. Reading them is the step before that, and a log line is how it is checked.
+     *
+     * @param input pack zip or extracted directory
+     * @return the declared resolution and distance in blocks, or the renderer's own defaults when the pack declares neither
+     */
+    public static ShadowSettings shadowSettings(java.nio.file.Path input) {
+        try {
+            java.util.List<Diagnostic> diagnostics = new java.util.ArrayList<>();
+            PackSource pack = PackSource.open(input, LoadOptions.defaults().limits(), diagnostics);
+            PackPath properties = PackPath.absoluteUnchecked("/shaders/shaders.properties");
+            if (!pack.exists(properties)) {
+                return ShadowSettings.DEFAULTS;
+            }
+            String text = new String(pack.read(properties), java.nio.charset.StandardCharsets.UTF_8);
+            int resolution = 0;
+            float distance = 0.0f;
+            java.util.regex.Matcher ints = java.util.regex.Pattern
+                    .compile("shadowMapResolution\\s*=\\s*([0-9]+)").matcher(text);
+            while (ints.find()) {
+                resolution = Math.max(resolution, Integer.parseInt(ints.group(1)));
+            }
+            java.util.regex.Matcher floats = java.util.regex.Pattern
+                    .compile("shadowDistance\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)").matcher(text);
+            while (floats.find()) {
+                distance = Math.max(distance, Float.parseFloat(floats.group(1)));
+            }
+            return new ShadowSettings(resolution > 0 ? resolution : ShadowSettings.DEFAULTS.resolution(),
+                    distance > 0.0f ? distance : ShadowSettings.DEFAULTS.distance());
+        } catch (PackException | RuntimeException failure) {
+            return ShadowSettings.DEFAULTS;
+        }
+    }
+
+    /** {@code resolution} is the map's edge in texels and {@code distance} the light box's half-extent in blocks. */
+    public record ShadowSettings(int resolution, float distance) {
+        public static final ShadowSettings DEFAULTS = new ShadowSettings(2048, 48.0f);
+    }
+
     public static String expand(Path input, PackPath file, Map<String, String> seeds) throws PackException {
         List<Diagnostic> diagnostics = new ArrayList<>();
         PackSource pack = PackSource.open(input, LoadOptions.defaults().limits(), diagnostics);
