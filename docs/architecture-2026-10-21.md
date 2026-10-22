@@ -530,6 +530,28 @@ JFR定常（1,215サンプル）とpassSplitから、受理経路を**構造変�
 
 **優先順**: ① distortion（コスト/品質の両方に効く）→ ② パック宣言の解像度・距離 → ③ entity casters → ④ `shadowtex` color target（パック接続時）。
 
+### 13.2 BSL が実際に宣言している影設定（パックの zip から直接、2026-10-22）
+
+`BSL_v10.1.8.zip` の `shaders/shaders.properties` に**プロファイル別の directive** がある:
+
+| profile | shadowMapResolution | shadowDistance |
+|---|---|---|
+| MINIMUM | 512 | **128.0** |
+| LOW | 1024 | **128.0** |
+| MEDIUM | 1536 | **192.0** |
+| HIGH | 2048 | **256.0** |
+| ULTRA | 3072 | **512.0** |
+
+（`final.glsl:37` に `const bool shadowHardwareFiltering = true;` もある）
+
+**これは Celtium の現状と桁が違う**: 我々は **2048²・±48ブロック**。BSL の想定は **128–512ブロック**で、
+ULTRA は 3072²。±48 の箱に 2048² を割ると 4.7cm/テクセルだが、BSL の設計は **distortion（half-plane）で近傍に集中**させて
+広い距離を少ないテクセルで賄う前提なので、**距離を広げるだけでは精度が落ちる**（だから ①distortion が先）。
+
+⇒ 次の実装単位は「**`shaders.properties` から `shadowMapResolution` と `shadowDistance` を読む**」
+（frontend は既に properties を解析している: `PackProperties`）。読めたら native 影パスの解像度・箱半径をそれで初期化し、
+distortion を入れてから距離を広げる順で検証する。
+
 ### 注意（この期間に踏んだ罠）
 - **probeは既定で呼ばれない**（`celtium.shaderpack.compileProbe=true` が必要）。フラグ無しの「無出力」を「失敗」と読まない。
 - `CELTIUM_PACK_DRAW_SUBMIT` の8,215行は**ログ出力条件のバグ**だった（`shaderPackDraws < 3` がパック無しで常に真）。
