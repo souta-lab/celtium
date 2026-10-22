@@ -836,3 +836,16 @@ array   (ae205d49)              1.797-1.897 ms   → 1.067x 遅い
 
 **次の設計判断**: ⑤（ソート＋arena＋indirect）を先に実装してから配列化を同時に入れるか、配列化を
 `-D`スイッチ＋シェーダvariant（array/単体sampler）で切替可能にして既定OFFで入れるか。前者は一括で重く、後者はシェーダ2系統。
+
+### 地形パスの未計測分（2026-10-22・計器が効かなかった記録）
+
+`celtium$renderPass` の `ensureFrameTarget()` の前後に `FramePassTimings.begin("terrainTarget")` を入れ、
+同一legで passSplit を取ったが、**`terrainTarget` はログに一度も現れなかった**（`grep -c` = 0）。
+同じパス内の `terrainRecord`/`terrainSubmit` は出ているので、この経路は実行されているはずで、
+**braket を足した場所が実際に測られている関数と別**か、`FramePassTimings` の集計が新規名を落としている。
+
+⇒ 地形パス 0.8ms に対し bracket 合計 0.1-0.2ms という**未説明の 0.6ms は依然未解明**。
+次は「braket 追加が本当に有効か」を、既知の braket（例 terrainRecord）の**別名**で足して確かめてから、
+地形パス内の実体（`renderLists` 反復、`frameCoordinator.submitCommands` 前後、`finally` の後始末）を測る。
+
+計器は revert 済み（jar `706002c2`）。
