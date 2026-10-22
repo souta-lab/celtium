@@ -209,3 +209,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### Intelの計器制約（2026-10-22）
 
 | **Intelの内訳計測は計器の制約に当たる（2026-10-22）** | **GPU時刻が取れない** | 実測 | 計器の制約 | Intelで `-Dceltium.gpuPassTimings=true`（正しいキー名。`.vulkan.` 付きは効かない）を付けて回しても **`CELTIUM_PASS_GPU` が1行も出ない**＝`passTimings` が空。理由はGPUタイムスタンプクエリが無いため（`timestampSlots` が0、`celtium.vulkan.forceNoTimestamps` 系の分岐）。代わりにCPU側の境界計器は動いており **`CELTIUM_BOUNDARY_SPLIT frames=600 submitMillisPerFrame=0 slotWaitMillisPerFrame=0`**＝Intelでも境界のsubmit待ちは0ms/frame。⇒ 非地形1.13msは**記録側（CPU）かドライバ内**で、次は `FramePassTimings`（recBind/recDraw等のCPUブラケット）をIntelで集計する |
+
+### 受理経路の総括（2026-10-22）
+
+| **受理経路の総括（2026-10-22・設計文書§7）** | **残る道は2つ** | 実測 | 未達 | 30ラウンド分の実測を `architecture` §7 に総括。受理経路は**1.7µs/offer**（279 offer/frame × 26%）、Celeritasは0.2-0.3µs。**名前の付いたコストを全部消してもフレームが動かない**（capture 79%減→0.7%、prepare 26%減→0.0%、行列比較100%減→0.0%、rebase全廃→上限0.5%）。名前の無い約1µsは5-50nsの集まりで、**本機の分解能（5-10ns/offer）以下**。⇒ 残る方針は **(1) accept経路をnativeへ移す**（`CeltiumGlStub` がGL呼び出しで実証済みの手法、見込み1.7→0.6-0.9µs、実装量大）か **(2) captureモデルを変える**（`BufferBuilder` のバッファを所有する、互換リスク大）の2つだけ。**やらないこと**も明記: group数削減・GPU側最適化・fastutil置換・1%未満の単品削減の「改善」報告 |
