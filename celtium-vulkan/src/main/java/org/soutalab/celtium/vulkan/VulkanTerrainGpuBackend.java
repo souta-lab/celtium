@@ -2249,7 +2249,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
                 + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
-                + (BATCH_TIMINGS ? offerStageNanosSummary() : "")
+                + (BATCH_TIMINGS ? offerStageNanosSummary() + " " + acceptSpanSummary() : "")
                 + " append[ms=" + (this.immediateStatistics.appendNanos() / 1000000L) + "]"
                 + " prepare[nanos=" + this.immediateStatistics.prepareImmediateNanos()
                 + " calls=" + this.immediateStatistics.prepareImmediateCalls()
@@ -6663,6 +6663,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$offerStage(9);
             org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
+            long acceptDecideStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             boolean fastMerged = retained == null && this.currentImmediateMesh != null
                     && this.currentGroupFormatId == formatId
                     && this.currentGroupTexture == boundTexture
@@ -6677,6 +6678,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             // Stage 10 marks the end of the fast-merge decision: the interval from stage 9 is what that decision costs.
             celtium$offerStage(10);
+            if (BATCH_TIMINGS && acceptDecideStart != 0L) {
+                this.acceptDecideNanos += System.nanoTime() - acceptDecideStart;
+            }
+            long acceptPreflightStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             if (!fastMerged) {
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
@@ -7113,6 +7118,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.flushPendingBeforeGlDraw();
                 return false;
             }
+            }
+            if (BATCH_TIMINGS && acceptPreflightStart != 0L) {
+                long now = System.nanoTime();
+                this.acceptPreflightNanos += now - acceptPreflightStart;
+                acceptPreflightStart = now;
             }
             celtium$offerStage(13);
         if (formatId == 5 && !fastMerged && !canBuildDescriptor(boundTexture)) {
@@ -13156,6 +13166,22 @@ this.frameBufferOpen = false;
     private final long[] offerStageMarks = new long[16];
 
     /** Per-stage totals and counts: [stage][0] nanos, [stage][1] batches that reached it. */
+
+    /**
+     * Per-batch cumulative times for the three spans of the accept path, filled only with batch timings on. The stage
+     * marks cannot carry these: a mark set on one branch makes the interval it starts average across whichever batches
+     * marked both ends, which is how a HashMap lookup read as nineteen microseconds.
+     */
+    private long acceptDecideNanos;
+    private long acceptPreflightNanos;
+    private long acceptTailNanos;
+
+    /** {@return the accept path's three spans, in milliseconds, for the frame statistics}. */
+    private String acceptSpanSummary() {
+        return "accept[decideMs=" + (this.acceptDecideNanos / 1000000L)
+                + " preflightMs=" + (this.acceptPreflightNanos / 1000000L)
+                + " tailMs=" + (this.acceptTailNanos / 1000000L) + "]";
+    }
     private final long[][] offerStageDeltas = new long[16][2];
 
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
