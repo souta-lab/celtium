@@ -212,7 +212,6 @@ public final class TerrainRenderer {
 
 
 
-    private long shadowIndirectOffset;
 
     /** Time inside {@code vkCmdDrawIndexedIndirect} itself, against the whole pass's recording bracket. */
     private long indirectDrawNanos;
