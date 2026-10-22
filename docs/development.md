@@ -418,3 +418,16 @@ frame=3 ... 1920x1080 display[close=true  ... fullscreen=true]
 - sway が接続を切ると SDL が QUIT を投げてゲームが正常終了する（利用者の「exit 0」と一致）。
 
 未解決。回避策はウィンドウ起動（options fullscreen:false）。headless（隔離Sway）でも再現可能かを次のlegで確認する。
+
+**fullscreen の真因と修正（2026-10-22・解決）**: `com.cleanroommc.client.sdl.Window.swapBuffers()` — `Display.update()` が
+毎フレーム呼ぶSDL自身のウィンドウswap — が、**Vulkan swapchainと同じwl_surfaceに別バッファをattach**していた。
+GL-lessではGLコンテキストが無いのでこのswapは何も提示しないが、Waylandのexplicit sync予約を壊し、swayが
+`wp_linux_drm_syncobj_surface_v1 error 4` で接続を切っていた（→ SDLがQUIT → ゲームは正常終了）。
+
+対策: `CeltiumGllessSdlSwapTransformer` で **GL-less時のみ `Window.swapBuffers()` を no-op** に（戻り値はthis）。
+計器: `-Dceltium.vulkan.windowDiag`, `-Dceltium.vulkan.eventTrace`（追加済み）。
+
+実測（headless隔離sway, render node D128, seed `fullscreen:true`, jar `fsfix-1`）:
+- 修正前: 15〜20秒で `Stopping!`、console に syncobj error 4 + `display connection closed`
+- 修正後: **72秒連続・Stopping!なし・syncobjエラー0・presented=1198**
+（headless出力は1280x720なのでリサイズは発生していない。実機1920x1080でのリサイズ確認は未実施）

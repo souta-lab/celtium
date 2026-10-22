@@ -12683,6 +12683,9 @@ this.frameBufferOpen = false;
             // clipped by the smaller swapchain: measured on the user's own session, the menu appeared shifted with its
             // right side and logo cut off, and going fullscreen did not change it. A present-time check costs one
             // surface-capabilities query per presented frame and is what makes the swapchain follow the window.
+            // The rebuild is back to unconditional: the Wayland rejection was not the new swapchain but SDL's own
+            // window swap presenting on the same wl_surface (stubbed in CeltiumGllessSdlSwapTransformer), so a resize
+            // can keep following the window at full resolution.
             if (!this.swapchain.matchesSurfaceExtent(framebufferWidth, framebufferHeight)) {
                 record("the surface extent no longer matches the " + this.swapchain.width() + "x"
                         + this.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
