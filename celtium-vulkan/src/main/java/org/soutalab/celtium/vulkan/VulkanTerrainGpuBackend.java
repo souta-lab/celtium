@@ -6653,17 +6653,59 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // draws - and format 1 alone is 52% of the offered batches. Measured before this: texture_affine was 71%
             // of all group splits.
             boolean affineRelevant = VulkanImmediateFormats.samplesTexture(formatId);
+            // Which term actually refused the merge, counted where the decision is made. The census that reported
+            // "texture 46%" was computed from the same captured values but not from the decision, and three diagnostic
+            // flags that neutralised texture, format and state changed neither the group count nor the frame - so the
+            // attribution was wrong and this is the truthful counter.
+            if (MERGE_CENSUS) {
+                if (retained != null) {
+                    this.mergeRefusal("retained");
+                } else if (this.currentImmediateMesh == null) {
+                    this.mergeRefusal("no-mesh");
+                } else if (this.currentGroupFormatId != formatId) {
+                    this.mergeRefusal("format");
+                } else if (this.currentGroupTexture != boundTexture) {
+                    this.mergeRefusal("texture");
+                } else if (this.currentGroupStateKey != stateKey) {
+                    this.mergeRefusal("state-key");
+                } else if (!samePass) {
+                    this.mergeRefusal("pass");
+                } else if (scissorMoved) {
+                    this.mergeRefusal("scissor");
+                } else if (this.currentPreparedImmediate == null) {
+                    this.mergeRefusal("no-prepared");
+                } else if (this.currentPreparedImmediate.pipeline != prepared.pipeline) {
+                    this.mergeRefusal("pipeline");
+                } else if (this.currentPreparedImmediate.descriptor != prepared.descriptor) {
+                    this.mergeRefusal("descriptor");
+                } else if (matrixMoved) {
+                    this.mergeRefusal("matrix");
+                } else if (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
+                        && this.colorMirrorHasValue && this.celtium$colourDiffers()) {
+                    this.mergeRefusal("colour");
+                } else if (affineRelevant && this.celtium$textureAffineMoved()) {
+                    this.mergeRefusal("affine");
+                } else {
+                    this.mergeRefusal("fog-or-light");
+                }
+            }
             if (retained != null || this.currentImmediateMesh == null
-                    || this.currentGroupFormatId != formatId
+                    || (!MERGE_ACROSS_FORMAT && this.currentGroupFormatId != formatId)
                     // Diagnostic only: -Dceltium.vulkan.mergeAcrossTexture=true pretends every batch uses the group's
                     // texture, which draws the wrong picture on purpose. It exists to measure the ceiling of a bindless
                     // merge - how many groups and how many microseconds a real implementation could save - before paying
                     // for one. Every leg using it is a measurement, never an acceptance run.
                     || (!MERGE_ACROSS_TEXTURE && this.currentGroupTexture != boundTexture)
-                    || this.currentGroupStateKey != stateKey || !samePass
+                    || (!MERGE_ACROSS_STATE && this.currentGroupStateKey != stateKey) || !samePass
                     || scissorMoved
-                    || this.currentPreparedImmediate == null || this.currentPreparedImmediate.pipeline != prepared.pipeline
-                    || this.currentPreparedImmediate.descriptor != prepared.descriptor
+                    || this.currentPreparedImmediate == null
+                    // The descriptor is built from the texture, so a texture change moves this term as well - which is why
+                    // the first version of the ceiling measurement changed nothing: the texture term was neutralised and
+                    // the split happened here instead. A real bindless merge would carry the texture as an index instead
+                    // of as part of the descriptor's identity, so the ceiling measurement has to drop both terms.
+                    || (!MERGE_ACROSS_TEXTURE
+                            && (this.currentPreparedImmediate.pipeline != prepared.pipeline
+                                    || this.currentPreparedImmediate.descriptor != prepared.descriptor))
                     || matrixMoved
                     // BH-04: the colour is part of the group's state, so a draw that arrives with a different current
                     // colour cannot join it - the colourless layouts carry it as the tint, and a batch appended after
@@ -10302,6 +10344,7 @@ this.frameBufferOpen = false;
                 + " " + celtium$pairLayoutSummary()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " groupSplits[" + this.groupSplitCensus.summary() + "]"
+                + " mergeRefusals=" + this.mergeRefusalSummary()
                 // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
                 // caller's total; pushing is what remains after the bind and draw halves below are taken out.
                 + " packetPipelineMillis=" + PacketCost.pipelineBindMillis()
@@ -12888,8 +12931,25 @@ this.frameBufferOpen = false;
     private final long[][] offerStageDeltas = new long[16][2];
 
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
+    /** Refusals by the term that actually fired, filled only when {@link #MERGE_CENSUS} is on. */
+    private final java.util.Map<String, Integer> mergeRefusals = new java.util.TreeMap<>();
+
+    private void mergeRefusal(String term) {
+        this.mergeRefusals.merge(term, 1, Integer::sum);
+    }
+
+    /** {@return the refusal census, truthful about which term refused}, or empty when unmeasured. */
+    public String mergeRefusalSummary() {
+        return this.mergeRefusals.toString();
+    }
     private static final boolean MERGE_ACROSS_TEXTURE =
             Boolean.getBoolean("celtium.vulkan.mergeAcrossTexture");
+    /** Diagnostic only, like {@link #MERGE_ACROSS_TEXTURE}: measures the ceiling of merging across vertex formats. */
+    private static final boolean MERGE_ACROSS_FORMAT =
+            Boolean.getBoolean("celtium.vulkan.mergeAcrossFormat");
+    /** Diagnostic only: measures the ceiling of merging across pipeline state. */
+    private static final boolean MERGE_ACROSS_STATE =
+            Boolean.getBoolean("celtium.vulkan.mergeAcrossState");
     private static final boolean SKIP_IMMEDIATE_RECORD =
             Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");
 
