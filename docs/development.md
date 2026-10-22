@@ -363,3 +363,17 @@ SDL 側のサーフェス生成が display にリスナを足し、こちらの 
 - 差分はラッパーの **`-Dceltium.vulkan.pumpInRedirect=false`**（既定にしていた）。SDLを誰もpumpしないためイベントが処理されず、
   コンポーザから見て無反応→ウィンドウclose→`Stopping!`（exit 0）と整合。
 ⇒ ラッパーは**pump既定ONに戻した**（`no-pump` ファイルで診断時のみOFF）。
+
+**メニューで落ちる真因（2026-10-22・決定的）**: ログの `19:20:20` に
+
+```
+wp_linux_drm_syncobj_surface_v1#52: error 4: Buffer attached but no acquire point set
+ERROR: Wayland display connection closed by server (fatal)
+```
+
+が出ていた。**フルスクリーンへ切り替えた直後（swapchain を 1920x1080 で作り直した最初の present）**に、
+コンポジタが Wayland 接続を切っている。接続が切れると SDL は fatal になり Minecraft は正常終了(0)する。
+検証ハーネスは options が**ウィンドウ**（854x480）なので、この経路を通らず安定していた。
+
+**回避（実施済み）**: インスタンスの `options.txt` を `fullscreen:false` / `overrideWidth:854` / `overrideHeight:480` に変更
+（バックアップ `options.txt.bak-fullscreen`）。フルスクリーンは後で直す（explicit sync の扱い、またはサーフェス再作成）。
