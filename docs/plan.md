@@ -27,6 +27,7 @@
 
 | **起動（Wayland）** | **修正済み・25秒→72秒完走** | 実測 | 完了 | SDLのwindow propertyからwl_display/wl_surfaceを取って`vkCreateWaylandSurfaceKHR`（`SDL_Vulkan_CreateSurface`はSDL側dispatchで落ちる）。fullscreenは別根因だった: `Display.update()`→`Window.swapBuffers()`（SDL自身のEGL swap）が**同じwl_surfaceに二重提示**し、swayが`wp_linux_drm_syncobj error 4`で接続を切る→SDL QUIT→exit 0。`CeltiumGllessSdlSwapTransformer`でGL-less時のみno-op化（jar 0.0.10-alpha / headlessで72秒・presented1198・エラー0）。
 
+| **性能KPI（2026-10-23 利用者指示）** | **実ワールド 1080p・上限OFF で 300fps** | 目標 | 未達（現在 91〜110fps / frame CPU 8.1ms） | 300fps = frame CPU ≤3.3ms。現在の内訳: world 8.0（terrain 5.3 / flush 3.7）、hand 0.1、clouds 0.1。 計測は `-Dceltium.vulkan.frameStats=true -Dceltium.vulkan.passSplit=true -Dceltium.vulkan.paceToRefresh=false`＋vsync OFF。 |
 | **性能（v0.0.13時点）** | **world 1080p: frame CPU 8.1ms / 実FPS 91–110（上限OFF）・57–61（上限60）** | 実測 | **達成（60Hz）** | jar `80e3d8b3…`・AMD RX 6400・headless隔離sway・world scene・validation ON。内訳: world 8.0（terrain 5.3 / flush 3.7）、hand 0.1、clouds 0.1、residual 0.0。メニューは 30→62fps（`Display.sync`撤去＋ペーシング）。残る最適化余地は terrain pass と flush |
 | **影（pack側の担当）** | **Celtium本体の現在単位ではない** | — | pack/別mod | 利用者指示:「影はpackに任せろ」「パフォーマンスが終わってないのに影に取り組むな」。影は `shader-plan.md` の方針どおり**シェーダーパック（別成果物）として実装**する。Celtium本体は**性能**を先に終わらせる。参考としてpackの実シェーダがcompile→pipeline→描画→画素読み戻しまで通ることは実測済み |
 
