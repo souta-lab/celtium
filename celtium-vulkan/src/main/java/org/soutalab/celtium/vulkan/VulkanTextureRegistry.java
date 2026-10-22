@@ -490,7 +490,7 @@ public final class VulkanTextureRegistry {
             skipDecisionLog(glTextureId, "stub mirror holds whole content", true);
             return true;
         }
-        Integer applied = this.announcedGeneration.get(id);
+        Integer applied = announcedGenerationOf(id);
         if (applied == null) {
             // Whole content is present and nothing was announced: kept as it was. Skipping here would also skip the
             // refresh of a texture the game writes without announcing (a rendered framebuffer), and that is a separate
@@ -498,7 +498,7 @@ public final class VulkanTextureRegistry {
             skipDecisionLog(glTextureId, "no announced application", false);
             return false;
         }
-        Integer consumed = this.consumedGeneration.get(id);
+        Integer consumed = consumedGenerationOf(id);
         boolean skip = consumed == null || applied.intValue() > consumed.intValue();
         skipDecisionLog(glTextureId, "applied=" + applied + " consumed=" + consumed, skip);
         return skip;
@@ -527,9 +527,9 @@ public final class VulkanTextureRegistry {
     /** Consumes the CPU application that made a readback unnecessary, so the next write is judged on its own. */
     public void consumeReadback(int glTextureId) {
         Integer id = Integer.valueOf(glTextureId);
-        Integer applied = this.announcedGeneration.get(id);
+        Integer applied = announcedGenerationOf(id);
         if (applied != null) {
-            this.consumedGeneration.put(id, applied);
+            setConsumedGeneration(id.intValue(), applied.intValue());
         }
         this.readbacksSkippedAfterAnnouncement++;
         // The generation being consumed means the pixels the invalidation reported are already in this image, so the
@@ -548,7 +548,7 @@ public final class VulkanTextureRegistry {
     /** Records one CPU application into the image, whatever producer it came from. */
     private void recordApplication(int glTextureId, boolean wholeTexture) {
         Integer id = Integer.valueOf(glTextureId);
-        this.announcedGeneration.put(id, Integer.valueOf(this.announceCounter = this.announceCounter + 1));
+        this.announceCounter = this.announceCounter + 1; setAnnouncedGeneration(id, this.announceCounter);
         if (wholeTexture) {
             this.fullyInitialized.add(id);
             return;
@@ -601,7 +601,7 @@ public final class VulkanTextureRegistry {
         // A generation, not the image identity: Minecraft updates a DynamicTexture in place, so the same BufferedImage
         // object arrives with different pixels. The generation changes on every announcement and is consumed when the
         // mirror is built from it, which is what makes "already converted this one" safe to skip.
-        this.announcedGeneration.put(Integer.valueOf(glTextureId),
+        setAnnouncedGeneration(glTextureId,
                 Integer.valueOf(this.announceCounter = this.announceCounter + 1));
     }
 
@@ -1476,7 +1476,13 @@ public final class VulkanTextureRegistry {
     public static long STALE_CALLS;
     public static long HIT_CALLS;
     /** Announcement generation per texture, and the generation already turned into a mirror. */
-    private final java.util.Map<Integer, Integer> announcedGeneration = new java.util.HashMap<Integer, Integer>();
+    /**
+     * Announcement and consumption generations, indexed by GL name. They were {@code HashMap<Integer, Integer>} and the
+     * in-world JFR put hash lookups at the top of the client thread (HashMap.get plus its node helpers around 97 of 1056
+     * samples), with this lookup on every batch that samples a texture: two boxed gets per batch. The names are small
+     * integers, so the same question is answered by an array slot and no allocation.
+     */
+    private int[] announcedGenerationByTexture = new int[4096];
     /**
      * The ownership contract for a mirrored texture, kept in one place.
      * <p>
@@ -1495,7 +1501,57 @@ public final class VulkanTextureRegistry {
      */
     private final java.util.Set<Integer> fullyInitialized = new java.util.HashSet<Integer>();
     /** The generation already present in the image, per texture: consumed by a readback skip or by a mirror build. */
-    private final java.util.Map<Integer, Integer> consumedGeneration = new java.util.HashMap<Integer, Integer>();
+    private int[] consumedGenerationByTexture = new int[4096];
+
+    /** {@return the announced generation for a GL name, or {@code null} when none was recorded}. */
+    private Integer announcedGenerationOf(int id) {
+        if (id < 0 || id >= this.announcedGenerationByTexture.length) {
+            return null;
+        }
+        int value = this.announcedGenerationByTexture[id];
+        return value == 0 ? null : Integer.valueOf(value);
+    }
+
+    /** {@return the consumed generation for a GL name, or {@code null} when none was recorded}. */
+    private Integer consumedGenerationOf(int id) {
+        if (id < 0 || id >= this.consumedGenerationByTexture.length) {
+            return null;
+        }
+        int value = this.consumedGenerationByTexture[id];
+        return value == 0 ? null : Integer.valueOf(value);
+    }
+
+    /** Records the announced generation, growing the table for large names. */
+    private void setAnnouncedGeneration(int id, int generation) {
+        if (id < 0) {
+            return;
+        }
+        if (id >= this.announcedGenerationByTexture.length) {
+            this.announcedGenerationByTexture = java.util.Arrays.copyOf(this.announcedGenerationByTexture,
+                    Math.max(id + 1, this.announcedGenerationByTexture.length * 2));
+        }
+        this.announcedGenerationByTexture[id] = generation;
+    }
+
+    private void setConsumedGeneration(int id, int generation) {
+        if (id < 0) {
+            return;
+        }
+        if (id >= this.consumedGenerationByTexture.length) {
+            this.consumedGenerationByTexture = java.util.Arrays.copyOf(this.consumedGenerationByTexture,
+                    Math.max(id + 1, this.consumedGenerationByTexture.length * 2));
+        }
+        this.consumedGenerationByTexture[id] = generation;
+    }
+
+    private void clearGeneration(int id) {
+        if (id >= 0 && id < this.announcedGenerationByTexture.length) {
+            this.announcedGenerationByTexture[id] = 0;
+        }
+        if (id >= 0 && id < this.consumedGenerationByTexture.length) {
+            this.consumedGenerationByTexture[id] = 0;
+        }
+    }
     private int announceCounter;
     private int readbacksSkippedAfterAnnouncement;
     /** CPU application cost, so "the update path is cheap" is a measurement and not an assumption. */
@@ -1557,8 +1613,8 @@ public final class VulkanTextureRegistry {
             // bridge leg's behaviour is left exactly as it was.
             this.retainedAnnouncements++;
         } else {
-            this.announcedGeneration.remove(id);
-            this.consumedGeneration.remove(id);
+            clearGeneration(id);
+            clearGeneration(id);
             if (this.announcedImages.remove(id) != null) {
                 // A pending announcement dropped with the mirror. Counted per name because the GUI defect turns on it:
                 // an announcement that has not been turned into a mirror yet is pixels the game handed over and this
@@ -1587,11 +1643,11 @@ public final class VulkanTextureRegistry {
      * delete-and-reallocate sequence would otherwise destroy.
      */
     private boolean announcementUnconsumed(Integer id) {
-        Integer announced = this.announcedGeneration.get(id);
+        Integer announced = announcedGenerationOf(id);
         if (announced == null || !this.announcedImages.containsKey(id)) {
             return false;
         }
-        Integer consumed = this.consumedGeneration.get(id);
+        Integer consumed = consumedGenerationOf(id);
         return consumed == null || announced.intValue() > consumed.intValue();
     }
 
@@ -1792,8 +1848,8 @@ public final class VulkanTextureRegistry {
             // The conversion is 1.17 ms per call and it ran on almost every batch: the announcement stayed pending, so the
             // same image was turned into RGBA again and again. A consumed generation means the mirror already holds these
             // pixels, and this lookup is then a plain hit.
-            Integer current = this.announcedGeneration.get(id);
-            Integer consumed = this.consumedGeneration.get(id);
+            Integer current = announcedGenerationOf(id);
+            Integer consumed = consumedGenerationOf(id);
             if (current != null && current.equals(consumed) && this.entries.get(id) != null) {
                 ANNOUNCED_SKIPS++;
                 HIT_CALLS++;
@@ -1803,7 +1859,7 @@ public final class VulkanTextureRegistry {
             try {
                 VulkanGlTexture converted = this.fromImage(glTextureId, announced, nearestFilter);
                 if (converted != null) {
-                    this.consumedGeneration.put(id, current);
+                    setConsumedGeneration(id.intValue(), current.intValue());
                     return converted;
                 }
                 // The announcement could not become an image - an unreadable size, a buffer that would not fit, a

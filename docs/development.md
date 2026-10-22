@@ -509,3 +509,10 @@ passSplit: frame 6.8 / world 6.8（terrain 4.5 / flush 3.3）/ hand 0.1 / clouds
 
 計測の注意: fixtureはワールド入室後 約5秒でキャプチャ→終了する。JFRは `delay=13s,duration=25s` のように
 **起動からの経過秒**で合わせる（`holdUntilTick` を増やしても滞在は延びない）。
+
+**試行: 世代マップの配列化（2026-10-23・中立）**
+
+`announcedGeneration`/`consumedGeneration`（`HashMap<Integer,Integer>`）をGL名インデックスのint配列へ置換。
+JFRの HashMap 探索 ~97/1056 サンプルの一部を狙ったが、**frame 6.8→7.0ms（p50）で中立〜誤差**。
+割当は減るので残すが、KPIへの寄与は認められない。次は `submitImmediateBatch` 本体の構造（準備・提出の分割）と
+アニメーションテクスチャ再アップロードを対象にする。
