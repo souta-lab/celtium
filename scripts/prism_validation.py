@@ -675,14 +675,27 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
             # The device this run used, not the first one the loader listed: those differ whenever more than one GPU is
             # present, which is exactly the case this reporting exists for. Matched by the UUID the renderer printed,
             # then by name; the first entry is only the last resort.
+            # Selected device, read here rather than from a name that only the earlier reporting block binds: that
+            # block is on a path which does not always run, and reading its local raised UnboundLocalError mid-run -
+            # which aborted the harness after the game had started, so the report was cut off and the run looked like
+            # a slow one.
+            selected_uuid = selected_name = None
+            try:
+                console_text = (game / "validation-console.log").read_text(errors="replace")
+            except OSError:
+                console_text = ""
+            picked = re.search(
+                r'CELTIUM_NATIVE_DEVICE name="([^"]*)" uuid=([0-9a-fA-F]*) matchedOpenGl=(\w+)', console_text)
+            if picked:
+                selected_name, selected_uuid = picked.group(1), picked.group(2)
             device = {}
             for candidate in devices:
                 if not isinstance(candidate, dict):
                     continue
-                if native_uuid and candidate.get("deviceUUID") == native_uuid:
+                if selected_uuid and candidate.get("deviceUUID") == selected_uuid:
                     device = candidate
                     break
-                if native_name and candidate.get("name") == native_name:
+                if selected_name and candidate.get("name") == selected_name:
                     device = candidate
                     break
             if not device and devices:

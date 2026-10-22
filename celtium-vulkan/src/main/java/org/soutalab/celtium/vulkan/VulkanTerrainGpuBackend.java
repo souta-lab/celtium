@@ -2221,32 +2221,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int debugFramesPresented;
     private boolean debugFullscreenAsked;
     /**
-     * {@code -Dceltium.vulkan.paceToRefresh=false} turns off the software frame cap.
-     * <p>
-     * With VSync off the present mode is MAILBOX, which queues whatever the renderer produces: the rate is then whatever
-     * the frame happens to cost, and the interval jitters with it. The game's own limiter ({@code Display.sync}) is
-     * skipped under GL-less - it slept to a slot it believed was 33 ms - so nothing paces the loop. A player reads that
-     * jitter as stutter even when the average rate is high, which is the report that produced this cap. It sleeps to
-     * the display's own refresh interval, so VSync-off means "no tearing and no queueing", not "no pacing".
-     */
-    private static final boolean PACE_TO_REFRESH = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.paceToRefresh", "true"));
-    private long paceNextFrameNanos;
-    private long paceIntervalNanos = 1_000_000_000L / 60L;
-
-    private void celtium$paceToRefresh() {
-        // The cap lives in CeltiumFramePacing because the game's own fps-limit hook calls it after the swap, which is
-        // where it belongs: sleeping at the top of the present pushed every frame back by the sleep.
-        org.soutalab.celtium.vulkan.CeltiumFramePacing.pace();
-    }
-
-    /** Records the display's refresh interval so the cap follows the monitor rather than assuming 60 Hz. */
-    private void celtium$adoptDisplayRefresh(double refreshHz) {
-        if (refreshHz > 1.0D) {
-            this.paceIntervalNanos = (long) (1_000_000_000D / refreshHz);
-        }
-    }
-    /**
      * {@code -Dceltium.vulkan.debugResizeAfterFrames=N} with {@code -Dceltium.vulkan.debugResizeTo=WxH}: ask SDL to
      * resize the window once, which is the surface-extent change that rebuilds the swapchain. The launcher's own death
      * happened on exactly that transition (fullscreen at a size the window was not created at), and the isolated
@@ -12876,15 +12850,6 @@ this.frameBufferOpen = false;
         this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt);
         if (this.swapchain != null) {
             org.soutalab.celtium.vulkan.CeltiumFramePacing.setFifoPacing(this.swapchain.presentModeIsFifo());
-            try {
-                org.lwjgl.sdl.SDL_DisplayMode mode =
-                        org.lwjgl.sdl.SDLVideo.SDL_GetCurrentDisplayMode(org.lwjgl.sdl.SDLVideo.SDL_GetPrimaryDisplay());
-                if (mode != null) {
-                    celtium$adoptDisplayRefresh(mode.refresh_rate());
-                }
-            } catch (RuntimeException | LinkageError ignored) {
-                // No SDL display query here: the cap keeps its 60 Hz default, which is the common case anyway.
-            }
         }
         forwardPendingPresentedDumps();
         if (this.swapchain == null) {
