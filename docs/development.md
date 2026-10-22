@@ -217,3 +217,23 @@ JvmArgs=-Dorg.lwjgl.librarypath=<instance>/natives-3.4.3
 白画面になるのは、Prism の classpath に **LWJGL Vulkan モジュールが入っていない**ため（検証ハーネスは `CELTIUM_LEG_LWJGL_VULKAN`
 で自前に入れるので気づかない）。インスタンス側の `java-celtium.sh` が `-cp` の値に `libs/lwjgl-vulkan-3.4.3.jar` を
 追記し、`-Dorg.lwjgl.librarypath` で 3.4.3 natives を指す。Prism の「Javaのパス」にこのスクリプトを指定する。
+
+#### 起動後に SDL で SIGSEGV（2026-10-22 実測・未解決）
+
+`java-celtium.sh` 経由の起動は **LWJGLの版混在を通り抜け、Vulkan device選択・初回presentまで到達**する
+（`CELTIUM_DEVICE_FEATURES ... textureArray=true`、`CELTIUM_PRESENT_SLOW millis=55 frame=0`）が、その直後に
+
+```
+SIGSEGV in libSDL3.so
+  org.lwjgl.sdl.SDLEvents.SDL_PollEvent <- com.cleanroommc.client.sdl.Pump.pump
+  <- CleanroomWindowBridge.pump <- Minecraft.redirect$...maybeSkipGlSwap
+```
+
+で落ちる。観測:
+- クラッシュ時の SDL は `natives-3.4.3/linux/x64/org/lwjgl/sdl/libSDL3.so`（サブディレクトリ配置）。
+- 同ディレクトリにはフラットな `libSDL3.so` も置いてあり、**同一ライブラリが2箇所**に存在していた。
+  二重ロードは SDL の内部状態を壊しうるため、サブディレクトリ側を削除してフラット7個のみに整理した（この後の再起動は未検証）。
+
+**次に見るべきもの**: 再起動して再発するなら、`SDL_PollEvent` の直前に行う `SDL.installLog`（FFM upcall）と
+こちら側スタブの FFM upcall が同じ SDL インスタンスに干渉していないか。`hs_err` の `Dynamic libraries` で
+libSDL3 が1つだけマップされているかも確認する。
