@@ -8,7 +8,8 @@
 ## 次の作業単位（2026-10-22）
 
 1. **受理経路を native へ**: Java 側の補足ではなく所有権ごと移す（規模の算術は `architecture` §12）。影ONの尾（p95）も同じ作業で扱う。
-2. **影の品質と尾**: `shader-plan.md` の既存modベース方針で改善し、二重バッファ化か cadence で尾を削る。
+2. **影の品質と尾**: distortion は実装済み（warp=0.5/128 で被覆0.58%・距離2.7倍）。**既定化の判断には校正gateを通さない比較legが必要**
+   （`celtium.validation.camera*` で画角を変えるとleg自体がFAILEDになるため）。その後 `shader-plan.md` の方針で品質を詰め、尾は二重バッファ化か cadence で削る。
 3. **シェーダパック**: `celtium$probePackProgram` からワールド描画へ接続（S0/S1 の設計に従う）。
 4. **測定**: 機械が空いたら出荷構成（影ON）で `gv_kpi.py` を再実行し、5ペア以上で比を取る。
 
