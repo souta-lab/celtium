@@ -221,3 +221,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### やり取り回数の一致（2026-10-22）
 
 | **両GPUでやり取り回数は同一（2026-10-22 確定）** | **コストは回数×単価** | 実測 | 削減対象が決まった | 既存カウンタ比較（同一jar、frame換算）: **immediateWindows 5.0 / immediateOffered 278 / immediateGroupsDrawn 182 / winSubmit 5.0 / terrainSubmit 3.0** が**IntelとAMDで完全に一致**。⇒ Intelの+1.3msは**回数ではなく1回あたりの単価**で、前ラウンドの「全ブラケット一律+0.1ms」と整合。**したがって削減対象は「回数」**で、効果は 回数 × 単価 で両GPUに比例配分される。最大の回数は **groups 182/frame（各=bind+draw）**＝ここを半減できれば Intel `grpDraw` 0.3→0.15・`wrecLoop` 0.5→0.25 で **約0.4ms（Intel）/ 0.1ms（AMD）**。次点は windows 5/frame（各 submit あり）。group数を減らすには分割要因（texture 46% / format 18% / matrix 18%）を潰す＝**bindless** が本命 |
+
+### qmagnet機能別対照（2026-10-22）
+
+| **qmagnet 機能別対照（2026-10-22 実測）** | **領域別に一致** | 実測 | 良好 | 同scene・同カメラ・同時刻（**worldTime=6000**、`fixedWorldTime=true` の既定）で presented画像と参照screenshotを領域別比較: **空 (165,180,207) vs (165,179,207)、石 (61,45,36) vs (61,45,36)＝完全一致、草 (62,104,49) vs (61,100,47)**。ログ帯（このレンダラだけが出す診断文字）を除いた全体差は **mean 11.4 / `>8` 10.6%**＝残差はAA・位相・撮影経路差。証拠は `docs/evidence/cr07-*`（4画面・影）。**影ON経路も現行jar `c7dd20ad…` で再検証**: `shadow-final` は **PASSED・gate PASSED・validation 0件**＝デバッグ定数（判定描画）追加後も**出荷既定の影経路は無影響** |
