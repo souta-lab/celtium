@@ -1536,7 +1536,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private int lazyMirrorRetrySkips;
     /** The stub write serial seen at the last lazy-supply attempt per GL id; a retry runs only when it moves. */
-    private final java.util.Map<Integer, Long> lazySupplySerials = new java.util.HashMap<Integer, Long>();
+    /**
+     * Last upload serial a lazy supply was attempted for, indexed by GL texture id. It was a
+     * {@code HashMap<Integer, Long>}, which boxes two objects and hashes on every entity or TESR batch; the ids are small
+     * and dense, so an array answers the same question without allocating on the accept path.
+     */
+    private long[] lazySupplySerialByTexture = new long[4096];
+    /** {@code true} where {@link #lazySupplySerialByTexture} holds a recorded attempt (serial 0 is a valid serial). */
+    private boolean[] lazySupplySerialRecorded = new boolean[4096];
     private String lastLazyMirrorFailure = "none";
     /** Texture lifecycle: reallocations seen, and how often the sampled atlas/light map had to be re-established. */
     private int glTextureDeletions;
@@ -2213,6 +2220,81 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
     private int debugFramesPresented;
     private boolean debugFullscreenAsked;
+    /**
+     * {@code -Dceltium.vulkan.paceToRefresh=false} turns off the software frame cap.
+     * <p>
+     * With VSync off the present mode is MAILBOX, which queues whatever the renderer produces: the rate is then whatever
+     * the frame happens to cost, and the interval jitters with it. The game's own limiter ({@code Display.sync}) is
+     * skipped under GL-less - it slept to a slot it believed was 33 ms - so nothing paces the loop. A player reads that
+     * jitter as stutter even when the average rate is high, which is the report that produced this cap. It sleeps to
+     * the display's own refresh interval, so VSync-off means "no tearing and no queueing", not "no pacing".
+     */
+    private static final boolean PACE_TO_REFRESH = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.paceToRefresh", "true"));
+    private long paceNextFrameNanos;
+    private long paceIntervalNanos = 1_000_000_000L / 60L;
+
+    private void celtium$paceToRefresh() {
+        if (!PACE_TO_REFRESH) {
+            return;
+        }
+        if (this.paceIntervalNanos <= 0L) {
+            this.paceIntervalNanos = 1_000_000_000L / 60L;
+        }
+        long now = System.nanoTime();
+        if (this.paceNextFrameNanos == 0L || now - this.paceNextFrameNanos > this.paceIntervalNanos * 4L) {
+            // First frame, or a stall long enough that catching up would burst: re-anchor instead of racing.
+            this.paceNextFrameNanos = now + this.paceIntervalNanos;
+            return;
+        }
+        long wait = this.paceNextFrameNanos - now;
+        if (wait > 0L) {
+            java.util.concurrent.locks.LockSupport.parkNanos(wait);
+        }
+        this.paceNextFrameNanos += this.paceIntervalNanos;
+    }
+
+    /** Records the display's refresh interval so the cap follows the monitor rather than assuming 60 Hz. */
+    private void celtium$adoptDisplayRefresh(double refreshHz) {
+        if (refreshHz > 1.0D) {
+            this.paceIntervalNanos = (long) (1_000_000_000D / refreshHz);
+        }
+    }
+    /**
+     * {@code -Dceltium.vulkan.debugResizeAfterFrames=N} with {@code -Dceltium.vulkan.debugResizeTo=WxH}: ask SDL to
+     * resize the window once, which is the surface-extent change that rebuilds the swapchain. The launcher's own death
+     * happened on exactly that transition (fullscreen at a size the window was not created at), and the isolated
+     * compositor never produces it by itself - its output matches the window it opened.
+     */
+    private static final int DEBUG_RESIZE_AFTER_FRAMES =
+            Integer.getInteger("celtium.vulkan.debugResizeAfterFrames", -1);
+    private static final String DEBUG_RESIZE_TO = System.getProperty("celtium.vulkan.debugResizeTo", "");
+    private int debugFramesSeen;
+    private boolean debugResizeAsked;
+
+    private void celtium$debugMaybeResize() {
+        if (DEBUG_RESIZE_AFTER_FRAMES < 0 || this.debugResizeAsked || DEBUG_RESIZE_TO.isEmpty()) {
+            return;
+        }
+        if (++this.debugFramesSeen < DEBUG_RESIZE_AFTER_FRAMES) {
+            return;
+        }
+        String[] parts = DEBUG_RESIZE_TO.split("x");
+        if (parts.length != 2) {
+            return;
+        }
+        this.debugResizeAsked = true;
+        long window = CeltiumWindow.sdlWindowPointer();
+        if (window == 0L) {
+            return;
+        }
+        int width = Integer.parseInt(parts[0].trim());
+        int height = Integer.parseInt(parts[1].trim());
+        boolean ok = org.lwjgl.sdl.SDLVideo.SDL_SetWindowSize(window, width, height);
+        System.out.println("[Celtium] CELTIUM_DEBUG_RESIZE frames=" + this.debugFramesSeen + " to=" + width + "x"
+                + height + " ok=" + ok + " (the surface-extent change that rebuilds the swapchain)");
+    }
+
     /**
      * {@code -Dceltium.vulkan.frameStats=true}: report the real interval between completed frames, once every 120
      * frames. Each bracketed section can be short while the delivered rate is low, and that gap is what a user sees as
@@ -3856,7 +3938,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void onGlTextureReallocated(int glTextureId, int width, int height) {
         this.glTextureDeletions++;
         // A reallocated id is a new identity: the lazy supply owes it a fresh attempt whatever the last serial was.
-        this.lazySupplySerials.remove(Integer.valueOf(glTextureId));
+        if (glTextureId >= 0 && glTextureId < this.lazySupplySerialRecorded.length) {
+            this.lazySupplySerialRecorded[glTextureId] = false;
+            this.lazySupplySerialByTexture[glTextureId] = 0L;
+        }
         boolean sameSize = width > 0 && height > 0 && this.textureRegistry != null
                 && this.textureRegistry.hasEntry(glTextureId, width, height);
         if (sameSize) {
@@ -6673,6 +6758,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // descriptor-recreate term by the texture's registry record itself - a re-created image is a different
             // object, which is exactly what `prepared.descriptor != currentPreparedImmediate.descriptor` catches -
             // and the lightmap by its own record for the families that carry one.
+            // The registry keeps a one-entry memo keyed by the GL name, so resolving the same name twice in a row is a
+            // field compare rather than a second hash - which is why this asks directly instead of threading the earlier
+            // lookup through.
             org.soutalab.celtium.vulkan.VulkanGlTexture liveTextureImage =
                     boundTexture == 0 ? null : celtium$registry().get(boundTexture);
             // Mark here unconditionally: the existing stage-9 mark sits inside a refusal-only branch, so the
@@ -6724,11 +6812,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // is due exactly when new content actually arrived.
                 long writeSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
                         .textureUploadSerial(boundTexture, 0);
-                Long lastAttempt = this.lazySupplySerials.get(Integer.valueOf(boundTexture));
-                if (lastAttempt != null && lastAttempt.longValue() == writeSerial) {
+                boolean recorded = boundTexture >= 0 && boundTexture < this.lazySupplySerialByTexture.length
+                        && this.lazySupplySerialRecorded[boundTexture]
+                        && this.lazySupplySerialByTexture[boundTexture] == writeSerial;
+                if (recorded) {
                     this.lazyMirrorRetrySkips++;
                 } else {
-                this.lazySupplySerials.put(Integer.valueOf(boundTexture), Long.valueOf(writeSerial));
+                if (boundTexture >= this.lazySupplySerialByTexture.length) {
+                    int grown = Math.max(boundTexture + 1, this.lazySupplySerialByTexture.length * 2);
+                    this.lazySupplySerialByTexture = java.util.Arrays.copyOf(this.lazySupplySerialByTexture, grown);
+                    this.lazySupplySerialRecorded = java.util.Arrays.copyOf(this.lazySupplySerialRecorded, grown);
+                }
+                this.lazySupplySerialByTexture[boundTexture] = writeSerial;
+                this.lazySupplySerialRecorded[boundTexture] = true;
                 int[] size = textureSize(boundTexture);
                 if (size[0] > 0 && size[1] > 0) {
                     try {
@@ -12792,6 +12888,17 @@ this.frameBufferOpen = false;
         this.reusableSurface = 0L;
         this.reusableSurfaceWindow = 0L;
         this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt);
+        if (this.swapchain != null) {
+            try {
+                org.lwjgl.sdl.SDL_DisplayMode mode =
+                        org.lwjgl.sdl.SDLVideo.SDL_GetCurrentDisplayMode(org.lwjgl.sdl.SDLVideo.SDL_GetPrimaryDisplay());
+                if (mode != null) {
+                    celtium$adoptDisplayRefresh(mode.refresh_rate());
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // No SDL display query here: the cap keeps its 60 Hz default, which is the common case anyway.
+            }
+        }
         forwardPendingPresentedDumps();
         if (this.swapchain == null) {
             if (!this.pendingPresentedDumps.isEmpty()) {
@@ -15408,6 +15515,7 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.CeltiumSdlEventTrace.installOnce();
         celtium$noteFrameBoundary("present");
         celtium$reportWindowState();
+        celtium$debugMaybeResize();
         celtium$debugMaybeGoFullscreen();
         // Isolation switch for the Wayland fault: with the swapchain out of the picture the frame is recorded and
         // submitted but never presented, which separates "the swapchain's own wl_display use is the fault" from
@@ -15444,6 +15552,7 @@ this.frameBufferOpen = false;
     }
 
     private boolean celtium$presentFrameBody() {
+        celtium$paceToRefresh();
         // The present must not order after work still sitting in the frame buffer: paths that reach here without
         // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
         celtium$finishFrameBuffer();
