@@ -2233,7 +2233,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private String celtium$gameLoopSummary() {
         try {
             Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
-            Object summary = timing.getMethod("summary").invoke(null);
+            Object summary = timing.getMethod("summaryDelta").invoke(null);
             return String.valueOf(summary);
         } catch (ReflectiveOperationException | LinkageError failed) {
             return "unavailable(" + failed.getClass().getSimpleName() + ")";

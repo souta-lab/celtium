@@ -363,6 +363,62 @@ public final class GameLoopTiming {
         return lastLoopSyncNanos / 1_000_000L;
     }
 
+    // Snapshots for summaryDelta: the readings the previous call ended at, so the next one reports the frames in
+    // between rather than the run's average - which startup loading dominates and later measurements cannot use.
+    private static long deltaTickCount, deltaTickMillis, deltaLoopCount, deltaLoopMillis, deltaDisplayMillis,
+            deltaBlitMillis, deltaSyncMillis, deltaRenderMillis, deltaSchedMillis, deltaWrapperMillis,
+            deltaToastMillis, deltaFmlMillis;
+
+    /**
+     * {@return the loop's shares for the frames since the previous call}, which is the steady state: the run-wide
+     * summary is an average over the loading phase too, and that phase's frames are long enough to hide the frame the
+     * measurements are about.
+     */
+    public static synchronized String summaryDelta() {
+        long tickCountNow = tickCount.get();
+        long loopCountNow = loopCount.get();
+        long tickMillisNow = totalMillis();
+        long loopMillisNow = loopTotalMillis();
+        long displayNow = displayUpdateTotalMillis();
+        long blitNow = blitTotalMillis();
+        long syncNow = syncTotalMillis();
+        long renderNow = renderNanos.get() / 1_000_000L;
+        long schedNow = scheduledNanos.get() / 1_000_000L;
+        long wrapperNow = renderWrapperNanos.get() / 1_000_000L;
+        long toastNow = toastNanos.get() / 1_000_000L;
+        long fmlNow = fmlTickNanos.get() / 1_000_000L;
+        long frames = loopCountNow - deltaLoopCount;
+        long tickFrames = tickCountNow - deltaTickCount;
+        String line = "frames=" + frames
+                + " loopMean=" + mean(loopMillisNow - deltaLoopMillis, frames)
+                + " tickMean=" + mean(tickMillisNow - deltaTickMillis, tickFrames)
+                + " displayMean=" + mean(displayNow - deltaDisplayMillis, frames)
+                + " blitMean=" + mean(blitNow - deltaBlitMillis, frames)
+                + " syncMean=" + mean(syncNow - deltaSyncMillis, frames)
+                + " renderMean=" + mean(renderNow - deltaRenderMillis, frames)
+                + " schedMean=" + mean(schedNow - deltaSchedMillis, frames)
+                + " wrapperMean=" + mean(wrapperNow - deltaWrapperMillis, frames)
+                + " toastMean=" + mean(toastNow - deltaToastMillis, frames)
+                + " fmlMean=" + mean(fmlNow - deltaFmlMillis, frames);
+        deltaTickCount = tickCountNow;
+        deltaLoopCount = loopCountNow;
+        deltaTickMillis = tickMillisNow;
+        deltaLoopMillis = loopMillisNow;
+        deltaDisplayMillis = displayNow;
+        deltaBlitMillis = blitNow;
+        deltaSyncMillis = syncNow;
+        deltaRenderMillis = renderNow;
+        deltaSchedMillis = schedNow;
+        deltaWrapperMillis = wrapperNow;
+        deltaToastMillis = toastNow;
+        deltaFmlMillis = fmlNow;
+        return line;
+    }
+
+    private static long mean(long total, long count) {
+        return count <= 0L ? 0L : total / count;
+    }
+
     /** {@return one line for the fixture report: counts, totals, means and worsts for tick, loop and present}. */
     public static String summary() {
         long count = tickCount.get();
