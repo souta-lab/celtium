@@ -14947,7 +14947,11 @@ this.frameBufferOpen = false;
     private int immediateOffersThisFrame;
 
     /** The first terrain-shaped batch's vertices, kept for the shaderpack probe's real-geometry draw. */
-    private java.nio.ByteBuffer terrainCaptureVertices;
+    private static java.nio.ByteBuffer terrainCaptureVertices;
+    /** Set once the probe has adopted the captured terrain geometry, so the line prints once and late. */
+    private boolean packGeometryLogged;
+    private boolean packReRenderLogged;
+    private boolean packGeometryReRenderLogged;
 
 
     private long terrainBindNanos;
@@ -14969,9 +14973,36 @@ this.frameBufferOpen = false;
     private long boundarySubmitNanos;
     private long slotWaitNanos;
     private int boundaryFrames;
-    private int terrainCaptureStride;
-    private int terrainCaptureCount;
-    private int terrainCaptureFormat;
+    private static int terrainCaptureStride;
+    private static int terrainCaptureCount;
+    private static int terrainCaptureFormat;
+
+    /**
+     * Records the first terrain batch's vertices for the shader-pack probe, from the terrain renderer rather than from
+     * the immediate accept path: the world's geometry never passes through that path, which is why the probe kept drawing
+     * its own triangle in world legs even after the capture hook existed.
+     */
+    public static void noteTerrainBatchForProbe(int formatId, java.nio.ByteBuffer vertices, int stride, int count) {
+        if (!SHADER_PACK_DRAW_PROBE || terrainCaptureVertices != null || vertices == null || count <= 0
+                || count > 8192 || stride <= 0) {
+            return;
+        }
+        long bytes = (long) count * stride;
+        if (bytes > vertices.remaining()) {
+            return;
+        }
+        java.nio.ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
+        for (int i = 0; i < (int) bytes; i++) {
+            copy.put(i, vertices.get(vertices.position() + i));
+        }
+        copy.rewind();
+        terrainCaptureVertices = copy;
+        terrainCaptureStride = stride;
+        terrainCaptureCount = count;
+        terrainCaptureFormat = formatId;
+        System.out.println("[Celtium] CELTIUM_PACK_CAPTURE format=" + formatId + " vertices=" + count
+                + " stride=" + stride + " bytes=" + bytes + " (terrain batch)");
+    }
     private int terrainCaptureAttempts;
 
     /**
@@ -15338,10 +15369,35 @@ this.frameBufferOpen = false;
                     + " open=" + this.frameBufferOpen + " recording=" + this.commandState.recording()
                     + " inPass=" + this.commandState.inRenderPass() + " slot=" + this.frameSlot);
         }
+        if (this.terrainCaptureVertices != null) {
+            // Applied here rather than where the probe is prepared: the pack loads long before the world's first terrain
+            // batch arrives, so the capture is only complete by the time a draw is being recorded.
+            String adopted = this.shaderPackDrawProbe.replaceGeometry(this.terrainCaptureFormat,
+                    this.terrainCaptureVertices, this.terrainCaptureStride, this.terrainCaptureCount);
+            // Logged on the adoption itself, not on an early frame: the capture arrives after the probe has already drawn,
+            // so gating this on shaderPackDraws == 0 hid the one line that says the geometry was installed.
+            if (adopted != null && !this.packGeometryLogged) {
+                this.packGeometryLogged = true;
+                System.out.println("[Celtium] CELTIUM_PACK_GEOMETRY " + adopted);
+            }
+            this.terrainCaptureVertices = null;
+        }
+
         if (SHADER_PACK_DRAW_BLIT) {
             // The delivery experiment: the pixels the pack's shaders already produced, transferred into the delivered
             // image at the frame boundary - no draw into the frame, no partial render area.
             if (target.colorImage() != 0L) {
+                // Re-render the probe's image with whatever geometry has been installed (the capture arrives after the
+                // probe is created), so the blit delivers the world through the pack's stages rather than the triangle.
+                String reRendered = this.shaderPackDrawProbe.renderOffscreen();
+                if (reRendered != null && !this.packReRenderLogged && reRendered.contains("vertices=3 ")) {
+                    this.packReRenderLogged = true;
+                    System.out.println("[Celtium] CELTIUM_PACK_RERENDER " + reRendered);
+                } else if (reRendered != null && this.packReRenderLogged && !this.packGeometryReRenderLogged
+                        && !reRendered.contains("vertices=3 ")) {
+                    this.packGeometryReRenderLogged = true;
+                    System.out.println("[Celtium] CELTIUM_PACK_RERENDER_GEOMETRY " + reRendered);
+                }
                 this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), 0, 0, 256, 256);
                 if (this.shaderPackDraws++ <= 2) {
                     // Which image the blit wrote, and which image the present will read: the delivery question is a
@@ -15356,16 +15412,6 @@ this.frameBufferOpen = false;
                 }
             }
             return;
-        }
-        if (this.terrainCaptureVertices != null) {
-            // Applied here rather than where the probe is prepared: the pack loads long before the world's first terrain
-            // batch arrives, so the capture is only complete by the time a draw is being recorded.
-            String adopted = this.shaderPackDrawProbe.replaceGeometry(this.terrainCaptureFormat,
-                    this.terrainCaptureVertices, this.terrainCaptureStride, this.terrainCaptureCount);
-            if (adopted != null && this.shaderPackDraws == 0) {
-                System.out.println("[Celtium] CELTIUM_PACK_GEOMETRY " + adopted);
-            }
-            this.terrainCaptureVertices = null;
         }
         if (SHADER_PACK_DRAW_CLEAR) {
             if ("small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)) {

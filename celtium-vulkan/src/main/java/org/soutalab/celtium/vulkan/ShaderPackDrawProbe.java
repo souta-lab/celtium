@@ -100,6 +100,9 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private ShaderPackPipelineFactory.ModuleHandle passVertexHandle;
     private ShaderPackPipelineFactory.ModuleHandle passFragmentHandle;
     private LegacyGlslLowering.Result passInterface;
+    /** The compiled stages, kept so the offscreen image can be re-rendered once the world's geometry is captured. */
+    private ShaderPackPipelineFactory.ModuleHandle vertexHandle;
+    private ShaderPackPipelineFactory.ModuleHandle fragmentHandle;
 
     /** Whether a descriptor set is bound at all; the built-in triangle's layout has none. */
     private final boolean builtin;
@@ -165,6 +168,9 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             probe.writeDescriptors(vertex, fragment, layout, whiteTexture);
             probe.writeEnvironmentValues(vertex.source(), 1280, 720);
             probe.prepareRenderPassPipeline(vertexHandle, fragmentHandle, vertex);
+            // Kept so the image can be re-rendered later: the creation draw happens before the world's geometry exists.
+            probe.vertexHandle = vertexHandle;
+            probe.fragmentHandle = fragmentHandle;
             return probe;
         } finally {
             MemoryUtil.memFree(pool);
@@ -557,6 +563,91 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      *
      * @return a one-line summary for the log, or null when the format is not one the adapter converts
      */
+    /**
+     * Re-renders the probe's own image with whatever geometry {@link #replaceGeometry} installed, so the delivery path
+     * can blit the current picture rather than the triangle the probe was created with.
+     * <p>
+     * The creation path renders once and keeps the image. The world's geometry is captured later (the pack loads before
+     * the first terrain batch exists), so without this the image a blit delivers is always the creation-time triangle -
+     * measured as a uniform green square in the presented frame, which proved the transfer but not the world.
+     */
+    String renderOffscreen() {
+        if (this.offscreenImage == 0L || this.pipelineLayout == 0L) {
+            return null;
+        }
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            LongBuffer pool = stack.mallocLong(1);
+            if (vkCreateCommandPool(this.context.device(), org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack)
+                    .sType$Default().queueFamilyIndex(this.context.queueFamilyIndex())
+                    .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT), null, pool) != VK_SUCCESS) {
+                return null;
+            }
+            org.lwjgl.PointerBuffer buffer = stack.callocPointer(1);
+            if (vkAllocateCommandBuffers(this.context.device(), org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack)
+                    .sType$Default().commandPool(pool.get(0)).level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                    .commandBufferCount(1), buffer) != VK_SUCCESS) {
+                vkDestroyCommandPool(this.context.device(), pool.get(0), null);
+                return null;
+            }
+            org.lwjgl.vulkan.VkCommandBuffer commands =
+                    new org.lwjgl.vulkan.VkCommandBuffer(buffer.get(0), this.context.device());
+            if (vkBeginCommandBuffer(commands, org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack)
+                    .sType$Default()) != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                vkDestroyCommandPool(this.context.device(), pool.get(0), null);
+                return null;
+            }
+            int size = this.offscreenSize;
+            barrier(stack, commands, this.offscreenImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            VkRenderingAttachmentInfoKHR.Buffer colour = VkRenderingAttachmentInfoKHR.calloc(1, stack);
+            colour.get(0).sType$Default().imageView(this.offscreenView)
+                    .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                    .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+            colour.get(0).clearValue(clearValue(stack, 0.0f, 0.0f, 1.0f));
+            VkRenderingInfoKHR rendering = VkRenderingInfoKHR.calloc(stack).sType$Default()
+                    .renderArea(org.lwjgl.vulkan.VkRect2D.calloc(stack)
+                            .offset(it -> it.set(0, 0)).extent(it -> it.set(size, size)))
+                    .layerCount(1).pColorAttachments(colour);
+            vkCmdBeginRenderingKHR(commands, rendering);
+            long pipeline = new ShaderPackPipelineFactory(this.context).createPipeline(this.pipelineLayout,
+                    this.vertexHandle, this.fragmentHandle, this.passInterface, VK_FORMAT_R8G8B8A8_UNORM,
+                    VK_FORMAT_UNDEFINED, false);
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    stack.longs(this.descriptorSet), null);
+            vkCmdSetViewport(commands, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
+                    .x(0.0f).y(0.0f).width(size).height(size).minDepth(0.0f).maxDepth(1.0f));
+            vkCmdSetScissor(commands, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
+                    .offset(it -> it.set(0, 0)).extent(it -> it.set(size, size)));
+            for (int index = 0; index < this.vertexBuffers.size(); index++) {
+                vkCmdBindVertexBuffers(commands, this.vertexBufferLocations.get(index).intValue(),
+                        stack.longs(this.vertexBuffers.get(index).buffer()), stack.longs(0L));
+            }
+            if (this.geometryIndices != null && this.geometryIndexCount > 0) {
+                vkCmdBindIndexBuffer(commands, this.geometryIndices.buffer(), 0L,
+                        org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(commands, this.geometryIndexCount, 1, 0, 0, 0);
+            } else {
+                vkCmdDraw(commands, this.vertexCount, 1, 0, 0);
+            }
+            vkCmdEndRenderingKHR(commands);
+            barrier(stack, commands, this.offscreenImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                    VK_ACCESS_TRANSFER_READ_BIT);
+            vkEndCommandBuffer(commands);
+            LongBuffer fence = stack.mallocLong(1);
+            vkCreateFence(this.context.device(), org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(),
+                    null, fence);
+            vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
+                    .pCommandBuffers(stack.pointers(commands.address())), fence.get(0));
+            vkWaitForFences(this.context.device(), fence.get(0), true, Long.MAX_VALUE);
+            vkDestroyFence(this.context.device(), fence.get(0), null);
+            vkDestroyPipeline(this.context.device(), pipeline, null);
+            vkDestroyCommandPool(this.context.device(), pool.get(0), null);
+            return "vertices=" + this.vertexCount + " indices=" + this.geometryIndexCount;
+        }
+    }
+
     String replaceGeometry(int formatId, java.nio.ByteBuffer vertices, int stride, int count) {
         java.util.Map<String, float[]> adapted = ShaderPackVertexAdapter.adapt(formatId, vertices, stride, count);
         if (adapted == null) {

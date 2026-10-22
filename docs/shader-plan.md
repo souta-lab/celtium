@@ -496,3 +496,16 @@ gate側の問題。出ていなければ `blitToFrame` の実装側。
 
 つまり `drawProbe=constant` で画像gateがPASSEDだったのは「描画が届いていない」ではなく、**constantモードはブリット経路を使わない**ため。
 **pack出力の可視性は `blit` モードで証明済み**。S3の残りは「probeの固定三角形」を実地形ジオメトリ／実パスに置き換えること。
+
+### S3進捗: 地形ジオメトリをpackのステージで描く（2026-10-23）
+
+- **地形バッチをpack probeへ供給**: 地形は immediate 受理経路を通らないため、`TerrainRenderer.uploadRegion` から
+  `noteTerrainBatchForProbe(...)` を呼ぶ静的シンクを追加。実測ログ:
+  `CELTIUM_PACK_CAPTURE format=3 vertices=5912 stride=32` / `format=3 vertices=1056` など
+- **ジオメトリ採用と再描画**: `CELTIUM_PACK_GEOMETRY terrain vertices=68 format=8 attributes=7` →
+  `CELTIUM_PACK_RERENDER_GEOMETRY vertices=68 indices=102`（probeのオフスクリーン画像を実地形で再描画）
+- **未達**: 再描画した地形が**ピクセルとして出ていない**（提示画像の左下256×256は依然としてクリア色一色）。
+  候補は (a) `renderOffscreen` のパイプラインが depthFormat=UNDEFINED で作られており、packのプログラムが
+  depth test 前提のためラスタライズが捨てられている、(b) `fitTransformToBounds` が書く変換がプログラムの
+  実際の参照（u_Projection/u_ModelView/u_MVP のどれ）と一致していない。
+  次の判別は (a) から: 再描画用パイプラインをdepth無効で作るか、depth attachment を付ける。
