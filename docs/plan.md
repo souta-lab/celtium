@@ -23,7 +23,7 @@
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 | **現在のCeleritas比較（2026-10-22）** | **AMD 1.373-1.387x / Intel 1.738x** | 実測 | 未達 | **現行jar `24d31f69…`（HEAD・validation leg PASSED・配布物検証済み）で再測定**: **AMD 1.632/1.586/1.642 vs 1.178/1.144/1.173 ＝ 中央値 1.387x**（3ペア交互順・参照 `567dcf8a…`、p95 2.45-2.50 vs 1.46-1.50）。**Intel 1.738x** は `e4622406…` での測定（3.138/3.146/3.214 vs 1.812/1.811/1.808）。AMDの再測定は 1.373-1.387x の範囲で安定。受入（両GPU ≤1.0）には未達。**出荷構成（影OFF既定）**: AMD/Intel とも **PASSED・gate PASSED・validation 0件** |
-| **Javaアロケーションを37.5%削減（2026-10-22）** | **13.8GB→8.6GB/run** | 実測 | 構造改善 | JFRで**1run 13.8GB**の確保を検出（float[]25%・byte[]24.7%・int[]12.3%）。最大の自前サイト **`VulkanGlState.copy` 977MB**（`glPushMatrix`毎に`new float[16]`）を、**push/popで行列スロットをプール再利用**（上限64）に変更。**総確保 13,763→8,602MB（−37.5%）**、**当該977→147MB（−85%）**、**GC 50→39回**、`[F` 3,444→766MB。**画像・validation不変**（PASSED・gate PASSED・0件）。**フレーム時間は未確定**（負荷2.7の強制A/Bで0.955x・ペア逆転）。他の大物: `ModelQuadCapture.snapshot`・`rgbaOf`・`ImmediateGroup.obtain` |
+| **Javaアロケーションを39%削減（2026-10-22）** | **13,763→8,393 MB/run** | 実測 | 構造改善 | JFRで**1run 13.8GB**の確保を検出（float[]25%・byte[]24.7%・int[]12.3%）。2件を修正: ①**`VulkanGlState.copy` 977MB**（`glPushMatrix`毎に`new float[16]`）→ **push/popでスロットをプール再利用**（上限64）で**147MB**。②**`celtium$fogSnapshot` 300MB**（**offer毎にfog配列**を確保して比較）→ **比較はスクラッチ、保持は従来通り**（group毎）で**上位から消滅**。**総確保 13,763→8,393MB（−39%）**、**GC 50→39回**。**画像・validation不変**（PASSED・gate PASSED・0件）。**フレーム時間は未確定**（負荷2.7の強制A/Bで0.955x・ペア逆転）。残る上位: `ModelQuadCapture.snapshot` 368MB・`VulkanGlState.copy` 153MB（getter）・`rgbaOf` 140MB・`drawModelList` 106MB・`ImmediateGroup.obtain` 80MB |
 
 
 

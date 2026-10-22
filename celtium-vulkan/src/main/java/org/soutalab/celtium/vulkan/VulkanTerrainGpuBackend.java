@@ -3840,12 +3840,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 && captured[3] == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorHeight();
     }
 
+    /** Scratch for the per-offer fog comparison: eight floats reused instead of allocated ~280 times a frame. */
+    private final float[] fogCompareScratch = new float[8];
+
     private boolean celtium$fogMoved() {
-        float[] now = celtium$fogSnapshot();
+        // The snapshot's values are only compared here, never kept, so they go into a member array. The group's own copy is
+        // taken at open time by celtium$fogSnapshot(), which is once per group rather than once per offer - the difference
+        // between this and the allocation the profile showed at 300 MB a run.
+        int selector = celtium$fogSelector();
         float[] captured = this.currentGroupFog;
-        if (now == null || captured == null) {
-            return (now == null) != (captured == null);
+        if (selector == 0 || captured == null) {
+            return (selector == 0) != (captured == null);
         }
+        float[] now = this.fogCompareScratch;
+        now[0] = selector;
+        now[1] = this.fogDensity;
+        now[2] = this.fogStart;
+        now[3] = this.fogEnd;
+        now[4] = this.fogRed;
+        now[5] = this.fogGreen;
+        now[6] = this.fogBlue;
+        now[7] = 1.0f;
         return !java.util.Arrays.equals(now, captured);
     }
 
