@@ -877,6 +877,11 @@ public final class VulkanSwapchain {
         }
     }
 
+    /** {@return whether this swapchain queues frames at the display's rate}, which is what VSync on means. */
+    public boolean presentModeIsFifo() {
+        return this.presentMode == VK_PRESENT_MODE_FIFO_KHR;
+    }
+
     public int presentMode() {
         return this.presentMode;
     }

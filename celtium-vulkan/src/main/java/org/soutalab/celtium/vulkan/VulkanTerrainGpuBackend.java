@@ -2238,6 +2238,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (!PACE_TO_REFRESH) {
             return;
         }
+        // FIFO already blocks on the display's presentation engine; sleeping on top of it would add a whole refresh
+        // interval of latency for nothing. The cap exists for MAILBOX and IMMEDIATE, where nothing else paces the loop.
+        if (this.swapchain != null && this.swapchain.presentModeIsFifo()) {
+            return;
+        }
         if (this.paceIntervalNanos <= 0L) {
             this.paceIntervalNanos = 1_000_000_000L / 60L;
         }
