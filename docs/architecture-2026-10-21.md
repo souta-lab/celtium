@@ -382,6 +382,19 @@ descriptor の更新漏れ、バッチ数、マップの充填とスケール。
 無い場合は、キャスタの `gl_Position` を影マップではなく**フレーム画像へ**書く一時パスを作る
 （影マップへの記録関数を流用し、attachment をフレーム画像に差し替える）。
 
+### 影の不一致: シェーダ式とpush内容は同一（2026-10-22 追記）
+コードを読んで確定したこと:
+- レシーバ: `v_ShadowCoord = u_ShadowMatrix * vec4(worldPosition, 1.0)`（`terrain_solid.vert:236`）
+- キャスタ: `gl_Position = pc.u_ProjectionMatrix * pc.u_ModelViewMatrix * vec4(worldPosition, 1.0)`（同:237）で、
+  `lightSpaceBlock` は `[lightVP*T(centre), identity]` をpushする。**片方が単位行列なので積の順序に依存せず、両者は同じ式**。
+- **`worldPosition = _vert_position + u_RegionOffset + _get_draw_translation(_draw_id)`** も共通。
+⇒ 行列・式・頂点属性はすべて同一なのに、画像では**キャスタが x0.35-0.96 / y0.25-0.73 の塊**、**レシーバは左下(0.06,0.11)中心**。
+
+**残る唯一の差は `u_RegionOffset` の供給**。キャスタは `batch.descriptorSet` + `batch.dynamicOffset` をbindするが、これは
+**そのバッチを記録した時点の最後のリージョン**の値で、バッチが**複数リージョンを跨ぐ**なら大部分のコマンドでoffsetが食い違う。
+⇒ **次の計器**: 1バッチが覆うリージョン数を数える（`regionsPerBatch`）と、キャスタの（descriptor/dynamicOffset）が
+**そのバッチの先頭リージョンと一致しているか**をログする。
+
 ### 触ってはいけないもの
 `lightSpaceBlock` のidentity、`lightVP*T(centre)`、Vulkan深度remap（`cameraDepth=0.5` で検証済み）は
 **いずれも実測で正しい**。ここを再度いじると、検証済みの土台を崩すだけになる。
