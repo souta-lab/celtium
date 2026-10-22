@@ -810,3 +810,12 @@ family側も **`descriptorBindingVariableDescriptorCount` を同じ値で宣言*
 **残条件（最終）**: array mode では **`allocateDescriptorSet` を一度も呼ばない**こと。確保元の呼び出し
 （pipeline 作成時の予約 set を含む）を列挙して止める必要がある。ここまでで layout 共有の方向自体は
 コンパイル・構造としては成立している（画像は 4 回目の時点で PASSED、`arrayDraws=126919`）。
+
+**確保元の切り分け（2026-10-22）**: 想起される呼び出し元を列挙した結果、
+- `descriptorSetFor`（texture family）: array mode で短絡済み → **確保しない**
+- 記録中の再構築（backend 17273）: `texturePipeline.descriptorSetFor(...)` を呼ぶだけ → **同じ短絡を通る**
+- item family の 286/358 行: 別クラス・別pool → 無関係
+
+⇒ `(immediate textured)` の OOM を出しているのはこの3つではない。次は
+**`createDescriptorPool` 世代の確保**（`VulkanImmediateTexturePipeline` の pool を array mode で `maxSets=1` にした一方、
+どこかが2個目を確保している）と、**`ensure()` が複数回呼ばれて配列を2つ作る**経路を疑う。
