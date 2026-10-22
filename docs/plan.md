@@ -23,6 +23,8 @@
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 | **現在のCeleritas比較（2026-10-22）** | **AMD 1.373-1.387x / Intel 1.738x** | 実測 | 未達 | **現行jar `24d31f69…`（HEAD・validation leg PASSED・配布物検証済み）で再測定**: **AMD 1.632/1.586/1.642 vs 1.178/1.144/1.173 ＝ 中央値 1.387x**（3ペア交互順・参照 `567dcf8a…`、p95 2.45-2.50 vs 1.46-1.50）。**Intel 1.738x** は `e4622406…` での測定（3.138/3.146/3.214 vs 1.812/1.811/1.808）。AMDの再測定は 1.373-1.387x の範囲で安定。受入（両GPU ≤1.0）には未達。**出荷構成（影OFF既定）**: AMD/Intel とも **PASSED・gate PASSED・validation 0件** |
+| **Javaアロケーションを37.5%削減（2026-10-22 実測）** | **13.8GB→8.6GB/run** | 実測 | 構造改善 | JFRの`jdk.ObjectAllocationSample`で**1run 13.8GB**の確保を検出（float[] 25%・byte[] 24.7%・int[] 12.3%）。最大の自前サイトは **`VulkanGlState.copy` 977MB**（`glPushMatrix`毎に`new float[16]`）だったので、**push/popで行列スロットをプール再利用**（上限64）に変更。結果: **総確保 13,763→8,602MB（−37.5%）**、**当該サイト 977→147MB（−85%）**、**GC 50→39回**、`[F` 3,444→766MB。**画像・validation は不変**（world leg PASSED・gate PASSED・0件）。**フレーム時間は未確定**: 負荷2.7の強制A/Bで 0.955x（各ペア逆転）＝ノイズに埋もれ判定不能。次は静かな環境で再測。他の大物は `VulkanModelQuadCapture.snapshot`（1.3GB→357MBは場面差）・`VulkanTextureRegistry.rgbaOf`・`ImmediateGroup.obtain` |
+
 
 
 

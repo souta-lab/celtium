@@ -146,15 +146,31 @@ public final class VulkanGlState {
         this.textureStack1.push(newIdentity());
     }
 
-    /** Pushes the current matrix of the active mode; paired with {@link #popMatrix()}. */
+    /**
+     * Pushes the current matrix of the active mode; paired with {@link #popMatrix()}.
+     * <p>
+     * The pushed slot comes from a small pool that {@link #popMatrix()} refills, because this runs for every glPushMatrix the game makes -
+     * an entity or item draw pushes and pops several times - and a fresh float[16] each time was 977 MB of allocation in one JFR of the
+     * world window, the largest single site in this class. Reuse is safe under the same rule that already applied to the stack: a matrix
+     * belongs to whoever holds the top, and nothing may keep a reference to it after popping.
+     */
     public void pushMatrix() {
-        stack(this.matrixMode).push(copy(top(this.matrixMode)));
+        ArrayDeque<float[]> stack = stack(this.matrixMode);
+        float[] pushed = this.matrixScratchPool.poll();
+        if (pushed == null) {
+            pushed = new float[MATRIX_FLOATS];
+        }
+        System.arraycopy(top(this.matrixMode), 0, pushed, 0, MATRIX_FLOATS);
+        stack.push(pushed);
     }
 
     public void popMatrix() {
         ArrayDeque<float[]> stack = stack(this.matrixMode);
         if (stack.size() > 1) {
-            stack.pop();
+            float[] popped = stack.pop();
+            if (popped != null && this.matrixScratchPool.size() < MATRIX_POOL_LIMIT) {
+                this.matrixScratchPool.push(popped);
+            }
         }
     }
 
@@ -882,6 +898,10 @@ public final class VulkanGlState {
                 return this.modelViewStack;
         }
     }
+
+    /** Recycled matrix slots for {@link #pushMatrix()}, bounded so a deep stack cannot pin memory. */
+    private final ArrayDeque<float[]> matrixScratchPool = new ArrayDeque<float[]>();
+    private static final int MATRIX_POOL_LIMIT = 64;
 
     private float[] top(int mode) {
         return stack(mode).peek();
