@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **384 個**／文字列内マーカー **359 個**。
+システムプロパティの読み取りキー **385 個**／文字列内マーカー **360 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -42,6 +42,7 @@
 | [celtium.probe](#group-celtium-probe) | 5 |
 | [celtium.shaderpack](#group-celtium-shaderpack) | 4 |
 | [celtium.shadow](#group-celtium-shadow) | 1 |
+| [celtium.splashBar](#group-celtium-splashBar) | 1 |
 | [celtium.stub](#group-celtium-stub) | 1 |
 | [celtium.terrain](#group-celtium-terrain) | 3 |
 | [celtium.validation](#group-celtium-validation) | 131 |
@@ -259,6 +260,13 @@
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
 | `celtium.shadow.debug` | `Boolean.getBoolean` | [VulkanImmediateBlockPipeline.java:402](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateBlockPipeline.java#L402>), [VulkanImmediateTexturePipeline.java:863](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTexturePipeline.java#L863>) |
+
+<a id="group-celtium-splashBar"></a>
+## `celtium.splashBar.*`
+
+| キー | 読み取りAPI | 位置 |
+|---|---|---|
+| `celtium.splashBar` | `System.getProperty` | [CeltiumSplashBar.java:18](<../forge122/src/main/java/org/taumc/celeritas/impl/gui/CeltiumSplashBar.java#L18>) |
 
 <a id="group-celtium-stub"></a>
 ## `celtium.stub.*`
@@ -753,7 +761,7 @@
 | `CELTIUM_GAME_CLEAR` | [VulkanTerrainGpuBackend.java:12292](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L12292>) |
 | `CELTIUM_GAME_CLEAR_ROUTE` | [VulkanTerrainGpuBackend.java:12406](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L12406>) |
 | `CELTIUM_GLESS_INVALIDATE` | [VulkanTerrainGpuBackend.java:4385](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L4385>) |
-| `CELTIUM_GLLESS` | [CeltiumGlStub.java:1041](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L1041>), [CeltiumGlStub.java:1044](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L1044>), [CeleritasLoadingPlugin.java:43](<../forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java#L43>), [CeltiumGllessHint.java:798](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L798>), [CeltiumGllessHint.java:802](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L802>), [CeltiumGllessNativeTransformer.java:89](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java#L89>), [CeltiumGllessSdlSwapTransformer.java:49](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessSdlSwapTransformer.java#L49>), [CeltiumGllessSplashTransformer.java:54](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessSplashTransformer.java#L54>), [CeltiumGllessSplashTransformer.java:69](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessSplashTransformer.java#L69>), [CeltiumGllessWindowTransformer.java:79](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessWindowTransformer.java#L79>), [CeleritasVintageMixinPlugin.java:58](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L58>), [CeleritasVintageMixinPlugin.java:60](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L60>), [MinecraftMixin.java:414](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L414>), [MinecraftMixin.java:420](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L420>) |
+| `CELTIUM_GLLESS` | [CeltiumGlStub.java:1041](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L1041>), [CeltiumGlStub.java:1044](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L1044>), [CeleritasLoadingPlugin.java:43](<../forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java#L43>), [CeltiumGllessHint.java:798](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L798>), [CeltiumGllessHint.java:802](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L802>), [CeltiumGllessNativeTransformer.java:89](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java#L89>), [CeltiumGllessSdlSwapTransformer.java:49](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessSdlSwapTransformer.java#L49>), [CeltiumGllessSplashTransformer.java:54](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessSplashTransformer.java#L54>), [CeltiumGllessSplashTransformer.java:69](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessSplashTransformer.java#L69>), [CeltiumGllessWindowTransformer.java:79](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessWindowTransformer.java#L79>), [CeleritasVintageMixinPlugin.java:58](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L58>), [CeleritasVintageMixinPlugin.java:60](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L60>), [MinecraftMixin.java:464](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L464>), [MinecraftMixin.java:470](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L470>) |
 | `CELTIUM_GLUPERSPECTIVE` | [VulkanTerrainGpuBackend.java:4690](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L4690>) |
 | `CELTIUM_GLUPERSPECTIVE_SKIP` | [VulkanTerrainGpuBackend.java:4716](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L4716>) |
 | `CELTIUM_GLYPH` | [CeltiumFontGlyphCapture.java:602](<../forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java#L602>), [CeltiumFontGlyphCapture.java:691](<../forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java#L691>) |
@@ -919,9 +927,10 @@
 | `CELTIUM_SKIP_DECISION` | [VulkanTextureRegistry.java:521](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L521>) |
 | `CELTIUM_SKY_DEGRADED` | [CeltiumGlStub.java:6832](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L6832>) |
 | `CELTIUM_SLOT_WAIT` | [VulkanTerrainGpuBackend.java:17101](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L17101>) |
+| `CELTIUM_SPLASH_BAR` | [MinecraftMixin.java:386](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L386>) |
 | `CELTIUM_SPLASH_FLIP` | [VulkanTerrainGpuBackend.java:8581](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8581>) |
 | `CELTIUM_SPLASH_HANDLES` | [VulkanTerrainGpuBackend.java:8694](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8694>), [VulkanTerrainGpuBackend.java:8699](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8699>) |
-| `CELTIUM_SPLASH_HOOK` | [MinecraftMixin.java:313](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L313>), [MinecraftMixin.java:318](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L318>), [MinecraftMixin.java:329](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L329>), [MinecraftMixin.java:333](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L333>), [ValidationClient.java:7415](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7415>) |
+| `CELTIUM_SPLASH_HOOK` | [MinecraftMixin.java:314](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L314>), [MinecraftMixin.java:319](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L319>), [MinecraftMixin.java:330](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L330>), [MinecraftMixin.java:334](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L334>), [ValidationClient.java:7415](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7415>) |
 | `CELTIUM_SPLASH_PAIRPOST` | [VulkanTerrainGpuBackend.java:8607](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8607>) |
 | `CELTIUM_SPLASH_PROBE` | [VulkanTerrainGpuBackend.java:8761](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8761>) |
 | `CELTIUM_SRC` | [VulkanGlTexture.java:2860](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L2860>), [VulkanGlTexture.java:2981](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L2981>) |
@@ -935,7 +944,7 @@
 | `CELTIUM_SWAPCHAIN_ACQUIRE_ABANDONED` | [VulkanSwapchain.java:1732](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L1732>) |
 | `CELTIUM_SWAPCHAIN_DRAIN_UNCONFIRMED` | [VulkanSwapchain.java:1758](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L1758>) |
 | `CELTIUM_SWAPCHAIN_FAILED` | [VulkanTerrainGpuBackend.java:12810](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L12810>) |
-| `CELTIUM_SWAPPOINT` | [MinecraftMixin.java:542](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L542>) |
+| `CELTIUM_SWAPPOINT` | [MinecraftMixin.java:592](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L592>) |
 | `CELTIUM_TARGET_FOREIGN` | [VulkanTerrainGpuBackend.java:16565](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16565>) |
 | `CELTIUM_TARGET_IMAGE` | [VulkanTerrainGpuBackend.java:5122](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L5122>) |
 | `CELTIUM_TARGET_REFUSAL` | [VulkanTerrainGpuBackend.java:16552](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16552>), [VulkanTerrainGpuBackend.java:16572](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16572>) |
@@ -971,7 +980,7 @@
 | `CELTIUM_WINDOW` | [CeltiumWindow.java:69](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L69>), [CeltiumWindow.java:118](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L118>), [CeltiumWindow.java:125](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L125>) |
 | `CELTIUM_WINDOW_DRAW` | [VulkanTerrainGpuBackend.java:9896](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L9896>) |
 | `CELTIUM_WINDOW_ORDER` | [VulkanTerrainGpuBackend.java:8511](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8511>) |
-| `CELTIUM_WINDOW_RENDERER` | [MinecraftMixin.java:493](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L493>), [MinecraftMixin.java:498](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L498>), [MinecraftMixin.java:517](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L517>) |
+| `CELTIUM_WINDOW_RENDERER` | [MinecraftMixin.java:543](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L543>), [MinecraftMixin.java:548](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L548>), [MinecraftMixin.java:567](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L567>) |
 | `CELTIUM_WINDOW_SITE` | [VulkanTerrainGpuBackend.java:14811](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L14811>) |
 | `CELTIUM_WINDOW_SIZE_CHANGED` | [ValidationClient.java:7157](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7157>) |
 | `CELTIUM_WINDOW_STATE` | [VulkanTerrainGpuBackend.java:2313](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L2313>) |
