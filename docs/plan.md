@@ -7,9 +7,17 @@
 
 ## 次の作業単位（2026-10-22 改訂・利用者指示）
 
-1. **性能（最優先）**: 出荷構成は影なし。参照実装に対する 1.387x（AMD・影OFF）を 1.0 に近づける。Java 側の補足ではなく native へ所有権を移す（`architecture` §11/§12）。
-2. **シェーダパックを実際に動かす**: BSL 等を読み、ワールドの地形描画を pack のプログラムで行う。**実装は別mod**（`docs/shader-plan.md`）。影も pack の `shadow`/`shadowtex` プログラムで行う。
-3. **組込影は scaffold に降格（既定OFF）**: `ShadowMapPass` は native の深度ターゲットと投影の検証用。既定 `false`、`-Dceltium.shadow.enabled=true` で起動。
+1. **性能（最優先）**: 出荷構成は影なし。参照実装に対する AMD 1.387x / Intel 1.738x を 1.0 に近づける。
+   受け入れの算術（`architecture` §11/§12）では受理経路の内側の最適化では届かず、per-offer のJava仕事を消す再設計が要る。
+2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
+   Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
+   Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では
+   「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Celtium の Vulkan 経路との接続面に置き換える**作業になる。
+   **別成果物（addon jar）**として実装し、Celtium core には取り込まない（`docs/shader-plan.md` の方針）。
+3. **組込影は scaffold に降格（既定OFF）**: `ShadowMapPass` は native 深度ターゲットと投影の検証用。既定 `false`。
+4. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来部分は LGPL-3.0、Actinium 由来は GPL-3.0、
+   glsl-transformer は AGPL-3.0。**fork するなら fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
+   LGPL 部分のチェリーピックはクレジット明記で可能（利用者指示③）。GLSM の丸ごと持ち込みはしない。
 
 ## 現在の優先順
 
@@ -24,7 +32,7 @@
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①**受理経路をnativeへ**（Java補足ではなく所有権移動。`architecture` §12が規模の算術）②影の尾の削減（二重バッファ化 or cadenceと品質のトレード）③`shader-plan.md` の既存modベースでBSL接続 ④state/texture/render target所有のnative化（未完） |
-| **測定の現状** | **フレーム時間は保留** | — | 欠測 | 機械負荷が5-8でKPI閾値2.0を大きく超え、単発比較は負荷を測ってしまう。**JFR（アロケーション・共有）とvalidation/gate/画像は有効**。共有値はA/Bで2件連続否定済み＝探索にのみ使う |
+| **測定の現状** | **フレーム時間は保留** | — | 欠測 | 機械負荷が5-8でKPI閾値2.0を大きく超え、単発比較は負荷を測ってしまう。**JFR（アロケーション・共有）とvalidation/gate/画像は有効**。共有値はA/Bで2件連続否定済み＝探索にのみ使う ／ **`-Dceltium.vulkan.passSplit` が現ビルドで無出力**（leg `perf-struct-1` のログに `CELTIUM_PASS_SPLIT` が1行も無い）。計器の有効性を先に確認する（無出力を根因にしない）。 |
 
 ## 撤回した前提（再入条件つき）
 

@@ -327,3 +327,43 @@ S0で再利用範囲と本体のnative APIを確定した時、S2で実packの�
 - **R46** [SDL3 GPU official API / feature・shader・資源管理](https://wiki.libsdl.org/SDL3/CategoryGPU)
 - **R47** [MoltenVK official / portability](https://github.com/KhronosGroup/MoltenVK)
 - **R48** [Angelica SDL GPU Java/toolchain/dependencies](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/sdl-gpu/build.gradle.kts)
+
+## 0. 決定（2026-10-22・利用者指示）: 影とパックは Demonica の fork で行う
+
+**Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする。** 判断の根拠と境界をここに固定する。
+
+### Demonica の実体（pinned commit `a83feba9cb15fe1d54404bcc740cd812d699d023` の README / docs より）
+- **Iris の shader pipeline ＋ Angelica の GLSM ＋ 互換層**を、別途導入の **Celeritas** の上で動かす mod。
+- Actinium から fork（`4a19c959`）し、**terrain renderer は持たない**（描画は Celeritas が持つ）。
+- Celeritas のクラスを触るのは **quarantine 1箇所**（`mixins.demonica.celeritas.json`）だけで、各パッチに台帳（`docs/celeritas/LEDGER.md`）と上流PR草案がある。
+- **Cleanroom の OpenGL context 上で動く**（core context も選択可）。
+- ライセンス: 本体 **AGPL-3.0**（〜0.4.0 は GPL-3.0）、Angelica/Iris 由来は LGPL-3.0、Actinium 由来は GPL-3.0、glsl-transformer は AGPL-3.0。
+
+### Celtium への移し方（残す／置換する／捨てる）
+| 部分 | 扱い |
+|---|---|
+| pack の読み込み・program 集合・directives・option 画面 | **残す**（Demonica 側の実装をそのまま fork で継承） |
+| Iris pipeline の段構成（gbuffers → composite → final、target 管理） | **残す**が、**描画先は Vulkan の target に置換**（GL FBO を持たない） |
+| Celeritas への quarantine パッチ | **置換**: Celtium が既に公開している `celtium$*` フック（terrain 描画乗っ取り・framebuffer 採用・pipeline/descriptor 廃棄通知・present）を呼ぶ形にする。Celtium 側のクラスを patch しない |
+| GLSM（Mod の直接 GL 呼び出しの互換） | **境界だけ残す**。Celtium の制約どおり「Mod が直接行う GL 呼び出し」専用。**GLSM を丸ごと持ち込まない**（shader-plan の既存方針） |
+| 描画そのもの（pack の GLSL → SPIR-V → Vulkan pipeline） | **Celtium 側の既存資産**（`celtium-shaderpack` の lowering、`ShaderPackPipelineFactory`）を使う |
+| 影 | **pack の `shadow`/`shadowtex` プログラムで行う**。Celtium の組込 `ShadowMapPass` は scaffold（既定OFF） |
+| 診断 jar | 取り込まない（独立のまま） |
+
+### 成果物の境界（ライセンス）
+- fork は **別リポジトリ／別 jar（AGPL-3.0）**として維持し、**Celtium core には取り込まない**。
+- LGPL-3.0 の部分（Angelica/Iris 由来）はクレジット明記のうえチェリーピック可（利用者指示③）。
+- AGPL の都合で fork 側のコードを Celtium core に混ぜない。接続は**公開フックとインターフェースのみ**。
+
+### 作業順（Celtium 側から見た依存）
+1. **Celtium の接続面を確定**（下記フックのうち fork が使うものを文書化し、不足を足す）
+2. fork 側でパック読み込みと program 集合を維持したまま **描画先を Vulkan target に差し替え**
+3. terrain の描画を **Celtium の terrain 経路へ委譲**（`celtium$captureTerrainBatch` 系）
+4. composite/final を Vulkan の pass として実行
+5. pack の影（`shadow`/`shadowtex`）を pack のプログラムで実行
+6. 4画面＋qmagnet の画質証拠を維持（壊したら戻す）
+
+### 参考: Celtium が既に公開しているフック（fork が使える）
+`captureTerrainBatch` / `adoptableFramebuffer` / `adoptedColorTexture` / `adoptedDepthTexture` / `mirrorSourceFor` / `mirroredTexture` /
+`mirroredProjection` / `ensureTargetForBoundFramebuffer` / `noteFramebufferAdopted` / `notePipelineDestroy` / `noteDescriptorDestroy` /
+`retireBuffer` / `flushPendingAtFrameBoundary` / `presentFrame` / `dumpPresentedImage` / `drawModelList` など（`celtium$` 前置、1197箇所で参照）。
