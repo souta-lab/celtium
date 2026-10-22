@@ -42,7 +42,7 @@ import static org.lwjgl.vulkan.VK10.*;
  */
 public final class VulkanSwapchain {
     private final VulkanContext context;
-    private final long surface;
+    private long surface;
     private final String platform;
 
     private long swapchain = VK_NULL_HANDLE;
@@ -582,7 +582,12 @@ public final class VulkanSwapchain {
         }
     }
 
-    private VulkanSwapchain(VulkanContext context, long surface, String platform) {
+    /** The native window the surface was built from, so a rebuild only reuses it for the same window. */
+    private final long nativeWindowHandle;
+
+    private VulkanSwapchain(VulkanContext context, long surface, String platform, long nativeWindowHandle) {
+        this.nativeWindowHandle = nativeWindowHandle;
+
         this.context = context;
         this.surface = surface;
         this.platform = platform;
@@ -597,6 +602,16 @@ public final class VulkanSwapchain {
      */
     public static VulkanSwapchain create(VulkanContext context, long window, int width, int height,
                                          List<String> reasons) {
+        return create(context, window, width, height, reasons, VK_NULL_HANDLE);
+    }
+
+    /**
+     * Creates a swapchain, adopting {@code reusedSurface} when the caller kept one for this same window.
+     *
+     * @param reusedSurface a surface detached from the previous swapchain, or {@link VK_NULL_HANDLE} to build one
+     */
+    public static VulkanSwapchain create(VulkanContext context, long window, int width, int height,
+                                         List<String> reasons, long reusedSurface) {
         if (context == null || window == 0L) {
             reasons.add("no window handle was available for a Vulkan surface");
             return null;
@@ -611,6 +626,11 @@ public final class VulkanSwapchain {
         // asking GLFW there is a NoClassDefFoundError rather than a fallback. SDL_Vulkan_CreateSurface takes the
         // SDL_Window directly and answers with the surface for whatever compositor it opened, which is why the two
         // hand-written compositor paths below are only needed for the GLFW line.
+        if (reusedSurface != VK_NULL_HANDLE) {
+            // Same window, same surface: nothing to create, and nothing for the compositor's explicit-sync state to
+            // be re-initialised against.
+            return buildForSurface(context, window, reusedSurface, "reused-surface", width, height, reasons);
+        }
         if (CeltiumWindow.sdl()) {
             String compositor = CeltiumWindow.sdlCompositor();
             String where = compositor == null ? "sdl" : compositor.toLowerCase();
@@ -646,7 +666,7 @@ public final class VulkanSwapchain {
                     }
                     surface = handle.get(0);
                 }
-                return buildForSurface(context, surface, where, width, height, reasons);
+                return buildForSurface(context, window, surface, where, width, height, reasons);
             }
             long sdlWindow = CeltiumWindow.sdlWindowPointer();
             if (sdlWindow == 0L) {
@@ -689,7 +709,7 @@ public final class VulkanSwapchain {
                         return null;
                     }
                     surface = handle.get(0);
-                    return buildForSurface(context, surface, where + "-wayland-raw", width, height, reasons);
+                    return buildForSurface(context, window, surface, where + "-wayland-raw", width, height, reasons);
                 }
                 if (!org.lwjgl.sdl.SDLVulkan.SDL_Vulkan_CreateSurface(sdlWindow, context.instance(), null, handle)) {
                     reasons.add("SDL_Vulkan_CreateSurface failed for compositor " + compositor
@@ -698,7 +718,7 @@ public final class VulkanSwapchain {
                 }
                 surface = handle.get(0);
             }
-            return buildForSurface(context, surface, where, width, height, reasons);
+            return buildForSurface(context, window, surface, where, width, height, reasons);
         }
         int platformId = GLFW.glfwGetPlatform();
         String platform;
@@ -751,11 +771,12 @@ public final class VulkanSwapchain {
             }
         }
 
-        return buildForSurface(context, surface, platform, width, height, reasons);
+        return buildForSurface(context, window, surface, platform, width, height, reasons);
     }
 
     /** Builds the swapchain for an already-created surface; the platform name is for diagnostics. */
-    private static VulkanSwapchain buildForSurface(VulkanContext context, long surface, String platform, int width,
+    private static VulkanSwapchain buildForSurface(VulkanContext context, long window, long surface, String platform,
+                                                   int width,
             int height, List<String> reasons) {
         // BH-19: the present-support contract, and the ownership/sharing decision behind it.
         //
@@ -805,7 +826,7 @@ public final class VulkanSwapchain {
             }
         }
 
-        VulkanSwapchain swapchain = new VulkanSwapchain(context, surface, platform);
+        VulkanSwapchain swapchain = new VulkanSwapchain(context, surface, platform, window);
         try {
             if (!swapchain.createSwapchain(width, height, reasons)) {
                 swapchain.delete();
@@ -1764,6 +1785,31 @@ public final class VulkanSwapchain {
             vkDestroyCommandPool(this.context.device(), this.presentBlitPool, null);
             this.presentBlitPool = VK_NULL_HANDLE;
         }
+    }
+
+    /** {@return the VkSurfaceKHR this swapchain presents to}, or 0 once it has been detached or destroyed. */
+    public long surfaceHandle() {
+        return this.surface;
+    }
+
+    /** {@return the native window handle the surface was built from}; a rebuild may only reuse the surface for the same window. */
+    public long nativeWindowHandle() {
+        return this.nativeWindowHandle;
+    }
+
+    /**
+     * Hands the surface to the caller without destroying it, so the next swapchain for the same window can adopt it.
+     * <p>
+     * Rebuilding used to destroy the surface and create an identical one on the same wl_surface. Under Wayland that
+     * leaves Mesa's explicit-sync bookkeeping for the surface pointing at a destroyed protocol object, and the next
+     * present attaches a buffer without an acquire point: sway answers with
+     * {@code wp_linux_drm_syncobj_surface_v1 error 4} and closes the connection, which ends the session. The surface
+     * belongs to the window, not to the swapchain, so it survives a rebuild.
+     */
+    public long detachSurface() {
+        long detached = this.surface;
+        this.surface = VK_NULL_HANDLE;
+        return detached;
     }
 
     public void delete() {

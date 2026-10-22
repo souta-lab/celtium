@@ -2213,6 +2213,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
     private int debugFramesPresented;
     private boolean debugFullscreenAsked;
+    /** {@code -Dceltium.vulkan.windowDiag=true}: report what SDL and the Display shim say the window is, once a second. */
+    private static final boolean WINDOW_DIAG = Boolean.getBoolean("celtium.vulkan.windowDiag");
+    private int windowDiagFrames;
+
+    private void celtium$reportWindowState() {
+        if (!WINDOW_DIAG) {
+            return;
+        }
+        ++this.windowDiagFrames;
+        if (false) {
+            return;
+        }
+        long window = CeltiumWindow.sdlWindowPointer();
+        int[] pixels = new int[2];
+        boolean havePixels = CeltiumWindow.sdlPixelSize(pixels);
+        long flags = window == 0L ? -1L : org.lwjgl.sdl.SDLVideo.SDL_GetWindowFlags(window);
+        String display = "unavailable";
+        try {
+            Class<?> cls = Class.forName("org.lwjgl.opengl.Display");
+            display = "close=" + cls.getMethod("isCloseRequested").invoke(null)
+                    + " created=" + cls.getMethod("isCreated").invoke(null)
+                    + " size=" + cls.getMethod("getWidth").invoke(null) + "x"
+                    + cls.getMethod("getHeight").invoke(null)
+                    + " active=" + cls.getMethod("isActive").invoke(null)
+                    + " fullscreen=" + cls.getMethod("isFullscreen").invoke(null);
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            display = "unavailable(" + failed.getClass().getSimpleName() + ")";
+        }
+        System.out.println("[Celtium] CELTIUM_WINDOW_STATE frame=" + this.windowDiagFrames
+                + " sdl=" + (window == 0L ? "none" : "0x" + Long.toHexString(window))
+                + " flags=0x" + Long.toHexString(flags)
+                + " pixelSize=" + (havePixels ? pixels[0] + "x" + pixels[1] : "unknown")
+                + " display[" + display + "]");
+    }
+
     private int currentGroupTextureIndex = -1;
     private long textureIndexHits;
     private long textureIndexMisses;
@@ -12558,8 +12593,20 @@ this.frameBufferOpen = false;
     /** Swapchains dropped because the VSync option changed (task-56), so the rebuild is a number, not a claim. */
 
     /** A request is owned by the window, not the replaceable swapchain wrapper. */
+    /** A surface kept across a rebuild: it belongs to the window, and recreating it breaks Wayland's explicit sync. */
+    private long reusableSurface;
+    private long reusableSurfaceWindow;
+
     private void releaseSwapchainForRebuild() {
         this.pendingPresentedDumps.addAll(this.swapchain.takePendingPresentedImageDumps());
+        long window = CeltiumWindow.sdl() ? CeltiumWindow.sdlWindowPointer() : 0L;
+        if (window != 0L && this.swapchain.nativeWindowHandle() == window) {
+            // Same window: hand the surface over instead of destroying it. Destroying and recreating it on the same
+            // wl_surface is what produced wp_linux_drm_syncobj_surface_v1 error 4 on the first present after a resize,
+            // and sway closes the connection on it.
+            this.reusableSurface = this.swapchain.detachSurface();
+            this.reusableSurfaceWindow = window;
+        }
         this.swapchain.delete();
         this.swapchain = null;
         // Write serials are local to the old wrapper. Retain completed frame bindings,
@@ -12648,7 +12695,10 @@ this.frameBufferOpen = false;
             }
         }
         java.util.List<String> reasons = new java.util.ArrayList<String>();
-        this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons);
+        long adopt = window == this.reusableSurfaceWindow ? this.reusableSurface : 0L;
+        this.reusableSurface = 0L;
+        this.reusableSurfaceWindow = 0L;
+        this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt);
         forwardPendingPresentedDumps();
         if (this.swapchain == null) {
             if (!this.pendingPresentedDumps.isEmpty()) {
@@ -15246,6 +15296,8 @@ this.frameBufferOpen = false;
     }
 
     private boolean celtium$presentFrameImpl() {
+        org.soutalab.celtium.vulkan.CeltiumSdlEventTrace.installOnce();
+        celtium$reportWindowState();
         celtium$debugMaybeGoFullscreen();
         // Isolation switch for the Wayland fault: with the swapchain out of the picture the frame is recorded and
         // submitted but never presented, which separates "the swapchain's own wl_display use is the fault" from

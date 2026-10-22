@@ -396,3 +396,25 @@ seedした leg `fsstart-1` は **17秒で `Stopping!`（利用者と同じ「ロ
 このとき `wp_linux_drm_syncobj` の行は出ていない＝**接続断は必須ではない**（症状は同じ、原因は別の可能性）。
 観測: swapchain は `size=1920x1080` で作られる一方、present は `blitted 1280x720`。**ゲームのframebufferとsurface extentが
 一致していない**（`Display`のサイズ報告がfullscreen後のSDLサイズに追従していない疑い）。次はここを計器化して切り分ける。
+
+**fullscreen の原因調査（2026-10-22 夜・計器追加）**: 追加した計器 `-Dceltium.vulkan.windowDiag=true`（SDL flags/画素サイズ/
+lwjgly Display の close・size・fullscreen）、`-Dceltium.vulkan.eventTrace=true`（SDL_AddEventWatch で quit/window イベントを生で出力）。
+
+実測（seed fullscreen:true, jar `windiag-2`）:
+```
+frame=1 ... 1280x720 display[close=false ... fullscreen=false]
+frame=2 ... 1920x1080 display[close=false ... fullscreen=true]
+frame=3 ... 1920x1080 display[close=true  ... fullscreen=true]
+```
+`SDL_Pump` の quit イベント(256) と `Window.requestClose()` が closeRequested を立て、`Minecraft.runGameLoop` が終了する。
+イベント列: `524 ENTER_FULLSCREEN → 525 LEAVE_FULLSCREEN → 527 FOCUS_LOST → 526 FOCUS_GAINED → 518/519 resize 1920 → 533 → 516 → 256 QUIT`。
+
+決定的な切り分け:
+- **`wp_linux_drm_syncobj_surface_v1 error 4 / Wayland display connection closed` は console にのみ出る**（log4jのlatest.logには出ない）。
+  これは**こちらがpresentしている時だけ**発生（`-Dceltium.vulkan.skipPresent=true` では syncobj エラー0）。
+- skipPresent でも **windowID=3 の 528 CLOSE_REQUESTED → 256 QUIT → 終了** は起きる（＝quit経路はpresentとは独立）。
+- present mode FIFO でも同じ。**VkSurfaceKHRを再作成しない（再利用する）変更を入れても syncobj エラーは消えない**
+  ⇒ 原因是れはサーフェス再作成ではなく、**リサイズ後の新しいswapchainの最初のpresent**（Mesa/WSIのexplicit sync）。
+- sway が接続を切ると SDL が QUIT を投げてゲームが正常終了する（利用者の「exit 0」と一致）。
+
+未解決。回避策はウィンドウ起動（options fullscreen:false）。headless（隔離Sway）でも再現可能かを次のlegで確認する。
