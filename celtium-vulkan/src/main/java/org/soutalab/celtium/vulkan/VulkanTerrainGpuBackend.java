@@ -2225,6 +2225,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int frameIntervalCount;
     private long lastFrameBoundaryNanos;
 
+    /**
+     * {@return the game loop's own breakdown of the frame}, read reflectively because the counters live in the mod's
+     * mixin package and this module does not depend on it. It is what separates tick, display, fps-sync, render and the
+     * loop's remainder - the shares a present-to-present interval cannot name.
+     */
+    private String celtium$gameLoopSummary() {
+        try {
+            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
+            Object summary = timing.getMethod("summary").invoke(null);
+            return String.valueOf(summary);
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            return "unavailable(" + failed.getClass().getSimpleName() + ")";
+        }
+    }
+
     private void celtium$noteFrameBoundary(String where) {
         if (!FRAME_STATS) {
             return;
@@ -2257,6 +2272,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         this.immediateStatistics.prepareImmediateNanos() / 1e6
                                 / Math.max(1L, this.debugFrameReports))
                 + "]"
+                + (FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
+                + " texCopy[calls=" + this.textureCopyCalls + " totalMs=" + (this.textureCopyNanos / 1000000L) + "]"
                 + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " skips=" + this.lazyMirrorRetrySkips
                 + " failures=" + this.lazyMirrorFailures + "]");
         this.debugFrameReports++;
@@ -15779,11 +15796,19 @@ this.frameBufferOpen = false;
      * @param readFbo  the framebuffer the game bound for reading
      * @return {@code "served"} when the pixels reached the destination mirror, otherwise a reason that names itself
      */
+    /** Cumulative wall time of the game's copyTexSubImage calls: three a frame in the menu, and each is a GPU round trip. */
+    private long textureCopyCalls;
+    private long textureCopyNanos;
+
     public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
             int x, int y, int width, int height, int readFbo) {
         // Thin delegate: the copy path lives in TextureCopyService, and this signature is what the GL-less stub calls.
-        return this.textureCopyService.serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
+        return long copyStarted = System.nanoTime();
+        String copyResult = this.textureCopyService.serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
                 readFbo);
+        this.textureCopyNanos += System.nanoTime() - copyStarted;
+        this.textureCopyCalls++;
+        return copyResult;
     }
 
     /**
