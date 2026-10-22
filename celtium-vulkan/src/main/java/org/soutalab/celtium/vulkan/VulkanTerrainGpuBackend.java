@@ -2734,7 +2734,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
                 + " groupLoopIterations=" + this.immediateStatistics.groupLoopIterations()
                 + " groupLoopCalls=" + this.immediateStatistics.groupLoopCalls()
-                + (this.shadowMapPass == null ? "" : " shadow=[" + this.shadowMapPass.statistics() + "]")
+                + ""
                 + " offerCount=" + this.immediateOfferCount
                 + " offerTotalMillis=" + (this.immediateSubmitNanos / 1000000L)
                 + " offersLastFrame=" + this.immediateOffersLastFrame
@@ -8166,19 +8166,6 @@ this.frameBufferOpen = false;
             // window's pass is exactly that point - the pass has ended, the frame buffer is still open, and the present
             // has not been queued.
             celtium$recordShaderPackDraw();
-            long shadowStart = System.nanoTime();
-            try {
-                celtium$recordShadowPass();
-            } finally {
-                long shadowNanos = System.nanoTime() - shadowStart;
-                this.shadowRecordNanos += shadowNanos;
-                if (this.shadowRecordPrints < 8 || shadowNanos > 50_000_000L) {
-                    this.shadowRecordPrints++;
-                    System.out.println("[Celtium] CELTIUM_SHADOW_RECORD millis=" + (shadowNanos / 1_000_000L)
-                            + " totalMillis=" + (this.shadowRecordNanos / 1_000_000L)
-                            + " frame=" + this.frameId);
-                }
-            }
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
             // The frame's wall clock split. A sampling profiler cannot see a thread that is waiting, and the gap to the
@@ -10405,7 +10392,6 @@ this.frameBufferOpen = false;
                 + " groupSplits[" + this.groupSplitCensus.summary() + "]"
                 + " groupCloses=" + this.groupClosesForcingStart
                 + " flushBeforeGlDraw=" + this.flushBeforeGlDrawCalls
-                + " shadowSkips=" + this.shadowSkips
                 + " flushBeforeGlDrawWithGroups=" + this.flushBeforeGlDrawWithGroups
                 + " mergeRefusals=" + this.mergeRefusalSummary()
                 // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
@@ -11359,12 +11345,6 @@ this.frameBufferOpen = false;
             pipeline.delete();
         }
         this.terrain.releasePipelines();
-        if (this.shadowMapPass != null) {
-            // The pass owns an image, a view, its memory, a sampler, a matrix block, two pipelines and the pools of its own
-            // submissions; without this call a context rebuild leaked all of them (#400).
-            this.shadowMapPass.destroy();
-            this.shadowMapPass = null;
-        }
         if (this.uiRenderPass != 0) {
             org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.uiRenderPass, null);
             this.uiRenderPass = 0;
@@ -11548,7 +11528,6 @@ this.frameBufferOpen = false;
         // pipelineFor(lastUiPass) can return a different instance (the vanilla-format variant has a 208-byte push range
         // where this one has 128), and a set bound under one layout is not compatible with the other - measured in leg
         // shadowTerrain4 as VUID-vkCmdDrawIndexedIndirect-None-08600.
-        this.shadowTerrainPipeline = pipeline;
         pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size(), this.frameSlot);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
@@ -11752,14 +11731,6 @@ this.frameBufferOpen = false;
             boolean indirect = false;
             if (TERRAIN_INDIRECT_ENABLED) {
                 indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer, stack, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType);
-                if (indirect
-                        && org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested()
-                        && !Boolean.getBoolean("celtium.shadow.noPass")) {
-                    // Every range of this batch becomes a caster, with the state this draw uses - taken here, where the
-                    // pipeline's set, dynamic offset and push block are the ones the batch was recorded with. The ranges
-                    // come from the renderer because a range and the buffers it reads have to be one tuple (#397).
-                    this.celtium$queueShadowBatches(pipeline);
-                }
             } else {
                 this.terrain.noteTerrainIndirectFallback();
                 this.terrain.setLastTerrainIndirectFallback("the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
@@ -14678,149 +14649,15 @@ this.frameBufferOpen = false;
     /** The first terrain-shaped batch's vertices, kept for the shaderpack probe's real-geometry draw. */
     private java.nio.ByteBuffer terrainCaptureVertices;
 
-    /** The native shadow map's pass, present only when {@code -Dceltium.shadow.enabled=true}. */
 
-    /** The terrain pipeline instance the last pass drew with, which the shadow draw has to match. */
-    private VulkanTerrainPipeline shadowTerrainPipeline;
-    private int shadowShadowDiag;
-    private boolean shadowProbeReported;
-    /** How many times the light setup has been logged; a bounded diagnostic, not a per-frame cost. */
-    private int shadowLightsLogged;
-    private int shadowMatrixComparePrints;
     private long terrainBindNanos;
     private long terrainPassBeginNanos;
     private long terrainUniformNanos;
-    /** The matrix the terrain receiver read while it drew, snapshotted so the caster's copy can be compared to it. */
-    private final float[] shadowReceiverMatrixAtDraw = new float[16];
-    private boolean shadowReceiverMatrixAtDrawSeen;
-    /** The camera position as the world pass saw it; the light is built around this. */
-    private final org.joml.Vector3f shadowCentre = new org.joml.Vector3f();
-    /**
-     * The world-space camera position, pushed from the game once a frame.
-     * <p>
-     * Nothing in the Vulkan path knows it: the terrain is drawn camera-relative and the GL matrix mirror holds a
-     * camera-relative model view in every place it was read (measured: the inverted translation is about zero at both the
-     * frame boundary and the terrain draw). That left the light built around whatever the boundary mirror happened to
-     * hold - (-0.0, -0.0, 2000.0) against a camera at (217.5, 48, 217.5) - so the +/-48 box covered almost none of the
-     * scene. The game knows the position, so it says it rather than the renderer inferring it.
-     */
-    private static volatile double cameraWorldX;
-    private static volatile double cameraWorldY;
-    private static volatile double cameraWorldZ;
-    private static volatile boolean cameraWorldKnown;
 
-    /** Called by the game each frame with the view entity's position; the shadow light is built around it. */
-    public static void setCameraWorldPosition(double x, double y, double z) {
-        cameraWorldX = x;
-        cameraWorldY = y;
-        cameraWorldZ = z;
-        cameraWorldKnown = true;
-    }
-    private boolean shadowCentreCaptured;
-    /**
-     * Snapshots the shadow draw's tuple if the renderer captured a new batch since the last one.
-     * <p>
-     * The geometry half comes from {@link TerrainRenderer#shadowCaptureSerial()}: when the serial changes, the renderer has
-     * just recorded a batch and the vertex, index and indirect values it exposes all belong to that batch. The state half -
-     * pipeline, descriptor set with its dynamic offset, and the 224-byte push block - is taken here, in the same call, so
-     * the two halves cannot describe different regions (#397).
-     *
-     * @param pipeline the terrain pipeline that drew the batch
-     * @return whether a tuple is available
-     */
-    /**
-     * Queues this batch's recorded ranges for the shadow pass, paired with the state the draw is using.
-     * <p>
-     * The tuple is complete here: the ranges and their buffers come from the renderer's recording of this batch, and the
-     * pipeline, descriptor set, dynamic offset and push block are the ones bound for it. Nothing is read later at the
-     * frame boundary, which is where the previous version kept only the last batch - and where taking the state would mix
-     * it with a different batch's geometry.
-     */
-    private void celtium$queueShadowBatches(VulkanTerrainPipeline pipeline) {
-        java.util.List<long[]> ranges = this.terrain.shadowRecordedRanges();
-        if (ranges.isEmpty()) {
-            return;
-        }
-        long descriptorSet = pipeline.lastDescriptorSet();
-        if (descriptorSet == 0L) {
-            return;
-        }
-        // The light has to be built around the camera, and the only moment the camera's model view is available is while
-        // the world is being drawn: at the frame boundary celtium$mirroredModelView() holds something else entirely
-        // (measured centre was (0,0,2000) against a camera at (217.5,48,217.5)), which put the light 1,800 blocks away and
-        // the +/-48 box off the visible terrain. Captured here, used by publishShadowSources.
-        float[] cameraModelView = this.celtium$mirroredModelView();
-        if (cameraModelView != null && cameraModelView.length >= 16) {
-            org.joml.Vector3f captured = new org.joml.Vector3f();
-            new org.joml.Matrix4f().set(cameraModelView).invert().getTranslation(captured);
-            if (captured.lengthSquared() > 1.0e-6f) {
-                this.shadowCentre.set(captured);
-                this.shadowCentreCaptured = true;
-            }
-        }
-        // Refreshed every frame: the first version snapshotted once and caught frame 0, where the matrix is still all
-        // zeros because publication happens after the terrain pass. The lag is one frame by design (the receivers read
-        // what the previous frame's boundary published), so the comparison below accounts for it.
-        if (this.shadowMapPass != null && this.shadowMapPass.matrixBuffer() != null) {
-            org.lwjgl.system.MemoryUtil.memFloatBuffer(
-                    this.shadowMapPass.matrixBuffer().mappedAddress(), 16).get(this.shadowReceiverMatrixAtDraw);
-            this.shadowReceiverMatrixAtDrawSeen = true;
-        }
-        this.shadowTuplePipeline = pipeline;
-        this.shadowTupleDescriptorSet = descriptorSet;
-        this.shadowTupleDynamicOffset = pipeline.lastDynamicOffset();
-        float[] block = pipeline.lastPushBlock();
-        if (block == null) {
-            return;
-        }
-        for (int i = 0; i < ranges.size(); i++) {
-            long[] range = ranges.get(i);
-            if (this.shadowBatches.size() >= MAX_SHADOW_BATCHES) {
-                this.shadowBatchesDropped++;
-                continue;
-            }
-            this.shadowBatches.add(new org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch(
-                    range[2], range[3], this.terrain.shadowIndirectBuffer(), range[0], (int) range[1], descriptorSet,
-                    this.shadowTupleDynamicOffset, block.clone()));
-        }
-    }
 
-    private boolean captureShadowTuple(VulkanTerrainPipeline pipeline) {
-        long serial = this.terrain.shadowCaptureSerial();
-        if (serial == this.shadowTupleSerial) {
-            return this.shadowTuplePipeline != null;
-        }
-        // Every batch the renderer captured this frame becomes a caster, not just the first: one region's geometry in the
-        // map meant the objects near the camera cast nothing unless their region happened to be recorded first.
-        long descriptorSet = pipeline.lastDescriptorSet();
-        if (descriptorSet == 0L || this.terrain.shadowIndirectCount() <= 0) {
-            // Not a drawable batch: leave the previous tuple alone and let the caller fall back.
-            return false;
-        }
-        this.shadowTupleSerial = serial;
-        this.shadowTuplePipeline = pipeline;
-        this.shadowTupleVertexBuffer = this.terrain.shadowVertexBuffer();
-        this.shadowTupleIndexBuffer = this.terrain.shadowIndexBuffer();
-        this.shadowTupleIndirectBuffer = this.terrain.shadowIndirectBuffer();
-        this.shadowTupleIndirectOffset = this.terrain.shadowIndirectOffset();
-        this.shadowTupleIndirectCount = this.terrain.shadowIndirectCount();
-        this.shadowTupleDescriptorSet = descriptorSet;
-        this.shadowTupleDynamicOffset = pipeline.lastDynamicOffset();
-        float[] block = pipeline.lastPushBlock();
-        this.shadowTuplePushBlock = block == null ? null : block.clone();
-        if (this.shadowTuplePushBlock != null
-                && this.shadowBatches.size() < MAX_SHADOW_BATCHES) {
-            this.shadowBatches.add(new org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch(
-                    this.shadowTupleVertexBuffer, this.shadowTupleIndexBuffer, this.shadowTupleIndirectBuffer,
-                    this.shadowTupleIndirectOffset, this.shadowTupleIndirectCount, this.shadowTupleDescriptorSet,
-                    this.shadowTupleDynamicOffset, this.shadowTuplePushBlock));
-        } else if (this.shadowTuplePushBlock != null) {
-            this.shadowBatchesDropped++;
-        }
-        return true;
-    }
 
-    private boolean shadowItemSourcesSet;
+
+
 
     // The shadow pass's draw tuple, captured in one place: the renderer supplies the geometry (vertex, index, indirect
     // range) from the instant its first batch of the frame was recorded, and this side supplies the pipeline, descriptor
@@ -14830,27 +14667,10 @@ this.frameBufferOpen = false;
     private final java.util.List<org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch> shadowBatches =
             new java.util.ArrayList<org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch>();
 
-    /** How many batches may be captured per frame; the rest are dropped and counted rather than growing without bound. */
-    private static final int MAX_SHADOW_BATCHES = 64;
-    private int shadowBatchesDropped;
 
-    private long shadowTupleSerial = -1L;
-    private VulkanTerrainPipeline shadowTuplePipeline;
-    private long shadowTupleVertexBuffer;
-    private long shadowTupleIndexBuffer;
-    private long shadowTupleIndirectBuffer;
-    private long shadowTupleIndirectOffset;
-    private int shadowTupleIndirectCount;
-    private long shadowTupleDescriptorSet;
-    private int shadowTupleDynamicOffset;
-    private float[] shadowTuplePushBlock;
     private long boundarySubmitNanos;
     private long slotWaitNanos;
     private int boundaryFrames;
-    private int shadowOwnPrints;
-    private long shadowRecordNanos;
-    private int shadowRecordPrints;
-    private org.soutalab.celtium.vulkan.shadow.ShadowMapPass shadowMapPass;
     private int terrainCaptureStride;
     private int terrainCaptureCount;
     private int terrainCaptureFormat;
@@ -15194,354 +15014,13 @@ this.frameBufferOpen = false;
         }
     }
 
-    /** Records the pack's triangle into the delivered image, once, after the window's own pass has ended. */
-    /**
-     * Records the native shadow map's pass for this frame, when the pass was requested.
-     * <p>
-     * The window and the frame boundary are where the frame's own recording is still open, which is the only place a
-     * separate pass can be recorded without a second submission. Nothing about the shaderless path changes when the pass
-     * is off, and when it is on this slice only clears the map: drawing terrain into it from the light's matrix, and
-     * sampling it in the world pass, are the next slices.
-     */
-    /**
-     * Publishes the light matrix and the map's sources to every receiver.
-     * <p>
-     * This used to run at the end of the shadow recording, which the own-submission path returns before - so with the default
-     * flags the pass submitted a draw into the map but no receiver ever pointed at it, and the effect only appeared under
-     * the in-frame switch (#396). The publication is independent of how the caster records, so it happens before either
-     * path records anything.
-     *
-     * @param terrainPipeline the terrain pipeline that draws into the map
-     */
-    private void publishShadowSources(VulkanTerrainPipeline terrainPipeline) {
-        if (this.shadowMapPass == null || this.shadowMapPass.matrixBuffer() == null) {
-            return;
-        }
-            // Arrays, not wrapped FloatBuffers: JOML reads a FloatBuffer through Unsafe at its address, and an
-            // array-backed buffer has none - that SIGSEGV was this line, and it killed the process about eighteen
-            // seconds into every leg with the terrain shadow path on (hs_err: Unsafe.getLong, Matrix4f.set, this
-            // method). The float[] overload copies the values and is what the arrays are anyway.
-            // A real light: the sun's direction with an orthographic box around the world origin, wide enough to
-            // cover the qmagnet map (its centre is at about 217, 48, 217). The camera's own projection was standing in
-            // here before, which put the scene's depth in the map exactly as the camera sees it - so only silhouette
-            // edges darkened, and the pair of legs ON/OFF differed by 0.3 percentage points of dark pixels.
-            // The box follows the camera and covers a short distance around it, which is what makes the shadows both
-            // visible and sharp: at +/-48 blocks a 2048-texel map is about 4.7 cm per texel, where the origin-centred
-            // +/-256 box texelled 25 cm and left the visible surfaces almost entirely lit.
-            // The eye-space matrix has to describe the transform the *immediate* vertices are expressed under, and that is
-            // the game's own modelview - the one the GL stub mirrors and the immediate path pre-multiplies into its vertices -
-            // not the terrain pass's, which is Celeritas's camera-relative matrix. Using the terrain one put the lookup
-            // coordinate outside the map for 94% of the immediate family's pixels (the bounds probe measured 168,227 out
-            // against 11,211 in), which is why the shadow never appeared on the surfaces a player sees.
-            float[] mirrored = this.celtium$mirroredModelView();
-            float[] push = terrainPipeline.lastPushBlock();
-            org.joml.Matrix4f modelViewForCamera;
-            if (mirrored != null && mirrored.length >= 16
-                    && (mirrored[12] != 0.0f || mirrored[13] != 0.0f || mirrored[14] != 0.0f)) {
-                modelViewForCamera = new org.joml.Matrix4f().set(mirrored);
-            } else {
-                modelViewForCamera = new org.joml.Matrix4f().set(java.util.Arrays.copyOfRange(push, 16, 32));
-            }
-            org.joml.Vector3f centre = new org.joml.Vector3f();
-            new org.joml.Matrix4f(modelViewForCamera).invert().getTranslation(centre);
-            if (cameraWorldKnown) {
-                centre.set((float) cameraWorldX, (float) cameraWorldY, (float) cameraWorldZ);
-            } else if (this.terrain.cameraWorldKnown()) {
-                centre.set((float) this.terrain.cameraWorldX(), (float) this.terrain.cameraWorldY(),
-                        (float) this.terrain.cameraWorldZ());
-            } else if (this.shadowCentreCaptured) {
-                // Taken while the world was drawn (see celtium$queueShadowBatches); the mirror at this boundary point is
-                // some other transform.
-                centre.set(this.shadowCentre);
-            }
-            // More oblique than the first attempt, so horizontal surfaces throw longer shadows across the ground.
-            // A property, so the sun's direction can be swept in a leg rather than recompiled: shadows are only
-            // convincing when they fall on surfaces the camera can see.
-            String directionText = System.getProperty("celtium.shadow.direction", "-0.7,-1.0,-0.45");
-            String[] directionParts = directionText.split(",");
-            org.joml.Vector3f direction = new org.joml.Vector3f(
-                    Float.parseFloat(directionParts[0].trim()),
-                    Float.parseFloat(directionParts[1].trim()),
-                    Float.parseFloat(directionParts[2].trim())).normalize();
-            // The box the map covers. Measured with the debug paint: at 48 blocks only 6.6% of the terrain's lookup
-            // coordinates fall inside [0,1] - the far half of an 8-chunk view is outside the box entirely, and the shader
-            // skips those fragments, which is why almost nothing is ever judged shadowed. Widened by property so the
-            // trade against texel size can be measured rather than argued: 2048 texels over +/-128 blocks is 12.5 cm a
-            // texel against 4.7 cm at +/-48.
-            // 128 blocks, with the half-plane distortion that makes it affordable (celtium.shadow.warp, default 0.5): measured on the same camera with
-            // shadows off as the control, a 128 block box at warp 1.0 darkens 0.34% of the frame and at warp 0.5 darkens 0.66%, reaching further down the
-            // frame (rows 17..696 against 17..662) - more than the 0.61% the 48 block box gave, and 2.7 times the distance. Without the warp a wider box
-            // loses coverage, which is why the two moved together.
-            float radius = Float.parseFloat(System.getProperty("celtium.shadow.radius", "128"));
-            org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
-                    new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
-                    new org.joml.Vector3f(0.0f, 1.0f, 0.0f));
-            org.joml.Matrix4f lightProjection = new org.joml.Matrix4f()
-                    .ortho(-radius, radius, -radius, radius, 0.0f, radius * 6.0f);
-            // JOML's ortho produces OpenGL clip depth in [-1, 1] where a point 144 units out - the distance to the centre -
-            // comes out at z = 0, and the measured cameraDepth of 1.2e-7 was exactly that. Vulkan clip depth is [0, 1], and
-            // the rest of this renderer remaps it with remapClipDepth; the light projection has to be remapped the same way
-            // or every texel of the map lands at depth zero and the depth test reads "lit" everywhere.
-            float[] glLightProjection = new float[16];
-            lightProjection.get(glLightProjection);
-            float[] vkLightProjection = new float[16];
-            remapClipDepth(glLightProjection, vkLightProjection);
-            org.joml.Matrix4f lightProjectionVulkan = new org.joml.Matrix4f().set(vkLightProjection);
-            org.joml.Matrix4f lightViewProjection = new org.joml.Matrix4f(lightProjectionVulkan).mul(lightView);
-            // The same matrix feeds both ends: the caster's push block (ShadowMapPass.lightSpaceBlock copies these sixteen
-            // floats) and the terrain receiver's uniform at binding 4. Both work on camera-relative positions - the terrain
-            // vertex stage's worldPosition is what the camera-relative model view then transforms - so a world-space light
-            // matrix clips the casters out of the map entirely. Measured: the map read back as min=1.0 max=1.0 mean=1.0
-            // belowOne=0.0, i.e. empty. lightVP * T(centre) maps a camera-relative position where lightVP maps the world
-            // position it stands for.
-            org.joml.Matrix4f terrainShadowMatrix = new org.joml.Matrix4f(lightViewProjection).translate(centre);
-            // Only once the game has said where the camera is: the first frames run before that push, and printing then
-            // reported the boundary mirror's (0,0,2000) as if it were the position the light had been built around.
-            if (this.shadowLightsLogged < 3 && (cameraWorldKnown || this.terrain.cameraWorldKnown())) {
-                this.shadowLightsLogged++;
-                org.joml.Vector4f cameraMapped = new org.joml.Vector4f(0.0f, 0.0f, 0.0f, 1.0f)
-                        .mul(terrainShadowMatrix);
-                System.out.println("[Celtium] CELTIUM_SHADOW_LIGHT centre=" + centre.x + "," + centre.y + "," + centre.z
-                        + " direction=" + direction.x + "," + direction.y + "," + direction.z
-                        + " cameraDepth=" + (cameraMapped.w == 0.0f ? Float.NaN : cameraMapped.z / cameraMapped.w)
-                        + " radius=" + radius);
-            }
-            java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
-                    this.shadowMapPass.matrixBuffer().mappedAddress(), 16);
-            terrainShadowMatrix.get(0, matrix);
-            // The immediate path's vertices are already in eye space, so its shadow lookup needs
-            // lightWorld * inverse(modelView); it reads that from the second half of the same block.
-            // The immediate families' vertices are eye space and their model view is camera-relative, so the eye-space light
-            // matrix has to be the same camera-relative one the terrain receiver uses: lightVP * T(centre) * inverse(MV).
-            // Leaving T(centre) out - which is what lightVP * inverse(MV) is - put the immediate lookup off by the camera
-            // position in exactly the way the earlier "94% outside the map" reading described, and the immediate path draws
-            // most of the visible surfaces in this scene.
-            org.joml.Matrix4f eyeSpaceLight = new org.joml.Matrix4f(terrainShadowMatrix)
-                    .mul(new org.joml.Matrix4f(modelViewForCamera).invert());
-            float[] eyeMatrix = new float[16];
-            eyeSpaceLight.get(eyeMatrix);
-            this.shadowMapPass.writeEyeSpaceMatrix(eyeMatrix);
-            // The immediate pipelines draw the blocks and entities that fill the view; they project the map with the
-            // same eye-space matrix, and their cached descriptor sets are pointed at the map the first time it exists.
-            // Every immediate family that has the lookup, the texture one included: its position_tint and tex_color variants draw
-            // the surfaces a player actually sees in this scene, and it was the one family the publication forgot - so its
-            // sets kept naming the 1x1 placeholder map and nothing it drew was ever shadowed (the ON/OFF difference stayed at
-            // 0.6% of the frame while the terrain's own palette showed 22%).
-            org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.writeShadowMatrix(eyeMatrix);
-            org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.writeShadowMatrix(eyeMatrix);
-            org.soutalab.celtium.vulkan.VulkanImmediateTexturePipeline.writeShadowMatrix(eyeMatrix);
-            if (!this.shadowItemSourcesSet) {
-                this.shadowItemSourcesSet = true;
-                org.soutalab.celtium.vulkan.VulkanImmediateTexturePipeline.setShadowSources(
-                        this.shadowMapPass.view(), this.shadowMapPass.sampler());
-                org.soutalab.celtium.vulkan.VulkanImmediateItemPipeline.setShadowSources(
-                        this.shadowMapPass.view(), this.shadowMapPass.sampler());
-                org.soutalab.celtium.vulkan.VulkanImmediateBlockPipeline.setShadowSources(
-                        this.shadowMapPass.view(), this.shadowMapPass.sampler());
-            }
-            if (!Boolean.getBoolean("celtium.shadow.noSources")) {
-                terrainPipeline.setShadowSources(this.shadowMapPass.view(), this.shadowMapPass.sampler(),
-                        this.shadowMapPass.matrixBuffer().buffer());
-            }
-    }
 
-    /** At most one shadow recording in this many frames: the map is a synchronous submission of its own. */
-    private static final int SHADOW_MAX_AGE = Integer.getInteger("celtium.shadow.maxAge", 2).intValue();
 
-    /** How often the map is refreshed even when the scene key says nothing moved. */
-    private static final int SHADOW_REFRESH_EVERY = Integer.getInteger("celtium.shadow.refreshEvery", 30).intValue();
-    private long shadowSceneKey;
-    private boolean shadowMapRecorded;
-    private long shadowRecordedFrameId;
-    private long shadowSkips;
 
-    /** {@return a key over everything that decides the map's content: the light box's centre and the caster count}. */
-    private long celtium$shadowSceneKey() {
-        long key = 1469598103934665603L;
-        if (this.terrain != null && this.terrain.cameraWorldKnown()) {
-            // A sixteenth of a block is far below one shadow texel at the 48 block radius, so this quantisation cannot hide a move that
-            // would change which texels a caster covers.
-            key = (key ^ (long) Math.round(this.terrain.cameraWorldX() * 16.0f)) * 1099511628211L;
-            key = (key ^ (long) Math.round(this.terrain.cameraWorldY() * 16.0f)) * 1099511628211L;
-            key = (key ^ (long) Math.round(this.terrain.cameraWorldZ() * 16.0f)) * 1099511628211L;
-        }
-        int batches = 0;
-        int commands = 0;
-        for (int i = 0; i < this.shadowBatches.size(); i++) {
-            org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch batch = this.shadowBatches.get(i);
-            batches++;
-            commands += Math.max(batch.indirectCount, 0);
-        }
-        key = (key ^ batches) * 1099511628211L;
-        return (key ^ commands) * 1099511628211L;
-    }
 
-    private void celtium$recordShadowPass() {
-        if (!org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested()) {
-            return;
-        }
-        if (Boolean.getBoolean("celtium.shadow.probeScope")) {
-            // The private-submission experiment: the pass records into a command buffer of its own, is submitted with a
-            // fence and waits with a bound, while the frame records nothing of it. A completion here with a healthy frame
-            // loop says carrying the pass in the frame's command buffer is what stalls; a timeout says the pass itself
-            // never finishes on the GPU.
-            if (this.shadowMapPass == null) {
-                this.shadowMapPass = org.soutalab.celtium.vulkan.shadow.ShadowMapPass.create(this.context);
-            }
-            if (this.shadowMapPass != null && !this.shadowProbeReported) {
-                this.shadowProbeReported = true;
-                System.out.println("[Celtium] CELTIUM_SHADOW_PROBE " + this.shadowMapPass.recordAndSubmitOnce());
-            }
-            return;
-        }
-        // The map only changes when the light box moves or the casters do: the sun is fixed and, in this build, only terrain casts. So a
-        // frame whose camera position and queued caster count match the last recorded one reuses the map instead of rasterising 2048 square
-        // worth of terrain again - and the refresh ceiling below keeps a proxy that missed a change from lasting.
-        // Two reasons to reuse the map instead of recording it again: the scene did not move (checked by the key),
-        // or the map is younger than SHADOW_MAX_AGE frames. The second matters because the pass is a synchronous
-        // submission of its own at the frame boundary, and paying it every frame cost about 0.4 ms on the AMD card
-        // (1.674x with shadows on against 1.387x with them off, same jar family). Receivers already read the previous
-        // frame's map, so an age of two makes that lag two frames - which is what the acceptance photographs show.
-        long sceneKey = celtium$shadowSceneKey();
-        long age = this.frameId - this.shadowRecordedFrameId;
-        if (this.shadowMapRecorded
-                && (sceneKey == this.shadowSceneKey || age < SHADOW_MAX_AGE)
-                && age < SHADOW_REFRESH_EVERY) {
-            this.shadowSkips++;
-            // The same hand-back the recording path performs. Skipping without it left this frame's queued casters in the list, so the next
-            // recording drew them again on top of its own - measured as a tail that grew with the cadence (p95 11.5 ms at one recording in two
-            // frames, 18.0 at one in four, 35.9 at one in eight, with p50 flat throughout, which is what accumulation looks like).
-            this.terrain.resetShadowCapture();
-            this.shadowTupleSerial = -1L;
-            this.shadowTuplePipeline = null;
-            this.shadowBatches.clear();
-            return;
-        }
-        if (this.shadowMapPass == null) {
-            this.shadowMapPass = org.soutalab.celtium.vulkan.shadow.ShadowMapPass.create(this.context);
-            if (this.shadowMapPass == null) {
-                record("native shadow map could not be created: "
-                        + org.soutalab.celtium.vulkan.shadow.ShadowMapPass.lastFailure());
-                return;
-            }
-            record("native shadow map created: " + this.shadowMapPass.statistics());
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            // The terrain first: the pass captures the same buffers and indirect range the terrain pass issued, and the
-            // pipeline is the terrain's own vertex stage with no fragment stage. The test triangle stays as the fallback for
-            // frames where no terrain was recorded.
-            // Off unless asked for: the terrain draw into the map needs the terrain pass's descriptor set with its dynamic
-            // offset bound for the shadow scope as well, which is not solved yet - borrowing the layout alone produced
-            // VUID-VkGraphicsPipelineCreateInfo-layout-07988 and then seventeen messages in leg shadowTerrain2 (the
-            // pipeline is created but the draw is not valid). The triangle path below is the verified one.
-            boolean terrainShadow = Boolean.parseBoolean(System.getProperty("celtium.shadow.terrain", "true"))
-                    && !Boolean.getBoolean("celtium.shadow.noPass");
-            VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
-            boolean drawn = false;
-            if (terrainPipeline != null && this.captureShadowTuple(terrainPipeline)) {
-                // The tuple this frame draws with is the one captured here; the fields below are read from it, not from
-                // the pipeline's last values.
-                terrainPipeline = this.shadowTuplePipeline;
-            }
-            this.publishShadowSources(terrainPipeline);
-            if (terrainPipeline != null && !Boolean.getBoolean("celtium.shadow.inFrame")) {
-                // The pass as its own queue packet, which is the default now: recording it into the frame's command
-                // buffer puts vkCmdBeginRendering inside the frame's render pass, and the validation layer says so on
-                // Intel (VUID-vkCmdBeginRendering-renderpass) - AMD stayed quiet about it. Its own submission has no
-                // enclosing pass, and the queue orders it against the frame's own submissions.
-                if (this.shadowMatrixComparePrints < 2 && this.frameId > 400 && this.shadowReceiverMatrixAtDrawSeen
-                        && this.shadowMapPass.matrixBuffer() != null
-                        && !this.shadowBatches.isEmpty()
-                        && this.shadowBatches.get(0).pushBlock != null
-                        && this.shadowBatches.get(0).pushBlock.length >= 16) {
-                    this.shadowMatrixComparePrints++;
-                    // The one thing eleven eliminated candidates left open: is the matrix the caster pushes the same one
-                    // the receiver reads? Both are printed from the objects that actually go to the GPU.
-                    // The receiver's matrix as it was when the receivers drew (snapshotted during the pass), against the
-                    // matrix the caster will push. Comparing the raw captured block was wrong: the caster's copy is
-                    // converted to light space at record time, so the two are different fields by construction.
-                    float[] receiver = this.shadowReceiverMatrixAtDraw.clone();
-                    float[] caster = new float[16];
-                    org.lwjgl.system.MemoryUtil.memFloatBuffer(
-                            this.shadowMapPass.matrixBuffer().mappedAddress(), 16).get(caster);
-                    boolean same = true;
-                    for (int i = 0; i < 16; i++) {
-                        if (Math.abs(receiver[i] - caster[i]) > 1.0e-5f) {
-                            same = false;
-                            break;
-                        }
-                    }
-                    System.out.println("[Celtium] CELTIUM_SHADOW_MATRICES same=" + same
-                            + " receiver=[" + receiver[0] + "," + receiver[1] + "," + receiver[2] + "," + receiver[3]
-                            + " ... " + receiver[12] + "," + receiver[13] + "," + receiver[14] + "," + receiver[15] + "]"
-                            + " caster=[" + caster[0] + "," + caster[1] + "," + caster[2] + "," + caster[3]
-                            + " ... " + caster[12] + "," + caster[13] + "," + caster[14] + "," + caster[15] + "]");
-                }
-                String submitted = this.shadowMapPass.recordTerrainBatchesAndSubmit(this.shadowTuplePipeline,
-                        this.shadowBatches);
-                // The map now holds this scene, so the next frame may reuse it. Only a submission that reported itself completed sets this:
-                // a refused or failed one leaves the flag clear so the pass is retried rather than the stale map served forever.
-                if (submitted != null && submitted.startsWith("submitted")) {
-                    this.shadowMapRecorded = true;
-                    this.shadowRecordedFrameId = this.frameId;
-                    this.shadowSceneKey = sceneKey;
-                }
-                // What actually landed in the map: a CPU-side argument about the matrix cannot see this, and the map being
-                // entirely 1.0 (casters nowhere) is a different failure from a map with content that receivers miss.
-                this.shadowMapPass.sampleDepthReport();
-                if (submitted != null && this.shadowOwnPrints < 4) {
-                    this.shadowOwnPrints++;
-                    System.out.println("[Celtium] CELTIUM_SHADOW_OWN " + submitted);
-                }
-                this.terrain.resetShadowCapture();
-                this.shadowTupleSerial = -1L;
-                this.shadowTuplePipeline = null;
-                this.shadowBatches.clear();
-                return;
-            }
-            if (terrainShadow && (this.frameId < 3 || this.frameId % 300 == 0)) {
-                System.out.println("[Celtium] CELTIUM_SHADOW_DIAG pipeline=" + (terrainPipeline != null)
-                        + " hasTerrainPipeline=" + this.shadowMapPass.hasTerrainPipeline()
-                        + " vertex=" + Long.toHexString(this.terrain.shadowVertexBuffer())
-                        + " indirect=" + Long.toHexString(this.terrain.shadowIndirectBuffer())
-                        + " count=" + this.terrain.shadowIndirectCount()
-                        + " block=" + (terrainPipeline == null ? -1 : terrainPipeline.lastPushBlock().length));
-            }
-            if (terrainPipeline != null && this.shadowMapPass.hasTerrainPipeline()) {
-                drawn = this.shadowMapPass.recordTerrainBatches(this.shadowTuplePipeline, this.commandBuffer, stack,
-                        this.shadowBatches);
-            } else if (terrainPipeline != null) {
-                drawn = this.shadowMapPass.createTerrainPipeline(terrainPipeline);
-                if (drawn) {
-                    drawn = this.shadowMapPass.recordTerrainBatches(this.shadowTuplePipeline, this.commandBuffer, stack,
-                            this.shadowBatches);
-                }
-            }
-            if (!drawn) {
-                this.shadowMapPass.record(this.commandBuffer, stack);
-            }
-            // The world pass of the next frame reads the map through this matrix. The camera's own projection and model
-            // view stand in for a light's for this first visible step: the map is then the scene depth as the camera sees
-            // it, which is exactly what makes the shading difference appear without a light rig.
 
-            // The capture is one frame's geometry: the next frame records its own.
-            this.terrain.resetShadowCapture();
-            this.shadowTupleSerial = -1L;
-            this.shadowTuplePipeline = null;
-            this.shadowBatches.clear();
-        } catch (RuntimeException | LinkageError error) {
-            record("native shadow pass failed: " + describe(error));
-            if (System.getProperty("celtium.shadow.diag") != null) {
-                // The failure otherwise only lands in the report list, which is why the counter reading zero and the draw
-                // being attempted at all looked contradictory for a round.
-                System.out.println("[Celtium] CELTIUM_SHADOW_FAILED " + error);
-                error.printStackTrace(System.out);
-            }
-        }
-        if ((this.frameId % 300) == 0) {
-            record("native shadow: " + this.shadowMapPass.statistics());
-        }
-    }
+
+
 
     private void celtium$recordShaderPackDraw() {
         if (this.shaderPackDrawProbe == null) {
@@ -15619,17 +15098,6 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.shaderpack.PackManifest manifest =
                     org.soutalab.celtium.shaderpack.ShaderPackLoader.load(path);
             this.shaderPackManifest = manifest;
-            // What the pack asks its shadow to be, logged rather than applied: the light box stays where it is until the half-plane distortion
-            // that makes a wider one affordable lands (architecture section 13.2 has BSL's numbers).
-            org.soutalab.celtium.shaderpack.ShaderPackLoader.ShadowSettings declared =
-                    org.soutalab.celtium.shaderpack.ShaderPackLoader.shadowSettings(
-                            java.nio.file.Paths.get(SHADER_PACK_PATH));
-            org.soutalab.celtium.vulkan.shadow.ShadowMapPass.setPackDistance(declared.smallestDistance());
-            System.out.println("[Celtium] CELTIUM_SHADOW_PACK declared resolution=" + declared.resolution()
-                    + " distance=" + declared.distance()
-                    + " applied resolution=" + org.soutalab.celtium.vulkan.shadow.ShadowMapPass.SIZE
-                    + " distance=" + (org.soutalab.celtium.vulkan.shadow.ShadowMapPass.packDistance() > 0.0f
-                            ? Math.min(org.soutalab.celtium.vulkan.shadow.ShadowMapPass.packDistance(), 128.0f) : 48.0f));
             // After the manifest, not before: the program probe reads the manifest to find the pack's own paths, and the
             // first version ran it first, so it returned early with nothing to report.
             celtium$probeShaderCompile();

@@ -445,13 +445,6 @@ public class MinecraftMixin {
             celtium$vsyncPushedValue = mc.gameSettings.enableVsync;
             org.soutalab.celtium.vulkan.VulkanSwapchain.setVSyncRequested(mc.gameSettings.enableVsync);
         }
-        // The shadow light is built around the camera, and nothing on the Vulkan side knows where it is: the terrain is
-        // drawn camera-relative and the GL matrix mirror is camera-relative at every point it was read. The game does
-        // know, so it pushes the position here - the same shape as the VSync push above.
-        if (mc.getRenderViewEntity() != null) {
-            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.setCameraWorldPosition(
-                    mc.getRenderViewEntity().posX, mc.getRenderViewEntity().posY, mc.getRenderViewEntity().posZ);
-        }
         if (mc != null && mc.world != null) {
             // Past the menu already; the world-time creation is the right path there.
             return;
