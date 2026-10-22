@@ -8134,7 +8134,11 @@ this.frameBufferOpen = false;
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
                 this.frameHeadNanos, this.frameTailNanos);
         DrawCounters.reportIfDue(this.frameId);
-        if (this.shaderPackDraws < 3) {
+        // Once, when a pack is actually loaded. The guard used to be shaderPackDraws < 3, and that counter only moves when a pack draw happens - so
+        // without a pack every frame printed this line: 8,215 of them and about 3.5 MB of log in one leg, which then read as "the pack draws every
+        // frame" during the shader-pack investigation.
+        if (!this.packSubmitLogged && !SHADER_PACK_PATH.isEmpty()) {
+            this.packSubmitLogged = true;
             System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
                     + " slot=" + this.frameSlot);
         }
@@ -14668,6 +14672,7 @@ this.frameBufferOpen = false;
     private int frameTargetWidth = 1280;
     private int frameTargetHeight = 720;
     private int shaderPackDraws;
+    private boolean packSubmitLogged;
     private int immediateOffersThisFrame;
 
     /** The first terrain-shaped batch's vertices, kept for the shaderpack probe's real-geometry draw. */
