@@ -244,3 +244,8 @@ libSDL3 が1つだけマップされているかも確認する。
 `Display.processMessages()` を呼ばない。既定は true（従来どおり）。jar `706002c27965` で **true/false とも AMD leg PASSED・
 画像gate PASSED・validation 0件**（挙動の既定は不変）。Prismの起動では wrapper が `no-pump` ファイルの有無で
 このフラグを付けるので、SDLのポンプが原因かを1ファイルで切り分けられる。
+
+**注意（2026-10-22 実測）**: `natives-3.4.3` は **LWJGLのjarレイアウト（`linux/x64/org/lwjgl/...`）を削ってはいけない**。
+フラットな `.so` だけにしたところ、LWJGLはnativesを見つけられずclasspath上の3.3.1に落ちて
+`MemoryUtil.ngetPageSize` の `UnsatisfiedLinkError` で起動失敗した。**サブディレクトリ配置とフラット配置の両方**を置く
+（7 jarを展開すればそうなる）。
