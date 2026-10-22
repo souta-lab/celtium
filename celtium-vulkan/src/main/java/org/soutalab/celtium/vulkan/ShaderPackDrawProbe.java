@@ -667,6 +667,28 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                             .offset(it -> it.set(0, 0)).extent(it -> it.set(size, size)))
                     .layerCount(1).pDepthAttachment(depth);
             vkCmdBeginRenderingKHR(commandBuffer, rendering);
+            // The casters, through the pack's own vertex module with no fragment stage: that is what a shadow pass is,
+            // and the positions were baked into clip space from the light's viewpoint.
+            long pipeline = new ShaderPackPipelineFactory(this.context)
+                    .createDepthOnlyPipeline(this.pipelineLayout, this.vertexHandle, VK_FORMAT_D32_SFLOAT);
+            vkCmdBindPipeline(commandBuffer, org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkCmdBindDescriptorSets(commandBuffer, org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    this.pipelineLayout, 0, stack.longs(this.descriptorSet), null);
+            vkCmdSetViewport(commandBuffer, 0, org.lwjgl.vulkan.VkViewport.calloc(1, stack)
+                    .x(0.0f).y(0.0f).width(size).height(size).minDepth(0.0f).maxDepth(1.0f));
+            vkCmdSetScissor(commandBuffer, 0, org.lwjgl.vulkan.VkRect2D.calloc(1, stack)
+                    .offset(it -> it.set(0, 0)).extent(it -> it.set(size, size)));
+            for (int index = 0; index < this.vertexBuffers.size(); index++) {
+                vkCmdBindVertexBuffers(commandBuffer, this.vertexBufferLocations.get(index).intValue(),
+                        stack.longs(this.vertexBuffers.get(index).buffer()), stack.longs(0L));
+            }
+            if (this.geometryIndices != null && this.geometryIndexCount > 0) {
+                vkCmdBindIndexBuffer(commandBuffer, this.geometryIndices.buffer(), 0L,
+                        org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(commandBuffer, this.geometryIndexCount, 1, 0, 0, 0);
+            } else {
+                vkCmdDraw(commandBuffer, this.vertexCount, 1, 0, 0);
+            }
             vkCmdEndRenderingKHR(commandBuffer);
             org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toSource =
                     org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
@@ -715,12 +737,13 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             }
             readback.delete();
             vkDestroyFence(this.context.device(), fence.get(0), null);
+            vkDestroyPipeline(this.context.device(), pipeline, null);
             vkDestroyCommandPool(this.context.device(), pool.get(0), null);
             vkDestroyImageView(this.context.device(), view.get(0), null);
             vkDestroyImage(this.context.device(), image.get(0), null);
             vkFreeMemory(this.context.device(), memory.get(0), null);
-            return String.format(java.util.Locale.ROOT, "shadow %dx%d depth=[%.5f,%.5f] covered=%d/%d (cleared map)",
-                    size, size, minimum, maximum, covered, pixels);
+            return String.format(java.util.Locale.ROOT, "shadow %dx%d depth=[%.5f,%.5f] covered=%d/%d casters=%d",
+                    size, size, minimum, maximum, covered, pixels, this.vertexCount);
         } catch (RuntimeException | LinkageError error) {
             return "shadow plumbing failed: " + error;
         }

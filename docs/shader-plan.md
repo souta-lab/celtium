@@ -730,3 +730,20 @@ CELTIUM_PACK_SHADOW shadow 64x64 depth=[1.00000,1.00000] covered=0/4096 (cleared
 
 次: この深度イメージに **depth-only パイプライン（packの頂点モジュール）** でキャスタを描き、`covered` が0でなくなること、
 深度レンジが遮蔽物の距離に応じて縮むことを実測する。その後 pack の `shadow` プログラムと `shadowModelView/Projection` の供給へ。
+
+### 影マップへのキャスタ描画: パイプラインの頂点入力が未接続（2026-10-23・未達）
+
+深度イメージへキャスタを描く実装を追加し、`-Dceltium.shaderpack.probeShadow=true -Dceltium.shaderpack.probeView=light` で実測:
+```
+CELTIUM_PACK_SHADOW shadow 64x64 depth=[1.00000,1.00000] covered=0/4096 casters=3
+validation errors: 7件（VUID-VkGraphicsPipelineCreateInfo-Input-07904）
+```
+二つの原因が判明:
+1. **casters=3** — 影チェックが**ジオメトリ採用より前**に走っており、probeはまだ生成時の三角形（3頂点）のまま。
+   → 採用後に実行するよう順序を直す必要がある。
+2. **VUID-...-Input-07904** — `createDepthOnlyPipeline` は**頂点入力を持たない**（attribute-free）パイプラインを作る。
+   packの頂点モジュールは入力属性を宣言しているため不一致。
+   → 深度用パイプラインにも**packの属性に一致する頂点入力**を作る variant が必要（`createPipeline` と同じ bindings/attributes を渡す）。
+
+この2点は次ラウンドで修正する。深度イメージ・バリア・クリア・読み戻しの土台自体は前ラウンドで検証済み
+（`depth=[1,1] covered=0` のクリア済みマップ、validationエラー0）。
