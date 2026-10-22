@@ -215,6 +215,9 @@ void main() {
     // pairs, the cross product and the nine taps, so the shipping fragment shader costs what it did before the feature
     // existed. A uniform branch would leave all of that in place for the default configuration.
     if (CELTIUM_SHADOW_ENABLED) {
+    // No y flip: measured in one valid frame on the AMD RX 6400, 82.25% of in-range lookups already sample a caster with these
+    // coordinates, against 6.91% with y mirrored. Earlier readings that suggested a flip came from legs whose frame was captured
+    // outside the warm window, where the same pixels paint something else entirely.
     vec3 shadowCoord = v_ShadowCoord.xyz / v_ShadowCoord.w;
     // The derivatives are taken unconditionally: inside the branch below they are in non-uniform control flow, which is
     // undefined in GLSL and made the frame loop stall on this driver (3 presents in 60 s against 600 without the

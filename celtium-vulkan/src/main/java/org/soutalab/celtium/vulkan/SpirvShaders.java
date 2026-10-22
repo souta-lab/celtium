@@ -29,6 +29,9 @@ import java.nio.ByteOrder;
  * (the driver copies the code, so it may be freed immediately afterwards).
  */
 public final class SpirvShaders {
+
+    private static final boolean LOG_MODULES = Boolean.getBoolean("celtium.vulkan.shaderModules");
+    private static final java.util.Set<String> LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Classpath name of the SOLID terrain pass vertex module. */
     /** The shadow map's depth-only vertex stage: one triangle over the whole map at clip depth 0.5. */
     public static final String SHADOW_DEPTH_ONLY_VERTEX = "shadow_depth_only.vert";
@@ -115,6 +118,11 @@ public final class SpirvShaders {
 
         String resource = RESOURCE_DIRECTORY + name + RESOURCE_SUFFIX;
         byte[] data = read(resource);
+        if (LOG_MODULES && LOGGED.add(name)) {
+            // A shader edit that changes nothing is either a cache or a wrong module; this names which module the GPU got.
+            System.out.println("[Celtium] CELTIUM_SHADER_MODULE " + name + " bytes=" + data.length
+                    + " crc=" + Integer.toHexString(java.util.Arrays.hashCode(data)));
+        }
 
         if (data.length < MODULE_HEADER_BYTES || (data.length & 3) != 0) {
             throw new IllegalStateException("SPIR-V module " + resource + " is not a valid module: "
