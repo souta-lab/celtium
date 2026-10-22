@@ -299,6 +299,11 @@ def main():
     parser.add_argument("--mod", type=Path, action="append", default=[])
     parser.add_argument("--exclude-instance-mod", action="append", default=[],
                         help="Glob of instance mods not to copy into the test game dir (e.g. 'StorageDrawers-*'); the instance itself is untouched")
+    parser.add_argument("--seed-options", type=Path, action="append", default=[],
+                        help="Copy this file into the isolated game directory as options.txt (repeatable; last wins)."
+                             " It is how a launch condition the game reads from options - fullscreen, GUI scale,"
+                             " render distance - is reproduced in a fresh directory, which the game otherwise"
+                             " starts with defaults.")
     parser.add_argument("--copy-pack-dir", action="append", default=[],
                         help="Also copy one of the pack's content directories (" + ", ".join(SUPPLEMENTAL_PACK_DIRS)
                              + ") into the test game dir; the source profile is never changed")
@@ -354,6 +359,14 @@ def main():
         create_isolated_game_directory(game)
     except FileExistsError:
         parser.error(f"The test directory already exists; preserve it and choose a fresh --game-dir: {game}")
+    # A game condition that lives in options.txt has to be seeded before the JVM reads it, and the isolated directory
+    # starts empty on purpose, so the caller supplies the file it wants the game to see.
+    if args.seed_options:
+        seeded = args.seed_options[-1]
+        if not seeded.is_file():
+            parser.error(f"--seed-options file does not exist: {seeded}")
+        shutil.copyfile(seeded, game / "options.txt")
+        print(f"Seeded {game / 'options.txt'} from {seeded}")
     # A jar the caller supplies with --mod is not copied from the instance, even when the instance has one with the
     # same name. It used to be a hard error ("Test mod would overwrite a copied mod"), which was right when the instance
     # was never expected to hold one - but the user keeps a build in their instance mods to launch the game themselves,

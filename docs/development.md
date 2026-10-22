@@ -389,3 +389,10 @@ N=3 と N=1 の両方で **syncobjエラーなし・presented 894/1192・PASSED*
 当面は**ウィンドウ起動**（options: fullscreen:false / 854x480）が回避策。次段は起動時のSDL fullscreen を再現する手段（options事前seed）を作ること。
 
 **ENOSPC**: `.gv-verify/run-*` の古い149件を削除し **17G空き**（runディレクトリは直近のみ保持）。
+
+**起動時fullscreen を ハーネスで再現できた（2026-10-22）**: `scripts/prism_validation.py` に `--seed-options <file>` を追加
+（隔離ゲームディレクトリは空で作られるため、`options.txt` 由来の起動条件を再現できなかった）。`fullscreen:true / guiScale:3` を
+seedした leg `fsstart-1` は **17秒で `Stopping!`（利用者と同じ「ロゴ/メニューだけ出て終了」）** を再現した。
+このとき `wp_linux_drm_syncobj` の行は出ていない＝**接続断は必須ではない**（症状は同じ、原因は別の可能性）。
+観測: swapchain は `size=1920x1080` で作られる一方、present は `blitted 1280x720`。**ゲームのframebufferとsurface extentが
+一致していない**（`Display`のサイズ報告がfullscreen後のSDLサイズに追従していない疑い）。次はここを計器化して切り分ける。
