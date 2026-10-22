@@ -6801,6 +6801,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
                 this.currentGroupFormatId = formatId;
                 this.currentGroupTexture = boundTexture;
+                if (MERGE_CENSUS) {
+                    // Why this group was opened, counted where it is opened. The refusal census and the close census
+                    // together explained 102 of 182 starts, so the rest must be openings this path reaches without either
+                    // event - which is what this split finds out.
+                    if (this.currentImmediateMesh == null) {
+                        this.mergeRefusal("open-without-mesh");
+                    } else if (this.currentGroupFormatId == formatId && this.currentGroupTexture == boundTexture
+                            && this.currentGroupStateKey == stateKey) {
+                        this.mergeRefusal("open-identical-state");
+                    } else {
+                        this.mergeRefusal("open-other");
+                    }
+                }
                 this.currentGroupStateKey = stateKey;
                 // The group's own copy of the captured state. Without this the field stayed at its initialised
                 // new int[7], closeCurrentImmediateGroup stored that zero array, and every group was drawn with blend,
