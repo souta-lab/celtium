@@ -885,3 +885,29 @@ packetDrawMillis=796  packetPipelineMillis=277  packetBindMillis=228  packetPush
 ⇒ **`winRecord` 0.6ms の大半はドライバ呼び出しではなく、group ごとのJava側処理**（push block 構築・状態判定・台帳更新）。
 したがって削るべきは「1 group あたりのJava仕事」か「group数そのもの」であり、後者が §11.5 のソート＋描画マージ。
 「bind/push を速くする」系のmicro-optimisationは、この実測から言って無意味。
+
+### 11.12 実FPS 30fps の正体: CPUフレーム20.4ms > vblank 16.7ms（2026-10-22 夜・実測）
+
+headless隔離 sway（output 1920x1080@60Hz, WLR_RENDERER=gles2）での実測:
+
+| 実験 | 結果 | 排除できた原因 |
+|---|---|---|
+| 既定 | 33.3ms / 30.0fps（p95 35, min 30, max 37） | — |
+| `skipPresent=true` | **同じ 33.3ms** | present経路ではない |
+| vsync off（MAILBOX） | 33.3ms | vsyncではない |
+| maxFramerate:260（limiter無効） | 33.3ms | ゲームlimiterではない |
+| guiScale:1 | 33.3ms | GUI形状コストではない |
+| **GPU busy（sysfsサンプリング12点平均）** | **3.2%** | **GPU律速ではない** |
+| `passSplit` frame（CPU） | **20.4ms** | 20.4 > 16.67 なので毎フレームvblankを取り逃し→30fps、と整合 |
+
+JFR（delay=45s の定常録画, Client thread 3006サンプル）:
+- self: **`vkQueueSubmit` 61%**（`submitCommands() ← flushImmediateWindow() ← submitImmediateBatchBody` が 1817/1876）
+- self: `submitImmediateBatchBody` 14.5%
+- inclusive: `GuiMainMenu` 97% / `submitImmediateBatch` 87.7% / `flushImmediateWindow` 69.6%
+
+⇒ **犯人はimmediate pathの「batchごとのwindow flush → vkQueueSubmit」**。メニューだけで数百batch/フレームあり、
+CPUフレームが20.4msに膨れてvblankを取り逃す。GPUは3%で遊んでいる。
+
+**次の実装**: immediate batchをフレームコマンドバッファに積み、**フレーム境界で1回だけsubmit**する
+（現状はflushごとにsubmit）。`immediateWindowsPerFrame=1` では変わらなかった（flushの閾値はindices側）ので、
+`submitImmediateBatchBody内のflushImmediateWindow()`を外し、境界flushへ寄せるのが本命。
