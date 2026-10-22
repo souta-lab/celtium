@@ -385,3 +385,31 @@ descriptor の更新漏れ、バッチ数、マップの充填とスケール。
 ### 触ってはいけないもの
 `lightSpaceBlock` のidentity、`lightVP*T(centre)`、Vulkan深度remap（`cameraDepth=0.5` で検証済み）は
 **いずれも実測で正しい**。ここを再度いじると、検証済みの土台を崩すだけになる。
+
+## 11. 現状の総括（2026-10-22）— 次に何をするか
+
+### 性能（同一jar・3ペア交互順・参照 `567dcf8a…`）
+| jar | AMD RX 6400 | Intel UHD 630 |
+|---|---|---|
+| `e4622406…`（計器なし） | **1.373x** | **1.738x** |
+| `c7dd20ad…`（計器入り＝HEAD） | **1.382x** | 未測定 |
+
+### 差の所在（両GPUで別の原因、どちらも実測）
+- **AMD**: 解像度非依存＝**CPU律速**。受理経路がフレームの26%（279 offer・1.7µs/offer）。
+  個別の名前付きコストを消しても動かない（`capture` 79%減・`prepare` 26%減・行列比較100%減・`append`全部 いずれも0〜0.7%）。
+- **Intel**: **ドライバ呼び出しの回数 × 単価**。回数はAMDと完全一致（window 5・groups 182・terrain submit 3 /frame）で、
+  **ほぼ全CPUブラケットが一律 +0.1ms**（合計 +1.3ms）。Vulkan呼び出し自体は地形ブラケットの1割以下。
+
+### 残るレバー（価値順）
+1. **group数を減らす（bindless / 動的format）** — 182 groups/frame が最大の回数。半減で Intel 約0.4ms・AMD 0.1ms。
+   分割要因は texture 46% / format 18% / matrix 18%。**textureを跨げるのはbindlessだけ**。
+2. **受理経路の構造変更**（AMDの0.5ms）— `architecture` §6/§7 の設計。1.7µs/offerを0.6-0.9µsへ。
+3. **シェーダパックをワールド描画へ接続** — 現状 `celtium$probePackProgram`（解析→数プログラムのコンパイル→プローブ描画）まで。
+   BSLは mean 0.31 で絵が変わらない。**shadercはLWJGL版に固定**（§9）なので、同梱では解決しない。
+
+### 計器の使い方（この期間に踏んだ罠）
+- **legが落ちたら、まず制御ビルドで同じlegを回す**（環境要因か変更要因かを分ける）。実例: 2回失敗を変更のせいと即断しかけた。
+- **フラグ名を確認する**: `-Dceltium.gpuPassTimings`（正） vs `-Dceltium.vulkan.gpuPassTimings`（無効・無出力に見える）。
+- **古いjarを測らない**: 編集が当たっていないビルドを測って「in率6.6%」という誤値を出した。`git status` と jar ハッシュを毎回確認する。
+- **単発フレームの画素比較は分散2倍**: 影の darkened は 1.70〜3.54% で振れる。比較は複数runか制御arm付きで。
+- **IntelではGPUタイムスタンプが取れない**（`passTimings` が空）。CPUブラケット（`-Dceltium.vulkan.passSplit`）を使う。
