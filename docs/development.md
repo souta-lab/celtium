@@ -458,3 +458,12 @@ GL-lessではGLコンテキストが無いのでこのswapは何も提示しな�
 Java 27 では `ParallelRefProcEnabled` が削除済み、G1のしきい値系は experimental なので `UnlockExperimentalVMOptions` が先に必要、`InitiatingHeapOccupancyPercent` は `G1IHOP` に改名（実測: `java -version` が通ることを確認）。
 `-XX:+DisableExplicitGC` は特に重要: バニラの `System.gc()` を落とす mixin は「別のtransformerもMinecraftを触る」ため
 除外されており、このフラグが無いとフレーム中に stop-the-world が入る。
+
+**サーフェスリサイズ（swapchain再構築）の再検証（2026-10-23・0.0.13-alpha）**: 隔離swayの出力は窓と同寸なので
+リサイズが自然には起きないため、`-Dceltium.vulkan.debugResizeAfterFrames=N -Dceltium.vulkan.debugResizeTo=WxH`
+（SDL_SetWindowSize を1回だけ呼ぶ）で**意図的に extent 変化**を起こして検証した。jar `80e3d8b3…`・headless:
+```
+CELTIUM_DEBUG_RESIZE frames=5 to=1000x600 ok=true
+stopping=0  syncobjエラー=0  fps p50=62.0
+```
+⇒ **リサイズ→swapchain再構築→present が安定**（ランチャーを落としていた経路。修正前はswayが接続を切った）。
