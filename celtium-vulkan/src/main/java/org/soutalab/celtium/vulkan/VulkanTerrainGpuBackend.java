@@ -15332,6 +15332,9 @@ this.frameBufferOpen = false;
             }
     }
 
+    /** At most one shadow recording in this many frames: the map is a synchronous submission of its own. */
+    private static final int SHADOW_MAX_AGE = Integer.getInteger("celtium.shadow.maxAge", 2).intValue();
+
     /** How often the map is refreshed even when the scene key says nothing moved. */
     private static final int SHADOW_REFRESH_EVERY = Integer.getInteger("celtium.shadow.refreshEvery", 30).intValue();
     private long shadowSceneKey;
@@ -15381,9 +15384,16 @@ this.frameBufferOpen = false;
         // The map only changes when the light box moves or the casters do: the sun is fixed and, in this build, only terrain casts. So a
         // frame whose camera position and queued caster count match the last recorded one reuses the map instead of rasterising 2048 square
         // worth of terrain again - and the refresh ceiling below keeps a proxy that missed a change from lasting.
+        // Two reasons to reuse the map instead of recording it again: the scene did not move (checked by the key),
+        // or the map is younger than SHADOW_MAX_AGE frames. The second matters because the pass is a synchronous
+        // submission of its own at the frame boundary, and paying it every frame cost about 0.4 ms on the AMD card
+        // (1.674x with shadows on against 1.387x with them off, same jar family). Receivers already read the previous
+        // frame's map, so an age of two makes that lag two frames - which is what the acceptance photographs show.
         long sceneKey = celtium$shadowSceneKey();
-        if (this.shadowMapRecorded && sceneKey == this.shadowSceneKey
-                && this.frameId - this.shadowRecordedFrameId < SHADOW_REFRESH_EVERY) {
+        long age = this.frameId - this.shadowRecordedFrameId;
+        if (this.shadowMapRecorded
+                && (sceneKey == this.shadowSceneKey || age < SHADOW_MAX_AGE)
+                && age < SHADOW_REFRESH_EVERY) {
             this.shadowSkips++;
             return;
         }
