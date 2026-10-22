@@ -15012,8 +15012,8 @@ this.frameBufferOpen = false;
         // scene is complete never closes inside one. Three seconds of the world's own uploads is enough to hold a view.
         if (terrainCaptureFirstNanos == 0L) {
             terrainCaptureFirstNanos = System.nanoTime();
-        } else if (!terrainCaptureFinalized && terrainCaptureCount > 0
-                && System.nanoTime() - terrainCaptureFirstNanos > 3_000_000_000L) {
+        } else if (!terrainCaptureFinalized && terrainCaptureCount >= 2048
+                && System.nanoTime() - terrainCaptureFirstNanos > 8_000_000_000L) {
             terrainCaptureFinalized = true;
             System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
                     + " vertices=" + terrainCaptureCount + " (three seconds of uploads)");

@@ -641,3 +641,19 @@ CELTIUM_PACK_GEOMETRY terrain vertices=65400 format=3 attributes=7
 
 残り: gbuffer→composite のパス構成（現在は単一プログラムの単一パス）、透視補正の検証、影パス（ライト行列の焼き込み）、
 そして probe 経路を本番の地形パイプラインへ移すこと。
+
+### 実測: gbuffers_terrain は未だ不可視（2026-10-23）
+
+`-Dceltium.shaderpack.program=gbuffers_terrain` で同じ65,412頂点を描画した結果:
+```
+CELTIUM_PACK_PIPELINE program=gbuffers_terrain ... result=OK attributes=7
+CELTIUM_PACK_CAPTURE finalized format=3 vertices=65412
+CELTIUM_PACK_CAMERA baked=65412/65412
+提示画像: clear 921,600px のみ（描画なし）
+```
+同条件で `gbuffers_basic` は 93% を地形で埋めた。したがって **gbuffers_terrain の描画は頂点段で消えている**
+（同プログラムは影行列・カメラ位置など uniform 契約が広く、probe のゼロ埋め uniform では clip 外に出る）。
+次段の S2/S3 作業: program単位のinterface（uniform/UBO実値）を地形パイプラインから供給する。
+
+**確定**: キャプチャ開始は format 3 のみ、時間ベースの閉じは「2,048頂点かつ8秒」で行う（3秒・68頂点では
+クリア画像になり判定不能だった）。
