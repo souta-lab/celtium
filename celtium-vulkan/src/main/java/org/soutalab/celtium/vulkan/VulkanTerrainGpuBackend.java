@@ -14982,9 +14982,11 @@ this.frameBufferOpen = false;
     private static boolean terrainCaptureFinalized;
     /** Batches offered since the capture opened, across all layouts; the fallback close condition. */
     private static int terrainCaptureSeen;
+    /** When the capture opened, for the wall-time close condition. */
+    private static long terrainCaptureFirstNanos;
     /** How many vertices the capture accumulates before it closes; about eight sections' worth. */
     private static final int CELTIUM_PACK_CAPTURE_VERTICES =
-            Integer.getInteger("celtium.shaderpack.captureVertices", 1024);
+            Integer.getInteger("celtium.shaderpack.captureVertices", 65536);
 
     /**
      * Records the first terrain batch's vertices for the shader-pack probe, from the terrain renderer rather than from
@@ -15001,12 +15003,22 @@ this.frameBufferOpen = false;
         // of the frame - or until the format changes, at which point the capture is closed so the fit is computed over
         // one layout.
         terrainCaptureSeen++;
+        // Close on wall time as well as on the vertex budget: a leg is short, and a capture that only closes when the
+        // scene is complete never closes inside one. Three seconds of the world's own uploads is enough to hold a view.
+        if (terrainCaptureFirstNanos == 0L) {
+            terrainCaptureFirstNanos = System.nanoTime();
+        } else if (!terrainCaptureFinalized && terrainCaptureCount > 0
+                && System.nanoTime() - terrainCaptureFirstNanos > 3_000_000_000L) {
+            terrainCaptureFinalized = true;
+            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
+                    + " vertices=" + terrainCaptureCount + " (three seconds of uploads)");
+        }
         // A batch of another layout is skipped, not a reason to close: the terrain pass alternates between formats, so
         // closing on the first mismatch kept exactly one batch. Closing happens on the vertex budget, or after enough
         // batches have gone by that waiting longer cannot help.
         if (terrainCaptureVertices != null
                 && (formatId != terrainCaptureFormat || stride != terrainCaptureStride)) {
-            if (terrainCaptureSeen > 200 && terrainCaptureCount > 0) {
+            if (terrainCaptureSeen > 1500 && terrainCaptureCount > 0) {
                 terrainCaptureFinalized = true;
                 System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
                         + " vertices=" + terrainCaptureCount + " seen=" + terrainCaptureSeen
