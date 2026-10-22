@@ -1042,17 +1042,35 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         }
         float centreX = (minX + maxX) * 0.5f, centreY = (minY + maxY) * 0.5f, centreZ = (minZ + maxZ) * 0.5f;
         float extent = Math.max(1.0f, Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ)));
-        // Sun direction: high and to one side, the angle BSL's default path uses.
-        float dx = 0.4f, dy = -0.8f, dz = 0.45f;
-        float length = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-        dx /= length; dy /= length; dz /= length;
+        // Sun direction: from the light towards the scene, high and to one side.
+        float fx = -0.4f, fy = -0.8f, fz = -0.45f;
+        float flen = (float) Math.sqrt(fx * fx + fy * fy + fz * fz);
+        fx /= flen; fy /= flen; fz /= flen;
+        // An orthonormal basis, computed rather than written out by hand: the hand-written version produced a matrix that
+        // projected everything away (the leg delivered the clear colour), because a lookAt is not a rotation with the
+        // forward vector pasted into a column.
+        float ux = 0.0f, uy = 1.0f, uz = 0.0f;
+        if (Math.abs(fy) > 0.99f) {
+            ux = 1.0f; uy = 0.0f; uz = 0.0f;
+        }
+        float rx = uy * fz - uz * fy;
+        float ry = uz * fx - ux * fz;
+        float rz = ux * fy - uy * fx;
+        float rlen = (float) Math.sqrt(rx * rx + ry * ry + rz * rz);
+        rx /= rlen; ry /= rlen; rz /= rlen;
+        float vx = fy * rz - fz * ry;
+        float vy = fz * rx - fx * rz;
+        float vz = fx * ry - fy * rx;
         float distance = extent * 2.0f;
-        float eyeX = centreX - dx * distance, eyeY = centreY - dy * distance, eyeZ = centreZ - dz * distance;
+        float eyeX = centreX - fx * distance, eyeY = centreY - fy * distance, eyeZ = centreZ - fz * distance;
+        float dotR = rx * eyeX + ry * eyeY + rz * eyeZ;
+        float dotU = vx * eyeX + vy * eyeY + vz * eyeZ;
+        float dotF = fx * eyeX + fy * eyeY + fz * eyeZ;
         float[] view = {
-                dz, 0.0f, -dx, 0.0f,
-                0.0f, 1.0f, 0.0f, 0.0f,
-                dx, 0.0f, dz, 0.0f,
-                -(dx * eyeX + dz * eyeZ), -eyeY, -(dz * eyeX - dx * eyeZ), 1.0f
+                rx, vx, -fx, 0.0f,
+                ry, vy, -fy, 0.0f,
+                rz, vz, -fz, 0.0f,
+                -dotR, -dotU, dotF, 1.0f
         };
         float half = extent * 0.75f + 1.0f;
         float[] ortho = {
