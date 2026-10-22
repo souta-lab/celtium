@@ -43,6 +43,8 @@
 | **terrain upload とframe実行** | **未完** | — | — | dirty bytes/copy/submit/可視判定の実費分離（warm＋streaming）、worker→render owner引渡し、pass/barrierの資源依存からの編成、旧GL handoff分岐の除去 |
 | **受理経路の再設計（2026-10-22 設計・前提訂正）** | **転写は遅延不可** | 未実装 | — | `architecture` §6。**`vertexAddress` はゲームの`BufferBuilder`内部バッファで次のdrawで再利用**されるため**頂点転写は受理時必須**（遅延すると壊れる）＝遅延できるのは境界判定とgroup生成だけで、判定は既に安く**5%には届かない見込み**。1.7µs/offerは数十個の5-50nsに散る（**長い尾**）ので、次は**まとめたsweepを5%基準**で測る |
 | **互換・目視（4画面 / E2E / RLCraft / BSL / 配布）** | **4画面取得済／settings はHEADで再合格** | 実測 | 一部未完 | **settings（`-Dceltium.validation.scene=videoSettings`）を現行HEADのjar `c7dd20ad…` で再検証**: `accepted=true`/PASSED・**画像gate PASSED**・**validation 0件**・distinct 152（以前の `d105e92f2866` と同値）。4画面（loading/game/settings/home）は色順修正後に取得済みで、home の `VUID-09600` が1件残る。**影**: マップ充填12.2%・in範囲75.4%・キャスタとの重なり4画素＝**キャスタとレシーバの射影不一致**が残る唯一の原因（候補12件消去）。**BSL**: 解析・（shadercがあれば）コンパイルまで通るが**ワールド描画に未接続**（mean 0.31）。**互換**: RLCraft 2.9.3 は0.7非対応（`com.cleanroommc.hackery` が0に）、E2E 1.93aはfull pack未導入。**配布物は検証済み**（梱包・版数・ハッシュ）。詳細は [history](<history/plan-archive-2026-10-21.md>) と `architecture` §9/§10/§11 |
+| **qmagnet 機能別対照（2026-10-22 実測）** | **領域別に一致** | 実測 | 良好 | 同scene・同カメラ・同時刻（1500）で presented画像と参照screenshotを領域別比較: **空 (165,180,207) vs (165,179,207)、石 (61,45,36) vs (61,45,36)＝完全一致、草 (62,104,49) vs (61,100,47)**。ログ帯（このレンダラだけが出す診断文字）を除いた全体差は **mean 11.4 / `>8` 10.6%**＝残差はAA・位相・撮影経路差。証拠は `docs/evidence/cr07-*`（4画面・影） |
+
 | **影・BSL・配布** | **未完** | — | — | native shadow mapの両GPU実画面、BSLの描画反映、配布物と実装の一致 |
 
 ## 撤回した前提（再入条件つき）
