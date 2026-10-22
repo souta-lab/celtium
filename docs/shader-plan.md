@@ -470,3 +470,17 @@ leg: PASSED  画像gate: PASSED  validation: 0件
 **次の判別（具体的）**: blit先を「そのフレームでpresentされるslot」に固定し、`presentedDump` を前後で画素比較する
 （gateは平均色ベースなので、緑の三角形1枚では反応しない可能性もある。画素差で見る）。
 
+### 実測（2026-10-22・blit先は正しい image。次は「presented dump に緑が居るか」）
+
+`celtium$recordShaderPackDraw` を実コードで確認: blit先は **`target.colorImage()`（フレームの色image）**で、
+swapchain slot ではない（ログの `slot=1` は `frameSlot` の記録）。したがって**slot不一致説は否定**。
+条件は「frame buffer が開いていて、render pass 中でない」こと。
+
+gate が動かない理由の候補は次の2つに絞られる:
+1. **presented dump が blit より前に撮られている**（capture が古い）
+2. `blitToFrame` 自体が実際には画素を移していない（layout/range/formatの問題で validation は通る）
+
+**次の判別（コマンド1つで可能）**: `-Dceltium.vulkan.presentedDumpEvery=1` で PNG を出し、
+blit領域 (0,0)-(256,256) の画素を「パック無し」と「パック有り」で比較する。緑(#00FF00)が出ていれば配達は成功し、
+gate側の問題。出ていなければ `blitToFrame` の実装側。
+
