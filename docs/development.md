@@ -516,3 +516,16 @@ passSplit: frame 6.8 / world 6.8（terrain 4.5 / flush 3.3）/ hand 0.1 / clouds
 JFRの HashMap 探索 ~97/1056 サンプルの一部を狙ったが、**frame 6.8→7.0ms（p50）で中立〜誤差**。
 割当は減るので残すが、KPIへの寄与は認められない。次は `submitImmediateBatch` 本体の構造（準備・提出の分割）と
 アニメーションテクスチャ再アップロードを対象にする。
+
+**fps300 KPI: 即時バッチ受理経路で見つけた毎バッチ処理（2026-10-23・コード読解）**
+
+`submitGeometryBatch`（JFR上位3メソッドの入口）は1バッチあたり:
+- `celtium$flushPendingFontBatch("intervening")`（文字列定数を渡す呼び出し）
+- 受理メタデータのフィールド書き込み 8個（immediateOffer* / immediateLastRefusal 等）
+- `noteImmediateBatchesOffered()` と形式別カウンタ
+- SHADER_PACK_DRAW_PROBE 判定（static final でJITが畳む想定）
+- `System.nanoTime()` 2回 + 統計スナップショット2個（submitFlushesAtEntry / submitSuppliesAtEntry）
+
+次の候補: (a) フォントバッチ未保持時の早期分岐を**フィールド1回の読み**に落とす、(b) 受理メタデータを
+1つの int パックへ畳む、(c) 計測用の nanoTime/スナップショットを `BATCH_TIMINGS` 有効時のみに限定。
+いずれも per-batch の固定費で、JFR上位がこの関数群であることと整合する。
