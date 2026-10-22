@@ -501,6 +501,33 @@ leg `perf-struct-1`（AMD RX 6400・world・固定カメラ・`-Dceltium.vulkan.
 **結果は 0.994x（中立）**で撤回。JFRの**帰属**は残るが、**呼び出し回数を減らすだけではフレームは動かない**という
 §11/§12の結論と一致する（時間は次段の構造＝描画実行の持ち方にある）。
 
+### 11.4 inclusive ランキング（2026-10-22・JFR steady 777サンプル・出荷構成）
+
+自前コードの**インクルーシブ**占有率（スタックに現れたサンプル数）:
+
+| メソッド | % |
+|---|---|
+| `CeleritasWorldRenderer.renderBlockEntityList`（fork由来＝バニラのblock entity描画） | **8.4** |
+| `celtium$renderPass`（地形パス全体） | 5.7 |
+| `render`（地形パスの入口） | 4.9 |
+| `celtium$drawModelList` | 4.8 |
+| `submitGeometryBatch` | 3.9 |
+| `recordRenderPass` | 3.7 |
+| `submitImmediateBatchBody` / `submitImmediateBatchTimed` | 3.7 |
+| `flushPendingBeforeGlDraw` / `flushImmediateWindow` | 3.1 |
+| `recordImmediateOnlyPass` | 2.2 |
+| `ModelGeometryCache.build` ＋ `celtium$buildModelMeshes` | **2.1** |
+
+**読み方**: 最大項は**バニラのtile entity描画**（参照実装も同じ仕事をする＝共有コスト）。Celtium固有で目立つのは
+`celtium$renderPass`配下と受理経路の各3-4%で、**単一の大きな塊は無い**。参照との差0.45msが
+「受理経路＋地形記録＋即時ウィンドウ記録」に分散しているという§12の結論と一致する。
+
+**次の構造候補**（この順）:
+1. `ModelGeometryCache.build` は**毎フレーム全リスト走査**（世代一致なら再利用だがループは走る）。世代の変化が無いフレームを
+   int比較1回で抜ける形にする（キャプチャ側に単調増加の世代番号を持たせる）。
+2. 受理経路の**頂点変換をGPUへ**（§12の2）: `copyVerticesTransformed` のper-vertex変換を push constant の行列に移す。
+3. flush/winRecord（0.6ms）の記録ループを**1本のindirect列**へ（§11.2）。
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）
