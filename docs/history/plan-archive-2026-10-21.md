@@ -217,3 +217,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 ### Intelのバッチ提出 再検証（2026-10-22）
 
 | **Intelのバッチ提出は現行ビルドでも病理的（2026-10-22 再検証）** | **2.8倍遅い** | 実測 | 既存ポリシーを支持 | 数ラウンド前の結論（Intelでは `batchFrameSubmits` を切る）を**現行jar `c7dd20ad…`・制御arm付き2ペア**で再検証: **ON 9.50/8.92ms（p95 47.2/44.5） vs OFF(制御) 3.15/3.20ms（p95 6.34/6.27）＝約2.8倍遅い**。⇒ **`FrameCoordinator` の「プロパティ未指定時はIntelのみ非バッチ」は正しい**（現行コードのまま維持）。バッチ提出はsubmitを減らす代わりにIntelで待ちを生むらしく、**「回数を減らせば速くなる」はIntelでは単純に成り立たない**。この反例があるため、Intel向けの回数削減は**submitではなく draw/descriptor/bind 側**で行う必要がある |
+
+### やり取り回数の一致（2026-10-22）
+
+| **両GPUでやり取り回数は同一（2026-10-22 確定）** | **コストは回数×単価** | 実測 | 削減対象が決まった | 既存カウンタ比較（同一jar、frame換算）: **immediateWindows 5.0 / immediateOffered 278 / immediateGroupsDrawn 182 / winSubmit 5.0 / terrainSubmit 3.0** が**IntelとAMDで完全に一致**。⇒ Intelの+1.3msは**回数ではなく1回あたりの単価**で、前ラウンドの「全ブラケット一律+0.1ms」と整合。**したがって削減対象は「回数」**で、効果は 回数 × 単価 で両GPUに比例配分される。最大の回数は **groups 182/frame（各=bind+draw）**＝ここを半減できれば Intel `grpDraw` 0.3→0.15・`wrecLoop` 0.5→0.25 で **約0.4ms（Intel）/ 0.1ms（AMD）**。次点は windows 5/frame（各 submit あり）。group数を減らすには分割要因（texture 46% / format 18% / matrix 18%）を潰す＝**bindless** が本命 |
