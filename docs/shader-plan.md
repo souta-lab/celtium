@@ -412,3 +412,24 @@ shaderc available=false reason=the shaderc binding could not be loaded
 **次の必要条件**: 検証環境に `lwjgl-shaderc` とそのnativesを追加し、`CELTIUM_PACK_PROGRAM` が
 `compiler=true` で実行される状態にする（`scripts/gv-leg.sh` のライブラリ集合に足す）。そのうえで
 `sampleOffscreen` の読み戻し値（画素）を証拠にする。可視性はさらにその後（final programから表示画像へ）。
+
+### 実測（2026-10-22・shadercを入れたらパックのシェーダが通った）
+
+**legでshadercを有効にする手順**（これが欠けていた）:
+1. `unzip .gv-verify/lib/lwjgl-shaderc-3.4.1-natives-linux.jar` の `libshaderc.so` を natives ディレクトリへ
+2. `CELTIUM_LEG_EXTRA_LIBS=$PWD/.gv-verify/lib/lwjgl-shaderc-3.4.3.jar` で leg を起動
+
+結果（jar `706002c2…`・AMD・validation ON・`-Dceltium.shaderpack.path=BSL_v10.1.8.zip -Dceltium.shaderpack.compileProbe=true`）:
+
+```
+CELTIUM_PACK_PROGRAM file=/shaders/world-1/gbuffers_basic.vsh expandedBytes=14240 loweredBytes=14248
+  attributes={a_Colour=5, a_Normal=4, a_Position=6, a_TexCoord0=2, a_TexCoord1=3, ...}
+CELTIUM_PACK_PROGRAM file=/shaders/world-1/gbuffers_basic.fsh expandedBytes=22151 loweredBytes=20096
+  varyings=8 samplers={noisetex=0} unsupported=0 spirvWords=2036
+CELTIUM_PACK_PIPELINE program=gbuffers_basic pipeline=ok attributes=7 result=OK
+leg: PASSED
+```
+
+**確定**: BSL 10.1.8 の**実シェーダが lower→compile→Vulkanパイプライン作成まで通る**（unsupported=0）。
+**未確定**: その程序を使った**描画と可視性**（次は gbuffers_basic で実ジオメトリを描き、`sampleOffscreen` の画素を証拠にする）。
+
