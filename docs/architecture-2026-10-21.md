@@ -592,6 +592,26 @@ per-drawデータは SSBO（`gl_DrawID`）に移すので push定数も不要。
 3. window を pipeline でソートし、geometry arena ＋ `vkCmdDrawIndexedIndirect` で **11 draw/window** へ
 4. translucent は pipeline 内で順序保持
 
+### 11.8 共有テクスチャ配列は実装され、35枚で足りる（2026-10-22 実測）
+
+`VulkanTextureArray` を追加: `UPDATE_AFTER_BIND | PARTIALLY_BOUND` の descriptor set 1個に
+combined image sampler の配列（容量4096）を持ち、`VulkanGlTexture.key()` で index を払い出す。
+受理経路がテクスチャを解決した時点で登録し、書き込みは**ラッパー1個につき1回**（group毎ではない）。
+
+出荷sceneの実測（jar `6cf90a00…`・AMD・validation ON）:
+
+```
+textureArray set=0x2b000000002b entries=35/4096 descriptorWrites=35
+```
+
+- **窓が必要とするテクスチャは35枚**。容量4096に対して余裕が大きく、`maxPerStageDescriptorSampledImages` の
+  上限（Intel 2.0e8 / AMD 8.4e6）に触れる可能性はない。
+- **descriptor書き込みは35回/プロセス**（group 159回ではない）。受理時の登録なので定常フレームでは0回。
+- **AMD PASSED・画像gate PASSED・validation 0件**。Intel も同ビルドで PASSED・0件（`91a458c4` 時点の同一配列コード）。
+
+→ §11.7 の残作業のうち「テクスチャ配列セット」は完了。次は**シェーダを配列indexへ**（indexは当面push定数、次にSSBO `gl_DrawID`）、
+その後に**pipelineソート＋geometry arena＋indirect**で 11 draw/window へ。
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）

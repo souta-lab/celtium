@@ -2183,6 +2183,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * is the same for the lightmap the lightmap-bearing formats' descriptors name.
      */
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupTextureImage;
+
+    /**
+     * The one descriptor set a converted window binds, with every texture it draws in one array (section 11.6). Created
+     * on the first accepted batch that names a texture; null when the device cannot index such an array, which keeps the
+     * per-group sets and is reported as {@code textureArray=false}.
+     */
+    private VulkanTextureArray textureArray;
+    private int textureArrayLogs;
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
     /**
      * The fog state at the moment the group was opened, beside {@code currentGroupState} and
@@ -6965,6 +6973,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // still this object" instead of repeating the descriptor lookup the record decides. A re-created
                 // texture is a different object, which is the slow path's `descriptor != prepared.descriptor` term.
                 this.currentGroupTextureImage = celtium$registry().get(boundTexture);
+                // Fill the shared array as batches are accepted: the index this returns is what a converted pipeline will
+                // put in its push block, and registering here means a texture is written once per wrapper, not per group.
+                celtium$registerTexture(currentGroupTextureImage);
                 this.currentGroupLightmapImage = this.lightmapTexture;
             }
             // Only a layout that samples a texture needs its bound name to have a mirror. Asked without that, this
@@ -10182,6 +10193,7 @@ this.frameBufferOpen = false;
                 + " skipReason=" + (this.terrainStatistics.lastSkipReason() == null ? "none" : this.terrainStatistics.lastSkipReason().replace(' ', '_'))
                 + " immediateState=" + this.immediateStatistics.immediateStateCalls() + " immediateOffered=" + this.immediateStatistics.immediateBatchesOffered()
                 + " frameId=" + this.frameId + " flushCount=" + this.immediateStatistics.flushCount()
+                + " textureArray=" + (this.textureArray == null ? "absent" : this.textureArray.report())
                 + " orderPreservingFlushes=" + this.immediateStatistics.orderPreservingFlushes()
                 + " actualFlushes=" + this.immediateStatistics.actualFlushes()
                 + " actualFlushMillis=" + (this.immediateStatistics.actualFlushNanos() / 1000000L)
@@ -11300,6 +11312,10 @@ this.frameBufferOpen = false;
     }
 
     public void delete() {
+        if (this.textureArray != null) {
+            this.textureArray.destroy();
+            this.textureArray = null;
+        }
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
@@ -12790,6 +12806,30 @@ this.frameBufferOpen = false;
      * The table is replaced only after the whole build succeeded, so a failure leaves the previous meshes in place, and
      * the meshes that attempt created are released before it returns.
      */
+    /**
+     * Registers a wrapper in the shared texture array, creating the array on first use.
+     * <p>
+     * Nothing draws through it yet: this is the registration half of the shared-descriptor design, and the count it reports
+     * is what says how many textures a window actually needs. The array is skipped entirely on a device without the
+     * features, so the per-group path is what runs there.
+     */
+    private void celtium$registerTexture(org.soutalab.celtium.vulkan.VulkanGlTexture texture) {
+        if (texture == null || !this.context.textureArraySupported()) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            if (this.textureArray == null) {
+                VulkanTextureArray array = new VulkanTextureArray(this.context);
+                if (!array.create(stack)) {
+                    this.textureArray = null;
+                    return;
+                }
+                this.textureArray = array;
+            }
+            this.textureArray.indexFor(stack, texture, 0);
+        }
+    }
+
     private void celtium$buildModelMeshes() {
         // The table, its generation-driven builder and the lending rule moved to ModelGeometryCache (R3a).
         // The capture version is recorded first so the model draw path can ask for one extra build per new capture

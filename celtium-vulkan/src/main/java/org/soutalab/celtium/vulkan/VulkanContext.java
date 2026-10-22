@@ -2026,6 +2026,11 @@ public final class VulkanContext {
     /** Whether the device can index one sampled-image array from the draw (section 11.6). */
     private boolean textureArraySupported;
 
+    /** {@return whether one sampled-image array can be indexed from the draw: the shared-descriptor design's precondition}. */
+    public boolean textureArraySupported() {
+        return this.textureArraySupported;
+    }
+
     /** {@return whether dynamic rendering is enabled on this device}. */
     public boolean dynamicRenderingSupported() {
         return dynamicRenderingSupported;
