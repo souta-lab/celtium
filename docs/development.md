@@ -467,3 +467,9 @@ CELTIUM_DEBUG_RESIZE frames=5 to=1000x600 ok=true
 stopping=0  syncobjエラー=0  fps p50=62.0
 ```
 ⇒ **リサイズ→swapchain再構築→present が安定**（ランチャーを落としていた経路。修正前はswayが接続を切った）。
+
+**互換コホート（2026-10-23・実測）**: 人気の1.12.2 Forge Modを追加して受入を実行した。
+- 追加: `Hwyla-1.8.26-B41_1.12.2.jar`, `AppleSkin-mc1.12-1.0.14.jar`, `Controlling-3.0.12.2.jar`（既存: JEI 4.31.2, Fugue 0.24.4, flare 0.8.0, scalar 3.9.0）
+- jar: `celtium-forge-mc1.12.2-0.0.13-alpha.jar`（sha256 `80e3d8b3…`）・leg `compat-1`・AMD・world scene・validation ON
+- 結果: **PASSED・problems 0**（クラッシュなし、画像gate通過）
+- 3つはインスタンスに残している（HUD/ツールチップ/キー設定の経路を日常操作で踏むため）
