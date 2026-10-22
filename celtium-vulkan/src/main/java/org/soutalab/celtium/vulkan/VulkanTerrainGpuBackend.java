@@ -15398,7 +15398,12 @@ this.frameBufferOpen = false;
                     this.packGeometryReRenderLogged = true;
                     System.out.println("[Celtium] CELTIUM_PACK_RERENDER_GEOMETRY " + reRendered);
                 }
-                this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), 0, 0, 256, 256);
+                // Centre of the frame rather than the corner: the corner rectangle is uniform in the capture and the
+                // probe image is not, so the location is the one thing an experiment can move to separate "the blit
+                // carries the wrong content" from "something paints over the corner of the picture".
+                int blitX = Math.max(0, (this.frameTargetWidth - 256) / 2);
+                int blitY = Math.max(0, (this.frameTargetHeight - 256) / 2);
+                this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), blitX, blitY, 256, 256);
                 if (this.shaderPackDraws++ <= 2) {
                     // Which image the blit wrote, and which image the present will read: the delivery question is a
                     // question about identities, and the answer belongs in the log rather than in an inference from a
