@@ -185,6 +185,7 @@ public class MinecraftMixin {
                     target = "Lnet/minecraft/client/renderer/EntityRenderer;func_181560_a(FJ)V"), require = 0)
     private void celtium$timedRenderSection(net.minecraft.client.renderer.EntityRenderer entityRenderer,
             float partialTicks, long finishTimeNano) {
+        org.taumc.celeritas.impl.gui.CeltiumSplashBar.stage(3);
         GameLoopTiming.renderStarted();
         try {
             entityRenderer.updateCameraAndRender(partialTicks, finishTimeNano);
@@ -334,6 +335,55 @@ public class MinecraftMixin {
                             + cause.getClass().getName() + ": " + cause.getMessage());
                 }
             }
+        }
+    }
+
+    /**
+     * Draws the loading bar under the splash logo. Forge's SplashProgress would draw it, and the GL-less renderer stubs
+     * that class out, so this is the replacement rather than a decoration: it is the only thing telling a player the
+     * launch is alive during the long atlas and model stages.
+     */
+    @Inject(method = "drawSplashScreen", at = @At("TAIL"), require = 0)
+    private void celtium$drawLoadingBar(CallbackInfo ci) {
+        if (!org.taumc.celeritas.impl.gui.CeltiumSplashBar.enabled()) {
+            return;
+        }
+        net.minecraft.client.Minecraft mc = (net.minecraft.client.Minecraft) (Object) this;
+        if (mc.world != null || mc.currentScreen != null) {
+            return;
+        }
+        try {
+            int width = mc.displayWidth;
+            int height = mc.displayHeight;
+            int barWidth = Math.max(40, (int) (width * 0.40D));
+            int barHeight = Math.max(2, height / 360);
+            int left = (width - barWidth) / 2;
+            int top = (int) (height * 0.14D);
+            int filled = (int) (barWidth * org.taumc.celeritas.impl.gui.CeltiumSplashBar.progress());
+            net.minecraft.client.renderer.GlStateManager.disableTexture2D();
+            net.minecraft.client.renderer.GlStateManager.enableBlend();
+            net.minecraft.client.renderer.GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+            net.minecraft.client.renderer.Tessellator tessellator =
+                    net.minecraft.client.renderer.Tessellator.getInstance();
+            net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
+            buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
+            // Outline and track in white at low alpha, fill in amber: the same two colours the logo's own bar used.
+            buffer.pos(left - 1, top + barHeight + 1, 0.0D).color(255, 255, 255, 40).endVertex();
+            buffer.pos(left + barWidth + 1, top + barHeight + 1, 0.0D).color(255, 255, 255, 40).endVertex();
+            buffer.pos(left + barWidth + 1, top - 1, 0.0D).color(255, 255, 255, 40).endVertex();
+            buffer.pos(left - 1, top - 1, 0.0D).color(255, 255, 255, 40).endVertex();
+            if (filled > 0) {
+                buffer.pos(left, top + barHeight, 0.0D).color(255, 190, 60, 235).endVertex();
+                buffer.pos(left + filled, top + barHeight, 0.0D).color(255, 190, 60, 235).endVertex();
+                buffer.pos(left + filled, top, 0.0D).color(255, 190, 60, 235).endVertex();
+                buffer.pos(left, top, 0.0D).color(255, 190, 60, 235).endVertex();
+            }
+            tessellator.draw();
+            net.minecraft.client.renderer.GlStateManager.enableTexture2D();
+            net.minecraft.client.renderer.GlStateManager.disableBlend();
+        } catch (RuntimeException | LinkageError failed) {
+            // A loading bar must never be the reason a launch fails.
+            System.out.println("[Celtium] CELTIUM_SPLASH_BAR skipped: " + failed);
         }
     }
 
