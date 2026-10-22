@@ -671,6 +671,14 @@ public final class VulkanSwapchain {
                                 "SDL.window.wayland.surface", 0L);
                     }
                 }
+                if (waylandDisplay != 0L || waylandSurface != 0L) {
+                    // Which surface is the window's: SDL's own report and the property must agree, otherwise the
+                    // swapchain is presenting to a surface the compositor never mapped.
+                    System.out.println("[Celtium] CELTIUM_SURFACE_WAYLAND display=0x"
+                            + Long.toHexString(waylandDisplay) + " surface=0x" + Long.toHexString(waylandSurface)
+                            + " sdlNative=0x" + Long.toHexString(CeltiumWindow.sdlNativeHandle())
+                            + " window=0x" + Long.toHexString(sdlWindow));
+                }
                 if (waylandDisplay != 0L && waylandSurface != 0L
                         && context.hasInstanceExtension("VK_KHR_wayland_surface")) {
                     VkWaylandSurfaceCreateInfoKHR create = VkWaylandSurfaceCreateInfoKHR.calloc(stack).sType$Default()

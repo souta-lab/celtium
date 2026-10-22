@@ -355,3 +355,11 @@ vkCreateWaylandSurfaceKHR(instance, {display, surface})
 
 切り分けの根拠: `skipPresent=true` でクラッシュしない／`pumpBeforePresent`・`freshPresentSemaphores` は無効。
 SDL 側のサーフェス生成が display にリスナを足し、こちらの present（Vulkan WSI）と衝突していた。
+
+**起動後にメニューで終了する件（2026-10-22 実測）**: Prism起動でロゴだけ出て約3秒後に **exit 0**。ログに例外は無く
+`Minecraft: Stopping!` の直前まで描画していた。切り分け:
+- ハーネス（Wayland・60秒）では **presented=299/300** で安定、`Stopping!` なし。
+- `CELTIUM_SURFACE_WAYLAND display=0x… surface=0x…7dc72650 sdlNative=0x…7dc72650` → **SDLのwl_surfaceと一致**（表面は正しい）。
+- 差分はラッパーの **`-Dceltium.vulkan.pumpInRedirect=false`**（既定にしていた）。SDLを誰もpumpしないためイベントが処理されず、
+  コンポーザから見て無反応→ウィンドウclose→`Stopping!`（exit 0）と整合。
+⇒ ラッパーは**pump既定ONに戻した**（`no-pump` ファイルで診断時のみOFF）。
