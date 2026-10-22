@@ -1,6 +1,6 @@
 # Celtium 現状表（唯一の現在状態表）
 
-開発ベース **0.0.6-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
+開発ベース **0.0.7-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
 2026-10-21 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
@@ -17,6 +17,8 @@
 
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
+| **v0.0.7-alpha をリリース（2026-10-22）** | **影の既定ONが主題** | 実測 | 公開済み | https://github.com/souta-lab/celtium/releases/tag/v0.0.7-alpha 。asset `celtium-forge-mc1.12.2-0.0.7-alpha.jar`（3,201,172 bytes）は**ダウンロードしたsha256がローカルビルドと一致**（`7e3b6783…`）。梱包 `verified: true`・版数整合 `verified: True`・内容ハッシュ1079エントリ。ノートに**影ON/OFFの実測（AMD 0.92%・Intel 2.17%）**、アロケーション−41%、S0/S1/S2のパック状況、既知の問題（性能1.674xと尾・パック未接続・RLCraftはFugue待ち）を明記 |
+
 | **性能（現状）** | **AMD 1.387x / Intel 1.738x（影OFF）／影ONはAMD 1.674x** | 実測 | 未達 | 参照 `567dcf8a…`・交互ペア。影OFFのAMDは 1.373-1.387x で安定、Intelは `e4622406…` で 1.738x。**影ON（出荷既定）は 1.674x**（影の実コスト約0.32ms、`noPass` 2.132／`noshadow` 2.123 で切り分け済み）。**Java名付き最適化9件は全て中立**＝Java補足では動かない（`architecture` §11/§12）。**アロケーションは13.8GB→8.1GB/run（−41%）**、GC 50→39（行列プール・fog比較・モデル幾何の再利用） |
 | **影（既定ON）** | **両GPU可視・validation 0件** | 実測＋画像 | 受入 | 同一scene・worldTime固定のON/OFFで **AMD 0.92%（平均19.1）/ Intel 2.17%（平均48.6）** の画素が>6レベル暗くなる。既定ONでもAMD/Intel とも **PASSED・gate PASSED・validation 0件**。**IntelのVUID-03047は地形`bindTextures`の毎bind再書き込みが原因で、変更分のみ書く方式にして解消**。スキップ時にキャスタを片付けない**蓄積バグも修正**。残課題は**尾**（p95 5.5-14ms）と `shader-plan.md` の既存modベースの品質向上 |
 | **互換・画質・配布** | **4画面＋qmagnet／RLCraftは環境制約／配布物検証済み** | 実測 | 一部未完 | 空(165,180,207)vs(165,179,207)・石は完全一致・草±4（worldTime=6000）。settings はHEADで再合格、**home のVUID-09600は再現せず**、mainMenuのgate FAILは**影OFFでも同一**（既存）。**RLCraft 2.9.3 は0.6.13でも0.7.11でも `com.cleanroommc.hackery.ReflectionHackery` 欠落で起動不能（Fugue更新待ち）**。配布物は `verify_forge_jar` verified・版数一致・内容ハッシュ一致。**BSLはワールド描画に未接続**（`shader-plan.md` S0/S1） |
