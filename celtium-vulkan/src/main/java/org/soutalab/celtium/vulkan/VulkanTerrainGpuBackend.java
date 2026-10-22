@@ -14950,6 +14950,8 @@ this.frameBufferOpen = false;
     private static java.nio.ByteBuffer terrainCaptureVertices;
     /** Set once the probe has adopted the captured terrain geometry, so the line prints once and late. */
     private boolean packGeometryLogged;
+    /** Set once the finalized multi-batch capture has been installed in the probe. */
+    private boolean packGeometryAdopted;
     private boolean packReRenderLogged;
     private boolean packGeometryReRenderLogged;
 
@@ -14976,6 +14978,11 @@ this.frameBufferOpen = false;
     private static int terrainCaptureStride;
     private static int terrainCaptureCount;
     private static int terrainCaptureFormat;
+    /** Set when no further batches are appended: the capture holds one format and is ready for the probe. */
+    private static boolean terrainCaptureFinalized;
+    /** How many vertices the capture accumulates before it closes; about eight sections' worth. */
+    private static final int CELTIUM_PACK_CAPTURE_VERTICES =
+            Integer.getInteger("celtium.shaderpack.captureVertices", 4096);
 
     /**
      * Records the first terrain batch's vertices for the shader-pack probe, from the terrain renderer rather than from
@@ -14983,25 +14990,52 @@ this.frameBufferOpen = false;
      * its own triangle in world legs even after the capture hook existed.
      */
     public static void noteTerrainBatchForProbe(int formatId, java.nio.ByteBuffer vertices, int stride, int count) {
-        if (!SHADER_PACK_DRAW_PROBE || terrainCaptureVertices != null || vertices == null || count <= 0
-                || count > 8192 || stride <= 0) {
+        if (!SHADER_PACK_DRAW_PROBE || terrainCaptureFinalized || vertices == null || count <= 0 || stride <= 0) {
+            return;
+        }
+        // Several sections, not one: a single 68-vertex batch draws one block face against the clear colour, which says
+        // the stages work but not that a view does. Batches of the same format and stride are byte-concatenated, which
+        // is exactly what the adapter expects (it reads vertices, not meshes), until enough geometry exists to fill some
+        // of the frame - or until the format changes, at which point the capture is closed so the fit is computed over
+        // one layout.
+        if (terrainCaptureVertices != null
+                && (formatId != terrainCaptureFormat || stride != terrainCaptureStride)) {
+            terrainCaptureFinalized = true;
+            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE closed format=" + terrainCaptureFormat
+                    + " vertices=" + terrainCaptureCount + " because the next batch is format=" + formatId
+                    + " stride=" + stride);
             return;
         }
         long bytes = (long) count * stride;
         if (bytes > vertices.remaining()) {
             return;
         }
-        java.nio.ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
-        for (int i = 0; i < (int) bytes; i++) {
-            copy.put(i, vertices.get(vertices.position() + i));
+        int needed = (int) bytes;
+        if (terrainCaptureVertices == null) {
+            terrainCaptureVertices = org.lwjgl.system.MemoryUtil.memAlloc(Math.max(needed, 4096));
+            terrainCaptureFormat = formatId;
+            terrainCaptureStride = stride;
         }
-        copy.rewind();
-        terrainCaptureVertices = copy;
-        terrainCaptureStride = stride;
-        terrainCaptureCount = count;
-        terrainCaptureFormat = formatId;
-        System.out.println("[Celtium] CELTIUM_PACK_CAPTURE format=" + formatId + " vertices=" + count
-                + " stride=" + stride + " bytes=" + bytes + " (terrain batch)");
+        int writeAt = terrainCaptureCount * stride;
+        long capacity = terrainCaptureVertices.capacity();
+        if (writeAt + needed > capacity) {
+            long grown = Math.min(1L << 21, Math.max(capacity * 2L, writeAt + needed));
+            java.nio.ByteBuffer replacement = org.lwjgl.system.MemoryUtil.memAlloc((int) grown);
+            for (int i = 0; i < writeAt; i++) {
+                replacement.put(i, terrainCaptureVertices.get(i));
+            }
+            terrainCaptureVertices = replacement;
+        }
+        for (int i = 0; i < needed; i++) {
+            terrainCaptureVertices.put(writeAt + i, vertices.get(vertices.position() + i));
+        }
+        terrainCaptureCount += count;
+        if (terrainCaptureCount >= CELTIUM_PACK_CAPTURE_VERTICES) {
+            terrainCaptureFinalized = true;
+            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
+                    + " vertices=" + terrainCaptureCount + " stride=" + terrainCaptureStride
+                    + " (multiple terrain batches)");
+        }
     }
     private int terrainCaptureAttempts;
 
@@ -15369,18 +15403,19 @@ this.frameBufferOpen = false;
                     + " open=" + this.frameBufferOpen + " recording=" + this.commandState.recording()
                     + " inPass=" + this.commandState.inRenderPass() + " slot=" + this.frameSlot);
         }
-        if (this.terrainCaptureVertices != null) {
+        if (this.terrainCaptureVertices != null && this.terrainCaptureFinalized && !this.packGeometryAdopted) {
             // Applied here rather than where the probe is prepared: the pack loads long before the world's first terrain
-            // batch arrives, so the capture is only complete by the time a draw is being recorded.
+            // batch arrives, so the capture is only complete by the time a draw is being recorded. It also waits for the
+            // capture to close, so the first adopted geometry is several sections rather than one.
             String adopted = this.shaderPackDrawProbe.replaceGeometry(this.terrainCaptureFormat,
                     this.terrainCaptureVertices, this.terrainCaptureStride, this.terrainCaptureCount);
             // Logged on the adoption itself, not on an early frame: the capture arrives after the probe has already drawn,
             // so gating this on shaderPackDraws == 0 hid the one line that says the geometry was installed.
-            if (adopted != null && !this.packGeometryLogged) {
+            if (adopted != null) {
+                this.packGeometryAdopted = true;
                 this.packGeometryLogged = true;
                 System.out.println("[Celtium] CELTIUM_PACK_GEOMETRY " + adopted);
             }
-            this.terrainCaptureVertices = null;
         }
 
         if (SHADER_PACK_DRAW_BLIT) {
@@ -15404,7 +15439,7 @@ this.frameBufferOpen = false;
                 // Full-screen by default: the question the picture has to answer now is "does the pack's output look
                 // like the world", and a 256x256 rectangle in a corner answers a delivery question instead. The scaled
                 // blit is the same transfer with a different destination extent.
-                if (Boolean.parseBoolean(System.getProperty("celtium.shaderpack.probeFullscreen", "true"))) {
+                if (Boolean.parseBoolean(System.getProperty("celtium.shaderpack.probeFullscreen", "false"))) {
                     this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), 0, 0,
                             this.frameTargetWidth, this.frameTargetHeight);
                 } else {
