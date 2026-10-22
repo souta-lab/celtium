@@ -528,6 +528,29 @@ leg `perf-struct-1`（AMD RX 6400・world・固定カメラ・`-Dceltium.vulkan.
 2. 受理経路の**頂点変換をGPUへ**（§12の2）: `copyVerticesTransformed` のper-vertex変換を push constant の行列に移す。
 3. flush/winRecord（0.6ms）の記録ループを**1本のindirect列**へ（§11.2）。
 
+### 11.5 記録ループを畳めるか（2026-10-22 実測・merge census）
+
+`-Dceltium.vulkan.mergeCensus=true` で出る run 統計（leg `merge-census-1`・jar `398533cd…`・AMD）:
+
+```
+frame=10156 groups=159 mergeableRuns=159 largestRun=1 arenaBackedGroups=37
+```
+
+**`mergeableRuns == groups` かつ `largestRun = 1`** ＝ **隣接するgroupがpipelineもdescriptorも共有していない**。
+したがって「同一状態のrunを1本のindirectで描く」案は、**現状の状態表現では1件もまとまらない**（§11.2の案3は棄却）。
+
+理由は状態 key に**テクスチャ（descriptor）と行列（push定数）が入っている**ため。block entity は1体ごとにテクスチャと行列が違うので、
+どう並べてもrunが1になる。
+
+**唯一の到達経路**は、状態をgroupから剥がすこと:
+1. **descriptor を配列化**（`VK_EXT_descriptor_indexing` の non-uniform indexing、または descriptor buffer）にして、
+   テクスチャは draw ごとの index で選ぶ → **descriptor bind が全groupで共通**になる
+2. 行列・UV・色・ライトを **per-draw の SSBO レコード**（`gl_DrawID` で引く）に移す → **push定数が消える**
+3. その結果 run が長くなり、**1本の `vkCmdDrawIndexedIndirect`** で窓の描画が終わる
+
+これは Sodium / Celeritas が採っている描画マネージャ方式そのもので、利用者指示③の「既存modの手法を取り入れ、実装は自前」に沿う。
+必要機能は既に有効（`CELTIUM_DEVICE_FEATURES shaderDrawParameters=true`、`multiDrawIndirect`）。
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）
