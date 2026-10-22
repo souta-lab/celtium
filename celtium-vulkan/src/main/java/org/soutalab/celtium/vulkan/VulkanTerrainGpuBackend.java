@@ -14980,6 +14980,8 @@ this.frameBufferOpen = false;
     private static int terrainCaptureFormat;
     /** Set when no further batches are appended: the capture holds one format and is ready for the probe. */
     private static boolean terrainCaptureFinalized;
+    /** Batches offered since the capture opened, across all layouts; the fallback close condition. */
+    private static int terrainCaptureSeen;
     /** How many vertices the capture accumulates before it closes; about eight sections' worth. */
     private static final int CELTIUM_PACK_CAPTURE_VERTICES =
             Integer.getInteger("celtium.shaderpack.captureVertices", 4096);
@@ -14998,12 +15000,18 @@ this.frameBufferOpen = false;
         // is exactly what the adapter expects (it reads vertices, not meshes), until enough geometry exists to fill some
         // of the frame - or until the format changes, at which point the capture is closed so the fit is computed over
         // one layout.
+        terrainCaptureSeen++;
+        // A batch of another layout is skipped, not a reason to close: the terrain pass alternates between formats, so
+        // closing on the first mismatch kept exactly one batch. Closing happens on the vertex budget, or after enough
+        // batches have gone by that waiting longer cannot help.
         if (terrainCaptureVertices != null
                 && (formatId != terrainCaptureFormat || stride != terrainCaptureStride)) {
-            terrainCaptureFinalized = true;
-            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE closed format=" + terrainCaptureFormat
-                    + " vertices=" + terrainCaptureCount + " because the next batch is format=" + formatId
-                    + " stride=" + stride);
+            if (terrainCaptureSeen > 600 && terrainCaptureCount > 0) {
+                terrainCaptureFinalized = true;
+                System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
+                        + " vertices=" + terrainCaptureCount + " seen=" + terrainCaptureSeen
+                        + " (other layouts were skipped)");
+            }
             return;
         }
         long bytes = (long) count * stride;

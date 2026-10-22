@@ -646,7 +646,12 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             vkDestroyCommandPool(this.context.device(), pool.get(0), null);
             // What actually landed in the image, and what the draw state was: the leg reports a legal draw that produces
             // no pixels, so the next question is whether the vertices reach clip space.
-            String sampled = sampleOffscreen(64);
+            // Off by default, and not just for cost: sampleOffscreen leaves the image in the layout its readback needs,
+            // and the delivery blit that runs next expects TRANSFER_SRC - the sampled leg delivered the clear colour
+            // while the sample itself read the drawn colour. A diagnostic that changes what it measures cannot answer
+            // the delivery question.
+            String sampled = Boolean.getBoolean("celtium.shaderpack.probeSample")
+                    ? sampleOffscreen(64) : "unread";
             StringBuilder positions = new StringBuilder();
             if (!this.vertexBuffers.isEmpty() && !this.packAttributeLocations.isEmpty()) {
                 long address = this.vertexBuffers.get(0).mappedAddress();
