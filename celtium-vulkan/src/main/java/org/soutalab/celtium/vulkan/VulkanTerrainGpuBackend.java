@@ -6805,11 +6805,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // Why this group was opened, counted where it is opened. The refusal census and the close census
                     // together explained 102 of 182 starts, so the rest must be openings this path reaches without either
                     // event - which is what this split finds out.
+                    // The fields that differ, counted here rather than at the predicate: the predicate's own census
+                    // disagreed with this one by a factor of three, and this one is consistent with the group count, so
+                    // this is the side to trust. It is also what tells a group-reduction design where its ceiling is.
                     if (this.currentImmediateMesh == null) {
                         this.mergeRefusal("open-without-mesh");
-                    } else if (this.currentGroupFormatId == formatId && this.currentGroupTexture == boundTexture
-                            && this.currentGroupStateKey == stateKey) {
-                        this.mergeRefusal("open-identical-state");
+                    } else if (this.currentGroupFormatId != formatId) {
+                        this.mergeRefusal("open-format");
+                    } else if (this.currentGroupTexture != boundTexture) {
+                        this.mergeRefusal("open-texture");
+                    } else if (this.currentGroupStateKey != stateKey) {
+                        this.mergeRefusal("open-state-key");
                     } else {
                         this.mergeRefusal("open-other");
                     }
