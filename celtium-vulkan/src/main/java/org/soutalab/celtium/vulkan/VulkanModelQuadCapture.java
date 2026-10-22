@@ -638,6 +638,28 @@ public final class VulkanModelQuadCapture {
     }
 
     /** {@return the compile generation of this list's current geometry, or 0 when it has none}. */
+    /**
+     * A value that changes whenever any list's geometry generation moves.
+     * <p>
+     * The model geometry cache is rebuilt from the captured lists, and the table can only change when a compile starts
+     * (which is the one place {@code generations} moves) or when quads are captured into a running compile. A caller
+     * that sees the same stamp twice has nothing to rebuild, which is the common frame: the world holds the same display
+     * lists until something in it changes.
+     *
+     * @return the current capture stamp
+     */
+    public static synchronized long stamp() {
+        // Every counter that can move a list's geometry or remove it: starts and resets move the generation, captures
+        // add quads, and deletes take a list away - a deletion does not move {@code generations}, so leaving it out would
+        // keep a retired list's mesh in the table forever.
+        long mix = ((long) generations << 32) ^ quads;
+        mix = mix * 31 + compileStarts;
+        mix = mix * 31 + compileResets;
+        mix = mix * 31 + listDeletes;
+        mix = mix * 31 + deletedEntries;
+        return mix;
+    }
+
     public static synchronized int generationOf(int listId) {
         ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
         return geometry == null ? 0 : geometry.generation;

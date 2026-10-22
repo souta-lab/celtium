@@ -39,6 +39,8 @@ public final class ModelGeometryCache {
     private final VulkanModelQuadCapture.Scratch snapshotScratch = new VulkanModelQuadCapture.Scratch();
 
     private LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
+    /** The capture stamp the table was built from; {@link Long#MIN_VALUE} forces a build. */
+    private long builtStamp = Long.MIN_VALUE;
 
     /** Display lists a replay asked for that this cache has no mesh for, and the bounded log of them. */
     private int modelMissingMeshes;
@@ -107,6 +109,13 @@ public final class ModelGeometryCache {
      */
     public boolean build(VulkanContext context) {
         if (!MODEL_MESH_BUILD) {
+            return false;
+        }
+        // Nothing captured has moved since the last successful build: the table cannot have changed, and skipping here
+        // also spares the two maps this method allocates per call. JFR of the shipped configuration put this method and
+        // its caller at 2.1% inclusive, all of it spent re-walking lists whose generations had not moved.
+        long stamp = VulkanModelQuadCapture.stamp();
+        if (this.builtStamp == stamp && this.modelMeshes != null) {
             return false;
         }
         int[] ids = VulkanModelQuadCapture.listIds();
@@ -232,6 +241,7 @@ public final class ModelGeometryCache {
         // generation it was built from, and only then are the superseded meshes retired. Stamping after the commit is
         // what keeps a failed build from leaving a stamped mesh in a table that was never installed.
         this.modelMeshes = built;
+        this.builtStamp = stamp;
         // Retired first: a list never has two meshes registered at once, so the registry's replacement counter means
         // what it says instead of counting this commit's own window.
         for (VulkanDynamicMesh mesh : superseded) {
@@ -293,6 +303,7 @@ public final class ModelGeometryCache {
                 mesh.releaseAfterIdle();
             }
             this.modelMeshes.clear();
+            this.builtStamp = Long.MIN_VALUE;
         }
     }
 
@@ -307,6 +318,7 @@ public final class ModelGeometryCache {
                 mesh.releaseAfterIdle();
             }
             this.modelMeshes.clear();
+            this.builtStamp = Long.MIN_VALUE;
         }
     }
 
