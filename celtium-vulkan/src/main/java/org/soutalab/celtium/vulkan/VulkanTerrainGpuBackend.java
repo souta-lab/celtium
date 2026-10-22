@@ -6655,6 +6655,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // and the lightmap by its own record for the families that carry one.
             org.soutalab.celtium.vulkan.VulkanGlTexture liveTextureImage =
                     boundTexture == 0 ? null : celtium$registry().get(boundTexture);
+            // Mark here unconditionally: the existing stage-9 mark sits inside a refusal-only branch, so the
+            // interval that follows it averaged across whichever batches happened to mark both ends and read as an
+            // artefact. From this point the marks measure the group decision and the append, which is where the accept
+            // path's own cost lives.
+            celtium$offerStage(9);
             org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
             boolean fastMerged = retained == null && this.currentImmediateMesh != null
@@ -6669,6 +6674,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (fastMerged) {
                 this.immediateStatistics.noteFastMergedBatches();
             }
+            // Stage 10 marks the end of the fast-merge decision: the interval from stage 9 is what that decision costs.
+            celtium$offerStage(10);
             if (!fastMerged) {
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
@@ -7102,7 +7109,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return false;
             }
             }
-            celtium$offerStage(10);
+            celtium$offerStage(11);
         if (formatId == 5 && !fastMerged && !canBuildDescriptor(boundTexture)) {
                 // The particle family is the one that dropped: every post-accept drop counted so far is format 5, which is
                 // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
@@ -7173,7 +7180,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
             }
 
-            celtium$offerStage(11);
+            celtium$offerStage(12);
             if (formatId >= 0 && formatId < this.acceptedByFormat.length) {
 
                 this.acceptedByFormat[formatId]++;
