@@ -2235,28 +2235,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long paceIntervalNanos = 1_000_000_000L / 60L;
 
     private void celtium$paceToRefresh() {
-        if (!PACE_TO_REFRESH) {
-            return;
-        }
-        // FIFO already blocks on the display's presentation engine; sleeping on top of it would add a whole refresh
-        // interval of latency for nothing. The cap exists for MAILBOX and IMMEDIATE, where nothing else paces the loop.
-        if (this.swapchain != null && this.swapchain.presentModeIsFifo()) {
-            return;
-        }
-        if (this.paceIntervalNanos <= 0L) {
-            this.paceIntervalNanos = 1_000_000_000L / 60L;
-        }
-        long now = System.nanoTime();
-        if (this.paceNextFrameNanos == 0L || now - this.paceNextFrameNanos > this.paceIntervalNanos * 4L) {
-            // First frame, or a stall long enough that catching up would burst: re-anchor instead of racing.
-            this.paceNextFrameNanos = now + this.paceIntervalNanos;
-            return;
-        }
-        long wait = this.paceNextFrameNanos - now;
-        if (wait > 0L) {
-            java.util.concurrent.locks.LockSupport.parkNanos(wait);
-        }
-        this.paceNextFrameNanos += this.paceIntervalNanos;
+        // The cap lives in CeltiumFramePacing because the game's own fps-limit hook calls it after the swap, which is
+        // where it belongs: sleeping at the top of the present pushed every frame back by the sleep.
+        org.soutalab.celtium.vulkan.CeltiumFramePacing.pace();
     }
 
     /** Records the display's refresh interval so the cap follows the monitor rather than assuming 60 Hz. */
@@ -12894,6 +12875,7 @@ this.frameBufferOpen = false;
         this.reusableSurfaceWindow = 0L;
         this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt);
         if (this.swapchain != null) {
+            org.soutalab.celtium.vulkan.CeltiumFramePacing.setFifoPacing(this.swapchain.presentModeIsFifo());
             try {
                 org.lwjgl.sdl.SDL_DisplayMode mode =
                         org.lwjgl.sdl.SDLVideo.SDL_GetCurrentDisplayMode(org.lwjgl.sdl.SDLVideo.SDL_GetPrimaryDisplay());
@@ -15557,7 +15539,6 @@ this.frameBufferOpen = false;
     }
 
     private boolean celtium$presentFrameBody() {
-        celtium$paceToRefresh();
         // The present must not order after work still sitting in the frame buffer: paths that reach here without
         // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
         celtium$finishFrameBuffer();

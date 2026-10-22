@@ -203,6 +203,9 @@ public class MinecraftMixin {
             // measures 9 ms a frame in the 1080p menu - a slot it believes is 33 ms - so the native path presents when
             // the frame is done and the present mode decides when that reaches the screen.
             if (GL_LESS_SYNC_SKIPPED) {
+                // Stands in for the game's limiter, at the same point in the loop: after the frame has been presented,
+                // so the sleep is behind the frame rather than in front of it.
+                org.soutalab.celtium.vulkan.CeltiumFramePacing.pace();
                 return;
             }
             org.lwjgl.opengl.Display.sync(fps);
