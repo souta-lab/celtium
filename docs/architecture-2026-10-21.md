@@ -570,6 +570,28 @@ groups=159  distinctPipelines=11  mergeableRuns=159  largestRun=1
 見積り: draw 0.2ms + push 0.1 + viewport 0.1 + prep 0.1 のうち、group数に比例する分（≒0.4ms）がほぼ消える。
 per-drawデータは SSBO（`gl_DrawID`）に移すので push定数も不要。**パリティ到達の本命**。
 
+### 11.7 共有descriptorは両GPUで成立する（2026-10-22 実測）
+
+§11.6 の設計に必要な機能を実機で確認し、`VulkanContext` で**有効化**した（jar `3e3dc1a5…`）:
+
+| | Intel UHD 630 | AMD RX 6400 |
+|---|---|---|
+| `maxPerStageDescriptorSampledImages` | 201,326,592 | 8,388,606 |
+| `maxDescriptorSetSampledImages` | 201,326,592 | 8,388,606 |
+| `shaderSampledImageArrayNonUniformIndexing` | **true** | **true** |
+| `runtimeDescriptorArray` | **true** | **true** |
+| `descriptorBindingSampledImageUpdateAfterBind` | **true** | **true** |
+| `descriptorBindingPartiallyBound` | true | true |
+
+⇒ **「窓の全groupが1つのdescriptor setを共有し、テクスチャは配列indexで選ぶ」設計は両GPUで可能**。
+`CELTIUM_DEVICE_FEATURES ... textureArray=true` が有効化の証拠で、**AMD/Intel とも PASSED・画像gate PASSED・validation 0件**。
+
+**残る実装**（次段）:
+1. テクスチャ配列 descriptor set（`UPDATE_AFTER_BIND|PARTIALLY_BOUND`、`VulkanGlTexture.key()`→index の登録）
+2. immediate系4 family のシェーダを「配列 + index」に変更（indexは当面push定数、次にSSBO `gl_DrawID`）
+3. window を pipeline でソートし、geometry arena ＋ `vkCmdDrawIndexedIndirect` で **11 draw/window** へ
+4. translucent は pipeline 内で順序保持
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）

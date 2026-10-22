@@ -2023,6 +2023,8 @@ public final class VulkanContext {
     private boolean dynamicRenderingSupported;
     /** {@code VkPhysicalDeviceVulkan11Features.shaderDrawParameters}: gl_DrawID in shaders, Vulkan 1.1. */
     private boolean shaderDrawParametersSupported;
+    /** Whether the device can index one sampled-image array from the draw (section 11.6). */
+    private boolean textureArraySupported;
 
     /** {@return whether dynamic rendering is enabled on this device}. */
     public boolean dynamicRenderingSupported() {
@@ -2375,6 +2377,27 @@ public final class VulkanContext {
                     org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(this.physicalDevice, deviceProperties);
             this.maxDrawIndirectCount = deviceProperties.limits().maxDrawIndirectCount();
+
+            // What a shared-descriptor design (architecture section 11.6) can build here: the array sizes the device
+            // promises and whether it can index them non-uniformly. Logged once per device because the answer decides
+            // whether a window can bind one set for every group, and it differs per driver.
+            {
+                org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures indexing =
+                        org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 query =
+                        org.lwjgl.vulkan.VkPhysicalDeviceFeatures2.calloc(stack).sType$Default()
+                                .pNext(indexing.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, query);
+                org.lwjgl.vulkan.VkPhysicalDeviceLimits limits = deviceProperties.limits();
+                System.out.println("[Celtium] CELTIUM_DEVICE_DESCRIPTOR_LIMITS maxSampledPerStage="
+                        + limits.maxPerStageDescriptorSampledImages() + " maxSampledPerSet="
+                        + limits.maxDescriptorSetSampledImages() + " maxStoragePerStage="
+                        + limits.maxPerStageDescriptorStorageBuffers() + " maxStoragePerSet="
+                        + limits.maxDescriptorSetStorageBuffers() + " nonUniformSampledArray="
+                        + indexing.shaderSampledImageArrayNonUniformIndexing() + " runtimeArray="
+                        + indexing.runtimeDescriptorArray() + " updateAfterBindSampled="
+                        + indexing.descriptorBindingSampledImageUpdateAfterBind());
+            }
             VkDeviceCreateInfo createInfo = VkDeviceCreateInfo.calloc(stack).sType$Default()
                     .pQueueCreateInfos(queues)
                     .ppEnabledExtensionNames(names)
@@ -2418,13 +2441,45 @@ public final class VulkanContext {
                     createInfo.pNext(drawParametersFeatures.address());
                 }
             }
+            // One descriptor set for every texture a window draws (architecture section 11.6): the shaders index an
+            // array of sampled images with a value that comes from the draw itself, which is why the array needs
+            // non-uniform indexing, a runtime-sized binding and update-after-bind - descriptors are written as textures
+            // are registered while recorded buffers may still reference the set. All three are optional, so each is
+            // asked for separately and reported; a device without them keeps the per-group sets.
+            org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures indexingFeatures = null;
+            {
+                org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures supported =
+                        org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 = org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
+                        .calloc(stack).sType$Default().pNext(supported.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
+                boolean nonUniform = supported.shaderSampledImageArrayNonUniformIndexing();
+                boolean runtimeArray = supported.runtimeDescriptorArray();
+                boolean afterBind = supported.descriptorBindingSampledImageUpdateAfterBind();
+                boolean partiallyBound = supported.descriptorBindingPartiallyBound();
+                this.textureArraySupported = nonUniform && runtimeArray && afterBind && partiallyBound;
+                if (this.textureArraySupported) {
+                    indexingFeatures = org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack)
+                            .sType$Default()
+                            .shaderSampledImageArrayNonUniformIndexing(true)
+                            .runtimeDescriptorArray(true)
+                            .descriptorBindingSampledImageUpdateAfterBind(true)
+                            .descriptorBindingPartiallyBound(true)
+                            .descriptorBindingVariableDescriptorCount(true);
+                    if (createInfo.pNext() != 0L) {
+                        org.lwjgl.system.MemoryUtil.memPutLong(indexingFeatures.address() + 8L, createInfo.pNext());
+                    }
+                    createInfo.pNext(indexingFeatures.address());
+                }
+            }
             PointerBuffer handle = stack.mallocPointer(1);
             check(vkCreateDevice(this.physicalDevice, createInfo, null, handle),
                     "vkCreateDevice(" + this.deviceName + ")");
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
             System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
                     + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported
-                    + " maxDrawIndirectCount=" + this.maxDrawIndirectCount);
+                    + " maxDrawIndirectCount=" + this.maxDrawIndirectCount
+                    + " textureArray=" + this.textureArraySupported);
         }
     }
 
