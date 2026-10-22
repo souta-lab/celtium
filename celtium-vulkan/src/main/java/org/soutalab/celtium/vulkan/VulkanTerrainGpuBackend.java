@@ -2193,6 +2193,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int textureArrayLogs;
     /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     private int currentGroupTextureIndex = -1;
+    private long textureArrayDraws;
     private long textureIndexHits;
     private long textureIndexMisses;
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
@@ -9197,6 +9198,7 @@ this.frameBufferOpen = false;
                         colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp);
                 cache.put(key, value);
             }
+            if (value.arrayMode()) this.currentGroupTextureIndex = celtium$registerTexture(texture);
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else {
             boolean lineBatch = (key & (1L << 61)) != 0;
@@ -10201,7 +10203,7 @@ this.frameBufferOpen = false;
                 + " immediateState=" + this.immediateStatistics.immediateStateCalls() + " immediateOffered=" + this.immediateStatistics.immediateBatchesOffered()
                 + " frameId=" + this.frameId + " flushCount=" + this.immediateStatistics.flushCount()
                 + " textureArray=" + (this.textureArray == null ? "absent" : this.textureArray.report())
-                + " textureIndex=hit" + this.textureIndexHits + "/miss" + this.textureIndexMisses
+                + " textureIndex=hit" + this.textureIndexHits + "/miss" + this.textureIndexMisses + " arrayDraws=" + this.textureArrayDraws
                 + " orderPreservingFlushes=" + this.immediateStatistics.orderPreservingFlushes()
                 + " actualFlushes=" + this.immediateStatistics.actualFlushes()
                 + " actualFlushMillis=" + (this.immediateStatistics.actualFlushNanos() / 1000000L)
@@ -17461,7 +17463,15 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
                     org.soutalab.celtium.vulkan.FramePassTimings.end("rcViewport");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
-                    if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                    if (pipeline instanceof VulkanImmediateTexturePipeline value) {
+                        long descriptor = prepared.descriptor;
+                        if (value.arrayMode() && group.textureArrayIndex >= 0 && push.capacity() >= 212) {
+                            push.putInt(208, group.textureArrayIndex);
+                            descriptor = VulkanTextureArray.currentSet();
+                            this.textureArrayDraws++;
+                        }
+                        value.draw(this.commandBuffer, mesh, push, descriptor, this.immediateBindCache);
+                    }
                     else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                     else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                     else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
