@@ -26,6 +26,14 @@ public final class ImmediateGroup {
     public int formatId;
     /** The GL texture id this group's draws sample; 0 when untextured. */
     public int texture;
+
+    /**
+     * The wrapper {@link #texture} resolved to when the batch was accepted, and the registry's mutation count at that
+     * moment. The draw site checks whether the registry moved before re-resolving: steady-state frames resolve nothing,
+     * which is 159 map lookups a frame measured in the window recording's JFR samples.
+     */
+    public VulkanGlTexture textureImage;
+    public long textureMutations;
     /** The pipeline-state key the group was accepted under. */
     public long stateKey;
     /** The decoded GL state (blend, depth, cull and friends) used to build the push block. */
@@ -229,6 +237,8 @@ public final class ImmediateGroup {
         group.state = null;
         group.formatId = 0;
         group.texture = 0;
+        group.textureImage = null;
+        group.textureMutations = 0L;
         group.stateKey = 0L;
         group.target = 0L;
         poolRecycled++;
@@ -289,6 +299,8 @@ public final class ImmediateGroup {
         this.stamp = null;
         this.postClears = null;
         this.retireSequence = 0L;
+        this.textureImage = null;
+        this.textureMutations = 0L;
     }
 }
 

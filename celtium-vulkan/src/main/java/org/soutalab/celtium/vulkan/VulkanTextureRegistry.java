@@ -326,7 +326,20 @@ public final class VulkanTextureRegistry {
      * belong to the caller, and {@link VulkanGlTexture#delete()} knows that for a wrapper built by
      * {@code shareExternal}.
      */
+    /**
+     * Incremented whenever a wrapper this registry handed out may have stopped describing a live image: a retire, a
+     * re-publish, or an entry replaced by an upload. A caller that resolved a wrapper earlier can compare this and only
+     * look it up again when it moved, instead of paying a map lookup per draw.
+     */
+    private long mutations;
+
+    /** {@return the number of mutations that may have invalidated a previously resolved wrapper}. */
+    public long mutations() {
+        return this.mutations;
+    }
+
     private void retireExternal(final VulkanGlTexture wrapper, String why) {
+        this.mutations++;
         if (this.externalRetireLogs < 8) {
             this.externalRetireLogs++;
             System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE dropped: " + why
@@ -403,6 +416,7 @@ public final class VulkanTextureRegistry {
         }
         VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
         this.entries.put(Integer.valueOf(glTextureId), new Entry(glTextureId, width, height, texture));
+        this.mutations++;
         this.memoTextureId = Integer.MIN_VALUE;
         this.mirrorCount++;
         return texture;
@@ -810,6 +824,7 @@ public final class VulkanTextureRegistry {
                         wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T));
                 entry = new Entry(glTextureId, extent[0], extent[1], texture);
                 this.entries.put(id, entry);
+                this.mutations++;
         this.memoTextureId = Integer.MIN_VALUE;
                 this.mirrorCount++;
             }
@@ -868,6 +883,7 @@ public final class VulkanTextureRegistry {
                 texture = VulkanGlTexture.create(this.context, width, height, nearestFilter, wrapS, wrapT);
                 entry = new Entry(glTextureId, width, height, texture);
                 this.entries.put(glTextureId, entry);
+                this.mutations++;
         this.memoTextureId = Integer.MIN_VALUE;
                 this.mirrorCount++;
             }
@@ -1023,6 +1039,7 @@ public final class VulkanTextureRegistry {
                         nearestFilterFor(glTextureId, x, y, width, height), wrapS, wrapT);
                 entry = new Entry(glTextureId, textureWidth, textureHeight, created);
                 this.entries.put(glTextureId, entry);
+                this.mutations++;
         this.memoTextureId = Integer.MIN_VALUE;
                 this.mirrorCount++;
                 this.createdByAnnouncement++;
@@ -1877,6 +1894,7 @@ public final class VulkanTextureRegistry {
             }
             VulkanGlTexture empty = VulkanGlTexture.create(this.context, width, height, nearestFilter);
             this.entries.put(glTextureId, new Entry(glTextureId, width, height, empty));
+            this.mutations++;
         this.memoTextureId = Integer.MIN_VALUE;
             this.mirrorCount++;
             celtium$noteMirrorSource(glTextureId, "none", width, height, null);
@@ -1900,6 +1918,7 @@ public final class VulkanTextureRegistry {
             VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
             texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
             this.entries.put(glTextureId, new Entry(glTextureId, width, height, texture));
+            this.mutations++;
         this.memoTextureId = Integer.MIN_VALUE;
             if (width >= 512 || height >= 512) {
                 // Who asks for a screen-sized mirror: the stack is the evidence for whether the frame's own colour is

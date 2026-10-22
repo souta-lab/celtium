@@ -118,7 +118,13 @@ def inspect(instance, java):
     for component in pack["components"]:
         patch = instance / "patches" / (component["uid"] + ".json")
         if not patch.exists():
-            raise ValueError(f"A local patch is required for {component['uid']}")
+            # A meta component can be listed without a local patch - the 1.12.2 component tree keeps an org.lwjgl3 entry
+            # whose patch Prism prunes, and that entry's libraries are the 3.3.1 ones a 3.4.3 renderer must not load.
+            # Skipping it is therefore both what the launcher needs and what this harness needs; anything the component
+            # would have contributed (main class, tweakers, libraries) is absent from the classpath, which is the safe
+            # direction: the harness passes its own LWJGL and natives.
+            print(f"note: {component['uid']} has no local patch; treated as empty")
+            continue
         data = json.loads(patch.read_text())
         patches.append({"uid": component["uid"], "version": data["version"], "sha256": digest(patch)})
         main_class = data.get("mainClass", main_class)

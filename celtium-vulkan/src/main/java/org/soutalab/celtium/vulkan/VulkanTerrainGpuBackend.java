@@ -10007,6 +10007,9 @@ this.frameBufferOpen = false;
             group.blendDst = this.currentGroupBlendDst;
             group.prepared = this.currentPreparedImmediate;
             group.batches = this.currentGroupBatches;
+            // Resolved when the batch was accepted; the draw site re-resolves only if the registry moved since.
+            group.textureImage = this.currentGroupTextureImage;
+            group.textureMutations = this.textureRegistry == null ? 0L : this.textureRegistry.mutations();
             group.viewportValues = this.currentGroupViewportValues;
             group.texMatrix = this.currentGroupTexMatrix;
             // BH-05: the payload captured when this group was opened, not one rebuilt from the live light state now.
@@ -17171,7 +17174,16 @@ this.frameBufferOpen = false;
                 // `u_Texture ... imageView 0x0` -> VK_ERROR_DEVICE_LOST chain, so the sampled wrapper is re-resolved here
                 // and the descriptor rebuilt when its key (view + generation) has moved.
                 if (prepared.textureKey != 0L && group.texture != 0) {
-                    VulkanGlTexture currentTexture = celtium$registry().get(group.texture);
+                    VulkanGlTexture currentTexture = null;
+                    if (group.textureImage != null && this.textureRegistry != null
+                            && this.textureRegistry.mutations() == group.textureMutations) {
+                        // Nothing was retired or re-published since this batch was accepted, so the wrapper it was
+                        // prepared with is still the live one: the draw pays no map lookup.
+                        currentTexture = group.textureImage;
+                    }
+                    if (currentTexture == null) {
+                        currentTexture = celtium$registry().get(group.texture);
+                    }
                     // A measurement switch, never a mode: rebuild every textured group's descriptor at the draw from the
                     // wrapper the registry resolves now. A group whose key is unchanged can still hold a set written
                     // against handles that have since moved, and this is the one-jar way to tell "the descriptor the
