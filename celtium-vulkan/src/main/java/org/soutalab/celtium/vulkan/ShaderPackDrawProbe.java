@@ -103,6 +103,8 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     /** The compiled stages, kept so the offscreen image can be re-rendered once the world's geometry is captured. */
     private ShaderPackPipelineFactory.ModuleHandle vertexHandle;
     private ShaderPackPipelineFactory.ModuleHandle fragmentHandle;
+    /** Which vertex buffer holds a_Position, so the diagnostic fit can be baked into it. */
+    private int positionsBufferIndex = -1;
 
     /** Whether a descriptor set is bound at all; the built-in triangle's layout has none. */
     private final boolean builtin;
@@ -673,6 +675,9 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         }
         int index = 0;
         for (java.util.Map.Entry<String, Integer> attribute : this.packAttributeLocations.entrySet()) {
+            if ("a_Position".equals(attribute.getKey())) {
+                this.positionsBufferIndex = index;
+            }
             float[] values = adapted.get(attribute.getKey());
             if (values == null) {
                 index++;
@@ -848,11 +853,27 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         fit[13] = -scale * centreY;
         fit[14] = 0.0f;
         fit[15] = 1.0f;
+        // The pack's programs may read a transform the fit matrix does not reach - the first two attempts wrote
+        // ModelView/Projection/MVP at the emitter's offsets and the geometry stayed invisible while the creation-time
+        // triangle (small coordinates, near identity) drew. So the fit is ALSO baked into the position attribute and the
+        // matrices are left at identity: whatever matrix the program multiplies by, the vertex is already in clip space.
+        if (this.positionsBufferIndex >= 0) {
+            java.nio.FloatBuffer positionsBuffer = MemoryUtil.memFloatBuffer(
+                    this.vertexBuffers.get(this.positionsBufferIndex).mappedAddress(), positions.length);
+            for (int vertex = 0; vertex < vertices; vertex++) {
+                float x = positions[vertex * 4];
+                float y = positions[vertex * 4 + 1];
+                positionsBuffer.put(vertex * 4, scale * x + fit[12]);
+                positionsBuffer.put(vertex * 4 + 1, scale * y + fit[13]);
+                positionsBuffer.put(vertex * 4 + 2, 0.0f);
+                positionsBuffer.put(vertex * 4 + 3, 1.0f);
+            }
+        }
         // u_TextureMatrix[8] (128 floats), u_NormalMatrix (12), u_ModelView (16), u_Projection (16),
         // u_ModelViewProjection (16): the layout the emitter writes and the earlier identity fill already used.
         writeTransformMatrix((8 * 16 + 12) * 4, identityMatrix());
-        writeTransformMatrix((8 * 16 + 28) * 4, fit);
-        writeTransformMatrix((8 * 16 + 44) * 4, fit);
+        writeTransformMatrix((8 * 16 + 28) * 4, identityMatrix());
+        writeTransformMatrix((8 * 16 + 44) * 4, identityMatrix());
         if (!geometryFitLogged) {
             geometryFitLogged = true;
             System.out.println("[Celtium] CELTIUM_PACK_FIT blockAddress=" + Long.toHexString(this.transformBlockAddress)
