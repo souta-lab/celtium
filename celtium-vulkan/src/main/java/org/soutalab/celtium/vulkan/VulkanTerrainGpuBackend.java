@@ -15395,6 +15395,13 @@ this.frameBufferOpen = false;
                 && (sceneKey == this.shadowSceneKey || age < SHADOW_MAX_AGE)
                 && age < SHADOW_REFRESH_EVERY) {
             this.shadowSkips++;
+            // The same hand-back the recording path performs. Skipping without it left this frame's queued casters in the list, so the next
+            // recording drew them again on top of its own - measured as a tail that grew with the cadence (p95 11.5 ms at one recording in two
+            // frames, 18.0 at one in four, 35.9 at one in eight, with p50 flat throughout, which is what accumulation looks like).
+            this.terrain.resetShadowCapture();
+            this.shadowTupleSerial = -1L;
+            this.shadowTuplePipeline = null;
+            this.shadowBatches.clear();
             return;
         }
         if (this.shadowMapPass == null) {

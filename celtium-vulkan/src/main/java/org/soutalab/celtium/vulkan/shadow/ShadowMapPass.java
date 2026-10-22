@@ -354,8 +354,16 @@ public final class ShadowMapPass {
      * a depth report.
      */
     public void sampleDepthReport() {
+        // Off unless asked for: this copies the whole depth image back and waits for it, which is 16 MB and a stall every three hundred
+        // frames. It was on by default, at the frame boundary, in the configuration that now ships with shadows enabled.
+        if (!DEPTH_SAMPLE_ENABLED) {
+            return;
+        }
         sampleDepthOnce();
     }
+
+    /** Whether the whole-map depth readback runs; a diagnostic, so it is opt-in. */
+    private static final boolean DEPTH_SAMPLE_ENABLED = Boolean.getBoolean("celtium.shadow.sampleDepth");
 
     private void sampleDepthOnce() {
         if (this.image == VK_NULL_HANDLE) {
