@@ -274,3 +274,8 @@ Celtium の present（Vulkan WSI が同じ `wl_surface`/`wl_display` を触る�
 `wl_display_read_events` 内で SEGV しうる。クラッシュが「ネイティブスレッド」で起きていること、Javaフレームが無いことと整合する。
 確認方法: present と SDL ポンプの**スレッドIDをログに出し**、両者が同一かを実測する（`Thread.currentThread()` と
 `SDL_GetCurrentThreadID` 相当）。同一でなければ、present をSDLスレッドへ寄せる設計変更が本命。
+
+**アタッチ方式の試行（2026-10-22）**: `gdb -p <java pid>` で実行中プロセスにアタッチし `continue` 後に `bt` を取る方式を試したが、
+2回とも **bt が空**（`ptrace_scope=1`、フィルタでエラーを落としていたため原因未確定）。次回は**生のgdb出力**を保存して
+`ptrace: Operation not permitted` か `no such process`（既にクラッシュ済み）かを切り分ける。
+タイミングは 起動→約12.7秒でクラッシュ、アタッチは9秒時点なので、**アタッチ直後にクラッシュを跨げていない**可能性がある。
