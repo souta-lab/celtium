@@ -292,3 +292,24 @@ Celtium の present（Vulkan WSI が同じ `wl_surface`/`wl_display` を触る�
 
 **注意**: `pkill -f prism_validation.py` を自分のコマンドラインに含むシェルで実行すると**自分自身を殺す**（実測）。
 pid指定のkillにすること。
+
+**コアダンプから取れたスタック（2026-10-22・決定的）**: `sudo sysctl -w kernel.core_pattern=/tmp/celtcore.%e.%p` ＋
+`-XX:+CreateCoredumpOnCrash` でコア取得（2.1GB）。`gdb java core` の結果:
+
+```
+#12 ffi_call                     (libffi.so.8)
+#13 #14 libwayland-client
+#15 wl_display_dispatch_queue_pending
+#16 #17 #18 libSDL3.so
+#19 ??   ← ここで戻りアドレス不明（JITコード/スタック破損）
+```
+
+読み方: **SDL が Wayland のイベントを dispatch → リスナ → libffi のクロージャ（Javaコールバック）→ SDL 内で再入 → SEGV**。
+LWJGL の Callback は libffi を使うため、これは **Cleanroom が `SDL.installLog` で登録した Java ログコールバック**が
+SDL のイベント配送中に呼ばれ、その中で SDL を再入している経路と一致する。
+
+**試した回避（効かず）**: `SDL_SetLogPriorities(CRITICAL)` を Java から呼んでログを抑制 → 依然同じ箇所で落ちた
+（`celtium.window.sdlLog` の実装は revert 済み）。
+
+**次の一手**: `com.cleanroommc.client.sdl.SDL.installLog` を **no-op に変換する coremod**（既存の SplashProgress スタブと同じ手法）で
+Javaログコールバック自体を登録させない。これで libffi クロージャが Wayland のイベント配送に参加しなくなる。
