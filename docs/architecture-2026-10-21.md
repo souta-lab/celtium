@@ -802,3 +802,11 @@ VUID-vkCmdBindDescriptorSets-pDescriptorSets-00358 / VUID-vkCmdDrawIndexed-None-
 ⇒ **残る唯一の条件**: 配列setのlayoutとpipeline layoutの**完全一致**（binding flags / set layout flags / descriptorCount）。
 `VulkanTextureArray` 側の layout は `UPDATE_AFTER_BIND|PARTIALLY_BOUND` + `variableDescriptorCount` を宣言しているので、
 family側も **`descriptorBindingVariableDescriptorCount` を同じ値で宣言**する必要がある可能性が高い。
+
+**5回目の試行（2026-10-22）**: 配列の set layout を**同一ハンドルで共有**（pipeline が自前 layout を作らない）方式に変更。
+結果は起動直後に `vkAllocateDescriptorSets(immediate textured)` が `VK_ERROR_OUT_OF_POOL_MEMORY` で失敗し、leg は 11 秒で終了
+（exit -6）。array mode では pool を `maxSets=1` にしているのに、**どこかが set を確保しようとしている**ため。
+
+**残条件（最終）**: array mode では **`allocateDescriptorSet` を一度も呼ばない**こと。確保元の呼び出し
+（pipeline 作成時の予約 set を含む）を列挙して止める必要がある。ここまでで layout 共有の方向自体は
+コンパイル・構造としては成立している（画像は 4 回目の時点で PASSED、`arrayDraws=126919`）。
