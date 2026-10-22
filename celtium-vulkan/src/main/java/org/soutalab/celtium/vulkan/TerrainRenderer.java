@@ -50,7 +50,11 @@ public final class TerrainRenderer {
         VulkanArena indexArena;
 
         RegionResources(VulkanContext context, int vertexStride) {
-            this.vertexArena = new VulkanArena(context, 512 * 1024, VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride);
+            // Four megabytes, not half of one. A region holds a fraction of the world; the half-megabyte start was grown
+            // through a chain of reallocations during the first chunk load, and a reallocation is a new Vulkan buffer, a
+            // copy and a destroy - paid mid-frame, which is where the world-load stutter comes from. The arena's own
+            // accounting still grows when a region really needs more.
+            this.vertexArena = new VulkanArena(context, 4 * 1024 * 1024, VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride);
         }
 
         int bufferCount() {
@@ -116,7 +120,7 @@ public final class TerrainRenderer {
     /** {@return the region's index arena, creating it on first use}. */
     VulkanArena indexArena(VulkanContext context, RegionResources resources) {
         if (resources.indexArena == null) {
-            resources.indexArena = new VulkanArena(context, 64 * 1024, VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 4);
+            resources.indexArena = new VulkanArena(context, 512 * 1024, VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 4);
         }
         return resources.indexArena;
     }
