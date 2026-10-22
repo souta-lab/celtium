@@ -133,7 +133,10 @@ public final class ShadowMapPass {
      * descriptor-lifetime defect, not the shadow. Ask for it with {@code -Dceltium.shadow.enabled=true}.
      */
     public static boolean requested() {
-        return Boolean.getBoolean("celtium.shadow.enabled");
+        // On by default. The pass renders on both cards (AMD darkens 0.92% of the frame by more than six levels, Intel 2.17%), and since
+        // the terrain pipeline stopped rewriting its descriptor set on every bind, a world leg with it on reports no validation messages
+        // on either GPU. -Dceltium.shadow.enabled=false turns it off for the performance legs, whose numbers describe the frame without it.
+        return Boolean.parseBoolean(System.getProperty("celtium.shadow.enabled", "true"));
     }
 
     /**

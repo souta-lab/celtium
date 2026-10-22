@@ -6704,7 +6704,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.mergeRefusal("fog-or-light");
                 }
             }
-            if (retained != null || this.currentImmediateMesh == null
+            // Diagnostic: -Dceltium.vulkan.noMerge=true refuses every merge, so one offer becomes one group and one draw. It exists to
+            // measure the opposite end of the design: how a frame behaves when the accept path keeps no group state at all and the draw
+            // count equals the offer count. Never an acceptance configuration - the draws that cannot merge are exactly the ones the
+            // grouping exists to combine.
+            if (NO_MERGE || retained != null || this.currentImmediateMesh == null
                     || (!MERGE_ACROSS_FORMAT && this.currentGroupFormatId != formatId)
                     // Diagnostic only: -Dceltium.vulkan.mergeAcrossTexture=true pretends every batch uses the group's
                     // texture, which draws the wrong picture on purpose. It exists to measure the ceiling of a bindless
@@ -13004,6 +13008,8 @@ this.frameBufferOpen = false;
     /** Diagnostic only: measures the ceiling of merging across pipeline state. */
     private static final boolean MERGE_ACROSS_STATE =
             Boolean.getBoolean("celtium.vulkan.mergeAcrossState");
+    /** Diagnostic only: refuses every merge, so one offer is one draw - the other end of the design. */
+    private static final boolean NO_MERGE = Boolean.getBoolean("celtium.vulkan.noMerge");
     private static final boolean SKIP_IMMEDIATE_RECORD =
             Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");
 
@@ -15360,7 +15366,7 @@ this.frameBufferOpen = false;
             // offset bound for the shadow scope as well, which is not solved yet - borrowing the layout alone produced
             // VUID-VkGraphicsPipelineCreateInfo-layout-07988 and then seventeen messages in leg shadowTerrain2 (the
             // pipeline is created but the draw is not valid). The triangle path below is the verified one.
-            boolean terrainShadow = Boolean.getBoolean("celtium.shadow.terrain")
+            boolean terrainShadow = Boolean.parseBoolean(System.getProperty("celtium.shadow.terrain", "true"))
                     && !Boolean.getBoolean("celtium.shadow.noPass");
             VulkanTerrainPipeline terrainPipeline = terrainShadow ? this.shadowTerrainPipeline : null;
             boolean drawn = false;
