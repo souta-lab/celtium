@@ -657,3 +657,21 @@ CELTIUM_PACK_CAMERA baked=65412/65412
 
 **確定**: キャプチャ開始は format 3 のみ、時間ベースの閉じは「2,048頂点かつ8秒」で行う（3秒・68頂点では
 クリア画像になり判定不能だった）。
+
+### 原因の特定: gl_Position の式（2026-10-23）
+
+`-Dceltium.shaderpack.drawProbeDebug=true` で低下GLSLをダンプし、地形プログラムの頂点段が
+```
+gl_Position = celtium_transforms.u_Projection * celtium_uniforms.gbufferModelView * position;
+gl_Position.xy = TAAJitter(gl_Position.xy, gl_Position.w);
+```
+であることを確認した（basicは `u_ModelViewProjection` 直掛けなので、CPU焼き込みだけで通っていた）。
+
+対応として probe の uniform 書き込みに:
+1. `gbufferModelView` / `gbufferModelViewInverse` へ**単位行列**を書く（焼き込み済み座標＋u_Projection=単位行列のため）
+2. **std140アラインメント**を導入（`mat4`/`vec3` は16、`vec2`は8）。従来はオフセットを詰めており、
+   `int/float/vec3/vec3` の後ろにある `gbufferModelView` は**別の場所**へ書かれていた
+
+実測: 上記2点を入れても `gbuffers_terrain` の提示画像は**依然クリア色**（`packblit-25`, `packblit-26`）。
+未確定要素として残るのは (a) `celtium_transforms.u_Projection` の実オフセット（プログラムごとに
+interface順が変わりうる）、(b) `TAAJitter` の分母（viewWidth/viewHeight）の実値、(c) フラグメント段の discard 条件。

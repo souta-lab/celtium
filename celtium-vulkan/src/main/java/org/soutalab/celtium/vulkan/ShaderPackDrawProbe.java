@@ -807,6 +807,12 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 count = Integer.parseInt(name.substring(bracket + 1, name.indexOf(']')));
                 name = name.substring(0, bracket);
             }
+            // std140 alignment, which the emitter's block layout follows: a mat4 and a vec3 start on a 16-byte
+            // boundary, a vec2 on 8. Without this the members after the first vec3 were written at the wrong offsets -
+            // gbuffers_terrain's block begins with int/float/vec3/vec3, so its gbufferModelView was hit by the shift.
+            int alignment = "mat4".equals(type) ? 16 : "vec4".equals(type) ? 16 : "vec3".equals(type) ? 16
+                    : "vec2".equals(type) ? 8 : 4;
+            offset = (offset + alignment - 1) / alignment * alignment;
             int size = std140Size(type) * count;
             if ("viewWidth".equals(name)) {
                 org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, (float) width);
@@ -818,6 +824,15 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                 org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, 256.0f);
             } else if ("frameTimeCounter".equals(name)) {
                 org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset, 0.016f);
+            } else if ("gbufferModelView".equals(name) || "gbufferModelViewInverse".equals(name)) {
+                // gbuffers_terrain computes gl_Position as u_Projection * gbufferModelView * position. That matrix lives
+                // in this block, so with it left zero the position collapsed to zero and nothing rasterised - measured
+                // by the fragment-less picture that the same capture produced with gbuffers_basic. The baked positions
+                // are already in clip space, and u_Projection is identity, so identity here completes the chain.
+                for (int element = 0; element < 16; element++) {
+                    org.lwjgl.system.MemoryUtil.memPutFloat(this.uniformBlockAddress + offset + (long) element * 4L,
+                            element % 5 == 0 ? 1.0f : 0.0f);
+                }
             }
             offset += size;
         }
