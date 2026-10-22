@@ -313,3 +313,18 @@ SDL のイベント配送中に呼ばれ、その中で SDL を再入してい�
 
 **次の一手**: `com.cleanroommc.client.sdl.SDL.installLog` を **no-op に変換する coremod**（既存の SplashProgress スタブと同じ手法）で
 Javaログコールバック自体を登録させない。これで libffi クロージャが Wayland のイベント配送に参加しなくなる。
+
+**Wayland クラッシュの現時点の理解（2026-10-22・実測の積み上げ）**
+- 新コア（1.5GB）で確認: 落ちる命令は `libSDL3.so` の `call *(%rax)`（`0x24e5e8`、SLOT=SDL+0x3ee208）。
+  SLOT には **wayland 側の関数ポインタ（0x…2120 / 0x…21d0）** が入っており、SDL が Wayland の関数を間接呼び出ししている。
+- 直前フレームは `libffi.so.8` → `wayland` → `wl_display_dispatch_queue_pending` → `libSDL3`。`#7` のクラッシュ番地は
+  **どのロード済みライブラリにも属さない**（`info sharedlibs` の範囲外）＝**生成コード（JIT か libffi クロージャ）**。
+- bisect: JEI/scalar/flare を除外しても**同じくクラッシュ**（10.8秒）。installLog スタブでも**変わらず**。
+- `-Dorg.lwjgl.system.ffm=false` でも**変わらず**（9.3秒）。
+- クラッシュは毎回 `CELTIUM_SWAPPOINT` / `CELTIUM_FRAME_QUEUED` の**直後**（初回 present 後）。
+
+**現時点で最も整合する仮説**: `wl_display` への**同時ディスパッチ**。Vulkan WSI の present が同じ `wl_display` を
+触り、SDL のイベントディスパッチと競合して関数ポインタ/キューが壊れる（クラッシュ番地が生成コードで、Javaフレームが無いこと、
+X11 では起きないことと整合）。
+**次の検証**: present 中の Vulkan WSI 呼び出しと SDL ポンプを**同一スレッドに固定**する（または WAYLAND 用の
+`wl_display` を Celtium 側で別に持つ）。まず `-Dceltium.vulkan.presentReadback=true` 等で present 経路を変えて再現が消えるかを見る。
