@@ -1302,7 +1302,19 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             vertexModule = createShaderModule(stack, device, vertexCode, "vertex");
             fragmentModule = createShaderModule(stack, device, fragmentCode, "fragment");
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
+            // The vertex stage's own specialisation map: the shadow warp and whether this draw is the caster. A pipeline hands
+            // specialisation constants to one stage at a time, which is why the fragment constants below could not carry these.
+            org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer warpEntry =
+                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
+            warpEntry.get(0).constantID(0).offset(0).size(4);
+            warpEntry.get(1).constantID(1).offset(4).size(4);
+            java.nio.ByteBuffer warpValue = stack.calloc(8);
+            warpValue.putFloat(0, Float.parseFloat(System.getProperty("celtium.shadow.warp", "1.0")));
+            warpValue.putInt(4, 0);
+            org.lwjgl.vulkan.VkSpecializationInfo warpSpecialization =
+                    org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(warpEntry, warpValue);
             stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
+                    .pSpecializationInfo(warpSpecialization)
                     .pName(stack.UTF8("main"));
             // The shadow path is behind a specialisation constant, so the pipeline for the default configuration compiles
             // it out rather than paying for the derivative pairs and nine taps on every terrain fragment. The JVM argument is

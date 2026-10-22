@@ -136,6 +136,14 @@ layout(location = 7) out vec4 v_ShadowCoord;
 //     VERT_POS_OFFSET = -8.0              (getPositionOffset())
 //     VERT_TEX_SCALE  = 1.0 / 131072.0    (getTextureScale())
 // --------------------------------------------------------------------------------------------
+// Half-plane distortion of the light space, the technique the pack format's shadow design assumes: with a power below one the
+// derivative diverges at the centre, so near texels cover less world than far ones and a wide light box fits in one map. The
+// default is exactly one, which is the identity, so the shipped pipeline is unchanged until the value is swept.
+layout(constant_id = 0) const float CELTIUM_SHADOW_WARP = 1.0;
+// Whether this draw is the shadow caster. Its gl_Position IS light space, while the main pass must leave gl_Position alone and
+// warp only the coordinate it will sample with.
+layout(constant_id = 1) const bool CELTIUM_LIGHT_PASS = false;
+
 // _draw_id is an index into a 256-entry region table (REGION_SIZE); it is only used for the
 // per-draw translation below.
 #define REGION_SIZE 256
@@ -235,6 +243,19 @@ void main() {
     // Transform the vertex position into model-view-projection space
     v_ShadowCoord = celtiumShadow.u_ShadowMatrix * vec4(worldPosition, 1.0);
     gl_Position = pc.u_ProjectionMatrix * pc.u_ModelViewMatrix * vec4(worldPosition, 1.0);
+    if (CELTIUM_SHADOW_WARP != 1.0) {
+        // Both ends warp the same coordinate by the same function, so the map and the lookup stay consistent by construction.
+        if (CELTIUM_LIGHT_PASS) {
+            // The caster's clip position is light space; warp it and keep w so the perspective divide is unaffected.
+            float casterW = gl_Position.w;
+            gl_Position.xy = sign(gl_Position.xy) * pow(abs(gl_Position.xy / casterW), vec2(CELTIUM_SHADOW_WARP)) * casterW;
+        } else if (v_ShadowCoord.w != 0.0) {
+            // The receiver's projected coordinate; the sign of w is carried so the divide stays as it was.
+            vec3 projected = v_ShadowCoord.xyz / v_ShadowCoord.w;
+            vec2 warped = sign(projected.xy) * pow(abs(projected.xy), vec2(CELTIUM_SHADOW_WARP));
+            v_ShadowCoord = vec4(warped * v_ShadowCoord.w, v_ShadowCoord.z, v_ShadowCoord.w);
+        }
+    }
 
     // Add the light color to the vertex color, and pass the texture coordinates to the fragment shader
     v_RdhFactor = _vert_rdh_factor * 2.0;
