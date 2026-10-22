@@ -10191,6 +10191,8 @@ this.frameBufferOpen = false;
                 + " terrainBindMillis=" + (this.terrainBindNanos / 1_000_000L)
                 + " terrainPacketMillis=" + (this.terrain.indirectPacketNanos() / 1_000_000L)
                 + " terrainBatchMillis=" + (this.terrain.indirectBatchNanos() / 1_000_000L)
+                + " terrainPassBeginMillis=" + (this.terrainPassBeginNanos / 1_000_000L)
+                + " terrainUniformMillis=" + (this.terrainUniformNanos / 1_000_000L)
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
                 // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
@@ -11479,7 +11481,9 @@ this.frameBufferOpen = false;
 
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBegin");
         try {
+        long passBeginStarted = System.nanoTime();
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        this.terrainPassBeginNanos += System.nanoTime() - passBeginStarted;
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
@@ -11544,7 +11548,9 @@ this.frameBufferOpen = false;
                 this.readbackRegion = resources;
             }
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
+            long uniformStarted = System.nanoTime();
             long uniformOffset = this.terrain.writeUniforms(region, pass, camera);
+            this.terrainUniformNanos += System.nanoTime() - uniformStarted;
             long bindStarted = System.nanoTime();
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset, this.frameSlot);
             this.terrainBindNanos += System.nanoTime() - bindStarted;
@@ -14549,6 +14555,8 @@ this.frameBufferOpen = false;
     private int shadowLightsLogged;
     private int shadowMatrixComparePrints;
     private long terrainBindNanos;
+    private long terrainPassBeginNanos;
+    private long terrainUniformNanos;
     /** The matrix the terrain receiver read while it drew, snapshotted so the caster's copy can be compared to it. */
     private final float[] shadowReceiverMatrixAtDraw = new float[16];
     private boolean shadowReceiverMatrixAtDrawSeen;
