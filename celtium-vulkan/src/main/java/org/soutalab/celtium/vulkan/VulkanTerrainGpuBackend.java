@@ -8203,10 +8203,15 @@ this.frameBufferOpen = false;
         }
     }
 
+    private long flushBeforeGlDrawCalls;
+    private long flushBeforeGlDrawWithGroups;
+
     private void flushPendingBeforeGlDraw() {
+        this.flushBeforeGlDrawCalls++;
         if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
+        this.flushBeforeGlDrawWithGroups++;
         if (this.targetRegistry.replacementInProgress()) {
             // No ordering flush across a framebuffer replacement: the pending groups were offered for a framebuffer whose
             // size no longer exists, and drawing them now would need the very wait that stalls the device. They are counted
@@ -10376,6 +10381,8 @@ this.frameBufferOpen = false;
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " groupSplits[" + this.groupSplitCensus.summary() + "]"
                 + " groupCloses=" + this.groupClosesForcingStart
+                + " flushBeforeGlDraw=" + this.flushBeforeGlDrawCalls
+                + " flushBeforeGlDrawWithGroups=" + this.flushBeforeGlDrawWithGroups
                 + " mergeRefusals=" + this.mergeRefusalSummary()
                 // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
                 // caller's total; pushing is what remains after the bind and draw halves below are taken out.
