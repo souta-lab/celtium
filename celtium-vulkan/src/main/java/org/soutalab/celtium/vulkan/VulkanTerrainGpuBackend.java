@@ -9838,7 +9838,16 @@ this.frameBufferOpen = false;
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
 
+    /** Group starts forced by a close (window/pass boundary), not by the merge predicate refusing. */
+    private long groupClosesForcingStart;
+
     private void closeCurrentImmediateGroup() {
+        if (MERGE_CENSUS && this.currentImmediateMesh != null) {
+            // A close ends whatever group was open, so the next offer cannot merge into it and starts a new group for a
+            // reason the merge predicate never evaluates. Counting the closes is the cheapest way to see whether these
+            // boundaries, rather than the refusals, are what makes 182 groups out of 278 offers.
+            this.groupClosesForcingStart++;
+        }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("closeGroup");
         try {
             closeCurrentImmediateGroupBody();
@@ -10344,6 +10353,7 @@ this.frameBufferOpen = false;
                 + " " + celtium$pairLayoutSummary()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " groupSplits[" + this.groupSplitCensus.summary() + "]"
+                + " groupCloses=" + this.groupClosesForcingStart
                 + " mergeRefusals=" + this.mergeRefusalSummary()
                 // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
                 // caller's total; pushing is what remains after the bind and draw halves below are taken out.
