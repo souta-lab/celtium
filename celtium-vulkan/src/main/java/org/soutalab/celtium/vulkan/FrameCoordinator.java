@@ -188,6 +188,22 @@ public final class FrameCoordinator {
 
     /** Bounded probe counter for the submit entry (2026-10-15). */
     private static int celtium$submitEntryLogs;
+    /**
+     * Wall time spent inside the queue submission. The steady-state profile put 61% of the client thread's samples inside
+     * vkQueueSubmit while the GPU sat at 3% busy, so the question is whether that call blocks and for how long; these
+     * counters say it with numbers rather than with a profile's stack attribution.
+     */
+    static long submitQueueNanos;
+    static long submitQueueCalls;
+
+    /** {@return the accumulated queue-submit time and call count as one line}, for the frame statistics. */
+    public static String submitQueueSummary() {
+        long calls = submitQueueCalls;
+        return "submitCalls=" + calls
+                + " submitTotalMs=" + (submitQueueNanos / 1000000L)
+                + " submitMeanMs=" + String.format(java.util.Locale.ROOT, "%.3f",
+                        calls == 0 ? 0.0 : submitQueueNanos / 1e6 / calls);
+    }
 
     Submission submitCommands(boolean withFrameSemaphores) {
         // Temporary probe: the present skips with "no completed frame waiting" and the frame-queued setter is never
@@ -286,6 +302,7 @@ public final class FrameCoordinator {
                 // touched. That is the property this switch exists to check.
                 this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
+            long submitStartedNanos = System.nanoTime();
             if (this.batchFrameSubmits()) {
                 // One vkQueueSubmit arms ONE fence, so ~9 recordings a frame were ~9 driver calls. The batch keeps
                 // every VkSubmitInfo and submits them together at the frame's flush points: same queue order, one
@@ -295,6 +312,8 @@ public final class FrameCoordinator {
                         VulkanContext.queueSubmitCalls++;
                         this.host.check(vkQueueSubmit(this.host.context().queue(), submit, this.host.fence()), "vkQueueSubmit");
             }
+            submitQueueNanos += System.nanoTime() - submitStartedNanos;
+            submitQueueCalls++;
 
             this.host.celtium$noteDirectSubmit();
             celtium$noteSubmissionBookkeeping(frameSemaphores);
