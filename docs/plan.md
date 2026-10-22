@@ -57,3 +57,25 @@
 - 旧表・旧日記は [snapshot](<history/plan-state-snapshot-2026-10-17.md>)、
   [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)、[diary](<history/plan-diary.md>)。
   履歴を現在の命令・判定として読み戻さない。
+
+## 再開手順（2026-10-22 時点の実コマンド）
+
+ビルド（GradleはJDK25で起動、ゲームはJDK27）:
+```
+JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64 ./gradlew -p build-1122 \
+  :celtium-vulkan:test :forge122:packageJar :forge122:validationRemapJar --console=plain \
+  '-Porg.gradle.java.installations.paths=/usr/lib/jvm/java-21-openjdk-amd64,/home/s0u7a/projects/celtium/.celtium-work/jdks/8/jdk8u504-b01'
+```
+leg（world・影ON既定）:
+```
+CELTIUM_INSTANCE_WORLD=$HOME/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha \
+CELTIUM_LEG_LWJGL_VULKAN=$PWD/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar \
+scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
+  -Dorg.lwjgl.librarypath=$PWD/.gv-verify/lib/lwjgl-natives-3.4.3 \
+  -Dceltium.validation.fixedWorldTime=true -Dceltium.validation.worldTime=1500
+```
+- `.gv-verify/jars/<stage>` には **forge jar と validation-client jar の2つ**を置き、`build-provenance.json` を作る（KPIは両方を要求）
+- **stage名・leg名の再利用は不可**（"artifact already exists" でFAIL）
+- 影の比較は `-Dceltium.shadow.enabled=false` との presented 画像差分で行う（`screenshots/celtium-presented-world-*.png` の最終枚）
+- パック: `-Dceltium.shaderpack.path=<zip>` ＋ `-Dceltium.shaderpack.compileProbe=true`、shaderc は `CELTIUM_LEG_EXTRA_LIBS=.gv-verify/lib/lwjgl-shaderc-3.4.3.jar`
+- ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
