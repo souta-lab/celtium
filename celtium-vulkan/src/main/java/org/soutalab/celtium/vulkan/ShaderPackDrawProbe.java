@@ -584,6 +584,149 @@ final class ShaderPackDrawProbe implements AutoCloseable {
      * @return a one-line summary for the log, or null when the format is not one the adapter converts
      */
     /**
+     * Creates a depth image, clears it, and reads it back - the plumbing a shadow map needs, before any caster is drawn.
+     * <p>
+     * The map itself is written by the depth-only pipeline; what this checks first is the part that has no point in being
+     * debugged through a picture: the {@code D32} image, its depth aspect barriers, the copy to host memory and the range
+     * that comes back. A cleared map reads as all ones and covers nothing, which is the expected result here.
+     */
+    String renderShadowDepthPlumbing() {
+        int size = this.offscreenSize > 0 ? this.offscreenSize : 256;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer image = stack.mallocLong(1);
+            LongBuffer memory = stack.mallocLong(1);
+            LongBuffer view = stack.mallocLong(1);
+            org.lwjgl.vulkan.VkImageCreateInfo imageInfo = org.lwjgl.vulkan.VkImageCreateInfo.calloc(stack)
+                    .sType$Default().imageType(org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D)
+                    .format(org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT)
+                    .extent(it -> it.width(size).height(size).depth(1))
+                    .mipLevels(1).arrayLayers(1).samples(org.lwjgl.vulkan.VK10.VK_SAMPLE_COUNT_1_BIT)
+                    .tiling(org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL)
+                    .initialLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED)
+                    .usage(org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                            | org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+            if (vkCreateImage(this.context.device(), imageInfo, null, image) != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return "shadow image=failed";
+            }
+            org.lwjgl.vulkan.VkMemoryRequirements requirements =
+                    org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
+            vkGetImageMemoryRequirements(this.context.device(), image.get(0), requirements);
+            org.lwjgl.vulkan.VkMemoryAllocateInfo allocate =
+                    org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack).sType$Default()
+                            .allocationSize(requirements.size())
+                            .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
+                                    org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "pack probe shadow"));
+            if (vkAllocateMemory(this.context.device(), allocate, null, memory) != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return "shadow memory=failed";
+            }
+            vkBindImageMemory(this.context.device(), image.get(0), memory.get(0), 0L);
+            org.lwjgl.vulkan.VkImageViewCreateInfo viewInfo =
+                    org.lwjgl.vulkan.VkImageViewCreateInfo.calloc(stack).sType$Default()
+                            .image(image.get(0)).viewType(org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D)
+                            .format(org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT)
+                            .subresourceRange(it -> it.aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
+                                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
+            if (vkCreateImageView(this.context.device(), viewInfo, null, view) != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return "shadow view=failed";
+            }
+            LongBuffer pool = stack.mallocLong(1);
+            vkCreateCommandPool(this.context.device(), org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack)
+                    .sType$Default().queueFamilyIndex(this.context.queueFamilyIndex()), null, pool);
+            org.lwjgl.PointerBuffer commands = stack.callocPointer(1);
+            vkAllocateCommandBuffers(this.context.device(), org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack)
+                    .sType$Default().commandPool(pool.get(0))
+                    .level(org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY).commandBufferCount(1), commands);
+            org.lwjgl.vulkan.VkCommandBuffer commandBuffer =
+                    new org.lwjgl.vulkan.VkCommandBuffer(commands.get(0), this.context.device());
+            vkBeginCommandBuffer(commandBuffer, org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack)
+                    .sType$Default());
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toDepth =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            toDepth.get(0).sType$Default()
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .image(image.get(0))
+                    .subresourceRange(it -> it.aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
+                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1))
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(0)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            vkCmdPipelineBarrier(commandBuffer, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, null, null, toDepth);
+            org.lwjgl.vulkan.VkRenderingAttachmentInfoKHR depth =
+                    org.lwjgl.vulkan.VkRenderingAttachmentInfoKHR.calloc(stack);
+            depth.sType$Default().imageView(view.get(0))
+                    .imageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .loadOp(org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_CLEAR)
+                    .storeOp(org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE);
+            depth.clearValue().depthStencil().depth(1.0f);
+            org.lwjgl.vulkan.VkRenderingInfoKHR rendering = org.lwjgl.vulkan.VkRenderingInfoKHR.calloc(stack)
+                    .sType$Default()
+                    .renderArea(org.lwjgl.vulkan.VkRect2D.calloc(stack)
+                            .offset(it -> it.set(0, 0)).extent(it -> it.set(size, size)))
+                    .layerCount(1).pDepthAttachment(depth);
+            vkCmdBeginRenderingKHR(commandBuffer, rendering);
+            vkCmdEndRenderingKHR(commandBuffer);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toSource =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            toSource.get(0).sType$Default()
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .image(image.get(0))
+                    .subresourceRange(it -> it.aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
+                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1))
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
+            vkCmdPipelineBarrier(commandBuffer, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toSource);
+            long pixels = (long) size * size;
+            VulkanHostBuffer readback = new VulkanHostBuffer(this.context, pixels * 4L,
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy =
+                    org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+            copy.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0)
+                    .imageSubresource(it -> it.aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
+                            .mipLevel(0).baseArrayLayer(0).layerCount(1))
+                    .imageOffset(it -> it.set(0, 0, 0)).imageExtent(it -> it.width(size).height(size).depth(1));
+            vkCmdCopyImageToBuffer(commandBuffer, image.get(0),
+                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer(), copy);
+            vkEndCommandBuffer(commandBuffer);
+            LongBuffer fence = stack.mallocLong(1);
+            vkCreateFence(this.context.device(), org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(),
+                    null, fence);
+            vkQueueSubmit(this.context.queue(), org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
+                    .pCommandBuffers(stack.pointers(commandBuffer.address())), fence.get(0));
+            vkWaitForFences(this.context.device(), fence.get(0), true, Long.MAX_VALUE);
+            float minimum = Float.MAX_VALUE;
+            float maximum = -Float.MAX_VALUE;
+            int covered = 0;
+            for (long pixel = 0; pixel < pixels; pixel++) {
+                float value = org.lwjgl.system.MemoryUtil.memGetFloat(readback.mappedAddress() + pixel * 4L);
+                if (Float.isFinite(value)) {
+                    minimum = Math.min(minimum, value);
+                    maximum = Math.max(maximum, value);
+                    if (value < 0.999999f) {
+                        covered++;
+                    }
+                }
+            }
+            readback.delete();
+            vkDestroyFence(this.context.device(), fence.get(0), null);
+            vkDestroyCommandPool(this.context.device(), pool.get(0), null);
+            vkDestroyImageView(this.context.device(), view.get(0), null);
+            vkDestroyImage(this.context.device(), image.get(0), null);
+            vkFreeMemory(this.context.device(), memory.get(0), null);
+            return String.format(java.util.Locale.ROOT, "shadow %dx%d depth=[%.5f,%.5f] covered=%d/%d (cleared map)",
+                    size, size, minimum, maximum, covered, pixels);
+        } catch (RuntimeException | LinkageError error) {
+            return "shadow plumbing failed: " + error;
+        }
+    }
+
+    /**
      * Re-renders the probe's own image with whatever geometry {@link #replaceGeometry} installed, so the delivery path
      * can blit the current picture rather than the triangle the probe was created with.
      * <p>

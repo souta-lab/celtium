@@ -14950,6 +14950,8 @@ this.frameBufferOpen = false;
     private static java.nio.ByteBuffer terrainCaptureVertices;
     /** Set once the probe has adopted the captured terrain geometry, so the line prints once and late. */
     private boolean packGeometryLogged;
+    /** Set once the shadow-map plumbing has been tried, so its line prints once. */
+    private boolean packShadowLogged;
     /** Set once the finalized multi-batch capture has been installed in the probe. */
     private boolean packGeometryAdopted;
     private boolean packReRenderLogged;
@@ -15461,6 +15463,11 @@ this.frameBufferOpen = false;
             if (target.colorImage() != 0L) {
                 // Re-render the probe's image with whatever geometry has been installed (the capture arrives after the
                 // probe is created), so the blit delivers the world through the pack's stages rather than the triangle.
+                if (Boolean.getBoolean("celtium.shaderpack.probeShadow") && !this.packShadowLogged) {
+                    this.packShadowLogged = true;
+                    System.out.println("[Celtium] CELTIUM_PACK_SHADOW "
+                            + this.shaderPackDrawProbe.renderShadowDepthPlumbing());
+                }
                 this.shaderPackDrawProbe.setWorldMatrices(this.worldSnapshotProjection, this.lastModelViewMatrix);
                 String reRendered = this.shaderPackDrawProbe.renderOffscreen();
                 if (reRendered != null && !this.packReRenderLogged && reRendered.contains("vertices=3 ")) {

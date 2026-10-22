@@ -715,3 +715,18 @@ clear 355,260px / (21,13,8) 178,220px / (26,16,10) 95,140px / (34,21,13) 84,720p
 ⇒ これは影パスが要求する「ライトからの描画」そのもの。カメラ視点（`packblit-27`）より地形の被覆が広く（clear 580,840→355,260px）、
 視点が実際に変わっていることも示す。次は深度アタッチメントへの描画と、その深度の読み戻しによる影マップ検証、
 そして pack の `shadow` プログラム + 影行列の供給。
+
+### 影マップの土台（2026-10-23・実測）
+
+`-Dceltium.shaderpack.probeShadow=true` で **D32深度イメージの作成→深度アスペクトのバリア→クリア→
+ホストへのコピー→読み戻し** を実装・検証:
+```
+CELTIUM_PACK_SHADOW shadow 64x64 depth=[1.00000,1.00000] covered=0/4096 (cleared map)
+```
+- 期待どおり全ピクセル 1.0（far）＝クリア済みの影マップ
+- validation: エラー0（記録された1件は `WARNING-Shader-OutputNotConsumed` の警告のみ）
+- 実装で判明したAPI: 深度レイアウトは `VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL`（`DEPTH_ATTACHMENT_OPTIMAL`はVK10に無い）、
+  クリア値は `clearValue().depthStencil().depth(1.0f)`、`pDepthAttachment` は `VkRenderingAttachmentInfoKHR` 単体を取る
+
+次: この深度イメージに **depth-only パイプライン（packの頂点モジュール）** でキャスタを描き、`covered` が0でなくなること、
+深度レンジが遮蔽物の距離に応じて縮むことを実測する。その後 pack の `shadow` プログラムと `shadowModelView/Projection` の供給へ。
