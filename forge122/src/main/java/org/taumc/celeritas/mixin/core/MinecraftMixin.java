@@ -15,6 +15,10 @@ import org.taumc.celeritas.CeleritasVintage;
 
 @Mixin(Minecraft.class)
 public class MinecraftMixin {
+    /** {@code -Dceltium.vulkan.displaySync=true} restores the game's fps-sync sleep under the GL-less renderer. */
+    private static final boolean GL_LESS_SYNC_SKIPPED =
+            !"true".equalsIgnoreCase(System.getProperty("celtium.vulkan.displaySync", "false"));
+
 
     /**
      * Whether the swap redirect pumps the window messages itself.
@@ -194,6 +198,12 @@ public class MinecraftMixin {
     private void celtium$timedFpsSync(int fps) {
         GameLoopTiming.syncStarted();
         try {
+            // GL-less: the swapchain owns pacing. Display.sync is a sleep-to-target built for a GL swap chain, and it
+            // measures 9 ms a frame in the 1080p menu - a slot it believes is 33 ms - so the native path presents when
+            // the frame is done and the present mode decides when that reaches the screen.
+            if (GL_LESS_SYNC_SKIPPED) {
+                return;
+            }
             org.lwjgl.opengl.Display.sync(fps);
         } finally {
             GameLoopTiming.syncEnded();
