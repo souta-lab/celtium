@@ -400,10 +400,18 @@ descriptor の更新漏れ、バッチ数、マップの充填とスケール。
 - **Intel**: **ドライバ呼び出しの回数 × 単価**。回数はAMDと完全一致（window 5・groups 182・terrain submit 3 /frame）で、
   **ほぼ全CPUブラケットが一律 +0.1ms**（合計 +1.3ms）。Vulkan呼び出し自体は地形ブラケットの1割以下。
 
-### 残るレバー（価値順）
-1. **group数を減らす（bindless / 動的format）** — 182 groups/frame が最大の回数。半減で Intel 約0.4ms・AMD 0.1ms。
-   分割要因は texture 46% / format 18% / matrix 18%。**textureを跨げるのはbindlessだけ**。
-2. **受理経路の構造変更**（AMDの0.5ms）— `architecture` §6/§7 の設計。1.7µs/offerを0.6-0.9µsへ。
+### 残るレバー（2026-10-22 算術で順序を訂正）
+**まず「groupをまとめる」路線は棄却**: `grpDraw` は Intel 0.3ms / AMD 0.1ms、groups 182/frame ⇒ 1groupあたり
+1.65µs / 0.55µs。**groupを半減しても Intel 4.8%・AMD 3.1%** にしかならない。受入に必要なのは
+**AMD 29%（0.47ms）・Intel 42%（1.33ms）** なので、この路線では到達しない。
+作成地点censusで原因も判明: group開始182/frame のうち **state-key差 49/frame（27%）**、texture 24/frame（13%）、
+closes 55/frame。単項の診断フラグ（texture/format/state）は**同時に変わるため効果ゼロ**と実測済み。
+
+1. **受理経路（AMDの26%＝0.42ms）の廃止またはGPU側移設** — AMDの差のほぼ全部がここ。1.7µs/offer × 278/frame。
+   名前付きコストを8通り削っても0〜0.7%だったので、**呼び出し回数かスレッド配置を変える**しかない。
+2. **フレーム内の pass/window/submit 数の構造的削減**（Intelの1.33ms）— 差は全ブラケットに一律+0.1msで分散し、
+   回数はAMDと同一（windows 5・terrain submit 3・groups 182）。`batchFrameSubmits` は Intel で2.8倍遅い（実測）ので、
+   submitではなく**pass/windowそのもの**を減らす。
 3. **シェーダパックをワールド描画へ接続** — 現状 `celtium$probePackProgram`（解析→数プログラムのコンパイル→プローブ描画）まで。
    BSLは mean 0.31 で絵が変わらない。**shadercはLWJGL版に固定**（§9）なので、同梱では解決しない。
 
