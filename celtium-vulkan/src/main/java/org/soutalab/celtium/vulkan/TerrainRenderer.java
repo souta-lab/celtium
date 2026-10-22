@@ -255,6 +255,13 @@ public final class TerrainRenderer {
     private long indirectDrawNanos;
     /** Time spent writing the indirect command packets into mapped memory. */
     private long indirectPacketNanos;
+    /** The whole indirect-batch call, section walk included; compare against the pass bracket. */
+    private long indirectBatchNanos;
+
+    /** {@return nanoseconds inside the indirect-batch calls}. */
+    long indirectBatchNanos() {
+        return this.indirectBatchNanos;
+    }
 
     /** {@return nanoseconds spent writing the indirect packets}. */
     long indirectPacketNanos() {
@@ -511,6 +518,21 @@ public final class TerrainRenderer {
     }
 
     boolean tryIndirectBatch(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
+            org.lwjgl.system.MemoryStack stack,
+            java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
+            RegionResources resources,
+            VulkanMultiDrawBatch batch, boolean sortedPass,
+            ChunkPrimitiveType primitiveType) {
+        long batchStarted = System.nanoTime();
+        try {
+            return indirectBatchBody(context, commandBuffer, stack, sharedIndexBuffers, resources, batch, sortedPass,
+                    primitiveType);
+        } finally {
+            this.indirectBatchNanos += System.nanoTime() - batchStarted;
+        }
+    }
+
+    private boolean indirectBatchBody(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
             org.lwjgl.system.MemoryStack stack,
             java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
             RegionResources resources,

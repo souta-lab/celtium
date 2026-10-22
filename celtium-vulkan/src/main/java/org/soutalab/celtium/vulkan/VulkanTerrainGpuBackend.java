@@ -10190,6 +10190,7 @@ this.frameBufferOpen = false;
                 + " terrainDrawCallMillis=" + (this.terrain.indirectDrawNanos() / 1_000_000L)
                 + " terrainBindMillis=" + (this.terrainBindNanos / 1_000_000L)
                 + " terrainPacketMillis=" + (this.terrain.indirectPacketNanos() / 1_000_000L)
+                + " terrainBatchMillis=" + (this.terrain.indirectBatchNanos() / 1_000_000L)
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
                 // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
