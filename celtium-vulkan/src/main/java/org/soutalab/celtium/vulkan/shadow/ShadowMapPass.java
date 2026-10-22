@@ -137,6 +137,19 @@ public final class ShadowMapPass {
      * itself renders on both cards (AMD darkens 0.92% of the frame by more than six levels, Intel 2.17%), so the gate is that
      * descriptor-lifetime defect, not the shadow. Ask for it with {@code -Dceltium.shadow.enabled=true}.
      */
+    /** The light box's half-extent the loaded pack asks for, in blocks; negative until a pack says. */
+    private static volatile float packDistance = -1.0f;
+
+    /** Records the distance a pack declared, so the pass can start from the pack's own number instead of a guess. */
+    public static void setPackDistance(float blocks) {
+        packDistance = blocks;
+    }
+
+    /** {@return the pack's distance in blocks, or a negative value when no pack declared one}. */
+    public static float packDistance() {
+        return packDistance;
+    }
+
     public static boolean requested() {
         // On by default. The pass renders on both cards (AMD darkens 0.92% of the frame by more than six levels, Intel 2.17%), and since
         // the terrain pipeline stopped rewriting its descriptor set on every bind, a world leg with it on reports no validation messages

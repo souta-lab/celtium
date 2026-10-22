@@ -15268,6 +15268,9 @@ this.frameBufferOpen = false;
             // skips those fragments, which is why almost nothing is ever judged shadowed. Widened by property so the
             // trade against texel size can be measured rather than argued: 2048 texels over +/-128 blocks is 12.5 cm a
             // texel against 4.7 cm at +/-48.
+            // 48 blocks, not the pack's own distance: measured with BSL loaded, a 128 block box on the 2048 map darkens 0.49% of the frame against
+            // 0.61% at 48, because widening without the pack's half-plane distortion spends texel density it has not got. The declared value is
+            // logged by CELTIUM_SHADOW_PACK and will be applied once the distortion is in.
             float radius = Float.parseFloat(System.getProperty("celtium.shadow.radius", "48"));
             org.joml.Matrix4f lightView = new org.joml.Matrix4f().lookAt(
                     new org.joml.Vector3f(direction).mul(-radius * 3.0f).add(centre), centre,
@@ -15620,10 +15623,12 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.shaderpack.ShaderPackLoader.ShadowSettings declared =
                     org.soutalab.celtium.shaderpack.ShaderPackLoader.shadowSettings(
                             java.nio.file.Paths.get(SHADER_PACK_PATH));
+            org.soutalab.celtium.vulkan.shadow.ShadowMapPass.setPackDistance(declared.smallestDistance());
             System.out.println("[Celtium] CELTIUM_SHADOW_PACK declared resolution=" + declared.resolution()
                     + " distance=" + declared.distance()
                     + " applied resolution=" + org.soutalab.celtium.vulkan.shadow.ShadowMapPass.SIZE
-                    + " distance=" + System.getProperty("celtium.shadow.radius", "48"));
+                    + " distance=" + (org.soutalab.celtium.vulkan.shadow.ShadowMapPass.packDistance() > 0.0f
+                            ? Math.min(org.soutalab.celtium.vulkan.shadow.ShadowMapPass.packDistance(), 128.0f) : 48.0f));
             // After the manifest, not before: the program probe reads the manifest to find the pack's own paths, and the
             // first version ran it first, so it returned early with nothing to report.
             celtium$probeShaderCompile();

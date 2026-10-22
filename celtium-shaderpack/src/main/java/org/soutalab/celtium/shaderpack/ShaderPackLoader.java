@@ -74,6 +74,7 @@ public final class ShaderPackLoader {
             String text = new String(pack.read(properties), java.nio.charset.StandardCharsets.UTF_8);
             int resolution = 0;
             float distance = 0.0f;
+            float smallest = Float.MAX_VALUE;
             java.util.regex.Matcher ints = java.util.regex.Pattern
                     .compile("shadowMapResolution\\s*=\\s*([0-9]+)").matcher(text);
             while (ints.find()) {
@@ -82,18 +83,25 @@ public final class ShaderPackLoader {
             java.util.regex.Matcher floats = java.util.regex.Pattern
                     .compile("shadowDistance\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)").matcher(text);
             while (floats.find()) {
-                distance = Math.max(distance, Float.parseFloat(floats.group(1)));
+                float declared = Float.parseFloat(floats.group(1));
+                distance = Math.max(distance, declared);
+                smallest = Math.min(smallest, declared);
             }
             return new ShadowSettings(resolution > 0 ? resolution : ShadowSettings.DEFAULTS.resolution(),
-                    distance > 0.0f ? distance : ShadowSettings.DEFAULTS.distance());
+                    distance > 0.0f ? distance : ShadowSettings.DEFAULTS.distance(),
+                    smallest < Float.MAX_VALUE ? smallest : ShadowSettings.DEFAULTS.distance());
         } catch (PackException | RuntimeException failure) {
             return ShadowSettings.DEFAULTS;
         }
     }
 
-    /** {@code resolution} is the map's edge in texels and {@code distance} the light box's half-extent in blocks. */
-    public record ShadowSettings(int resolution, float distance) {
-        public static final ShadowSettings DEFAULTS = new ShadowSettings(2048, 48.0f);
+    /**
+     * {@code resolution} is the map's edge in texels, {@code distance} the largest light box the pack asks for in blocks and
+     * {@code smallestDistance} the smallest - the conservative one to start from, because a wider box without the pack's own distortion trades
+     * texel density for reach.
+     */
+    public record ShadowSettings(int resolution, float distance, float smallestDistance) {
+        public static final ShadowSettings DEFAULTS = new ShadowSettings(2048, 48.0f, 48.0f);
     }
 
     public static String expand(Path input, PackPath file, Map<String, String> seeds) throws PackException {
