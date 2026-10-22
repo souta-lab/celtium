@@ -473,3 +473,18 @@ stopping=0  syncobjエラー=0  fps p50=62.0
 - jar: `celtium-forge-mc1.12.2-0.0.13-alpha.jar`（sha256 `80e3d8b3…`）・leg `compat-1`・AMD・world scene・validation ON
 - 結果: **PASSED・problems 0**（クラッシュなし、画像gate通過）
 - 3つはインスタンスに残している（HUD/ツールチップ/キー設定の経路を日常操作で踏むため）
+
+**fps300 KPI の基準計測（2026-10-23・実測）**
+
+`-Dceltium.validation.scene=world -Dceltium.vulkan.paceToRefresh=false -Dceltium.vulkan.frameStats=true -Dceltium.vulkan.passSplit=true`
+（上限OFF・vsync OFF・1920x1080・leg `kpi-base`・jar `80e3d8b3…`・AMD RX 6400）:
+```
+fps p50 = 120〜136
+frame ms[p50=7.37 p95=13.91]
+passSplit: frame 6.8 / world 6.8（terrain 4.5 / flush 3.3）/ hand 0.1 / clouds 0.1
+```
+⇒ **300fps = 3.3ms/frame**。現在 6.8ms、削減対象は **terrain 4.5ms と flush 3.3ms**。
+
+注意（この計測で判明）: `CELTIUM_FRAME_STATS` の `prepare[perFrameMs]` と `accept[...]` は**累積値**で、
+`debugFrameReports`（レポート回数）で割っているため**フレーム毎コストとして読めない**。判定には `passSplit` の
+`clock=cpu` 行を使うこと（この行は 512 フレームの p50/p95/worst を出す）。
