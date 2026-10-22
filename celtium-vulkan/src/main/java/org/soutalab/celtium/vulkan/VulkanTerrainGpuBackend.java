@@ -844,6 +844,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // frame BEFORE the terrain: leaving them queued submits them after this pass, and the void plane then paints
         // over the terrain it is supposed to be hidden behind.
         flushPendingBeforeGlDraw();
+        // The pass' work before the first bracket: the pre-flush and the two gates below. Measured separately because
+        // the pass reads 0.8 ms against 0.2 ms of brackets and this is the first of the spans that is not covered.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainSetup");
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
@@ -860,8 +863,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         if (!renderLists.hasPass(pass)) {
             // No geometry for this pass; nothing is opened, nothing has to be closed.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
             return;
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
         // One of the pass' three unmeasured spans: the frame target is ensured before any bracket, and the pass read
         // 0.8 ms against 0.2 ms of brackets, so this is where to look first.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainTarget");

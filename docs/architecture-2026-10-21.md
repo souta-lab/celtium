@@ -849,3 +849,23 @@ array   (ae205d49)              1.797-1.897 ms   → 1.067x 遅い
 地形パス内の実体（`renderLists` 反復、`frameCoordinator.submitCommands` 前後、`finally` の後始末）を測る。
 
 計器は revert 済み（jar `706002c2`）。
+
+### 11.10 地形パスの「未計測0.6ms」は計測方法の誤読だった（2026-10-22）
+
+`FramePassTimings` の **outer（`terrain`）は1フレームの合計**、**inner（`terrainRecord` 等）は1呼び出しあたりの p50** で、
+地形パスは **1フレームに3回**（solid/cutout/translucent）呼ばれる。したがって inner を outer と直接比べてはいけない
+（inner の合計は概ね 3 倍して比較する）。
+
+実測（jar `0325739011cc`・AMD・passSplit CPU）:
+```
+terrain 0.7   terrainSetup 0.0   terrainTarget 0.0   terrainEnsure 0.0
+terrainHandoff 0.0   terrainBegin 0.0   terrainRecord 0.1   terrainSubmit 0.0
+flush 0.6   winRecord 0.6   world 2.1
+```
+`terrainSetup`（pre-flush と2つのgate）と `terrainTarget`（`ensureFrameTarget`）を**新規に計器化**した結果、どちらも **0.0**。
+⇒ 地形パスに隠れた単一の大ブロックは無い。コストは **3パス × 約0.23ms** に分散している。
+
+（`terrainSetup`/`terrainTarget` は `FramePassTimings.INSIDE` への登録が無いと出力されない、という落とし穴も踏んだので記録する。）
+
+**次の性能候補**: ①3パスを1パスへ統合（begin/end/barrier の重複除去）②`winRecord` 0.6ms の per-group 記録を
+描画マージ（§11.5 のソート＋間接）で削る。どちらも「呼び出し回数×ドライバ単価」の削減であり、§11/§12 の結論と一致する。
