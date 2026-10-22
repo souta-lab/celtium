@@ -509,3 +509,17 @@ gate側の問題。出ていなければ `blitToFrame` の実装側。
   depth test 前提のためラスタライズが捨てられている、(b) `fitTransformToBounds` が書く変換がプログラムの
   実際の参照（u_Projection/u_ModelView/u_MVP のどれ）と一致していない。
   次の判別は (a) から: 再描画用パイプラインをdepth無効で作るか、depth attachment を付ける。
+
+### S3進捗2: 実地形がpackのステージで描けた（2026-10-23・sampled実測）
+
+再描画直後にprobe自身の画像を読み戻した結果:
+```
+CELTIUM_PACK_RERENDER_GEOMETRY vertices=68 indices=102 pipeline=0x2170000000217
+  sampled=[centre=#FF0000 sampledColours=1] lane0=[0.654902,...]
+```
+⇒ **実地形（68頂点/102インデックス）がBSLのステージでラスタライズされ、画像が赤一色になった**。
+ジオメトリのバインド・`fitTransformToBounds` の変換・パイプラインはいずれも機能している。
+
+**残る不一致**: probe画像は赤なのに、提示画像の該当矩形は青（クリア色）のまま。
+ブリット自体は同一イメージへ書いている（`sameImage=true`）ので、**フレーム後半のパスが矩形を上書きしている**のが次の仮説。
+判別: ブリットを最後の描画（present直前）へ移す／ブリット直後にフレーム内容を読み戻して比較する。

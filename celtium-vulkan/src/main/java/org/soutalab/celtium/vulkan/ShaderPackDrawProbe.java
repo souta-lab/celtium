@@ -644,7 +644,20 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             vkDestroyFence(this.context.device(), fence.get(0), null);
             vkDestroyPipeline(this.context.device(), pipeline, null);
             vkDestroyCommandPool(this.context.device(), pool.get(0), null);
-            return "vertices=" + this.vertexCount + " indices=" + this.geometryIndexCount;
+            // What actually landed in the image, and what the draw state was: the leg reports a legal draw that produces
+            // no pixels, so the next question is whether the vertices reach clip space.
+            String sampled = sampleOffscreen(64);
+            StringBuilder positions = new StringBuilder();
+            if (!this.vertexBuffers.isEmpty() && !this.packAttributeLocations.isEmpty()) {
+                long address = this.vertexBuffers.get(0).mappedAddress();
+                for (int i = 0; i < 3; i++) {
+                    positions.append('[').append(Float.intBitsToFloat(org.lwjgl.system.MemoryUtil.memGetInt(address + i * 16L)))
+                            .append(',').append(Float.intBitsToFloat(org.lwjgl.system.MemoryUtil.memGetInt(address + i * 16L + 4L)))
+                            .append(']');
+                }
+            }
+            return "vertices=" + this.vertexCount + " indices=" + this.geometryIndexCount + " pipeline="
+                    + Long.toHexString(pipeline) + " sampled=[" + sampled + "] lane0=" + positions;
         }
     }
 
