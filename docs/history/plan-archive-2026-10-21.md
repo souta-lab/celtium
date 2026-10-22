@@ -236,3 +236,7 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 | **VertexBuffer保持型データのnative所有（2026-10-21 実装）** | **実装済み・実機PASSED** | PASSED/clean | 未測定 | `VertexBufferMixin` が `VertexBuffer` の生成/bind/upload/draw/unbind/delete を所有し、`NativeGeometryBuffer`（CPU内容＋opaque identity）と `RetainedGeometryCache`（device別・内容世代別mesh）へ渡す。`LeasedResource` で受理済みdrawが未記録/記録中/in-flightの旧世代を保持。sky/stars/horizon/Forge cloudがGL buffer store再decodeから外れる。AMD leg `native-v3-valid-amd`（jar `25668c4e…`）で確認 |
 | **terrain targetの不要な失敗計上（2026-10-21 修正）** | **修正済み・実機確認** | 確認 | 未測定 | `FrameCoordinator.Submission`（SKIPPED/RECORDED/QUEUED）を導入。native同一queue targetのRECORDEDを「GLへ同期通知できなかった失敗」と数えていた。修正前は`errors=17310`／`no submission reached the queue`が3324件、修正後は**errors=0**・当該断片0（`native-v2/v3`）。記録受理・queue送信・GPU完了を別状態として扱う |
+
+### テクスチャ参照キャッシュ（2026-10-22 撤回）
+
+| **テクスチャ参照キャッシュは撤回（2026-10-22）** | **0.993x＝誤差** | 実測 | 撤回 | `VulkanTextureRegistry.get`（毎bindのHashMap参照・JFR 1.8%）に**id索引の直接マップキャッシュ**を前置して測定: 旧jar対照・交互3ペア **1.596/1.609/1.663 vs 1.623/1.621/1.551ms＝0.993x**（3ペア目は逆転）で**誤差**。さらにこのマップの**変更点は9箇所**（put5・remove2・clear）あり、実装は4箇所しか無効化しておらず**`clear()` 後は古いEntryを返す**潜在バグになる。⇒ **利得が誤差・リスクが実在なので撤回**（`git checkout`） |
