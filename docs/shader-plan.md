@@ -367,3 +367,19 @@ S0で再利用範囲と本体のnative APIを確定した時、S2で実packの�
 `captureTerrainBatch` / `adoptableFramebuffer` / `adoptedColorTexture` / `adoptedDepthTexture` / `mirrorSourceFor` / `mirroredTexture` /
 `mirroredProjection` / `ensureTargetForBoundFramebuffer` / `noteFramebufferAdopted` / `notePipelineDestroy` / `noteDescriptorDestroy` /
 `retireBuffer` / `flushPendingAtFrameBoundary` / `presentFrame` / `dumpPresentedImage` / `drawModelList` など（`celtium$` 前置、1197箇所で参照）。
+
+## 実測メモ（2026-10-22・S3の土台確認）
+
+`-Dceltium.shaderpack.path=/home/s0u7a/ダウンロード/BSL_v10.1.8.zip -Dceltium.shaderpack.drawProbe=blit` で
+world leg を実行（jar `706002c2…`・AMD・validation ON）:
+
+```
+result: PASSED  画像gate: PASSED  validation: 0件
+CELTIUM_PACK_DRAW_SUBMIT cb=... slot=0
+```
+
+**確定**: BSL のプログラムが**実フレーム経路で bind・提出され、validation違反なく通る**（描画コマンドが記録され実行される）。
+**未確定**: その出力が**最終表示画像に寄与しているか**。画像gateが PASSED のままなので、
+probe の描画先が表示画像でない（別target/オフスクリーン）可能性が残る。次の判別は
+「packの出力を final として表示画像に書く」経路（S3本体）を実装し、**画像が変わること**を差分で示すこと。
+
