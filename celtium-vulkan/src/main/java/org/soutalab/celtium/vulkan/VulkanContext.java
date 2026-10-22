@@ -1264,6 +1264,25 @@ public final class VulkanContext {
      * Every path that could observe a submission completes or starts must flush first: a fence a caller was handed
      * is only armed when this submits, so awaiting it before the flush is a stall of the caller's own making.
      */
+    /**
+     * Wall time inside the enforced submission of the deferred list. This is the path the frame statistics' earlier
+     * counters did not see: the batched entries are enqueued elsewhere and only submitted here, so the profile put 55%
+     * of the client thread's samples in vkQueueSubmit while the counted calls read a few hundred microseconds.
+     */
+    static long batchedSubmitNanos;
+    static long batchedSubmitCalls;
+    static long batchedFlushCalls;
+
+    /** {@return the deferred submission's cost as one line}, for the frame statistics. */
+    public static String batchedSubmitSummary() {
+        long calls = batchedSubmitCalls;
+        return "batchedSubmit[calls=" + calls
+                + " totalMs=" + (batchedSubmitNanos / 1000000L)
+                + " meanMs=" + String.format(java.util.Locale.ROOT, "%.3f",
+                        calls == 0 ? 0.0 : batchedSubmitNanos / 1e6 / calls)
+                + " flushes=" + batchedFlushCalls + "]";
+    }
+
     public void celtium$flushBatchedSubmits() {
         if (this.pendingBatchedSubmits.isEmpty()) {
             return;
@@ -1290,7 +1309,10 @@ public final class VulkanContext {
             }
             try {
                 VulkanContext.queueSubmitCalls++;
+                long batchedSubmitStarted = System.nanoTime();
                 check(vkQueueSubmit(this.queue, submits, batch.fence), "vkQueueSubmit (batched deferred)");
+                batchedSubmitNanos += System.nanoTime() - batchedSubmitStarted;
+                batchedSubmitCalls++;
             } catch (RuntimeException | LinkageError submitError) {
                 // The queue never saw the batch: the entries leave the deferred queue and their resources free the
                 // same way the single-submit failure path frees them, and the shared fence goes with them.
@@ -1314,6 +1336,7 @@ public final class VulkanContext {
                 throw submitError;
             }
         }
+        batchedFlushCalls++;
         this.batchedFlushes++;
         this.batchedSubmissions += entries.size();
     }

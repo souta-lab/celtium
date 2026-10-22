@@ -2248,6 +2248,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " max=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[sorted.length - 1] / 1e6) + "]"
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
+                + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
                 + (BATCH_TIMINGS ? offerStageNanosSummary() : "")
                 + " prepare[nanos=" + this.immediateStatistics.prepareImmediateNanos()
                 + " calls=" + this.immediateStatistics.prepareImmediateCalls()
