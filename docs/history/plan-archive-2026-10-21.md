@@ -228,4 +228,6 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 ### Intelの差の分解（2026-10-22）
 
+### Intelの差は全域に分散（2026-10-22）
 
+| **Intelの1.3ms超過は全域に分散（2026-10-22 決定的）** | **ホットスポット無し** | 実測 | 方針確定 | 既存の細分ブラケットを両GPUで比較（同一jar・p50 ms）: **frame Intel 2.6 / AMD 1.3（+1.3）**。内訳の差は **terrain +0.8 / flush +0.6** だが、terrain内は**terrainRecord +0.1・recordPrepare +0.1・prepDescriptors +0.1・recDraw +0.1**、flush内は **winRecord +0.2・wrecLoop +0.2・grpDraw +0.2・winSubmit +0.2**、さらに **gui/hand/clouds が各 +0.1**。⇒ **ほぼ全てのブラケットが一律 +0.1ms**で、**単一のホットスポットは存在しない**＝Intelドライバ呼び出し1回あたりの固定オーバーヘッドが支配的。**したがってレバーは「ドライバとのやり取り回数を減らす」**（draw・submit・barrier・window数）であり、個別関数の最適化ではない。認容: 各ブラケットが+0.1msなので、10回のやり取りを削れば1ms級になる |
