@@ -194,3 +194,19 @@ qmagnetの標準view（壁面支配・yaw180/pitch10）では、**太陽の影�
 2. validation clean のまま**両GPU**で動くこと（AMD/Intel）+ コスト測定（p50 +10%）
 
 通常描画での見栄えの受入は、**床が広く太陽が斜めの専用シーン**を用意してから行う（qmagnetの標準viewでは不可）。
+
+### Prism からの手動起動（Cleanroom 0.7.11 + LWJGL 3.4.3）
+
+1.12.2 のメタコンポーネント `org.lwjgl3 3.3.1` は依存として残り、Prism の画面からは削除できない。これを残したまま起動すると、
+**3.3.1 の natives と 3.4.3 のクラス**が混ざり `MemoryUtil.ngetPageSize()` の `UnsatisfiedLinkError` で即死する（2026-10-22 実測）。
+
+回避は **natives を 3.4.3 に固定する**こと。`~/.local/share/PrismLauncher/libraries/org/lwjgl/*/3.4.3/*-natives-linux*.jar`
+を展開したディレクトリを作り、インスタンスの `instance.cfg` に次を入れる（Prism の UI なら「Java → JVM の引数」でも同じ）:
+
+```
+OverrideJavaArgs=true
+JvmArgs=-Dorg.lwjgl.librarypath=<instance>/natives-3.4.3
+```
+
+`org.lwjgl.librarypath` は LWJGL が最初に探す場所なので、クラスパス上の 3.3.1 natives は読まれない。
+検証ハーネス（`scripts/gv-leg.sh`）は自前でこの引数と `CELTIUM_LEG_LWJGL_VULKAN` を渡すため、この設定に依存しない。
