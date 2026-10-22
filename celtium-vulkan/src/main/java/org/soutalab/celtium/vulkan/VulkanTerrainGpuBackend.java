@@ -2274,6 +2274,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + "]"
                 + (FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
                 + " texCopy[calls=" + this.textureCopyCalls + " totalMs=" + (this.textureCopyNanos / 1000000L) + "]"
+                + " copyBlit[refusals=" + this.textureCopyService.textureCopyBlitRefusals()
+                + " last=" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " skips=" + this.lazyMirrorRetrySkips
                 + " failures=" + this.lazyMirrorFailures + "]");
         this.debugFrameReports++;
