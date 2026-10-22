@@ -237,3 +237,5 @@ SIGSEGV in libSDL3.so
 **次に見るべきもの**: 再起動して再発するなら、`SDL_PollEvent` の直前に行う `SDL.installLog`（FFM upcall）と
 こちら側スタブの FFM upcall が同じ SDL インスタンスに干渉していないか。`hs_err` の `Dynamic libraries` で
 libSDL3 が1つだけマップされているかも確認する。
+
+**2026-10-22 reproduction split**: the same jar passes a headless Sway X11 leg (presents at frames 0 and 3, no fault) and dies in SDL_PollEvent only on the real Wayland session. The Java frames put that call inside the redirect replacing the GL swap, via Display.processMessages -> CleanroomWindowBridge.pump, so a nested SDL pump is the suspect; SDL is not reentrant. Next: check whether the hs_err library map holds one libSDL3, then either skip the pump during the splash or pump exactly once per frame.
