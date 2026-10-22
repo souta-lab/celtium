@@ -452,3 +452,21 @@ leg: PASSED  画像gate: PASSED
 **未確定**: その出力が**表示画像に可視**か（probeは自前オフスクリーンimageに描いている）。
 次は `final`/`composite` を表示画像へ書く経路。
 
+### 実測（2026-10-22・blitは記録されるが画像gateは変わらない）
+
+`compileProbe=true` ＋ `drawProbe=blit`（jar `706002c2…`・AMD・validation ON）:
+
+```
+offscreen=[centre=#00FF00 sampledColours=1]
+CELTIUM_PACK_DRAW_HOOK cb=... open=true recording=true inPass=false slot=1
+CELTIUM_PACK_DRAW blit=true draws=1
+leg: PASSED  画像gate: PASSED  validation: 0件
+```
+
+**確定**: パックの画素（緑）は出ており、**blitのコマンドも記録されている**（`blit=true draws=1`、`slot=1`）。
+**確定（負）**: それでも**表示画像は変わらない**（gate PASSED）。swapchainは4枚（`frameSlots=4`）で slot 0..3 が現れるため、
+**blit先slotとpresentされるslotが一致していない**可能性が高い。
+
+**次の判別（具体的）**: blit先を「そのフレームでpresentされるslot」に固定し、`presentedDump` を前後で画素比較する
+（gateは平均色ベースなので、緑の三角形1枚では反応しない可能性もある。画素差で見る）。
+
