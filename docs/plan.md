@@ -34,7 +34,7 @@
 
 | **影: native実装を完全削除（2026-10-22）** | **コードから消えた（両GPU検証済み）** | 実測＋画像 | 完了 | 利用者指示「native影実装消して」。受信シェーダ全系統・backendの影パス一式・カメラ位置フック（mixin含む）・`ShadowMapPass`本体・専用シェーダ・パイプライン3本のプレースホルダ/binding/spec定数/fan-out・`TerrainRenderer`の簿記（range捕捉・indirect捕捉・カメラ位置フィールド）を削除。**AMD/Intel とも PASSED・画像gate PASSED・validation 0件**（jar `398533cd…`）。残るのはコメント1箇所のみ。影とパックは Demonica fork（`shader-plan.md` §0）が持つ |
 | **互換・画質・配布** | **4画面＋qmagnet／RLCraftは環境制約／配布物検証済み** | 実測 | 一部未完 | 空(165,180,207)vs(165,179,207)・石は完全一致・草±4（worldTime=6000）。settings はHEADで再合格、**home のVUID-09600は再現せず**、mainMenuのgate FAILは**影OFFでも同一**（既存）。**RLCraft 2.9.3 は0.6.13でも0.7.11でも `com.cleanroommc.hackery.ReflectionHackery` 欠落で起動不能（Fugue更新待ち）**。配布物は `verify_forge_jar` verified・版数一致・内容ハッシュ一致。**BSLはワールド描画に未接続**（`shader-plan.md` S0/S1） |
-| **シェーダパック: 世界描画到達（2026-10-23）** | **S3: packのgbuffers_terrainが実地形を描き、提示画像に出る** | 実測 | 残りは影パス・gbuffer→composite・本番統合 | `docs/evidence/pack-terrain-program-2026-10-23.png`（39色・土/木の茶色）と `pack-lightview-2026-10-23.png`（82色・太陽視点）。 変換ブロックのメンバー順を**パースしてstd140で書く**方式にしたことが決定的（固定オフセットではu_Projectionが別メンバーを指し、地形が不可視だった）。 実測leg: `packblit-27`（カメラ視点）, `packblit-29`（ライト視点）。いずれも画像gateは意図通りFAILED＝配達画像がpack出力。 |
+| **シェーダパック/影: 休止（2026-10-23 利用者指示）** | **S3の探索は到達点を残して停止** | 実測済み | 利用者の判断待ち | 実測到達点: `gbuffers_terrain`が実地形を描く（`packblit-27`）、ライト視点（`packblit-29`）、影マップに65,536キャスタ・被覆60.2%（`packblit-32`）。『影を3回やっている』と利用者から指摘があり停止。 再開条件: 利用者がpack統合を優先すると明示した時。 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①**受理経路をnativeへ**（Java補足ではなく所有権移動。`architecture` §12が規模の算術）②影の尾の削減（二重バッファ化 or cadenceと品質のトレード）③`shader-plan.md` の既存modベースでBSL接続 ④state/texture/render target所有のnative化（未完） |
