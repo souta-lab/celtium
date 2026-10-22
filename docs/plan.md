@@ -1,6 +1,6 @@
 # Celtium 現状表（唯一の現在状態表）
 
-開発ベース **0.0.8-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
+開発ベース **0.0.9-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
 2026-10-21 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
@@ -24,6 +24,8 @@
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 | **v0.0.7-alpha をリリース（2026-10-22）** | **影の既定ONが主題** | 実測 | 公開済み・両GPU検証済 | https://github.com/souta-lab/celtium/releases/tag/v0.0.7-alpha 。asset `celtium-forge-mc1.12.2-0.0.7-alpha.jar`（3,201,172 bytes）は**ダウンロードしたsha256がローカルビルドと一致**（`7e3b6783…`）。梱包 `verified: true`・版数整合 `verified: True`・内容ハッシュ1079エントリ。ノートに**影ON/OFFの実測（AMD 0.92%・Intel 2.17%）**、アロケーション−41%、S0/S1/S2のパック状況、既知の問題（性能1.674xと尾・パック未接続・RLCraftはFugue待ち）を明記。**公開jarを両GPUで検証**: AMD/Intel とも world leg **PASSED・画像ゲート PASSED・validation 0件**（Intel は jar hash `7e3b6783…` 一致を確認）。**公開jarの測定**（負荷3.2-4.7・強制・交互5ペア）: **AMD 1.400x**（中央値。影OFF構成は1.387x＝この負荷帯では影の上乗せは小さい） |
+
+| **起動（Wayland）** | **修正済み・実機で25秒完走** | 実測 | 完了 | `SDL_Vulkan_CreateSurface` をやめ、SDLのwindow propertiesから `wl_display`/`wl_surface` を取って `vkCreateWaylandSurfaceKHR` で自前生成。実セッションで **クラッシュ消失**（`presented=2`, `frameQueued call=12`）。X11分岐は不変。回帰: AMD/Intel **PASSED・画像gate PASSED・validation 0件**（jar `f7e5a828`）。切り分けは `-Dceltium.vulkan.skipPresent`（presentせず＝落ちない）で確定 |
 
 | **性能（現状・影削除後）** | **AMD 1.249x（最良・静かな時間帯）** | 実測 | 未達 | jar `6150c7a1…`・影なし構成・交互4ペア・負荷3→3.9: **Celtium 1.610-1.681ms vs 参照 1.251-1.377ms＝1.249x**、p95 2.2-2.5 vs 1.6-2.6。同じ手法の以前の値は 1.387x（影あり）→1.350x（影削除後・負荷5-6）で、機械の静穏でここまで下がった。**負荷依存が大きいので比は時間帯と併記**。個別の改善は ①モデルキャッシュ世代ゲート（0.969x）②**受理時のテクスチャ解決**（記録時のper-group Map参照を除去、0.989x）。残る構造課題は `architecture` §11.5（状態をgroupから剥がす＝descriptor配列＋per-draw SSBO） |
 | **影（pack側の担当）** | **Celtium本体の現在単位ではない** | — | pack/別mod | 利用者指示:「影はpackに任せろ」「パフォーマンスが終わってないのに影に取り組むな」。影は `shader-plan.md` の方針どおり**シェーダーパック（別成果物）として実装**する。Celtium本体は**性能**を先に終わらせる。参考としてpackの実シェーダがcompile→pipeline→描画→画素読み戻しまで通ることは実測済み |
