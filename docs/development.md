@@ -431,3 +431,17 @@ GL-lessではGLコンテキストが無いのでこのswapは何も提示しな�
 - 修正前: 15〜20秒で `Stopping!`、console に syncobj error 4 + `display connection closed`
 - 修正後: **72秒連続・Stopping!なし・syncobjエラー0・presented=1198**
 （headless出力は1280x720なのでリサイズは発生していない。実機1920x1080でのリサイズ確認は未実施）
+
+**実フレーム間隔の計器と、実FPSがベンチと乖離する件（2026-10-22）**: `-Dceltium.vulkan.frameStats=true` を追加
+（present境界で実間隔を120フレーム集計し p50/p95/min/max と fps を出力）。ヘッドレス隔離sway・worldシーンで実測:
+
+| 条件 | 実測 p50 |
+|---|---|
+| 1280x720（既定） | **5.7〜14.6 ms（68〜176 fps）** |
+| 1920x1080 | **33.3 ms（30.0 fps）**, p95 35, min 25, max 42 |
+| 1920x1080 + `vsync=false`(MAILBOX) | **33.3 ms（30.0 fps）** |
+| 1920x1080 + `maxFramerate:260`（limiter無効） | **33.3 ms（30.0 fps）** |
+
+**33.3msが極めて規則的**＝負荷変動ではなく**固定の待ち**。vsyncでもゲームのfps limiterでもない（両方除外）。
+利用者の実機20FPSと整合するのはこの領域。次は1フレーム内の待ち（acquire/present/フレームスロット待ち）を
+区間計測して、2vblank相当の待ちがどこか（SDLのframe callback待ちの疑い）を特定する。

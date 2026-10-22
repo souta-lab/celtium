@@ -2213,6 +2213,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
     private int debugFramesPresented;
     private boolean debugFullscreenAsked;
+    /**
+     * {@code -Dceltium.vulkan.frameStats=true}: report the real interval between completed frames, once every 120
+     * frames. Each bracketed section can be short while the delivered rate is low, and that gap is what a user sees as
+     * low FPS, so it is measured on the frame boundary instead of inferred from the sections.
+     */
+    private static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
+    private final long[] frameIntervals = new long[120];
+    private int frameIntervalCount;
+    private long lastFrameBoundaryNanos;
+
+    private void celtium$noteFrameBoundary(String where) {
+        if (!FRAME_STATS) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (this.lastFrameBoundaryNanos != 0L) {
+            this.frameIntervals[this.frameIntervalCount++] = now - this.lastFrameBoundaryNanos;
+        }
+        this.lastFrameBoundaryNanos = now;
+        if (this.frameIntervalCount < this.frameIntervals.length) {
+            return;
+        }
+        long[] sorted = java.util.Arrays.copyOf(this.frameIntervals, this.frameIntervalCount);
+        java.util.Arrays.sort(sorted);
+        long p50 = sorted[sorted.length / 2];
+        System.out.println("[Celtium] CELTIUM_FRAME_STATS site=" + where
+                + " frames=" + this.frameIntervalCount
+                + " ms[p50=" + String.format(java.util.Locale.ROOT, "%.2f", p50 / 1e6)
+                + " p95=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[(int) (sorted.length * 0.95)] / 1e6)
+                + " min=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[0] / 1e6)
+                + " max=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[sorted.length - 1] / 1e6) + "]"
+                + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "]");
+        this.frameIntervalCount = 0;
+    }
+
     /** {@code -Dceltium.vulkan.windowDiag=true}: report what SDL and the Display shim say the window is, once a second. */
     private static final boolean WINDOW_DIAG = Boolean.getBoolean("celtium.vulkan.windowDiag");
     private int windowDiagFrames;
@@ -15300,6 +15335,7 @@ this.frameBufferOpen = false;
 
     private boolean celtium$presentFrameImpl() {
         org.soutalab.celtium.vulkan.CeltiumSdlEventTrace.installOnce();
+        celtium$noteFrameBoundary("present");
         celtium$reportWindowState();
         celtium$debugMaybeGoFullscreen();
         // Isolation switch for the Wayland fault: with the swapchain out of the picture the frame is recorded and
