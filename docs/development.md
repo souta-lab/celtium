@@ -279,3 +279,16 @@ Celtium の present（Vulkan WSI が同じ `wl_surface`/`wl_display` を触る�
 2回とも **bt が空**（`ptrace_scope=1`、フィルタでエラーを落としていたため原因未確定）。次回は**生のgdb出力**を保存して
 `ptrace: Operation not permitted` か `no such process`（既にクラッシュ済み）かを切り分ける。
 タイミングは 起動→約12.7秒でクラッシュ、アタッチは9秒時点なので、**アタッチ直後にクラッシュを跨げていない**可能性がある。
+
+**アタッチの可否が判明（2026-10-22）**: `gdb -p` は `ptrace: 許可されていない操作です` で拒否された。原因は
+`kernel.yama.ptrace_scope=1`（親プロセスのみ許可）。`sudo -n sysctl -w kernel.yama.ptrace_scope=0` で解除でき、
+**この環境ではsudoがパスワード無しで通る**（解除後はアタッチ可能・終了後に 1 へ戻した）。
+
+次回の手順:
+1. `sudo sysctl -w kernel.yama.ptrace_scope=0`
+2. ゲームを起動（ハーネス）→ java pid を取得（`pgrep -f net.minecraft.client.main.Main`）
+3. `gdb -p <pid> -batch -ex "continue" -ex "bt 20" -ex "thread apply all bt 8"`
+4. 終了後 `sysctl -w kernel.yama.ptrace_scope=1` に戻す
+
+**注意**: `pkill -f prism_validation.py` を自分のコマンドラインに含むシェルで実行すると**自分自身を殺す**（実測）。
+pid指定のkillにすること。
