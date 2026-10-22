@@ -2319,7 +2319,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " copyBlit[refusals=" + this.textureCopyService.textureCopyBlitRefusals()
                 + " last=" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " skips=" + this.lazyMirrorRetrySkips
-                + " failures=" + this.lazyMirrorFailures + "]");
+                + " failures=" + this.lazyMirrorFailures + "]"
+                // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
+                // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
+                // ones" could not be told apart from a log. These are deltas over the frames this report covers.
+                + this.celtium$terrainPerFrameSummary(this.frameIntervalCount));
         this.debugFrameReports++;
         this.frameIntervalCount = 0;
     }
@@ -14950,6 +14954,23 @@ this.frameBufferOpen = false;
     private static java.nio.ByteBuffer terrainCaptureVertices;
     /** Set once the probe has adopted the captured terrain geometry, so the line prints once and late. */
     private boolean packGeometryLogged;
+    private long lastTerrainIndirectCalls;
+    private long lastTerrainIndirectDraws;
+
+    /** {@return the terrain pass's per-frame recording counts}, as a log fragment. */
+    private String celtium$terrainPerFrameSummary(int frames) {
+        if (this.terrain == null || frames <= 0) {
+            return "";
+        }
+        long calls = this.terrain.terrainIndirectCalls();
+        long draws = this.terrain.terrainIndirectDraws();
+        long callDelta = calls - this.lastTerrainIndirectCalls;
+        long drawDelta = draws - this.lastTerrainIndirectDraws;
+        this.lastTerrainIndirectCalls = calls;
+        this.lastTerrainIndirectDraws = draws;
+        return " terrainPerFrame[calls=" + (callDelta / frames) + " draws=" + (drawDelta / frames)
+                + " drawsPerCall=" + (callDelta == 0 ? 0 : drawDelta / callDelta) + "]";
+    }
     /** Set once the shadow-map plumbing has been tried, so its line prints once. */
     private boolean packShadowLogged;
     /** Set once the finalized multi-batch capture has been installed in the probe. */

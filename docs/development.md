@@ -533,3 +533,14 @@ JFRの HashMap 探索 ~97/1056 サンプルの一部を狙ったが、**frame 6.
 **KPI変更後の受入（2026-10-23・実測）**: `kpi-2` jar（ARGBテクスチャ高速化＋世代配列化＋互換コホート入り）で
 world scene を受入: **PASSED・problems 0**（AMD RX 6400・validation ON・leg `kpi-acc`）。
 性能変更は受入の絵を壊していない。KPIは frame 6.8〜7.0ms（300fps目標に対し未達）。
+
+**fps300 KPI: terrain pass のフレーム毎記録数（2026-10-23・実測）**
+
+`CELTIUM_FRAME_STATS` に `terrainPerFrame[calls= draws= drawsPerCall=]` を追加（レポート区間の差分／フレーム数）。
+world leg の実測:
+```
+terrainPerFrame[calls=5 draws=48 drawsPerCall=9]
+```
+⇒ **1フレームあたり間接ドローは48個だけ**（5回の indirect call に9個ずつ）。描画コマンド数は律速ではない。
+terrain 4.5ms の内訳は**ドロー記録の前段のCPU処理**（セクション走査・行列・パス開始/終了・バインド）にある。
+次の判別: terrain bracket 内をさらに分割（region走査 / バインド / push constant / パス開始終了）して計測する。
