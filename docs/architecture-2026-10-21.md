@@ -481,6 +481,26 @@ leg `perf-struct-1`（AMD RX 6400・world・固定カメラ・`-Dceltium.vulkan.
 
 移行は**immediate（window）経路から**行う（最大の 0.6ms）。terrain は既に indirect なので、record 形式を共有したうえで後段で移す。
 
+### 11.3 `winRecord`（flush 0.7ms の内側 0.6ms）の内訳（2026-10-22・JFR）
+
+出荷構成のJFR（steady 1,020サンプル）で、`recordImmediateOnlyPass` を含むサンプルは **43（4.2%）**。
+その先頭フレーム（＝実際に時間を使っている場所）は:
+
+| 子フレーム | サンプル |
+|---|---|
+| **HashMap系（treeifiedバケット5＋`VulkanTextureRegistry.get` 3＋`LinkedHashMap.get` 1）** | **9（21%）** |
+| `drawPendingImmediate` | 7 |
+| `transitionPublishedFrameTextures` | 2 |
+| JNI呼び出し（`callPV`/`callPPPV`） | 3 |
+| `ThreadLocal`／`String.<init>`／`pairLayoutSummary` | 各1-2 |
+
+⇒ **記録ループがgroupごとにテクスチャを再解決している**（`celtium$registry().get(group.texture)`）のが最大の内訳。
+これは「準備後にラッパーが退役した場合」のための健全性チェックで、レジストリは記録中に変化しない。
+
+**試作**: 記録ループ内で直前のテクスチャ解決をメモ化（同一idの連続groupで再利用）。
+**結果は 0.994x（中立）**で撤回。JFRの**帰属**は残るが、**呼び出し回数を減らすだけではフレームは動かない**という
+§11/§12の結論と一致する（時間は次段の構造＝描画実行の持ち方にある）。
+
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
 
 ### 測って消えた道（再調査不要）
