@@ -233,7 +233,12 @@ void main() {
             return;
         }
         float sampled = texture(u_ShadowMap, shadowCoord.xy).r;
-        fragColor = vec4(sampled < 0.9999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), 1.0);
+        // The lookup's own position, painted as colour: red is x, green is y, in light-map space. The caster map came out as a
+        // single blob at x 89..245, y 64..187 of 256, so a screenshot of this tells whether the receivers look at that blob or
+        // somewhere else entirely - the one question the coverage counts could not settle.
+        float inside = (shadowCoord.x >= 0.3477 && shadowCoord.x <= 0.9570
+                && shadowCoord.y >= 0.25 && shadowCoord.y <= 0.7305) ? 1.0 : 0.0;
+        fragColor = vec4(shadowCoord.xy, inside, 1.0);
         return;
     }
     if (all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
