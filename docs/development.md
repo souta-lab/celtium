@@ -449,11 +449,12 @@ GL-lessではGLコンテキストが無いのでこのswapは何も提示しな�
 **推奨JVMフラグ（G1・スタッタ対策、2026-10-22）**: mod入り1.12.2では既定コレクタのポーズがフレーム内に入り、
 平均fpsが高くても「カクつき」として体感される。ランチャーのラッパー（`java-celtium.sh`）へ以下を追加した:
 ```
--XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=37 -XX:+DisableExplicitGC
+-XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:MaxGCPauseMillis=37 -XX:+DisableExplicitGC
 -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20
--XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15
+-XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:G1IHOP=15
 -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32
 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1
 ```
+Java 27 では `ParallelRefProcEnabled` が削除済み、G1のしきい値系は experimental なので `UnlockExperimentalVMOptions` が先に必要、`InitiatingHeapOccupancyPercent` は `G1IHOP` に改名（実測: `java -version` が通ることを確認）。
 `-XX:+DisableExplicitGC` は特に重要: バニラの `System.gc()` を落とす mixin は「別のtransformerもMinecraftを触る」ため
 除外されており、このフラグが無いとフレーム中に stop-the-world が入る。
