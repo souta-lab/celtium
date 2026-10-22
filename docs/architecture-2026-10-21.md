@@ -552,6 +552,31 @@ ULTRA は 3072²。±48 の箱に 2048² を割ると 4.7cm/テクセルだが�
 （frontend は既に properties を解析している: `PackProperties`）。読めたら native 影パスの解像度・箱半径をそれで初期化し、
 distortion を入れてから距離を広げる順で検証する。
 
+### 13.3 half-plane distortion の実装計画（2026-10-22 時点の調査結果）
+
+**なぜ要るか**: BSL は 128–512ブロックの影距離を要求する（§13.2）。距離をそのまま広げると 2048² で 0.5m/テクセルになり、
+近傍の影が潰れる。distortion は「近傍にテクセルを集中させ、遠方は粗く」して同じ解像度で広い距離を賄う（Iris の half-plane。
+
+**式（自前実装）**: 正規化した光源空間座標 `u ∈ [-1,1]` に対して `warp(u) = sign(u) * |u|^p`（p<1）。
+`du'/du = p*|u|^(p-1)` は中心で発散するので、近傍ほど1テクセルあたりの世界距離が小さくなる。
+p=1.0 が恒等（現状）、0.5 前後が BSL の見た目に近い候補。
+
+**両端で一致させる方法（この構成では無料）**: キャスタもレシーバも**同じ頂点シェーダ**（`terrain_solid.vert`）を通り、
+`worldPosition` から `gl_Position`（=光源空間）と `v_ShadowCoord` の**両方**を作っている。したがって
+- キャスタ: 頂点で `gl_Position.xy` を warp（w を保つ: `xy' = warp(xy/w) * w`）
+- レシーバ: `v_ShadowCoord` を**フラグメント**で `uv' = warp(2*uv-1)*0.5+0.5` に変換（または頂点で `v_ShadowCoord` 自体を warp）
+と、**同じ関数を同じ場所（頂点）で適用するのが最も安全**（z は不変、`dFdx/dFdy` も自然に追従）。
+
+**ブロッカー（実装前に片付ける）**: 現在の terrain パイプラインは **fragment ステージにのみ** spec定数（id 0,1）を渡している
+（`VulkanTerrainPipeline:1310` の `VkSpecializationMapEntry` が2個）。distortion は**頂点ステージ**の定数が要るので、
+`VkPipelineShaderStageCreateInfo` の **vertex ステージ側に専用の specialization map** を足す必要がある（fragment とは別の map）。
+それが入れば、シェーダ側は `layout(constant_id = 0) const float CELTIUM_SHADOW_WARP = 1.0;` を vert に足して
+`-Dceltium.shadow.warp=0.5` で掃引できる。
+
+**検証方法（測定が要らない）**: ①`celtium.shadow.radius` を 48→192 にして、**影ON/OFFの暗くなる画素の割合**が
+増えるか（被覆）と、近傍のノイズ（アクネ）が増えていないかを presented 画像で見る。②validation 0件。③両GPU。
+p の候補は 0.4/0.5/0.6 を掃引し、被覆とノイズのトレードで選ぶ。
+
 ### 注意（この期間に踏んだ罠）
 - **probeは既定で呼ばれない**（`celtium.shaderpack.compileProbe=true` が必要）。フラグ無しの「無出力」を「失敗」と読まない。
 - `CELTIUM_PACK_DRAW_SUBMIT` の8,215行は**ログ出力条件のバグ**だった（`shaderPackDraws < 3` がパック無しで常に真）。
