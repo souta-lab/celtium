@@ -42,6 +42,8 @@
 | **RLCraft 2.9.3 は0.6でも起動不能（2026-10-22）** | **Cleanroom側のクラス欠落** | 実測 | 環境制約 | `rlcraft-2.9.3-on-07`（175 mods）を複製して**Cleanroom 0.6.13-alpha** で起動: **同じクラッシュ**。`NoClassDefFoundError: com/cleanroommc/hackery/ReflectionHackery`（パック側 `com.fantasticsource...ReflectionTool` 由来）。⇒ **0.7固有ではなく0.6.13でも同クラスが無い**＝このパックは**当該クラスを同梱する古いCleanroomを要求**。**Celtium側では回避不能**。複製は削除済み（ディスク18G） |
 
 | **影は既定ON・両GPUでvalidation 0件（2026-10-22 達成）** | **AMD 0.92% / Intel 2.17% が暗くなる** | 実測＋画像 | 受入 | **原因は地形パイプラインの「毎bindで5 binding全部を書き直す」**こと（`VulkanTerrainPipeline.bindTextures`）。FrameSlotのsetは実行中コマンドバッファに名指しされ得るので、**変更されたbindingだけ書く**方式に変更 → 影ONでも **AMD/Intel とも PASSED・gate PASSED・validation 0件**。その結果**影を既定ONにした**（`-Dceltium.shadow.enabled=false` で無効化）。既定ONの状態でも両GPU PASSED・0件を確認（jar `be3c14d9…`）。**可視性**: 同一scene・同カメラ・worldTime固定のON/OFF比較で **AMD 0.92%（平均19.1レベル）/ Intel 2.17%（平均48.6）** 暗くなる。証拠 `docs/evidence/cr07-shadow-{on,off}-{amd,intel}-2026-10-22.png` |
+| **影マップの再描画を省略（2026-10-22 実測）** | **33.3%のフレームでスキップ** | 実測＋画像 | 出荷構成の改善 | 影は毎フレーム2048²へ地形を描き直していたが、**光源は固定・キャスタは地形のみ**なので、**カメラ位置（1/16ブロック量子化）と積まれたキャスタ数が前回と同じなら前フレームのマップを再利用**する方式にした（`celtium.shadow.refreshEvery`（既定30）で強制更新。提出が"submitted"を返した時だけ記録済みにする）。**実測: 7,750フレーム中2,580でスキップ＝33.3%**（`shadowSkips`を検証行に追加）。**影は可視のまま**（ON/OFF比較で0.61%の画素が>6レベル暗く、平均19.7）、**validation 0件・gate PASSED**（AMD/Intel）。**フレーム時間への効果は未測定**（機械負荷でKPI不可）。副次: settings画面は**影ONでもPASSED**、mainMenuのgate FAILは**影OFFでも同一**（既存挙動） |
+
 
 
 

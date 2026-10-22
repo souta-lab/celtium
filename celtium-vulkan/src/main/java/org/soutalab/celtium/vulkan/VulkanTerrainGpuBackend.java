@@ -10401,6 +10401,7 @@ this.frameBufferOpen = false;
                 + " groupSplits[" + this.groupSplitCensus.summary() + "]"
                 + " groupCloses=" + this.groupClosesForcingStart
                 + " flushBeforeGlDraw=" + this.flushBeforeGlDrawCalls
+                + " shadowSkips=" + this.shadowSkips
                 + " flushBeforeGlDrawWithGroups=" + this.flushBeforeGlDrawWithGroups
                 + " mergeRefusals=" + this.mergeRefusalSummary()
                 // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
@@ -15331,6 +15332,34 @@ this.frameBufferOpen = false;
             }
     }
 
+    /** How often the map is refreshed even when the scene key says nothing moved. */
+    private static final int SHADOW_REFRESH_EVERY = Integer.getInteger("celtium.shadow.refreshEvery", 30).intValue();
+    private long shadowSceneKey;
+    private boolean shadowMapRecorded;
+    private long shadowRecordedFrameId;
+    private long shadowSkips;
+
+    /** {@return a key over everything that decides the map's content: the light box's centre and the caster count}. */
+    private long celtium$shadowSceneKey() {
+        long key = 1469598103934665603L;
+        if (this.terrain != null && this.terrain.cameraWorldKnown()) {
+            // A sixteenth of a block is far below one shadow texel at the 48 block radius, so this quantisation cannot hide a move that
+            // would change which texels a caster covers.
+            key = (key ^ (long) Math.round(this.terrain.cameraWorldX() * 16.0f)) * 1099511628211L;
+            key = (key ^ (long) Math.round(this.terrain.cameraWorldY() * 16.0f)) * 1099511628211L;
+            key = (key ^ (long) Math.round(this.terrain.cameraWorldZ() * 16.0f)) * 1099511628211L;
+        }
+        int batches = 0;
+        int commands = 0;
+        for (int i = 0; i < this.shadowBatches.size(); i++) {
+            org.soutalab.celtium.vulkan.shadow.ShadowMapPass.Batch batch = this.shadowBatches.get(i);
+            batches++;
+            commands += Math.max(batch.indirectCount, 0);
+        }
+        key = (key ^ batches) * 1099511628211L;
+        return (key ^ commands) * 1099511628211L;
+    }
+
     private void celtium$recordShadowPass() {
         if (!org.soutalab.celtium.vulkan.shadow.ShadowMapPass.requested()) {
             return;
@@ -15347,6 +15376,15 @@ this.frameBufferOpen = false;
                 this.shadowProbeReported = true;
                 System.out.println("[Celtium] CELTIUM_SHADOW_PROBE " + this.shadowMapPass.recordAndSubmitOnce());
             }
+            return;
+        }
+        // The map only changes when the light box moves or the casters do: the sun is fixed and, in this build, only terrain casts. So a
+        // frame whose camera position and queued caster count match the last recorded one reuses the map instead of rasterising 2048 square
+        // worth of terrain again - and the refresh ceiling below keeps a proxy that missed a change from lasting.
+        long sceneKey = celtium$shadowSceneKey();
+        if (this.shadowMapRecorded && sceneKey == this.shadowSceneKey
+                && this.frameId - this.shadowRecordedFrameId < SHADOW_REFRESH_EVERY) {
+            this.shadowSkips++;
             return;
         }
         if (this.shadowMapPass == null) {
@@ -15411,6 +15449,13 @@ this.frameBufferOpen = false;
                 }
                 String submitted = this.shadowMapPass.recordTerrainBatchesAndSubmit(this.shadowTuplePipeline,
                         this.shadowBatches);
+                // The map now holds this scene, so the next frame may reuse it. Only a submission that reported itself completed sets this:
+                // a refused or failed one leaves the flag clear so the pass is retried rather than the stale map served forever.
+                if (submitted != null && submitted.startsWith("submitted")) {
+                    this.shadowMapRecorded = true;
+                    this.shadowRecordedFrameId = this.frameId;
+                    this.shadowSceneKey = sceneKey;
+                }
                 // What actually landed in the map: a CPU-side argument about the matrix cannot see this, and the map being
                 // entirely 1.0 (casters nowhere) is a different failure from a map with content that receivers miss.
                 this.shadowMapPass.sampleDepthReport();
