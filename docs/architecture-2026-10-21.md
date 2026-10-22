@@ -782,3 +782,11 @@ p の候補は 0.4/0.5/0.6 を掃引し、被覆とノイズのトレードで�
 - **古いjarを測らない**: 編集が当たっていないビルドを測って「in率6.6%」という誤値を出した。`git status` と jar ハッシュを毎回確認する。
 - **単発フレームの画素比較は分散2倍**: 影の darkened は 1.70〜3.54% で振れる。比較は複数runか制御arm付きで。
 - **IntelではGPUタイムスタンプが取れない**（`passTimings` が空）。CPUブラケット（`-Dceltium.vulkan.passSplit`）を使う。
+
+**3回目の試行（2026-10-22・最接近）**: poolに UPDATE_AFTER_BIND フラグを付け、array mode では maxSets=1 / descriptorCount=4096 にした。
+結果は **leg PASSED・画像gate PASSED・`arrayDraws=78597`**＝変換は実際に動いた。残るvalidation 20件は
+`VUID-vkCmdBindDescriptorSets-pDescriptorSets-00358` / `VUID-vkCmdDrawIndexed-None-08600`（束縛setとpipeline layoutが非互換）。
+原因は一部variant（positionOnly/positionNoTexture）だけが count=1 layout を持つこと。全variantを array mode にすると数は消えるが、
+`immediate_position_tex` の fragment が未変換のため画像gateが FAILED（`arrayDraws=5434`・49件）。
+
+**4回目の条件**: `immediate_position_tex.{vert,frag}` も配列indexへ変換してから family 全体を array mode に統一する。
