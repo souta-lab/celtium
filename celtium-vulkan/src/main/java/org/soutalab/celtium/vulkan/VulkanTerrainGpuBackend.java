@@ -14960,6 +14960,10 @@ this.frameBufferOpen = false;
      */
     private void celtium$probePackProgram(ShadercGlslCompiler compiler) {
         if (SHADER_PACK_PATH.isEmpty() || !compiler.available()) {
+            // Say why: the probe returning silently made it look as though the pack's programs were being compiled when they were not, and the
+            // difference between "no path" and "no compiler" is the difference between a missing argument and a missing native library.
+            System.out.println("[Celtium] CELTIUM_PACK_PROGRAM skipped path=" + !SHADER_PACK_PATH.isEmpty()
+                    + " compiler=" + compiler.available());
             return;
         }
         java.nio.file.Path pack = java.nio.file.Paths.get(SHADER_PACK_PATH);
