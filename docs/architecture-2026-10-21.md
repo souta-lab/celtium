@@ -629,6 +629,20 @@ texture系1 familyを配列indexへ変換する最初の実装を試し、**NO_C
    → 変換時は `descriptorSetFor` 経路を **array 経路に置き換え**、pool も配列用に分離する。
 3. push範囲は 208→**212**（index 4バイト）。ITEM familyが208/212にlightmapを持つが、groupはどちらか一方の family でしか描かれないため衝突しない。
 
+**2回目の試行（2026-10-22）**: 上記1（配列をprepare時に作る＝`celtium$registerTexture` を prepare で呼ぶ）と
+2（`descriptorSetFor` を array mode で配列setに短絡）を実装したが、依然 **NO_CAPTURE・validation 20件**。
+残ったVUIDは全て:
+
+```
+VUID-VkDescriptorSetAllocateInfo-pSetLayouts-03044
+  pSetLayouts[0] was created with VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT_EXT
+  but pAllocateInfo->descriptorPool was not created with VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT
+```
+
+**次の必要条件**: 配列modeのfamilyは、`createDescriptorPool`（と「作成時に1 set 予約する」経路）を
+**UPDATE_AFTER_BIND対応プールに切り替える**か、array mode では**set確保を一切しない**（poolを作らない）。
+確保元のプールのフラグが layout と揃っていない限り、このVUIDは消えない。
+
 失敗した実装は revert 済みで、再ビルドは検証済みjar `0b3b49d8…` と**バイト一致**（ツリーが緑に戻ったことの確認）。
 
 ## 12. 受入に届かせるには何を変えるか（2026-10-22・実測に基づく設計メモ）
