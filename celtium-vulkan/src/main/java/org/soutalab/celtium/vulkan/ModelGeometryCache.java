@@ -35,6 +35,9 @@ public final class ModelGeometryCache {
     private static final int MODEL_QUAD_LIMIT = Integer.getInteger("celtium.vulkan.modelQuadLimit", 0).intValue();
 
     /** The built meshes, keyed by display-list id, or null when they have not been built. */
+    /** Reusable destination for the model-geometry read: the rebuild loop allocates nothing per list with it. */
+    private final VulkanModelQuadCapture.Scratch snapshotScratch = new VulkanModelQuadCapture.Scratch();
+
     private LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
 
     /** Display lists a replay asked for that this cache has no mesh for, and the bounded log of them. */
@@ -135,10 +138,12 @@ public final class ModelGeometryCache {
         try {
             // The mesh being built, held so a failure before it reaches the table can still release it.
             for (int id : ids) {
-                VulkanModelQuadCapture.Snapshot snapshot = VulkanModelQuadCapture.snapshot(id);
-                if (snapshot == null) {
+                // Filled in place: the arrays are read until the next list and never kept, and this loop rebuilds every list whose
+                // generation moved on - which allocated 1.3 GB of float[] per run when each snapshot was a fresh copy.
+                if (!VulkanModelQuadCapture.snapshotInto(id, this.snapshotScratch)) {
                     continue;
                 }
+                VulkanModelQuadCapture.Scratch snapshot = this.snapshotScratch;
                 VulkanDynamicMesh existing = built.get(Integer.valueOf(id));
                 if (existing != null && existing.matches(id, snapshot.generation)) {
                     continue;

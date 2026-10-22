@@ -710,6 +710,49 @@ public final class VulkanModelQuadCapture {
         return new Snapshot(geometry.listId, geometry.generation, geometry.quads, positions, uvs, normals);
     }
 
+    /**
+     * Reusable destination for {@link #snapshotInto}: the three arrays are grown as needed and then overwritten in place.
+     * <p>
+     * {@link #snapshot} copies a list's geometry into three fresh arrays, and the mesh builder consumes them immediately - so one
+     * caller rebuilding hundreds of lists allocated 1.3 GB of float[] in a single JFR of the world window. A caller that only reads
+     * the arrays until the next call can hand its own scratch in instead.
+     */
+    public static final class Scratch {
+        public int listId;
+        public int generation;
+        public int quads;
+        public float[] positions = EMPTY_FLOATS;
+        public float[] uvs = EMPTY_FLOATS;
+        public float[] normals = EMPTY_FLOATS;
+    }
+
+    private static final float[] EMPTY_FLOATS = new float[0];
+
+    /** {@return whether the list was captured with geometry}, filling {@code out} in place. */
+    public static synchronized boolean snapshotInto(int listId, Scratch out) {
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        if (geometry == null || geometry.quads == 0) {
+            return false;
+        }
+        int floats = geometry.quads * 4;
+        if (out.positions.length < floats * 3) {
+            out.positions = new float[floats * 3];
+        }
+        if (out.uvs.length < floats * 2) {
+            out.uvs = new float[floats * 2];
+        }
+        if (out.normals.length < geometry.quads * 3) {
+            out.normals = new float[geometry.quads * 3];
+        }
+        out.listId = geometry.listId;
+        out.generation = geometry.generation;
+        out.quads = geometry.quads;
+        System.arraycopy(geometry.positions, 0, out.positions, 0, floats * 3);
+        System.arraycopy(geometry.uvs, 0, out.uvs, 0, floats * 2);
+        System.arraycopy(geometry.normals, 0, out.normals, 0, geometry.quads * 3);
+        return true;
+    }
+
     /** {@return every captured list id, for the renderer to walk}. */
     public static synchronized int[] listIds() {
         int[] ids = new int[LISTS.size()];
