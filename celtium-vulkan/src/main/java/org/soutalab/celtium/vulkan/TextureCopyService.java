@@ -181,6 +181,13 @@ public final class TextureCopyService {
      * framebuffer has no alpha bits), so the image's alpha is the acquire's clear - 1 - and the blit's verbatim copy
      * is the answer GL owes. {@code -Dceltium.vulkan.windowCopyBlit=false} keeps the host route for comparison.
      */
+    /**
+     * {@code -Dceltium.vulkan.copyOrderWithoutIdle=false} restores the device-idle wait that used to order the source's
+     * draws before a native copy. The A/B switch stays because the wait is what the copy's ordering was measured with.
+     */
+    private static final boolean COPY_ORDER_WITHOUT_IDLE = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.copyOrderWithoutIdle", "true"));
+
     private static final boolean WINDOW_COPY_BLIT = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.windowCopyBlit", "true"));
 
@@ -463,7 +470,13 @@ public final class TextureCopyService {
                 // cheaper one afterwards (no readback, no upload).
                 if (this.host.hasPendingImmediateWork()) {
                     this.host.flushPendingBeforeGlDraw();
-                    if (!this.host.waitForIdle()) {
+                    if (COPY_ORDER_WITHOUT_IDLE) {
+                        // Same queue, same order: the draws were recorded before this blit, so submitting them now and
+                        // the blit next preserves the order the idle wait used to buy, without stopping the render
+                        // thread for a full device round trip (measured 1.6 ms per copy, three copies a frame in the
+                        // menu).
+                        this.host.context().celtium$flushBatchedSubmits();
+                    } else if (!this.host.waitForIdle()) {
                         blitRefusal = "the GPU did not confirm the source's draws before the native copy";
                     }
                 }
