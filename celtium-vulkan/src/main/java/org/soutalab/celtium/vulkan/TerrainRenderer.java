@@ -251,6 +251,13 @@ public final class TerrainRenderer {
 
     /** Ranges the shadow pass could not be told about because the cap was reached; counted, never dropped silently. */
     private int shadowRangesDropped;
+    /** Time inside {@code vkCmdDrawIndexedIndirect} itself, against the whole pass's recording bracket. */
+    private long indirectDrawNanos;
+
+    /** {@return nanoseconds spent inside the indirect draw calls since the last reset}. */
+    long indirectDrawNanos() {
+        return this.indirectDrawNanos;
+    }
 
     /** {@return the ranges the last indirect batch recorded}, each {offset, count, vertexBuffer, indexBuffer}. */
     java.util.List<long[]> shadowRecordedRanges() {
@@ -592,8 +599,10 @@ public final class TerrainRenderer {
                 this.terrainIndirectClampEvents++;
             }
             long offsetBytes = this.indirectBatchOffset + (long) first * INDIRECT_COMMAND_BYTES;
+            long drawStarted = System.nanoTime();
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
+            this.indirectDrawNanos += System.nanoTime() - drawStarted;
             // The tuple for the shadow pass: this range and the buffers it reads, captured together.
             if (this.shadowRecordedRanges.size() < 64) {
                 this.shadowRecordedRanges.add(new long[] {offsetBytes, count,

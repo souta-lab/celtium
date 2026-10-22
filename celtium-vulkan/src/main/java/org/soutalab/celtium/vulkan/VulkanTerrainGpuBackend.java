@@ -10187,6 +10187,7 @@ this.frameBufferOpen = false;
                 // identity's first group says nothing about the families that arrive later in the frame.
                 + " targetStages=[" + this.celtium$targetStagesSummary() + "]"
                 + " framePassSplit=[" + FramePassTimings.summary() + "]"
+                + " terrainDrawCallMillis=" + (this.terrain.indirectDrawNanos() / 1_000_000L)
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
                 // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
