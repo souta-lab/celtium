@@ -747,3 +747,22 @@ validation errors: 7件（VUID-VkGraphicsPipelineCreateInfo-Input-07904）
 
 この2点は次ラウンドで修正する。深度イメージ・バリア・クリア・読み戻しの土台自体は前ラウンドで検証済み
 （`depth=[1,1] covered=0` のクリア済みマップ、validationエラー0）。
+
+### S3達成6: 影マップにキャスタが描けた（2026-10-23・実測）
+
+2点の修正で影マップが埋まった:
+1. **深度用パイプラインの頂点入力variant**を追加（`createDepthOnlyPipeline(layout, vertex, depthFormat, vertexInterface)`）。
+   attribute-free版では pack の頂点モジュールと不一致（VUID-...-Input-07904 が7件）。
+2. 影チェックを**ジオメトリ採用後**に移動（それまでは生成時の三角形＝3頂点で走っていた）。
+
+実測（leg `packblit-32`, AMD, BSL v10.1.8, world, validation ON）:
+```
+CELTIUM_PACK_SHADOW shadow 64x64 depth=[0.00000,1.00000] covered=2466/4096 casters=65536
+validation errors: 0
+```
+- **65,536頂点**をライト視点で深度へ描画、**2,466/4,096 (60.2%) のピクセルが深度<1**
+- validationエラー0
+
+⇒ 影マップ（深度）が実際に生成されている。次は (a) 深度範囲 0.0 の確認（正射影のnear/far）、
+(b) このマップを pack の `shadow` プログラムの出力に置き換え、(c) `shadowModelView/shadowProjection` を
+実値で供給して gbuffers から影を参照、の順。

@@ -355,6 +355,81 @@ public final class ShaderPackPipelineFactory {
      * what a shadow pass does. The vertex positions come from {@code gl_VertexIndex} here so the pipeline can be verified
      * with no buffers at all; the terrain variant is the same pipeline with the terrain vertex layout added.
      */
+    /**
+     * The same depth-only pipeline, with the pack's vertex input declared.
+     * <p>
+     * The attribute-free variant is right for a shader that reads nothing and wrong for a pack's vertex module, which
+     * declares inputs: validation reports VUID-VkGraphicsPipelineCreateInfo-Input-07904 for every unconsumed attribute
+     * and the draw rasterises nothing. This overload builds the input state from the same interface the colour pipeline
+     * uses, so the shadow pass binds the same buffers.
+     */
+    public long createDepthOnlyPipeline(long pipelineLayout, ModuleHandle vertex, int depthFormat,
+                                        LegacyGlslLowering.Result vertexInterface) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(1, stack);
+            stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertex.module())
+                    .pName(stack.UTF8("main"));
+            Map<String, Integer> attributes = vertexInterface.attributes();
+            VkVertexInputAttributeDescription.Buffer attributeDescriptions =
+                    VkVertexInputAttributeDescription.calloc(attributes.size(), stack);
+            VkVertexInputBindingDescription.Buffer bindingDescriptions =
+                    VkVertexInputBindingDescription.calloc(attributes.size(), stack);
+            int index = 0;
+            java.util.List<String> ordered = new java.util.ArrayList<>(attributes.keySet());
+            ordered.sort(java.util.Comparator.comparingInt(attributes::get));
+            for (String name : ordered) {
+                if (occurrences(vertexInterface.source(), name) <= 1) {
+                    continue;
+                }
+                String type = vertexInterface.attributeTypes().get(name);
+                int[] format = vertexFormat(type);
+                if (format == null) {
+                    continue;
+                }
+                int location = attributes.get(name).intValue();
+                bindingDescriptions.get(index).binding(location).stride(format[1])
+                        .inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                attributeDescriptions.get(index).location(location).binding(location).format(format[0]).offset(0);
+                index++;
+            }
+            bindingDescriptions.limit(index);
+            attributeDescriptions.limit(index);
+            VkPipelineVertexInputStateCreateInfo vertexInput =
+                    VkPipelineVertexInputStateCreateInfo.calloc(stack).sType$Default()
+                            .pVertexBindingDescriptions(bindingDescriptions)
+                            .pVertexAttributeDescriptions(attributeDescriptions);
+            VkPipelineInputAssemblyStateCreateInfo assembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+                    .sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
+                    .sType$Default().viewportCount(1).scissorCount(1);
+            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                    .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
+                    .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
+            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                    .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            VkPipelineDepthStencilStateCreateInfo depthState = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                    .sType$Default().depthTestEnable(true).depthWriteEnable(true)
+                    .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+            org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamic =
+                    org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                            .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR));
+            org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR rendering =
+                    org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR.calloc(stack).sType$Default()
+                            .colorAttachmentCount(0).depthAttachmentFormat(depthFormat);
+            VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
+                    .pInputAssemblyState(assembly).pViewportState(viewport).pRasterizationState(raster)
+                    .pMultisampleState(multisample).pDepthStencilState(depthState).pDynamicState(dynamic)
+                    .layout(pipelineLayout).renderPass(VK_NULL_HANDLE).pNext(rendering.address());
+            LongBuffer handle = stack.mallocLong(1);
+            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            if (result != VK_SUCCESS) {
+                throw new IllegalStateException("vkCreateGraphicsPipelines(depth-only with input) failed: " + result);
+            }
+            return handle.get(0);
+        }
+    }
+
     public long createDepthOnlyPipeline(long pipelineLayout, ModuleHandle vertex, int depthFormat) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(1, stack);

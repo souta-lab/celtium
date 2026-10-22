@@ -670,7 +670,8 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             // The casters, through the pack's own vertex module with no fragment stage: that is what a shadow pass is,
             // and the positions were baked into clip space from the light's viewpoint.
             long pipeline = new ShaderPackPipelineFactory(this.context)
-                    .createDepthOnlyPipeline(this.pipelineLayout, this.vertexHandle, VK_FORMAT_D32_SFLOAT);
+                    .createDepthOnlyPipeline(this.pipelineLayout, this.vertexHandle, VK_FORMAT_D32_SFLOAT,
+                            this.passInterface);
             vkCmdBindPipeline(commandBuffer, org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(commandBuffer, org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                     this.pipelineLayout, 0, stack.longs(this.descriptorSet), null);

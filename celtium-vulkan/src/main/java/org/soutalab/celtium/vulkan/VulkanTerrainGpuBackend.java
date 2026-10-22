@@ -15463,7 +15463,8 @@ this.frameBufferOpen = false;
             if (target.colorImage() != 0L) {
                 // Re-render the probe's image with whatever geometry has been installed (the capture arrives after the
                 // probe is created), so the blit delivers the world through the pack's stages rather than the triangle.
-                if (Boolean.getBoolean("celtium.shaderpack.probeShadow") && !this.packShadowLogged) {
+                if (Boolean.getBoolean("celtium.shaderpack.probeShadow") && !this.packShadowLogged
+                        && this.packGeometryAdopted) {
                     this.packShadowLogged = true;
                     System.out.println("[Celtium] CELTIUM_PACK_SHADOW "
                             + this.shaderPackDrawProbe.renderShadowDepthPlumbing());
