@@ -819,3 +819,20 @@ family側も **`descriptorBindingVariableDescriptorCount` を同じ値で宣言*
 ⇒ `(immediate textured)` の OOM を出しているのはこの3つではない。次は
 **`createDescriptorPool` 世代の確保**（`VulkanImmediateTexturePipeline` の pool を array mode で `maxSets=1` にした一方、
 どこかが2個目を確保している）と、**`ensure()` が複数回呼ばれて配列を2つ作る**経路を疑う。
+
+**6回目の試行（2026-10-22・機構完成・性能は純損失）**: 条件1-6を全て満たし、**AMD/Intel とも PASSED・画像gate PASSED・validation 0件**、
+`arrayDraws=138205`（AMD）/`75161`（Intel）（jar `ae205d49`）。しかし A/B（interleaved 4ペア・負荷5.6）では
+
+```
+control (v0.0.8-alpha, 5eb9bf87) 1.704-1.825 ms
+array   (ae205d49)              1.797-1.897 ms   → 1.067x 遅い
+```
+
+**原因の見立て**: ①4096要素配列の動的indexサンプリングが、固定samplerより高い（両ドライバで同傾向）②descriptor bindは
+既にbind cacheで安く、配列化の利得が無い③push 4バイト増。
+
+⇒ **配列化は単独では損**。§11.6 の本来の狙い（pipelineでソート→runをまとめ→`vkCmdDrawIndexedIndirect`で 159→11 draw）を
+同じ変更に含めない限り、既定で有効にしてはいけない。実装は revert 済み（`git revert cfe0dbdbb`）。
+
+**次の設計判断**: ⑤（ソート＋arena＋indirect）を先に実装してから配列化を同時に入れるか、配列化を
+`-D`スイッチ＋シェーダvariant（array/単体sampler）で切替可能にして既定OFFで入れるか。前者は一括で重く、後者はシェーダ2系統。
