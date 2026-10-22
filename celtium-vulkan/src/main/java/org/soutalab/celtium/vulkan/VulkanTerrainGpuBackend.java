@@ -7588,8 +7588,11 @@ this.frameBufferOpen = false;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
         int sourceAlpha = blend ? glBlendFactorToVk(this.immediateState.blendSrcAlpha()) : 0;
         int destinationAlpha = blend ? glBlendFactorToVk(this.immediateState.blendDstAlpha()) : 0;
-        int colorOp = glBlendEquationToVk(this.immediateState.blendEquationRgb());
-        int alphaOp = glBlendEquationToVk(this.immediateState.blendEquationAlpha());
+        // Zeroed when blending is off, exactly like the factors above. The equations were captured unconditionally, so a
+        // pass that had blending disabled still carried whatever equation the game last set into the state key - and a
+        // differing key means a different pipeline and a new group, for state that cannot affect the draw at all.
+        int colorOp = blend ? glBlendEquationToVk(this.immediateState.blendEquationRgb()) : 0;
+        int alphaOp = blend ? glBlendEquationToVk(this.immediateState.blendEquationAlpha()) : 0;
         int writeMask = this.immediateState.colorMask();
         // Comparison switch, default on: forcing the threshold to zero isolates alpha testing in one build.
         float alphaReference = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
