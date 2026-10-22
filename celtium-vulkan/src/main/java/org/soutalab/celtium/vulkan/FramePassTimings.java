@@ -213,9 +213,19 @@ public final class FramePassTimings {
 
     /** Opens a pass bracket. Nested passes are allowed: an inner pass's time stays inside its outer pass. */
     public static void begin(String pass) {
-        int counted = indexOf(pass);
+        // The GUI flag first, by identity: the call sites pass string literals, so this is the same comparison indexOf
+        // made, without the hash lookup. It has to stay unconditional because the group logic reads it while the timings
+        // are off.
+        if (pass == "gui") {
+            guiActive = true;
+        }
+        // The call counts used to run on every bracket whether the timings were enabled or not - 1.1% of the render
+        // thread in a steady-state JFR, spent on a hash lookup per bracket. The question they answer ("was the bracket
+        // opened at all, or opened and empty?") is only asked while diagnosing, so they are opt-in now.
+        // Resolved when anything needs it: the timings themselves when they are enabled, or the counts when asked for.
+        // Skipping it when both are off is the point - it is the hash lookup that cost 1.1% of the render thread.
+        int counted = enabled() || COUNT_CALLS ? indexOf(pass) : -1;
         if (counted >= 0) BEGIN_CALLS[counted]++;
-        if (counted == GUI_INDEX) guiActive = true;
         if (!enabled() || frameStart == 0L || counted < 0) return;
         int i = counted;
         long now = clockNanos();
@@ -289,6 +299,15 @@ public final class FramePassTimings {
     /** The GUI bracket's name: {@link #end} compares it directly so the disabled path pays no map lookup. */
     private static final String GUI_PASS = "gui";
     private static final int GUI_INDEX = indexOf("gui");
+
+    /**
+     * Whether per-bracket call counts are kept while the timings are disabled.
+     * <p>
+     * Off by default: the counts cost a hash lookup on every bracket, measured at 1.1% of the render thread in a
+     * steady-state profile. They exist to separate "the bracket never ran" from "the bracket ran and measured zero", a
+     * question asked while diagnosing, so they are a switch rather than a permanent tax.
+     */
+    private static final boolean COUNT_CALLS = Boolean.getBoolean("celtium.vulkan.passCounts");
 
     private static int indexOf(String pass) {
         int slot = System.identityHashCode(pass) & 31;
