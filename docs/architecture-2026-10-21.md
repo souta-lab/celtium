@@ -513,6 +513,23 @@ JFR定常（1,215サンプル）とpassSplitから、受理経路を**構造変�
 5. **受入**: ①パックON/OFFの presented 画像が**目視で異なる** ②validation 0件 ③`CELTIUM_PACK_DRAW` の記録が
    program名付きで出る ④両GPUで gate PASSED。
 
+### 13.1 既存mod（Iris）との対応表 — 影を何に載せるか
+
+リポジトリには Iris の shader frontend が同梱されている（`modern/src/main/shaders_java/net/irisshaders/iris/`、926ファイル）。
+影の設計はそこから**要素単位で採り、実装は自前**にする（利用者指示②③）。実コードの該当箇所つきで現状を並べる。
+
+| Iris の要素（実装位置） | Iris の内容 | Celtium の現状 | 次の一手 |
+|---|---|---|---|
+| 解像度 (`ShadowRenderer:120` `shadowDirectives.getResolution()`) | **パックが宣言**する shadow map 解像度 | **2048固定**（`celtium.shadow.mapSize`） | パックの directive を読んで既定にする |
+| 影の距離 (`ShadowRenderer:321` `IrisVideoSettings.shadowDistance * 16`) | ブロック単位の距離（設定で上書き可） | **±48固定**（`celtium.shadow.radius`） | 同上。距離＝光源box半径に直結 |
+| **distortion / half-plane** (`ShadowRenderer:132` "half plane = …") | カメラ近傍にテクセルを集中させる**非線形ワープ** | **無し**（等間隔ortho） | **最優先**: 同じ距離を少ない解像度でカバーできる。Irisの式を自前実装 |
+| 投影の種類 (`ShadowRenderer:447-450`) | ortho と、legacy pack向け perspective の両対応 | ortho のみ | パックが perspective を要求したら追加 |
+| 光源行列 (`shadows/ShadowMatrices.java`) | light view/proj の生成とbias | JOML `ortho` + **Vulkan深度remap**（対応済み） | 変更不要（実測で正しい） |
+| 描画対象 (`ShadowRenderer.render` 周辺) | terrain・entity・block entity | **地形のみ** | entity casters（immediate経路）を足す |
+| target 構成 (`shadows/ShadowRenderTargets.java`) | `shadowtex0/1`・depth・color を持つ | **depthのみ** | パックの `shadowtex` sampler を繋ぐ段で必要 |
+
+**優先順**: ① distortion（コスト/品質の両方に効く）→ ② パック宣言の解像度・距離 → ③ entity casters → ④ `shadowtex` color target（パック接続時）。
+
 ### 注意（この期間に踏んだ罠）
 - **probeは既定で呼ばれない**（`celtium.shaderpack.compileProbe=true` が必要）。フラグ無しの「無出力」を「失敗」と読まない。
 - `CELTIUM_PACK_DRAW_SUBMIT` の8,215行は**ログ出力条件のバグ**だった（`shaderPackDraws < 3` がパック無しで常に真）。
