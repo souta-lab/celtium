@@ -2250,6 +2250,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
                 + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
                 + (BATCH_TIMINGS ? offerStageNanosSummary() : "")
+                + " append[ms=" + (this.immediateStatistics.appendNanos() / 1000000L) + "]"
                 + " prepare[nanos=" + this.immediateStatistics.prepareImmediateNanos()
                 + " calls=" + this.immediateStatistics.prepareImmediateCalls()
                 + " perFrameMs=" + String.format(java.util.Locale.ROOT, "%.2f",
@@ -6734,6 +6735,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 flushPendingBeforeGlDraw();
                 return false;
             }
+            // Stage 11 marks the end of the preflight: the pipeline and descriptor are decided.
+            celtium$offerStage(11);
             // The pass identity joins the key here: a batch from another render target or viewport is not part of this
             // group, which is what stops two passes merging into one draw (audit S10).
             boolean samePass = this.currentGroupTarget == this.targetRegistry.currentIdentity()
@@ -7094,6 +7097,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.currentGroupTextureIndex = celtium$registerTexture(currentGroupTextureImage);
                 this.currentGroupLightmapImage = this.lightmapTexture;
             }
+            // Stage 12 marks the end of the block that prepares the batch and opens its group.
+            celtium$offerStage(12);
             // Only a layout that samples a texture needs its bound name to have a mirror. Asked without that, this
             // refused every POSITION and POSITION_NORMAL batch that happened to be offered while a stale texture was
             // bound - measured on leg gv-vset-r30-site2, where the Sodium-style tooltip's own box (stride 12, four
@@ -7109,7 +7114,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return false;
             }
             }
-            celtium$offerStage(11);
+            celtium$offerStage(13);
         if (formatId == 5 && !fastMerged && !canBuildDescriptor(boundTexture)) {
                 // The particle family is the one that dropped: every post-accept drop counted so far is format 5, which is
                 // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
@@ -7180,7 +7185,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
             }
 
-            celtium$offerStage(12);
+            celtium$offerStage(14);
             if (formatId >= 0 && formatId < this.acceptedByFormat.length) {
 
                 this.acceptedByFormat[formatId]++;
