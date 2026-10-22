@@ -609,3 +609,18 @@ CELTIUM_PACK_RERENDER_GEOMETRY vertices=4248 indices=6372 pipeline=0x2b5...
 読み戻し（`probeSample`）はレイアウトを変えるため既定off。
 
 残り: 実カメラ行列（現在はfitによる画面フィット）、パス構成（gbuffer→composite）、影パス。
+
+### S3達成2: ゲームのカメラでpackが地形を描く（2026-10-23・実画像）
+
+`docs/evidence/pack-camera-2026-10-23.png`（1280×720）:
+```
+CELTIUM_PACK_CAPTURE finalized format=3 vertices=2360
+CELTIUM_PACK_CAMERA baked=2360/2360 projection=[0.803,1.428,-1.0002,0.0]
+CELTIUM_PACK_GEOMETRY terrain vertices=2360 format=3 attributes=7
+提示画像: clear 624,800px / (118,118,118) 277,440px / (199,199,199) 15,520px / white 3,380px
+```
+⇒ fit（画面フィット）ではなく**ゲームのprojection×modelviewをCPUでNDCへ焼き込み**、
+packのステージが**実カメラ視点**で地形を描いた（被覆 92,160→277,440px）。
+行列をuploadするのではなく頂点へ焼く方式が効く理由も判明済み（uniformインターフェイスが届かない）。
+
+残り: 全セクション（現在はキャプチャした2360頂点のみ）、gbuffer→composite のパス構成、影パス（ライト行列は同じ焼き込み方式を流用できる）。

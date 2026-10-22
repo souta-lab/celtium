@@ -15432,6 +15432,7 @@ this.frameBufferOpen = false;
             if (target.colorImage() != 0L) {
                 // Re-render the probe's image with whatever geometry has been installed (the capture arrives after the
                 // probe is created), so the blit delivers the world through the pack's stages rather than the triangle.
+                this.shaderPackDrawProbe.setWorldMatrices(this.worldSnapshotProjection, this.lastModelViewMatrix);
                 String reRendered = this.shaderPackDrawProbe.renderOffscreen();
                 if (reRendered != null && !this.packReRenderLogged && reRendered.contains("vertices=3 ")) {
                     this.packReRenderLogged = true;

@@ -105,6 +105,24 @@ final class ShaderPackDrawProbe implements AutoCloseable {
     private ShaderPackPipelineFactory.ModuleHandle fragmentHandle;
     /** Which vertex buffer holds a_Position, so the diagnostic fit can be baked into it. */
     private int positionsBufferIndex = -1;
+    /** The game's projection and model-view for the world pass, when the caller supplies them. */
+    private float[] worldProjection;
+    private float[] worldModelView;
+
+    /**
+     * Supplies the camera the world pass is drawn with. With these, the captured world coordinates are transformed to
+     * clip space on the CPU and baked into the position attribute, so the probe shows the scene from the game's own
+     * viewpoint instead of fitting it to the picture. The matrices are baked rather than uploaded because the transform
+     * uniforms a pack reads did not reach the geometry (the fit had the same problem), while baked positions are
+     * independent of that interface.
+     */
+    void setWorldMatrices(float[] projection, float[] modelView) {
+        if (projection == null || modelView == null || projection.length < 16 || modelView.length < 16) {
+            return;
+        }
+        this.worldProjection = projection.clone();
+        this.worldModelView = modelView.clone();
+    }
 
     /** Whether a descriptor set is bound at all; the built-in triangle's layout has none. */
     private final boolean builtin;
@@ -845,6 +863,41 @@ final class ShaderPackDrawProbe implements AutoCloseable {
         float scale = 2.0f / extent;
         float centreX = (minX + maxX) * 0.5f;
         float centreY = (minY + maxY) * 0.5f;
+        // With the game's camera the vertices go to clip space through the real projection and model-view; without it
+        // the picture-fitting transform below still applies, which is what the earlier legs measured.
+        float[] clipMatrix = this.worldProjection != null && this.worldModelView != null
+                ? multiplyColumnMajor(this.worldProjection, this.worldModelView) : null;
+        if (clipMatrix != null && this.positionsBufferIndex >= 0) {
+            java.nio.FloatBuffer positionsBuffer = MemoryUtil.memFloatBuffer(
+                    this.vertexBuffers.get(this.positionsBufferIndex).mappedAddress(), positions.length);
+            int baked = 0;
+            for (int vertex = 0; vertex < vertices; vertex++) {
+                float x = positions[vertex * 4];
+                float y = positions[vertex * 4 + 1];
+                float z = positions[vertex * 4 + 2];
+                float cx = clipMatrix[0] * x + clipMatrix[4] * y + clipMatrix[8] * z + clipMatrix[12];
+                float cy = clipMatrix[1] * x + clipMatrix[5] * y + clipMatrix[9] * z + clipMatrix[13];
+                float cw = clipMatrix[3] * x + clipMatrix[7] * y + clipMatrix[11] * z + clipMatrix[15];
+                if (!Float.isFinite(cw) || Math.abs(cw) < 1.0e-6f) {
+                    continue;
+                }
+                positionsBuffer.put(vertex * 4, cx / cw);
+                positionsBuffer.put(vertex * 4 + 1, cy / cw);
+                positionsBuffer.put(vertex * 4 + 2, 0.0f);
+                positionsBuffer.put(vertex * 4 + 3, 1.0f);
+                baked++;
+            }
+            if (!geometryFitLogged) {
+                geometryFitLogged = true;
+                System.out.println("[Celtium] CELTIUM_PACK_CAMERA baked=" + baked + "/" + vertices
+                        + " projection=[" + this.worldProjection[0] + "," + this.worldProjection[5] + ","
+                        + this.worldProjection[10] + "," + this.worldProjection[15] + "]");
+            }
+            writeTransformMatrix((8 * 16 + 12) * 4, identityMatrix());
+            writeTransformMatrix((8 * 16 + 28) * 4, identityMatrix());
+            writeTransformMatrix((8 * 16 + 44) * 4, identityMatrix());
+            return String.format(java.util.Locale.ROOT, "camera baked=%d/%d", baked, vertices);
+        }
         float[] fit = new float[16];
         fit[0] = scale;
         fit[5] = scale;
@@ -882,6 +935,21 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                     + positions[4] + "," + positions[5] + "][" + positions[8] + "," + positions[9] + "]");
         }
         return String.format(java.util.Locale.ROOT, "bounds=%.1fx%.1f scale=%.4f", extentX, extentY, scale);
+    }
+
+    /** {@return the column-major product of two 4x4 matrices}. */
+    private static float[] multiplyColumnMajor(float[] a, float[] b) {
+        float[] out = new float[16];
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; k++) {
+                    sum += a[k * 4 + row] * b[column * 4 + k];
+                }
+                out[column * 4 + row] = sum;
+            }
+        }
+        return out;
     }
 
     private static float[] identityMatrix() {
