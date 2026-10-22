@@ -81,6 +81,6 @@ scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
 ```
 - `.gv-verify/jars/<stage>` には **forge jar と validation-client jar の2つ**を置き、`build-provenance.json` を作る（KPIは両方を要求）
 - **stage名・leg名の再利用は不可**（"artifact already exists" でFAIL）
-- 影の比較は `-Dceltium.shadow.enabled=false` との presented 画像差分で行う（`screenshots/celtium-presented-world-*.png` の最終枚）
+- 影は native 実装を削除済み（pack 側の影は Demonica fork で実装する）。比較画像は presented dump の最終枚を使う
 - パック: `-Dceltium.shaderpack.path=<zip>` ＋ `-Dceltium.shaderpack.compileProbe=true`、shaderc は `CELTIUM_LEG_EXTRA_LIBS=.gv-verify/lib/lwjgl-shaderc-3.4.3.jar`
 - ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
