@@ -15,6 +15,16 @@ import org.taumc.celeritas.CeleritasVintage;
 
 @Mixin(Minecraft.class)
 public class MinecraftMixin {
+
+    /**
+     * Whether the swap redirect pumps the window messages itself.
+     * <p>
+     * A presented frame still needs the events a GL swap would have delivered, so this is on by default. It is a switch
+     * because the launcher session measured the pump crash inside SDL on Wayland while the headless X11 leg does not, and
+     * turning one flag off is the way to tell "the pump is the fault" from "the pump is a casualty" without a build.
+     */
+    private static final boolean PUMP_IN_REDIRECT =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pumpInRedirect", "true"));
     @Unique
     private final RenderAheadManager celeritas$renderAheadManager = new RenderAheadManager();
 
@@ -557,7 +567,9 @@ public class MinecraftMixin {
                 // The frame is already on the swapchain, so only the swap is skipped: processMessages() is
                 // everything Display.update() does besides it - GLFW's events, the mouse position and the resize
                 // bookkeeping Minecraft.checkWindowResize reads - and skipping all of that froze input and resizes.
-                org.lwjgl.opengl.Display.processMessages();
+                if (PUMP_IN_REDIRECT) {
+                    org.lwjgl.opengl.Display.processMessages();
+                }
                 return;
             }
         } catch (RuntimeException | LinkageError ignored) {

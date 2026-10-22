@@ -239,3 +239,8 @@ SIGSEGV in libSDL3.so
 libSDL3 が1つだけマップされているかも確認する。
 
 **2026-10-22 reproduction split**: the same jar passes a headless Sway X11 leg (presents at frames 0 and 3, no fault) and dies in SDL_PollEvent only on the real Wayland session. The Java frames put that call inside the redirect replacing the GL swap, via Display.processMessages -> CleanroomWindowBridge.pump, so a nested SDL pump is the suspect; SDL is not reentrant. Next: check whether the hs_err library map holds one libSDL3, then either skip the pump during the splash or pump exactly once per frame.
+
+**切り分けスイッチ（2026-10-22 実装・検証済み）**: `-Dceltium.vulkan.pumpInRedirect=false` で、present後の
+`Display.processMessages()` を呼ばない。既定は true（従来どおり）。jar `706002c27965` で **true/false とも AMD leg PASSED・
+画像gate PASSED・validation 0件**（挙動の既定は不変）。Prismの起動では wrapper が `no-pump` ファイルの有無で
+このフラグを付けるので、SDLのポンプが原因かを1ファイルで切り分けられる。
