@@ -581,8 +581,6 @@ public final class VulkanImmediateTexturePipeline {
                     .pImageInfo(image);
             celtium$noteDescWrite(write);
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            ensureShadowResources();
-            writeShadowBindings(stack, set);
             this.setsByTextureView.put(texture.key(), set);
             this.lastDescriptorKey = texture.key();
             this.lastDescriptorSet = set;
@@ -647,8 +645,7 @@ public final class VulkanImmediateTexturePipeline {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
-                    org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(2, stack);
-            poolSize.get(1).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(8192);
+                    org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
             poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(DESCRIPTOR_SETS_PER_POOL);
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
@@ -781,21 +778,11 @@ public final class VulkanImmediateTexturePipeline {
     private void createPipelineLayout() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
-                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(3, stack);
+                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(1, stack);
             binding.get(0).binding(0)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(1)
                     .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
-            // The native shadow map: the eye-space matrix for the vertex stage and the map for both (the vertex shader
-            // declares the sampler as well).
-            binding.get(1).binding(2)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                    .descriptorCount(1)
-                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-            binding.get(2).binding(3)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                    .descriptorCount(1)
-                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
             org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo layoutInfo =
                     org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
                             .pBindings(binding);
@@ -981,146 +968,6 @@ public final class VulkanImmediateTexturePipeline {
             throw new IllegalStateException(what + " failed with VkResult " + result);
         }
     }
-    // ---- Native shadow map -----------------------------------------------------------------------------------------
-
-    /** Creates the matrix block and the placeholder map on first use, and records this instance for later updates. */
-    private void ensureShadowResources() {
-        if (shadowMatrixBuffer == null) {
-            shadowMatrixBuffer = new org.soutalab.celtium.vulkan.VulkanHostBuffer(this.context, 64L,
-                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-            // Identity with the translation far away: a finite coordinate well outside the map, so a lookup with it is
-            // skipped by comparison rather than by a non-finite divide.
-            java.nio.FloatBuffer matrix = org.lwjgl.system.MemoryUtil.memFloatBuffer(
-                    shadowMatrixBuffer.mappedAddress(), 16);
-            for (int i = 0; i < 16; i++) {
-                matrix.put(i, 0.0f);
-            }
-            matrix.put(0, 1.0f);
-            matrix.put(5, 1.0f);
-            matrix.put(10, 1.0f);
-            matrix.put(15, 1.0f);
-            matrix.put(12, -1.0e6f);
-        }
-        if (shadowPlaceholderView == 0L) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                org.lwjgl.vulkan.VkImageCreateInfo imageInfo = org.lwjgl.vulkan.VkImageCreateInfo.calloc(stack)
-                        .sType$Default().imageType(org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D)
-                        .format(org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT)
-                        .extent(it -> it.set(1, 1, 1)).mipLevels(1).arrayLayers(1)
-                        .samples(org.lwjgl.vulkan.VK10.VK_SAMPLE_COUNT_1_BIT)
-                        .tiling(org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL)
-                        .usage(org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-                                | org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT)
-                        .sharingMode(org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE)
-                        .initialLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED);
-                java.nio.LongBuffer handle = stack.mallocLong(1);
-                if (org.lwjgl.vulkan.VK10.vkCreateImage(this.context.device(), imageInfo, null, handle)
-                        == org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                    shadowPlaceholderImage = handle.get(0);
-                    org.lwjgl.vulkan.VkMemoryRequirements requirements =
-                            org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
-                    org.lwjgl.vulkan.VK10.vkGetImageMemoryRequirements(this.context.device(),
-                            shadowPlaceholderImage, requirements);
-                    org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
-                            .sType$Default().allocationSize(requirements.size())
-                            .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
-                                    org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                    "immediate item shadow placeholder"));
-                    if (org.lwjgl.vulkan.VK10.vkAllocateMemory(this.context.device(), allocate, null, handle)
-                            == org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                        shadowPlaceholderMemory = handle.get(0);
-                        org.lwjgl.vulkan.VK10.vkBindImageMemory(this.context.device(), shadowPlaceholderImage,
-                                shadowPlaceholderMemory, 0L);
-                    }
-                    org.lwjgl.vulkan.VkImageViewCreateInfo viewInfo =
-                            org.lwjgl.vulkan.VkImageViewCreateInfo.calloc(stack).sType$Default()
-                                    .image(shadowPlaceholderImage)
-                                    .viewType(org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D)
-                                    .format(org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
-                    viewInfo.subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
-                            .levelCount(1).layerCount(1);
-                    if (org.lwjgl.vulkan.VK10.vkCreateImageView(this.context.device(), viewInfo, null, handle)
-                            == org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                        shadowPlaceholderView = handle.get(0);
-                    }
-                }
-                org.lwjgl.vulkan.VkSamplerCreateInfo samplerInfo =
-                        org.lwjgl.vulkan.VkSamplerCreateInfo.calloc(stack).sType$Default()
-                                .magFilter(org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST)
-                                .minFilter(org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST)
-                                .addressModeU(org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-                                .addressModeV(org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-                                .addressModeW(org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-                if (org.lwjgl.vulkan.VK10.vkCreateSampler(this.context.device(), samplerInfo, null, handle)
-                        == org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                    shadowPlaceholderSampler = handle.get(0);
-                }
-                transitionPlaceholderToGeneral();
-            }
-        }
-        if (!SHADOW_INSTANCES.contains(this)) {
-            SHADOW_INSTANCES.add(this);
-        }
-    }
-
-    /** Writes bindings 2 and 3 of one set from whatever the current shadow sources are. */
-    private void writeShadowBindings(MemoryStack stack, long set) {
-        org.lwjgl.vulkan.VkDescriptorBufferInfo.Buffer buffer =
-                org.lwjgl.vulkan.VkDescriptorBufferInfo.calloc(1, stack);
-        buffer.get(0).buffer(shadowMatrixBuffer.buffer()).offset(0L).range(64L);
-        org.lwjgl.vulkan.VkDescriptorImageInfo.Buffer image =
-                org.lwjgl.vulkan.VkDescriptorImageInfo.calloc(1, stack);
-        long view = shadowMapView != 0L ? shadowMapView : shadowPlaceholderView;
-        long sampler = shadowMapSampler != 0L ? shadowMapSampler : shadowPlaceholderSampler;
-        image.get(0).imageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
-                .imageView(view).sampler(sampler);
-        org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer writes =
-                org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(2, stack);
-        writes.get(0).sType$Default().dstSet(set).dstBinding(2)
-                .descriptorType(org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                .descriptorCount(1).pBufferInfo(buffer);
-        writes.get(1).sType$Default().dstSet(set).dstBinding(3)
-                .descriptorType(org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                .descriptorCount(1).pImageInfo(image);
-        vkUpdateDescriptorSets(this.context.device(), writes, null);
-    }
-
-    /** Writes the eye-space light matrix the renderer composes each frame. */
-    public static void writeShadowMatrix(float[] matrix) {
-        if (shadowMatrixBuffer == null) {
-            return;
-        }
-        java.nio.FloatBuffer data = org.lwjgl.system.MemoryUtil.memFloatBuffer(
-                shadowMatrixBuffer.mappedAddress(), 16);
-        for (int i = 0; i < 16 && i < matrix.length; i++) {
-            data.put(i, matrix[i]);
-        }
-    }
-
-    /**
-     * Points every live instance's sets at the map that now exists.
-     * <p>
-     * Sets are cached per texture view and built as items are drawn - which starts before the shadow pass has an image -
-     * so this is what moves a set from the placeholder to the real map.
-     */
-    public static void setShadowSources(long view, long sampler) {
-        shadowMapView = view;
-        shadowMapSampler = sampler;
-        // The sets already handed out are *not* rewritten. vkUpdateDescriptorSets on a set that a recording or pending
-        // command buffer references invalidates that buffer without the UPDATE_AFTER_BIND layout flag, which this layout
-        // does not use (#401). Instead each pipeline's cache is emptied and its sets are retired: the recorded buffers keep
-        // valid sets (they hold the placeholder map, which is a real image), and the next draws build sets that name the
-        // real map. The retired sets are released by the completion-gated path that already exists for eviction.
-        for (int i = 0; i < SHADOW_INSTANCES.size(); i++) {
-            VulkanImmediateTexturePipeline instance = SHADOW_INSTANCES.get(i);
-            instance.retireCachedSets();
-        }
-    }
-
-    /**
-     * Moves every cached set to the retirement list and clears the cache, so the next draw builds a set from the current
-     * shadow sources.
-     */
     private void retireCachedSets() {
         for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry : this.setsByTextureView.long2LongEntrySet()) {
             this.descriptorSetsRetired++;
