@@ -6654,7 +6654,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // of all group splits.
             boolean affineRelevant = VulkanImmediateFormats.samplesTexture(formatId);
             if (retained != null || this.currentImmediateMesh == null
-                    || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
+                    || this.currentGroupFormatId != formatId
+                    // Diagnostic only: -Dceltium.vulkan.mergeAcrossTexture=true pretends every batch uses the group's
+                    // texture, which draws the wrong picture on purpose. It exists to measure the ceiling of a bindless
+                    // merge - how many groups and how many microseconds a real implementation could save - before paying
+                    // for one. Every leg using it is a measurement, never an acceptance run.
+                    || (!MERGE_ACROSS_TEXTURE && this.currentGroupTexture != boundTexture)
                     || this.currentGroupStateKey != stateKey || !samePass
                     || scissorMoved
                     || this.currentPreparedImmediate == null || this.currentPreparedImmediate.pipeline != prepared.pipeline
@@ -12883,6 +12888,8 @@ this.frameBufferOpen = false;
     private final long[][] offerStageDeltas = new long[16][2];
 
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
+    private static final boolean MERGE_ACROSS_TEXTURE =
+            Boolean.getBoolean("celtium.vulkan.mergeAcrossTexture");
     private static final boolean SKIP_IMMEDIATE_RECORD =
             Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");
 
