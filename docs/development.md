@@ -249,3 +249,8 @@ libSDL3 が1つだけマップされているかも確認する。
 フラットな `.so` だけにしたところ、LWJGLはnativesを見つけられずclasspath上の3.3.1に落ちて
 `MemoryUtil.ngetPageSize` の `UnsatisfiedLinkError` で起動失敗した。**サブディレクトリ配置とフラット配置の両方**を置く
 （7 jarを展開すればそうなる）。
+
+**Waylandでのクラッシュ（2026-10-22 実測）**: 起動は `CELTIUM_WINDOW_RENDERER created` → Vulkan device選択 → 初回presentまで進んだ後、
+`SIGSEGV in libwayland-client.so.0 wl_display_read_events` で落ちた（前回の `SDL_PollEvent` とは別箇所）。
+同じビルドが検証ハーネス（X11）では完走するため、ラッパーで **`SDL_VIDEODRIVER=x11`** を既定にした
+（instance直下に `wayland` ファイルを置くとSDLに任せる）。

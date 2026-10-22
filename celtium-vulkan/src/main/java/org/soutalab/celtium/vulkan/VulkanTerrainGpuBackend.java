@@ -862,7 +862,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // No geometry for this pass; nothing is opened, nothing has to be closed.
             return;
         }
-        if (!ensureFrameTarget()) {
+        // One of the pass' three unmeasured spans: the frame target is ensured before any bracket, and the pass read
+        // 0.8 ms against 0.2 ms of brackets, so this is where to look first.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainTarget");
+        boolean terrainTargetReady = ensureFrameTarget();
+        org.soutalab.celtium.vulkan.FramePassTimings.end("terrainTarget");
+        if (!terrainTargetReady) {
             this.terrainStatistics.notePassSkips();
             this.terrainStatistics.setLastSkipReason(pass.name() + ": no frame target");
             return;
