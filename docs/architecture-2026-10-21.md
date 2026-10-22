@@ -487,6 +487,36 @@ JFR定常（1,215サンプル）とpassSplitから、受理経路を**構造変�
 **GLスタブが要求をGPU側のリングに直接書き、描画は1本の間接コマンドで行う**設計への置き換えが必要で、
 これは本ドキュメントの§6/§7を実装するのではなく**置き換える**規模の作業。
 
+## 13. シェーダパックをワールド描画へ接続する手順（2026-10-22 実測に基づく）
+
+### 実測で確定していること
+- **S0**: BSL 10.1.8 → `files=292 programs=94 options=402 disabled=11 errors=0 loadMillis=515`（解析は0エラー）
+- **S1**: `-Dceltium.shaderpack.compileProbe=true` で **6プログラム全て `result=OK`**
+  （例 `gbuffers_basic.vsh` expanded=14,240 → lowered=14,248 → `spirvWords=1402`、module/descriptorLayout/pipelineLayout すべてok）
+- **S2（パイプライン生成まで）**: `CELTIUM_PACK_PIPELINE program=gbuffers_basic pipeline=ok attributes=7 result=OK`
+  ＝**実フレームのformat（R8G8B8A8 + D32）向けのグラフィックスパイプラインが作れる**
+- 生成に使う部品は既に存在する: `ShaderPackPipelineFactory.createModule` / `createLayoutRebased(lowered, set=?)` /
+  `ShaderPackDrawProbe.createBuiltin|createConstant`、`SpirvModule`、`ShadercGlslCompiler`
+
+### 残り（S2の後半）: ワールドの地形をこのパイプラインで描く
+1. **set 0 の実体を作る**: `createLayoutRebased` が返す `uniformBlockBinding`（実測 `uniformBlock=1`）に、パックが宣言する
+   transform block（`gbuffers_*` は `ModelViewMat`/`ProjMat`/`ModelOffset` 等）を**レイアウト順に詰めて**書く。
+   サイズとオフセットは lowered の interface から取る（推測しない）。
+2. **sampler を供給**: `samplerBindings`（実測 `samplers=0` のステージと `1` のステージがある）に対して、
+   `gtexture`→地形アトラス、`lightmap`→ライトマップ、`noisetex`→1x1白色、などの**フォールバック表**を用意する。
+3. **地形の間接描画を流用**: `TerrainRenderer` の indirect 範囲（`shadowRecordedRanges()` と同じ組）を、
+   **パック用のパイプライン＋ユニフォームで1本の `vkCmdDrawIndexedIndirect`** として記録する。
+   vertex layout は現行地形（`vertexFormats/offsets/stride`）を使い、パック側の attribute 名・location は lowered の
+   `attributes` マップ（実測 `{a_Colour=5, a_Normal=4, a_Position=6, a_TexCoord=...}`）で対応付ける。
+4. **描画順**: パックの `gbuffers_terrain` は「地形をそのまま別 pipeline で描く」ので、既存の地形パスを置き換える形で入れる。
+   壊れたら `-Dceltium.shaderpack.draw=false` で従来経路に戻せるようにする。
+5. **受入**: ①パックON/OFFの presented 画像が**目視で異なる** ②validation 0件 ③`CELTIUM_PACK_DRAW` の記録が
+   program名付きで出る ④両GPUで gate PASSED。
+
+### 注意（この期間に踏んだ罠）
+- **probeは既定で呼ばれない**（`celtium.shaderpack.compileProbe=true` が必要）。フラグ無しの「無出力」を「失敗」と読まない。
+- `CELTIUM_PACK_DRAW_SUBMIT` の8,215行は**ログ出力条件のバグ**だった（`shaderPackDraws < 3` がパック無しで常に真）。
+
 ### 計器の使い方（この期間に踏んだ罠）
 - **legが落ちたら、まず制御ビルドで同じlegを回す**（環境要因か変更要因かを分ける）。実例: 2回失敗を変更のせいと即断しかけた。
 - **フラグ名を確認する**: `-Dceltium.gpuPassTimings`（正） vs `-Dceltium.vulkan.gpuPassTimings`（無効・無出力に見える）。
