@@ -15002,6 +15002,11 @@ this.frameBufferOpen = false;
         // is exactly what the adapter expects (it reads vertices, not meshes), until enough geometry exists to fill some
         // of the frame - or until the format changes, at which point the capture is closed so the fit is computed over
         // one layout.
+        if (terrainCaptureVertices == null && formatId != 3) {
+            // The opaque terrain pass (format 3) is the bulk of the world: starting the capture on a translucent batch
+            // instead kept 68 vertices and a clear picture, because every later opaque batch was a layout mismatch.
+            return;
+        }
         terrainCaptureSeen++;
         // Close on wall time as well as on the vertex budget: a leg is short, and a capture that only closes when the
         // scene is complete never closes inside one. Three seconds of the world's own uploads is enough to hold a view.
@@ -15179,8 +15184,13 @@ this.frameBufferOpen = false;
         // Several programs, smallest first: whether the stack overflow is a property of these packs' terrain programs
         // or of the chain itself is decided by where it starts, and one program cannot answer it.
         java.util.List<org.soutalab.celtium.shaderpack.PackPath> wanted = new java.util.ArrayList<>();
-        java.util.List<String> preference = java.util.List.of("gbuffers_basic", "gbuffers_skybasic",
-                "gbuffers_textured", "gbuffers_terrain");
+        // Which program the probe draws with. The smallest one (gbuffers_basic) proves the chain but draws no texture:
+        // its fragment stage samples nothing, so the picture is flat colour. gbuffers_terrain is the program that
+        // samples the block atlas, and selecting it is what turns the probe's output into something recognisably world.
+        String programChoice = System.getProperty("celtium.shaderpack.program", "").trim();
+        java.util.List<String> preference = programChoice.isEmpty()
+                ? java.util.List.of("gbuffers_basic", "gbuffers_skybasic", "gbuffers_textured", "gbuffers_terrain")
+                : java.util.List.of(programChoice);
         for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : this.shaderPackManifest.dimensions()) {
             for (org.soutalab.celtium.shaderpack.ProgramEntry program : dimension.programs()) {
                 if (program.isComputeOnly() || preference.stream().noneMatch(w -> program.name().contains(w))) {
@@ -15282,7 +15292,14 @@ this.frameBufferOpen = false;
                 // the viewport. The first program the manifest lists is the shadow program, whose vertices depend on
                 // the shadow matrices; with a zeroed uniform block it projects to zero and is clipped away, which is
                 // exactly how the first attempts recorded a draw and showed nothing.
-                if (!this.shaderPackDrawProbeProgramChosen
+                String programFilter = System.getProperty("celtium.shaderpack.program", "").trim();
+                if (!programFilter.isEmpty()) {
+                    // A named program is honoured here as well as in the preference list: this loop is what actually
+                    // creates the probe, and its basic/textured filter is what kept gbuffers_terrain out.
+                    if (!program.name().contains(programFilter)) {
+                        continue;
+                    }
+                } else if (!this.shaderPackDrawProbeProgramChosen
                         && !program.name().contains("basic") && !program.name().contains("textured")) {
                     continue;
                 }
