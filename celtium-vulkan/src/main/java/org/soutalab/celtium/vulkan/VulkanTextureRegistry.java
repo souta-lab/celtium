@@ -614,8 +614,19 @@ public final class VulkanTextureRegistry {
         // put() per component was five AWT calls per pixel (measured in a JFR of the world window: DirectColorModel.getRGB
         // and friends 5.5% of the client thread, rgbaOf 3.8% inclusive), and it ran on the render thread while the world
         // was being entered.
-        int[] pixels = new int[w * h];
-        image.getRGB(0, 0, w, h, pixels, 0, w);
+        int[] pixels;
+        java.awt.image.Raster raster = image.getRaster();
+        java.awt.image.DataBuffer dataBuffer = raster == null ? null : raster.getDataBuffer();
+        if (dataBuffer instanceof java.awt.image.DataBufferInt intBuffer) {
+            // The game's textures are TYPE_INT_ARGB, so their pixels are already an int[] of ARGB words and the AWT
+            // colour-model conversion is pure overhead: the JFR of the world window put BufferedImage.getRGB and
+            // DirectColorModel.getRGB at the top of the client thread (55 and 30 samples) - more than the terrain
+            // pass and the flush together. Reading the backing array is the same pixels without that conversion.
+            pixels = intBuffer.getData();
+        } else {
+            pixels = new int[w * h];
+            image.getRGB(0, 0, w, h, pixels, 0, w);
+        }
         // Pack into the RGBA byte order the Vulkan image wants with one bulk put: the per-component form wrote four bytes
         // per pixel through memPutByte, which is the same pattern that made the presented dump cost 284 ms.
         int[] rgba = new int[pixels.length];

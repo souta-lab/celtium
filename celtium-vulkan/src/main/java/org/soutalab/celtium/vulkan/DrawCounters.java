@@ -23,6 +23,38 @@ public final class DrawCounters {
     private static long lastReportedIndexed;
     private static long lastReportedFrame = -1L;
 
+    /** Per-frame work counters for the KPI: what the flush records and how often state is rebound. */
+    private static final AtomicLong IMMEDIATE_GROUPS = new AtomicLong();
+    private static final AtomicLong PIPELINE_BINDS = new AtomicLong();
+    private static final AtomicLong DESCRIPTOR_BINDS = new AtomicLong();
+
+    /** One group of the immediate window's draw list was recorded. */
+    public static void noteImmediateGroup() {
+        IMMEDIATE_GROUPS.incrementAndGet();
+    }
+
+    /** One graphics pipeline was bound while recording. */
+    public static void notePipelineBind() {
+        PIPELINE_BINDS.incrementAndGet();
+    }
+
+    /** One descriptor set was bound while recording. */
+    public static void noteDescriptorBind() {
+        DESCRIPTOR_BINDS.incrementAndGet();
+    }
+
+    public static long immediateGroups() {
+        return IMMEDIATE_GROUPS.get();
+    }
+
+    public static long pipelineBinds() {
+        return PIPELINE_BINDS.get();
+    }
+
+    public static long descriptorBinds() {
+        return DESCRIPTOR_BINDS.get();
+    }
+
     private DrawCounters() {
     }
 
