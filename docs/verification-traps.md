@@ -105,3 +105,14 @@ terrain と flush を分離する目的でこのフラグを立てたところ�
 **「即時経路を除いたコスト」を表さない**。分離にはこのフラグを使わないこと。
 分離が必要なら `FramePassTimings` の bracket 内訳（terrain / flush）をそのまま読み、
 または一時的に `flush` bracket の呼び出しを外した専用ビルドで測る（受入経路とは別jar）。
+
+## 「groupsPerFrame=0」は計器未接続だった（2026-10-23）
+
+pre-terrain flush の内部を調べるために入れた `DrawCounters.immediateGroups()` は、
+**カウンタを加算する呼び出し（`noteImmediateGroup()`）をどこにも配線していなかった**。
+そのため `preflush[groupsPerFrame=0]` は「グループが0」ではなく「**計器が動いていない**」を意味していた。
+この0を根拠に「吐き出し対象がいない＝描画ではない」と結論したのは誤り（撤回）。
+
+修正: 即時グループの記録ループ（`for (int groupIndex …) {` の直後）に `noteImmediateGroup()` を配線。
+次回の計測で実際のグループ数が出る。**計器を追加したら、その値が動くこと（陽性対照）を確認してから
+根拠に使う**という規約の再確認。

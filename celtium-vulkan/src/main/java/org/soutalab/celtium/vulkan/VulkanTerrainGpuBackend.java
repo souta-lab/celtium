@@ -17593,6 +17593,7 @@ this.frameBufferOpen = false;
             java.util.Set<Integer> censusPipelines = MERGE_CENSUS ? new java.util.HashSet<Integer>() : null;
             int censusArenaBacked = 0;
             for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+                org.soutalab.celtium.vulkan.DrawCounters.noteImmediateGroup();
                 ImmediateGroup group = groups.get(groupIndex);
                 if (group.target != target) {
                     // Kept for its own pass, and now counted: this is the site the counter's name describes, and
