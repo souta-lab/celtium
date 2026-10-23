@@ -3212,6 +3212,10 @@ public final class ValidationClient {
                             new String[] {"panoramaTimer", "field_73979_m"})));
             report.addProperty("menuDumpRenderPartialTicks", Float.toString(mc.getRenderPartialTicks()));
             celtium$requestPresentedDump(mc, "menu");
+            // The game's own screenshot beside the presented dump: on a GL arm this is the only picture the menu can
+            // have at all, and under GL-less it is the path a player's F2 takes. They are the same picture when both
+            // work, so the pair is what says whether the menu's own frame is right.
+            celtium$captureGlScreenshot(mc, "celtium-validation-menu.png", "menu");
         }
         // Legacy post-launch sample. This handler resumes after the synchronous server-start loop;
         // launched/loadingScreen != null do not establish that LoadingScreenRenderer is drawing now.

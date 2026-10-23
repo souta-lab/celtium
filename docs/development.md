@@ -2059,3 +2059,23 @@ presented dump は**Celtiumのpresentフックが書くもの**なので、参�
 現時点の①の状態: 壊れた画像（`docs/evidence/2026-10-23-menu-panorama-broken.png`）と
 「panoramaTimerは進む・テクスチャ拒否0・生FBO記録あり」まで確認済み。参照画像なしで
 多段合成のどこが誤りかを詰めるのは非効率なので、次は参照画像の取得を先に整える。
+
+**パノラマ①の正解画像を取得（2026-10-24 実測・これが基準）**
+
+menu段に「ゲーム自身のスクショ」を追加したことで、**GLアーム（Celeritas）でもメニュー画像が取れる**ようになった。
+同じフラグ（menuHoldTicks=60/80, dumpPresentedMenuTick=40）で両アームを撮影:
+
+| アーム | 画像 | 内容 |
+|---|---|---|
+| **GL（Celeritas 2.5.0-dev）** | `celtium-validation-menu.png`（534KB） | **正しい**: 左に緑/青の風景、右に灰色の石、スプラッシュは画面中央上寄り。全体にぼかし |
+| GL-less（Celtium） | `celtium-presented-menu-...`（255KB） | **壊れている**: 巨大な白い文字（アトラス断片）が画面全体に引き伸ばされる |
+
+保存: `docs/evidence/2026-10-24-menu-panorama-reference.png`（正解）と
+`docs/evidence/2026-10-23-menu-panorama-broken.png`（我々）。
+
+さらに **GL-less側でもF2経路（nglGetTexImage修正後）とpresented dumpがほぼ一致**（差分0.48%＝トースト等の時間差）。
+⇒ 壊れているのは「ゲームのスクショ」ではなく**我々が描いている絵そのもの**。
+
+**次の一手**: パノラマは 6面テクスチャ×64複製 → FBO(256x256) → ぼかし → 合成 の多段。
+巨大文字は「合成時に別テクスチャ（アトラス）を引いている」形なので、
+メニュー期間の `bindTexture` と、合成クアッドが解決したテクスチャ名を計器で出す。
