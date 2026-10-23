@@ -1551,3 +1551,19 @@ IntelがAMDより遅いのはiGPU自体の性能差で、最適化の有無と�
 
 **教訓**: 受入（PASSED・画像gate）は「描画漏れ」を検出しなかった。runの本数とグループ数を
 突き合わせる計器（`runs`/`groups`/`singletons`）を先に入れていれば、1グループ=1runの異常に気づけた。
+
+**素材ソートの対象familyを全immediateへ拡大（2026-10-23・受入）**
+
+`celtium$buildDrawOrder` は「並べ替え可能」の判定を **textured family だけ**で行っていた（item/colourが対象外）。
+そのため1ウィンドウで並べ替えられるのは1グループだけで、run長が伸びない原因の一つだった。
+共有述語 `celtium$reorderable` を作り、texture / lit item / colour のすべてで
+「depth test・depth write 有り・blend 無し」を満たすグループを並べ替えるようにした。
+計器 `sortOrder[ordered=]` も「並べ替え対象の実数」を返すよう修正（以前は全件を返していた）。
+
+```
+leg sortall-world（間接on・ソートon）: PASSED・problems 0
+indirect[runs=83153 singletons=81293 groups=93365]  frame p50 8.86 → 7.72ms
+```
+⇒ 並べ替え対象は広がったが、**run長は依然ほぼ1**（singletons 81293/83153）。
+理由は素材キーが毎グループ交互に変わること自体で、ソートでは解消しない。
+**間接経路は既定offのまま**（v0.0.15-alpha）。この変更は正しさ（対象familyの網羅）の改善として残す。

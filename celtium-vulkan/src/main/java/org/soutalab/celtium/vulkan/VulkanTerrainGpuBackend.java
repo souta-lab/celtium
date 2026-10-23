@@ -13811,6 +13811,33 @@ this.frameBufferOpen = false;
      * colour a pixel ends up with is independent of the order its fragments were recorded in. Everything else - blended
      * HUD and font work, alpha-tested decals, groups for another target - stays exactly where it was.
      */
+    /**
+     * {@return whether this group can be reordered by material}.
+     * <p>
+     * Any immediate family whose pipeline tests and writes depth and does not blend: with those on, the colour a pixel ends
+     * with is independent of the order the opaque fragments were recorded in. The textured family was the only one this
+     * asked about when the ordering was written, which left the lit item family - the bulk of a world frame - in arrival
+     * order and the runs short.
+     */
+    private static boolean celtium$reorderable(java.util.List<ImmediateGroup> groups, int index) {
+        ImmediateGroup group = groups.get(index);
+        PreparedImmediate prepared = group.prepared;
+        if (prepared == null) {
+            return false;
+        }
+        Object pipeline = prepared.pipeline;
+        if (pipeline instanceof VulkanImmediateTexturePipeline texture) {
+            return texture.celtium$depthWrites() && texture.celtium$depthTests() && !texture.celtium$blends();
+        }
+        if (pipeline instanceof VulkanImmediateItemPipeline item) {
+            return item.lit() && item.celtium$depthWrites() && item.celtium$depthTests() && !item.celtium$blends();
+        }
+        if (pipeline instanceof VulkanImmediatePipeline colour) {
+            return colour.celtium$depthWrites() && colour.celtium$depthTests() && !colour.celtium$blends();
+        }
+        return false;
+    }
+
     private int[] celtium$buildDrawOrder(java.util.List<ImmediateGroup> groups) {
         int count = groups.size();
         if (this.drawOrder.length < count) {
@@ -13823,6 +13850,7 @@ this.frameBufferOpen = false;
         int[] order = this.drawOrder;
         int pos = 0;
         int segments = 0;
+        int reorderable = 0;
         int segmentStart = 0;
         // One target segment at a time: the loop below keeps groups of another target at their arrival position (they are
         // handed to keptImmediateGroups), so only the runs of one target can be reordered against each other.
@@ -13837,10 +13865,7 @@ this.frameBufferOpen = false;
             for (int i = segmentStart; i < segmentEnd; i++) {
                 ImmediateGroup group = groups.get(i);
                 PreparedImmediate prepared = group.prepared;
-                if (prepared == null || !(prepared.pipeline instanceof VulkanImmediateTexturePipeline texture)) {
-                    continue;
-                }
-                if (!texture.celtium$depthWrites() || !texture.celtium$depthTests() || texture.celtium$blends()) {
+                if (!celtium$reorderable(groups, i)) {
                     continue;
                 }
                 keys[opaque] = (((long) System.identityHashCode(prepared.pipeline)) * 0x9E3779B97F4A7C15L)
@@ -13863,12 +13888,11 @@ this.frameBufferOpen = false;
             for (int i = 0; i < opaque; i++) {
                 order[pos++] = indices[i];
             }
+            reorderable += opaque;
             for (int i = segmentStart; i < segmentEnd; i++) {
                 ImmediateGroup group = groups.get(i);
                 PreparedImmediate prepared = group.prepared;
-                boolean opaqueGroup = prepared != null
-                        && prepared.pipeline instanceof VulkanImmediateTexturePipeline texture
-                        && texture.celtium$depthWrites() && texture.celtium$depthTests() && !texture.celtium$blends();
+                boolean opaqueGroup = celtium$reorderable(groups, i);
                 if (!opaqueGroup) {
                     order[pos++] = i;
                 }
@@ -13876,7 +13900,7 @@ this.frameBufferOpen = false;
             segmentStart = segmentEnd;
         }
         this.drawOrderSegments = segments;
-        this.drawOrderOpaque = pos;
+        this.drawOrderOpaque = reorderable;
         return order;
     }
     private final java.util.Map<Long, Integer> drawKeyCounts = new java.util.HashMap<Long, Integer>();
