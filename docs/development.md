@@ -693,3 +693,24 @@ bracket化されていない毎グループ処理が実体。
 
 次: グループループ内の未計測区間を `recPrepare`（状態解決〜push constant）と `recMatrix`（行列）に分割して特定し、
 そこを削る（例: 同一マテリアル連続グループでの再計算排除）。
+
+**fps300 KPI: 即時描画は 194〜236グループ/フレーム、push は無罪（2026-10-23 実測）**
+
+新計器 `drawn[perFrame]`（フレーム全体で描いた即時グループ数）と既存bracket:
+```
+drawn[perFrame=194〜236]
+winRecord 2.5ms / grpDraw 2.0ms / rcPush 0.1ms / rcViewport 0.1ms / rcResolve 0.1ms
+```
+⇒ **1グループあたり約10µs**が `grpDraw`（pipeline の draw 呼び出し）にある。
+
+対照実験: `-Dceltium.debug.skipPushConstants=true`（push を呼ばない）でも
+```
+grpDraw 2.0ms / winRecord 2.5ms   ← 変化なし
+```
+⇒ **push constants は原因ではない**（前回の `pushCache` 効果と整合）。コストは draw 呼び出し側
+（バインド/記述子/driver へのコマンド記録）にある。
+
+**含意**: 300fps（3.3ms）には、1グループ1draw の構造自体を変える必要がある。
+設計済みの方向は「連続グループを1回の `vkCmdDrawIndexedIndirect` に畳む」（ループ内コメントの MERGE_CENSUS が
+その go/no-go 計器）。条件は pipeline・記述子・push・viewport・同一バッファ（arena借用）が一致する連続区間。
+次ラウンドはこの indirect 折り畳みを実装する。
