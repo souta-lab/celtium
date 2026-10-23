@@ -2251,8 +2251,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * material run. On by default: about 194 draws become about three commands a frame; pass
      * {@code -Dceltium.vulkan.indirectImmediate=false} to fall back to per-group draws.
      */
-    private static final boolean INDIRECT_IMMEDIATE =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectImmediate"));
+    private static final boolean INDIRECT_IMMEDIATE = Boolean.getBoolean("celtium.vulkan.indirectImmediate");
     private static final int INDIRECT_COMMAND_BYTES = 20;
     private final java.util.Map<Object, VulkanImmediateTexturePipeline> recordsPipelines = new java.util.IdentityHashMap<>();
     private final java.util.Map<Object, VulkanImmediateItemPipeline> recordsItemPipelines = new java.util.IdentityHashMap<>();
@@ -2269,6 +2268,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private VulkanDynamicMesh indirectRunMesh;
     private java.nio.ByteBuffer indirectRunPush;
     private long indirectRunsIssued;
+    /** The pipeline the run's groups arrived with, and how many runs held a single group. */
+    private Object indirectRunOriginalPipeline;
+    private long indirectSingletonRuns;
     private long indirectGroupsIssued;
 
     /**
@@ -2393,6 +2395,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             this.indirectRunTextureSet = prepared.descriptor;
             this.indirectRunMesh = mesh;
+            this.indirectRunOriginalPipeline = prepared.pipeline;
             this.indirectRunFirstCommand = this.indirectCommandCount;
             this.indirectRunCommands = 0;
             if (this.indirectRunPush == null) {
@@ -2421,7 +2424,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         this.indirectRunActive = false;
-        if (this.indirectRunPipeline == null || this.indirectRunMesh == null || this.indirectRunCommands <= 0) {
+        // The colour family's twin lives in the object field, not in indirectRunPipeline, so testing that field here
+        // dropped every colour-family run before it was drawn. The dispatch below is what knows which of the two holds
+        // the run's pipeline; this guard only asks whether there is anything to draw at all.
+        if (this.indirectRunMesh == null || this.indirectRunCommands <= 0
+                || (this.indirectRunPipeline == null && this.indirectRunPipelineObject == null)) {
+            return;
+        }
+        if (this.indirectRunCommands == 1 && this.indirectRunOriginalPipeline != null) {
+            // A run of one group has nothing to save: the record and the command would be the same work as the ordinary
+            // draw plus the set pair and the dispatch. It is drawn the way it would have been without the run path, which
+            // also keeps a frame of all-distinct materials at its old cost instead of paying for the machinery.
+            Object original = this.indirectRunOriginalPipeline;
+            if (original instanceof VulkanImmediateTexturePipeline textureState) {
+                textureState.draw(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
+                        this.indirectRunTextureSet, this.immediateBindCache);
+            } else if (original instanceof VulkanImmediateItemPipeline itemState) {
+                itemState.draw(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
+                        this.indirectRunTextureSet, this.immediateBindCache);
+            } else if (original instanceof VulkanImmediatePipeline colourState) {
+                colourState.draw(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
+                        this.immediateBindCache);
+            }
+            this.indirectSingletonRuns++;
+            this.indirectRunsIssued++;
             return;
         }
         if (this.indirectRunPipeline != null) {
@@ -2669,7 +2695,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
                 + " sortOrder[segments=" + this.drawOrderSegments + " ordered=" + this.drawOrderOpaque + "]"
-                + " indirect[runs=" + this.indirectRunsIssued + " groups=" + this.indirectGroupsIssued
+                + " indirect[runs=" + this.indirectRunsIssued + " singletons=" + this.indirectSingletonRuns
+                + " groups=" + this.indirectGroupsIssued
                 + " runsPerFrameX100=" + this.celtium$indirectRunsPerFrameX100() + "]"
                 // How many groups the bake actually opened and how many splits still name the matrix: the bake only pays
                 // if the second number falls, and a zero on the first says the predicate never fired.
@@ -13720,8 +13747,7 @@ this.frameBufferOpen = false;
      * equal materials adjacent to form runs, and the opaque ones are the only ones safe to move. The measurement that
      * justified it is in docs/development.md (steady window 8.13 to 6.98 ms with both switches on).
      */
-    private static final boolean SORT_OPAQUE =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.sortOpaque"));
+    private static final boolean SORT_OPAQUE = Boolean.getBoolean("celtium.vulkan.sortOpaque");
     /** {@code -Dceltium.vulkan.bakeAtRecord=true}: bake each group's modelView into its vertices at record time. */
     private static final boolean BAKE_AT_RECORD = Boolean.getBoolean("celtium.vulkan.bakeAtRecord");
     private static final float[] IDENTITY_MATRIX = {
@@ -18813,9 +18839,9 @@ this.frameBufferOpen = false;
                 // after the draws they erase and before the groups that follow them.
                 celtium$recordQueuedClearsInPass(group.postClears, group.target);
                 group.postClears = null;
-                // The last indirect run of the window has no following group to close it.
-                celtium$flushIndirectRun();
             }
+            // The last run of the window has no following group to close it.
+            celtium$flushIndirectRun();
             if (MERGE_CENSUS) {
                 int largest = 0;
                 for (Integer count : censusRuns.values()) {
