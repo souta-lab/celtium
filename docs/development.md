@@ -2767,3 +2767,23 @@ groups=40  textures=[23,...]                                   viewport=1280x720
 
 **次の一手**: `setGroupViewport` が実際に渡す Vulkan viewport の y と、
 コピー元矩形の y（readImageRectangle 内の変換）を並べてログに出す。
+
+**パノラマ①: ビューポートy変換のコード確認（2026-10-24）**
+
+`celtium$setGroupViewport` を読むと:
+```java
+int y = empty ? 0 : yBottom0;            // ← GLのyをそのままVulkan viewportへ
+...
+int scissorY = y;                        // コメントは「GLの左下原点をVulkanの左上へ反転」と書いてある
+```
+- **viewport は y を反転していない**（GLの y をそのまま渡す）。scissor も同値。
+- もしアプリ内の画像が「row 0 = 画面の下端」（GL準拠のボトムアップ）で統一されているなら、
+  この非反転は正しい。実際、ワールドもGUIもこの経路で正しく出ている。
+- 一方 `readImageRectangle` は「row 0 は絵の下端」と明記しており、コピー元 y も同じ規約。
+
+⇒ 少なくとも**コード上の規約は一貫**している（片方だけ反転という形ではない）。
+
+**次の一手**: パノラマのコピー先 texture 23 の中身を**画像として**取り出して目視する。
+`mean=107,120,138` までは測ってあるが、それが「ぼけた風景」なのか「別物」なのかは見ていない。
+`TextureCopyService` の image 読み出しを PNG に落とす計器（debug用）を足せば、
+texture 23 の内容そのものを検証できる。
