@@ -1669,3 +1669,21 @@ run-rlcft-nocel (celtium なし): VerifyError EntityRenderer.func_78472_g  ← �
 **結論**: RLCraft 2.9.3 は「Fugue 更新」だけでは 0.7.11 で動かない（Fugue 0.25.5 でも未達）。
 次に試す価値があるのは Cleanroom 0.7.12-alpha 以降（互換修正入り）での再試行。
 Celtium 側でできることは無い（対照実験で切り分け済み）。
+
+**決定的な発見: KPI測定はvalidationレイヤ込みだった（2026-10-23 実測）**
+
+同じjar・同じscene・同じAMD RX 6400で、validation の有無だけ切り替え:
+
+| 条件 | 定常 frame p50 |
+|---|---|
+| `celtium.vulkan.validation=true`（これまでの全KPI leg） | **7.99ms** |
+| `celtium.vulkan.validation=false` | **4.38ms** |
+
+⇒ **validationレイヤが約3.6ms/フレーム（45%）を占めていた**。
+これまでの KPI/内訳（描画2.5ms・vanilla 3.0ms・床5.3ms など）はすべて**validation込みの数値**であり、
+**実運用に近い条件では frame 4.38ms ≒ 228fps**。
+
+**影響**
+- 300fps（3.3ms）までの残りは **約1.1ms**。以前の「床5.3msで到達不能」はvalidation込みの結論で、**再評価が必要**。
+- 以後の性能測定・最適化は **validation OFF** を基本にし、受入（validation ON）は別途記録する。
+- leg `novalid` は harness 上も PASSED（validation無効でも他gateは通る）。
