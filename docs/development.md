@@ -952,3 +952,18 @@ drawn[perFrame=194-212]（変化なし） frame p50 8.2-9.4ms（変化なし） 
 したがって「同一モデル・同一テクスチャの連続グループを1ドローに」は、retained 経路そのものの
 再設計（インスタンシング/per-drawデータ）なしには不可能。今回の変更は**挙動を元に戻した**
 （拡張は無効のまま残さない）。計器 `preTransform[groups=, matrixSplits=]` だけを残す。
+
+**fps300 KPI: retained経路は支配的ではない（2026-10-23 実測・census）**
+
+`-Dceltium.debug.retainedCensus=true` + `frameStats=true`（窓=120フレーム）:
+```
+CELTIUM_RETAINED_CENSUS groups=23857-28680 retainedAtAccept=332-360 preTransformEligible=3480
+                        retained=332-360 distinctMeshes=2-3 largestBucket=220-240
+```
+⇒ 1フレームあたり: グループ約197、**retained（表示リストキャッシュ）は約3**、
+**現行ルールで bake 可能なバッチは約29**。retained は支配的ではない（前ラウンドの推定は誤りだったので訂正）。
+
+それでも bake を全開放した実験（kpi-38）で `drawn[perFrame]` は 194 のまま、frame も変わらなかった。
+理由は **隣接バッチが同じテクスチャ/状態で揃わない**ため、変換を消してもグループは結合しないこと。
+`preTransform[groups=0]` の計器は窓リセットとの兼ね合いで0を出している可能性があり、
+**「0＝未発火」を根拠にしない**（未配線・リセット罠の3例目）。

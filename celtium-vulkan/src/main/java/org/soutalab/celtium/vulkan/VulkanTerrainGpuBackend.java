@@ -2393,6 +2393,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.lastPipelineBindNanos = pipelineBindTotal;
         this.lastDescriptorBindNanos = descriptorBindTotal;
 
+        if (RETAINED_CENSUS) {
+            System.out.println("[Celtium] CELTIUM_RETAINED_CENSUS groups=" + this.retainedCensusGroups
+                    + " retainedAtAccept=" + this.retainedAccept
+                    + " preTransformEligible=" + this.preTransformEligible
+                    + " retained=" + this.retainedCensusRetained
+                    + " distinctMeshes=" + this.retainedCensusByMesh.size()
+                    + " largestBucket=" + this.retainedCensusLargest);
+            this.retainedCensusGroups = 0L;
+            this.retainedAccept = 0L;
+            this.preTransformEligible = 0L;
+            this.retainedCensusRetained = 0L;
+            this.retainedCensusLargest = 0;
+            this.retainedCensusByMesh.clear();
+        }
         long[] sorted = java.util.Arrays.copyOf(this.frameIntervals, this.frameIntervalCount);
         java.util.Arrays.sort(sorted);
         long p50 = sorted[sorted.length / 2];
@@ -7167,6 +7181,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // identity, so a batch drawn under a different GUI matrix can still join this group: the transform it
                 // would have had is baked into its vertices instead of being carried in the group's push constants.
                 // Everything else keeps the matrix as part of the key exactly as before.
+                if (RETAINED_CENSUS) {
+                    // Counted where the decision is made, not at the draw: a lease can be released before the group is
+                    // recorded, and the draw-time census reported 3 retained groups a frame against 197 total.
+                    if (retained != null) {
+                        this.retainedAccept++;
+                    } else if (celtium$preTransformable(formatId, state)) {
+                        this.preTransformEligible++;
+                    }
+                }
                 this.currentGroupPreTransformed = retained == null && celtium$preTransformable(formatId, state);
                 if (this.currentGroupPreTransformed) {
                     this.immediateStatistics.notePreTransformedGroups();
@@ -13429,6 +13452,14 @@ this.frameBufferOpen = false;
     private final long[][] offerStageDeltas = new long[16][2];
 
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
+    /** {@code -Dceltium.debug.retainedCensus=true}: how much of a frame is retained geometry, and how it repeats. */
+    private static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
+    private final java.util.Map<Integer, Integer> retainedCensusByMesh = new java.util.HashMap<Integer, Integer>();
+    private long retainedCensusGroups;
+    private long retainedAccept;
+    private long preTransformEligible;
+    private long retainedCensusRetained;
+    private int retainedCensusLargest;
     /** {@code -Dceltium.debug.itemCensus=true}: name the groups the item pipeline draws, up to a bound. */
     private static final boolean ITEM_CENSUS = Boolean.getBoolean("celtium.debug.itemCensus");
     private static final int ITEM_CENSUS_LIMIT = Integer.getInteger("celtium.debug.itemCensusLimit", 40);
@@ -18224,6 +18255,21 @@ this.frameBufferOpen = false;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                }
+                if (RETAINED_CENSUS) {
+                    // How many of the frame's groups are retained geometry, and how many of them share one cached mesh:
+                    // that second number is the ceiling on instancing, and nothing has measured it yet.
+                    this.retainedCensusGroups++;
+                    if (group.geometryLease != null) {
+                        this.retainedCensusRetained++;
+                        Integer bucket = Integer.valueOf(System.identityHashCode(mesh));
+                        Integer seen = this.retainedCensusByMesh.get(bucket);
+                        int count = seen == null ? 1 : seen.intValue() + 1;
+                        this.retainedCensusByMesh.put(bucket, Integer.valueOf(count));
+                        if (count > this.retainedCensusLargest) {
+                            this.retainedCensusLargest = count;
+                        }
+                    }
                 }
                 if (DRAW_BENCH > 0 && this.lastDrawnMesh == null) {
                     this.lastDrawnMesh = mesh;
