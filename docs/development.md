@@ -1586,7 +1586,7 @@ leg sortonly-world: PASSED・problems 0、frame 9.27 → 7.94 → 7.50ms（ば�
 
 **技術的負債の削除: 記録時bakeの実験コード（2026-10-23）**
 
-`-Dceltium.vulkan.bakeAtRecord`（記録時にモデルビューを頂点へ焼き込む実験）は、実測で
+記録時bakeの実験フラグ（記録時にモデルビューを頂点へ焼き込むもの）は、実測で
 「発火するが描画数も時間も変わらない」と反証済みで、既定offのまま残っていた。
 フラグ・`IDENTITY_MATRIX`・`celtium$bakeGroupInPlace` と呼び出しを削除した（約60行）。
 `copyVerticesTransformed` は受理時のpre-transform（GUI系）が使うので残す。
