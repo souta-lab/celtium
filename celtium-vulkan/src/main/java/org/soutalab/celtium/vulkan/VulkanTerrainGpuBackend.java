@@ -18413,7 +18413,7 @@ this.frameBufferOpen = false;
         if (VERTEX_DUMP_TEXTURE >= 0 && this.textureVertexDumps < 6 && !this.immediateGroups.isEmpty()) {
             ImmediateGroup probeGroup = this.immediateGroups.get(0);
             if (probeGroup.texture == VERTEX_DUMP_TEXTURE && probeGroup.mesh != null
-                    && probeGroup.mesh.vertexAddress() != 0L && this.immediateGroups.size() >= 10) {
+                    && probeGroup.mesh.vertexAddress() != 0L) {
                 this.textureVertexDumps++;
                 long probeBase = probeGroup.mesh.vertexAddress();
                 int probeStride = 24;
@@ -18427,8 +18427,13 @@ this.frameBufferOpen = false;
                             Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 12L)),
                             Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 16L))));
                 }
+                String matrix = probeGroup.texMatrix == null ? "none"
+                        : String.format(java.util.Locale.ROOT, "[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f]",
+                                Float.valueOf(probeGroup.texMatrix[0]), Float.valueOf(probeGroup.texMatrix[1]),
+                                Float.valueOf(probeGroup.texMatrix[2]), Float.valueOf(probeGroup.texMatrix[3]),
+                                Float.valueOf(probeGroup.texMatrix[4]), Float.valueOf(probeGroup.texMatrix[5]));
                 System.out.println("[Celtium] CELTIUM_TEX_VERTICES id=" + VERTEX_DUMP_TEXTURE + " groups="
-                        + this.immediateGroups.size() + probeVertices);
+                        + this.immediateGroups.size() + " texMat=" + matrix + probeVertices);
             }
         }
         if (WINDOW_CENSUS && this.immediateGroups.size() >= 10 && this.windowCensusLines < 80
