@@ -13467,6 +13467,88 @@ this.frameBufferOpen = false;
     private static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
     /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
     private static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
+    /** {@code -Dceltium.vulkan.sortOpaque=true}: order the opaque groups by material so equal materials share a run. */
+    private static final boolean SORT_OPAQUE = Boolean.getBoolean("celtium.vulkan.sortOpaque");
+    private long[] drawOrderKeys = new long[0];
+    private int[] drawOrderIndices = new int[0];
+    private int[] drawOrder = new int[0];
+
+    /**
+     * {@return the order to record a flush's groups in}: the fully opaque groups by material first, then everything else
+     * in arrival order.
+     * <p>
+     * A group moves only when its pipeline tests depth, writes depth and does not blend, which is the case where the
+     * colour a pixel ends up with is independent of the order its fragments were recorded in. Everything else - blended
+     * HUD and font work, alpha-tested decals, groups for another target - stays exactly where it was.
+     */
+    private int[] celtium$buildDrawOrder(java.util.List<ImmediateGroup> groups) {
+        int count = groups.size();
+        if (this.drawOrder.length < count) {
+            this.drawOrder = new int[Math.max(count, 64)];
+            this.drawOrderKeys = new long[this.drawOrder.length];
+            this.drawOrderIndices = new int[this.drawOrder.length];
+        }
+        long[] keys = this.drawOrderKeys;
+        int[] indices = this.drawOrderIndices;
+        int[] order = this.drawOrder;
+        int opaque = 0;
+        long sharedTarget = groups.get(0).target;
+        for (int i = 0; i < count; i++) {
+            ImmediateGroup group = groups.get(i);
+            // A target boundary keeps its position: the flush that switches target is what the loop below records around.
+            if (group.target != sharedTarget) {
+                return null;
+            }
+            PreparedImmediate prepared = group.prepared;
+            if (prepared == null || prepared.pipeline == null) {
+                continue;
+            }
+            Object pipeline = prepared.pipeline;
+            if (!(pipeline instanceof VulkanImmediatePipeline immediate)) {
+                continue;
+            }
+            if (!immediate.celtium$depthWrites() || !immediate.celtium$depthTests() || immediate.celtium$blends()) {
+                continue;
+            }
+            keys[opaque] = ((long) System.identityHashCode(pipeline) << 21) ^ (prepared.descriptor * 0x9E3779B97F4A7C15L);
+            indices[opaque] = i;
+            opaque++;
+        }
+        // Insertion sort on the opaque prefix: about 150 entries with 60 distinct keys, and the pair has to stay
+        // together, which the primitive arrays do without an object array per frame.
+        for (int i = 1; i < opaque; i++) {
+            long key = keys[i];
+            int index = indices[i];
+            int j = i - 1;
+            while (j >= 0 && keys[j] > key) {
+                keys[j + 1] = keys[j];
+                indices[j + 1] = indices[j];
+                j--;
+            }
+            keys[j + 1] = key;
+            indices[j + 1] = index;
+        }
+        int pos = 0;
+        for (int i = 0; i < opaque; i++) {
+            order[pos++] = indices[i];
+        }
+        // The rest keeps arrival order. A group is "rest" if it was not collected above; recomputing the test is cheaper
+        // than a parallel flag array and cannot disagree with it.
+        for (int i = 0; i < count; i++) {
+            ImmediateGroup group = groups.get(i);
+            PreparedImmediate prepared = group.prepared;
+            boolean opaqueGroup = false;
+            if (prepared != null && prepared.pipeline instanceof VulkanImmediatePipeline immediate
+                    && immediate.celtium$depthWrites() && immediate.celtium$depthTests()
+                    && !immediate.celtium$blends()) {
+                opaqueGroup = true;
+            }
+            if (!opaqueGroup) {
+                order[pos++] = i;
+            }
+        }
+        return order;
+    }
     private final java.util.Map<Long, Integer> drawKeyCounts = new java.util.HashMap<Long, Integer>();
     private long drawKeyGroups;
     private long drawKeySwitches;
@@ -17853,7 +17935,13 @@ this.frameBufferOpen = false;
             java.util.Map<Long, Integer> censusRuns = MERGE_CENSUS ? new java.util.HashMap<Long, Integer>() : null;
             java.util.Set<Integer> censusPipelines = MERGE_CENSUS ? new java.util.HashSet<Integer>() : null;
             int censusArenaBacked = 0;
-            for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            // The frame's groups use about 62 distinct (pipeline, descriptor) pairs and switch almost every group, so
+            // ordering the opaque ones by material is what turns 194 draws into about 62. Only fully opaque groups move:
+            // with depth test and depth write on and no blending, the result of a pixel does not depend on the order the
+            // opaque fragments arrived in. Blended groups and anything from another target keep their arrival order.
+            int[] drawOrder = SORT_OPAQUE ? celtium$buildDrawOrder(groups) : null;
+            for (int orderIndex = 0; orderIndex < groups.size(); orderIndex++) {
+                int groupIndex = drawOrder == null ? orderIndex : drawOrder[orderIndex];
                 if (org.soutalab.celtium.vulkan.FramePassTimings.countsCallsEnabled()) {
                     // This counter was added for the KPI and is read from the frame report; it is not worth an atomic
                     // increment per group unless the counts are being read. The same switch the bracket counts use.

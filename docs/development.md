@@ -985,3 +985,24 @@ largestBucket が1のときはキー設計を先に疑う（`docs/verification-t
 
 **次の実装**: 不透明グループ（depthWrite かつ blend 無効）だけを素材キーでソートして先に描き、
 残りは元の順序で描く。期待削減 194→62ドロー ≈ 0.6〜0.8ms。画像gateとvalidationで検証する。
+
+**fps300 KPI: 不透明ソートを実装・受入したが描画数は減らない（2026-10-23 実測）**
+
+不透明グループ（depth test・depth write 有り・blend 無し）を素材キーで並べ替えて先に記録する実装を追加
+（`-Dceltium.vulkan.sortOpaque=true`、他targetやblend有りは元順序のまま）。
+```
+leg kpi-sort: PASSED・problems 0
+drawn[perFrame=194]（変化なし） frame p50 8.64-10.30ms（有意差なし）
+```
+⇒ **ソートしてもドロー数は減らない**（グループは所詮グループ毎に1回描く）。
+ソートが効くのは「同じ素材のrun」ができた後、**per-drawデータをバッファに移して
+1回の `vkCmdDrawIndexedIndirect` に畳む**段を実装してから。push constants はドロー毎に
+変える必要があるため、multi-draw にするには行列・fog・色を**レコードバッファ**へ移す必要がある。
+
+**確定した次の設計**（§11のnative所有化）:
+1. per-draw レコード（208B: 合成行列・fog行・色/alpha・テクスチャindex）をフレームarenaに書く
+2. シェーダは `gl_InstanceIndex`（または `vkCmdDrawIndexedIndirect` の firstInstance）でレコードを読む
+3. ソート済みrunを indirect コマンド列に変換し、runあたり1コマンドで記録
+4. テクスチャは既存の `VulkanTextureArray`（登録側実装済み）をレコードindexで引く
+
+ソート実装は既定off（フラグ）で残す。multi-draw の前提として必要。

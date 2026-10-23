@@ -43,6 +43,11 @@ public final class VulkanColorBlendState {
     }
 
     private final boolean blend;
+
+    /** {@return whether blending is enabled at all} - the sort's opaque test needs it. */
+    public boolean celtium$blends() {
+        return this.blend;
+    }
     private final int srcColor;
     private final int dstColor;
     private final int srcAlpha;

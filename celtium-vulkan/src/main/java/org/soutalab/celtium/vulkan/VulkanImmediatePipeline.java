@@ -64,6 +64,21 @@ public final class VulkanImmediatePipeline {
     private final VulkanColorBlendState colorBlend;
     private final boolean depthTest;
     private final boolean depthWrite;
+
+    /** {@return whether this pipeline writes depth} - an opaque group can be reordered only when the answer is yes. */
+    public boolean celtium$depthWrites() {
+        return this.depthWrite;
+    }
+
+    /** {@return whether this pipeline tests depth} - reordering opaque groups is only equivalent when it does. */
+    public boolean celtium$depthTests() {
+        return this.depthTest;
+    }
+
+    /** {@return whether this pipeline blends} - a blended group keeps its arrival order. */
+    public boolean celtium$blends() {
+        return this.colorBlend != null && this.colorBlend.celtium$blends();
+    }
     private final boolean cull;
     /** Draw line lists instead of triangles: the selection outline and other line batches. */
     private final boolean lines;
