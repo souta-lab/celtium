@@ -2644,3 +2644,31 @@ draw 時に使われた pipeline ハンドルと突き合わせる。
 **GLテクスチャ名を特定**する。方法は `CELTIUM_MIRROR_SOURCE` の id と、そのアップロード元
 （リソースパス）を対応付ける計器を足すか、6枚の平均色を バニラの参照実装（Celeritas）側で
 同じ計器で測って一致するかを見る。
+
+**パノラマ①の根因を特定: textured family の shader が modelview を一切適用しない（2026-10-24 決定）**
+
+`celtium-vulkan/src/main/shaders/immediate_tex_color.vert` の末尾:
+```glsl
+void main() {
+    ...
+    gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
+}
+```
+- この family の **push constant に modelview が無い**（u_TexA/B はテクスチャ行列、fog 行は fog 専用）
+- つまり **a_Position は「既にワールド空間へ変換済み」が前提**で、projection だけ掛ける
+
+ところがパノラマの384グループは `identityViews=0`（＝modelview は非恒等のまま、**bakeされていない**）。
+バニラはタイル毎に `translate(f,f1)` と `rotate(...)` を modelview に与えるので、
+**変換が丸ごと落ちて 384枚が完全に同一位置に重なる**。
+α合成は 255/(j+1) で進むため、結果は「**1枚のくっきりした写真**」に収束する
+＝ 観測（ぼけない・シャープ）と完全一致。
+
+テクスチャ同一性も外部参照と一致して確定済み（下記）。したがって原因はここで確定。
+```
+panorama_0..5.png の中央16x16平均 = 198.3 / 169.2 / 66.6 / 41.6 / 184.4 / 79.3
+GPUからreadbackした6枚の平均   = 198.3 / 169.2 / 66.6 / 41.6 / 184.4 / 79.3  ← 完全一致
+```
+
+**修正方針**: textured family に限り、**非恒等 modelview のグループは受理時に頂点へbake**する
+（`VulkanDynamicMesh.copyVerticesTransformed` は 3x4 全体を焼けるので回転も扱える）。
+bake 後 group.modelView を恒等にすれば、shader の前提（position は変換済み）と一致する。
