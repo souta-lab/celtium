@@ -475,9 +475,32 @@ public final class TextureCopyService {
                 }
                 if (this.copyOrderLogs < 14) {
                     this.copyOrderLogs++;
+                    // What the corner holds *after* the flush: the copy's own source, measured before the copy takes it.
+                    // A landscape here means the draws land where they should and the blit reads elsewhere; the overlay's
+                    // text means the panorama is not drawn yet at this point in the frame.
+                    String corner = "unread";
+                    if (this.host.frameTarget() != null && x == 0 && y == 0 && width <= 256 && height <= 256) {
+                        int[] probe = readImageRectangle(this.host.frameTarget().colorImage(), 0, 0, width, height);
+                        if (probe != null && probe.length > 0) {
+                            long sum = 0L;
+                            int bright = 0;
+                            for (int pixel : probe) {
+                                int r = (pixel >> 16) & 0xFF;
+                                int g = (pixel >> 8) & 0xFF;
+                                int b = pixel & 0xFF;
+                                sum += r + g + b;
+                                if (r + g + b > 690) {
+                                    bright++;
+                                }
+                            }
+                            corner = String.format(java.util.Locale.ROOT, "mean=%.1f bright=%.4f",
+                                    Float.valueOf((float) ((double) sum / (double) (probe.length * 3))),
+                                    Float.valueOf((float) bright / (float) probe.length));
+                        }
+                    }
                     System.out.println("[Celtium] CELTIUM_COPY_ORDER present=" + this.host.presentSerial()
                             + " call=" + (this.copiesThisPresent + 1) + " pending=" + pendingBeforeCopy
-                            + " src=" + x + "," + y + " " + width + "x" + height);
+                            + " src=" + x + "," + y + " " + width + "x" + height + " corner=" + corner);
                 }
                 if (COPY_ORDER_WITHOUT_IDLE) {
                     this.host.context().celtium$flushBatchedSubmits();
