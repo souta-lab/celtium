@@ -585,3 +585,14 @@ terrainRecord    p50=0.5ms
 ⇒ **ユニフォーム容量は無罪**。3.2ms は terrainPrep 内の**まだbracket化していない区間**に残る
 （状態スナップショット、`pipelineFor(pass)`、レンダーリスト/リージョン走査、ミラー準備など）。
 次: terrainPrep の各呼び出し（`pipelineFor`, スナップショット, リスト反復）を個別bracket化して特定する。
+
+**fps300 KPI: terrainPrep 3.2ms の残り候補（2026-10-23・コード読解）**
+
+`celtium$renderPass` の recording 前区間を読み、bracket 済みの `terrainSetup/Target/Ensure/Begin` を除いた**未計測の残り**は:
+1. 入口ガード群（`gpuStalled` / `renderLists.hasPass(pass)` / ターゲットレジストリ判定 ほか）
+2. `ensureSharedIndexBuffer(primitiveType)`（毎フレーム呼ばれる）
+3. 状態スナップショット/行列導出（`worldSnapshotProjection` など）
+4. `pipelineFor(pass)` の外側にある準備（`terrainEnsure` 内は 0.0 なので、パイプライン自体は安い）
+
+次ラウンドはこの4つを `terrainGuards` / `terrainSharedIndex` / `terrainSnapshot` としてbracket化し、
+3.2ms の所在を確定させてから削る（容量は前ラウンドで 0.0 と確定済み）。
