@@ -2094,3 +2094,27 @@ menu段に「ゲーム自身のスクショ」を追加したことで、**GLア
   そのchain pairの中身（読み出し平均色）を測る。ここが空/別物なら合成元の解決が誤り。
 
 現状の①: **未修正**。壊れた絵と正解画像、計器、棄却済み仮説（eviction/再publish）は揃っている。
+
+**パノラマ①の現状と次に試すこと（2026-10-24 記録）**
+
+判明している事実（実測）:
+- タイトル画面は撮れる。`menuHoldTicks`＋`dumpPresentedMenuTick` で **GLアーム（Celeritas）と GL-less の両方**の絵が取れ、
+  正解画像 `docs/evidence/2026-10-24-menu-panorama-reference.png` と 壊れた絵
+  `docs/evidence/2026-10-23-menu-panorama-broken.png` が比較できる。
+- `panoramaTimer=262〜271` は進む（ゲーム側は動いている）。
+- chain pairの退避は0（上限8は原因でない）。毎フレーム再publishしても絵は変わらない（revert済み）。
+- パノラマは「6枚の背景テクスチャ × 64タイル → 256x256のFBO → ぼかし → 合成」。
+  `CELTIUM_PREP_TEX` では背景6枚（256x256）は正しく解決されている。
+- `celtium.debug.prepareTextures` の「FBO色テクスチャとして解決された描画」は**0件**だった（＝描画側では
+  FBOテクスチャを直接サンプルしていない）。ただし逆引きマップが空である可能性と区別できていないので
+  **この0を根拠に断定しない**（AGENTSの罠）。
+
+壊れた絵の見え方は「巨大な白い文字片（アトラス様）」。パノラマの合成が
+**別テクスチャ（フォントアトラス等）を引いている**形。
+
+次に試す（優先順）:
+1. `celtium$publishFramebufferColorTexture` を、パノラマFBOの色テクスチャ（推定 name=23）に対して
+   明示的に呼び、`CELTIUM_FBO_CENSUS` が出るか・identity が解決するかを見る（逆引きの有無を確定）。
+2. パノラマFBOの中身を直接読む: その identity の chain pair 画像を `readImageRectangle` で読み、
+   平均色と非黒率を出す。正解なら風景の平均色、壊れていれば別物。
+3. ぼかし段（glCopyTexSubImage2D 連鎖）の宛先テクスチャが正しいか、`CELTIUM_TEX_COPY_*` の拒否/宛先を確認。
