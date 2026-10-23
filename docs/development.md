@@ -1275,3 +1275,5 @@ indirect[runs=14895 groups=102743]  → run長 ≈6.9グループ、約28run/フ
 frame p50: 7.65 → 6.36 → **6.14ms**（定常）
 ```
 ⇒ 従来arm 8.13ms 比 **−24.5%（約2.0ms）**。前段（不透明のみ）の6.45msからさらに −0.31ms。
+**Intel UHD 630 でも同条件で PASSED・problems 0**（画像gate一致、`kpi-blendintel`）。
+
