@@ -2328,3 +2328,19 @@ ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA)` の下で384クアッドを重�
 
 **次の一手**: この384グループの state（blend有無・depthMask・cull・blendFunc）を記録し、
 選択された pipeline がその state を反映しているか照合する。
+
+**パノラマ①: パイプライン状態も「ブレンド有効・深度書き込み無効」（2026-10-24 実測）**
+
+```
+CELTIUM_WINDOW_PIPELINES distinct=1 texture blends=true depthWrite=false depthTest=true   ← 1フレーム目
+CELTIUM_WINDOW_PIPELINES distinct=1 texture blends=true depthWrite=false depthTest=false  ← 以降のフレーム
+```
+- パノラマ384グループは**単一のtexture pipeline**で、**blend有効・depth書き込み無効**。
+  データ（行列・並進・回転・テクスチャ・射影・経路）も直前の厳密比較で全て正しいと確定済み。
+- 1フレーム目だけ `depthTest=true`（以降 false）。バニラは `depthMask(false)` のみで深度テストは
+  有効のままの局面もあるため、これ自体は直ちに異常とは言えないが、**遷移として記録**する。
+
+⇒ データも状態も妥当。残るのは「**描画結果のどこがどう違うか**」の性格づけ。
+次は壊れた絵と参照画像を**領域別に比較**する（例: 画面を16x9に分割し、各セルの平均色差).
+特に「白い巨大な文字片」がフォントアトラス由来か、パノラマ画像の拡大かを、
+アトラスの色分布・パノラマ画像の色分布と突き合わせて判別する。

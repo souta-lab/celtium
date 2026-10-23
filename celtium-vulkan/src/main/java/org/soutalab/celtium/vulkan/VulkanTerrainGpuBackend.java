@@ -18398,6 +18398,40 @@ this.frameBufferOpen = false;
                 }
                 textureList.append(texture.intValue());
             }
+            java.util.LinkedHashSet<Object> pipelines = new java.util.LinkedHashSet<Object>();
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                ImmediateGroup group = this.immediateGroups.get(i);
+                if (group.prepared != null) {
+                    pipelines.add(group.prepared.pipeline);
+                }
+            }
+            StringBuilder pipelineSummary = new StringBuilder();
+            int pipelineLines = 0;
+            for (Object pipeline : pipelines) {
+                if (pipelineLines++ >= 4) {
+                    break;
+                }
+                if (pipelineSummary.length() > 0) {
+                    pipelineSummary.append(" | ");
+                }
+                if (pipeline instanceof VulkanImmediateTexturePipeline texture) {
+                    pipelineSummary.append("texture blends=").append(texture.celtium$blends())
+                            .append(" depthWrite=").append(texture.celtium$depthWrites())
+                            .append(" depthTest=").append(texture.celtium$depthTests());
+                } else if (pipeline instanceof VulkanImmediateItemPipeline item) {
+                    pipelineSummary.append("item blends=").append(item.celtium$blends())
+                            .append(" depthWrite=").append(item.celtium$depthWrites())
+                            .append(" depthTest=").append(item.celtium$depthTests());
+                } else if (pipeline instanceof VulkanImmediatePipeline colour) {
+                    pipelineSummary.append("colour blends=").append(colour.celtium$blends())
+                            .append(" depthWrite=").append(colour.celtium$depthWrites())
+                            .append(" depthTest=").append(colour.celtium$depthTests());
+                } else {
+                    pipelineSummary.append(pipeline == null ? "null" : pipeline.getClass().getSimpleName());
+                }
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_PIPELINES distinct=" + pipelines.size()
+                    + " " + pipelineSummary);
             System.out.println("[Celtium] CELTIUM_MODELVIEW_EXACT distinct=" + exactDistinct
                     + " groups=" + this.immediateGroups.size() + " identity=" + identityMatrices
                     + " placements=" + byPlacement.size() + " perTileRotations=[" + perTile + "]"
