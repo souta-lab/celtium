@@ -1759,3 +1759,22 @@ tree bin の呼び出し元（少なくとも判明分）:
 
 ⇒ validation OFF では受理経路（自前）が最大の名前付き項目で、後はvanillaのエンティティ/TESR/ワールド参照が
 幅広く並ぶ。**レンダラ側は約1.3〜1.5msで分散しており、1つの変更で数百µsを取れる箇所は見つかっていない**。
+
+**これまでのKPIは「present毎のreadback」税込みだった（2026-10-23 実測）**
+
+present経路の段別内訳（`CELTIUM_PRESENT_STAGES`）を読むと、1 present の実コストは:
+```
+acquire ~0.05ms / readback ~1.6ms / queue ~0.05ms / caps ~0.13ms / submit ~0.06ms / dumpWrite ~0.4〜2.5ms
+```
+`readback` は**中央8x8ブロックを読むためのバッファ作成＋submit＋fence待ち**（presentedMeanの証拠用）。
+`dumpWrite` は presented PNG の書き出し。
+
+**すべての gv-leg は既定で `-Dceltium.vulkan.presentReadback=true` と周期dumpを渡す**（`scripts/gv_leg.py`）。
+そのため今までの「4.75ms」等は**実測値ではなく計測税込み**:
+- validation ON: 7.99ms
+- validation OFF（readback/dump込み）: 4.75ms（中央値）
+- **本物のKPIは `scripts/gv_kpi.sh`**（`presentReadback=false` を明示し、interleaved repで中央値/比を取る）
+
+⇒ 「CeltiumはCeleritasより速くならない」は**測定構成のせいだった可能性**が高く、
+次は gv_kpi で Celeritas 参照jar（`~/ダウンロード/01-celeritas-forge-mc12.2-2.5.0-dev.jar`）と
+同一repで比較する（leg `kpi-cel`）。ここで負けていれば初めて「レンダラが遅い」と言える。
