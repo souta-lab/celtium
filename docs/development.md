@@ -1148,3 +1148,20 @@ hostBuffersCreated=123 / hostBuffersLive=121（レポート間で増加なし＝
 
 `:celtium-vulkan:compileJava` 成功。**まだ生成も描画もしていない**（次段でバックエンドが
 `ImmediateDrawRecords.descriptorSetLayout()` を受け取って生成し、runを記録する）。
+
+**fps300 KPI: indirect run は正しく描けるが、まだ遅い（2026-10-23 実測・第一版）**
+
+不透明テクスチャグループを run として記録し `vkCmdDrawIndexedIndirect` で発行する経路を実装（フラグ既定off）。
+検証で3回の失敗を経て修正:
+1. `VUID-VkGraphicsPipelineCreateInfo-layout-07987` … records用パイプラインに **push constant range が無かった**
+   （fragment は push block を宣言している）
+2. `VUID-...-layout-10069` … range を 128 にしたが **fragment のブロック宣言は208バイト**で不足
+3. 208 に拡張して **PASSED・problems 0（画像gate通過）**
+
+```
+frame p50 10.68-13.51ms（ベースラインは 8.2〜9.2ms）← まだ遅い
+```
+⇒ 正しさは取れたが、**run が短い**ため run毎のコスト（set0/set1束縛・208B push・バッファ束縛）が
+ドロー削減分を上回っている。次は run長の実測（`indirect[runs=, groups=, runsPerFrameX100=]`）を計器に追加し、
+`sortOpaque` 併用で run を長くする／item（lit）系のレコード変種を作る、のどちらが効くかを測る。
+既定offのまま（未達のため）。

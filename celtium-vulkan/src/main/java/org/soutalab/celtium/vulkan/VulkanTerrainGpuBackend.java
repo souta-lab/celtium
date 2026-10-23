@@ -2244,6 +2244,128 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * set are created and released cleanly on this device.
      */
     private ImmediateDrawRecords drawRecords;
+
+    /** {@code -Dceltium.vulkan.indirectImmediate=true}: record opaque textured groups as indirect runs. */
+    private static final boolean INDIRECT_IMMEDIATE = Boolean.getBoolean("celtium.vulkan.indirectImmediate");
+    private static final int INDIRECT_COMMAND_BYTES = 20;
+    private final java.util.Map<Object, VulkanImmediateTexturePipeline> recordsPipelines = new java.util.IdentityHashMap<>();
+    private VulkanHostBuffer indirectCommands;
+    private int indirectCommandCount;
+    private long indirectRunKey;
+    private boolean indirectRunActive;
+    private int indirectRunFirstCommand;
+    private int indirectRunCommands;
+    private VulkanImmediateTexturePipeline indirectRunPipeline;
+    private long indirectRunTextureSet;
+    private VulkanDynamicMesh indirectRunMesh;
+    private java.nio.ByteBuffer indirectRunPush;
+    private long indirectRunsIssued;
+    private long indirectGroupsIssued;
+
+    /** {@return the record-reading twin of a texture pipeline, created on first use for that exact state}. */
+    private VulkanImmediateTexturePipeline celtium$recordsPipeline(VulkanImmediateTexturePipeline state) {
+        VulkanImmediateTexturePipeline twin = this.recordsPipelines.get(state);
+        if (twin == null) {
+            twin = VulkanImmediateTexturePipeline.createRecords(this.context, state.celtium$renderPass(),
+                    state.celtium$colorBlend(), state.celtium$depthTests(), state.celtium$depthWrites(),
+                    state.celtium$culls(), state.celtium$depthCompareOp(), this.drawRecords.descriptorSetLayout());
+            this.recordsPipelines.put(state, twin);
+        }
+        return twin;
+    }
+
+    /**
+     * {@return whether this group was turned into indirect work}.
+     * <p>
+     * The geometry stays where it is: a record is a copy of the push block the group would have pushed, and the command
+     * carries the offsets the binding already uses. Everything a run has to share - pipeline, descriptor, the two buffers
+     * and the stride - is in the key. A group that does not qualify keeps the per-group draw, and the run is flushed
+     * first so ordering against it is unchanged.
+     */
+    private boolean celtium$tryEnqueueIndirect(ImmediateGroup group, VulkanDynamicMesh mesh,
+                                               PreparedImmediate prepared, java.nio.ByteBuffer push) {
+        if (!INDIRECT_IMMEDIATE || mesh == null || prepared == null || push == null || this.drawRecords == null
+                || !(prepared.pipeline instanceof VulkanImmediateTexturePipeline texture)) {
+            celtium$flushIndirectRun();
+            return false;
+        }
+        if (!texture.celtium$depthTests() || !texture.celtium$depthWrites() || texture.celtium$blends()
+                || group.postClears != null || mesh.layout() == null) {
+            celtium$flushIndirectRun();
+            return false;
+        }
+        int stride = mesh.layout().stride;
+        long vertexOffsetBytes = mesh.vertexBindOffset();
+        long indexOffsetBytes = mesh.indexBindOffset();
+        if (stride <= 0 || vertexOffsetBytes % stride != 0L || indexOffsetBytes % 4L != 0L
+                || mesh.indexCount() <= 0 || mesh.vertexCount() <= 0) {
+            celtium$flushIndirectRun();
+            return false;
+        }
+        // The fragment stage still takes the alpha reference and the current colour from the push block, so a run has to
+        // agree on those sixteen bytes too; everything else the block carries the vertex stage now reads per record.
+        long alphaKey = 0L;
+        for (int offset = 112; offset < 128; offset++) {
+            alphaKey = 31L * alphaKey + push.get(offset);
+        }
+        long key = (((long) System.identityHashCode(texture)) * 0x9E3779B97F4A7C15L)
+                ^ (prepared.descriptor * 0x94D049BB133111EBL)
+                ^ (((long) mesh.vertexBuffer()) * 31L) ^ ((long) mesh.indexBuffer())
+                ^ (alphaKey * 0xC2B2AE3D27D4EB4FL);
+        if (this.indirectRunActive && key != this.indirectRunKey) {
+            celtium$flushIndirectRun();
+        }
+        int recordIndex = this.drawRecords.record(push);
+        if (recordIndex < 0) {
+            return false;
+        }
+        if (this.indirectCommands == null) {
+            this.indirectCommands = new VulkanHostBuffer(this.context, 256L * INDIRECT_COMMAND_BYTES,
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+        }
+        if (!this.indirectRunActive) {
+            this.indirectRunActive = true;
+            this.indirectRunKey = key;
+            this.indirectRunPipeline = celtium$recordsPipeline(texture);
+            this.indirectRunTextureSet = prepared.descriptor;
+            this.indirectRunMesh = mesh;
+            this.indirectRunFirstCommand = this.indirectCommandCount;
+            this.indirectRunCommands = 0;
+            if (this.indirectRunPush == null) {
+                this.indirectRunPush = org.lwjgl.system.MemoryUtil.memAlloc(256);
+            }
+            for (int i = 0; i < 208; i++) {
+                this.indirectRunPush.put(i, push.get(i));
+            }
+        }
+        this.indirectCommands.ensureCapacity((this.indirectCommandCount + 1L) * INDIRECT_COMMAND_BYTES);
+        long commandAddress = this.indirectCommands.mappedAddress() + (long) this.indirectCommandCount * INDIRECT_COMMAND_BYTES;
+        org.lwjgl.system.MemoryUtil.memPutInt(commandAddress, mesh.indexCount());
+        org.lwjgl.system.MemoryUtil.memPutInt(commandAddress + 4, 1);
+        org.lwjgl.system.MemoryUtil.memPutInt(commandAddress + 8, (int) (indexOffsetBytes / 4L));
+        org.lwjgl.system.MemoryUtil.memPutInt(commandAddress + 12, (int) (vertexOffsetBytes / (long) stride));
+        org.lwjgl.system.MemoryUtil.memPutInt(commandAddress + 16, recordIndex);
+        this.indirectCommandCount++;
+        this.indirectRunCommands++;
+        this.indirectGroupsIssued++;
+        return true;
+    }
+
+    /** Issues the open run as one vkCmdDrawIndexedIndirect. */
+    private void celtium$flushIndirectRun() {
+        if (!this.indirectRunActive) {
+            return;
+        }
+        this.indirectRunActive = false;
+        if (this.indirectRunPipeline == null || this.indirectRunMesh == null || this.indirectRunCommands <= 0) {
+            return;
+        }
+        this.indirectRunPipeline.drawIndirectRange(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
+                this.indirectRunTextureSet, this.drawRecords.descriptorSet(), this.immediateBindCache,
+                this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
+                this.indirectRunCommands);
+        this.indirectRunsIssued++;
+    }
     private int textureArrayLogs;
     /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
@@ -2470,6 +2592,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
+                + " indirect[runs=" + this.indirectRunsIssued + " groups=" + this.indirectGroupsIssued
+                + " runsPerFrameX100=" + this.celtium$indirectRunsPerFrameX100() + "]"
                 // How many groups the bake actually opened and how many splits still name the matrix: the bake only pays
                 // if the second number falls, and a zero on the first says the predicate never fired.
                 + " preTransform[groups=" + (this.immediateStatistics.preTransformedGroups() - this.lastPreTransformed)
@@ -11741,6 +11865,14 @@ this.frameBufferOpen = false;
     }
 
     public void delete() {
+        for (VulkanImmediateTexturePipeline records : this.recordsPipelines.values()) {
+            records.delete();
+        }
+        this.recordsPipelines.clear();
+        if (this.indirectCommands != null) {
+            this.indirectCommands.delete();
+            this.indirectCommands = null;
+        }
         if (this.drawRecords != null) {
             this.drawRecords.delete();
             this.drawRecords = null;
@@ -15363,6 +15495,14 @@ this.frameBufferOpen = false;
 
     private long lastTerrainIndirectCalls;
     private long lastDrawnGroups;
+    private long lastIndirectRuns;
+
+    /** {@return indirect runs per frame times 100, over the frames this report covers}. */
+    private long celtium$indirectRunsPerFrameX100() {
+        long delta = this.indirectRunsIssued - this.lastIndirectRuns;
+        this.lastIndirectRuns = this.indirectRunsIssued;
+        return (delta * 100L) / Math.max(1, this.frameIntervalCount);
+    }
     private long lastPreTransformed;
     private long lastMatrixSplits;
     private long lastImmediateWindows;
@@ -17992,6 +18132,7 @@ this.frameBufferOpen = false;
             // group loop. Reset here so the array's lifetime is the window's, like the group list it parallels.
             this.drawRecords.reset();
         }
+        this.indirectCommandCount = 0;
         try { this.commandState.requireDraw(target); }
         catch (IllegalStateException error) { this.immediateStatistics.noteInvalidImmediateRecords(); throw error; }
         // The depth-bias dedup tracks command state that a pipeline bind can invalidate: binding a pipeline without
@@ -18432,6 +18573,8 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
                     org.soutalab.celtium.vulkan.FramePassTimings.end("rcViewport");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
+                    boolean indirectConsumed = celtium$tryEnqueueIndirect(group, mesh, prepared, push);
+                    if (!indirectConsumed) {
                     if (BAKE_AT_RECORD) {
                         celtium$bakeGroupInPlace(group, mesh, push);
                     }
@@ -18458,6 +18601,7 @@ this.frameBufferOpen = false;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                    }
                 }
                 if (BUFFER_CENSUS) {
                     // The premise of one indirect command per run: every group of a run must draw from the same vertex
@@ -18576,6 +18720,8 @@ this.frameBufferOpen = false;
                 // after the draws they erase and before the groups that follow them.
                 celtium$recordQueuedClearsInPass(group.postClears, group.target);
                 group.postClears = null;
+                // The last indirect run of the window has no following group to close it.
+                celtium$flushIndirectRun();
             }
             if (MERGE_CENSUS) {
                 int largest = 0;

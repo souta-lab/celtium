@@ -93,6 +93,11 @@ final class ImmediateDrawRecords {
         org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets(this.context.device(), write, null);
     }
 
+    /** {@return the set layout, so a record-reading pipeline can declare set 1}. */
+    long descriptorSetLayout() {
+        return this.descriptorSetLayout;
+    }
+
     /** {@return the set holding the records, to bind at set 1 before a run}. */
     long descriptorSet() {
         return this.descriptorSet;

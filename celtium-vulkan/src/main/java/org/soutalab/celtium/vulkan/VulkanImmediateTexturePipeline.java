@@ -437,9 +437,9 @@ public final class VulkanImmediateTexturePipeline {
      * shader reads. Both sets are bound per run rather than deduplicated: a run is about sixty commands a frame in the
      * pinned scene, so a set-pair bind costs far less than one record per draw saved.
      */
-    public void drawIndirectRange(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, long textureSet,
-                                  long recordsSet, long[] bindCache, long indirectBuffer, long indirectOffset,
-                                  int drawCount) {
+    public void drawIndirectRange(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
+                                  long textureSet, long recordsSet, long[] bindCache, long indirectBuffer,
+                                  long indirectOffset, int drawCount) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || drawCount <= 0) {
             return;
         }
@@ -448,6 +448,10 @@ public final class VulkanImmediateTexturePipeline {
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }
+        if (pushConstants != null) {
+            ByteBuffer clamped = this.clampedView.view(pushConstants, PUSH_CONSTANT_BYTES);
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
+        }
         if (textureSet != 0L && recordsSet != 0L) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     org.lwjgl.system.MemoryStack.stackGet().longs(textureSet, recordsSet), null);
@@ -455,6 +459,41 @@ public final class VulkanImmediateTexturePipeline {
         mesh.bindAtZero(commandBuffer, bindCache);
         org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, drawCount,
                 org.lwjgl.vulkan.VkDrawIndexedIndirectCommand.SIZEOF);
+    }
+
+    /** {@return whether this pipeline writes depth} - the indirect run only takes opaque groups. */
+    public boolean celtium$depthWrites() {
+        return this.depthWrite;
+    }
+
+    /** {@return whether this pipeline tests depth}. */
+    public boolean celtium$depthTests() {
+        return this.depthTest;
+    }
+
+    /** {@return whether this pipeline blends} - a blended group keeps its per-group draw. */
+    public boolean celtium$blends() {
+        return this.colorBlend != null && this.colorBlend.celtium$blends();
+    }
+
+    /** {@return the render pass this pipeline was built for}. */
+    public long celtium$renderPass() {
+        return this.renderPass;
+    }
+
+    /** {@return the blend state this pipeline was built with}, so a record-reading twin can match it. */
+    public VulkanColorBlendState celtium$colorBlend() {
+        return this.colorBlend;
+    }
+
+    /** {@return the depth compare op this pipeline was built with}. */
+    public int celtium$depthCompareOp() {
+        return this.depthCompareOp;
+    }
+
+    /** {@return whether face culling is on}, which a twin has to reproduce to draw the same pixels. */
+    public boolean celtium$culls() {
+        return this.cull;
     }
 
     public int vertexBytes() {
@@ -885,7 +924,15 @@ public final class VulkanImmediateTexturePipeline {
                 if (this.recordsLayout == VK_NULL_HANDLE) {
                     throw new IllegalStateException("the records pipeline needs the records set layout");
                 }
-                create.pSetLayouts(stack.longs(this.descriptorSetLayout, this.recordsLayout));
+                // The fragment stage still reads the alpha reference and the current colour from the push block, so the
+                // records layout keeps a range for it - declared for the fragment stage alone, because the record-reading
+                // vertex shader declares no push constants at all. Offset 0 keeps the block's own offsets.
+                VkPushConstantRange.Buffer fragmentRange = VkPushConstantRange.calloc(1, stack);
+                // The fragment file declares the block identically to the vertex stage (208 bytes in this family), so the
+                // range has to cover all of it even though only the alpha reference and colour are read here.
+                fragmentRange.get(0).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT).offset(0).size(PUSH_CONSTANT_BYTES);
+                create.pSetLayouts(stack.longs(this.descriptorSetLayout, this.recordsLayout))
+                        .pPushConstantRanges(fragmentRange);
             } else {
             VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
             // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
