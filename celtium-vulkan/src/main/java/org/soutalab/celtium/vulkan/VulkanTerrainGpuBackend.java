@@ -3119,6 +3119,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@code -Dceltium.debug.sampleWindowImages=true}: read back the mean of each large window's textures. */
     private static final boolean SAMPLE_WINDOW_IMAGES = Boolean.getBoolean("celtium.debug.sampleWindowImages");
     private int textureVertexDumps;
+    private int groupDetailDumps;
 
     /** {@code -Dceltium.debug.vertexDumpTexture=23}: dump the vertices of a group sampling that texture. */
     private static final int VERTEX_DUMP_TEXTURE = Integer.getInteger("celtium.debug.vertexDumpTexture", -1).intValue();
@@ -18428,6 +18429,25 @@ this.frameBufferOpen = false;
                 }
                 System.out.println("[Celtium] CELTIUM_TEX_VERTICES id=" + VERTEX_DUMP_TEXTURE + " groups="
                         + this.immediateGroups.size() + probeVertices);
+            }
+        }
+        if (WINDOW_CENSUS && this.immediateGroups.size() >= 10 && this.windowCensusLines < 80
+                && this.groupDetailDumps < 3) {
+            this.groupDetailDumps++;
+            for (int gi = 0; gi < this.immediateGroups.size(); gi++) {
+                ImmediateGroup detail = this.immediateGroups.get(gi);
+                if (detail.mesh == null || detail.mesh.vertexAddress() == 0L) {
+                    continue;
+                }
+                long at = detail.mesh.vertexAddress();
+                System.out.println("[Celtium] CELTIUM_GROUP_DETAIL i=" + gi + " tex=" + detail.texture
+                        + " format=" + detail.formatId + " verts=" + detail.mesh.vertexCount()
+                        + String.format(java.util.Locale.ROOT, " v0=(%.1f,%.1f,%.1f|uv %.3f,%.3f)",
+                                Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at)),
+                                Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 4L)),
+                                Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 8L)),
+                                Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 12L)),
+                                Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 16L))));
             }
         }
         if (WINDOW_CENSUS && this.windowCensusLines < 80) {
