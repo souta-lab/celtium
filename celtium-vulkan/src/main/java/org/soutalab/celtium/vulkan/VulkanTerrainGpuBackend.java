@@ -18432,8 +18432,14 @@ this.frameBufferOpen = false;
                                 Float.valueOf(probeGroup.texMatrix[0]), Float.valueOf(probeGroup.texMatrix[1]),
                                 Float.valueOf(probeGroup.texMatrix[2]), Float.valueOf(probeGroup.texMatrix[3]),
                                 Float.valueOf(probeGroup.texMatrix[4]), Float.valueOf(probeGroup.texMatrix[5]));
+                long probeImage = probeGroup.textureImage == null ? 0L : probeGroup.textureImage.image();
+                long frameImage = this.frameTarget == null ? 0L : this.frameTarget.colorImage();
                 System.out.println("[Celtium] CELTIUM_TEX_VERTICES id=" + VERTEX_DUMP_TEXTURE + " groups="
-                        + this.immediateGroups.size() + " texMat=" + matrix + probeVertices);
+                        + this.immediateGroups.size() + " texMat=" + matrix
+                        + " image=0x" + Long.toHexString(probeImage)
+                        + " frameImage=0x" + Long.toHexString(frameImage)
+                        + " selfSampling=" + (probeImage != 0L && probeImage == frameImage)
+                        + probeVertices);
             }
         }
         if (WINDOW_CENSUS && this.immediateGroups.size() >= 10 && this.windowCensusLines < 80
