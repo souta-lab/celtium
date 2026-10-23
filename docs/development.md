@@ -1136,3 +1136,15 @@ hostBuffersCreated=123 / hostBuffersLive=121（レポート間で増加なし＝
 ```
 型システムでは繋がっていない「writer が書くバイト列」と「shader が読む構造体」の契約を、片側だけ変えたときに落ちる形にした。
 **これはレイアウトのテストであり、描画の証拠ではない**。
+
+**fps300 KPI: recordsモードのパイプラインを追加（2026-10-23・コンパイル検証）**
+
+`VulkanImmediateTexturePipeline.createRecords(...)` を追加:
+- 頂点シェーダは `SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX`（レコード読み）
+- パイプライン・レイアウトは **set0=既存の(texture,lightmap)、set1=records** の2セット、**push constant range なし**
+- `drawIndirectRange(...)`: set0/set1 をrun毎に1回束縛し、`mesh.bindAtZero` でバッファを0束縛、
+  **`vkCmdDrawIndexedIndirect(count=run長)` を1回**発行（コマンドは各自の firstIndex/vertexOffset と firstInstance=レコードindex）
+- `VulkanDynamicMesh.bindAtZero(...)` を追加（runの頂点/インデックス束縛を1回に）
+
+`:celtium-vulkan:compileJava` 成功。**まだ生成も描画もしていない**（次段でバックエンドが
+`ImmediateDrawRecords.descriptorSetLayout()` を受け取って生成し、runを記録する）。

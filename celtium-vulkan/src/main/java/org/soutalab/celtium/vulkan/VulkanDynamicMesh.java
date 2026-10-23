@@ -339,6 +339,30 @@ public final class VulkanDynamicMesh {
      * every position-first layout. The range rides in the draw call's firstIndex and vertexOffset, so a run costs the
      * binding once and one command.
      */
+    /**
+     * Binds this mesh's own streams at offset zero and nothing else.
+     * <p>
+     * The indirect run form needs the buffers bound but the offsets in the commands: every command of a run carries its
+     * own firstIndex and vertexOffset, so the binding is one pair per run instead of one pair per draw.
+     */
+    public void bindAtZero(VkCommandBuffer commandBuffer, long[] bindCache) {
+        if (this.destroyed) {
+            throw new IllegalStateException("a destroyed mesh cannot be drawn");
+        }
+        long vb = vertexBuffer();
+        long ib = indexBuffer();
+        if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L) {
+            org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+            org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(0L));
+            org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, 0L,
+                    org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+            bindCache[0] = vb;
+            bindCache[1] = ib;
+            bindCache[2] = 0L;
+            bindCache[3] = 0L;
+        }
+    }
+
     /** The one place the indexed draw command is recorded, shared by the whole-mesh and the range forms. */
     private void drawRangeInternal(VkCommandBuffer commandBuffer, int firstIndex, int indexCount, int vertexOffset) {
         if (indexCount <= 0) {

@@ -128,6 +128,14 @@ public final class VulkanImmediateTexturePipeline {
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
     private long descriptorSetLayout = VK_NULL_HANDLE;
+    /**
+     * Whether this instance is the record-reading variant: its vertex shader takes the block from a storage buffer at set
+     * 1 (indexed by gl_InstanceIndex) and the layout declares no push-constant range. It exists so a run of groups that
+     * share a material can be recorded as indirect commands whose firstInstance is the record index.
+     */
+    private boolean records;
+    /** The records set layout, owned by {@link ImmediateDrawRecords}; this pipeline only references it. */
+    private long recordsLayout = VK_NULL_HANDLE;
 
     // ---- Native shadow map, shared by every instance of this family (same arrangement as the item family) --------
     private static org.soutalab.celtium.vulkan.VulkanHostBuffer shadowMatrixBuffer;
@@ -208,6 +216,20 @@ public final class VulkanImmediateTexturePipeline {
      * mask, and face culling. These bake into the pipeline object, which is why the immediate path caches one per
      * state instead of forcing every batch through a single hardcoded combination.
      */
+    /**
+     * Creates the record-reading variant: the same textured family, with the block taken from the records buffer at set 1
+     * and drawn through {@link #drawIndirectRange}.
+     */
+    public static VulkanImmediateTexturePipeline createRecords(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp,
+            long recordsSetLayout) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp);
+        pipeline.records = true;
+        pipeline.recordsLayout = recordsSetLayout;
+        return pipeline.build();
+    }
+
     /** Creates the colourless {@code POSITION_TEX} variant, which is how the sky, the clouds and the water arrive. */
     public static VulkanImmediateTexturePipeline createForPositionTex(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
@@ -406,6 +428,34 @@ public final class VulkanImmediateTexturePipeline {
     public static long MESH_BIND_NANOS;
     public static long PIPELINE_BIND_NANOS;
     public static long DESCRIPTOR_BIND_NANOS;
+
+    /**
+     * Binds this record-reading pipeline for a run: set 0 the texture pair, set 1 the records, the run's buffers at zero,
+     * and one {@code vkCmdDrawIndexedIndirect} for every group in the run.
+     * <p>
+     * The commands carry each group's own firstIndex and vertexOffset, and their firstInstance is the record index the
+     * shader reads. Both sets are bound per run rather than deduplicated: a run is about sixty commands a frame in the
+     * pinned scene, so a set-pair bind costs far less than one record per draw saved.
+     */
+    public void drawIndirectRange(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, long textureSet,
+                                  long recordsSet, long[] bindCache, long indirectBuffer, long indirectOffset,
+                                  int drawCount) {
+        if (this.pipeline == VK_NULL_HANDLE || mesh == null || drawCount <= 0) {
+            return;
+        }
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
+        if (textureSet != 0L && recordsSet != 0L) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    org.lwjgl.system.MemoryStack.stackGet().longs(textureSet, recordsSet), null);
+        }
+        mesh.bindAtZero(commandBuffer, bindCache);
+        org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, drawCount,
+                org.lwjgl.vulkan.VkDrawIndexedIndirectCommand.SIZEOF);
+    }
 
     public int vertexBytes() {
         return VERTEX_BYTES;
@@ -828,14 +878,22 @@ public final class VulkanImmediateTexturePipeline {
             this.descriptorSet = setHandle.get(0);
             this.descriptorSetsAllocated++;
             DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
+            VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default();
+            if (this.records) {
+                // Two sets and no push range: set 0 is the per-texture pair this class already builds, set 1 is the
+                // records buffer. The record-reading shader declares no push constants at all.
+                if (this.recordsLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the records pipeline needs the records set layout");
+                }
+                create.pSetLayouts(stack.longs(this.descriptorSetLayout, this.recordsLayout));
+            } else {
             VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
             // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
             // stages: declaring it for the vertex stage alone is a shader-interface mismatch.
             range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                     .offset(0).size(PUSH_CONSTANT_BYTES);
-            VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
-                    .pSetLayouts(stack.longs(this.descriptorSetLayout))
-                    .pPushConstantRanges(range);
+            create.pSetLayouts(stack.longs(this.descriptorSetLayout)).pPushConstantRanges(range);
+            }
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreatePipelineLayout(this.context.device(), create, null, handle),
                     "vkCreatePipelineLayout(immediate)");
@@ -848,7 +906,8 @@ public final class VulkanImmediateTexturePipeline {
             // BH-30: the shared pair carries the world fog block at 128..207, which this layout declares 208 bytes for
             // and the backend writes for every group without a lighting payload. The lit ITEM variant has its own
             // fragment (IMMEDIATE_TEX_COLOR_LIT_FRAGMENT) because its block spends 128..215 on lighting.
-            ByteBuffer vertexCode = SpirvShaders.load(this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
+            ByteBuffer vertexCode = SpirvShaders.load(this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX
+                    : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
                     : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT
                 : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_FRAGMENT : SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
