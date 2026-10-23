@@ -18429,6 +18429,7 @@ this.frameBufferOpen = false;
                 }
                 if (image instanceof VulkanGlTexture texture) {
                     imageDetail.append(texture.width()).append('x').append(texture.height())
+                            .append(texture.hasFullContent() ? "/full" : "/EMPTY")
                             .append("@0x").append(Long.toHexString(texture.image()));
                 } else {
                     imageDetail.append(image == null ? "null" : image.getClass().getSimpleName());

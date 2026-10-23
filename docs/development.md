@@ -2499,3 +2499,26 @@ ONE_MINUS_SRC_ALPHA)` で設定する色合成と**一致**している。
 
 **次の一手**: id=34〜39 が「fullyInitialized」かどうかを記録し、未初期化なら
 `uploadFromGlTexture` 経路（announcement からの供給）がメニュー時に走っているかを追う。
+
+**パノラマ①: テクスチャ画像は `full`（内容あり）。受理側は完全に健全（2026-10-24 実測）**
+
+```
+CELTIUM_WINDOW_IMAGES distinct=6 images=[256x256/full@0x7e.. 256x256/full@0x8c.. ... ]
+```
+⇒ 6枚とも「中身あり」。これで**受理側の全項目＋alpha＋blend＋画像内容**まで全て正常と確定。
+
+**残るのは「どの画像に描かれたか」の実行時ルーティング**。過去ログの `CELTIUM_BIND_ENTRY` は
+```
+target=0x0 current=0x440a6f4c pending=78 ... recorded=391
+```
+と、**大きなウィンドウが2つ**あることを示す:
+- identity 0x0 の384グループ（パノラマ、ログの route=frame-image）
+- identity 0x440a6f4c（ゲームのmain FB）側の記録
+
+`GllessFrameTarget.routeLabelForBinding` は「main→frame image / identity 0→**default pair** / その他→chain pair」
+という規則を持つとコメントされており、ログの route 表示と**規則の食い違い**が疑わしい。
+（ログは frame-image と言うが、コメント上の規則では identity 0 は default pair。）
+
+**次の一手**: フレーム内で「パノラマウィンドウ描画の直前と直後」に
+frame image と default pair の**平均色をreadback**し、どちらにパノラマが入ったかを確定する。
+入っていない方に描かれているなら、それが直接の原因（合成が読まない画像に描いている）。
