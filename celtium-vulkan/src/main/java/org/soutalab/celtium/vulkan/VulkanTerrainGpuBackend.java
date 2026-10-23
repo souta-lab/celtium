@@ -3118,6 +3118,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** {@code -Dceltium.debug.sampleWindowImages=true}: read back the mean of each large window's textures. */
     private static final boolean SAMPLE_WINDOW_IMAGES = Boolean.getBoolean("celtium.debug.sampleWindowImages");
+    /** {@code -Dceltium.debug.dumpTextureIds=23}: write those textures' images to the temp directory once. */
+    private static final java.util.Set<Integer> DUMP_TEXTURE_IDS = dumpTextureIds();
+    private int dumpedTextureImages;
+
+    private static java.util.Set<Integer> dumpTextureIds() {
+        String spec = System.getProperty("celtium.debug.dumpTextureIds");
+        if (spec == null || spec.trim().isEmpty()) {
+            return null;
+        }
+        java.util.Set<Integer> ids = new java.util.LinkedHashSet<Integer>();
+        for (String part : spec.split(",")) {
+            try {
+                ids.add(Integer.valueOf(part.trim()));
+            } catch (NumberFormatException ignored) {
+                // A malformed entry selects nothing.
+            }
+        }
+        return ids.isEmpty() ? null : ids;
+    }
+
     /** {@code -Dceltium.debug.windowCensus=true}: name every window a menu frame draws. */
     private static final boolean WINDOW_CENSUS = Boolean.getBoolean("celtium.debug.windowCensus");
     private int windowCensusLines;
@@ -18363,6 +18383,27 @@ this.frameBufferOpen = false;
      */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+        if (DUMP_TEXTURE_IDS != null && this.dumpedTextureImages < 4) {
+            for (int di = 0; di < this.immediateGroups.size(); di++) {
+                ImmediateGroup dumpGroup = this.immediateGroups.get(di);
+                if (!DUMP_TEXTURE_IDS.contains(Integer.valueOf(dumpGroup.texture))) {
+                    continue;
+                }
+                VulkanGlTexture dumpImage = dumpGroup.textureImage;
+                if (dumpImage == null || dumpImage.image() == 0L) {
+                    continue;
+                }
+                this.dumpedTextureImages++;
+                java.nio.file.Path path = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
+                        "celtium-tex-" + dumpGroup.texture + "-" + dumpImage.width() + "x" + dumpImage.height()
+                                + ".png");
+                boolean wrote = this.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
+                        dumpImage.height(), path);
+                System.out.println("[Celtium] CELTIUM_TEXTURE_IMAGE id=" + dumpGroup.texture + " path=" + path
+                        + " " + dumpImage.width() + "x" + dumpImage.height() + " wrote=" + wrote);
+                break;
+            }
+        }
         if (WINDOW_CENSUS && this.windowCensusLines < 80) {
             this.windowCensusLines++;
             java.util.LinkedHashSet<Integer> censusTextures = new java.util.LinkedHashSet<Integer>();

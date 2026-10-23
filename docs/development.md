@@ -2787,3 +2787,23 @@ int scissorY = y;                        // コメントは「GLの左下原点�
 `mean=107,120,138` までは測ってあるが、それが「ぼけた風景」なのか「別物」なのかは見ていない。
 `TextureCopyService` の image 読み出しを PNG に落とす計器（debug用）を足せば、
 texture 23 の内容そのものを検証できる。
+
+**パノラマ①: texture 23 の中身は正しい風景だった（2026-10-24 決定的・新計器）**
+
+`-Dceltium.debug.dumpTextureIds=23,34,42` を追加し、描画に使われたテクスチャの**GPU画像をPNGへ書き出した**。
+```
+CELTIUM_TEXTURE_IMAGE id=34 path=/tmp/celtium-tex-34-256x256.png 256x256 wrote=true
+CELTIUM_TEXTURE_IMAGE id=23 path=/tmp/celtium-tex-23-256x256.png 256x256 wrote=true
+```
+texture 23（パノラマを256x256へ描いてコピーしたもの）を開くと、
+**緑の草地・青い水面・石の崖・空**という正しいMinecraftの風景が写っていた。
+保存: `docs/evidence/2026-10-24-panorama-copy-texture23.png`
+
+⇒ **パノラマの描画とコピーは正しい**。texture 23 は「ぼける前の風景」として完璧。
+
+したがって画面の異常（巨大な形）は、**この23を画面へ拡大合成する段**（8枚のぼかしクアッド＋
+1280x720での最終合成）のサンプリング座標/UVのどこかにある。
+texture 23 が正しい以上、原因は「合成側が23のごく一部だけを引いている」形。
+
+**次の一手**: ぼかし8クアッドと最終合成クアッドの**頂点UV**を記録する
+（`CELTIUM_WINDOW_VERTICES` は format 2 の最初のグループしか出さないので、texture 23 のグループに限定して出す）。

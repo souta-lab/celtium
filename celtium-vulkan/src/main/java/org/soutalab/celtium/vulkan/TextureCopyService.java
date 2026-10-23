@@ -1133,6 +1133,31 @@ public final class TextureCopyService {
         return (float) ((double) sum / (double) (pixels.length * 3));
     }
 
+    /**
+     * Writes an image to a PNG, for the one question a mean cannot answer: whether the content is the picture the
+     * pipeline believes it is. Diagnostic only; the caller is a bounded debug line.
+     *
+     * @return whether the file was written
+     */
+    public boolean celtium$dumpImage(long image, int width, int height, java.nio.file.Path path) {
+        if (image == 0L || width <= 0 || height <= 0 || path == null) {
+            return false;
+        }
+        int[] pixels = readImageRectangle(image, 0, 0, width, height);
+        if (pixels == null || pixels.length < width * height) {
+            return false;
+        }
+        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(width, height,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        out.setRGB(0, 0, width, height, pixels, 0, width);
+        try {
+            java.nio.file.Files.createDirectories(path.toAbsolutePath().getParent());
+            return javax.imageio.ImageIO.write(out, "png", path.toFile());
+        } catch (java.io.IOException | RuntimeException error) {
+            return false;
+        }
+    }
+
     /** Bounded refusals for {@link #celtium$readPixels} and the serve count for the run report. */
     private int readPixelsRefusals;
     /** Reads of the window that the routing rule could not place and the frame image answered. */
