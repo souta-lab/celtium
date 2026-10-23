@@ -1344,3 +1344,13 @@ indirect[runs=11669 groups=111373]  frame p50 7.76 → 6.09ms
 
 残る texture 個別は「postClears を持つ（クリアを先に記録する必要がある）」か「bindForm（スロットオフセットを
 コマンドで表現できない）」で、いまの間接機構では吸収できない種類。
+
+**Intel UHD 630: 色family吸収後の最新ビルドも PASSED（2026-10-23）**
+
+```
+leg kpi-colourintel: PASSED・problems 0（画像gate一致）
+device: Intel(R) UHD Graphics 630 (CFL GT2)
+variants[texture=3339 item=0 particle=116 generic=0]   ← generic個別ドロー0（AMDと同じ）
+frame p50 13.96 → 11.00ms（Intelは元々遅く、AMDの6.09msとは別GPU）
+```
+⇒ 色familyのrecords化は**両GPUで正しい**。
