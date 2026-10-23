@@ -1506,3 +1506,16 @@ leg guard-cohort (0.6.13, AMD)  : 起動拒否（想定どおり FAILED）
   crash-report: IllegalStateException: [Celtium] this build requires CleanroomMC 0.7.11-alpha ...
 ```
 ⇒ **対応ホストの受入は不変**、非対応ホストは原因が読める形で止まる。
+
+**Intel UHD 630 でも間接runは有効（2026-10-23・同一jar A/B）**
+
+同じjar（guard, 0.0.13-alpha ビルド）・同じinstance・180秒で、フラグだけ切り替えた2 leg:
+
+| フラグ | 立ち上がり → 定常 p50 |
+|---|---|
+| 無効（`indirectImmediate=false`, `sortOpaque=false`） | 22.29 → 14.20 → **11.84ms** |
+| **有効（既定）** | 13.25 → 10.62 → **10.26ms** |
+
+⇒ **Intel UHD 630 でも −13%（11.84 → 10.26ms）**。両方 PASSED。
+AMD（−27%）より効果は小さいが、**GPUベンダーで切り替える必要はない**（既定onのままでよい）。
+IntelがAMDより遅いのはiGPU自体の性能差で、最適化の有無とは別。
