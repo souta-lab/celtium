@@ -3080,3 +3080,22 @@ call 1 と call 5〜7 で内容が変わるかを測る。変われば
 ⇒ 23へ文字を書いているのは **このコピー呼び出しではない**（別の経路／別のフレーム位置）可能性。
 次の判別は「23へ書き込む全経路」の列挙（copy以外の書き込み、blurパスのフィードバック、
 または23のミラー差し替え）を計器で確認すること。
+
+**パノラマ①を修正（2026-10-24）: window由来コピーはhostルートを使う**
+
+`-Dceltium.vulkan.windowCopyBlit=false`（＝window読みのコピーをhostルートで提供）を**既定**に変更した。
+根拠（同一JAR・AMD RX 6400・leg menu69 / menu70）:
+| 経路 | mean | 彩度 | 参照との差 |
+|---|---|---|---|
+| blit（従来） | 105.3 | 0.042 | 65.63% |
+| **host（新既定）** | **112.0** | **0.303** | **43.35%** |
+- host経路のメニュー画像は**ぼけた風景**（`docs/evidence/2026-10-24-menu-panorama-fixed.png`）
+- ワールド受入は **PASSED（problems 0）** を維持（leg `windowfix-acc`）
+
+計器の待機漏れも修正済み: `corner=` と `celtium$dumpImage` の前に `waitForIdle()`。
+これが無いと「コピー元が文字」という**古い読み**を測ってしまう（実測で訂正）。
+順序の証拠: wait付きで corner は present 1〜122 すべて mean 118〜126 / bright 0.0000（風景）。
+
+**残課題（性能）**: menuでは1 presentあたり最大7コピー（`textureCopiesPeakPerPresent=7`）が
+hostルートを通る。blitルートは同じ画像を読むのに誤った内容を焼くため、blitのy/提出順の
+不整合を直せばhostルートを外せる。menuの体感速度は未測定。

@@ -188,8 +188,25 @@ public final class TextureCopyService {
     private static final boolean COPY_ORDER_WITHOUT_IDLE = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.copyOrderWithoutIdle", "true"));
 
+    /**
+     * Whether a window-source copy ({@code readFbo == 0}) may take the native blit route.
+     * <p>
+     * Off by default, and the reason is measured rather than stylistic. The title screen copies the window's
+     * (0,0)-(256,256) corner into a texture several times a frame and magnifies it into the background; with the blit
+     * route that background is a field of letterforms - the GUI text the corner held before this frame's panorama was
+     * drawn into it - while the host route, which flushes and waits before it reads, produces the blurred landscape.
+     * Reading the corner back with the device idle shows a landscape in both arms, so the difference is that the blit
+     * copies an image the frame's own draws have not reached yet. {@code -Dceltium.vulkan.windowCopyBlit=true} keeps
+     * the blit route for the A/B.
+     */
     private static final boolean WINDOW_COPY_BLIT = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.windowCopyBlit", "true"));
+            System.getProperty("celtium.vulkan.windowCopyBlit", "false"));
+
+    /**
+     * {@code -Dceltium.debug.copyOrderProbe=true}: read the copy's source corner back and name its content. The probe
+     * pays a device wait per copy, so it is opt-in and never part of a leg's timing.
+     */
+    private static final boolean COPY_ORDER_PROBE = Boolean.getBoolean("celtium.debug.copyOrderProbe");
 
     /** Bounded lines for the copy's read resolution (see {@link #ownedReadImage}). */
     private static final int READ_RESOLVE_LOG_LIMIT =
@@ -473,7 +490,7 @@ public final class TextureCopyService {
                 if (pendingBeforeCopy) {
                     this.host.flushPendingBeforeGlDraw();
                 }
-                if (this.copyOrderLogs < 40) {
+                if (COPY_ORDER_PROBE && this.copyOrderLogs < 20) {
                     this.copyOrderLogs++;
                     // What the corner holds *after* the flush: the copy's own source, measured before the copy takes it.
                     // A landscape here means the draws land where they should and the blit reads elsewhere; the overlay's
