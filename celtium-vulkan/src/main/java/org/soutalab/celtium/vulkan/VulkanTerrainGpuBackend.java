@@ -18418,6 +18418,24 @@ this.frameBufferOpen = false;
                 }
                 descriptorList.append("0x").append(Long.toHexString(descriptor.longValue()));
             }
+            StringBuilder imageDetail = new StringBuilder();
+            int imageLines = 0;
+            for (Object image : textureImages) {
+                if (imageLines++ >= 6) {
+                    break;
+                }
+                if (imageDetail.length() > 0) {
+                    imageDetail.append(' ');
+                }
+                if (image instanceof VulkanGlTexture texture) {
+                    imageDetail.append(texture.width()).append('x').append(texture.height())
+                            .append("@0x").append(Long.toHexString(texture.image()));
+                } else {
+                    imageDetail.append(image == null ? "null" : image.getClass().getSimpleName());
+                }
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_IMAGES distinct=" + textureImages.size()
+                    + " images=[" + imageDetail + "]");
             System.out.println("[Celtium] CELTIUM_WINDOW_DESCRIPTORS distinct=" + descriptors.size()
                     + " groups=" + this.immediateGroups.size() + " textureImages=" + textureImages.size()
                     + " first=[" + descriptorList + "]");
