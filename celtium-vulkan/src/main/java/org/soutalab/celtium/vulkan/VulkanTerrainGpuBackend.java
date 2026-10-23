@@ -3118,6 +3118,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** {@code -Dceltium.debug.sampleWindowImages=true}: read back the mean of each large window's textures. */
     private static final boolean SAMPLE_WINDOW_IMAGES = Boolean.getBoolean("celtium.debug.sampleWindowImages");
+    private int textureVertexDumps;
+
+    /** {@code -Dceltium.debug.vertexDumpTexture=23}: dump the vertices of a group sampling that texture. */
+    private static final int VERTEX_DUMP_TEXTURE = Integer.getInteger("celtium.debug.vertexDumpTexture", -1).intValue();
+
     /** {@code -Dceltium.debug.dumpTextureIds=23}: write those textures' images to the temp directory once. */
     private static final java.util.Set<Integer> DUMP_TEXTURE_IDS = dumpTextureIds();
     private int dumpedTextureImages;
@@ -18404,6 +18409,27 @@ this.frameBufferOpen = false;
                 break;
             }
         }
+        if (VERTEX_DUMP_TEXTURE >= 0 && this.textureVertexDumps < 6 && !this.immediateGroups.isEmpty()) {
+            ImmediateGroup probeGroup = this.immediateGroups.get(0);
+            if (probeGroup.texture == VERTEX_DUMP_TEXTURE && probeGroup.mesh != null
+                    && probeGroup.mesh.vertexAddress() != 0L && this.immediateGroups.size() >= 10) {
+                this.textureVertexDumps++;
+                long probeBase = probeGroup.mesh.vertexAddress();
+                int probeStride = 24;
+                StringBuilder probeVertices = new StringBuilder();
+                for (int pv = 0; pv < Math.min(4, probeGroup.mesh.vertexCount()); pv++) {
+                    long at = probeBase + (long) pv * probeStride;
+                    probeVertices.append(String.format(java.util.Locale.ROOT, " (%.2f,%.2f,%.2f|uv %.3f,%.3f)",
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 4L)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 8L)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 12L)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 16L))));
+                }
+                System.out.println("[Celtium] CELTIUM_TEX_VERTICES id=" + VERTEX_DUMP_TEXTURE + " groups="
+                        + this.immediateGroups.size() + probeVertices);
+            }
+        }
         if (WINDOW_CENSUS && this.windowCensusLines < 80) {
             this.windowCensusLines++;
             java.util.LinkedHashSet<Integer> censusTextures = new java.util.LinkedHashSet<Integer>();
@@ -18567,6 +18593,9 @@ this.frameBufferOpen = false;
             for (int i = 0; i < this.immediateGroups.size(); i++) {
                 ImmediateGroup group = this.immediateGroups.get(i);
                 if (group.mesh == null || group.formatId != 2 || group.mesh.vertexAddress() == 0L) {
+                    continue;
+                }
+                if (VERTEX_DUMP_TEXTURE >= 0 && group.texture != VERTEX_DUMP_TEXTURE) {
                     continue;
                 }
                 long base = group.mesh.vertexAddress();
