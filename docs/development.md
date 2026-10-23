@@ -1835,3 +1835,20 @@ Celeritasとの差0.44msのうち、受理経路（`submitImmediateBatchBody` �
 
 確認: ビルド成功・CPUテスト122件成功（failures 0）。
 A/B（`kpi-bs`: 候補 vs throttleビルド, 150s×3rep）は負荷交絡のため判定保留。
+
+**F2スクショ黒の修正（2026-10-23・受入は通るが経路は未再現）**
+
+原因の候補だった「既定framebuffer(0)からの `glReadPixels` の拒否」に対し、
+`TextureCopyService.celtium$readPixels` に**ウィンドウ読みのフォールバック**を追加した:
+`ownedReadImage(0)` が画像を解決できず、要求矩形がframe targetに収まる場合、
+**配信中のフレーム画像**から返す（`CELTIUM_READ_PIXELS_WINDOW` を4回まで記録）。
+
+- 受理: leg `shotfix-acc`（AMD RX 6400, world, validation ON）= **PASSED・problems 0**
+- ただし**このfixtureはF2の経路を通らない**（presented dumpは自前の経路）。
+  そのため `CELTIUM_READ_PIXELS*` のログは1件も出ず、**修正の実地確認はできていない**。
+- 未検証であることを明記する。次はfixtureに `ScreenShotHelper.saveScreenshot` を呼ぶ段を足し、
+  保存PNGの平均色/非黒割合を検査する（黒なら本修正の対象経路が違う）。
+
+**残り3件（④色付きガラスのチカチカ / ⑤看板文字の残像 / ①パノラマ / ②エンドポータル）は未着手**。
+⑤は `GllessFrameTarget` の clear latch（`gameClearLatched`）がメニュー/GUIフレームで
+更新されない場合に前フレーム内容が残る筋が有力。

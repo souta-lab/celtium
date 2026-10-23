@@ -980,6 +980,21 @@ public final class TextureCopyService {
             return false;
         }
         long image = ownedReadImage(readFbo);
+        if (image == 0L && readFbo == 0 && this.host.frameTarget() != null) {
+            // A read of the window that the routing rule could not place still has one image it can only mean: the
+            // delivered frame. Screenshots are exactly this - the game binds its main framebuffer, asks for the whole
+            // window and encodes what comes back - and a refusal here is a black picture, which is what a player
+            // reported. Panning copies resolve through the rule above and never reach this, and a read that does not
+            // fit the frame target is not a window read at all, so it keeps its refusal.
+            if (rectangleFits(x, y, width, height, this.host.targetWidth(), this.host.targetHeight())) {
+                image = this.host.frameTarget().colorImage();
+                this.readPixelsWindowFallbacks++;
+                if (this.readPixelsWindowFallbacks <= 4) {
+                    System.out.println("[Celtium] CELTIUM_READ_PIXELS_WINDOW readFbo=" + readFbo + " rect="
+                            + x + "," + y + " " + width + "x" + height + " served from the frame image");
+                }
+            }
+        }
         if (image == 0L) {
             if (this.readPixelsRefusals < 8) {
                 this.readPixelsRefusals++;
@@ -1025,6 +1040,8 @@ public final class TextureCopyService {
 
     /** Bounded refusals for {@link #celtium$readPixels} and the serve count for the run report. */
     private int readPixelsRefusals;
+    /** Reads of the window that the routing rule could not place and the frame image answered. */
+    private long readPixelsWindowFallbacks;
     private long readPixelsServed;
 
     /** {@return the glReadPixels calls served this run}, for the texture-copy section of the run report. */
