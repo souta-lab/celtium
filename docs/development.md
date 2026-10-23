@@ -625,3 +625,18 @@ terrain(inside world)  3.7ms
 1. 何を吐き出しているか（バッチ数・グループ数・描画種別）を `terrainPreflush` の内側で計測
 2. 空/雲を地形より前ではなく**専用パスで先に描く**（記録を溜めずにその場で submit する）
 3. あるいは吐き出し対象を減らす（ソート/合体で groups を縮小）
+
+**fps300 KPI: terrainPreflush 2.8ms は「グループ0」＝描画ではなく待ち（2026-10-23 実測）**
+
+```
+terrainPreflush(inside world)  p50=2.8ms p95=4.1 worst=7.2
+preflush[groupsPerFrame=0]
+```
+⇒ 吐き出し対象の**グループは0**。つまり2.8msはグループの記録/描画ではなく、
+`flushPendingBeforeGlDraw()` が内部で行う**待機（キュー/フェンス/フレーム間同期）**の可能性が高い。
+これは「CPU律速に見えていた時間の一部が実はGPU待ち」という、以前の観測（GPU busy 3.2%）とも整合する。
+
+次の判別: `flushPendingBeforeGlDraw` の内側で
+1. `vkQueueSubmit` 呼び出し回数と所要時間
+2. `host.waitForIdle` / フェンス待ち / フレームスロット待ち の有無と時間
+を計器化し、**待ちを消す（frames-in-flightを増やす・待機点をずらす）**方向で削る。
