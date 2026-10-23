@@ -18456,6 +18456,31 @@ this.frameBufferOpen = false;
                     }
                 }
             }
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                ImmediateGroup group = this.immediateGroups.get(i);
+                if (group.mesh == null || group.formatId != 2 || group.mesh.vertexAddress() == 0L) {
+                    continue;
+                }
+                long base = group.mesh.vertexAddress();
+                StringBuilder vertices = new StringBuilder();
+                for (int v = 0; v < Math.min(4, group.mesh.vertexCount()); v++) {
+                    long at = base + (long) v * 24L;
+                    vertices.append(String.format(java.util.Locale.ROOT,
+                            " (%.3f,%.3f,%.3f|%.3f,%.3f|%d,%d,%d,%d)",
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 4L)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 8L)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 12L)),
+                            Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 16L)),
+                            Integer.valueOf(org.lwjgl.system.MemoryUtil.memGetByte(at + 20L) & 0xFF),
+                            Integer.valueOf(org.lwjgl.system.MemoryUtil.memGetByte(at + 21L) & 0xFF),
+                            Integer.valueOf(org.lwjgl.system.MemoryUtil.memGetByte(at + 22L) & 0xFF),
+                            Integer.valueOf(org.lwjgl.system.MemoryUtil.memGetByte(at + 23L) & 0xFF)));
+                }
+                System.out.println("[Celtium] CELTIUM_WINDOW_VERTICES count=" + group.mesh.vertexCount()
+                        + vertices);
+                break;
+            }
             System.out.println("[Celtium] CELTIUM_WINDOW_VERTEX_ALPHA distinct=" + alphas.size()
                     + " values=" + alphas + " firstQuad=[" + firstQuad.toString().trim() + "]");
             int textured = 0;
