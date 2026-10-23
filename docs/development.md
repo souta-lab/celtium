@@ -1490,3 +1490,19 @@ java.lang.IllegalStateException: There is no OpenGL context current in the curre
 受入ではない**。この対応関係はリリースノートにも明記した。
 
 0.6.13 側の fixture を使う受入を主張する場合は、0.6 用の別ビルドが必要（同じjarでは不可）。
+
+**非対応ホストの明示的な拒否（2026-10-23 実測・受入）**
+
+0.6.13 cohort で分かりにくい `There is no OpenGL context current` で落ちる代わりに、
+**バージョンと理由を名指しして止まる**ようにした（`CeltiumGllessHint.beforeWindowCreation`）。
+
+- SDL3 バインディング `org.lwjgl.sdl.SDL` の有無でホスト世代を判定
+- 無い場合: ERRORログ＋`IllegalStateException`（クラッシュレポートに理由が残る）
+
+```
+leg guard-world (0.7.11, AMD)   : PASSED・problems 0   ← 対応ホストでは従来どおり
+leg guard-cohort (0.6.13, AMD)  : 起動拒否（想定どおり FAILED）
+  log: [Celtium] this build requires CleanroomMC 0.7.11-alpha (SDL3, LWJGL 3.4.3); the host has no org.lwjgl.sdl.SDL...
+  crash-report: IllegalStateException: [Celtium] this build requires CleanroomMC 0.7.11-alpha ...
+```
+⇒ **対応ホストの受入は不変**、非対応ホストは原因が読める形で止まる。

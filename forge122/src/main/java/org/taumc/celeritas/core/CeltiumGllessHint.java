@@ -28,6 +28,16 @@ public final class CeltiumGllessHint {
      * The mixins that answer calls the GL surface cannot need to be inert on a hybrid run, where a real GL context
      * exists and its answers are the right ones.
      */
+    /** {@return whether this host carries the SDL3 LWJGL binding}, which only the 0.7 generation does. */
+    private static boolean sdl3Present() {
+        try {
+            Class.forName("org.lwjgl.sdl.SDL", false, CeltiumGllessHint.class.getClassLoader());
+            return true;
+        } catch (Throwable absent) {
+            return false;
+        }
+    }
+
     public static boolean isGllessClaimed() {
         return !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
     }
@@ -791,6 +801,16 @@ public final class CeltiumGllessHint {
             return;
         }
         applied = true;
+        if (!sdl3Present()) {
+            // Refusing here beats letting the window be created without a client API and dying later in
+            // GL.createCapabilities with "There is no OpenGL context current in the current thread", which names
+            // neither the version nor this mod. Measured on the 0.6.13 cohort fixture (LWJGL 3.4.1, GLFW, lwjglx).
+            String message = "[Celtium] this build requires CleanroomMC 0.7.11-alpha (SDL3, LWJGL 3.4.3); the host has no "
+                    + "org.lwjgl.sdl.SDL, so it is the GLFW/lwjglx generation, where a GL-less window cannot exist. "
+                    + "Use a 0.7.x instance or a build made for the older generation.";
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.error(message);
+            throw new IllegalStateException(message);
+        }
         try {
             Class.forName("org.lwjgl.glfw.GLFW").getMethod("glfwWindowHint", int.class, int.class)
                     .invoke(null, Integer.valueOf(0x00022001), Integer.valueOf(0));
