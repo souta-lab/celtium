@@ -1735,3 +1735,27 @@ validation OFF・同一jar・180s leg を3回:
 
 計測プロトコル: validation OFF の 180s leg ×3、各runの最終窓 p50 の中央値。単一窓p50は使わない
 （300s run で最終窓 6.46ms という外れ値も観測済み＝ワールド状態で動く）。
+
+**validation OFF のプロファイル（2026-10-23・JFR 30s・Client thread 209サンプル）**
+
+inclusive（上位）:
+```
+ 8% submitImmediateBatchBody          ← 受理経路（自前）
+ 7% submitImmediateBatchTimed
+ 7% HashMap.getNode
+ 7% EntityRenderer.renderWorldPass
+ 6% submitGeometryBatch
+ 5% HashMap$TreeNode.getTreeNode      ← tree bin（衝突）
+ 4% TileEntityRendererDispatcher.render
+ 4% flushImmediateWindow / celtium$renderPass
+```
+self上位: submitImmediateBatchBody 5% / HashMap$TreeNode 5% / Long2ObjectOpenHashMap.get 3% /
+HashMap.putVal 2% / ArrayDeque.elementAt 2% / BufferBuilder 2%。
+
+tree bin の呼び出し元（少なくとも判明分）:
+`CeltiumGlStub.noteBindSite` 3（テーブル充填前のみ）、`EntityDataManager` 2（vanilla）、
+`VulkanModelQuadCapture.generationOf` 2（自前・Integerキー）、`VulkanTextureArray.indexFor` 1、
+`VulkanTextureRegistry.get` 1。→ **分散しており単一の巨大ホットスポットは無い**。
+
+⇒ validation OFF では受理経路（自前）が最大の名前付き項目で、後はvanillaのエンティティ/TESR/ワールド参照が
+幅広く並ぶ。**レンダラ側は約1.3〜1.5msで分散しており、1つの変更で数百µsを取れる箇所は見つかっていない**。
