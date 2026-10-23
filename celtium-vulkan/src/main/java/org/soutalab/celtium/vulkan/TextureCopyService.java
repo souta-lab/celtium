@@ -462,23 +462,19 @@ public final class TextureCopyService {
                 blitRefusal = "the source is the window and windowCopyBlit is off (A/B arm)";
             }
             if (blitRefusal == null) {
-                // The source has to be real pixels before the blit runs. Flushing alone is not enough under the
-                // unified frame buffer: the draws stay *recorded* in the open buffer and are submitted at the frame
-                // boundary, i.e. after this blit - measured as the main menu's grey background (1,830 distinct
-                // colours with the blit route, 50,882 with the host route, whose waitForIdle submits the open buffer
-                // first). The wait is paid only when there is pending work to confirm, and the blit route stays the
-                // cheaper one afterwards (no readback, no upload).
+                // Whatever is already recorded is submitted before this copy is recorded, unconditionally. Gating it on
+                // hasPendingImmediateWork is what let the copy read a corner the current frame had not drawn into yet: the
+                // groups are dequeued into an open pass before they are submitted, so the queue can be empty while the
+                // frame's panorama sits recorded-but-unsubmitted. Measured on the title screen: the copy captured the
+                // previous frame's GUI text from that corner (texture 23 dumped as mirrored overlay strings at mean 67.8
+                // against 122.1 for a panorama-only frame) and the blur chain magnified it across the background.
                 if (this.host.hasPendingImmediateWork()) {
                     this.host.flushPendingBeforeGlDraw();
-                    if (COPY_ORDER_WITHOUT_IDLE) {
-                        // Same queue, same order: the draws were recorded before this blit, so submitting them now and
-                        // the blit next preserves the order the idle wait used to buy, without stopping the render
-                        // thread for a full device round trip (measured 1.6 ms per copy, three copies a frame in the
-                        // menu).
-                        this.host.context().celtium$flushBatchedSubmits();
-                    } else if (!this.host.waitForIdle()) {
-                        blitRefusal = "the GPU did not confirm the source's draws before the native copy";
-                    }
+                }
+                if (COPY_ORDER_WITHOUT_IDLE) {
+                    this.host.context().celtium$flushBatchedSubmits();
+                } else if (this.host.hasPendingImmediateWork() && !this.host.waitForIdle()) {
+                    blitRefusal = "the GPU did not confirm the source's draws before the native copy";
                 }
             }
             if (blitRefusal == null) {
