@@ -1931,3 +1931,16 @@ gameScreenshotMean=113.74  nonBlackFraction=0.98308  black=false
 「フレーム単位でclearが漏れたか」を判定するには、フレーム開始でのみ計数する必要がある（次にやる）。
 
 ⇒ 残像⑤の原因は未確定。今回の計器だけでは断定しない。
+
+**フレーム単位で測り直した結果: clearは毎フレーム入っている（2026-10-23）**
+
+フレーム境界で「そのフレームにclearが1回も入らなかった回数」を数え、実際に印字される
+`gameClears=[...]` の行に載せた（`framesNoClear=`）。leg `frameclear2`（AMD, world, 90s）:
+```
+gameClears=[latched=347,live=686,noClear=1720,framesNoClear=0]
+```
+⇒ **clear漏れのフレームは0**。**残像⑤の原因はclear漏れではない**（この仮説は棄却）。
+残る候補: (a) フレーム画像を次フレームが上書きしている最中にpresentが読む、
+(b) 同じ文字が二重に描かれている（immediate経路＋display list経路）、
+(c) フォントアトラスのミラーが1フレーム遅れる。
+次は (b) を疑い、看板TESRの描画回数を計器で数える（`drawModelList`/文字クアッドのサイト別カウント）。

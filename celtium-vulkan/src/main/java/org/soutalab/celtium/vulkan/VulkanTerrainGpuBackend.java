@@ -2693,6 +2693,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + this.celtium$terrainPerFrameSummary(this.frameIntervalCount)
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
+                + " framesNoClear=" + this.framesWithNoClearAtAll
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
                 + " sortOrder[segments=" + this.drawOrderSegments + " ordered=" + this.drawOrderOpaque + "]"
                 + " indirect[runs=" + this.indirectRunsIssued + " singletons=" + this.indirectSingletonRuns
@@ -3094,6 +3095,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
     private static final int CHAIN_FRAME_DUMPS = Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue();
 
+    /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
+    private long framesWithNoClearAtAll;
+    private int frameClearsAtLastBoundary = -1;
     private boolean immediateWindowBusy;
     /**
      * A real frame identity (audit S11).
@@ -6044,6 +6048,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.countersFrameId >= 0) {
             this.immediateStatistics.setLastFrameAccepted(this.immediateStatistics.frameAccepted());
             this.immediateStatistics.setLastFrameDrawn(this.frameDrawn);
+        }
+        // A frame whose image was never cleared keeps the previous frame's picture under whatever this one draws,
+        // which is what a ghosted moving picture looks like. Counted once per frame, at the boundary that starts it:
+        // the per-window counter cannot answer it, because only the first window of a frame can carry the clear.
+        if (this.frameTarget instanceof GllessFrameTarget gllessFrame) {
+            int clears = gllessFrame.clearsApplied();
+            if (clears == this.frameClearsAtLastBoundary) {
+                this.framesWithNoClearAtAll++;
+            }
+            this.frameClearsAtLastBoundary = clears;
+            gllessFrame.setFramesWithNoClear(this.framesWithNoClearAtAll);
         }
         this.frameId++;
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;

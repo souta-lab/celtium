@@ -191,6 +191,19 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private int liveGameClears;
     /** Frames whose acquire found no clear request, which leave the previous frame's picture in place. */
     private int framesWithoutClear;
+
+    /** {@return how many clears this image has been given}, read at frame boundaries to see a frame that had none. */
+    public int clearsApplied() {
+        return this.latchedGameClears + this.liveGameClears;
+    }
+
+    /** Frames the backend saw start without any clear in between; counted at the frame boundary and reported here. */
+    private long framesWithNoClear;
+
+    /** Sets the count the summary reports. */
+    public void setFramesWithNoClear(long frames) {
+        this.framesWithNoClear = frames;
+    }
     private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int abandonedFrames;
@@ -1834,7 +1847,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return "glless target: no handoff, abandoned=" + this.abandonedFrames
                 + " lastAbandon=[" + this.lastAbandonReason + "]"
                 + " gameClears=[latched=" + this.latchedGameClears + ",live=" + this.liveGameClears
-                + ",noClear=" + this.framesWithoutClear + "]"
+                + ",noClear=" + this.framesWithoutClear
+                + ",framesNoClear=" + this.framesWithNoClear + "]"
                 + " offTargetPairs=[" + pairSummary() + "]";
     }
 
