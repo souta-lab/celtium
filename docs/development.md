@@ -1471,3 +1471,22 @@ Long2ObjectOpenHashMap 3%。
 つまり300fps（3.3ms）は「レンダラを最適化する」だけでは到達できず、
 **tickとvanilla描画ロジックの削減**（Sodium型の別プロジェクト、またはtick間引き等の設計変更）が必要。
 これは実測に基づく結論であり、レンダラ側の残作業ではない。
+
+**対象環境の境界: 0.7.11 は可、0.6.13 は不可（2026-10-23 実測）**
+
+`cohort` mode の既定インスタンスは `cleanroom-0.6.13-alpha`（LWJGL 3.4.1 / GLFW）で、
+`world` mode の既定は `celtium-world-accept`（中身も **0.6.13** の clone、qmagnet セーブ入り）。
+一方 v0.0.14-alpha のjarを 0.6.13 cohort で起動すると:
+
+```
+CELTIUM_GLLESS Display transformer installed / window hinted GLFW_NO_API
+java.lang.IllegalStateException: There is no OpenGL context current in the current thread.
+  at org.lwjgl.opengl.GL.createCapabilities
+  at org.lwjgl.opengl.Display.create
+  at net.minecraft.client.Minecraft.func_175609_am
+```
+⇒ **0.6.13 は非対応**（GL-less ブートストラップは SDL3 の 0.7.11 用）。したがって本リリースの受入は
+`CELTIUM_INSTANCE_WORLD=.../cleanroom-0.7.11-alpha` で取得しており、**canonical fixture（0.6.13）での
+受入ではない**。この対応関係はリリースノートにも明記した。
+
+0.6.13 側の fixture を使う受入を主張する場合は、0.6 用の別ビルドが必要（同じjarでは不可）。
