@@ -520,7 +520,12 @@ public final class TextureCopyService {
         // What the game drew into that image is still queued as groups: submitting them is what makes the read the
         // frame the copy is about. flushPendingBeforeGlDraw draws into an open pass if there is one, otherwise it opens
         // and completes an immediate window, which is the same ordering boundary the game's own draw calls use.
-        if (this.host.hasPendingImmediateWork()) {
+        // Unconditional on purpose: the copy reads the window's own corner, and the content that belongs there is
+        // what the game drew before this call. Measured on the title screen, the guard let a copy run while this
+        // frame's panorama was still queued, so the corner held the previous frame's GUI text; the copy captured
+        // it (texture 23 dumped as mirrored overlay text, mean 67.8 against the panorama-only 122.1), the blur
+        // passes magnified it, and the background came out as a field of letterforms.
+        if (true) {
             this.host.flushPendingBeforeGlDraw();
         }
         if (!this.host.waitForIdle()) {

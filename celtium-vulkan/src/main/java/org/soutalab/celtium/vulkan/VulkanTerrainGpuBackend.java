@@ -18418,7 +18418,7 @@ this.frameBufferOpen = false;
      */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
-        if (DUMP_TEXTURE_IDS != null && this.dumpedTextureImages < 8) {
+        if (DUMP_TEXTURE_IDS != null && this.dumpedTextureImages < 8 && this.presentHookCalls >= 120) {
             for (int di = 0; di < this.immediateGroups.size(); di++) {
                 ImmediateGroup dumpGroup = this.immediateGroups.get(di);
                 if (!DUMP_TEXTURE_IDS.contains(Integer.valueOf(dumpGroup.texture))) {
