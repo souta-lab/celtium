@@ -596,3 +596,14 @@ terrainRecord    p50=0.5ms
 
 次ラウンドはこの4つを `terrainGuards` / `terrainSharedIndex` / `terrainSnapshot` としてbracket化し、
 3.2ms の所在を確定させてから削る（容量は前ラウンドで 0.0 と確定済み）。
+
+**fps300 KPI: terrainSharedIndex も 0.0（2026-10-23 実測）**
+
+```
+terrain 3.7 / terrainPrep 3.2 / terrainRecord 0.5
+terrainCapacity 0.0 / terrainSharedIndex 0.0 / Setup/Target/Ensure/Begin/End/Handoff/Close 0.0
+```
+⇒ `ensureSharedIndexBuffer` も無罪。残るのは **入口ガード群（`renderLists.hasPass(pass)`・ターゲットレジストリ判定）と
+状態スナップショット**。次はこの2つを `terrainGuards` / `terrainSnapshot` としてbracket化する。
+ここまでで terrain 3.2ms の候補は「ユニフォーム容量=0.0」「共有インデックス=0.0」と2つ消え、
+**入口ガードかスナップショットのどちらか**に絞られた。
