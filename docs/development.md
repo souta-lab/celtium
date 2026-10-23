@@ -1024,7 +1024,7 @@ drawn[perFrame=197]  ← 変化なし
 
 **fps300 KPI: 記録時のbakeが画像gateを通った（2026-10-23・前進）**
 
-`-Dceltium.vulkan.bakeAtRecord=true` を追加: 記録時に各グループの modelView を**自分の頂点へ焼き込み**、
+記録時bakeの実験（後に撤去）: 記録時に各グループの modelView を**自分の頂点へ焼き込み**、
 push block の行列を `projection`（modelView＝単位行列）へ書き換え、fog行も単位行列にする。
 retained（共有メッシュ）のグループは対象外（二重変換になるため）。
 
