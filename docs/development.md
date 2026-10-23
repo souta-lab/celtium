@@ -2025,3 +2025,25 @@ world mode のlegは起動後すぐワールドへ進むため滞在tickが足�
 **次**: menu 用の短い leg（world に入らず 60 client tick 滞在するモード）を追加するか、
 `dumpPresentedMenuTick` を world 突入前の実測tickに合わせる。撮影できれば、
 panoramaTimer が進んでいるのに絵が動かない＝我々の描画側、両方止まっている＝フィクスチャ側と分離できる。
+
+**パノラマ①の症状を画像で再現（2026-10-23 実測）**
+
+`-Dceltium.validation.menuHoldTicks=80 -Dceltium.validation.dumpPresentedImage=true
+-Dceltium.validation.dumpPresentedMenuTick=40` でタイトル画面を保持してメニュー提示画像を取得できた。
+
+```
+menuDumpPanoramaTimer=271.03995   ← ゲーム側のパノラマ回転タイマーは進んでいる
+menuDumpRenderPartialTicks=0.9999969
+picture: screenshots/celtium-presented-menu-run-...-kept.png (1280x720)
+受入はFAILED（メニュー保持がワールド撮影のタイミングをずらしたため。画像取得は成功）
+```
+取得画像は `docs/evidence/2026-10-23-menu-panorama-broken.png`。内容:
+- ロゴ・ボタン・スプラッシュ・MOD数表示は**正しい**
+- **背景パノラマが壊れている**: 巨大な文字（アトラスの一部）が引き伸ばされたような絵
+
+**切り分け結果**: panoramaTimer は進んでいる（271）ので「ゲームが角度を進めていない」側ではない。
+⇒ **我々の描画側**で、パノラマの背景画像（6面×64複製をオフスクリーンFBOへ描く）が
+正しく合成・参照されていない。`CELTIUM_RAW_FBO framebuffer=1/6/24 colorTexture=3/7/25` は出ており
+テクスチャ拒否は0件。したがって「FBOの色テクスチャを描画元として使う経路」（コピー/参照）の
+ルーティングが本命。パノラマは 6面テクスチャ→FBO→ぼかし→合成 の多段なので、
+どこで別画像（アトラス）を引いているかを次に特定する。
