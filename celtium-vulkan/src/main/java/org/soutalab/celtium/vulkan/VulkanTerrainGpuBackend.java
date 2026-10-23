@@ -2246,7 +2246,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private ImmediateDrawRecords drawRecords;
 
     /** {@code -Dceltium.vulkan.indirectImmediate=true}: record opaque textured groups as indirect runs. */
-    private static final boolean INDIRECT_IMMEDIATE = Boolean.getBoolean("celtium.vulkan.indirectImmediate");
+    /**
+     * Record opaque textured and lit item groups as records plus indirect commands, one command per group and one call per
+     * material run. On by default: about 194 draws become about three commands a frame; pass
+     * {@code -Dceltium.vulkan.indirectImmediate=false} to fall back to per-group draws.
+     */
+    private static final boolean INDIRECT_IMMEDIATE =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectImmediate"));
     private static final int INDIRECT_COMMAND_BYTES = 20;
     private final java.util.Map<Object, VulkanImmediateTexturePipeline> recordsPipelines = new java.util.IdentityHashMap<>();
     private final java.util.Map<Object, VulkanImmediateItemPipeline> recordsItemPipelines = new java.util.IdentityHashMap<>();
@@ -13672,7 +13678,13 @@ this.frameBufferOpen = false;
     private long bufferCensusArenaBacked;
     private long bufferCensusOwning;
     /** {@code -Dceltium.vulkan.sortOpaque=true}: order the opaque groups by material so equal materials share a run. */
-    private static final boolean SORT_OPAQUE = Boolean.getBoolean("celtium.vulkan.sortOpaque");
+    /**
+     * Order a flush's opaque groups by material before recording them. On by default: the indirect run path below needs
+     * equal materials adjacent to form runs, and the opaque ones are the only ones safe to move. The measurement that
+     * justified it is in docs/development.md (steady window 8.13 to 6.98 ms with both switches on).
+     */
+    private static final boolean SORT_OPAQUE =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.sortOpaque"));
     /** {@code -Dceltium.vulkan.bakeAtRecord=true}: bake each group's modelView into its vertices at record time. */
     private static final boolean BAKE_AT_RECORD = Boolean.getBoolean("celtium.vulkan.bakeAtRecord");
     private static final float[] IDENTITY_MATRIX = {

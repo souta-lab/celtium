@@ -1230,3 +1230,20 @@ frame p50 15.67 → 9.95ms（ベースライン 8.07〜9.2ms）
 
 起動直後の窓が両armとも遅いのはfixture側のワールド生成/ロードであり、比較は定常窓で行う。
 次の判断: **両フラグを既定onにする**か。Intel実機での確認が先（次leg）。
+
+**fps300 KPI: 間接run経路を既定onにした（2026-10-23 実測）**
+
+`sortOpaque` と `indirectImmediate` を**既定on**へ（`-Dceltium.vulkan.sortOpaque=false` /
+`-Dceltium.vulkan.indirectImmediate=false` で従来動作に戻せる）。
+
+```
+leg kpi-default（既定＝新経路, AMD RX 6400, world, validation ON, 180秒, jar kpi-57）
+受入: PASSED・problems 0（画像gate一致）
+indirect[runs=1827 groups=83708]  → run長 ≈46グループ、約3コマンド/フレーム
+frame p50: 7.98 → 6.72 → 6.45ms（定常）
+```
+比較（同一条件の従来arm, kpi-56）: 定常 **8.13ms** ⇒ **6.45ms（−21%、約1.7ms）**。
+Intel UHD 630 も同フラグで **PASSED・problems 0**（`kpi-steadyintel`）。
+
+⇒ レンダラ所有コストが下がり、**frame 8.1 → 6.45ms（fps 約155）**。300fpsの床（ドロー全削除で5.3ms）は
+別途vanilla側の削減が必要なことに変わりはない。
