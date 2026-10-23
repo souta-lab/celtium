@@ -2047,3 +2047,15 @@ picture: screenshots/celtium-presented-menu-run-...-kept.png (1280x720)
 テクスチャ拒否は0件。したがって「FBOの色テクスチャを描画元として使う経路」（コピー/参照）の
 ルーティングが本命。パノラマは 6面テクスチャ→FBO→ぼかし→合成 の多段なので、
 どこで別画像（アトラス）を引いているかを次に特定する。
+
+**パノラマの参照画像は取れず（2026-10-23 実測）**
+
+Celeritas（`01-celeritas-forge-mc12.2-2.5.0-dev.jar`）＋fixture で同じメニュー保持フラグを付けて実行したが、
+`screenshots/` に出たのは `celtium-validation.png`（GL armのワールド撮影）だけで、**menu dumpは無い**。
+presented dump は**Celtiumのpresentフックが書くもの**なので、参照レンダラ側では発火しない。
+⇒ パノラマの「正しい絵」を fixture で取るには、メニュー段で `celtium$captureGlScreenshot`
+（GL armのスクショ経路）を呼ぶ段を足す必要がある。**未実装**。
+
+現時点の①の状態: 壊れた画像（`docs/evidence/2026-10-23-menu-panorama-broken.png`）と
+「panoramaTimerは進む・テクスチャ拒否0・生FBO記録あり」まで確認済み。参照画像なしで
+多段合成のどこが誤りかを詰めるのは非効率なので、次は参照画像の取得を先に整える。
