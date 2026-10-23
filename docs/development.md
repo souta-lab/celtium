@@ -1418,3 +1418,16 @@ frame p50 10.72 → 8.53 → 6.97ms    ← 直前5.90msから **約+1.1ms 悪化
 ```
 ⇒ viewportをキーに含めると**runが細切れになり**、節約できる per-group の状態設定より損失が大きい。
 挙動は revert（5.90msの構成に戻した）。
+
+**受理経路の内訳（brackets ON・間接run既定onのrunから）**
+
+```
+offCapture 0.0 / offPrepare 0.1 / offMerge 0.5 / offAppend 0.1 / flushCloseGroup 0.0 / rcPrepared 0.1
+```
+⇒ 最も大きいのは `offMerge`（fast-merge判定）0.5ms。ただしこのrunは**bracket有効**（グループ毎に
+`begin/end` が2回入る）なので、その分の計器税を含む。1バッチあたり約0.43µsで、
+内訳は「テクスチャ・状態・ライトマップの比較」で、テクスチャ解決は**1エントリmemo**により同一名の連続は
+フィールド比較で済む実装になっている。**目立つホットスポットは無い**。
+
+受理経路の残り（submitImmediateBatchBody全体 0.6〜0.9ms のうち、上記の合計約0.8msでほぼ説明できる）。
+つまり受理側も**局所最適化の余地は小さい**。
