@@ -1944,3 +1944,18 @@ gameClears=[latched=347,live=686,noClear=1720,framesNoClear=0]
 (b) 同じ文字が二重に描かれている（immediate経路＋display list経路）、
 (c) フォントアトラスのミラーが1フレーム遅れる。
 次は (b) を疑い、看板TESRの描画回数を計器で数える（`drawModelList`/文字クアッドのサイト別カウント）。
+
+**ゲームのF2画像と提示フレームは静止時にピクセル一致（2026-10-23 実測）**
+
+leg `shot-test6` は同じtickで「ゲーム自身のスクショ」と「提示フレームのdump」の両方を残すので、比較した:
+```
+game screenshot : screenshots/celtium-validation-screen.png
+presented (kept): screenshots/celtium-presented-world-...-kept.png
+サイズ一致 1280x720 / 差分ピクセル 0（0.00%）
+```
+⇒ 静止時は**提示画像がゲームのF2と完全一致**。提示経路が古いフレームを混ぜている・別画像を出している、
+という筋は**静止条件では否定**される。フレーム画像のclearも毎フレーム入っている（`framesNoClear=0`）。
+
+したがって残像⑤は**動きに依存する現象**（提示レイテンシ＝1フレーム遅れ、または入力と表示のずれ）の可能性が高い。
+次は fixture に「視点を動かしながら2フレーム撮る」段を足し、F2と提示画像の**位置ずれ**を測る。
+（静止画比較で0差分だったことは、動きの指標にはならない。）
