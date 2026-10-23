@@ -122,3 +122,10 @@ pre-terrain flush の内部を調べるために入れた `DrawCounters.immediat
 delta を取る計器で、`last = current` を**先に**実行してから `current - last` を計算すると必ず0になる。
 実際に variant 別ドロー時間が全部 0 と出た（修正後: item 129ms/14880回）。
 delta はスナップショット更新**前**に計算し、更新は最後に行うこと。未配線カウンタ（0が「計器停止」を意味した件）と同類。
+
+## `skipDrawCalls` は即時経路に効いていなかった（2026-10-23）
+
+`-Dceltium.debug.skipDrawCalls=true` は `VulkanDynamicMesh.draw()` だけを見ており、
+即時フラッシュが実際に使う `bindAndDraw` の **drawForm インライン `vkCmdDrawIndexed` を見ていなかった**。
+そのため以前の「ドローを止めても時間が変わらない」という測定は**無効**。修正後に測ると
+frame 7.0→5.3ms、winRecord 2.5→1.5ms と、ドローコマンドが1.0ms/frameを占めることが分かった。

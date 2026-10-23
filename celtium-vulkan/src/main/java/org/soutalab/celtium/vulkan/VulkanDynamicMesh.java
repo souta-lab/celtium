@@ -296,8 +296,13 @@ public final class VulkanDynamicMesh {
             if (timed) PacketCost.noteBind(PacketCost.start() - bindStart);
             org.soutalab.celtium.vulkan.DrawCounters.noteIndexed();
             long drawStart = timed ? PacketCost.start() : 0L;
-            org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
+            // The skip switch applies here as well: this is the path the immediate flush actually uses, so leaving it out
+            // meant -Dceltium.debug.skipDrawCalls measured nothing on the one path that matters. With it, the difference
+            // is the cost of the vkCmdDrawIndexed command itself.
+            if (!SKIP_DRAW_CALLS && !abSkipDraw) {
+                org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
                         (int) (ibo / 4L), (int) (vbo / stride), 0);
+            }
             if (timed) {
                 PacketCost.noteDraw(PacketCost.start() - drawStart);
                 PacketCost.notePacket(bound);

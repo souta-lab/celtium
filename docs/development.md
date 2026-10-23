@@ -858,3 +858,19 @@ push 0.07 + mesh 0.32 ≈ 2.4ms）で確定。**削れるのはドロー回数�
 合計 ≈6.6ms（world）で矛盾なし。**300fps（3.3ms）には描画2.4msを約0.8msへ**（196→60ドロー）と
 vanilla側 2.8→1.5ms の両方が必要。前者はテクスチャ配列/インデックス＋indirect multi-draw（bindless）で、
 `VulkanContext` には descriptor indexing の機能判定が既にある（実装は未接続）。
+
+**fps300 KPI: ドローコマンドの実コスト（2026-10-23 A/B・決定的）**
+
+`-Dceltium.debug.skipDrawCalls=true` を **実際に効くように**修正（従来は `mesh.bindAndDraw` の
+drawForm インライン `vkCmdDrawIndexed` を見ていなかったため無効だった）うえで測定:
+```
+                通常        drawスキップ
+frame p50       7.0ms  →   5.3ms
+winRecord       2.5ms  →   1.5ms
+item meshMs     90     →   41   （/120フレーム）
+drawParts meshBind 38  →   10
+```
+⇒ **`vkCmdDrawIndexed` 196回 ≈ 1.0ms/frame（1回 ≈5µs）**。即時描画2.5msのうち
+**ドローコマンド1.0ms＋その他1.5ms**。
+したがって 196→60 に減らしても **約0.7ms** しか減らない。残る1.5msは
+**グループ毎の状態処理（未計測の部分）**にあり、そこを特定するのが先。
