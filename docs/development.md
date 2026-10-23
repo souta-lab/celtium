@@ -1088,3 +1088,19 @@ GPU側で節約できる約1msを大きく上回る**。run用メッシュの確
 ⇒ シェーダとして正しくコンパイルされることを確認（glslangValidator）。
 **まだ描画経路には接続していない**（次段でレイアウト／レコードバッファ／indirect記録を実装）。
 CPUはレコードを書くだけで、頂点データは共有メッシュのまま＝CPU連結マージの反証（17〜33ms）を踏まない設計。
+
+**fps300 KPI: グループが使うバッファは窓あたり38〜58個だけ（2026-10-23 実測・indirectの前提確認）**
+
+`-Dceltium.debug.bufferCensus=true`（窓=120フレーム）:
+```
+groups=23042-28751  vertexBuffers=38-58  indexBuffers=38-58
+arenaBacked=4972-8275（≒41-69/フレーム）  owning=15240-20476（≒127-171/フレーム）
+```
+⇒ **バッファの種類は1フレームあたり数個**しかない（retainedモデルメッシュは大きな共有バッファを借り、
+owning でも種類は増えない）。つまり **indirect multi-drawの障害は「バッファがバラバラ」ではなく
+「ドロー毎の状態（push/レコード）とバインド形式」**であることが確定。
+
+したがって次段の条件は:
+- 不透明・drawForm（`vbo % stride == 0`）・同一 (pipeline, descriptor, 頂点/インデックスバッファ, stride) の連続グループ
+- 各コマンドは自身の firstIndex/vertexOffset/indexCount を持ち、per-drawデータはレコードの firstInstance で引く
+- bind-form のグループ（実測で全体の約9%）は従来どおり個別ドローにフォールバック

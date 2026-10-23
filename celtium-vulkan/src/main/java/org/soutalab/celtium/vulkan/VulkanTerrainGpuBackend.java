@@ -2393,6 +2393,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.lastPipelineBindNanos = pipelineBindTotal;
         this.lastDescriptorBindNanos = descriptorBindTotal;
 
+        if (BUFFER_CENSUS) {
+            System.out.println("[Celtium] CELTIUM_BUFFER_CENSUS groups=" + this.bufferCensusGroups
+                    + " vertexBuffers=" + this.bufferCensusVertexBuffers.size()
+                    + " indexBuffers=" + this.bufferCensusIndexBuffers.size()
+                    + " arenaBacked=" + this.bufferCensusArenaBacked
+                    + " owning=" + this.bufferCensusOwning);
+            this.bufferCensusGroups = 0L;
+            this.bufferCensusArenaBacked = 0L;
+            this.bufferCensusOwning = 0L;
+            this.bufferCensusVertexBuffers.clear();
+            this.bufferCensusIndexBuffers.clear();
+        }
         if (DRAW_KEY_CENSUS) {
             System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + this.drawKeyGroups
                     + " distinctKeys=" + this.drawKeyCounts.size()
@@ -13467,6 +13479,13 @@ this.frameBufferOpen = false;
     private static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
     /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
     private static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
+    /** {@code -Dceltium.debug.bufferCensus=true}: how many distinct buffers a frame's groups draw from. */
+    private static final boolean BUFFER_CENSUS = Boolean.getBoolean("celtium.debug.bufferCensus");
+    private final java.util.Set<Long> bufferCensusVertexBuffers = new java.util.HashSet<Long>();
+    private final java.util.Set<Long> bufferCensusIndexBuffers = new java.util.HashSet<Long>();
+    private long bufferCensusGroups;
+    private long bufferCensusArenaBacked;
+    private long bufferCensusOwning;
     /** {@code -Dceltium.vulkan.sortOpaque=true}: order the opaque groups by material so equal materials share a run. */
     private static final boolean SORT_OPAQUE = Boolean.getBoolean("celtium.vulkan.sortOpaque");
     /** {@code -Dceltium.vulkan.bakeAtRecord=true}: bake each group's modelView into its vertices at record time. */
@@ -18413,6 +18432,21 @@ this.frameBufferOpen = false;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                }
+                if (BUFFER_CENSUS) {
+                    // The premise of one indirect command per run: every group of a run must draw from the same vertex
+                    // and index buffer, because an indirect command cannot change the bindings. The frame arena hands
+                    // out slices of one buffer per slot, so an arena-backed group qualifies; an owning mesh does not.
+                    this.bufferCensusGroups++;
+                    if (mesh != null) {
+                        this.bufferCensusVertexBuffers.add(Long.valueOf(mesh.vertexBuffer()));
+                        this.bufferCensusIndexBuffers.add(Long.valueOf(mesh.indexBuffer()));
+                        if (mesh.isArenaBorrow()) {
+                            this.bufferCensusArenaBacked++;
+                        } else {
+                            this.bufferCensusOwning++;
+                        }
+                    }
                 }
                 if (DRAW_KEY_CENSUS) {
                     // How many distinct (pipeline, descriptor) pairs the frame's groups use, and how often the pair changes
