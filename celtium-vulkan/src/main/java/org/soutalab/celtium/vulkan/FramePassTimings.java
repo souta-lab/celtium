@@ -309,6 +309,11 @@ public final class FramePassTimings {
      */
     private static final boolean COUNT_CALLS = Boolean.getBoolean("celtium.vulkan.passCounts");
 
+    /** {@return whether per-bracket call counting is on} ({@code -Dceltium.vulkan.passCounts}). */
+    public static boolean countsCallsEnabled() {
+        return COUNT_CALLS;
+    }
+
     private static int indexOf(String pass) {
         int slot = System.identityHashCode(pass) & 31;
         if (INDEX_CACHE_NAME[slot] == pass) {
