@@ -2079,3 +2079,18 @@ menu段に「ゲーム自身のスクショ」を追加したことで、**GLア
 **次の一手**: パノラマは 6面テクスチャ×64複製 → FBO(256x256) → ぼかし → 合成 の多段。
 巨大文字は「合成時に別テクスチャ（アトラス）を引いている」形なので、
 メニュー期間の `bindTexture` と、合成クアッドが解決したテクスチャ名を計器で出す。
+
+**パノラマ①の追加計測（2026-10-24）**
+
+- chain pairの**退避（eviction）は発生していない**（`CELTIUM_CHAIN_EVICT` 0件）。上限8でも
+  メニューのFBO数は収まっており、画像の取り違えはエビクションではない。計器は残置（今後の再発検出用）。
+- `CELTIUM_FBO_CENSUS` / `CELTIUM_FBO_TEXTURE_PUBLISHED` により、vanilla Framebufferの色テクスチャは
+  **公開（publish）されている**ことを確認: name=7 identity=0x5b7518c8 route=chain-pair（1281x720）、
+  name=25 identity=0x4d3efa84 route=chain-pair（1280x720）。
+- 「毎フレーム再publish」を試したが**絵は変わらなかった**（参照画像との差分65%のまま）ため**revertした**。
+  未検証の挙動変更を残さない方針。
+- パノラマFBO（256x256想定）のテクスチャ名は `CELTIUM_PREP_TEX` で 23 として見えており、
+  これに対応する公開ログが出ていない。**次の的にする**: name=23 の identity を引き、
+  そのchain pairの中身（読み出し平均色）を測る。ここが空/別物なら合成元の解決が誤り。
+
+現状の①: **未修正**。壊れた絵と正解画像、計器、棄却済み仮説（eviction/再publish）は揃っている。

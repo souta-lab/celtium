@@ -158,6 +158,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private final java.util.Map<Long, Pair> chainPairs = new java.util.LinkedHashMap<Long, Pair>();
     /** The eviction bound for {@link #chainPairs}; a session that binds more targets reuses the oldest. */
     private static final int MAX_CHAIN_PAIRS = 8;
+    /** Pairs evicted because the bound was reached; a menu that cycles more framebuffers than the bound thrashes. */
+    private long chainPairEvictions;
 
     private boolean frameOpen;
     private boolean deleted;
@@ -1117,6 +1119,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             Pair evicted = this.chainPairs.remove(oldest);
             if (evicted != null) {
                 evicted.release();
+                this.chainPairEvictions++;
+                if (this.chainPairEvictions <= 12) {
+                    System.out.println("[Celtium] CELTIUM_CHAIN_EVICT identity=" + Long.toHexString(oldest)
+                            + " evictions=" + this.chainPairEvictions + " live=" + this.chainPairs.size()
+                            + " limit=" + MAX_CHAIN_PAIRS);
+                }
             }
         }
         Pair created = new Pair("chain-" + Long.toHexString(identity));
