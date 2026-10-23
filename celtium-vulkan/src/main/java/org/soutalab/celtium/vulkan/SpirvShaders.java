@@ -42,6 +42,11 @@ public final class SpirvShaders {
     public static final String SOLID_FRAGMENT = "terrain_solid.frag";
 
     /** Vertex module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */
+    /** The record-reading form of the position-only variant: the sky, the stars and the horizon plane. */
+    public static final String IMMEDIATE_POSITION_RECORDS_VERTEX = "immediate_position_records.vert";
+    /** The record-reading form of the position-plus-texture variant: sky, clouds and the water surface. */
+    public static final String IMMEDIATE_POSITION_TEX_RECORDS_VERTEX = "immediate_position_tex_records.vert";
+
     public static final String UI_VERTEX = "ui_quad.vert";
 
     /** Fragment module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */

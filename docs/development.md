@@ -1298,3 +1298,16 @@ forms[draw=2400 bind=2671]
 
 次の削減候補: position系（`immediate_position.vert` / `immediate_position_tex.vert`）のrecords変種を作り、
 generic 20ドロー/フレームを吸収（見込み −0.2〜0.4ms）。
+
+**fps300 KPI: position系（generic）のレコード読みシェーダを追加（2026-10-23・コンパイル検証）**
+
+`immediate_position_records.vert` / `immediate_position_tex_records.vert` を追加。
+208バイトのブロック（行列0 / 死んだMV列orテクスチャaffine 64,80 / colour alpha 96 / alpha+色 112 /
+fog 128..207）を `set=1 binding=0` の SSBO から `gl_InstanceIndex` で読み、**224バイトstrideにpad**。
+
+シェーダコンパイルは **38本成功**（`compileTerrainShaders --rerun-tasks`）。
+途中、fogヘルパー `celtiumFogDistance(vec3)` がレコードを参照する形に変換されたため未宣言エラーになり、
+**引数に `in DrawRecord record` を追加**して修正した（コンパイルで検出）。
+
+これで「個別ドロー約20/フレーム」の generic（position系）を間接経路に載せる前提が揃った。
+残り: `VulkanImmediatePipeline` に records モード＋backend配線。
