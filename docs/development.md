@@ -2365,3 +2365,23 @@ pipelineは blends=true/depthWrite=false。行列・射影も正しい。
 **次の一手**: 384グループの `prepared.descriptor` が**何種類あるか**を数え、draw時の
 `vkCmdBindDescriptorSets` に渡す descriptor が group ごとに変わっているかを記録する。
 （1種類しか無いなら、テクスチャ束縛が共有されていて全グループが最後のアトラスを引く＝症状と一致）
+
+**パノラマ①: descriptor も6種で正しい（2026-10-24 実測）**
+
+```
+CELTIUM_WINDOW_DESCRIPTORS distinct=6 groups=384 textureImages=6 first=[0x122...,0x123...,...]
+CELTIUM_WINDOW_PIPELINES distinct=1 texture blends=true depthWrite=false depthTest=false
+CELTIUM_MODELVIEW_EXACT  distinct=384 groups=384 placements=64 perTileRotations=[6:64]
+```
+⇒ **受理側の解決は完全に正しい**: 6面のテクスチャ・6つのdescriptor・384の正しい行列・
+blend有効/depth書き込み無効・route=frame-image・射影も正しい。
+
+**それでも描画結果は巨大なフォント字形**。考えられる残りの説明は
+「**6つのdescriptorが指す先の画像が、実際には別のもの（フレーム画像など）になっている**」こと。
+フレーム画像をパノラマのクアッドで拡大サンプルすると、直前までに描かれたGUIの文字が
+巨大化して見える（＝観測と一致）。
+
+**次の一手**: `textureImage`（6個）それぞれについて
+- レジストリ上の名前・サイズ
+- その画像が「フレーム画像に公開されている」か（publish経路の有無）
+を記録し、6つが 256x256 のパノラマ画像を指しているか、フレーム画像を指していないかを確定する。

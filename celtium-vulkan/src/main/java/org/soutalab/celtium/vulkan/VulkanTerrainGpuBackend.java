@@ -18398,6 +18398,29 @@ this.frameBufferOpen = false;
                 }
                 textureList.append(texture.intValue());
             }
+            java.util.LinkedHashSet<Long> descriptors = new java.util.LinkedHashSet<Long>();
+            java.util.LinkedHashSet<Object> textureImages = new java.util.LinkedHashSet<Object>();
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                ImmediateGroup group = this.immediateGroups.get(i);
+                if (group.prepared != null) {
+                    descriptors.add(Long.valueOf(group.prepared.descriptor));
+                }
+                textureImages.add(group.textureImage);
+            }
+            StringBuilder descriptorList = new StringBuilder();
+            int descriptorLines = 0;
+            for (Long descriptor : descriptors) {
+                if (descriptorLines++ >= 6) {
+                    break;
+                }
+                if (descriptorList.length() > 0) {
+                    descriptorList.append(',');
+                }
+                descriptorList.append("0x").append(Long.toHexString(descriptor.longValue()));
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_DESCRIPTORS distinct=" + descriptors.size()
+                    + " groups=" + this.immediateGroups.size() + " textureImages=" + textureImages.size()
+                    + " first=[" + descriptorList + "]");
             java.util.LinkedHashSet<Object> pipelines = new java.util.LinkedHashSet<Object>();
             for (int i = 0; i < this.immediateGroups.size(); i++) {
                 ImmediateGroup group = this.immediateGroups.get(i);
