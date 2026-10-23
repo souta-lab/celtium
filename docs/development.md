@@ -607,3 +607,21 @@ terrainCapacity 0.0 / terrainSharedIndex 0.0 / Setup/Target/Ensure/Begin/End/Han
 状態スナップショット**。次はこの2つを `terrainGuards` / `terrainSnapshot` としてbracket化する。
 ここまでで terrain 3.2ms の候補は「ユニフォーム容量=0.0」「共有インデックス=0.0」と2つ消え、
 **入口ガードかスナップショットのどちらか**に絞られた。
+
+**fps300 KPI: 真犯人は「地形の前の即時ワーク吐き出し」（2026-10-23 実測で確定）**
+
+```
+terrain(inside world)  3.7ms
+  terrainPrep          3.2ms
+    terrainPreflush    3.1ms   ← これ
+  terrainRecord        0.5ms
+  容量/共有インデックス/Setup/Target/Ensure/Begin/End/Handoff/Close = 0.0ms
+```
+`flushPendingBeforeGlDraw()`（`celtium$renderPass` の先頭、`terrainSetup` より前）が
+**地形パスの3.2msのほぼ全部**を占めていた。ここでは地形より前に記録された即時ワーク
+（スカイ・ボイド面・太陽/月など）を吐き出している。
+
+⇒ 300fpsへの次の一手は「この吐き出しを軽くする」:
+1. 何を吐き出しているか（バッチ数・グループ数・描画種別）を `terrainPreflush` の内側で計測
+2. 空/雲を地形より前ではなく**専用パスで先に描く**（記録を溜めずにその場で submit する）
+3. あるいは吐き出し対象を減らす（ソート/合体で groups を縮小）
