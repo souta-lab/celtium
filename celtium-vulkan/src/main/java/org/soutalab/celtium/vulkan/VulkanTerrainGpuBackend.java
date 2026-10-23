@@ -16816,6 +16816,11 @@ this.frameBufferOpen = false;
         return this.textureCopyService.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
     }
 
+    /** The backend side of {@code glGetTexImage}, which is the read the game's own screenshot makes. */
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
+        return this.textureCopyService.celtium$getTexImage(textureName, level, format, type, address);
+    }
+
     /**
      * The backend side of {@link TextureCopyService.Host}: one method per fact the copy path reads.
      * <p>

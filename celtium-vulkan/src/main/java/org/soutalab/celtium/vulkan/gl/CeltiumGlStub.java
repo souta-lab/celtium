@@ -5922,6 +5922,23 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** The transformer's entry for {@code glReadPixels}: forwards to the installed stub when one exists. */
+    /**
+     * A {@code glGetTexImage} of the bound texture, answered from that texture's mirror.
+     * <p>
+     * The game's screenshot reads this way rather than through {@code glReadPixels} whenever framebuffers are enabled,
+     * which they are in a GL-less run - so before this route existed the buffer it encoded was the zero-writer's.
+     */
+    public static void celtium$getTexImage(int target, int level, int format, int type, long address) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || target != 0x0DE1) {
+            return;
+        }
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$getTexImage(stub.lastBoundTexture, level, format, type, address);
+        }
+    }
+
     public static void celtium$readPixels(int x, int y, int width, int height, int format, int type, long address) {
         CeltiumGlStub stub = installed;
         if (stub != null) {

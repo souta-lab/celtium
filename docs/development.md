@@ -1901,6 +1901,22 @@ GL-less では `isFramebufferEnabled()` が真なので**必ず `glGetTexImage` 
 そして `glGetTexImage` は `CeltiumGlStub` の**ゼロ書き**リストに入っている（`celtium-vulkan/.../CeltiumGlStub.java:488`）。
 ⇒ **バッファがゼロのままPNG化＝真っ黒**。transformer にも hint にも `glGetTexImage` の経路は無い。
 
-**修正方針**: `glGetTexImage(target=3553, level=0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, IntBuffer)` を
-transformer→hint→stub に配線し、バインド中のテクスチャ（=スクショ用FBOの色テクスチャ）のミラー画像から
-ピクセルを返す。読み出しは `TextureCopyService` の画像読み出しを使う。黒スクショは**未修正**。
+**修正・検証済み（2026-10-23）**
+
+`nglGetTexImage(IIIIJ)V`（LWJGLのnative）を transformer → `CeltiumGllessHint.glGetTexImage` →
+`CeltiumGlStub.celtium$getTexImage` → `TextureCopyService.celtium$getTexImage` に配線し、
+バインド中テクスチャ名のミラーから packed-int(BGRA) で返すようにした。
+
+**訂正**: 最初に `(IIIILjava/nio/IntBuffer;)V` を計装しようとして何も起きなかったのは、
+このtransformerが**LWJGLのnativeメソッド**を書き換える方式で、バッファ版の呼び出しは
+`GL11` 内で native の `nglGetTexImage(IIIIJ)V` に化けるため。descriptorは必ず `(IIIIJ)V`。
+
+検証（leg `shot-test6`, AMD RX 6400, world, validation ON）:
+```
+受入: PASSED・problems 0
+CELTIUM_GET_TEX_IMAGE texture=3 1280x720  (ルート発火)
+gameScreenshotMean=113.74  nonBlackFraction=0.98308  black=false
+```
+保存PNGのsha256 `24aafadd27d659c3d995070970d8d8980c979273ecd221038b400f20a6641d64`、
+証拠として `docs/evidence/v0.0.15-f2-screenshot-fixed.png` に保存。
+⇒ **ゲーム自身のF2スクリーンショットが実画像を返すようになった**（不具合③は修正）。

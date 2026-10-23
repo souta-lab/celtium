@@ -1052,6 +1052,61 @@ public final class TextureCopyService {
         return true;
     }
 
+    /**
+     * Serves {@code glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, IntBuffer)} for a colour
+     * texture name, which is the call the game's own screenshot makes.
+     * <p>
+     * Measured: ScreenShotHelper takes the {@code glGetTexImage} branch whenever framebuffers are enabled, so in a
+     * GL-less run a screenshot never reaches {@code glReadPixels} at all - leg shot-test4 recorded only the fixture's
+     * own 8x8 centre sample. The name the game binds is the framebuffer's colour attachment, whose draws went to the
+     * routed pair, so the read follows the same routing rule the draws did.
+     */
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
+        if (level != 0 || address == 0L || format != 0x80E1 || type != 0x8367 || textureName <= 0) {
+            return false;
+        }
+        long identity = this.host.identityForColorTexture(textureName);
+        if (identity == Long.MIN_VALUE) {
+            return false;
+        }
+        long image;
+        if (identity == 0L || identity == this.host.mainTargetIdentity()) {
+            image = this.host.frameTarget() == null ? 0L : this.host.frameTarget().colorImage();
+        } else {
+            GllessFrameTarget glless = this.host.offTargetTarget();
+            image = glless == null ? 0L : glless.chainPairColorImage(identity);
+        }
+        if (image == 0L) {
+            return false;
+        }
+        if (this.host.hasPendingImmediateWork()) {
+            this.host.flushPendingBeforeGlDraw();
+        }
+        if (!this.host.waitForIdle()) {
+            return false;
+        }
+        int width = this.host.targetWidth();
+        int height = this.host.targetHeight();
+        int[] pixels = readImageRectangle(image, 0, 0, width, height);
+        if (pixels == null) {
+            return false;
+        }
+        long dst = address;
+        int count = Math.min(pixels.length, width * height);
+        for (int i = 0; i < count; i++) {
+            org.lwjgl.system.MemoryUtil.memPutInt(dst + (long) i * 4L, pixels[i]);
+        }
+        this.readPixelsServed++;
+        if (this.getTexImageServes < 4) {
+            this.getTexImageServes++;
+            System.out.println("[Celtium] CELTIUM_GET_TEX_IMAGE texture=" + textureName + " " + width + "x" + height);
+        }
+        return true;
+    }
+
+    /** How many {@code glGetTexImage} serves have been logged. */
+    private int getTexImageServes;
+
     /** Bounded refusals for {@link #celtium$readPixels} and the serve count for the run report. */
     private int readPixelsRefusals;
     /** Reads of the window that the routing rule could not place and the frame image answered. */

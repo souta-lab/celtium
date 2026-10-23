@@ -556,20 +556,13 @@ public final class CeltiumGllessHint {
     }
 
     /**
-     * The same read into a packed {@code IntBuffer}, which is the overload {@code ScreenShotHelper} calls.
+     * {@code glGetTexImage(target, level, format, type, pixels)}, the read the game's own screenshot uses.
      * <p>
-     * Measured: a black F2 picture came from this overload not being routed at all - the transformer matched only the
-     * address form, so LWJGL's own {@code glReadPixels} ran against no GL context and left the buffer zeroed. The buffer's
-     * remaining capacity is not consulted here because the game's own call sizes it from the rectangle it passes, and the
-     * stub stops at the rectangle in turn.
+     * Measured: ScreenShotHelper takes this branch whenever framebuffers are enabled, so a GL-less run's screenshot
+     * never touched the {@code glReadPixels} route and its buffer stayed zeroed - a black PNG.
      */
-    public static void glReadPixelsBuffer(int x, int y, int width, int height, int format, int type,
-            java.nio.IntBuffer pixels) {
-        if (pixels == null) {
-            return;
-        }
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$readPixels(x, y, width, height, format, type,
-                org.lwjgl.system.MemoryUtil.memAddress(pixels));
+    public static void glGetTexImage(int target, int level, int format, int type, long pixels) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexImage(target, level, format, type, pixels);
     }
 
     /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */

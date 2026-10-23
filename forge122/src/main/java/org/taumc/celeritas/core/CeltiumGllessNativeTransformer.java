@@ -456,15 +456,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
-            if (("glReadPixels".equals(name) || "nglReadPixels".equals(name))
-                    && descriptor.equals("(IIIIIILjava/nio/IntBuffer;)V")) {
-                // The IntBuffer overload ScreenShotHelper calls: route it to the same stub, through the buffer's address.
-                for (int slot = 0; slot < 6; slot++) {
+            if ("nglGetTexImage".equals(name) && descriptor.equals("(IIIIJ)V")) {
+                // The screenshot's read: target, level, format, type, pixels address. Served from the mirror of the
+                // bound texture. This is the native LWJGL method, so the buffer form never appears here - the game's
+                // own IntBuffer call is inside GL11, which forwards to this native, and this is the native the
+                // transformer replaces.
+                for (int slot = 0; slot < 4; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitVarInsn(Opcodes.ALOAD, 6);
+                method.visitVarInsn(Opcodes.LLOAD, 4);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
-                        "glReadPixelsBuffer", "(IIIIIILjava/nio/IntBuffer;)V", false);
+                        "glGetTexImage", "(IIIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
