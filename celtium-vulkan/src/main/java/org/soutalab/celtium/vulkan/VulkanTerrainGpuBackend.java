@@ -18360,6 +18360,33 @@ this.frameBufferOpen = false;
                 distinctTranslations.add(Long.valueOf((tx << 32) ^ (ty & 0xFFFFFFFFL)));
             }
             float[] firstMv = this.immediateGroups.get(0).modelView;
+            java.util.Map<Long, java.util.List<float[]>> byTranslation =
+                    new java.util.LinkedHashMap<Long, java.util.List<float[]>>();
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                float[] mv = this.immediateGroups.get(i).modelView;
+                if (mv == null || mv.length < 16) {
+                    continue;
+                }
+                long key = (((long) Float.floatToIntBits(mv[12])) << 32)
+                        ^ (Float.floatToIntBits(mv[13]) & 0xFFFFFFFFL);
+                byTranslation.computeIfAbsent(Long.valueOf(key), ignored -> new java.util.ArrayList<float[]>())
+                        .add(mv);
+            }
+            for (java.util.Map.Entry<Long, java.util.List<float[]>> entry : byTranslation.entrySet()) {
+                if (entry.getValue().size() >= 2) {
+                    StringBuilder faces = new StringBuilder();
+                    for (float[] mv : entry.getValue()) {
+                        if (faces.length() > 0) {
+                            faces.append(' ');
+                        }
+                        faces.append(String.format(java.util.Locale.ROOT, "(%.3f,%.3f,%.3f)", Float.valueOf(mv[0]),
+                                Float.valueOf(mv[1]), Float.valueOf(mv[4])));
+                    }
+                    System.out.println("[Celtium] CELTIUM_TILE_FACES count=" + entry.getValue().size()
+                            + " rotations=" + faces);
+                    break;
+                }
+            }
             System.out.println("[Celtium] CELTIUM_WINDOW_TRANSLATIONS distinct=" + distinctTranslations.size()
                     + " groups=" + this.immediateGroups.size()
                     + " first=(" + String.format(java.util.Locale.ROOT, "%.4f,%.4f,%.4f",
