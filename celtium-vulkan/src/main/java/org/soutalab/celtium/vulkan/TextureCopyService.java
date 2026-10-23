@@ -530,6 +530,19 @@ public final class TextureCopyService {
                 }
             }
             if (blitRefusal == null) {
+                // Unconditional, and the reason is measured: with the wait left to the hasPendingImmediateWork branch the
+                // blit copies an image the frame's own draws have not reached. The title screen copies the window's
+                // (0,0)-(256,256) corner six times a frame, and the background came out as the previous frame's GUI text
+                // magnified (mean 105.3, saturated 0.042 against 112.0 and 0.303 for the host route, which waits). One
+                // device round trip per copy is the price of the corner holding this frame's panorama.
+                if (COPY_ORDER_WITHOUT_IDLE) {
+                    this.host.context().celtium$flushBatchedSubmits();
+                }
+                if (!this.host.waitForIdle()) {
+                    blitRefusal = "the GPU did not confirm the source's draws before the native copy";
+                }
+            }
+            if (blitRefusal == null) {
                 VkCommandBuffer commands = this.host.context().beginCommands();
                 try {
                     String recorded = this.host.registry().blitInto(destName, commands, image,
@@ -630,10 +643,26 @@ public final class TextureCopyService {
                 }
             }
         }
-        long readbackStartedNanos = System.nanoTime();
-        int[] pixels = readImageRectangle(image, x, y, width, height);
-        this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;
-        this.textureCopyReadbacks++;
+        // One readback a present per identical source rectangle. The title screen copies the same (0,0)-(256,256)
+        // corner seven times into one texture, each time at a different destination offset to build the blur, so the
+        // pixels are identical and only the upload differs. Measured before this: seven readbacks and seven device
+        // waits a present (textureCopiesReusedInFrame=0, textureCopiesReServedAfterContentChange=648); the wait is what
+        // the copy's ordering needs, and it only has to be paid once per (present, rectangle).
+        long sourceKey = (((long) readFbo * 0x9E3779B1L) ^ ((long) x << 40) ^ ((long) y << 20)
+                ^ ((long) width << 10) ^ (long) height) * 31L + this.host.presentSerial();
+        int[] pixels = CACHE_COPY_SOURCE ? this.cachedCopySource(this.host.presentSerial(), sourceKey,
+                image, x, y, width, height) : null;
+        if (pixels == null) {
+            long readbackStartedNanos = System.nanoTime();
+            pixels = readImageRectangle(image, x, y, width, height);
+            this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;
+            this.textureCopyReadbacks++;
+            if (pixels != null) {
+                this.rememberCopySource(this.host.presentSerial(), sourceKey, pixels);
+            }
+        } else {
+            this.textureCopySourceCacheHits++;
+        }
         if (pixels == null) {
             return refuseTextureCopy("the rectangle read of the owned image failed");
         }
@@ -884,6 +913,32 @@ public final class TextureCopyService {
         this.textureCopiesServed++;
         this.textureCopiesServedLastPresent++;
         return "served";
+    }
+
+    /**
+     * {@code -Dceltium.vulkan.cacheCopySource=false}: read every copy's pixels again instead of reusing one read per
+     * (present, source rectangle). On by default; the menu's blur chain is seven copies of one rectangle.
+     */
+    private static final boolean CACHE_COPY_SOURCE = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.cacheCopySource", "true"));
+    private final java.util.Map<Long, int[]> copySourceCache = new java.util.HashMap<Long, int[]>();
+    private long copySourceCachePresent = Long.MIN_VALUE;
+    private long textureCopySourceCacheHits;
+
+    private int[] cachedCopySource(long present, long key, long image, int x, int y, int width, int height) {
+        if (this.copySourceCachePresent != present) {
+            this.copySourceCache.clear();
+            this.copySourceCachePresent = present;
+        }
+        return this.copySourceCache.get(Long.valueOf(key));
+    }
+
+    private void rememberCopySource(long present, long key, int[] pixels) {
+        if (this.copySourceCachePresent != present) {
+            this.copySourceCache.clear();
+            this.copySourceCachePresent = present;
+        }
+        this.copySourceCache.put(Long.valueOf(key), pixels);
     }
 
     private long ownedReadImage(int readFbo) {
