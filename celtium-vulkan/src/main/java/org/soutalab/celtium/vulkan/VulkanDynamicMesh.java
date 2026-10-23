@@ -556,26 +556,47 @@ public final class VulkanDynamicMesh {
         if (vertexTarget == 0L || indexTarget == 0L) {
             return false;
         }
-        // The transform runs inside the copy rather than as a second pass: the position is read from the source and
-        // the attributes after it are copied verbatim. x' = sx*x + tx, y' = sy*y + ty, z' = sz*z + tz are the
-        // diagonal and translation terms of an axis-aligned matrix - every off-axis element is zero, which is what
-        // the caller checks, so each product is the same single-precision value the shader would compute.
-        float sx = modelView[0], sy = modelView[5], sz = modelView[10];
-        float tx = modelView[12], ty = modelView[13], tz = modelView[14];
-        if (sx == 1.0f && tx == 0.0f && sy == 1.0f && ty == 0.0f && sz == 1.0f && tz == 0.0f) {
+        // The transform runs inside the copy rather than as a second pass: the position is read from the source and the
+        // attributes after it are copied verbatim. The full 3x3 is applied, not just its diagonal: a rotated model view
+        // used to be refused by the caller (its off-axis terms would have been dropped here, and the textured family's
+        // shader applies no model view at all, so the whole transform would vanish). The title screen's panorama is
+        // exactly that shape - sixty-four tiles rotated and offset - so the product has to be complete.
+        float m00 = modelView[0], m01 = modelView[4], m02 = modelView[8], tx = modelView[12];
+        float m10 = modelView[1], m11 = modelView[5], m12 = modelView[9], ty = modelView[13];
+        float m20 = modelView[2], m21 = modelView[6], m22 = modelView[10], tz = modelView[14];
+        boolean identity = m00 == 1.0f && m11 == 1.0f && m22 == 1.0f
+                && m01 == 0.0f && m02 == 0.0f && m10 == 0.0f && m12 == 0.0f && m20 == 0.0f && m21 == 0.0f
+                && tx == 0.0f && ty == 0.0f && tz == 0.0f
+                && modelView[3] == 0.0f && modelView[7] == 0.0f && modelView[11] == 0.0f && modelView[15] == 1.0f;
+        boolean axisAligned = m01 == 0.0f && m02 == 0.0f && m10 == 0.0f && m12 == 0.0f && m20 == 0.0f && m21 == 0.0f;
+        if (identity) {
             // The dominant pre-transformed case: GUI text rides this path on an identity modelView, where the
             // per-vertex multiply-add produced x*1+0 verbatim - the same bytes a straight copy writes, at a tenth of
             // the cost (10.5% of the F3 leg's warm samples were this loop on identity quads).
             MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
+        } else if (axisAligned) {
+            // The common case, kept as its own loop: a diagonal product is three multiply-adds and it is what GUI draws
+            // and the HUD use, so it should not pay for the off-axis terms it does not have.
+            for (int i = 0; i < count; i++) {
+                long source = sourceAddress + (long) i * stride;
+                long target = vertexTarget + (long) i * stride;
+                MemoryUtil.memPutFloat(target, m00 * MemoryUtil.memGetFloat(source) + tx);
+                MemoryUtil.memPutFloat(target + 4, m11 * MemoryUtil.memGetFloat(source + 4) + ty);
+                MemoryUtil.memPutFloat(target + 8, m22 * MemoryUtil.memGetFloat(source + 8) + tz);
+                MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
+            }
         } else {
-        for (int i = 0; i < count; i++) {
-            long source = sourceAddress + (long) i * stride;
-            long target = vertexTarget + (long) i * stride;
-            MemoryUtil.memPutFloat(target, sx * MemoryUtil.memGetFloat(source) + tx);
-            MemoryUtil.memPutFloat(target + 4, sy * MemoryUtil.memGetFloat(source + 4) + ty);
-            MemoryUtil.memPutFloat(target + 8, sz * MemoryUtil.memGetFloat(source + 8) + tz);
-            MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
-        }
+            for (int i = 0; i < count; i++) {
+                long source = sourceAddress + (long) i * stride;
+                long target = vertexTarget + (long) i * stride;
+                float x = MemoryUtil.memGetFloat(source);
+                float y = MemoryUtil.memGetFloat(source + 4);
+                float z = MemoryUtil.memGetFloat(source + 8);
+                MemoryUtil.memPutFloat(target, (m00 * x) + (m01 * y) + (m02 * z) + tx);
+                MemoryUtil.memPutFloat(target + 4, (m10 * x) + (m11 * y) + (m12 * z) + ty);
+                MemoryUtil.memPutFloat(target + 8, (m20 * x) + (m21 * y) + (m22 * z) + tz);
+                MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
+            }
         }
         if (baseVertex == 0) {
             // The common case for a mesh that starts empty: the indices need no rebasing, so they go out as one bulk

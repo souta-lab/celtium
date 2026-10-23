@@ -8209,7 +8209,18 @@ this.frameBufferOpen = false;
         if (this.fogEnabled) {
             return false;
         }
-        return celtium$axisAlignedModelView();
+        if (celtium$axisAlignedModelView()) {
+            return true;
+        }
+        // The textured family's vertex shader applies the projection only (immediate_tex_color.vert ends with
+        // gl_Position = u_ProjectionMatrix * a_Position and its push block carries the texture matrix, not the model
+        // view), so a rotated model view reaches the GPU only if it is baked here. The bake now applies the whole 3x3,
+        // which is what makes that legal: the title screen's panorama is sixty-four tiles, each rotated and offset, and
+        // without this every one of its 384 quads landed on the same place and the alpha stack converged to a single
+        // sharp photograph instead of a blur. Formats 1, 2 and 6 are the layouts drawn through that family.
+        boolean affine = this.glModelView[3] == 0.0f && this.glModelView[7] == 0.0f
+                && this.glModelView[11] == 0.0f && this.glModelView[15] == 1.0f;
+        return affine && (formatId == 1 || formatId == 2 || formatId == 6);
     }
 
     /**
