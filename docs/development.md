@@ -1606,3 +1606,24 @@ loop[frames=120 loopMean=11-12 tickMean=5 displayMean=4 renderMean=4-5]
   既定経路に触れないため、必要になった時点で再取得する。
 - `tickMean=5`（20Hzなのでフレーム換算 約0.8〜1ms）と `renderMean=4-5`。
   loopMean 11-12 は計測区間の定義がフレーム間隔と一致しないため、**フレーム間隔(7.7ms)とは別物として読む**。
+
+**RLCraftプロファイルの実体: 0.6.13（GLFW世代）だった（2026-10-23 確認）**
+
+```
+.gv-verify の recipe 既定: .celtium-work/modpack-p0/recipe-profile/instances/rlcraft-2.9.3-recipe
+  mmc-pack.json: org.lwjgl3 3.4.1 / net.minecraftforge 0.6.13-alpha  / mods: +Fugue-0.23.7.jar
+別instance rlcraft-2.9.3-on-07 も同じ構成（0.6.13-alpha, LWJGL 3.4.1, Fugue 0.23.7）
+```
+
+⇒ **RLCraftの検証プロファイルは CleanroomMC 0.6.13（GLFW / LWJGL 3.4.1）**。
+一方 v0.0.15-alpha は **0.7.11（SDL3 / LWJGL 3.4.3）専用**で、0.6.13 では起動時に明示拒否する
+（SDL3バインディング不在を検出）。
+
+したがって「RLCraft互換はFugue更新で解決」という前提は、**Fugue以前にホスト世代の壁**がある:
+- 0.7.11 用の本ビルドは RLCraft の現行プロファイルでは起動できない
+- 0.6.13 で動かすには **GLFW世代のウィンドウ/提示バックエンド**（SDL3を使わない経路）が必要で、
+  これは別規模の実装（現在のGL-lessブートストラップは SDL3 前提）
+- Fugue 0.23.7 → 0.24.4 の更新は、その後に効いてくる（0.7系で組んだ場合の前提）
+
+**次の判断が必要**: (a) 0.7.11専用のまま、パック側の移行を待つ / (b) 0.6.13用のGLFW提示バックエンドを実装する。
+どちらも「1ラウンドの修正」ではない。
