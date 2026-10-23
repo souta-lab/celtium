@@ -8520,7 +8520,12 @@ this.frameBufferOpen = false;
                 } else {
                     // The window's own census, taken before the window so a failure still names its caller.
                     celtium$noteWindowOpenSite();
-                    flushImmediateWindow();
+org.soutalab.celtium.vulkan.FramePassTimings.begin("flushWindow");
+try {
+    flushImmediateWindow();
+} finally {
+    org.soutalab.celtium.vulkan.FramePassTimings.end("flushWindow");
+}shImmediateWindow();
                 }
             } finally {
                 FramePassTimings.end("flush");
