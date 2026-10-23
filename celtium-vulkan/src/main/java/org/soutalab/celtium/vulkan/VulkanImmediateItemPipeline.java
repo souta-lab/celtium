@@ -217,36 +217,49 @@ public final class VulkanImmediateItemPipeline {
         }
         // OPT-12: pipeline and descriptor binds dedup against the flush's bind cache; a pipeline rebind
         // disturbs the set bound under the old layout, so the descriptor slot resets whenever this re-emits.
+        long pipelineStart = System.nanoTime();
         if (bindCache[4] != this.pipeline) {
-            long pipelineStart = PacketCost.beginPipelineBind();
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
-            PacketCost.notePipelineBind(PacketCost.endPush(pipelineStart));
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }
+        ITEM_PIPELINE_NANOS += System.nanoTime() - pipelineStart;
+        long descriptorStart = System.nanoTime();
         if (bindCache[5] != descriptorSetToBind) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
             bindCache[5] = descriptorSetToBind;
         }
+        ITEM_DESCRIPTOR_NANOS += System.nanoTime() - descriptorStart;
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
+        long viewStart = System.nanoTime();
         ByteBuffer view = this.clampedView.view(pushConstants, pushBytes());
+        ITEM_VIEW_NANOS += System.nanoTime() - viewStart;
         // The shared block may be wider than this layout's declared range (the lit variant's block is) - pushing past
         // the range is a validation error, so the view is clamped to what this pipeline declared.
         
-        long pushStart = PacketCost.beginPush();
+        long itemPushStart = System.nanoTime();
         if (this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, view)) {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, view);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, view);
-        PacketCost.notePush(PacketCost.endPush(pushStart));
         }
+        ITEM_PUSH_NANOS += System.nanoTime() - itemPushStart;
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
+        long meshStart = System.nanoTime();
         mesh.bindAndDraw(commandBuffer, bindCache);
+        ITEM_MESH_NANOS += System.nanoTime() - meshStart;
     }
+
+    /** Nanoseconds inside an item draw's parts, to locate the ten microseconds one draw costs. */
+    public static long ITEM_PIPELINE_NANOS;
+    public static long ITEM_DESCRIPTOR_NANOS;
+    public static long ITEM_VIEW_NANOS;
+    public static long ITEM_PUSH_NANOS;
+    public static long ITEM_MESH_NANOS;
 
     public int vertexBytes() {
         return VERTEX_BYTES;

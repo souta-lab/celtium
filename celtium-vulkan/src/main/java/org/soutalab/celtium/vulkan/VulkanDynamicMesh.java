@@ -262,6 +262,10 @@ public final class VulkanDynamicMesh {
      * emitted per group. A slice that does not convert binds at its own offset exactly as {@link #bindAndDraw} does,
      * and the cache then names that binding, so a mixed stream still dedups whatever repeats.
      */
+    /** How many mesh binds use the offset-in-draw form (buffers bound once) and how many re-bind at a slice offset. */
+    public static long DRAW_FORM_BINDS;
+    public static long BIND_FORM_BINDS;
+
     public void bindAndDraw(VkCommandBuffer commandBuffer, long[] bindCache) {
         if (this.destroyed) {
             throw new IllegalStateException("a destroyed mesh cannot be drawn");
@@ -278,6 +282,7 @@ public final class VulkanDynamicMesh {
         boolean timed = PacketCost.enabled();
         long bindStart = timed ? PacketCost.start() : 0L;
         if (drawForm) {
+            DRAW_FORM_BINDS++;
             boolean bound = !(bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L);
             if (!bound) {
                 org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(0L));
@@ -299,6 +304,7 @@ public final class VulkanDynamicMesh {
             }
             return;
         }
+        BIND_FORM_BINDS++;
         if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != vbo || bindCache[3] != ibo) {
             org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(vbo));
             org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, ibo,

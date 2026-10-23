@@ -214,6 +214,11 @@ public final class VulkanFrameArena {
     }
 
     /** {@return how many group openings found no free slot, so the caller fell back to an owning mesh}. */
+    /** {@return how many meshes outgrew the arena and were promoted to owning buffers}. */
+    public long promotions() {
+        return this.promotions;
+    }
+
     public long blockedOpenings() {
         return this.blockedOpenings;
     }

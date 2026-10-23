@@ -2328,6 +2328,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long descriptorBindTotal = VulkanImmediateTexturePipeline.DESCRIPTOR_BIND_NANOS;
         long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
         long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
+        long drawFormDelta = VulkanDynamicMesh.DRAW_FORM_BINDS - this.lastDrawFormBinds;
+        long bindFormDelta = VulkanDynamicMesh.BIND_FORM_BINDS - this.lastBindFormBinds;
+        this.lastDrawFormBinds = VulkanDynamicMesh.DRAW_FORM_BINDS;
+        this.lastBindFormBinds = VulkanDynamicMesh.BIND_FORM_BINDS;
+        long arenaPromotionsDelta = (this.frameArena == null ? 0 : this.frameArena.promotions()) - this.lastArenaPromotions;
+        long arenaBlockedDelta = (this.frameArena == null ? 0 : this.frameArena.blockedOpenings()) - this.lastArenaBlocked;
+        long arenaFallbacksDelta = this.submissionStatistics.frameArenaFallbackGroups() - this.lastArenaFallbacks;
+        this.lastArenaPromotions = this.frameArena == null ? 0 : this.frameArena.promotions();
+        this.lastArenaBlocked = this.frameArena == null ? 0 : this.frameArena.blockedOpenings();
+        this.lastArenaFallbacks = this.submissionStatistics.frameArenaFallbackGroups();
+        long itemPipelineDelta = VulkanImmediateItemPipeline.ITEM_PIPELINE_NANOS - this.lastItemPipelineNanos;
+        long itemDescriptorDelta = VulkanImmediateItemPipeline.ITEM_DESCRIPTOR_NANOS - this.lastItemDescriptorNanos;
+        long itemViewDelta = VulkanImmediateItemPipeline.ITEM_VIEW_NANOS - this.lastItemViewNanos;
+        long itemPushDelta = VulkanImmediateItemPipeline.ITEM_PUSH_NANOS - this.lastItemPushNanos;
+        long itemMeshDelta = VulkanImmediateItemPipeline.ITEM_MESH_NANOS - this.lastItemMeshNanos;
+        this.lastItemPipelineNanos = VulkanImmediateItemPipeline.ITEM_PIPELINE_NANOS;
+        this.lastItemDescriptorNanos = VulkanImmediateItemPipeline.ITEM_DESCRIPTOR_NANOS;
+        this.lastItemViewNanos = VulkanImmediateItemPipeline.ITEM_VIEW_NANOS;
+        this.lastItemPushNanos = VulkanImmediateItemPipeline.ITEM_PUSH_NANOS;
+        this.lastItemMeshNanos = VulkanImmediateItemPipeline.ITEM_MESH_NANOS;
         long textureCountDelta = this.textureDrawCount - this.lastTextureDrawCount;
         long itemCountDelta = this.itemDrawCount - this.lastItemDrawCount;
         long blockCountDelta = this.blockDrawCount - this.lastBlockDrawCount;
@@ -2390,6 +2410,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
+                // The arena hypothesis for the 6 microseconds a mesh bind costs: a mesh that could not borrow one of the
+                // frame arena's slices owns its buffers, and owning buffers means two binds per draw that cannot be
+                // deduplicated. Promotion and fallback counts say whether that is happening at all.
+                + " arena[promotions=" + arenaPromotionsDelta + " blocked=" + arenaBlockedDelta
+                + " fallbacks=" + arenaFallbacksDelta + "]"
+                // Which mesh-bind form the frame used: the offset-in-draw form binds the arena's buffers once and is
+                // cheap; re-binding a slice offset per group is the expensive one, and only happens when the slice
+                // offset is not a multiple of the vertex stride.
+                + " forms[draw=" + drawFormDelta + " bind=" + bindFormDelta + "]"
                 + " binds[pipelineMs=" + (pipelineBindDelta / 1_000_000L)
                 + " descriptorMs=" + (descriptorBindDelta / 1_000_000L) + "]"
                 + " variants[textureMs=" + (textureDrawDelta / 1_000_000L)
@@ -2400,6 +2429,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " counts[texture=" + textureCountDelta + " item=" + itemCountDelta
                 + " block=" + blockCountDelta + " particle=" + particleCountDelta
                 + " generic=" + genericCountDelta + "]]"
+                + " itemParts[pipelineMs=" + (itemPipelineDelta / 1_000_000L)
+                + " descriptorMs=" + (itemDescriptorDelta / 1_000_000L)
+                + " viewMs=" + (itemViewDelta / 1_000_000L)
+                + " pushMs=" + (itemPushDelta / 1_000_000L)
+                + " meshMs=" + (itemMeshDelta / 1_000_000L) + "]"
                 + " drawParts[viewMs=" + (viewDelta / 1_000_000L)
                 + " pushCallMs=" + (pushDelta / 1_000_000L)
                 + " meshBindMs=" + (meshDelta / 1_000_000L) + "]"
@@ -15068,6 +15102,16 @@ this.frameBufferOpen = false;
     private long particleDrawNanos;
     private long genericDrawNanos;
     private long lastTextureDrawNanos;
+    private long lastArenaPromotions;
+    private long lastDrawFormBinds;
+    private long lastBindFormBinds;
+    private long lastArenaBlocked;
+    private long lastArenaFallbacks;
+    private long lastItemPipelineNanos;
+    private long lastItemDescriptorNanos;
+    private long lastItemViewNanos;
+    private long lastItemPushNanos;
+    private long lastItemMeshNanos;
     private long lastItemDrawNanos;
     private long lastBlockDrawNanos;
     private long lastParticleDrawNanos;

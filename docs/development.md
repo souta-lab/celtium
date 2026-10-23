@@ -744,3 +744,20 @@ drawParts[viewMs=0 pushCallMs=8 meshBindMs=38]
 **計器の罠（今回踏んだ）**: variant の delta を「スナップショット更新後に同じフィールドで引く」実装にしたため
 最初は全部 0 と出た（自己差）。スナップショット更新**前**に delta を計算する形に修正して実測。
 同じ種類の誤り（未配線・自己差）が計器で2回続いたので、`docs/verification-traps.md` にも追記する。
+
+**fps300 KPI: item draw の中身とメッシュ束縛（2026-10-23・実測）**
+
+レポート窓120フレームの累積:
+```
+itemParts[pipelineMs=5 descriptorMs=15 viewMs=0 pushMs=17 meshMs=90]
+variants[... itemMs=134 counts[item=14880]]   ← 124回/フレーム
+arena[promotions=0 blocked=0 fallbacks=0]     ← 全メッシュがframe arena借用
+forms[draw=21144 bind=2135]                   ← 90.8%が「オフセットをdrawで渡す」安い形式
+```
+⇒ item 1ドロー ≈ 7.2µs の内訳は **mesh 5.0µs（＝vkCmdDrawIndexed本体を含む）+ push 1.1 + descriptor 0.8 + pipeline 0.3**。
+arena 由来の全メッシュが同一バッファなので束縛自体は1回で済むが、**ドローコマンド1回に約2.5〜3µs**かかる
+（RADVの記録コスト）。194ドロー/フレーム × 3µs ≈ 0.6ms が「引くに引けない床」。
+
+**含意**: 300fps には「ドロー回数」を減らす以外に道がない。ターゲットは item 124回/フレーム。
+同一テクスチャ・同一状態の連続をひとつのコマンドにまとめる（またはバインドレス＋indirectで
+1コマンドに畳む）必要がある。push は既にキャッシュされ、descriptor は 0.8µs なので主要因ではない。
