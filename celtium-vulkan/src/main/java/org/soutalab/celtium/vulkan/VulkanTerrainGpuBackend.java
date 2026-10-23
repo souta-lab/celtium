@@ -890,7 +890,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         ChunkPrimitiveType primitiveType = this.configuration.getPrimitiveTypeForPass(pass);
-        ensureSharedIndexBuffer(primitiveType);
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainSharedIndex");
+        try {
+            ensureSharedIndexBuffer(primitiveType);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSharedIndex");
+        }
         // Reserve every uniform block this pass can possibly need *before* anything is recorded. VulkanUniformBuffer
         // growth allocates a new buffer and destroys the old one immediately, so a growth after the first region's
         // descriptors were bound would leave the already recorded draws of this pass pointing at freed memory - the
