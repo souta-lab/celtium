@@ -714,3 +714,16 @@ grpDraw 2.0ms / winRecord 2.5ms   ← 変化なし
 設計済みの方向は「連続グループを1回の `vkCmdDrawIndexedIndirect` に畳む」（ループ内コメントの MERGE_CENSUS が
 その go/no-go 計器）。条件は pipeline・記述子・push・viewport・同一バッファ（arena借用）が一致する連続区間。
 次ラウンドはこの indirect 折り畳みを実装する。
+
+**fps300 KPI: 連続グループの合体（indirect折り畳み）は空振り（2026-10-23 実測）**
+
+`-Dceltium.vulkan.mergeCensus=true` で各ウィンドウの run を計測:
+```
+frame=578 groups=28 mergeableRuns=28 largestRun=1 arenaBackedGroups=28
+frame=578 groups=2  mergeableRuns=2  largestRun=1
+```
+⇒ **連続する2グループが pipeline・記述子・viewport を共有する区間は存在しない**（largestRun が常に1）。
+即時描画は素材が毎グループ交互に変わるため、**indirect 折り畳みでは draw 数を減らせない**。
+残る削減軸は (a) 1ドローあたりのコスト（bind/記述子/コマンド記録）、(b) 受理時点でのグループ数削減、の2つだけ。
+
+なお `CENSUS_BY_PIPELINE` が既定offのため `distinctPipelines=0` は「計器が動いていない」値であり根拠にしない。
