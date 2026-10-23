@@ -1006,3 +1006,18 @@ drawn[perFrame=194]（変化なし） frame p50 8.64-10.30ms（有意差なし�
 4. テクスチャは既存の `VulkanTextureArray`（登録側実装済み）をレコードindexで引く
 
 ソート実装は既定off（フラグ）で残す。multi-draw の前提として必要。
+
+**fps300 KPI: bake は実際に発火するが描画数は変わらない（2026-10-23 決定的な反証）**
+
+述語を全開放した再試験（`preTransformEligible` が実測で動くことを確認した上で）:
+```
+leg kpi-bake3: PASSED・problems 0
+CELTIUM_RETAINED_CENSUS preTransformEligible=8050-8166/窓（≒68/フレーム。開放前は3480/窓）
+drawn[perFrame=197]  ← 変化なし
+```
+⇒ **bake は1フレーム約68グループで実際に発火しており**（計器も動いている）、画像gateも通るが、
+**描画数は減らない**。理由は fast-merge が要求する「同一テクスチャ・同一状態」が隣接offerで成立しないため。
+**「変換を消せばグループが畳める」という仮説は、これで計器を伴って反証された**（前回の「0件」は計器読みの疑いがあったが、
+今回は発火を確認した上での反証）。挙動は元に戻した。
+
+残る唯一の道は **per-drawレコード＋indirect multi-draw＋レコードを読むシェーダ変種**（`docs/plan.md`の性能行に記載）。
