@@ -2009,3 +2009,19 @@ CELTIUM_FLICKER samples=2 changed=1259/921600 fraction=0.00137 maxDelta=190
 
 次の使い方: 色付きガラスがある地点をfixtureのポーズに足し、同じ計器で fraction を比較する。
 （ガラスが写っていない今のポーズでは、チカチカ④の有無は判定できない。）
+
+**パノラマ①のメニュー撮影を試行（2026-10-23・発火せず）**
+
+`-Dceltium.validation.dumpPresentedImage=true -Dceltium.validation.dumpPresentedMenuTick=40` で
+メニュー提示画像のdumpを要求したが、**撮影条件が発火しなかった**（report に `menuDump*` が無く、
+`screenshots/` に menu 画像も無い）。条件は
+`worldTicks==0 && clientTicks>=40 && mc.currentScreen instanceof GuiMainMenu` で、
+world mode のlegは起動後すぐワールドへ進むため滞在tickが足りない。
+
+先人のメモ（同コード内）に「round 166: 描かれたパノラマは全く動かない」とあり、①の症状は
+**パノラマが回転しない**こと。切り分けは `menuDumpPanoramaTimer`（panoramaTimerが進んでいるか）と
+`menuDumpRenderPartialTicks` の2値で行う設計になっている。
+
+**次**: menu 用の短い leg（world に入らず 60 client tick 滞在するモード）を追加するか、
+`dumpPresentedMenuTick` を world 突入前の実測tickに合わせる。撮影できれば、
+panoramaTimer が進んでいるのに絵が動かない＝我々の描画側、両方止まっている＝フィクスチャ側と分離できる。
