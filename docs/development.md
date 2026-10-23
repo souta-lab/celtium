@@ -1704,3 +1704,18 @@ Prism libraries に配置して構成）:
 ⇒ RLCraft 2.9.3 は 0.7.x + Fugue（0.24.4/0.25.5）+ Cleanroom 0.7.12 の組み合わせでは起動できず、
 **Celtium の関与しない外部互換問題**（SetBonus→FantasticSource Tools の Hackery 依存、Fugue/Cleanroom と
 RLCraft側パッチの `updateFogColor` バイトコード干渉）。Celtium側で打てる手は無い。
+
+**validation OFF の内訳（2026-10-23・AMD RX 6400, passSplit込み）**
+
+```
+frame 3.7 / world 3.4 / gui 0.3
+flush 0.8   terrain 1.0（うち wrecLoop 0.5＝即時ループ、terrainRecord 0.2）
+grpDraw 0.2 / grpPrep 0.1 / rcPush 0.1 / rcViewport 0.1
+offMerge 0.1 / offAppend 0.1 / setupTerrain 0.1 / sky 0.1
+```
+⇒ validation OFF では **即時描画（194グループ）は約0.5ms**、地形記録0.2ms、GUI 0.3ms。
+frame 3.7ms のうち名前の付いたレンダラ分は約1.5msで、残り約2msがvanilla側（tick含む）。
+※このrunはpassSplit有効（bracket税あり）。production（bracketなし）はさらに軽い。
+
+**KPIの現在地（実運用に近い条件）**: frame 3.7〜4.4ms ＝ **約230〜270fps**。
+300fps(3.3ms)まで残り **0.4〜1.1ms** で、内訳的にはvanilla側と窓オーバーヘッドが対象。
