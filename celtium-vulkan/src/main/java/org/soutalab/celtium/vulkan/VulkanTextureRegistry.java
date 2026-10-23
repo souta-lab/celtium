@@ -1453,6 +1453,33 @@ public final class VulkanTextureRegistry {
         return (source == null ? "unfilled" : source) + "@" + entry.width + "x" + entry.height;
     }
 
+    /**
+     * {@return the mirror source of a name as flags}: bit 0 set when the mirror was filled by an int[] announcement,
+     * bit 1 when the name stands for a published external image.
+     * <p>
+     * The per-group draw path asks these two questions for every format-2 group - the HUD, the font and the panorama -
+     * and it used to ask them by building {@link #celtium$mirrorSourceFor(int)}'s summary string, which allocates a
+     * concatenation and formats the dimensions per group. The answer is a lookup and a prefix test; the string was only
+     * ever consumed by two {@code startsWith} calls. This is the same question without the allocation, and it keeps the
+     * "published image with no entry" case the string form encoded.
+     */
+    public int celtium$mirrorSourceFlags(int glTextureId) {
+        int flags = 0;
+        String source = this.mirrorSourceById.get(Integer.valueOf(glTextureId));
+        if (source != null) {
+            if (source.startsWith("announced-int[]")) {
+                flags |= 1;
+            } else if (source.startsWith("published-image")) {
+                flags |= 2;
+            }
+        }
+        if (this.entries.get(Integer.valueOf(glTextureId)) == null
+                && this.externalImages.get(Integer.valueOf(glTextureId)) != null) {
+            flags |= 2;
+        }
+        return flags;
+    }
+
     /** {@return the fills by source and the announcement drops, for the texture summary line}. */
     public String mirrorSourceSummary() {
         StringBuilder sources = new StringBuilder();

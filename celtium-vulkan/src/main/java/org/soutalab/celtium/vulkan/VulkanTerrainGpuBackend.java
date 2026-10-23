@@ -2355,6 +2355,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + this.celtium$terrainPerFrameSummary(this.frameIntervalCount)
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
+                + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
                 // The frame's own serialisation: the fence wait on a slot, counted where vkWaitForFences is called. The
                 // pre-terrain flush reads 2.8 ms with zero groups, so this is the number that says whether that time is
                 // waiting for the GPU rather than working.
@@ -15001,6 +15002,15 @@ this.frameBufferOpen = false;
     private long preflushFrames;
 
     private long lastTerrainIndirectCalls;
+    private long lastDrawnGroups;
+
+    /** {@return the immediate groups drawn per frame over the report window}. */
+    private long celtium$drawnGroupsPerFrame() {
+        long drawn = this.immediateStatistics.groupDrawCount();
+        long delta = drawn - this.lastDrawnGroups;
+        this.lastDrawnGroups = drawn;
+        return delta / Math.max(1, this.frameIntervalCount);
+    }
     private long lastTerrainIndirectDraws;
 
     /** {@return the terrain pass's per-frame recording counts}, as a log fragment. */
@@ -17679,15 +17689,15 @@ this.frameBufferOpen = false;
                     // filled. The panorama's faces are drawn with texture 8, whose mirror came from
                     // SplashProgress.drawVanillaScreen - a 256x256 white canvas - so this counter is what says how
                     // much of the GUI's traffic is sampling the splash's leftover rather than the panorama's sheets.
-                    String source = celtium$registry().celtium$mirrorSourceFor(group.texture);
-                    if (source.startsWith("announced-int[]") && this.targetStatistics.splashSourcedGroups() < Integer.MAX_VALUE) {
+                    int mirrorFlags = celtium$registry().celtium$mirrorSourceFlags(group.texture);
+                    if ((mirrorFlags & 1) != 0 && this.targetStatistics.splashSourcedGroups() < Integer.MAX_VALUE) {
                         this.targetStatistics.noteSplashSourcedGroups();
                     }
                     // A group that samples a published frame texture reads the chain pair through the renderer's own
                     // wrapper. What the pair held *at that draw* is the one fact the present-time dumps cannot give:
                     // they read it many windows later, after the game has drawn the framebuffer again. This arms a
                     // single readback at the next window boundary, which is the earliest point outside a render pass.
-                    if (source.startsWith("published-image")) {
+                    if ((mirrorFlags & 2) != 0) {
                         this.splashPairAfterCompositeArmed = true;
                     }
                 }
