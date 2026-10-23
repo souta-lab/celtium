@@ -50,6 +50,13 @@ public final class SpirvShaders {
     /** Vertex module for untextured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_COLOR}). */
     public static final String IMMEDIATE_COLOR_VERTEX = "immediate_color.vert";
 
+    /**
+     * The record-reading form of {@link #IMMEDIATE_TEX_COLOR_VERTEX}: the same push block, taken from a storage buffer
+     * indexed by {@code gl_InstanceIndex}. It is what an indirect multi-draw needs, because a run of groups that share a
+     * material cannot share a push block.
+     */
+    public static final String IMMEDIATE_TEX_COLOR_RECORDS_VERTEX = "immediate_tex_color_records.vert";
+
     /** Vertex module for the BLOCK-family immediate geometry (position, colour, texture, lightmap). */
     public static final String IMMEDIATE_BLOCK_VERTEX = "immediate_block.vert";
 

@@ -1074,3 +1074,17 @@ GPU側で節約できる約1msを大きく上回る**。run用メッシュの確
 **結論**: ドロー数削減は「CPUでジオメトリを連結する」方向では成立しない（実測で反証）。
 残る道は **per-drawデータをバッファに置き、シェーダが instance で読む indirect multi-draw** のみ
 （CPUはレコードを書くだけで、頂点データは共有メッシュのまま）。挙動は元に戻した。
+
+**fps300 KPI: レコード読みシェーダ変種を追加（2026-10-23・コンパイル検証済み）**
+
+`celtium-vulkan/src/main/shaders/immediate_tex_color_records.vert` を追加し、
+`SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX` で参照。push block（0行列 / 64..96テクスチャaffine /
+112 alpha+色 / 128..207 fog）と**バイト単位で同じ構造体**を `std430` の SSBO（set0 binding2）から
+`gl_InstanceIndex` で読む。fog距離の計算も同じ式。
+
+```
+: celtium-vulkan:compileTerrainShaders --rerun-tasks → "compiling 35 shaders" 成功
+```
+⇒ シェーダとして正しくコンパイルされることを確認（glslangValidator）。
+**まだ描画経路には接続していない**（次段でレイアウト／レコードバッファ／indirect記録を実装）。
+CPUはレコードを書くだけで、頂点データは共有メッシュのまま＝CPU連結マージの反証（17〜33ms）を踏まない設計。
