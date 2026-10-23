@@ -1852,3 +1852,25 @@ A/B（`kpi-bs`: 候補 vs throttleビルド, 150s×3rep）は負荷交絡のた�
 **残り3件（④色付きガラスのチカチカ / ⑤看板文字の残像 / ①パノラマ / ②エンドポータル）は未着手**。
 ⑤は `GllessFrameTarget` の clear latch（`gameClearLatched`）がメニュー/GUIフレームで
 更新されない場合に前フレーム内容が残る筋が有力。
+
+**黒スクショの根因を特定（2026-10-23 実測）**
+
+fixtureに `-Dceltium.validation.gameScreenshot=true` の段を追加し、**ゲーム自身のF2経路**
+（`ScreenShotHelper.saveScreenshot`）を実際に呼ばせて保存PNGを判定した。
+
+```
+leg shot-test （修正前）: gameScreenshotMean=0.00 nonBlackFraction=0.00000 black=true
+leg shot-test2（packed-int対応後）: 同じく 0.00 / 0.00000 / black=true
+```
+**`CELTIUM_READ_PIXELS*` のログが1件も出ない**＝ゲームの読みは**スタブに到達していない**。
+
+原因: vanilla `ScreenShotHelper` は
+`GL11.glReadPixels(int, int, int, int, int, int, IntBuffer)` を呼ぶが、
+`CeltiumGllessNativeTransformer` が計装しているのは `glReadPixels`/`nglReadPixels` の
+**`(IIIIIIJ)V`（アドレス版）** のみ。**IntBuffer版 `(IIIIIILjava/nio/IntBuffer;)V` は対象外**なので、
+LWJGLの実装がそのまま走り、GLコンテキストが無いためバッファはゼロのまま → 真っ黒PNG。
+
+**次**: IntBuffer版の経路を transformer に追加し、スタブがそのバッファへ書く。
+その後に leg `shot-test3` で `gameScreenshotNonBlackFraction > 0` を確認する。
+（`TextureCopyService` には `GL_BGRA`+`GL_UNSIGNED_INT_8_8_8_8_REV` のpacked-int書式を先行して追加済み。
+ F2が使う書式がそれであることは、IntBuffer版を計装した時点でログで確定する。）

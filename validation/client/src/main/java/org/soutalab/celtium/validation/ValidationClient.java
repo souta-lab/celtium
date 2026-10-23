@@ -7800,10 +7800,64 @@ public final class ValidationClient {
         return gui != null && gui.completed;
     }
 
+    /**
+     * {@code -Dceltium.validation.gameScreenshot=true}: takes the game's own screenshot and judges its pixels.
+     * <p>
+     * The fixture's own pictures come from the renderer's presented image, so they cannot say whether the path a player
+     * presses F2 into works. This one calls {@code ScreenShotHelper} exactly as the game does and then reads the file it
+     * wrote: a GL-less run without a readback answers that call with black by construction, and this is the measurement
+     * that says whether it still does.
+     */
+    private void celtium$captureGameScreenshot(Minecraft mc) {
+        if (!Boolean.getBoolean("celtium.validation.gameScreenshot")) {
+            return;
+        }
+        try {
+            String name = "celtium-validation-screen.png";
+            ScreenShotHelper.saveScreenshot(mc.gameDir, name,
+                    mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+            java.nio.file.Path shot = mc.gameDir.toPath().resolve("screenshots").resolve(name);
+            if (!java.nio.file.Files.isRegularFile(shot)) {
+                report.addProperty("gameScreenshotProblem", "the game's screenshot wrote no file at " + shot);
+                return;
+            }
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(shot.toFile());
+            if (image == null) {
+                report.addProperty("gameScreenshotProblem", "unreadable " + shot);
+                return;
+            }
+            long total = (long) image.getWidth() * image.getHeight();
+            long lit = 0L;
+            long sum = 0L;
+            for (int y = 0; y < image.getHeight(); y++) {
+                for (int x = 0; x < image.getWidth(); x++) {
+                    int rgb = image.getRGB(x, y);
+                    int r = (rgb >> 16) & 0xFF;
+                    int g = (rgb >> 8) & 0xFF;
+                    int b = rgb & 0xFF;
+                    sum += r + g + b;
+                    if (r + g + b > 24) {
+                        lit++;
+                    }
+                }
+            }
+            report.addProperty("gameScreenshotPath", celtium$relative(shot));
+            report.addProperty("gameScreenshotSize", image.getWidth() + "x" + image.getHeight());
+            report.addProperty("gameScreenshotMean",
+                    String.format(java.util.Locale.ROOT, "%.2f", (double) sum / (double) (total * 3L)));
+            report.addProperty("gameScreenshotNonBlackFraction",
+                    String.format(java.util.Locale.ROOT, "%.5f", (double) lit / (double) total));
+            report.addProperty("gameScreenshotBlack", lit * 100L < total);
+        } catch (Throwable error) {
+            report.addProperty("gameScreenshotProblem", String.valueOf(error));
+        }
+    }
+
     /** The world stage's picture: the presented dump under GL-less, the game's screenshot in a GL-bridge run. */
     private void celtium$takeWorldStageEvidence(Minecraft mc) {
         // Recorded at the capture, beside the frame it describes: see celtium$recordDarkRegionProbe.
         celtium$recordDarkRegionProbe(mc);
+        celtium$captureGameScreenshot(mc);
         if (!Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
             if (celtium$glLessInstalled()) {
                 report.addProperty("pictureEvidenceProblem", "GL-less without -Dceltium.vulkan.presentReadback and"

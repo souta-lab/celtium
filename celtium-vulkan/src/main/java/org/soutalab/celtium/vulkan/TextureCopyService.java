@@ -976,7 +976,13 @@ public final class TextureCopyService {
         }
         // GL_UNSIGNED_BYTE (0x1401) is the only type the callers a readback can serve need; GL_RGBA (0x1908) and
         // GL_BGRA (0x80E1) are the two orders ScreenShotHelper and screenshot mods use.
-        if (type != 0x1401 || (format != 0x1908 && format != 0x80E1)) {
+        // GL_UNSIGNED_BYTE (0x1401) serves screenshot mods and GL_UNSIGNED_INT_8_8_8_8_REV (0x8367) is what
+        // ScreenShotHelper itself asks for, with GL_BGRA: that pair is one little-endian 32-bit word per pixel in
+        // BGRA byte order, which is exactly the ARGB int this path already holds, so the game's own F2 is one
+        // memPutInt away from the same pixels. Measured: with 0x1401 only, leg shot-test's gameScreenshotMean was
+        // 0.00 - the game read black while the renderer's own dumps of the same frame were correct.
+        boolean packedInts = type == 0x8367;
+        if (!(packedInts ? format == 0x80E1 : (type == 0x1401 && (format == 0x1908 || format == 0x80E1)))) {
             return false;
         }
         long image = ownedReadImage(readFbo);
@@ -1019,6 +1025,14 @@ public final class TextureCopyService {
         // order GL's readback contract returns.
         boolean bgra = format == 0x80E1;
         long dst = address;
+        if (packedInts) {
+            int packed = Math.min(pixels.length, width * height);
+            for (int i = 0; i < packed; i++) {
+                org.lwjgl.system.MemoryUtil.memPutInt(dst + (long) i * 4L, pixels[i]);
+            }
+            this.readPixelsServed++;
+            return true;
+        }
         int count = Math.min(pixels.length, width * height);
         for (int i = 0; i < count; i++) {
             int p = pixels[i];
