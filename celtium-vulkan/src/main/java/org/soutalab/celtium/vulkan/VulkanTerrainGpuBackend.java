@@ -18349,6 +18349,21 @@ this.frameBufferOpen = false;
                     identityModelViews++;
                 }
             }
+            java.util.HashSet<Long> distinctTranslations = new java.util.HashSet<Long>();
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                float[] mv = this.immediateGroups.get(i).modelView;
+                if (mv == null || mv.length < 16) {
+                    continue;
+                }
+                long tx = Float.floatToIntBits(mv[12]);
+                long ty = Float.floatToIntBits(mv[13]);
+                distinctTranslations.add(Long.valueOf((tx << 32) ^ (ty & 0xFFFFFFFFL)));
+            }
+            float[] firstMv = this.immediateGroups.get(0).modelView;
+            System.out.println("[Celtium] CELTIUM_WINDOW_TRANSLATIONS distinct=" + distinctTranslations.size()
+                    + " groups=" + this.immediateGroups.size()
+                    + " first=(" + String.format(java.util.Locale.ROOT, "%.4f,%.4f,%.4f",
+                            Float.valueOf(firstMv[12]), Float.valueOf(firstMv[13]), Float.valueOf(firstMv[14])) + ")");
             System.out.println("[Celtium] CELTIUM_WINDOW_IDENTITY_MV identityViews=" + identityModelViews
                     + " groups=" + this.immediateGroups.size());
             System.out.println("[Celtium] CELTIUM_WINDOW_MODELVIEWS distinct=" + modelViewCounts.size()

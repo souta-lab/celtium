@@ -2238,3 +2238,20 @@ System.arraycopy(this.currentGroupModelView, 0, modelView, 0, 16);
 - 各グループの**並進成分 (p12,p13,p14)** の分布を出す。タイルごとに ±0.07 程度ずつ異なるはずで、
   値が数種類しか出ないなら `glTranslate` の反映漏れ（行列ミラーの更新漏れ）、
   細かく分かれているなら回転側の合成が潰れている。
+
+**パノラマ①: 並進は64種で完璧。回転側が少ない（2026-10-24 実測）**
+
+```
+CELTIUM_WINDOW_TRANSLATIONS distinct=64 groups=384 first=(0.0078,0.0078,-0.0000)
+CELTIUM_WINDOW_IDENTITY_MV identityViews=0
+CELTIUM_WINDOW_MODELVIEWS distinct=172 groups=384
+```
+- 並進は**64種**＝バニラの64タイル位置と一致。`glTranslate` はミラーに正しく届いている。
+- にもかかわらず行列全体は172種のみ。64並進 × 6面なら**384種**になるはず。
+  ⇒ **面ごとの回転が一部しか反映されていない**（または面の回転が同一に潰れている）。
+- `matrixMirrorDelta=proj:0.0,view:0.0`（GL照会とミラーが完全一致）なので、
+  ミラー自体は正しい。回転のミラー更新（`GlStateManager.rotate` 経路）を疑う。
+
+**次の一手**: 同一タイルの6面ぶんの回転3x3だけを並べて出す。
+  - 6面が同値 → `rotate` が行列に効いていない（ミラー更新漏れ）＝修正対象
+  - 6面が別値 → 回転は正常。ならば残差172種は「面の組み合わせで同値になる」仕様側
