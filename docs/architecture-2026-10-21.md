@@ -911,3 +911,33 @@ CPUフレームが20.4msに膨れてvblankを取り逃す。GPUは3%で遊んで
 **次の実装**: immediate batchをフレームコマンドバッファに積み、**フレーム境界で1回だけsubmit**する
 （現状はflushごとにsubmit）。`immediateWindowsPerFrame=1` では変わらなかった（flushの閾値はindices側）ので、
 `submitImmediateBatchBody内のflushImmediateWindow()`を外し、境界flushへ寄せるのが本命。
+
+### 11.13 即時描画の indirect multi-draw: 実装計画（2026-10-23・前提は実測済み）
+
+**実測で確定した前提**: 1フレーム194ドロー / 素材キー（pipeline＋descriptor）は61〜69種 /
+グループが使うバッファは数個（retainedが共有バッファを借りる）/ `drawForm` 90.8% /
+`vkCmdDrawIndexed` 1回 ≈5µs・ドロー毎の状態処理 ≈5µs。
+CPUでジオメトリを連結する案は実測で**2〜3倍遅くなる**ため不可（17〜33ms）。
+
+**部品（この順で実装する）**
+1. `ImmediateDrawRecords`（新規, `org.soutalab.celtium.vulkan`）
+   - host-visible の SSBO。1レコード=**208バイト（push blockと同一レイアウト）**。
+   - `record(int index, ByteBuffer pushBlock208)` で書き、窓開始で `reset()`。
+   - descriptor set（**set=1, binding=0**, storage buffer）を1つ持ち、窓ごとに1回束縛。
+2. パイプライン変種（`VulkanImmediateTexturePipeline` に `records` モードを追加）
+   - シェーダ: `SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX`（実装済み・コンパイル済み）＋既存fragment。
+   - レイアウト: set0=既存の(texture,lightmap) をそのまま、**set1=records**。
+   - push constants は不要（レコードが行列・fog・alpha・色を持つ）。
+3. run記録（`VulkanTerrainGpuBackend` のグループループ）
+   - run条件: 不透明・`drawForm`（`vbo % stride == 0`）・同一 (pipeline, descriptor, vb, ib, stride)。
+   - 各グループで: (a) モデルビューを行列スロットへ書いた208Bレコードを追記、
+     (b) `VkDrawIndexedIndirectCommand{indexCount, 1, firstIndex, vertexOffset, firstInstance=recordIndex}` を追記。
+   - run境界で: set1束縛 → set0束縛 → `vkCmdDrawIndexedIndirect(count=run長)` を**1回だけ**発行。
+   - フォールバック: run条件を満たさないグループ（bindForm・非対応パイプライン・postClears有り）は従来どおり個別ドロー。
+4. 検証
+   - 受入leg（AMD/Intel, validation ON）で **PASSED・problems 0**、画像gate一致。
+   - `drawn` ではなく**実際の`vkCmdDrawIndexedIndirect`回数**を計器化（`indirect[commands=, groups=]`）。
+   - 期待: 描画2.5ms → 約0.8ms（ドローコマンド1.0msとpush/状態の一部が消える）。
+
+**注意**: レコードは push block と同一バイト列にする。`pushCombinedMatrixInto(projection, IDENTITY, ...)` で
+モデルビューを畳んだブロックを書くこと（記録時bakeと同じ規約）。
