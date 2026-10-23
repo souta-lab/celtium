@@ -18434,6 +18434,27 @@ this.frameBufferOpen = false;
                     imageDetail.append(image == null ? "null" : image.getClass().getSimpleName());
                 }
             }
+            java.util.LinkedHashSet<Integer> alphas = new java.util.LinkedHashSet<Integer>();
+            StringBuilder firstQuad = new StringBuilder();
+            for (int i = 0; i < this.immediateGroups.size() && i < 64; i++) {
+                ImmediateGroup group = this.immediateGroups.get(i);
+                if (group.mesh == null || group.formatId != 2) {
+                    continue;
+                }
+                long base = group.mesh.vertexAddress();
+                if (base == 0L) {
+                    continue;
+                }
+                for (int v = 0; v < 4; v++) {
+                    int alpha = org.lwjgl.system.MemoryUtil.memGetByte(base + (long) v * 24L + 23L) & 0xFF;
+                    alphas.add(Integer.valueOf(alpha));
+                    if (i == 0) {
+                        firstQuad.append(alpha).append(' ');
+                    }
+                }
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_VERTEX_ALPHA distinct=" + alphas.size()
+                    + " values=" + alphas + " firstQuad=[" + firstQuad.toString().trim() + "]");
             int textured = 0;
             String firstTextureMatrix = "none";
             for (int i = 0; i < this.immediateGroups.size(); i++) {

@@ -2460,3 +2460,23 @@ route=frame-image/射影/texMatrixなし。
 バニラが書く `color(255,255,255,l)` の l（0〜1）が正しく読めているか、A が 255 に潰れていないかを確認。
 同時に、選ばれた pipeline の blend 係数（SRC_ALPHA, ONE_MINUS_SRC_ALPHA）が
 バニラの `tryBlendFuncSeparate` と一致しているかを照合する。
+
+**パノラマ①: 頂点アルファはバニラの重みと一致（2026-10-24 実測）**
+
+頂点バッファ（format 2、stride 24、色は offset 20..23）から alpha を採取:
+```
+CELTIUM_WINDOW_VERTEX_ALPHA distinct=11 values=[255,127,85,63,51,42,36,31,28,25,23]
+firstQuad=[255 255 255 255]
+```
+この並びは **alpha = 255/(j+1)**（255,127,85,63,51,42,36,31,28,25,23）と一致。
+⇒ 頂点色（バニラが書く `color(255,255,255,l)`）は**正しく捕捉・格納されている**。
+
+**ここまでで棄却/確定した項目**（すべて実測）:
+行列384・並進64・回転6/配置・テクスチャ34-39・descriptor6・画像256x256×6・format2・
+pipeline blend有効/depth書き込み無効・route frame-image・射影・texMatrix無し・**頂点alpha**。
+
+残るのは **実行時のブレンド係数** と **draw時のdescriptor束縛の実効性**。
+（skip-drawで全面白＝内容は全て自前の描画、という事実も確定済み）
+
+**次の一手**: この pipeline の `colorBlend`（srcColor/dstColor/srcAlpha/dstAlpha）を数値で出し、
+バニラの `tryBlendFuncSeparate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA)` と比較。
