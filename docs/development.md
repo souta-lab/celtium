@@ -2118,3 +2118,18 @@ menu段に「ゲーム自身のスクショ」を追加したことで、**GLア
 2. パノラマFBOの中身を直接読む: その identity の chain pair 画像を `readImageRectangle` で読み、
    平均色と非黒率を出す。正解なら風景の平均色、壊れていれば別物。
 3. ぼかし段（glCopyTexSubImage2D 連鎖）の宛先テクスチャが正しいか、`CELTIUM_TEX_COPY_*` の拒否/宛先を確認。
+
+**「GL-lessのスクショは構造上黒い」という前提を削除（2026-10-24 実測）**
+
+fixture は長らく `pictureScreenshotUsable_<stage>=False` を**決め打ち**し、
+「GL-lessでは黒に決まっている」という注記を書いていた。しかし `nglGetTexImage` を
+レンダラのミラーから返すようにした後は事実と異なる。
+
+修正: `saveScreenshot` の後で**保存PNGを読んで** 非黒率と平均値を測り、`>0.05` で usable を決める。
+leg `menu6`（AMD, menuHold 80, world/menu両方を撮影）:
+```
+pictureScreenshotNonBlackFraction_menu = 0.94741
+pictureScreenshotNonBlackFraction_world = 0.98295
+pictureScreenshotUsable_menu = True / _world = True
+```
+⇒ ゲーム自身のスクショは**GL-lessでも実画像**（F2修正の裏付けが計測として残る）。

@@ -7564,13 +7564,49 @@ public final class ValidationClient {
         }
         report.addProperty("pictureScreenshot_" + stage, "screenshots/" + fileName);
         report.addProperty("pictureGlLessProbe_" + stage, celtium$glLessProbeDetail());
-        if (celtium$glLessInstalled()) {
-            report.addProperty("pictureScreenshotUsable_" + stage, Boolean.FALSE);
-            report.addProperty("pictureScreenshotNote_" + stage, "black by construction under the GL-less stub: there"
-                    + " is no GL default framebuffer to read, so the presented dump is this configuration's picture");
+        // Measured, not assumed. This used to declare the picture unusable under GL-less "by construction", and that
+        // claim stopped being true the moment the game's screenshot read (nglGetTexImage) was served from the renderer's
+        // own mirror: leg menu3's screenshot held 94.7 percent lit pixels while this property still said False. What the
+        // record has to carry is what the file holds.
+        java.nio.file.Path shot = mc.gameDir.toPath().resolve("screenshots").resolve(fileName);
+        Picture measured;
+        try {
+            measured = Picture.read(shot);
+        } catch (java.io.IOException unreadable) {
+            measured = null;
+            report.addProperty("pictureScreenshotNote_" + stage, "the game's screenshot could not be read: " + unreadable);
+        }
+        double litFraction = -1.0D;
+        double meanChannel = -1.0D;
+        if (measured != null && measured.pixels.length > 0) {
+            long lit = 0L;
+            long sum = 0L;
+            for (int pixel : measured.pixels) {
+                int r = (pixel >> 16) & 0xFF;
+                int g = (pixel >> 8) & 0xFF;
+                int b = pixel & 0xFF;
+                sum += r + g + b;
+                if (r + g + b > 24) {
+                    lit++;
+                }
+            }
+            litFraction = (double) lit / (double) measured.pixels.length;
+            meanChannel = (double) sum / (double) (measured.pixels.length * 3L);
+        }
+        boolean usable = litFraction > 0.05D;
+        report.addProperty("pictureScreenshotUsable_" + stage, Boolean.valueOf(usable));
+        report.addProperty("pictureScreenshotNonBlackFraction_" + stage,
+                String.format(java.util.Locale.ROOT, "%.5f", litFraction));
+        report.addProperty("pictureScreenshotMean_" + stage,
+                String.format(java.util.Locale.ROOT, "%.2f", meanChannel));
+        report.addProperty("pictureScreenshotNote_" + stage, usable
+                ? "measured: the game's own screenshot holds pixels (non-black " + String.format(java.util.Locale.ROOT,
+                        "%.4f", litFraction) + "), so it is a picture of this configuration"
+                : "measured: the game's own screenshot is black (non-black " + String.format(java.util.Locale.ROOT,
+                        "%.5f", litFraction) + "), so only the presented dump is a picture of this configuration");
+        if (!usable) {
             return;
         }
-        report.addProperty("pictureScreenshotUsable_" + stage, Boolean.TRUE);
         PictureEvidence evidence = new PictureEvidence(stage, SOURCE_GL_SCREENSHOT,
                 mc.gameDir.toPath().resolve("screenshots").resolve(fileName), worldTicks, worldFrames,
                 celtium$presentedFrameCount(), mc.displayWidth, mc.displayHeight, BINDING_WRITE_AT_CAPTURE);
