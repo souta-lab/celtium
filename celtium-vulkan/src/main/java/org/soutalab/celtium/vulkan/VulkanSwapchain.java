@@ -194,6 +194,9 @@ public final class VulkanSwapchain {
      * signal it keys off, and since the backend already creates the swapchain lazily, dropping it and letting the next
      * present ask for one is the whole rebuild.
      */
+    /** How many presents between surface-size queries; the query costs about 0.13 ms. */
+    private static final int CAPS_CHECK_INTERVAL = 8;
+    private int capsCheckCountdown;
     private boolean outOfDate;
     private int acquireOutOfDate;
     /** Presents a solid marker colour instead of the frame, so the screen can be attributed to this path. */
@@ -1143,8 +1146,16 @@ public final class VulkanSwapchain {
             }
             // A window resize that the driver never reports as OUT_OF_DATE leaves this swapchain stale, and the frame
             // it presents then disagrees with the window (measured: a 1280x720 image out of a 1024x640 window). Ask
-            // the surface for its size now and mark the swapchain out of date; the caller's existing rebuild handles it.
-            try (org.lwjgl.system.MemoryStack capStack = org.lwjgl.system.MemoryStack.stackPush()) {
+            // the surface for its size and mark the swapchain out of date; the caller's existing rebuild handles it.
+            // The query is not free (0.13 ms a present when measured), and a resize is a user gesture that the next
+            // few presents catch just as well, so it is asked once every CAPS_CHECK_INTERVAL presents: a stale frame
+            // that lasts a handful of presents is the worst case, against a fifth of a millisecond paid every frame.
+            boolean checkCaps = this.capsCheckCountdown <= 0;
+            if (checkCaps) {
+                this.capsCheckCountdown = CAPS_CHECK_INTERVAL;
+            }
+            this.capsCheckCountdown--;
+            if (checkCaps) try (org.lwjgl.system.MemoryStack capStack = org.lwjgl.system.MemoryStack.stackPush()) {
                 long capsStartedNanos = System.nanoTime();
                 org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR current =
                         org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR.calloc(capStack);

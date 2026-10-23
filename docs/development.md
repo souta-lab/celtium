@@ -1803,3 +1803,19 @@ world/qmagnet・AMD RX 6400・180s×2rep:
 
 **次の標的**: 受理経路のコスト削減（CeleritasのGL即時描画に相当する部分をJavaで模倣している所）とp95ヒッチ。
 ここを詰めればCeleritas超えが現実的な距離（0.4ms）にある。
+
+**present毎のsurface caps問い合わせを8回に1回へ（2026-10-23・A/Bは交絡）**
+
+presentの段別で `capsMs`（vkGetPhysicalDeviceSurfaceCapabilitiesKHR）が約0.13ms/present あったため、
+リサイズ検出用の問い合わせを **8 presentに1回**へ間引いた（`CAPS_CHECK_INTERVAL=8`）,
+最悪でも数present分の古いフレームで、毎フレーム0.13msを払うより安い。
+
+`kpi-thr`（候補=間引き版, 対照=直前ビルド, 150s×2rep, interleaved, 参照なし）:
+```
+候補 1.877 / 1.830ms（p95 5.6）
+対照 2.620 / 2.382ms（p95 22〜31, samples 1433/1948 と少ない）
+判定 NO_SPEED_VERDICT
+```
+⇒ 数字上は候補が速いが、**対照legのsamplesが半分以下で負荷に叩かれている**ため交絡。
+このA/Bを根拠に「26%改善」とは言わない。**機構としては0.1ms程度の削減**を狙ったもので、
+次に空いている機械で再測する。
