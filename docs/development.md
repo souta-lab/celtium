@@ -1277,3 +1277,24 @@ frame p50: 7.65 → 6.36 → **6.14ms**（定常）
 ⇒ 従来arm 8.13ms 比 **−24.5%（約2.0ms）**。前段（不透明のみ）の6.45msからさらに −0.31ms。
 **Intel UHD 630 でも同条件で PASSED・problems 0**（画像gate一致、`kpi-blendintel`）。
 
+**fps300 KPI: 最適化後の内訳と、まだ個別描画しているもの（2026-10-23 実測）**
+
+bracket（brackets ON なので計器込み）:
+```
+frame 6.2 / world 5.5 / flush 1.5 / winRecord 1.1 / terrain 1.9（うち preflush 1.4）/ gui 0.4
+setupTerrain 0.2 / chunkUpload 0.0
+```
+バリアント別（frameStats, 既定=間接ON）:
+```
+counts[texture=2551 item=0 block=0 particle=120 generic=2400]（窓=120フレーム）
+forms[draw=2400 bind=2671]
+```
+⇒ **item系は全て間接runに吸収（個別ドロー0）**。
+残る個別ドローは約42/フレーム:
+- `texture` 約21（postClears有り等でrunに載らない／bindForm）
+- `generic` 約20（`VulkanImmediatePipeline` の position系。**records変種が無い**）
+- `particle` 1
+- また **bindForm 2671 対 drawForm 2400**＝個別描画はほぼbindForm経路（9%の制約）
+
+次の削減候補: position系（`immediate_position.vert` / `immediate_position_tex.vert`）のrecords変種を作り、
+generic 20ドロー/フレームを吸収（見込み −0.2〜0.4ms）。
