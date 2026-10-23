@@ -473,7 +473,7 @@ public final class TextureCopyService {
                 if (pendingBeforeCopy) {
                     this.host.flushPendingBeforeGlDraw();
                 }
-                if (this.copyOrderLogs < 14) {
+                if (this.copyOrderLogs < 40) {
                     this.copyOrderLogs++;
                     // What the corner holds *after* the flush: the copy's own source, measured before the copy takes it.
                     // A landscape here means the draws land where they should and the blit reads elsewhere; the overlay's
