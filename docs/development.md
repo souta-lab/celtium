@@ -935,3 +935,20 @@ flush の実体は **winRecord＝194ドローの記録2.5ms**。
 `描画2.5（194×約13µs） + terrain記録0.5 + 受理/ウィンドウ機構1.1 + vanilla描画ロジック約3.0`。
 300fps(3.3ms)には「描画を約1.2msへ（＝ドロー数半減以下）」＋「vanilla描画ロジックを約1.5msへ」の両方が必要で、
 どちらも局所最適化では届かない（`modelDraws` は実行中に64,300件＝エンティティ/モデル描画がこの経路の主要顧客）。
+
+**fps300 KPI: 事前変換（bake）の拡大は空振り（2026-10-23 実測）**
+
+`copyVerticesTransformed` を回転行列（フル3x4）へ拡張し、`celtium$preTransformable` を
+全フォーマット・fog有効・lighting有効へ開放して受入試験:
+```
+preTransform[groups=0 matrixSplits=0]   ← 窓を3回とも「bake が一度も発火しない」
+drawn[perFrame=194-212]（変化なし） frame p50 8.2-9.4ms（変化なし） 受入: PASSED
+```
+⇒ **bake は発火しない**。理由は実測の帰結: ワールドの主要バッチ（エンティティ/アイテムのモデル）は
+`retained != null`（表示リストのキャッシュ経路 `RetainedGeometryCache`）で届くため、
+`retained == null && celtium$preTransformable(...)` の条件に入らない。
+**表示リストのジオメトリは行列がキャッシュ後に決まるのでbakeでは畳めない**。
+
+したがって「同一モデル・同一テクスチャの連続グループを1ドローに」は、retained 経路そのものの
+再設計（インスタンシング/per-drawデータ）なしには不可能。今回の変更は**挙動を元に戻した**
+（拡張は無効のまま残さない）。計器 `preTransform[groups=, matrixSplits=]` だけを残す。

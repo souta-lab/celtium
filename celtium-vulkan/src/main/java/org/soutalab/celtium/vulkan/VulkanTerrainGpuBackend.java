@@ -2360,6 +2360,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.lastItemViewNanos = VulkanImmediateItemPipeline.ITEM_VIEW_NANOS;
         this.lastItemPushNanos = VulkanImmediateItemPipeline.ITEM_PUSH_NANOS;
         this.lastItemMeshNanos = VulkanImmediateItemPipeline.ITEM_MESH_NANOS;
+        long preTransformedDelta = this.immediateStatistics.preTransformedGroups() - this.lastPreTransformed;
+        long matrixSplitsDelta = this.immediateStatistics.matrixSplits() - this.lastMatrixSplits;
+        this.lastPreTransformed = this.immediateStatistics.preTransformedGroups();
+        this.lastMatrixSplits = this.immediateStatistics.matrixSplits();
         long textureCountDelta = this.textureDrawCount - this.lastTextureDrawCount;
         long itemCountDelta = this.itemDrawCount - this.lastItemDrawCount;
         long blockCountDelta = this.blockDrawCount - this.lastBlockDrawCount;
@@ -2422,6 +2426,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
+                // How many groups the bake actually opened and how many splits still name the matrix: the bake only pays
+                // if the second number falls, and a zero on the first says the predicate never fired.
+                + " preTransform[groups=" + (this.immediateStatistics.preTransformedGroups() - this.lastPreTransformed)
+                + " matrixSplits=" + (this.immediateStatistics.matrixSplits() - this.lastMatrixSplits) + "]"
                 // Windows per frame: each window is a render pass plus a submission, and the A/B that removed the drawing
                 // left 0.5 ms a frame in the window machinery, so this count is what says whether coalescing windows is
                 // worth anything.
@@ -5934,7 +5942,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
                                 org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD, org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
                                 VulkanColorBlendState.allChannels()),
-                        false, false, false, org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
+                        this.currentGroupPreTransformed && !this.celtium$axisAlignedModelView(), false, false, org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
             }
             boolean ok = celtium$descriptorSet(
                     this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture), "probe") != 0L;
@@ -7109,7 +7117,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         this.currentPreparedImmediate != null && this.currentPreparedImmediate.pipeline != prepared.pipeline,
                         this.currentPreparedImmediate != null && this.currentPreparedImmediate.descriptor != prepared.descriptor,
                         !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection),
-                        this.currentGroupPreTransformed && !this.celtium$axisAlignedModelView(),
+                        false,
                         !this.currentGroupPreTransformed
                                 && !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView),
                         GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
@@ -15145,6 +15153,8 @@ this.frameBufferOpen = false;
 
     private long lastTerrainIndirectCalls;
     private long lastDrawnGroups;
+    private long lastPreTransformed;
+    private long lastMatrixSplits;
     private long lastImmediateWindows;
 
     /** {@return windows per frame times 100, over the frames this report covers}. */
