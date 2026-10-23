@@ -2522,3 +2522,23 @@ target=0x0 current=0x440a6f4c pending=78 ... recorded=391
 **次の一手**: フレーム内で「パノラマウィンドウ描画の直前と直後」に
 frame image と default pair の**平均色をreadback**し、どちらにパノラマが入ったかを確定する。
 入っていない方に描かれているなら、それが直接の原因（合成が読まない画像に描いている）。
+
+**パノラマ①: 最重要の手がかり（2026-10-24 実測＋推論）**
+
+メニュー時のコピー経路ログ:
+```
+CELTIUM_READ_RESOLVE readFbo=0 mainIdentity=25503723 mainColorName=3 currentTarget=0
+  currentIsMain=false frameImage=... defaultPair=0 chainPair=0
+CELTIUM_TEX_COPY_SERVED dest=23 level=0 destOffset=0,0 source=0,0 256x256 readFbo=0
+  mean=107,120,138 opaque=65536/65536 served=1
+```
+⇒ 読み出しは成立し、コピー先テクスチャ23の中身は**青空っぽい平均色**で不透明。つまり経路は動いている。
+
+一方、ミラー登録ログでは id=34〜39 の**CPU側の内容**は正しい色（0xff8fa3ff 等）。
+しかし `hasFullContent()` は「アップロード済み」の意味しか持たず、**GPU画像に何が書かれたか**は未検証。
+もし6枚が**白で初期化**されていれば、パノラマは「白い形」をalpha合成したものになり、
+**観測（淡い＝白っぽい巨大な形）と完全に一致**する。
+
+**次の一手（決定的）**: id=34〜39 の**GPU画像の平均色をreadback**する。
+- 白（255,255,255）→ アップロード経路が白埋め＝これが原因。修正は「announcement→GPUアップロード」の配線
+- 写真の色 → テクスチャは正常。サンプラ/mipを疑う
