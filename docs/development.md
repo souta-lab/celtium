@@ -1994,3 +1994,18 @@ gameClears=[latched=426,live=846,noClear=2120,framesNoClear=0 presentLag=[max=0,
 - 差分が小さい → 並び順ではなく、視点依存のz-fight（見た目の問題）
 この2フレームdump段をfixtureに足すのが次の作業。撮影は `celtium$requestPresentedDump` を
 world撮影の直後と次tickで別名に対して発行し、ファイルを比較する。
+
+**時間方向のちらつき計器を追加（2026-10-23 実測・基準値つき）**
+
+`-Dceltium.debug.flickerSample=true` で、**連続する2枚の提示フレームをreadbackして比較**する
+（150提示以降に2枚、差分>8/255 を「変化」として数える）。leg `flicker`（AMD, world, 90s, 静止カメラ）:
+```
+CELTIUM_FLICKER samples=2 changed=1259/921600 fraction=0.00137 maxDelta=190
+受入: PASSED・problems 0
+```
+⇒ 静止カメラでも **0.137%のピクセルがフレーム間で変わる**（maxDelta 190）。
+この値はHUD/トースト/雲など動く要素の寄与を含む**基準値**で、これ以上の変化が出れば
+「時間方向に不安定な描画」（＝チカチカ）の客観的証拠になる。
+
+次の使い方: 色付きガラスがある地点をfixtureのポーズに足し、同じ計器で fraction を比較する。
+（ガラスが写っていない今のポーズでは、チカチカ④の有無は判定できない。）

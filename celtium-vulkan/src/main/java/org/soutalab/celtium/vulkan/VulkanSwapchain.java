@@ -242,6 +242,11 @@ public final class VulkanSwapchain {
     private float lastPresentedMean = -1.0f;
     /** {@code -Dceltium.vulkan.presentReadback=true} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
+    /** {@code -Dceltium.debug.flickerSample=true}: compare two consecutive presented frames for temporal flicker. */
+    private static final boolean FLICKER_SAMPLE = Boolean.getBoolean("celtium.debug.flickerSample");
+    private int[] flickerPrevious;
+    private int flickerSamples;
+    private int flickerSeen;
     /**
      * Per-stage wall nanos inside {@link #presentImage}: the acquire, the diagnostic readback (whose own submit waits
      * on a fence) and the queue present. The present runs between updateRenderer and the swap, outside every frame
@@ -1270,6 +1275,45 @@ public final class VulkanSwapchain {
             // diagnostic switch was off (legs hei005br and glref3: no dump file anywhere, presentedDumpFailure=none
             // because writePresentedImage was never called). It runs here unconditionally, and clears the list so the
             // block below cannot write the same path twice.
+            // Temporal stability measured instead of argued: two consecutive presented frames are read back and
+            // compared. A still camera whose two frames differ over large areas is the flicker a player reports, and it
+            // can only come from something that changes between frames (draw order, a rebuilt mesh, an alternating
+            // sample). Two full readbacks, so it is a diagnostic switch, not a default.
+            // The first frames are the loading screen, where a difference says nothing about the world: sample after
+            // the world has been up for a while (present count, not a timer, so two legs sample the same frames).
+            if (FLICKER_SAMPLE && this.flickerSamples < 2 && ++this.flickerSeen > 150) {
+                int[] pixels = readBackBlock(this.context, image, this.format, this.width, this.height, 0, 0,
+                        this.width, this.height);
+                if (pixels != null) {
+                    this.flickerSamples++;
+                    if (this.flickerPrevious == null) {
+                        this.flickerPrevious = pixels;
+                    } else {
+                        long changed = 0L;
+                        int maxDelta = 0;
+                        int count = Math.min(pixels.length, this.flickerPrevious.length);
+                        for (int i = 0; i < count; i++) {
+                            int a = pixels[i];
+                            int b = this.flickerPrevious[i];
+                            int dr = Math.abs(((a >> 16) & 0xFF) - ((b >> 16) & 0xFF));
+                            int dg = Math.abs(((a >> 8) & 0xFF) - ((b >> 8) & 0xFF));
+                            int db = Math.abs((a & 0xFF) - (b & 0xFF));
+                            int delta = Math.max(dr, Math.max(dg, db));
+                            if (delta > 8) {
+                                changed++;
+                            }
+                            if (delta > maxDelta) {
+                                maxDelta = delta;
+                            }
+                        }
+                        System.out.println("[Celtium] CELTIUM_FLICKER samples=2 changed=" + changed + "/" + count
+                                + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
+                                        (double) changed / (double) count)
+                                + " maxDelta=" + maxDelta);
+                        this.flickerPrevious = null;
+                    }
+                }
+            }
             if (!this.pendingDumpPaths.isEmpty()) {
                 java.util.List<java.nio.file.Path> pendingPaths =
                         new java.util.ArrayList<>(this.pendingDumpPaths);
