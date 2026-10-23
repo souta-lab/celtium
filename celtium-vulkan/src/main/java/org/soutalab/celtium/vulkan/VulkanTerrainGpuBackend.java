@@ -3103,6 +3103,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
     private static final int CHAIN_FRAME_DUMPS = Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue();
 
+    /** How many large windows have had their routing logged. */
+    private int windowRouteLogs;
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
     private long framesWithNoClearAtAll;
     private int frameClearsAtLastBoundary = -1;
@@ -18306,6 +18308,25 @@ this.frameBufferOpen = false;
      */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+        if (this.windowRouteLogs < 12 && this.immediateGroups.size() >= 100) {
+            this.windowRouteLogs++;
+            boolean isMainTarget = target == this.targetRegistry.mainIdentity();
+            StringBuilder textures = new StringBuilder();
+            java.util.LinkedHashSet<Integer> distinctTextures = new java.util.LinkedHashSet<Integer>();
+            for (int i = 0; i < this.immediateGroups.size() && distinctTextures.size() < 8; i++) {
+                distinctTextures.add(Integer.valueOf(this.immediateGroups.get(i).texture));
+            }
+            for (Integer texture : distinctTextures) {
+                if (textures.length() > 0) {
+                    textures.append(',');
+                }
+                textures.append(texture.intValue());
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_ROUTE identity=0x" + Long.toHexString(target)
+                    + " isMain=" + isMainTarget + " route="
+                    + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
+                    + " groups=" + this.immediateGroups.size() + " textures=[" + textures + "] frame=" + this.frameId);
+        }
         if (this.drawRecords == null) {
             ImmediateDrawRecords records = new ImmediateDrawRecords(this.context);
             if (records.create()) {

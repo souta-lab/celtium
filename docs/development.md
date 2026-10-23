@@ -2133,3 +2133,28 @@ pictureScreenshotNonBlackFraction_world = 0.98295
 pictureScreenshotUsable_menu = True / _world = True
 ```
 ⇒ ゲーム自身のスクショは**GL-lessでも実画像**（F2修正の裏付けが計測として残る）。
+
+**パノラマ①: ジオメトリとテクスチャは正しく、射影行列が疑わしい（2026-10-24 実測）**
+
+計器を2つ追加して分かったこと:
+
+1. `CELTIUM_WINDOW_ROUTE`（100グループ以上のウィンドウで経路を記録）
+```
+identity=0x0 isMain=false route=frame-image groups=384 textures=[34,35,36,37,38,39] frame=0
+```
+- 384グループ＝バニラのパノラマ描画（64タイル×6面）そのもの。
+- 使っているテクスチャは **34〜39＝パノラマ6面の画像で正しい**。
+- 経路は `frame-image`（＝画面）。これはパノラマが画面へ直接描かれるバニラの構造どおりで**正常**。
+
+2. `CELTIUM_FBO_BIND`（mixinが捕捉したFramebuffer bind）
+- 出てくるのは 1280x720 / 1281x720 / main のみで、**256x256のFBOは登場しない**。
+  パノラマはFBOを使わない（直接画面へ描く）ため。
+
+⇒ したがって「巨大な文字片に見える」のは**テクスチャでも経路でもなく射影**の疑いが濃い。
+ベースは `matrixMode(GL_PROJECTION); loadIdentity; Project.gluPerspective(120,1,0.05,10)` で
+作られる透視射影。この射影が我々の push constant に載っていない（GUIの直交射影のまま等）なら、
+同じ384クアッドが画面全体を覆う巨大タイルとして描かれる＝観測と一致する。
+
+**次の一手**: パノラマ期間の `projection`（stubのミラー）と、記録された group.projection を
+数値で出す（例: p[0], p[5], p[11], p[14]）。正しい透視なら p[11]=-1, p[14]≈-0.1 付近、
+直交なら p[0]=2/w のような値になる。ここが違えば射影チャネルの修正（stubの projection stack 追跡）へ。

@@ -28,6 +28,11 @@ public abstract class FramebufferMixin {
     /** One-shot: whether the bind RETURN hook runs and what it sees, which decides if the adoption can happen there. */
     private static int celtium$adoptProbeLastSize = -1;
 
+    /** {@code -Dceltium.debug.fboBind=true}: name each framebuffer bind the mixin sees, bounded. */
+    private static final boolean FBO_BIND_LOG = Boolean.getBoolean("celtium.debug.fboBind");
+    private static final java.util.concurrent.atomic.AtomicLong FBO_BIND_LINES =
+            new java.util.concurrent.atomic.AtomicLong();
+
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
         // Announce a framebuffer replacement before the bind below, so the flush that a target change would otherwise do
@@ -72,7 +77,13 @@ public abstract class FramebufferMixin {
             // not move when the GL name behind it does (adoption rewrites framebufferObject, a resize regenerates
             // framebufferTexture in place through func_147613_a).
             long identity = System.identityHashCode(self);
-            backend.bindFramebuffer(identity, mc != null && mc.getFramebuffer() == self);
+            boolean isMainFramebuffer = mc != null && mc.getFramebuffer() == self;
+            if (FBO_BIND_LOG && FBO_BIND_LINES.getAndIncrement() < 60) {
+                System.out.println("[Celtium] CELTIUM_FBO_BIND identity=0x" + Long.toHexString(identity)
+                        + " isMain=" + isMainFramebuffer + " size=" + self.framebufferTextureWidth + "x"
+                        + self.framebufferTextureHeight);
+            }
+            backend.bindFramebuffer(identity, isMainFramebuffer);
             // CELTIUM-OUTLINE-WIRING (call site 1 of 2; blocked on the backend - nothing is invented here): the colour
             // texture name and size attached to the framebuffer that is being bound. The GL-less path cannot ask GL for
             // an attachment (glGetNamedFramebufferAttachmentParameteri answers nothing without a context), so this bind
