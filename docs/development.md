@@ -2995,3 +2995,20 @@ flush ではなく **blit 経路の提出順（open command buffer の submit）
 
 **次の一手**: `glCopyTexSubImage2D` 呼び出し時の FBO 束縛追跡を確認し、
 256x256 の FBO が bind されているのに readFbo=0 として届いていないかをログで確かめる。
+
+**パノラマ①: コピー時には常に pending=true（2026-10-24 実測）**
+
+コピーサイトに順序ログを追加（境界付き14行）:
+```
+CELTIUM_COPY_ORDER present=1 call=2 pending=true src=0,0 256x256
+CELTIUM_COPY_ORDER present=2 call=1 pending=true src=0,0 256x256
+...
+```
+⇒ **毎回 flush は走っている**。それでもコピー元の左下は前フレームの文字のまま。
+つまり「flushが呼ばれていない」のではなく、**flush が描いた先（画像/パス）と
+コピーが読む先が食い違っている**可能性が高い。
+
+**次の一手（最終局面）**: コピー直前の flush 後に
+「この時点で frame画像の左下256x256をreadbackした平均色」を測る。
+それが風景なら描画先は正しく、blitの読み先が別画像。
+文字ならパノラマがまだ描かれていない（受理順の問題）。

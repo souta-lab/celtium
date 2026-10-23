@@ -255,6 +255,7 @@ public final class TextureCopyService {
     /** Reads that resolved through the frame's last non-main draw target rather than the bound target (panorama). */
     private int readResolvedFromLastDrawnTarget;
     private int copyReadLogs;
+    private int copyOrderLogs;
     private int copyCallerLogs;
 
     public TextureCopyService(Host host) {
@@ -468,8 +469,15 @@ public final class TextureCopyService {
                 // frame's panorama sits recorded-but-unsubmitted. Measured on the title screen: the copy captured the
                 // previous frame's GUI text from that corner (texture 23 dumped as mirrored overlay strings at mean 67.8
                 // against 122.1 for a panorama-only frame) and the blur chain magnified it across the background.
-                if (this.host.hasPendingImmediateWork()) {
+                boolean pendingBeforeCopy = this.host.hasPendingImmediateWork();
+                if (pendingBeforeCopy) {
                     this.host.flushPendingBeforeGlDraw();
+                }
+                if (this.copyOrderLogs < 14) {
+                    this.copyOrderLogs++;
+                    System.out.println("[Celtium] CELTIUM_COPY_ORDER present=" + this.host.presentSerial()
+                            + " call=" + (this.copiesThisPresent + 1) + " pending=" + pendingBeforeCopy
+                            + " src=" + x + "," + y + " " + width + "x" + height);
                 }
                 if (COPY_ORDER_WITHOUT_IDLE) {
                     this.host.context().celtium$flushBatchedSubmits();
