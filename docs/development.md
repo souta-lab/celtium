@@ -2627,3 +2627,20 @@ descriptor、format、pipeline（blend有効・係数正しい）、描画回数
 ブレンド無効で作られたもの**である可能性（同一stateで複数pipelineが作られ、古い方が使われる等）。
 **次の一手**: `create(...)` 内で `colorBlend.blend()` と生成した pipeline ハンドルを境界付きで記録し、
 draw 時に使われた pipeline ハンドルと突き合わせる。
+
+**パノラマ①: パイプラインキャッシュ鍵も正しい（2026-10-24 原典確認・新計器なし）**
+
+`celtium$stateKey(formatId, state)` は **state の全値を畳み込む**（`key = formatId; for (value : state) key = key*31 + value`）。
+したがって blend 有無/係数が違えば別キー＝別パイプライン。**「古いブレンド無効パイプラインの再利用」仮説は棄却**。
+生成も `computeIfAbsent(key, ... celtium$blendState(state) ...)` で、state から作っている。
+
+これで**実測可能な入力・状態・生成側はすべて正しい**と確定した。
+残るのは
+1. **テクスチャIDの対応そのもの**（34〜39 が本当に `textures/gui/title/background/panorama_*.png` か。
+   我々は「256x256 で写真らしい平均色」までしか確認しておらず、*どのリソースか*は未確認）
+2. サンプラの mip/LOD（maxLod=1.0、mipLevels は画像由来）
+
+**次の一手（1回で決着させる）**: ロード時に `TextureManager` が panorama 画像へ割り当てた
+**GLテクスチャ名を特定**する。方法は `CELTIUM_MIRROR_SOURCE` の id と、そのアップロード元
+（リソースパス）を対応付ける計器を足すか、6枚の平均色を バニラの参照実装（Celeritas）側で
+同じ計器で測って一致するかを見る。
