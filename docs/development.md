@@ -1450,3 +1450,24 @@ offCapture 0.0 / offPrepare 0.1 / offMerge 0.5 / offAppend 0.1 / flushCloseGroup
 
 ビルドは `-Pceltium_release_version=0.0.14-alpha`。版を上げたのでjarハッシュは0.0.13系と別物であり、
 **この受入は v0.0.14-alpha のjarに対する証拠**（0.0.13の証拠とは流用しない）。
+
+**300fpsが現実的でない理由の最終整理（2026-10-23・v0.0.14-alpha のJFR）**
+
+Client thread 321サンプル（25秒, validation ON）のinclusive:
+```
+ 8% EntityRenderer.renderWorldPass        ← ワールド描画パス全体
+ 7% submitImmediateBatchTimed             ← 受理
+ 7% flushImmediateWindow                  ← run記録
+ 5% Minecraft.runTick                     ← tick（描画ではない）
+ 4% TileEntityRendererDispatcher.render   ← TESR
+ 1% RenderGlobal.renderEntitiesBlock / setRenderLayer
+```
+self上位: HashMap$TreeNode 4%(エンティティdata等)、submitImmediateBatchBody 3%、BufferBuilder 3%、
+Long2ObjectOpenHashMap 3%。
+
+⇒ **フレーム6msのうち、レンダラが所有するのは受理＋run記録（約14%）＋地形**。
+残りは **tick（20Hzで6ms/tick＝フレーム換算約2ms）** と **vanillaのエンティティ/TESR/ワールド参照**。
+
+つまり300fps（3.3ms）は「レンダラを最適化する」だけでは到達できず、
+**tickとvanilla描画ロジックの削減**（Sodium型の別プロジェクト、またはtick間引き等の設計変更）が必要。
+これは実測に基づく結論であり、レンダラ側の残作業ではない。
