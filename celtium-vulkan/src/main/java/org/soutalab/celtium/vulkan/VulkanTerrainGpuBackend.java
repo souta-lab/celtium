@@ -18321,113 +18321,89 @@ this.frameBufferOpen = false;
         if (this.windowRouteLogs < 12 && this.immediateGroups.size() >= 100) {
             this.windowRouteLogs++;
             boolean isMainTarget = target == this.targetRegistry.mainIdentity();
-            StringBuilder textures = new StringBuilder();
-            java.util.LinkedHashSet<Integer> distinctTextures = new java.util.LinkedHashSet<Integer>();
-            for (int i = 0; i < this.immediateGroups.size() && distinctTextures.size() < 8; i++) {
-                distinctTextures.add(Integer.valueOf(this.immediateGroups.get(i).texture));
-            }
-            for (Integer texture : distinctTextures) {
-                if (textures.length() > 0) {
-                    textures.append(',');
-                }
-                textures.append(texture.intValue());
-            }
-            java.util.Map<Integer, Integer> modelViewCounts = new java.util.LinkedHashMap<Integer, Integer>();
-            for (int i = 0; i < this.immediateGroups.size(); i++) {
-                float[] modelView = this.immediateGroups.get(i).modelView;
-                Integer key = Integer.valueOf(java.util.Arrays.hashCode(modelView));
-                modelViewCounts.merge(key, Integer.valueOf(1), Integer::sum);
-            }
-            java.util.List<Integer> sizes = new java.util.ArrayList<Integer>(modelViewCounts.values());
-            sizes.sort(java.util.Comparator.reverseOrder());
-            int identityModelViews = 0;
+            int exactDistinct = 0;
+            int identityMatrices = 0;
+            java.util.List<float[]> seen = new java.util.ArrayList<float[]>();
+            java.util.Map<Long, java.util.List<float[]>> byPlacement =
+                    new java.util.LinkedHashMap<Long, java.util.List<float[]>>();
+            java.util.LinkedHashSet<Integer> textures = new java.util.LinkedHashSet<Integer>();
             for (int i = 0; i < this.immediateGroups.size(); i++) {
                 float[] mv = this.immediateGroups.get(i).modelView;
-                if (mv != null && Math.abs(mv[0] - 1.0f) < 1.0e-5f && Math.abs(mv[5] - 1.0f) < 1.0e-5f
+                textures.add(Integer.valueOf(this.immediateGroups.get(i).texture));
+                if (mv == null || mv.length < 16) {
+                    continue;
+                }
+                boolean duplicate = false;
+                for (int s = 0; s < seen.size() && !duplicate; s++) {
+                    float[] other = seen.get(s);
+                    boolean same = true;
+                    for (int e = 0; e < 16; e++) {
+                        if (Float.floatToIntBits(other[e]) != Float.floatToIntBits(mv[e])) {
+                            same = false;
+                            break;
+                        }
+                    }
+                    duplicate = same;
+                }
+                if (!duplicate) {
+                    seen.add(mv);
+                    exactDistinct++;
+                }
+                if (Math.abs(mv[0] - 1.0f) < 1.0e-5f && Math.abs(mv[5] - 1.0f) < 1.0e-5f
                         && Math.abs(mv[10] - 1.0f) < 1.0e-5f && Math.abs(mv[12]) < 1.0e-5f
                         && Math.abs(mv[13]) < 1.0e-5f && Math.abs(mv[14]) < 1.0e-5f) {
-                    identityModelViews++;
+                    identityMatrices++;
                 }
-            }
-            java.util.HashSet<Long> distinctTranslations = new java.util.HashSet<Long>();
-            for (int i = 0; i < this.immediateGroups.size(); i++) {
-                float[] mv = this.immediateGroups.get(i).modelView;
-                if (mv == null || mv.length < 16) {
-                    continue;
-                }
-                long tx = Float.floatToIntBits(mv[12]);
-                long ty = Float.floatToIntBits(mv[13]);
-                distinctTranslations.add(Long.valueOf((tx << 32) ^ (ty & 0xFFFFFFFFL)));
-            }
-            float[] firstMv = this.immediateGroups.get(0).modelView;
-            java.util.Map<Long, java.util.List<float[]>> byTranslation =
-                    new java.util.LinkedHashMap<Long, java.util.List<float[]>>();
-            for (int i = 0; i < this.immediateGroups.size(); i++) {
-                float[] mv = this.immediateGroups.get(i).modelView;
-                if (mv == null || mv.length < 16) {
-                    continue;
-                }
-                long key = (((long) Float.floatToIntBits(mv[12])) << 32)
+                long placement = (((long) Float.floatToIntBits(mv[12])) << 32)
                         ^ (Float.floatToIntBits(mv[13]) & 0xFFFFFFFFL);
-                byTranslation.computeIfAbsent(Long.valueOf(key), ignored -> new java.util.ArrayList<float[]>())
-                        .add(mv);
+                byPlacement.computeIfAbsent(Long.valueOf(placement),
+                        ignored -> new java.util.ArrayList<float[]>()).add(mv);
             }
-            int[] perTileHistogram = new int[7];
-            for (java.util.Map.Entry<Long, java.util.List<float[]>> entry : byTranslation.entrySet()) {
-                java.util.HashSet<Integer> rotations = new java.util.HashSet<Integer>();
-                for (float[] mv : entry.getValue()) {
-                    int[] rotation = new int[] {Float.floatToIntBits(mv[0]), Float.floatToIntBits(mv[1]),
-                            Float.floatToIntBits(mv[4]), Float.floatToIntBits(mv[5])};
-                    rotations.add(Integer.valueOf(java.util.Arrays.hashCode(rotation)));
+            int[] histogram = new int[7];
+            for (java.util.List<float[]> bucket : byPlacement.values()) {
+                java.util.List<float[]> rotations = new java.util.ArrayList<float[]>();
+                for (float[] mv : bucket) {
+                    boolean duplicate = false;
+                    for (int s = 0; s < rotations.size() && !duplicate; s++) {
+                        float[] other = rotations.get(s);
+                        boolean same = true;
+                        for (int e : new int[] {0, 1, 2, 4, 5, 6, 8, 9, 10}) {
+                            if (Float.floatToIntBits(other[e]) != Float.floatToIntBits(mv[e])) {
+                                same = false;
+                                break;
+                            }
+                        }
+                        duplicate = same;
+                    }
+                    if (!duplicate) {
+                        rotations.add(mv);
+                    }
                 }
-                int bucket = Math.min(6, rotations.size());
-                perTileHistogram[bucket]++;
+                histogram[Math.min(6, rotations.size())]++;
             }
-            StringBuilder histogram = new StringBuilder();
-            for (int i = 0; i < perTileHistogram.length; i++) {
-                if (perTileHistogram[i] == 0) {
+            StringBuilder perTile = new StringBuilder();
+            for (int i = 0; i < histogram.length; i++) {
+                if (histogram[i] == 0) {
                     continue;
                 }
-                if (histogram.length() > 0) {
-                    histogram.append(' ');
+                if (perTile.length() > 0) {
+                    perTile.append(' ');
                 }
-                histogram.append(i).append(':').append(perTileHistogram[i]);
+                perTile.append(i).append(':').append(histogram[i]);
             }
-            System.out.println("[Celtium] CELTIUM_TILE_ROTATION_HIST tilesWithDistinctRotations=[" + histogram
-                    + "] placements=" + byTranslation.size());
-            for (java.util.Map.Entry<Long, java.util.List<float[]>> entry : byTranslation.entrySet()) {
-                if (entry.getValue().size() >= 2) {
-                    StringBuilder faces = new StringBuilder();
-                    for (float[] mv : entry.getValue()) {
-                        if (faces.length() > 0) {
-                            faces.append(' ');
-                        }
-                        faces.append(String.format(java.util.Locale.ROOT, "(%.3f,%.3f,%.3f)", Float.valueOf(mv[0]),
-                                Float.valueOf(mv[1]), Float.valueOf(mv[4])));
-                    }
-                    System.out.println("[Celtium] CELTIUM_TILE_FACES count=" + entry.getValue().size()
-                            + " rotations=" + faces);
-                    break;
+            StringBuilder textureList = new StringBuilder();
+            for (Integer texture : textures) {
+                if (textureList.length() > 0) {
+                    textureList.append(',');
                 }
+                textureList.append(texture.intValue());
             }
-            System.out.println("[Celtium] CELTIUM_WINDOW_TRANSLATIONS distinct=" + distinctTranslations.size()
-                    + " groups=" + this.immediateGroups.size()
-                    + " first=(" + String.format(java.util.Locale.ROOT, "%.4f,%.4f,%.4f",
-                            Float.valueOf(firstMv[12]), Float.valueOf(firstMv[13]), Float.valueOf(firstMv[14])) + ")");
-            System.out.println("[Celtium] CELTIUM_WINDOW_IDENTITY_MV identityViews=" + identityModelViews
-                    + " groups=" + this.immediateGroups.size());
-            System.out.println("[Celtium] CELTIUM_WINDOW_MODELVIEWS distinct=" + modelViewCounts.size()
-                    + " groups=" + this.immediateGroups.size()
-                    + " largest=" + (sizes.isEmpty() ? 0 : sizes.get(0).intValue())
-                    + " second=" + (sizes.size() < 2 ? 0 : sizes.get(1).intValue())
-                    + " third=" + (sizes.size() < 3 ? 0 : sizes.get(2).intValue())
-                    + " first=" + projectionSummary(this.immediateGroups.get(0).modelView));
-            System.out.println("[Celtium] CELTIUM_WINDOW_ROUTE identity=0x" + Long.toHexString(target)
-                    + " isMain=" + isMainTarget + " route="
-                    + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
-                    + " groups=" + this.immediateGroups.size() + " textures=[" + textures + "]"
-                    + " projection=" + projectionSummary(this.immediateGroups.get(0).projection)
-                    + " frame=" + this.frameId);
+            System.out.println("[Celtium] CELTIUM_MODELVIEW_EXACT distinct=" + exactDistinct
+                    + " groups=" + this.immediateGroups.size() + " identity=" + identityMatrices
+                    + " placements=" + byPlacement.size() + " perTileRotations=[" + perTile + "]"
+                    + " textures=[" + textureList + "]"
+                    + " route=" + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
+                    + " projection=" + projectionSummary(this.immediateGroups.get(0).projection));
         }
         if (this.drawRecords == null) {
             ImmediateDrawRecords records = new ImmediateDrawRecords(this.context);
