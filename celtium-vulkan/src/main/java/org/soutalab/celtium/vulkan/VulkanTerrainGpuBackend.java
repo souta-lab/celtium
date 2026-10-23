@@ -8477,7 +8477,12 @@ this.frameBufferOpen = false;
     private void flushPendingBeforeGlDraw() {
         this.flushBeforeGlDrawCalls++;
         if (this.immediateWindowBusy) return;
-        closeCurrentImmediateGroup();
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("flushCloseGroup");
+        try {
+            closeCurrentImmediateGroup();
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("flushCloseGroup");
+        }
         if (this.immediateGroups.isEmpty()) return;
         this.flushBeforeGlDrawWithGroups++;
         if (this.targetRegistry.replacementInProgress()) {
