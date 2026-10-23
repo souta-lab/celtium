@@ -1167,6 +1167,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int cameraSetupSeeds;
     private int framesSeen;
     private long currentViewportKey = -1L;
+    /** The last viewport's extent, for the diagnostic lines that ask where a window drew. */
+    private int liveViewportWidth = -1;
+    private int liveViewportHeight = -1;
     private long currentGroupTarget = Long.MIN_VALUE;
     private long currentGroupViewport = Long.MIN_VALUE;
     private int passSplits;
@@ -6004,6 +6007,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // bridge round trip per viewport change - four full-screen blits plus two depth conversions - for nothing.
         // Packed so the comparison in the group key is one test rather than four.
         this.currentViewportKey = ((long) x << 42) ^ ((long) y << 21) ^ ((long) width << 10) ^ (long) height;
+        this.liveViewportWidth = width;
+        this.liveViewportHeight = height;
     }
 
     public void beginWorldPass() {
@@ -18368,6 +18373,7 @@ this.frameBufferOpen = false;
                     + " groups=" + this.immediateGroups.size() + " textures=" + censusTextures
                     + " projection=" + projectionSummary(this.immediateGroups.isEmpty() ? null
                             : this.immediateGroups.get(0).projection)
+                    + " viewport=" + this.liveViewportWidth + "x" + this.liveViewportHeight
                     + " frame=" + this.frameId);
         }
         if (this.immediateGroups.size() >= 100) {

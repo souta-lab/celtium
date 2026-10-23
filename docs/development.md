@@ -2748,3 +2748,22 @@ x' = sx*x + tx    y' = sy*y + ty    z' = sz*z + tz
 
 **次の一手**: パノラマ384グループの**ビューポート**を記録（256x256 か 1280x720 か）し、
 コピー元 (0,0,256,256) と整合しているかを確認。食い違えばビューポート適用（またはコピー元座標）が原因。
+
+**パノラマ①: ビューポートは正しく256x256だった（2026-10-24 実測）**
+
+センサスに viewport を追加:
+```
+groups=384 textures=[34..39] projection=[0.577,0.577,-1,-0.05] viewport=256x256   ← パノラマ本体
+groups=1   textures=[23]     projection=[0.005,-0.008,0,-0.5]  viewport=256x256 ×8 ← ぼかし合成
+groups=40  textures=[23,...]                                   viewport=1280x720   ← 画面への最終合成
+```
+⇒ **バニラの構造どおり**: パノラマは256x256に描かれ、256x256のコピーを経て、
+最後に1280x720で全画面合成される。ビューポートの食い違い仮説は**棄却**。
+
+残るのは**座標系**: Vulkanは y-down、GLは y-up。
+- `setGroupViewport` が GL の (x,y,w,h) を Vulkan の viewport へ変換する際の y 反転
+- `glCopyTexSubImage2D` の読み出し（readImageRectangle）の y 反転
+この2つが食い違うと、**256x256のうち別の領域をコピー**して全画面に拡大 → 観測（巨大な断片）と一致。
+
+**次の一手**: `setGroupViewport` が実際に渡す Vulkan viewport の y と、
+コピー元矩形の y（readImageRectangle 内の変換）を並べてログに出す。
