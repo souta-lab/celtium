@@ -1373,3 +1373,14 @@ frame p50 6.44 → **5.90ms**
 ⇒ 通算 **8.13 → 5.90ms（−27.4%、約169fps）**。
 **Intel UHD 630 でも PASSED・problems 0**（`kpi-alignintel`、`forms[draw=1827 bind=714]` と同じ改善）。
 
+**fps300 KPI: クリア持ちグループのrun取り込みは遅くなる（2026-10-23 実測・反証）**
+
+`postClears` を持つグループを間接runに載せ、**runのflushをクリア記録の前に移す**実験:
+```
+leg kpi-clears: PASSED・problems 0（正しさは維持）
+variants[texture=2400 ...]       ← 個別ドローは減らない（同じ2400）
+indirect[runs=12422 groups=92039] ← 吸収グループはむしろ減少（111373→92039）
+frame p50 8.60 → 8.07ms          ← 直前の5.90msから **約+2.2ms 悪化**
+```
+⇒ 吸収数が増えないうえに遅くなる。**runのflush位置を変えるとrunの連続性が壊れる**ため。
+挙動は revert した（未検証の最適化を残さない）。
