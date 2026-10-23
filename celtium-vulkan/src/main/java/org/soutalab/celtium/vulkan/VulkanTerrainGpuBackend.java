@@ -2354,7 +2354,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // ones" could not be told apart from a log. These are deltas over the frames this report covers.
                 + this.celtium$terrainPerFrameSummary(this.frameIntervalCount)
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
-                        : this.preflushGroupsDrained / this.preflushFrames) + "]");
+                        : this.preflushGroupsDrained / this.preflushFrames) + "]"
+                // The frame's own serialisation: the fence wait on a slot, counted where vkWaitForFences is called. The
+                // pre-terrain flush reads 2.8 ms with zero groups, so this is the number that says whether that time is
+                // waiting for the GPU rather than working.
+                + " frameFenceWait[count=" + this.submissionStatistics.frameFenceWaitCount()
+                + " totalMs=" + this.submissionStatistics.frameFenceWaitMillis()
+                + " worstMs=" + this.submissionStatistics.frameFenceWaitWorstMillis() + "]");
         this.debugFrameReports++;
         this.frameIntervalCount = 0;
     }
