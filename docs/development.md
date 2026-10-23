@@ -1329,3 +1329,18 @@ indirect[runs=11903 groups=102457]  frame p50 6.80 → 6.20ms
 ⇒ ガード後も性能は同等（6.20ms）。**残る個別ドロー**は texture 約28/フレーム、generic 約20/フレーム。
 generic は `VulkanImmediatePipeline`（`immediate_color.vert` の色family）で、records変種は
 **色family用のシェーダ**が必要（前ラウンドで作った position 系シェーダとは別）。
+
+**fps300 KPI: 色family（generic）も間接runに吸収（2026-10-23 実測・受入）**
+
+`immediate_color_records.vert`（色familyのrecords変種。samples しないので **set=0 に records**）を追加し、
+`VulkanImmediatePipeline` に recordsモード＋`drawIndirectRange` を実装。backendで色familyを対象化。
+
+```
+leg kpi-colour: PASSED・problems 0（画像gate一致）
+variants[texture=3298 item=0 particle=113 generic=0]  ← **generic 個別ドロー 0**
+indirect[runs=11669 groups=111373]  frame p50 7.76 → 6.09ms
+```
+⇒ 個別描画は **texture 約27/フレーム・particle 約1/フレーム**まで減少。frame は 6.09ms（前段6.20ms）。
+
+残る texture 個別は「postClears を持つ（クリアを先に記録する必要がある）」か「bindForm（スロットオフセットを
+コマンドで表現できない）」で、いまの間接機構では吸収できない種類。

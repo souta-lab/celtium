@@ -2256,6 +2256,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int INDIRECT_COMMAND_BYTES = 20;
     private final java.util.Map<Object, VulkanImmediateTexturePipeline> recordsPipelines = new java.util.IdentityHashMap<>();
     private final java.util.Map<Object, VulkanImmediateItemPipeline> recordsItemPipelines = new java.util.IdentityHashMap<>();
+    private final java.util.Map<Object, VulkanImmediatePipeline> recordsColourPipelines = new java.util.IdentityHashMap<>();
     private Object indirectRunPipelineObject;
     private VulkanHostBuffer indirectCommands;
     private int indirectCommandCount;
@@ -2311,7 +2312,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // bulk at about 124 draws. They are separate classes, so each has its own record-reading twin.
         boolean texturedFamily = prepared.pipeline instanceof VulkanImmediateTexturePipeline;
         boolean itemFamily = prepared.pipeline instanceof VulkanImmediateItemPipeline item && item.lit();
-        if (!texturedFamily && !itemFamily) {
+        boolean colourFamily = prepared.pipeline instanceof VulkanImmediatePipeline;
+        if (!texturedFamily && !itemFamily && !colourFamily) {
             celtium$flushIndirectRun();
             return false;
         }
@@ -2320,6 +2322,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (texturedFamily && (celtium$recordsPipeline((VulkanImmediateTexturePipeline) prepared.pipeline) == null)) {
             celtium$flushIndirectRun();
             return false;
+        }
+        if (colourFamily) {
+            VulkanImmediatePipeline colourState = (VulkanImmediatePipeline) prepared.pipeline;
+            if (!this.recordsColourPipelines.containsKey(colourState)) {
+                this.recordsColourPipelines.put(colourState, VulkanImmediatePipeline.createRecords(this.context,
+                        colourState.celtium$renderPass(), colourState.celtium$colorBlend(),
+                        colourState.celtium$depthTests(), colourState.celtium$depthWrites(),
+                        colourState.celtium$culls(), colourState.celtium$depthCompareOp(),
+                        this.drawRecords.descriptorSetLayout()));
+            }
         }
         // Blended groups are eligible as well: the opaque ordering only moves the opaque ones, so a blended group keeps its
         // arrival position, and the commands of a run are issued in the order they were recorded. A run therefore never
@@ -2363,6 +2375,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (prepared.pipeline instanceof VulkanImmediateTexturePipeline texture) {
                 this.indirectRunPipeline = celtium$recordsPipeline(texture);
                 this.indirectRunPipelineObject = this.indirectRunPipeline;
+            } else if (prepared.pipeline instanceof VulkanImmediatePipeline colourState) {
+                this.indirectRunPipeline = null;
+                this.indirectRunPipelineObject = this.recordsColourPipelines.get(colourState);
             } else {
                 VulkanImmediateItemPipeline itemState = (VulkanImmediateItemPipeline) prepared.pipeline;
                 VulkanImmediateItemPipeline twin = this.recordsItemPipelines.get(itemState);
@@ -2417,6 +2432,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         } else if (this.indirectRunPipelineObject instanceof VulkanImmediateItemPipeline item) {
             item.drawIndirectRange(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
                     this.indirectRunTextureSet, this.drawRecords.descriptorSet(), this.immediateBindCache,
+                    this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
+                    this.indirectRunCommands);
+        } else if (this.indirectRunPipelineObject instanceof VulkanImmediatePipeline colour) {
+            colour.drawIndirectRange(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
+                    this.drawRecords.descriptorSet(), this.immediateBindCache,
                     this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
                     this.indirectRunCommands);
         }
@@ -11930,6 +11950,10 @@ this.frameBufferOpen = false;
             records.delete();
         }
         this.recordsItemPipelines.clear();
+        for (VulkanImmediatePipeline records : this.recordsColourPipelines.values()) {
+            records.delete();
+        }
+        this.recordsColourPipelines.clear();
         if (this.indirectCommands != null) {
             this.indirectCommands.delete();
             this.indirectCommands = null;

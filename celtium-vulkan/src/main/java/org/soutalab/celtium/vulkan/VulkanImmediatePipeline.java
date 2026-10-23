@@ -80,6 +80,10 @@ public final class VulkanImmediatePipeline {
         return this.colorBlend != null && this.colorBlend.celtium$blends();
     }
     private final boolean cull;
+    /** Whether this instance is the record-reading variant: its vertex block comes from the draw records. */
+    private boolean records;
+    /** The records set layout, owned by {@link ImmediateDrawRecords}; this pipeline only references it. */
+    private long recordsLayout = VK_NULL_HANDLE;
     /** Draw line lists instead of triangles: the selection outline and other line batches. */
     private final boolean lines;
     /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
@@ -222,15 +226,96 @@ public final class VulkanImmediatePipeline {
         }
     }
 
+    /**
+     * Creates the record-reading twin of a colour-family state: the block comes from the draw records at set 0, so the
+     * layout declares that set and nothing else, and no push block is read by the vertex stage.
+     */
+    public static VulkanImmediatePipeline createRecords(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp,
+            long recordsSetLayout) {
+        VulkanImmediatePipeline result = new VulkanImmediatePipeline(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, false, depthCompareOp);
+        result.records = true;
+        result.recordsLayout = recordsSetLayout;
+        try {
+            result.createPipelineLayout();
+            result.createPipeline();
+        } catch (RuntimeException | LinkageError error) {
+            VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.incrementAndGet();
+            result.delete();
+            throw error;
+        }
+        return result;
+    }
+
+    /** {@return the render pass this pipeline was built for}. */
+    public long celtium$renderPass() {
+        return this.renderPass;
+    }
+
+    /** {@return the blend state this pipeline was built with}. */
+    public VulkanColorBlendState celtium$colorBlend() {
+        return this.colorBlend;
+    }
+
+    /** {@return whether face culling is on}. */
+    public boolean celtium$culls() {
+        return this.cull;
+    }
+
+    /** {@return the depth compare op this pipeline was built with}. */
+    public int celtium$depthCompareOp() {
+        return this.depthCompareOp;
+    }
+
+    /**
+     * Binds this record-reading pipeline for a run and issues one {@code vkCmdDrawIndexedIndirect}.
+     * <p>
+     * The colour family samples nothing, so the only set is the records one; the fragment stage still takes its block
+     * from the push range the layout declares for it.
+     */
+    public void drawIndirectRange(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
+                                  long recordsSet, long[] bindCache, long indirectBuffer, long indirectOffset,
+                                  int drawCount) {
+        if (this.pipeline == VK_NULL_HANDLE || mesh == null || drawCount <= 0) {
+            return;
+        }
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
+        if (pushConstants != null) {
+            ByteBuffer clamped = this.clampedView.view(pushConstants, PUSH_CONSTANT_BYTES);
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
+        }
+        if (recordsSet != 0L) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    org.lwjgl.system.MemoryStack.stackGet().longs(recordsSet), null);
+        }
+        mesh.bindAtZero(commandBuffer, bindCache);
+        org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, drawCount,
+                org.lwjgl.vulkan.VkDrawIndexedIndirectCommand.SIZEOF);
+    }
+
     private void createPipelineLayout() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default();
+            if (this.records) {
+                VkPushConstantRange.Buffer fragmentRange = VkPushConstantRange.calloc(1, stack);
+                fragmentRange.get(0).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT).offset(0).size(PUSH_CONSTANT_BYTES);
+                if (this.recordsLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the records pipeline needs the records set layout");
+                }
+                create.pSetLayouts(stack.longs(this.recordsLayout)).pPushConstantRanges(fragmentRange);
+            } else {
             VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
             // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
             // stages: declaring it for the vertex stage alone is a shader-interface mismatch.
             range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                     .offset(0).size(PUSH_CONSTANT_BYTES);
-            VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
-                    .pPushConstantRanges(range);
+            create.pPushConstantRanges(range);
+            }
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreatePipelineLayout(this.context.device(), create, null, handle),
                     "vkCreatePipelineLayout(immediate)");
@@ -240,7 +325,9 @@ public final class VulkanImmediatePipeline {
 
     private void createPipeline() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer vertexCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_COLOR_VERTEX);
+            ByteBuffer vertexCode = SpirvShaders.load(this.records
+                    ? SpirvShaders.IMMEDIATE_COLOR_RECORDS_VERTEX
+                    : SpirvShaders.IMMEDIATE_COLOR_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_COLOR_FRAGMENT);
             long vertexModule = VK_NULL_HANDLE;
             long fragmentModule = VK_NULL_HANDLE;

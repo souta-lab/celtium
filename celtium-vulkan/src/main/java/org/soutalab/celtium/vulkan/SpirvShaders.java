@@ -54,6 +54,8 @@ public final class SpirvShaders {
 
     /** Vertex module for untextured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_COLOR}). */
     public static final String IMMEDIATE_COLOR_VERTEX = "immediate_color.vert";
+    /** The record-reading form of {@link #IMMEDIATE_COLOR_VERTEX}: the colour family, from the record buffer. */
+    public static final String IMMEDIATE_COLOR_RECORDS_VERTEX = "immediate_color_records.vert";
 
     /**
      * The record-reading form of {@link #IMMEDIATE_TEX_COLOR_VERTEX}: the same push block, taken from a storage buffer
