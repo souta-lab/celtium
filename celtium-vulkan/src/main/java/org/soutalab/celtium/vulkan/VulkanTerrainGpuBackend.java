@@ -18491,7 +18491,22 @@ this.frameBufferOpen = false;
                             Integer.valueOf(org.lwjgl.system.MemoryUtil.memGetByte(at + 22L) & 0xFF),
                             Integer.valueOf(org.lwjgl.system.MemoryUtil.memGetByte(at + 23L) & 0xFF)));
                 }
-                System.out.println("[Celtium] CELTIUM_WINDOW_VERTICES count=" + group.mesh.vertexCount()
+                // The tile offsets, which are what makes 384 stacked quads a blur rather than one picture: vanilla moves each
+            // by a fraction of a block (about 0.05 in the unit-square model space), so their magnitudes matter.
+            StringBuilder offsets = new StringBuilder();
+            for (int gi = 0; gi < this.immediateGroups.size() && gi < 8; gi++) {
+                float[] offsetMv = this.immediateGroups.get(gi).modelView;
+                if (offsetMv == null || offsetMv.length < 16) {
+                    continue;
+                }
+                if (offsets.length() > 0) {
+                    offsets.append(' ');
+                }
+                offsets.append(String.format(java.util.Locale.ROOT, "(%.4f,%.4f)", Float.valueOf(offsetMv[12]),
+                        Float.valueOf(offsetMv[13])));
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_TILE_OFFSETS first=[" + offsets + "]");
+            System.out.println("[Celtium] CELTIUM_WINDOW_VERTICES count=" + group.mesh.vertexCount()
                         + vertices);
                 break;
             }
