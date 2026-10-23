@@ -1354,3 +1354,20 @@ variants[texture=3339 item=0 particle=116 generic=0]   ← generic個別ドロ�
 frame p50 13.96 → 11.00ms（Intelは元々遅く、AMDの6.09msとは別GPU）
 ```
 ⇒ 色familyのrecords化は**両GPUで正しい**。
+
+**fps300 KPI: frame arenaのスライスをstride整列にして bindForm を削減（2026-10-23 実測・受入）**
+
+frame arena の頂点スライス開始は16バイト整列だけだったため、stride 20/24/28 のレイアウトでは
+`vbo % stride != 0` になり、**安い drawForm が使えず毎回バッファを再束縛**していた（bindForm）。
+
+- `Region.vertexAddressAt(byteOffset, length, alignment)` を追加（任意の正の整列）
+- `VulkanDynamicMesh` が自分の layout の stride から **lcm(16, stride)** を計算して要求
+- これで arena 由来のメッシュは常に「頂点の整数倍」から始まる
+
+```
+leg kpi-alignstride: PASSED・problems 0（画像gate一致）
+forms[draw=1823 bind=697]      ← bindForm 2671 → 697（−74%）
+variants[texture=2400 ...]     ← texture個別ドロー 27 → 20/フレーム
+frame p50 6.44 → **5.90ms**
+```
+⇒ 通算 **8.13 → 5.90ms（−27.4%、約169fps）**。

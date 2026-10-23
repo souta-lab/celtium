@@ -276,7 +276,19 @@ public final class VulkanFrameArena {
          * @return the mapped address to write at, or 0 when the slot cannot hold it even at its cap
          */
         public long vertexAddressAt(long byteOffset, long length) {
-            long start = this.vertexStart < 0L ? align(this.slot.vertexCursor) : this.vertexStart;
+            return vertexAddressAt(byteOffset, length, SLICE_ALIGNMENT);
+        }
+
+        /**
+         * The same reservation with the slice start aligned to {@code alignment}.
+         * <p>
+         * The vertex start is what the draw path binds at, and the cheap draw form needs it to be a whole number of
+         * vertices: a slice that starts at a 16-byte boundary and steps a 20- or 24-byte vertex cannot put its offset in
+         * the draw call and has to re-bind instead. The mesh knows its stride, so it asks for a start that satisfies both
+         * the 4-byte attribute rule and its own stride.
+         */
+        public long vertexAddressAt(long byteOffset, long length, long alignment) {
+            long start = this.vertexStart < 0L ? alignTo(this.slot.vertexCursor, alignment) : this.vertexStart;
             if (!this.slot.ensureVertices(start + byteOffset + length)) {
                 return 0L;
             }
@@ -383,6 +395,11 @@ public final class VulkanFrameArena {
 
     private static long align(long value) {
         return (value + SLICE_ALIGNMENT - 1L) & ~(SLICE_ALIGNMENT - 1L);
+    }
+
+    /** Rounds {@code value} up to a multiple of {@code alignment}; any positive alignment, not only a power of two. */
+    private static long alignTo(long value, long alignment) {
+        return ((value + alignment - 1L) / alignment) * alignment;
     }
 
     private static final class Slot {

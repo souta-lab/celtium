@@ -657,7 +657,22 @@ public final class VulkanDynamicMesh {
      */
     private long vertexWriteAddress(long byteOffset, long length) {
         if (this.frameRegion != null) {
-            long address = this.frameRegion.vertexAddressAt(byteOffset, length);
+            // The slice start is what the draw call binds at, so it is aligned to the layout's own stride as well as to
+            // the 4-byte attribute rule: a start that is a whole number of vertices lets the cheap draw form carry the
+            // offset in the command instead of re-binding the buffer per group.
+            long alignment = 16L;
+            if (this.layout != null && this.layout.stride > 0) {
+                long stride = this.layout.stride;
+                long g = alignment;
+                long b = stride;
+                while (b != 0L) {
+                    long r = g % b;
+                    g = b;
+                    b = r;
+                }
+                alignment = alignment / g * stride;
+            }
+            long address = this.frameRegion.vertexAddressAt(byteOffset, length, alignment);
             if (address != 0L) {
                 return address;
             }
