@@ -281,7 +281,10 @@ public final class FramePassTimings {
         for (int i = 0; i < INSIDE.length; i++) {
             index.put(INSIDE[i], Integer.valueOf(TOP_LEVEL.length + i));
         }
-        return java.util.Collections.unmodifiableMap(index);
+        // A plain map: the wrapper added a call per lookup and the table is private and never mutated after this, while
+        // the JFR showed Collections$UnmodifiableMap.get inside the hottest bracket path (validation runs keep the
+        // brackets enabled, because diagnostics turns them on).
+        return index;
     }
 
     /** The index of {@code gui} in the pass tables, so the flag is set by name rather than by a literal. */
@@ -293,8 +296,8 @@ public final class FramePassTimings {
      * disabled - the shipping configuration - {@code FramePassTimings.indexOf} was still 1.4% of the client thread's JFR
      * samples, because both begin and end resolve the name even when nothing is being timed.
      */
-    private static final String[] INDEX_CACHE_NAME = new String[32];
-    private static final int[] INDEX_CACHE_VALUE = new int[32];
+    private static final String[] INDEX_CACHE_NAME = new String[256];
+    private static final int[] INDEX_CACHE_VALUE = new int[256];
 
     /** The GUI bracket's name: {@link #end} compares it directly so the disabled path pays no map lookup. */
     private static final String GUI_PASS = "gui";
@@ -315,7 +318,9 @@ public final class FramePassTimings {
     }
 
     private static int indexOf(String pass) {
-        int slot = System.identityHashCode(pass) & 31;
+        // 256 slots, not 32: the brackets number thirty-odd names and are entered in a repeating order, so a 32-slot
+        // direct-mapped table collides and falls back to the map on the very path the cache exists for.
+        int slot = System.identityHashCode(pass) & 255;
         if (INDEX_CACHE_NAME[slot] == pass) {
             return INDEX_CACHE_VALUE[slot];
         }

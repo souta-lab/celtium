@@ -820,3 +820,14 @@ HashMap の呼び出し元の内訳:
 **300fps（3.3ms）はレンダラ所有分だけでは届かず、vanilla側の描画コストも削らないと達成できない**。
 次の削減対象は (a) GLスタブ経路の per-call コスト（`countCallList`・`CeltiumModelBatchGroups.note` 等）、
 (b) エンティティ描画の data parameter 参照（HashMap 16サンプル）。
+
+**計器コストの削減（2026-10-23）**
+
+`FramePassTimings.indexOf` は JFR で `Collections$UnmodifiableMap.get` として現れていた（validation中は
+diagnostics が理由で bracket が有効になるため、受入legでも毎グループ8回呼ばれる）。2点変更:
+1. 索引を `Collections.unmodifiableMap` から素の `HashMap` に（読み取り専用はprivateで保証）
+2. 直接マップキャッシュを 32→256 スロット（bracket名は30数個を巡回するので32では衝突していた）
+
+実測: leg `kpi-acc3` は **PASSED・problems 0**、frame p50 7.1ms / world 6.6ms。
+**p50では差が検出できない**（期待効果 < 0.1ms）。ただし受入legのように diagnostics が常時オンの条件では
+無駄な map 参照が確実に減るため、残す。断定はしない。
