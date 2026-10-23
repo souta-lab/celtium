@@ -93,3 +93,5 @@ scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
 - ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
 
 最新リリース: **v0.0.13-alpha**（性能: リフレッシュ基準のフレーム上限（MAILBOX時のみ・スワップ後スリープ）、テレインアリーナ事前拡大、受理経路のボックス化除去。asset sha256 `80e3d8b3f8c85eed…`、AMD/Intel とも PASSED・gate PASSED・0違反。実測: 実ワールド1080pで p50 57–61fps（上限60で安定）） / 前版 v0.0.12-alpha（スプラッシュのローディングバー）
+
+| **配布** | **v0.0.14-alpha 公開済み**（2026-10-23）。forge jar sha256 `90a7c505…`、AMD/Intel 両GPUで PASSED。 |

@@ -1431,3 +1431,22 @@ offCapture 0.0 / offPrepare 0.1 / offMerge 0.5 / offAppend 0.1 / flushCloseGroup
 
 受理経路の残り（submitImmediateBatchBody全体 0.6〜0.9ms のうち、上記の合計約0.8msでほぼ説明できる）。
 つまり受理側も**局所最適化の余地は小さい**。
+
+**リリース v0.0.14-alpha（2026-10-23）**
+
+間接描画の成果を配布物として公開した。
+
+- tag: `v0.0.14-alpha`（commit `37d05bc0a`）
+- URL: https://github.com/souta-lab/celtium/releases/tag/v0.0.14-alpha
+- forge jar sha256: `90a7c505d8820b1a5bb5c7c1c15bf7ae71214b54092e4c1da9c76e428dc31dd4`（3215224 bytes）
+  - 公開後に **ダウンロードして再計算し、テストしたjarと一致**することを確認済み
+- validation-client jar sha256: `3864d3b7a69622665e1c5cf6f92ef5381301613e9775dd32b35e496ea99eb282`
+
+**受入（このjarそのもの）**
+| leg | GPU | 結果 |
+|---|---|---|
+| `rel014-amd` | AMD RX 6400 | **PASSED・problems 0**（定常 p50 6.24ms の窓まで確認） |
+| `rel014-intel` | Intel UHD Graphics 630 | **PASSED・problems 0** |
+
+ビルドは `-Pceltium_release_version=0.0.14-alpha`。版を上げたのでjarハッシュは0.0.13系と別物であり、
+**この受入は v0.0.14-alpha のjarに対する証拠**（0.0.13の証拠とは流用しない）。
