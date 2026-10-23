@@ -1111,3 +1111,18 @@ owning でも種類は増えない）。つまり **indirect multi-drawの障害
 理由: set 0 は即時描画がテクスチャ毎に作る (texture, lightmap) のペアで、そこへ binding 2 を足すと
 **全テクスチャセットのレイアウトを変える**ことになる。set 1 に置けば「1ウィンドウに1回束縛」で済み、
 既存のテクスチャセットは無変更。シェーダは 35本すべて再コンパイル成功。
+
+**fps300 KPI: レコードバッファを実装・受入（2026-10-23・§11.13のステップ1）**
+
+`ImmediateDrawRecords`（新規）: 208バイト/レコードの host-visible SSBO、**set=1 binding=0** の
+descriptor set を1つ所有、窓ごとに `reset()`、容量不足時は `ensureCapacity`＋descriptor再書き込み。
+`ImmediateDrawRecords.RECORD_BYTES=208` は push block と同一レイアウト（行列0 / テクスチャaffine64 /
+alpha+色112 / fog 128〜207）。
+
+ライフサイクル: 窓開始時に遅延生成（失敗時は破棄して従来経路）、`delete()` で解放。
+```
+leg kpi-records: PASSED・problems 0
+hostBuffersCreated=123 / hostBuffersLive=121（レポート間で増加なし＝リーク無し）
+```
+⇒ この端末で storage buffer の set が作れること、窓ごとの生成・解放が健全であることを確認。
+**まだ描画には使っていない**（次段: パイプライン変種＋indirect記録）。

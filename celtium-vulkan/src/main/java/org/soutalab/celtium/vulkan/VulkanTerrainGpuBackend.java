@@ -2237,6 +2237,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * per-group sets and is reported as {@code textureArray=false}.
      */
     private VulkanTextureArray textureArray;
+
+    /**
+     * The draw records an indirect immediate run will read (architecture 11.13). Created with the texture array and reset
+     * per window; nothing draws from it yet, and the acceptance legs are what prove its buffer, set layout and descriptor
+     * set are created and released cleanly on this device.
+     */
+    private ImmediateDrawRecords drawRecords;
     private int textureArrayLogs;
     /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
@@ -11734,6 +11741,10 @@ this.frameBufferOpen = false;
     }
 
     public void delete() {
+        if (this.drawRecords != null) {
+            this.drawRecords.delete();
+            this.drawRecords = null;
+        }
         if (this.textureArray != null) {
             this.textureArray.destroy();
             this.textureArray = null;
@@ -17966,6 +17977,21 @@ this.frameBufferOpen = false;
      */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+        if (this.drawRecords == null) {
+            ImmediateDrawRecords records = new ImmediateDrawRecords(this.context);
+            if (records.create()) {
+                this.drawRecords = records;
+            } else {
+                // A device that cannot give a storage-buffer set keeps the per-group path; the refusal is named rather
+                // than silently drawn through.
+                records.delete();
+            }
+        }
+        if (this.drawRecords != null) {
+            // A window starts a fresh record array; the indirect run of architecture 11.13 will write into it from the
+            // group loop. Reset here so the array's lifetime is the window's, like the group list it parallels.
+            this.drawRecords.reset();
+        }
         try { this.commandState.requireDraw(target); }
         catch (IllegalStateException error) { this.immediateStatistics.noteInvalidImmediateRecords(); throw error; }
         // The depth-bias dedup tracks command state that a pipeline bind can invalidate: binding a pipeline without
