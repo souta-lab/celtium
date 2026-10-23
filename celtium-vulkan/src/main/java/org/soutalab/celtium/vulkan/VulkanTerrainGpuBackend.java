@@ -18389,7 +18389,7 @@ this.frameBufferOpen = false;
      */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
-        if (DUMP_TEXTURE_IDS != null && this.dumpedTextureImages < 4) {
+        if (DUMP_TEXTURE_IDS != null && this.dumpedTextureImages < 8) {
             for (int di = 0; di < this.immediateGroups.size(); di++) {
                 ImmediateGroup dumpGroup = this.immediateGroups.get(di);
                 if (!DUMP_TEXTURE_IDS.contains(Integer.valueOf(dumpGroup.texture))) {
@@ -18402,7 +18402,7 @@ this.frameBufferOpen = false;
                 this.dumpedTextureImages++;
                 java.nio.file.Path path = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
                         "celtium-tex-" + dumpGroup.texture + "-" + dumpImage.width() + "x" + dumpImage.height()
-                                + ".png");
+                                + "-n" + this.dumpedTextureImages + ".png");
                 boolean wrote = this.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
                         dumpImage.height(), path);
                 System.out.println("[Celtium] CELTIUM_TEXTURE_IMAGE id=" + dumpGroup.texture + " path=" + path
@@ -18439,6 +18439,8 @@ this.frameBufferOpen = false;
                         + " image=0x" + Long.toHexString(probeImage)
                         + " frameImage=0x" + Long.toHexString(frameImage)
                         + " selfSampling=" + (probeImage != 0L && probeImage == frameImage)
+                        + " attached=0x" + Long.toHexString(this.passAttachedColorImage)
+                        + " feedback=" + (probeImage != 0L && probeImage == this.passAttachedColorImage)
                         + probeVertices);
             }
         }
