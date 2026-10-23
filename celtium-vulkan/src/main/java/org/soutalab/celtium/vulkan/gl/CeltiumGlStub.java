@@ -555,6 +555,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      * E2E pack was bound and never uploaded, and without this there was nothing to name the caller.
      */
     private final java.util.Map<Integer, String> firstBindSites = new java.util.HashMap<Integer, String>();
+    /**
+     * {@code -Dceltium.debug.bindSites=true}: remember who first bound each texture name.
+     * <p>
+     * Only the "no mirror" refusal's message reads it, but it used to run on every texture bind. A bound-texture cache
+     * already answers the question the renderer needs, and the diagnostic's map is one of the colliding-bin lookups that
+     * a no-validation profile put at three percent of the client thread, so it is off unless asked for.
+     */
+    private static final boolean BIND_SITE_DIAGNOSTICS = Boolean.getBoolean("celtium.debug.bindSites");
     private static final int MAX_BIND_SITES = 4096;
     /**
      * A shared ordinal every bind takes, whichever route carried it. The direct-route bind ({@code glBindTexture}
@@ -1377,7 +1385,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // only ever answer "already full", so the map probe must not be paid for. The order is also what keeps the
         // cost bounded - a bind is one of the most frequent GL calls in the frame, and this is a diagnostic, not
         // state the draw reads.
-        if (texture == 0 || this.firstBindSites.size() >= MAX_BIND_SITES
+        if (!BIND_SITE_DIAGNOSTICS || texture == 0 || this.firstBindSites.size() >= MAX_BIND_SITES
                 || this.firstBindSites.containsKey(Integer.valueOf(texture))) {
             return;
         }

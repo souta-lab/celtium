@@ -9704,7 +9704,59 @@ this.frameBufferOpen = false;
         return true;
     }
 
+    /**
+     * A prepared material, memoised by the three things that decide it.
+     * <p>
+     * The accept path resolves a material for every batch - about 1150 of them a frame against roughly 194 distinct
+     * materials - and the resolution reaches the pipeline table, the texture registry and the pass layout. A batch's
+     * material is a pure function of the vertex format, the bound texture name and the state key, so a direct-mapped
+     * table of the last resolution of each triple answers most asks without repeating that walk. The table is emptied
+     * when the pass changes, because the pipeline is chosen for the pass.
+     * <p>
+     * {@link PreparedImmediate} is final-fielded, so sharing one instance between two groups changes nothing a draw
+     * reads.
+     */
     private PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
+        Object pass = this.lastUiPass;
+        if (pass != this.prepareCachePass) {
+            java.util.Arrays.fill(this.prepareCacheValue, null);
+            this.prepareCachePass = pass;
+        }
+        // The texture's write serial is part of the identity: the resolution below also supplies a texture whose
+        // content arrived after the first ask, so a cached answer must not outlive a new upload of the same name.
+        long writeSerial = textureId >= 0 ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .textureUploadSerial(textureId, 0) : 0L;
+        long mix = (((long) format) * 0x9E3779B97F4A7C15L)
+                ^ (((long) textureId) * 0xC2B2AE3D27D4EB4FL)
+                ^ (key * 0x165667B19E3779F9L)
+                ^ (writeSerial * 0x27D4EB2F165667C5L);
+        int slot = (int) (mix >>> 56) & (PREPARE_CACHE_SIZE - 1);
+        PreparedImmediate cached = this.prepareCacheValue[slot];
+        if (cached != null && this.prepareCacheFormat[slot] == format
+                && this.prepareCacheTexture[slot] == textureId && this.prepareCacheKey[slot] == key) {
+            this.prepareCacheHits++;
+            return cached;
+        }
+        PreparedImmediate prepared = prepareImmediateUncached(format, textureId, key, state);
+        if (prepared != null) {
+            this.prepareCacheFormat[slot] = format;
+            this.prepareCacheTexture[slot] = textureId;
+            this.prepareCacheKey[slot] = key;
+            this.prepareCacheValue[slot] = prepared;
+        }
+        return prepared;
+    }
+
+    /** 256 entries: a world frame asks for about 194 distinct materials, so it holds a frame's worth. */
+    private static final int PREPARE_CACHE_SIZE = 256;
+    private final int[] prepareCacheFormat = new int[PREPARE_CACHE_SIZE];
+    private final int[] prepareCacheTexture = new int[PREPARE_CACHE_SIZE];
+    private final long[] prepareCacheKey = new long[PREPARE_CACHE_SIZE];
+    private final PreparedImmediate[] prepareCacheValue = new PreparedImmediate[PREPARE_CACHE_SIZE];
+    private Object prepareCachePass;
+    private long prepareCacheHits;
+
+    private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
         long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;

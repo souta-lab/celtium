@@ -1819,3 +1819,19 @@ presentの段別で `capsMs`（vkGetPhysicalDeviceSurfaceCapabilitiesKHR）が�
 ⇒ 数字上は候補が速いが、**対照legのsamplesが半分以下で負荷に叩かれている**ため交絡。
 このA/Bを根拠に「26%改善」とは言わない。**機構としては0.1ms程度の削減**を狙ったもので、
 次に空いている機械で再測する。
+
+**受理経路の削減（2026-10-23）: prepare のメモ化と bind-site 診断の停止**
+
+Celeritasとの差0.44msのうち、受理経路（`submitImmediateBatchBody` が inclusive 13%・self 5%）を削る第一手:
+
+1. **`prepareImmediate` の直マップメモ化（256エントリ）**
+   素材は (format, textureId, stateKey, texture upload serial) の純関数。1フレームのofferは約1150だが
+   素材は約194種なので、同じ3つ組の再解決を省く。`PreparedImmediate` はfinalフィールドのみ＝共有可。
+   passが変わったら表を空にする（pipelineはpassに依存）。**テクスチャのwrite serialをキーに含める**ので、
+   アップロード後に古い解決を返すことはない。
+2. **`noteBindSite` を既定off（`-Dceltium.debug.bindSites=true` で有効）**
+   これは「no mirror」拒否メッセージ用の診断で、毎テクスチャbindで衝突tree binの `containsKey` を払っていた
+   （no-validationプロファイルでクライアントスレッドの約3%）。既定offにした。
+
+確認: ビルド成功・CPUテスト122件成功（failures 0）。
+A/B（`kpi-bs`: 候補 vs throttleビルド, 150s×3rep）は負荷交絡のため判定保留。
