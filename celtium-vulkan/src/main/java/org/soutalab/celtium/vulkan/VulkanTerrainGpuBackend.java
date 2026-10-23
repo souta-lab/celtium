@@ -3115,6 +3115,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** {@code -Dceltium.debug.sampleWindowImages=true}: read back the mean of each large window's textures. */
     private static final boolean SAMPLE_WINDOW_IMAGES = Boolean.getBoolean("celtium.debug.sampleWindowImages");
+    /** {@code -Dceltium.debug.windowCensus=true}: name every window a menu frame draws. */
+    private static final boolean WINDOW_CENSUS = Boolean.getBoolean("celtium.debug.windowCensus");
+    private int windowCensusLines;
+
+    /** {@code -Dceltium.debug.skipTextures=3,4}: drop the draws that sample these GL texture names, for a probe. */
+    private static final java.util.Set<Integer> SKIP_TEXTURE_IDS = skipTextureIds();
+    private long skippedTextureDraws;
+
+    private static java.util.Set<Integer> skipTextureIds() {
+        String spec = System.getProperty("celtium.debug.skipTextures");
+        if (spec == null || spec.trim().isEmpty()) {
+            return null;
+        }
+        java.util.Set<Integer> ids = new java.util.LinkedHashSet<Integer>();
+        for (String part : spec.split(",")) {
+            try {
+                ids.add(Integer.valueOf(part.trim()));
+            } catch (NumberFormatException ignored) {
+                // A malformed entry simply does not select a texture.
+            }
+        }
+        return ids.isEmpty() ? null : ids;
+    }
+
     /** Every window that carried a hundred groups or more, and the groups they carried. */
     private long largeWindows;
     private long largeWindowGroups;
@@ -18334,6 +18358,18 @@ this.frameBufferOpen = false;
      */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+        if (WINDOW_CENSUS && this.windowCensusLines < 80) {
+            this.windowCensusLines++;
+            java.util.LinkedHashSet<Integer> censusTextures = new java.util.LinkedHashSet<Integer>();
+            for (int ci = 0; ci < this.immediateGroups.size() && censusTextures.size() < 6; ci++) {
+                censusTextures.add(Integer.valueOf(this.immediateGroups.get(ci).texture));
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_CENSUS target=0x" + Long.toHexString(target)
+                    + " groups=" + this.immediateGroups.size() + " textures=" + censusTextures
+                    + " projection=" + projectionSummary(this.immediateGroups.isEmpty() ? null
+                            : this.immediateGroups.get(0).projection)
+                    + " frame=" + this.frameId);
+        }
         if (this.immediateGroups.size() >= 100) {
             // Counted every time, not only while the diagnostic line is allowed: the question this answers is how many
             // large windows a menu frame draws, and a log bounded to twelve cannot say that.
@@ -18662,6 +18698,13 @@ this.frameBufferOpen = false;
             // opaque fragments arrived in. Blended groups and anything from another target keep their arrival order.
             int[] drawOrder = SORT_OPAQUE ? celtium$buildDrawOrder(groups) : null;
             for (int orderIndex = 0; orderIndex < groups.size(); orderIndex++) {
+                if (SKIP_TEXTURE_IDS != null && SKIP_TEXTURE_IDS.contains(
+                        Integer.valueOf(groups.get(orderIndex).texture))) {
+                    // Measurement switch: drop only the draws that sample the named textures, so a picture that loses
+                    // one element names the draws that put it there. Nothing else about the batch changes.
+                    this.skippedTextureDraws++;
+                    continue;
+                }
                 int groupIndex = drawOrder == null ? orderIndex : drawOrder[orderIndex];
                 if (org.soutalab.celtium.vulkan.FramePassTimings.countsCallsEnabled()) {
                     // This counter was added for the KPI and is read from the frame report; it is not worth an atomic
