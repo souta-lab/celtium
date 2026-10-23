@@ -850,7 +850,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // over the terrain it is supposed to be hidden behind.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainPreflush");
         try {
+            // What this flush drains is the cost the bracket above measured: the sky, the void plane and the bodies are
+            // recorded before the world and go out here. Counting the groups it hands over says whether the fix is fewer
+            // groups (merge) or a different submit point (record the sky in its own pass).
+            long groupsBefore = org.soutalab.celtium.vulkan.DrawCounters.immediateGroups();
             flushPendingBeforeGlDraw();
+            this.preflushGroupsDrained +=
+                    org.soutalab.celtium.vulkan.DrawCounters.immediateGroups() - groupsBefore;
+            this.preflushFrames++;
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainPreflush");
         }
@@ -2345,7 +2352,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
                 // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
                 // ones" could not be told apart from a log. These are deltas over the frames this report covers.
-                + this.celtium$terrainPerFrameSummary(this.frameIntervalCount));
+                + this.celtium$terrainPerFrameSummary(this.frameIntervalCount)
+                + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
+                        : this.preflushGroupsDrained / this.preflushFrames) + "]");
         this.debugFrameReports++;
         this.frameIntervalCount = 0;
     }
@@ -14976,6 +14985,10 @@ this.frameBufferOpen = false;
     private static java.nio.ByteBuffer terrainCaptureVertices;
     /** Set once the probe has adopted the captured terrain geometry, so the line prints once and late. */
     private boolean packGeometryLogged;
+    /** Groups the pre-terrain flush handed over, and how many frames contributed. */
+    private long preflushGroupsDrained;
+    private long preflushFrames;
+
     private long lastTerrainIndirectCalls;
     private long lastTerrainIndirectDraws;
 
