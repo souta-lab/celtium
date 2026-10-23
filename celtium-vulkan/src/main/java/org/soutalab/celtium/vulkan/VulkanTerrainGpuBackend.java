@@ -18332,6 +18332,14 @@ this.frameBufferOpen = false;
                 }
                 textures.append(texture.intValue());
             }
+            java.util.HashSet<Integer> distinctModelViews = new java.util.HashSet<Integer>();
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                float[] modelView = this.immediateGroups.get(i).modelView;
+                distinctModelViews.add(Integer.valueOf(java.util.Arrays.hashCode(modelView)));
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_MODELVIEWS distinct=" + distinctModelViews.size()
+                    + " groups=" + this.immediateGroups.size()
+                    + " first=" + projectionSummary(this.immediateGroups.get(0).modelView));
             System.out.println("[Celtium] CELTIUM_WINDOW_ROUTE identity=0x" + Long.toHexString(target)
                     + " isMain=" + isMainTarget + " route="
                     + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
