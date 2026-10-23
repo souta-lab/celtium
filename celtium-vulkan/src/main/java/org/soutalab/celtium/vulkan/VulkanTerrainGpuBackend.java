@@ -2304,14 +2304,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$flushIndirectRun();
             return false;
         }
-        boolean opaque = texturedFamily
-                ? ((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$depthTests()
-                        && ((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$depthWrites()
-                        && !((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$blends()
-                : ((VulkanImmediateItemPipeline) prepared.pipeline).celtium$depthTests()
-                        && ((VulkanImmediateItemPipeline) prepared.pipeline).celtium$depthWrites()
-                        && !((VulkanImmediateItemPipeline) prepared.pipeline).celtium$blends();
-        if (!opaque || group.postClears != null || mesh.layout() == null) {
+        // Blended groups are eligible as well: the opaque ordering only moves the opaque ones, so a blended group keeps its
+        // arrival position, and the commands of a run are issued in the order they were recorded. A run therefore never
+        // reorders blending; it only stops at a material change, which is where the per-group path took over anyway.
+        if (group.postClears != null || mesh.layout() == null) {
             celtium$flushIndirectRun();
             return false;
         }

@@ -1262,3 +1262,16 @@ JFR（ワールド滞在中, 377サンプル, Client thread）上位:
 
 注: このrunは validation ON（diagnostics有効）なので、`bindTexture` 等のdiagnostics側の参照も含む。
 既定運用（validation OFF）ではその分は消える。
+
+**fps300 KPI: blend有りグループもrunに載せて更に短縮（2026-10-23 実測）**
+
+間接経路の対象に**blend有りグループ**も追加（不透明ソートは不透明だけを動かすので、blend有りは
+到着順のまま。run内のコマンドは記録順に発行されるためブレンド順序は変わらない）。
+
+```
+leg kpi-blend（AMD, world, validation ON, 180秒, jar kpi-58）
+受入: PASSED・problems 0（画像gate一致）
+indirect[runs=14895 groups=102743]  → run長 ≈6.9グループ、約28run/フレーム
+frame p50: 7.65 → 6.36 → **6.14ms**（定常）
+```
+⇒ 従来arm 8.13ms 比 **−24.5%（約2.0ms）**。前段（不透明のみ）の6.45msからさらに −0.31ms。
