@@ -57,6 +57,9 @@ public final class SpirvShaders {
      */
     public static final String IMMEDIATE_TEX_COLOR_RECORDS_VERTEX = "immediate_tex_color_records.vert";
 
+    /** The record-reading form of {@link #IMMEDIATE_TEX_COLOR_LIT_VERTEX}: the lit item family, from the record buffer. */
+    public static final String IMMEDIATE_TEX_COLOR_LIT_RECORDS_VERTEX = "immediate_tex_color_lit_records.vert";
+
     /** Vertex module for the BLOCK-family immediate geometry (position, colour, texture, lightmap). */
     public static final String IMMEDIATE_BLOCK_VERTEX = "immediate_block.vert";
 

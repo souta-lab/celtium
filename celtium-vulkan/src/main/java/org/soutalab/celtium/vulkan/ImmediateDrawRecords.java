@@ -17,8 +17,12 @@ import java.nio.ByteBuffer;
  */
 final class ImmediateDrawRecords {
 
-    /** Bytes per record: the push block's length for the lit and textured families. */
-    static final int RECORD_BYTES = 208;
+    /**
+     * Bytes per record. 208 is the textured family's push block and 216 the lit family's (its light coordinate sits at
+     * 208), so the stride is 224 and the unlit record declares a trailing pad: a record array has one stride, and a
+     * 208-byte struct in a 224-byte array would index the wrong bytes from the second record on.
+     */
+    static final int RECORD_BYTES = 224;
 
     private static final int INITIAL_RECORDS = 256;
 

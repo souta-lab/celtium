@@ -1183,3 +1183,15 @@ run は1グループのままで、run固定費（set束縛2つ＋208B push＋�
 
 `sortOpaque` は **targetセグメント単位**で順序を付ける実装に変えた（別targetのグループは位置を保つ）。
 `sortedOrder[segments=, ordered=]` をレポートに追加。
+
+**fps300 KPI: lit（item）系のレコード読み変種とレコード長224（2026-10-23・コンパイル／テスト検証）**
+
+- `immediate_tex_color_lit_records.vert` を追加: lit ブロック（**216バイト**: 光座標が208）を
+  `set=1 binding=0` の SSBO から `gl_InstanceIndex` で読む。
+- レコード配列は**1つのstride**なので **RECORD_BYTES を 224 に統一**し、unlit 側の構造体にも末尾padを追加。
+  208バイトの構造体を224バイト配列に入れると2件目以降でインデックスがずれるため。
+- `SpirvShaders.IMMEDIATE_TEX_COLOR_LIT_RECORDS_VERTEX` を追加。シェーダコンパイルは **36本成功**。
+- `ImmediateDrawRecordAbiTest` を拡張し、**lit 側も224バイトであること**を検査 → `tests=2 failures=0`。
+
+これで「ワールドの主役＝item 124ドロー/フレーム」を間接経路に載せる前提が揃った。
+残り: `VulkanImmediateItemPipeline` に records モードを追加し、対象familyを広げて run長を再測定。

@@ -23,7 +23,7 @@ class ImmediateDrawRecordAbiTest {
 
     @Test
     void theRecordIsThePushBlockAndTheShaderAgreesWithIt() throws IOException {
-        assertEquals(208, ImmediateDrawRecords.RECORD_BYTES,
+        assertEquals(224, ImmediateDrawRecords.RECORD_BYTES,
                 "the record is the 208-byte push block of the immediate families");
         Path shader = findShader("immediate_tex_color_records.vert");
         String source = Files.readString(shader);
@@ -46,6 +46,21 @@ class ImmediateDrawRecordAbiTest {
         int fogOffset = source.indexOf("vec4 u_FogColor;");
         assertTrue(matrixOffset > 0 && alphaOffset > matrixOffset && fogOffset > alphaOffset,
                 "the members keep the push block's order: matrix, affines, alpha/colour, fog");
+    }
+
+    @Test
+    void theLitRecordUsesTheSameStride() throws IOException {
+        String source = Files.readString(findShader("immediate_tex_color_lit_records.vert"));
+        assertTrue(source.contains("std430"), "the lit records binding is std430");
+        assertTrue(source.contains("records[gl_InstanceIndex]"), "the lit variant indexes by the instance index");
+        int structStart = source.indexOf("struct DrawRecord {");
+        assertTrue(structStart >= 0, "the lit record struct is declared");
+        int structEnd = source.indexOf("};", structStart);
+        String body = source.substring(structStart, structEnd);
+        long bytes = 64L * count(body, "mat4 ") + 16L * count(body, "vec4 ") + 16L * count(body, "vec2 ");
+        // 216 bytes of lit block plus the pad the 224-byte stride needs: the two families share one record array.
+        assertEquals(ImmediateDrawRecords.RECORD_BYTES, bytes,
+                "the lit struct must be one record long, padded to the shared stride");
     }
 
     private static int count(String haystack, String needle) {
