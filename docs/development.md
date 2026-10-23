@@ -1406,3 +1406,15 @@ python3 scripts/check_agent_docs.py → OK
 ```
 GPU受入（AMD RX 6400 / Intel UHD 630）と合わせて、現HEADは
 **CPUテスト122件・スクリプトテスト69件・文書検査・両GPU受入**がすべて通る状態。
+
+**fps300 KPI: runにviewportを足してper-run状態にすると run長が縮む（2026-10-23 実測・反証）**
+
+吸収グループの viewport/depth-bias 適用をやめ、runのflush時に1回だけ設定する実験
+（runキーに viewportHash を追加）:
+```
+leg kpi-state: PASSED・problems 0（VUIDなし）
+indirect[runs=11894 groups=92566]  ← run長 9.5 → 7.8グループに短縮（吸収数 111373→92566）
+frame p50 10.72 → 8.53 → 6.97ms    ← 直前5.90msから **約+1.1ms 悪化**
+```
+⇒ viewportをキーに含めると**runが細切れになり**、節約できる per-group の状態設定より損失が大きい。
+挙動は revert（5.90msの構成に戻した）。
