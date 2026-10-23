@@ -3048,3 +3048,22 @@ present=1で風景だったのは、待たなくても直前の描画が間に�
 
 **次の一手**: `corner=` の readback の前に `waitForIdle()` を入れて再測する。
 それで「本当に文字」か「読むのが早すぎた」かが確定する。
+
+**パノラマ①: 計器の待機漏れを修正したら、コピー元コーナーは風景だった（2026-10-24 決定的）**
+
+`corner=` の readback と `celtium$dumpImage` の前に `waitForIdle()` を入れて再測:
+```
+present=1 call=2 corner=mean=122.0 bright=0.0000
+present=2 call=1 corner=mean=120.8 bright=0.0000
+present=2 call=1 corner=mean=126.0 bright=0.0000
+present=3 call=1 corner=mean=120.8 bright=0.0000
+```
+⇒ **コピー時点のフレーム左下は正しく風景（パノラマ）**。
+前ラウンドの「present=2 は文字」は**待機漏れによる古い読み**だった。
+
+一方、`present>=120` の texture 23 のダンプは依然として文字（mean 67.8, nearWhite 0.080、
+ここもwaitを入れてある）。⇒ **1フレーム内の後半のコピー（call 2〜7）が文字を取り込んでいる**。
+
+**次の一手**: 同一present内の**全コピー呼び出し**のcornerを記録し、
+call 1 と call 5〜7 で内容が変わるかを測る。変われば
+「後半コピーの前にGUI文字がフレームへ描かれている（＝提出順序）」が原因と確定する。

@@ -480,6 +480,10 @@ public final class TextureCopyService {
                     // text means the panorama is not drawn yet at this point in the frame.
                     String corner = "unread";
                     if (this.host.frameTarget() != null && x == 0 && y == 0 && width <= 256 && height <= 256) {
+                        // Wait first: without it the read can see the image as it stood before this frame's draws were
+                        // executed, which is how "the corner holds text" was measured on schedules that had simply not
+                        // run yet.
+                        this.host.waitForIdle();
                         int[] probe = readImageRectangle(this.host.frameTarget().colorImage(), 0, 0, width, height);
                         if (probe != null && probe.length > 0) {
                             long sum = 0L;
@@ -1172,6 +1176,10 @@ public final class TextureCopyService {
      * @return whether the file was written
      */
     public boolean celtium$dumpImage(long image, int width, int height, java.nio.file.Path path) {
+        // The dump reads the image from the host, so the device has to have finished with it: without this wait the file
+        // showed whatever the previous frame left, which is how texture 23 was first reported to contain the overlay's
+        // text.
+        this.host.waitForIdle();
         if (image == 0L || width <= 0 || height <= 0 || path == null) {
             return false;
         }
