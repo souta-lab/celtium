@@ -2562,3 +2562,27 @@ CELTIUM_WINDOW_IMAGE_MEANS means=[198.3 169.2 66.6 41.6 184.4 79.3]
 **次の一手**: `descriptorSetFor(texture)` が書く `texture.view()` と、
 グループが持つ `textureImage.view()` を**照合してログ**に出す。
 一致していれば descriptor は正しく、次はサンプラ/mip。不一致ならキャッシュのキー衝突を修正。
+
+**パノラマ①: descriptor生成コードは `texture.view()` を書いている（原典確認）**
+
+`VulkanImmediateTexturePipeline.descriptorSetFor` を読む限り、
+```
+image.get(0).imageLayout(texture.samplingLayout())
+        .imageView(texture.view())
+        .sampler(texture.sampler());
+...
+this.setsByTextureView.put(texture.key(), set);
+```
+と、**テクスチャ自身の view** を書いており、キャッシュも `texture.key()` 単位。コード上の取り違えは見当たらない。
+
+一方、壊れた背景は「白くピクセル状の巨大な字形」で、
+- フォントアトラス（4096x4224）を拡大したもの、よりは
+- **`textures/gui/title/minecraft.png`（白い文字・低解像度・透明背景）**を拡大した見え方に近い。
+
+つまりパノラマのクアッドがどこかで**ロゴテクスチャ**を引いている可能性。
+次の計器候補:
+1. `descriptorSetFor` のキャッシュミス時に `key` と `view` と `texture.width x height` を境界付きで記録し、
+   パノラマ期間に生成された set が 256x256 の6枚を指しているかを確認
+2. 実際に描画で使われた descriptor を draw 時に記録（bindCache[5] の変化）
+
+（このラウンドはコード変更なし・原典確認と画像の再解釈のみ）
