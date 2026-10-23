@@ -795,3 +795,28 @@ format=4 texture=103/112 batches=6 verts=24 ×2ずつ（worldPass=false = メニ
 §11の「native側へ所有権を移す」設計そのもの。
 
 次の計測: **1フレームだけ**の全 item グループを列挙し（frame指定でダンプ）、窓ごと・テクスチャごとの内訳を出す。
+
+**fps300 KPI: 定常状態のJFR（2026-10-23・決定的な内訳）**
+
+`-XX:StartFlightRecording=delay=25s,duration=20s`（ワールド滞在中）の上位フレーム:
+```
+39 submitImmediateBatchTimed / 35 submitImmediateBatch / 35 submitGeometryBatch
+36 HashMap.get + 35 getNode + 35 TreeNode   ≒ 106サンプル（10%）
+36 EntityDataManager.func_187225_a/func_187219_c（エンティティのdata parameter参照）
+18 WorldVertexBufferUploader.offerBatch（即時受理フック）
+14 EntityRenderer skipWorldWithoutCamera
+13 World.func_175667_e / 12 World.func_180495_p / 12 WorldServer.func_72866_a …
+ 9 ChunkProviderServer.loadChunk（ワールド生成）
+  3 FramePassTimings.indexOf（計器自身）
+```
+HashMap の呼び出し元の内訳:
+```
+16 EntityDataManager（エンティティ描画）  9 ChunkProviderServer.loadChunk
+ 3 VulkanGlState.bindTexture(containsKey)  3 FramePassTimings.indexOf
+ 2 CeltiumGlStub.setTextureParameterBound  2 CompatibilityHooks.computeIfAbsent
+ 2 VulkanModelQuadCapture.matrixForList    2 prepareImmediate …
+```
+⇒ **フレーム6.6ms（world）は「レンダラ所有分 ≈2.5〜3ms（即時受理+記録）」＋「vanilla/Forge側 ≈3.6ms（エンティティ・空・TESR・チャンクロード・GLスタブ経由の呼び出し）」**に分かれる。
+**300fps（3.3ms）はレンダラ所有分だけでは届かず、vanilla側の描画コストも削らないと達成できない**。
+次の削減対象は (a) GLスタブ経路の per-call コスト（`countCallList`・`CeltiumModelBatchGroups.note` 等）、
+(b) エンティティ描画の data parameter 参照（HashMap 16サンプル）。
