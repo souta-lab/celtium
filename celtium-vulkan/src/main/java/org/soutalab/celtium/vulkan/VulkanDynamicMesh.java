@@ -200,6 +200,14 @@ public final class VulkanDynamicMesh {
         return this.frameRegion != null ? this.frameRegion.vertexBaseAddress() : this.vertices.mappedAddress();
     }
 
+    /** {@return the address this mesh's indices are mapped at}, or 0 when it has none. */
+    public long indexAddress() {
+        if (this.frameRegion != null) {
+            return this.frameRegion.indexBaseAddress();
+        }
+        return this.indices == null ? 0L : this.indices.mappedAddress();
+    }
+
     public int indexCount() {
         return this.indexCount;
     }

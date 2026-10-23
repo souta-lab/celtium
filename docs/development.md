@@ -1021,3 +1021,24 @@ drawn[perFrame=197]  ← 変化なし
 今回は発火を確認した上での反証）。挙動は元に戻した。
 
 残る唯一の道は **per-drawレコード＋indirect multi-draw＋レコードを読むシェーダ変種**（`docs/plan.md`の性能行に記載）。
+
+**fps300 KPI: 記録時のbakeが画像gateを通った（2026-10-23・前進）**
+
+`-Dceltium.vulkan.bakeAtRecord=true` を追加: 記録時に各グループの modelView を**自分の頂点へ焼き込み**、
+push block の行列を `projection`（modelView＝単位行列）へ書き換え、fog行も単位行列にする。
+retained（共有メッシュ）のグループは対象外（二重変換になるため）。
+
+```
+leg kpi-bakerec: PASSED・problems 0（画像gate通過）
+drawn[perFrame=190-216]（ドロー数は当然まだ減らない）
+```
+⇒ **bakeの数学とpush書き換えが正しいことが画像gateで確認できた**。
+これは次段（同一素材グループを1メッシュに連結して1ドロー）の前提条件。
+受理時bakeが効かなかった理由（隣接offerが同一素材にならない）は変わらないが、
+**記録時ならソートで同一素材を隣接させた後に連結できる**ため、ここが唯一の実装可能な道。
+
+次段の設計:
+1. run（pipeline・記述子・viewport/scissor・行列以外のpush内容が一致）を検出
+2. run内の各グループを `copyVerticesTransformed` で**run用メッシュへ連結**（インデックスはrebasing済みのAPI使用）
+3. runあたり1回の bind+push+`vkCmdDrawIndexed`
+4. 対象は不透明グループのみ（ブレンド順序を壊さない）

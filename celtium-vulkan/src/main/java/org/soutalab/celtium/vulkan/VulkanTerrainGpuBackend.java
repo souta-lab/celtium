@@ -13469,6 +13469,55 @@ this.frameBufferOpen = false;
     private static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
     /** {@code -Dceltium.vulkan.sortOpaque=true}: order the opaque groups by material so equal materials share a run. */
     private static final boolean SORT_OPAQUE = Boolean.getBoolean("celtium.vulkan.sortOpaque");
+    /** {@code -Dceltium.vulkan.bakeAtRecord=true}: bake each group's modelView into its vertices at record time. */
+    private static final boolean BAKE_AT_RECORD = Boolean.getBoolean("celtium.vulkan.bakeAtRecord");
+    private static final float[] IDENTITY_MATRIX = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f};
+
+    /**
+     * Bakes this group's modelView into its own vertices and rewrites its push block for an identity modelView.
+     * <p>
+     * Only a group that owns its slice is eligible: a retained mesh is shared between groups, so transforming it in place
+     * would transform it again for the next group that draws it. The rewrite is the same product the vertex shader would
+     * compute - {@code projection * (modelView * position)} - with the modelView applied here instead, and the fog rows
+     * the block carries become the identity so the fog distance is the baked eye-space position, exactly as before.
+     * <p>
+     * The point is the step after this one: once a group's transform lives in its vertices, two groups of the same
+     * material can share one command, which is what the 194-a-frame draw count needs.
+     */
+    private void celtium$bakeGroupInPlace(ImmediateGroup group, VulkanDynamicMesh mesh, java.nio.ByteBuffer push) {
+        if (group.geometryLease != null || mesh == null || group.modelView == null || group.projection == null) {
+            return;
+        }
+        VulkanDynamicMesh.Layout layout = mesh.layout();
+        if (layout == null || layout.stride < 12 || layout.position < 0) {
+            return;
+        }
+        long address = mesh.vertexAddress();
+        int count = mesh.vertexCount();
+        if (address == 0L || count <= 0) {
+            return;
+        }
+        float[] mv = group.modelView;
+        float m00 = mv[0], m01 = mv[4], m02 = mv[8], m03 = mv[12];
+        float m10 = mv[1], m11 = mv[5], m12 = mv[9], m13 = mv[13];
+        float m20 = mv[2], m21 = mv[6], m22 = mv[10], m23 = mv[14];
+        int stride = layout.stride;
+        long position = layout.position;
+        for (int i = 0; i < count; i++) {
+            long vertex = address + (long) i * stride + position;
+            float x = org.lwjgl.system.MemoryUtil.memGetFloat(vertex);
+            float y = org.lwjgl.system.MemoryUtil.memGetFloat(vertex + 4);
+            float z = org.lwjgl.system.MemoryUtil.memGetFloat(vertex + 8);
+            org.lwjgl.system.MemoryUtil.memPutFloat(vertex, m00 * x + m01 * y + m02 * z + m03);
+            org.lwjgl.system.MemoryUtil.memPutFloat(vertex + 4, m10 * x + m11 * y + m12 * z + m13);
+            org.lwjgl.system.MemoryUtil.memPutFloat(vertex + 8, m20 * x + m21 * y + m22 * z + m23);
+        }
+        pushCombinedMatrixInto(group.projection, IDENTITY_MATRIX, push, 0);
+    }
     private long[] drawOrderKeys = new long[0];
     private int[] drawOrderIndices = new int[0];
     private int[] drawOrder = new int[0];
@@ -18338,6 +18387,9 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
                     org.soutalab.celtium.vulkan.FramePassTimings.end("rcViewport");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
+                    if (BAKE_AT_RECORD) {
+                        celtium$bakeGroupInPlace(group, mesh, push);
+                    }
                     long variantStart = System.nanoTime();
                     if (pipeline instanceof VulkanImmediateTexturePipeline value) {
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
