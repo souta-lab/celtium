@@ -2422,6 +2422,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
+                // Windows per frame: each window is a render pass plus a submission, and the A/B that removed the drawing
+                // left 0.5 ms a frame in the window machinery, so this count is what says whether coalescing windows is
+                // worth anything.
+                + " windows[perFrameX100=" + this.celtium$windowsPerFrameX100() + "]"
                 // The arena hypothesis for the 6 microseconds a mesh bind costs: a mesh that could not borrow one of the
                 // frame arena's slices owns its buffers, and owning buffers means two binds per draw that cannot be
                 // deduplicated. Promotion and fallback counts say whether that is happening at all.
@@ -15141,6 +15145,15 @@ this.frameBufferOpen = false;
 
     private long lastTerrainIndirectCalls;
     private long lastDrawnGroups;
+    private long lastImmediateWindows;
+
+    /** {@return windows per frame times 100, over the frames this report covers}. */
+    private long celtium$windowsPerFrameX100() {
+        long windows = this.immediateStatistics.immediateWindows();
+        long delta = windows - this.lastImmediateWindows;
+        this.lastImmediateWindows = windows;
+        return Math.max(1, this.frameIntervalCount) == 0 ? 0 : (delta * 100L) / Math.max(1, this.frameIntervalCount);
+    }
     private long lastPipelineBindNanos;
     private long lastViewNanos;
     private long textureDrawNanos;

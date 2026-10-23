@@ -920,3 +920,18 @@ winRecord 2.5 / grpDraw 2.0 / grpPrep 0.1 / rcPrepared 0.1 / rcPush 0.1 / rcReso
 - 先行run（brackets on）では pass-split 行の frame p50 が 7.0ms だったが、
   **run間の分散（7.0〜8.4ms）が効果より大きい**ため、この変更の速度効果は**断定しない**。
 - 以降のKPIは `frameStats=true`（bracketなし）で測る。bracket入りの数値を「実フレーム」として引用しない。
+
+**fps300 KPI: ウィンドウ機構は安い（2026-10-23 実測）**
+
+`windows[perFrameX100=490-500]` ＝ **約5ウィンドウ/フレーム**。bracket内訳:
+```
+flush 2.6-3.0 / winRecord 2.3-2.7 / winBarrier 0.2 / winSubmit 0.0 / winEnd 0.0 / windowSetup 0.0
+frameFenceWait[count=0]
+```
+⇒ **submit・pass境界・フェンス待ちはほぼ0**。ウィンドウ統合で削れるのは最大0.2ms（barrier）で、
+flush の実体は **winRecord＝194ドローの記録2.5ms**。
+
+**結論（これで全内訳が閉じた）**: world 6.6-6.9ms =
+`描画2.5（194×約13µs） + terrain記録0.5 + 受理/ウィンドウ機構1.1 + vanilla描画ロジック約3.0`。
+300fps(3.3ms)には「描画を約1.2msへ（＝ドロー数半減以下）」＋「vanilla描画ロジックを約1.5msへ」の両方が必要で、
+どちらも局所最適化では届かない（`modelDraws` は実行中に64,300件＝エンティティ/モデル描画がこの経路の主要顧客）。
