@@ -456,6 +456,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if (("glReadPixels".equals(name) || "nglReadPixels".equals(name))
+                    && descriptor.equals("(IIIIIILjava/nio/IntBuffer;)V")) {
+                // The IntBuffer overload ScreenShotHelper calls: route it to the same stub, through the buffer's address.
+                for (int slot = 0; slot < 6; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.ALOAD, 6);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glReadPixelsBuffer", "(IIIIIILjava/nio/IntBuffer;)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // The client-array/VBO draw family. VertexBuffer.bindBuffer/glVertexPointer/glDrawArrays is how the sky
             // dome, the stars, the horizon plane and Forge's CloudRenderer draw; the stub decodes that shape, and
             // without this route the calls were no-ops (leg gv-cohort-cloud2's census: glDrawArrays=6220,

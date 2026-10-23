@@ -1870,7 +1870,19 @@ leg shot-test2（packed-int対応後）: 同じく 0.00 / 0.00000 / black=true
 **`(IIIIIIJ)V`（アドレス版）** のみ。**IntBuffer版 `(IIIIIILjava/nio/IntBuffer;)V` は対象外**なので、
 LWJGLの実装がそのまま走り、GLコンテキストが無いためバッファはゼロのまま → 真っ黒PNG。
 
-**次**: IntBuffer版の経路を transformer に追加し、スタブがそのバッファへ書く。
-その後に leg `shot-test3` で `gameScreenshotNonBlackFraction > 0` を確認する。
-（`TextureCopyService` には `GL_BGRA`+`GL_UNSIGNED_INT_8_8_8_8_REV` のpacked-int書式を先行して追加済み。
- F2が使う書式がそれであることは、IntBuffer版を計装した時点でログで確定する。）
+**IntBuffer版を追加したが、まだ黒い（2026-10-23 実測）**
+
+`CeltiumGllessHint.glReadPixelsBuffer` と transformer の `(IIIIIILjava/nio/IntBuffer;)V` 分岐を追加し、
+`TextureCopyService` に packed-int（`GL_BGRA`+`GL_UNSIGNED_INT_8_8_8_8_REV`）の書き込みも入れた。
+leg `shot-test3` の結果は**変化なし**:
+```
+gameScreenshotMean=0.00 nonBlackFraction=0.00000 black=true
+```
+決定的なのは **`CELTIUM_READ_PIXELS*` のログが依然1件も出ない**こと。
+⇒ ゲームの `saveScreenshot` は**スタブの `glReadPixels` に到達していない**。vanilla 1.12 の
+`ScreenShotHelper` は自作のFBOを作って色テクスチャを描き、そこから読むので、
+(a) そのFBOのミラー画像が黒、(b) 読みが別経路、のどちらか。
+
+**次**: `CeltiumGlStub.celtium$readPixels` の入口に到達ログを足して「呼ばれていない」を確定させ、
+呼ばれていないなら `ScreenShotHelper` が実際に使うGL関数（`glReadPixels` のIntBuffer版か、
+`GL30`/`GL12` の別名か）をバイトコードで確認する。黒スクショは未解決。

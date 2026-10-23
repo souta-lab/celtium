@@ -555,6 +555,23 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$readPixels(x, y, width, height, format, type, pixels);
     }
 
+    /**
+     * The same read into a packed {@code IntBuffer}, which is the overload {@code ScreenShotHelper} calls.
+     * <p>
+     * Measured: a black F2 picture came from this overload not being routed at all - the transformer matched only the
+     * address form, so LWJGL's own {@code glReadPixels} ran against no GL context and left the buffer zeroed. The buffer's
+     * remaining capacity is not consulted here because the game's own call sizes it from the rectangle it passes, and the
+     * stub stops at the rectangle in turn.
+     */
+    public static void glReadPixelsBuffer(int x, int y, int width, int height, int format, int type,
+            java.nio.IntBuffer pixels) {
+        if (pixels == null) {
+            return;
+        }
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$readPixels(x, y, width, height, format, type,
+                org.lwjgl.system.MemoryUtil.memAddress(pixels));
+    }
+
     /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */
     public static void glBufferData(int target, long size, long data, int usage) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferData(target, size, data, usage);
