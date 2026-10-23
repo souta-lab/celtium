@@ -3103,6 +3103,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
     private static final int CHAIN_FRAME_DUMPS = Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue();
 
+    /** {@return a few numbers that tell a perspective projection from an orthographic one}. */
+    private static String projectionSummary(float[] projection) {
+        if (projection == null || projection.length < 16) {
+            return "none";
+        }
+        return String.format(java.util.Locale.ROOT, "[%.3f,%.3f,%.3f,%.3f]",
+                Float.valueOf(projection[0]), Float.valueOf(projection[5]), Float.valueOf(projection[11]),
+                Float.valueOf(projection[14]));
+    }
+
     /** How many large windows have had their routing logged. */
     private int windowRouteLogs;
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
@@ -18325,7 +18335,9 @@ this.frameBufferOpen = false;
             System.out.println("[Celtium] CELTIUM_WINDOW_ROUTE identity=0x" + Long.toHexString(target)
                     + " isMain=" + isMainTarget + " route="
                     + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
-                    + " groups=" + this.immediateGroups.size() + " textures=[" + textures + "] frame=" + this.frameId);
+                    + " groups=" + this.immediateGroups.size() + " textures=[" + textures + "]"
+                    + " projection=" + projectionSummary(this.immediateGroups.get(0).projection)
+                    + " frame=" + this.frameId);
         }
         if (this.drawRecords == null) {
             ImmediateDrawRecords records = new ImmediateDrawRecords(this.context);
