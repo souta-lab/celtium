@@ -2423,3 +2423,24 @@ texture matrix（無し）。
 
 **次の一手**: この384グループの `formatId` を記録し、その format の属性オフセット/strideを
 `VulkanImmediateFormats` の定義と突き合わせる。POSITION_TEX_COLOR が正しくマップされているか確認。
+
+**パノラマ①: vertex format の対応も正しい（2026-10-24 原典確認）**
+
+`VulkanImmediateFormats` の定義を確認:
+```
+POSITION_TEX_COLOR  pos3f tex2f col4ub   stride 24   id=2   VulkanImmediateTexturePipeline
+```
+パノラマの 384グループは `format=2`（PREP_TEXログで確認済み）で、これは POSITION_TEX_COLOR の
+正しい対応。**よって vertex format の取り違え仮説も棄却**。
+
+受理側で測れる項目はこれで**全て正しい**ことになった:
+行列384/並進64/回転6/テクスチャ34-39/descriptor6/画像256x256×6/format=2/pipeline blend/
+route=frame-image/射影/texMatrixなし。
+
+**残るのは「受理後の実行」だけ**。疑うべきは:
+1. この window が **frame image に描かれる前に GUI が先に描かれている**（順序）
+2. window の render pass の loadOp/clear が panorama を消す/混ぜる
+3. 提示フレームが別フレーム（静止比較ではF2と一致していたので低い）
+
+**次の一手**: 384グループのwindowを描く直前に **frame image の内容をreadbackして平均色を出す**
+（描く前の状態）。パノラマ前は「GUIが未描画の黒/空」であるべきで、そこに既に文字があれば順序の誤り。
