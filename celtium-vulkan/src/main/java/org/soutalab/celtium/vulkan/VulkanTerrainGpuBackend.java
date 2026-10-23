@@ -18372,6 +18372,29 @@ this.frameBufferOpen = false;
                 byTranslation.computeIfAbsent(Long.valueOf(key), ignored -> new java.util.ArrayList<float[]>())
                         .add(mv);
             }
+            int[] perTileHistogram = new int[7];
+            for (java.util.Map.Entry<Long, java.util.List<float[]>> entry : byTranslation.entrySet()) {
+                java.util.HashSet<Integer> rotations = new java.util.HashSet<Integer>();
+                for (float[] mv : entry.getValue()) {
+                    int[] rotation = new int[] {Float.floatToIntBits(mv[0]), Float.floatToIntBits(mv[1]),
+                            Float.floatToIntBits(mv[4]), Float.floatToIntBits(mv[5])};
+                    rotations.add(Integer.valueOf(java.util.Arrays.hashCode(rotation)));
+                }
+                int bucket = Math.min(6, rotations.size());
+                perTileHistogram[bucket]++;
+            }
+            StringBuilder histogram = new StringBuilder();
+            for (int i = 0; i < perTileHistogram.length; i++) {
+                if (perTileHistogram[i] == 0) {
+                    continue;
+                }
+                if (histogram.length() > 0) {
+                    histogram.append(' ');
+                }
+                histogram.append(i).append(':').append(perTileHistogram[i]);
+            }
+            System.out.println("[Celtium] CELTIUM_TILE_ROTATION_HIST tilesWithDistinctRotations=[" + histogram
+                    + "] placements=" + byTranslation.size());
             for (java.util.Map.Entry<Long, java.util.List<float[]>> entry : byTranslation.entrySet()) {
                 if (entry.getValue().size() >= 2) {
                     StringBuilder faces = new StringBuilder();
