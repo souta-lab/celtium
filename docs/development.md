@@ -1396,3 +1396,13 @@ AMD/Intel の受入を実施した `kpi-61` のステージと**同一**。つ�
   renderer 側の同一性は上のforge jarで担保される。混同しないこと。
 - バージョン表記は 0.0.13-alpha のまま（リリースするなら gradle.properties の版を上げて
   **再ビルド→両GPU再受入**が必要。版を上げるとjarハッシュが変わるため、既存の受入証拠は使えない）。
+
+**HEADの健全性（2026-10-23 実測）**
+
+```
+:celtium-vulkan:test → tests=122 failures=0 errors=0 skipped=0
+python3 -m unittest discover -s scripts/tests → Ran 69 tests, OK
+python3 scripts/check_agent_docs.py → OK
+```
+GPU受入（AMD RX 6400 / Intel UHD 630）と合わせて、現HEADは
+**CPUテスト122件・スクリプトテスト69件・文書検査・両GPU受入**がすべて通る状態。
