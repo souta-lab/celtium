@@ -8528,6 +8528,9 @@ this.frameBufferOpen = false;
             // window's pass is exactly that point - the pass has ended, the frame buffer is still open, and the present
             // has not been queued.
             celtium$recordShaderPackDraw();
+            // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
+            // which is the only way to price the command itself without the rest of the frame in the way.
+            celtium$runDrawBench();
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
             // The frame's wall clock split. A sampling profiler cannot see a thread that is waiting, and the gap to the
@@ -14998,6 +15001,33 @@ this.frameBufferOpen = false;
     }
 
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
+    /** {@code -Dceltium.debug.drawBench=N}: measure N bind+draw calls on the last mesh of a window. */
+    private static final int DRAW_BENCH = Integer.getInteger("celtium.debug.drawBench", 0);
+    private transient VulkanDynamicMesh lastDrawnMesh;
+    private int drawBenchDone;
+    private long drawBenchBestNanos = Long.MAX_VALUE;
+
+    private void celtium$runDrawBench() {
+        if (DRAW_BENCH <= 0 || this.drawBenchDone >= 8 || this.lastDrawnMesh == null || this.commandBuffer == null) {
+            return;
+        }
+        this.drawBenchDone++;
+        long start = System.nanoTime();
+        for (int i = 0; i < DRAW_BENCH; i++) {
+            this.lastDrawnMesh.bindAndDraw(this.commandBuffer, this.immediateBindCache);
+        }
+        long total = System.nanoTime() - start;
+        long perCall = total / DRAW_BENCH;
+        // The first runs are cold: this path is entered once per window at most, so the JIT has had no reason to compile
+        // it. The minimum over eight windows is the number to quote; a single run read 23 microseconds, which is the
+        // cold figure and does not match the 5 microseconds the A/B (frame 7.0 -> 5.3 ms at 196 draws) implies.
+        if (perCall < this.drawBenchBestNanos) {
+            this.drawBenchBestNanos = perCall;
+        }
+        System.out.println("[Celtium] CELTIUM_DRAW_BENCH run=" + this.drawBenchDone + " n=" + DRAW_BENCH
+                + " perCallNanos=" + perCall + " bestNanos=" + this.drawBenchBestNanos);
+    }
+
     private void celtium$noteWindowOpenSite() {
         if (!this.windowSiteCensusWanted) {
             // The census names the callers that open the frame's windows. It walks the stack, so it is not left on the
@@ -18165,6 +18195,9 @@ this.frameBufferOpen = false;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                }
+                if (DRAW_BENCH > 0 && this.lastDrawnMesh == null) {
+                    this.lastDrawnMesh = mesh;
                 }
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
