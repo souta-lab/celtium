@@ -1647,3 +1647,25 @@ java.lang.NoClassDefFoundError: com/cleanroommc/hackery/ReflectionHackery
 **含意**: 「RLCraft 互換は Fugue 更新で解決」は、少なくとも **0.7.11 + Fugue 0.24.4 では成立しない**。
 残る候補は (a) Cleanroom 0.7.12 以降（互換修正入り）での再試行、(b) Fugue 0.25.x、
 (c) 0.6.13 用ビルド（前述のGLFWバックエンド問題）。**この順で試す価値がある**。
+
+**RLCraft: Fugue 0.25.5 では進むが、Celtium 無しでも同じ VerifyError で落ちる（2026-10-23 実測・決定的）**
+
+probe（0.7.11 clone + RLCraft 166 mods + scalar-3.9.0）で Fugue を差し替えて再試行:
+
+| Fugue | 結果 |
+|---|---|
+| 0.24.4 | 24秒で停止: `NoClassDefFoundError: com/cleanroommc/hackery/ReflectionHackery`（SetBonus→FantasticSource Tools） |
+| **0.25.5** | **44秒まで進行**（`Sound engine started` / `Created: 2048x1024 textures-atlas`）。次に
+`java.lang.VerifyError: Bad local variable type` @ `EntityRenderer.func_78472_g(F)V @863: iload` |
+
+**対照実験**: 同じ probe から **celtium jar を外して**起動 → **同一の VerifyError が再現**。
+```
+run-rlcft-probe3 (celtium あり): VerifyError EntityRenderer.func_78472_g
+run-rlcft-nocel (celtium なし): VerifyError EntityRenderer.func_78472_g  ← 同じ
+```
+⇒ **この停止は Celtium の不具合ではない**。Fugue 0.25.5 / Cleanroom 0.7.11 と RLCraft 側パッチの
+バイトコード干渉（`updateFogColor`）で、**外部で解決すべき互換問題**。
+
+**結論**: RLCraft 2.9.3 は「Fugue 更新」だけでは 0.7.11 で動かない（Fugue 0.25.5 でも未達）。
+次に試す価値があるのは Cleanroom 0.7.12-alpha 以降（互換修正入り）での再試行。
+Celtium 側でできることは無い（対照実験で切り分け済み）。
