@@ -674,3 +674,22 @@ terrainPreflush p50 = 2.8ms
 ⇒ 2.8ms / 67 ≒ **42µs/グループ**。グループ数は控えめ(67)で1件あたりが重い。
 削減目標: 20µs/グループ以下（2.8ms → 1.3ms）またはグループ合体で半減。
 内訳候補: グループごとの状態解決・パイプライン/ディスクリプタ束縛・push constant・コマンド記録。
+
+**fps300 KPI: グループ記録の内訳（2026-10-23 実測・既存bracketから）**
+
+`CELTIUM_FRAME_PASS_SPLIT` の記録系bracket（world leg, p50）:
+```
+winRecord   2.5ms   ← ウィンドウ記録の全体
+recLoop     2.4ms   ← そのうちグループループ
+  recBind   0.1ms
+  recDraw   0.1ms
+  rcResolve 0.0ms
+  prepDescriptors 0.0ms / prepBarriers 0.1ms
+winBarrier  0.2ms
+```
+⇒ **グループループ2.4ms のうち、名前付き内訳は合計0.3ms しかなく、残り約2.2msが「ループ本体の未計測処理」**
+（67グループで **約33µs/グループ**）。状態キー比較・push constant書き込み・行列/テクスチャ解決など
+bracket化されていない毎グループ処理が実体。
+
+次: グループループ内の未計測区間を `recPrepare`（状態解決〜push constant）と `recMatrix`（行列）に分割して特定し、
+そこを削る（例: 同一マテリアル連続グループでの再計算排除）。
