@@ -18332,13 +18332,19 @@ this.frameBufferOpen = false;
                 }
                 textures.append(texture.intValue());
             }
-            java.util.HashSet<Integer> distinctModelViews = new java.util.HashSet<Integer>();
+            java.util.Map<Integer, Integer> modelViewCounts = new java.util.LinkedHashMap<Integer, Integer>();
             for (int i = 0; i < this.immediateGroups.size(); i++) {
                 float[] modelView = this.immediateGroups.get(i).modelView;
-                distinctModelViews.add(Integer.valueOf(java.util.Arrays.hashCode(modelView)));
+                Integer key = Integer.valueOf(java.util.Arrays.hashCode(modelView));
+                modelViewCounts.merge(key, Integer.valueOf(1), Integer::sum);
             }
-            System.out.println("[Celtium] CELTIUM_WINDOW_MODELVIEWS distinct=" + distinctModelViews.size()
+            java.util.List<Integer> sizes = new java.util.ArrayList<Integer>(modelViewCounts.values());
+            sizes.sort(java.util.Comparator.reverseOrder());
+            System.out.println("[Celtium] CELTIUM_WINDOW_MODELVIEWS distinct=" + modelViewCounts.size()
                     + " groups=" + this.immediateGroups.size()
+                    + " largest=" + (sizes.isEmpty() ? 0 : sizes.get(0).intValue())
+                    + " second=" + (sizes.size() < 2 ? 0 : sizes.get(1).intValue())
+                    + " third=" + (sizes.size() < 3 ? 0 : sizes.get(2).intValue())
                     + " first=" + projectionSummary(this.immediateGroups.get(0).modelView));
             System.out.println("[Celtium] CELTIUM_WINDOW_ROUTE identity=0x" + Long.toHexString(target)
                     + " isMain=" + isMainTarget + " route="
