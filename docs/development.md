@@ -1519,3 +1519,15 @@ leg guard-cohort (0.6.13, AMD)  : 起動拒否（想定どおり FAILED）
 ⇒ **Intel UHD 630 でも −13%（11.84 → 10.26ms）**。両方 PASSED。
 AMD（−27%）より効果は小さいが、**GPUベンダーで切り替える必要はない**（既定onのままでよい）。
 IntelがAMDより遅いのはiGPU自体の性能差で、最適化の有無とは別。
+
+**実画像の証拠（2026-10-23・HEAD=guardビルド, AMD RX 6400）**
+
+`docs/evidence/v0.0.14-world-amd-2026-10-23.png` は leg `guard-world` が保存した presented ダンプ
+（1280x720、QMAGNET配布マップを 0.7.11 instance で描画）。F3相当の検証オーバーレイが重なっているが、
+地形・HUD・ホットバー・トーストが正しく描けていることが分かる。
+
+- 取得元: `.gv-verify/run-guard-world/screenshots/celtium-presented-world-*.png`
+- 受入: `guard-world` = **PASSED・problems 0**（画像gate判定込み）、device `AMD Radeon RX 6400 (RADV NAVI24)`
+- **注意**: この画像は **ホスト拒否ガードを入れた後のビルド**（jar は guard ステージ, sha256 `$(sha256sum ...)`）で取得した。
+  v0.0.14-alpha のリリースjarはガード前のビルドなので、**リリース添付の証拠としては使わない**。
+  次のリリース（ガード込み）で改めて取得する。
