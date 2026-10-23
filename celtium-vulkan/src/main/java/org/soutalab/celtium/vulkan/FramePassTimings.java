@@ -46,7 +46,7 @@ public final class FramePassTimings {
     private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload",
             "setupTerrain", "stGraph", "stEvents", "stAsync", "stPrepare", "stUpload", "stUpdate", "stVisible", "stReclaim", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
             "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin",
-            "recBind", "recDraw", "recLoop", "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep",
+            "recBind", "recDraw", "recLoop", "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep", "terrainCapacity",
             "winBarrier", "winRecord", "winSubmit", "winEnd",
             // The terrain pass' three unmeasured spans: the fixed prepare work before recording (frame target,
             // pipeline lookup, shared index buffer, uniform capacity, atlas/lightmap mirrors), the command-buffer

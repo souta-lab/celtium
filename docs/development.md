@@ -573,3 +573,15 @@ terrain(inside world)  p50=3.7ms
 ⇒ **terrain のコストは描画記録ではなく「準備」**（3.2/3.7ms）。次はこの区間を分割して特定する:
 (a) `ensureUniformCapacity` と行列アップロード、(b) `pipelineFor(pass)` とパイプライン状態、(c) ワールドスナップショット/状態キャプチャ、
 (d) レンダーリスト・リージョン走査。この順に bracket を足して削る。
+
+**fps300 KPI: terrainPrep 3.2ms の内訳（続報・2026-10-23）**
+
+`ensureUniformCapacity` を新bracket `terrainCapacity` で囲んで測定:
+```
+terrainPrep      p50=3.2ms
+terrainCapacity  p50=0.0ms   ← 容量確保ではない
+terrainRecord    p50=0.5ms
+```
+⇒ **ユニフォーム容量は無罪**。3.2ms は terrainPrep 内の**まだbracket化していない区間**に残る
+（状態スナップショット、`pipelineFor(pass)`、レンダーリスト/リージョン走査、ミラー準備など）。
+次: terrainPrep の各呼び出し（`pipelineFor`, スナップショット, リスト反復）を個別bracket化して特定する。

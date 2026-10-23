@@ -900,7 +900,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // reason recorded, which is the same shape as the missing-atlas skip just below. An injected allocation failure
         // here used to escape into Minecraft's render loop and end the run with "Game crashed!" and no report.
         try {
-            ensureUniformCapacity((this.terrain.regionCount() * MAX_UNIFORM_PASSES) + 1);
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainCapacity");
+            try {
+                ensureUniformCapacity((this.terrain.regionCount() * MAX_UNIFORM_PASSES) + 1);
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("terrainCapacity");
+            }
         } catch (RuntimeException error) {
             this.immediateStatistics.noteUniformPreparationFailures();
             this.immediateStatistics.setLastUniformPreparationFailure(String.valueOf(error));
