@@ -652,3 +652,14 @@ preflush[groupsPerFrame=0]
 (2) フレームスロットのフェンス待ち（`waitForSlot` → `vkWaitForFences`）
 のどちらか（または両方）。次はこの2つを個別に計器化する（submit回数/時間とスロット待ち時間）。
 待ちなら frames-in-flight を増やす、提出なら統合する。
+
+**fps300 KPI: flushCloseGroup も 0.0（2026-10-23 実測）**
+
+```
+terrain 3.2 / terrainPrep 2.8 / terrainPreflush 2.8 / flushCloseGroup 0.0
+```
+⇒ `closeCurrentImmediateGroup()` も無罪。グループ0・待ち0・クローズ0で2.8msなので、
+残るのは `flushPendingBeforeGlDraw()` の**末尾側**（描画後のフレームバッファ終了・提出・パス終了）か、
+複数箇所にある `drawPendingImmediate` 呼び出しの**周辺処理**。
+次は `flushPendingBeforeGlDraw` の残り区間（先頭から `flush` bracket の終わりまで）を
+`flushTail` として計測し、そこを最後の分割点にする。
