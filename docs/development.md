@@ -1778,3 +1778,28 @@ acquire ~0.05ms / readback ~1.6ms / queue ~0.05ms / caps ~0.13ms / submit ~0.06m
 ⇒ 「CeltiumはCeleritasより速くならない」は**測定構成のせいだった可能性**が高く、
 次は gv_kpi で Celeritas 参照jar（`~/ダウンロード/01-celeritas-forge-mc12.2-2.5.0-dev.jar`）と
 同一repで比較する（leg `kpi-cel`）。ここで負けていれば初めて「レンダラが遅い」と言える。
+
+**Celtium vs Celeritas の同一rep比較（2026-10-23・gv_kpi 正規ハーネス）**
+
+`scripts/gv_kpi.sh`（`presentReadback=false`、候補と参照をinterleave）で、
+world/qmagnet・AMD RX 6400・180s×2rep:
+
+| rep | Celtium warm p50 | Celeritas warm p50 |
+|---|---|---|
+| r1 | 2.030ms | 1.594ms |
+| r2 | **1.872ms** | **1.430ms** |
+| p95 | 5.8〜7.1ms | 2.6〜3.5ms |
+
+- 候補jar: `c6c496892558ab2690c4984c0c7bf384283e56945278496c0dbbc29180e69642`
+- 参照jar: `567dcf8aadd6f4f4d5d594b02549c7997385b7dc8ade5e9722d1e9756056092c`（`01-celeritas-forge-mc12.2-2.5.0-dev.jar`）
+- **median paired ratio = 1.291x**（Celtiumが29%遅い）/ verdict `NO_SPEED_VERDICT`（負荷/FORCEのため有意判定なし）
+
+**判明したこと**
+1. **Celtiumは 1.87〜2.03ms ＝ 約490〜535fps**。これまでの「4.75ms ≒ 210fps」はfixture税（presentReadback 1.6ms + dump）込みで、
+   **ユーザー目標の500fpsに実測で到達している**（同条件のgv_kpiで）。
+2. ただし**Celeritasはさらに速い（1.43〜1.59ms）**。差は約0.44msで、
+   我々の**受理経路（全immediate batchをJavaで捕捉）と194グループのループ＋複数ウィンドウ**が主因と推定。
+3. **p95が我々だけ2倍悪い**（5.8〜7.1 vs 2.6〜3.5ms）＝フレーム毎のヒッチ源が我々にある。
+
+**次の標的**: 受理経路のコスト削減（CeleritasのGL即時描画に相当する部分をJavaで模倣している所）とp95ヒッチ。
+ここを詰めればCeleritas超えが現実的な距離（0.4ms）にある。
