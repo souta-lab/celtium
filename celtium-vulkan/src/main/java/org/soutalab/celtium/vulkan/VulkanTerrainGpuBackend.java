@@ -853,10 +853,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // What this flush drains is the cost the bracket above measured: the sky, the void plane and the bodies are
             // recorded before the world and go out here. Counting the groups it hands over says whether the fix is fewer
             // groups (merge) or a different submit point (record the sky in its own pass).
-            long groupsBefore = org.soutalab.celtium.vulkan.DrawCounters.immediateGroups();
+            // Read from the queue itself, not DrawCounters.immediateGroups(): that counter only runs when
+            // -Dceltium.vulkan.passCounts is on, so every ordinary run reported groupsPerFrame=0 for a flush that was
+            // draining dozens of groups - the same "zero means the instrument is off" trap the group counter fell into.
+            this.preflushGroupsDrained += this.immediateGroups.size() + (this.currentImmediateMesh == null ? 0 : 1);
             flushPendingBeforeGlDraw();
-            this.preflushGroupsDrained +=
-                    org.soutalab.celtium.vulkan.DrawCounters.immediateGroups() - groupsBefore;
             this.preflushFrames++;
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainPreflush");

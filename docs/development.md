@@ -902,3 +902,21 @@ winRecord 2.5 / grpDraw 2.0 / grpPrep 0.1 / rcPrepared 0.1 / rcPush 0.1 / rcReso
 計器: `rcPrepared` を追加。bindAndDraw の `MemoryStack.stackGet()`/`PacketCost.enabled()` を
 実際に束縛する分岐の内側へ移動（キャッシュ済みパスの負荷を減らす）。
 受入: leg kpi-acc4 **PASSED・problems 0**、frame p50 7.0ms（差は検出できず＝速度主張はしない）。
+
+**計器が「判定対象のフレーム」に課金していた（2026-10-23 修正）**
+
+`FramePassTimings.enabled()` が `VulkanDiagnostics.enabled() || passSplit` で、`VulkanDiagnostics` は
+`celtium.vulkan.validation=true` で有効になる。**受入legはこのスイッチを必ず渡す**ため、
+全受入/KPI legで group 毎に bracket（名前解決2回＋時計2回）が動いていた（実測: 8/グループ）。
+変更: bracket は `passSplit` か新設の `-Dceltium.vulkan.brackets=true` のときだけ有効。
+
+併せて `preflush[groupsPerFrame]` を修正: `DrawCounters.immediateGroups()` は `passCounts` がオフだと
+0 のままなので、通常runで「flushが0グループ」という**未配線カウンタの罠**を踏んでいた。
+キューの実サイズ（`immediateGroups.size() + open group`）から数えるようにした。
+
+**実測（brackets off / validation ON の受入leg `kpi-acc5`,`kpi-acc6`）**
+- `kpi-acc5`: **PASSED・problems 0**
+- `kpi-acc6`（`frameStats=true`）: frame p50 8.42ms / fps p50 118.8（窓ごとに 12.30→10.48→8.42 と立ち上がる）
+- 先行run（brackets on）では pass-split 行の frame p50 が 7.0ms だったが、
+  **run間の分散（7.0〜8.4ms）が効果より大きい**ため、この変更の速度効果は**断定しない**。
+- 以降のKPIは `frameStats=true`（bracketなし）で測る。bracket入りの数値を「実フレーム」として引用しない。

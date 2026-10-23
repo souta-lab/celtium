@@ -129,3 +129,10 @@ delta はスナップショット更新**前**に計算し、更新は最後に�
 即時フラッシュが実際に使う `bindAndDraw` の **drawForm インライン `vkCmdDrawIndexed` を見ていなかった**。
 そのため以前の「ドローを止めても時間が変わらない」という測定は**無効**。修正後に測ると
 frame 7.0→5.3ms、winRecord 2.5→1.5ms と、ドローコマンドが1.0ms/frameを占めることが分かった。
+
+## 計器が受入スイッチで有効になっていた（2026-10-23）
+
+`FramePassTimings.enabled()` が `VulkanDiagnostics.enabled()` に連動し、それが `celtium.vulkan.validation=true`
+で有効化されていた。受入legは必ず validation を渡すので、**判定されるフレームが計器のコスト（group毎に8 bracket）を
+払っていた**。bracket は `passSplit` / `celtium.vulkan.brackets` の時だけ有効に変更。
+教訓: 計測フラグの既定値が「受入で必ず付くスイッチ」に連動していないか確認する。

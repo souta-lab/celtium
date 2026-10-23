@@ -110,8 +110,14 @@ public final class FramePassTimings {
     private static final boolean PASS_SPLIT_ENABLED = Boolean.getBoolean("celtium.vulkan.passSplit");
 
     public static boolean enabled() {
-        return VulkanDiagnostics.enabled() || PASS_SPLIT_ENABLED;
+        // Deliberately not VulkanDiagnostics.enabled(): the acceptance fixture always passes celtium.vulkan.validation,
+        // and tying the brackets to it put eight name lookups and two clock reads on every group of every acceptance leg -
+        // the frame being judged paid for the instrument judging it. A run that wants the brackets asks for them.
+        return PASS_SPLIT_ENABLED || BRACKETS_ENABLED;
     }
+
+    /** {@code -Dceltium.vulkan.brackets=true}: keep the pass brackets on without the pass-split report. */
+    private static final boolean BRACKETS_ENABLED = Boolean.getBoolean("celtium.vulkan.brackets");
 
     /**
      * The clock the brackets read.
