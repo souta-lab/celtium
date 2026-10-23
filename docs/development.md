@@ -1059,3 +1059,18 @@ drawn[perFrame=194]（挙動不変） frame p50 9.56-11.87ms（分散内）
 3. run の `(firstIndex, indexCount, vertexOffset)` を記録し、run境界で 1回の bind+push+`bindAndDrawRange`
 4. run境界の条件: pipeline・記述子・viewport/scissor・行列以外のpush内容（オフセット64〜156）が一致
 5. 対象は不透明かつ postClears の無いグループのみ（順序・クリア順を壊さない）
+
+**fps300 KPI: 素材runのCPU連結マージは絵は正しいが大幅に遅い（2026-10-23 実測・反証）**
+
+記録時bake＋run用メッシュへの連結（`-Dceltium.vulkan.mergeBaked=true`）を実装し受入:
+```
+leg kpi-mergeb: PASSED・problems 0（画像gate通過＝マージ結果は正しい）
+frame p50 17.27-33.08ms（通常8.2〜9.6ms）← 約2〜3倍遅い
+drawn[perFrame=192-214]（この計器はグループ数であり、コマンド数ではないので減少しない）
+```
+⇒ **CPUでインデックスを読み出し頂点を連結するコスト（約196グループ/フレーム）が、
+GPU側で節約できる約1msを大きく上回る**。run用メッシュの確保も毎run発生し、arena確保とコピーが重い。
+
+**結論**: ドロー数削減は「CPUでジオメトリを連結する」方向では成立しない（実測で反証）。
+残る道は **per-drawデータをバッファに置き、シェーダが instance で読む indirect multi-draw** のみ
+（CPUはレコードを書くだけで、頂点データは共有メッシュのまま）。挙動は元に戻した。
