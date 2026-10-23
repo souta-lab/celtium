@@ -1592,3 +1592,17 @@ leg sortonly-world: PASSED・problems 0、frame 9.27 → 7.94 → 7.50ms（ば�
 `copyVerticesTransformed` は受理時のpre-transform（GUI系）が使うので残す。
 
 確認: ビルド成功、CPUテスト 122件すべて成功（failures 0）。
+
+**HEADの受入（2026-10-23・bake撤去後）**
+
+`main` の最新ビルドで world を受入（AMD RX 6400、既定フラグ、180秒）:
+```
+leg head-world: PASSED・problems 0（validation 0・画像gate一致）
+frame p50 7.99 → 7.69ms（定常）
+loop[frames=120 loopMean=11-12 tickMean=5 displayMean=4 renderMean=4-5]
+```
+- v0.0.15-alpha と同水準（7.99ms）。**bake撤去・reorderable修正・計器追加は既定経路に影響なし**。
+- Intel の証拠は v0.0.15-alpha のもの（既定経路は同一）。差分（フラグ限定の並べ替え述語・計器・死コード削除）は
+  既定経路に触れないため、必要になった時点で再取得する。
+- `tickMean=5`（20Hzなのでフレーム換算 約0.8〜1ms）と `renderMean=4-5`。
+  loopMean 11-12 は計測区間の定義がフレーム間隔と一致しないため、**フレーム間隔(7.7ms)とは別物として読む**。
