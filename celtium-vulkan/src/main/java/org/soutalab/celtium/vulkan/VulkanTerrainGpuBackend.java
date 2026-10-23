@@ -17858,6 +17858,10 @@ this.frameBufferOpen = false;
                 }
                 if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
                 PreparedImmediate prepared = group.prepared;
+                // The 260 lines between here and grpPrep - descriptor and texture resolution plus the rebuild decisions -
+                // were the largest unbracketed stretch of the group loop, and the draw-skipped A/B left 1.5 ms of
+                // per-group work without a name on it. No early exit crosses this range.
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("rcPrepared");
                 // The panorama's per-draw line: the id the group recorded, the descriptor key it was prepared with,
                 // the key the registry resolves for that id now, the size of that wrapper, and which path filled the
                 // mirror. The question left is whether the descriptor at the draw samples the recorded id's mirror or
@@ -18118,6 +18122,7 @@ this.frameBufferOpen = false;
                 // Bound the lifetime to ONE group. All vkCmd* calls synchronously consume these
                 // parameter arrays before this scope ends; Vulkan owns the recorded handles.
                 long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+                org.soutalab.celtium.vulkan.FramePassTimings.end("rcPrepared");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcViewport");

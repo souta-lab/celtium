@@ -885,3 +885,20 @@ drawParts meshBind 38  →   10
 実測は run=1 のみで **13.4µs/回（コールド）**、別runで23.1µs。A/Bから逆算した値は約5µs。
 **コールド値は採用しない**（JIT未育成）。ベンチは8ウィンドウの最小値を出す実装にしたが、
 ワールド滞在が短く1回しか走らなかった → 次回は長い滞在で再測。
+
+**fps300 KPI: グループループの残り区間も無罪（2026-10-23 実測）**
+
+長い未計測区間（260行・記述子/テクスチャ解決と再構築判定）に `rcPrepared` bracket を追加:
+```
+winRecord 2.5 / grpDraw 2.0 / grpPrep 0.1 / rcPrepared 0.1 / rcPush 0.1 / rcResolve 0.1
+```
+⇒ **per-group のJava作業はほぼ無料**（合計0.5ms未満）。状態処理の実体は `grpDraw` の内側:
+`descriptor bind 0.24ms + push 0.21 + mesh bind(ドロー以外) ≈0.4 + pipeline bind 0.09 ≈ 0.94ms`（196ドロー, ≈4.8µs/draw）。
+ドローコマンド本体 ≈5µs/draw と合わせて **1ドロー ≈10µs**。
+
+⇒ 削減は「ドロー回数」（architectural）以外では **bindless記述子で descriptor bind 0.24 を消す**、
+**push を減らす**、**mesh bind のホイスト**程度で、合計 0.5ms 前後が上限。
+
+計器: `rcPrepared` を追加。bindAndDraw の `MemoryStack.stackGet()`/`PacketCost.enabled()` を
+実際に束縛する分岐の内側へ移動（キャッシュ済みパスの負荷を減らす）。
+受入: leg kpi-acc4 **PASSED・problems 0**、frame p50 7.0ms（差は検出できず＝速度主張はしない）。

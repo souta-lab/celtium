@@ -78,7 +78,7 @@ public final class FramePassTimings {
             // The immediate window's group loop on its own: the window's recording is 0.95 ms a frame and the loop's
             // per-group work is the part the driver-call probes could not explain (skipping the pushes and the draws
             // changed neither the loop's own timer nor the frame).
-            "wrecLoop"};
+            "wrecLoop", "rcPrepared"};
 
     private static final int CAPACITY = 512;
 

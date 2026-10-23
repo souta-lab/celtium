@@ -278,13 +278,15 @@ public final class VulkanDynamicMesh {
         // Index byte offsets are always 4-aligned (the arena aligns slices to 16 and indices are uint32), so the
         // firstIndex conversion below is lossless on every path.
         boolean drawForm = stride > 0 && (vbo % stride) == 0L;
-        org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+        // The stack view and the timing flag are only needed when a bind actually happens; taking them on every call put two
+        // voluntary reads on the cached path, which is the one the flush takes for most groups.
         boolean timed = PacketCost.enabled();
         long bindStart = timed ? PacketCost.start() : 0L;
         if (drawForm) {
             DRAW_FORM_BINDS++;
             boolean bound = !(bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L);
             if (!bound) {
+                org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
                 org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(0L));
                 org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, 0L,
                         org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
@@ -311,6 +313,7 @@ public final class VulkanDynamicMesh {
         }
         BIND_FORM_BINDS++;
         if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != vbo || bindCache[3] != ibo) {
+            org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
             org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(vbo));
             org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, ibo,
                     org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
