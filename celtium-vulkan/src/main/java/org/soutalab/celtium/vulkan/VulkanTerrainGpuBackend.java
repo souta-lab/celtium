@@ -2393,6 +2393,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.lastPipelineBindNanos = pipelineBindTotal;
         this.lastDescriptorBindNanos = descriptorBindTotal;
 
+        if (DRAW_KEY_CENSUS) {
+            System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + this.drawKeyGroups
+                    + " distinctKeys=" + this.drawKeyCounts.size()
+                    + " switches=" + this.drawKeySwitches
+                    + " largestBucket=" + this.drawKeyLargest);
+            this.drawKeyGroups = 0L;
+            this.drawKeySwitches = 0L;
+            this.drawKeyPrevious = 0L;
+            this.drawKeyLargest = 0;
+            this.drawKeyCounts.clear();
+        }
         if (RETAINED_CENSUS) {
             System.out.println("[Celtium] CELTIUM_RETAINED_CENSUS groups=" + this.retainedCensusGroups
                     + " retainedAtAccept=" + this.retainedAccept
@@ -13454,6 +13465,13 @@ this.frameBufferOpen = false;
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
     /** {@code -Dceltium.debug.retainedCensus=true}: how much of a frame is retained geometry, and how it repeats. */
     private static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
+    /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
+    private static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
+    private final java.util.Map<Long, Integer> drawKeyCounts = new java.util.HashMap<Long, Integer>();
+    private long drawKeyGroups;
+    private long drawKeySwitches;
+    private long drawKeyPrevious;
+    private int drawKeyLargest;
     private final java.util.Map<Integer, Integer> retainedCensusByMesh = new java.util.HashMap<Integer, Integer>();
     private long retainedCensusGroups;
     private long retainedAccept;
@@ -18255,6 +18273,27 @@ this.frameBufferOpen = false;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                }
+                if (DRAW_KEY_CENSUS) {
+                    // How many distinct (pipeline, descriptor) pairs the frame's groups use, and how often the pair changes
+                    // between consecutive groups. The distinct count is the floor on draws after sorting by material; the
+                    // switch count says whether the stream is already sorted.
+                    this.drawKeyGroups++;
+                    // The material key is the pipeline plus the descriptor handle. It cannot include the prepared
+                    // object: that is per group, so keying on its identity made every group distinct (24828 of 24828)
+                    // and the first run of this census said nothing at all.
+                    long key = ((long) System.identityHashCode(prepared.pipeline) << 21)
+                            ^ (prepared.descriptor * 0x9E3779B97F4A7C15L);
+                    Integer seen = this.drawKeyCounts.get(Long.valueOf(key));
+                    int count = seen == null ? 1 : seen.intValue() + 1;
+                    this.drawKeyCounts.put(Long.valueOf(key), Integer.valueOf(count));
+                    if (count > this.drawKeyLargest) {
+                        this.drawKeyLargest = count;
+                    }
+                    if (key != this.drawKeyPrevious && this.drawKeyPrevious != 0L) {
+                        this.drawKeySwitches++;
+                    }
+                    this.drawKeyPrevious = key;
                 }
                 if (RETAINED_CENSUS) {
                     // How many of the frame's groups are retained geometry, and how many of them share one cached mesh:

@@ -967,3 +967,21 @@ CELTIUM_RETAINED_CENSUS groups=23857-28680 retainedAtAccept=332-360 preTransform
 理由は **隣接バッチが同じテクスチャ/状態で揃わない**ため、変換を消してもグループは結合しないこと。
 `preTransform[groups=0]` の計器は窓リセットとの兼ね合いで0を出している可能性があり、
 **「0＝未発火」を根拠にしない**（未配線・リセット罠の3例目）。
+
+**fps300 KPI: 描画の素材キーは1フレーム61〜69種類しかない（2026-10-23 実測・決定的）**
+
+`-Dceltium.debug.drawKeyCensus=true`（キー＝pipeline identity＋descriptorハンドル、窓=120フレーム）:
+```
+groups=23316-28590  distinctKeys=61-69  switches=14915-15999  largestBucket=1320-2880
+```
+⇒ 1フレーム: **グループ約194〜238、素材キーは61〜69種類のみ**。switches は約125/フレーム
+（＝ほぼ毎グループでキーが変わる）。**素材でソートすれば194ドロー → 約62ドローに畳める**。
+最大バケットは1キーで約11〜24グループ/フレーム。
+
+**最初の実装は誤っていた**: キーに `PreparedImmediate` の identity を使ったため全グループが
+distinct（24828/24828, largestBucket=1）になった。キーは「pipeline identity + descriptorハンドル」で
+取るのが正しく、修正後に上記の数字。**計器のキー設計ミスは「結合不能」という逆の結論を出す**ので、
+largestBucket が1のときはキー設計を先に疑う（`docs/verification-traps.md` に追記）。
+
+**次の実装**: 不透明グループ（depthWrite かつ blend 無効）だけを素材キーでソートして先に描き、
+残りは元の順序で描く。期待削減 194→62ドロー ≈ 0.6〜0.8ms。画像gateとvalidationで検証する。

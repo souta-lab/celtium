@@ -136,3 +136,11 @@ frame 7.0→5.3ms、winRecord 2.5→1.5ms と、ドローコマンドが1.0ms/fr
 で有効化されていた。受入legは必ず validation を渡すので、**判定されるフレームが計器のコスト（group毎に8 bracket）を
 払っていた**。bracket は `passSplit` / `celtium.vulkan.brackets` の時だけ有効に変更。
 教訓: 計測フラグの既定値が「受入で必ず付くスイッチ」に連動していないか確認する。
+
+## 結合censusのキーに per-group オブジェクトを使うと「結合不能」に見える（2026-10-23）
+
+`System.identityHashCode(prepared)` を素材キーにすると、`prepared` はグループ毎に作られるため
+全グループが distinct になる（24828グループ / distinctKeys=24828 / largestBucket=1）。
+「連続グループは決して同じ状態を共有しない」という以前の結論は、この**キー設計ミス**に基づいていた。
+正しいキー（pipeline identity + descriptor ハンドル）では **69キー / 194〜238グループ** で、
+ソートすれば3倍以上に畳める。censusで largestBucket が1なら、まずキー設計を疑うこと。
