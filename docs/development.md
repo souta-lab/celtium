@@ -727,3 +727,20 @@ frame=578 groups=2  mergeableRuns=2  largestRun=1
 残る削減軸は (a) 1ドローあたりのコスト（bind/記述子/コマンド記録）、(b) 受理時点でのグループ数削減、の2つだけ。
 
 なお `CENSUS_BY_PIPELINE` が既定offのため `distinctPipelines=0` は「計器が動いていない」値であり根拠にしない。
+
+**fps300 KPI: 即時描画の内訳（2026-10-23・実測・訂正版）**
+
+レポート窓（120フレーム）の累積から:
+```
+variants[textureMs=72 itemMs=129 blockMs=0 particleMs=2 genericMs=16
+         counts[texture=5880 item=14880 block=0 particle=120 generic=2400]]
+drawn[perFrame=194]  binds[pipelineMs=13 descriptorMs=13]
+drawParts[viewMs=0 pushCallMs=8 meshBindMs=38]
+```
+1フレームあたり: texture 49回・**item 124回**・generic 20回・particle 1回 = 194回。
+1ドローあたり: **item 8.7µs / texture 12.2µs / generic 6.7µs** ⇒ 状態差では説明できず、
+**「1ドローあたり約10µs」という共通コスト**（パイプライン/記述子バインド・push・メッシュ束縛・記録）。
+
+**計器の罠（今回踏んだ）**: variant の delta を「スナップショット更新後に同じフィールドで引く」実装にしたため
+最初は全部 0 と出た（自己差）。スナップショット更新**前**に delta を計算する形に修正して実測。
+同じ種類の誤り（未配線・自己差）が計器で2回続いたので、`docs/verification-traps.md` にも追記する。

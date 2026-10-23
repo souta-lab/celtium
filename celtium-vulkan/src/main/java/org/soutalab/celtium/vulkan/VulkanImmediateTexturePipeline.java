@@ -358,9 +358,9 @@ public final class VulkanImmediateTexturePipeline {
         // A pipeline switch disturbs the sets bound under the old layout, so the descriptor slot is invalidated on
         // every rebind rather than trusted across layouts.
         if (bindCache[4] != this.pipeline) {
-            long pipelineStart = PacketCost.beginPipelineBind();
+            long pipelineStart = System.nanoTime();
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
-            PacketCost.notePipelineBind(PacketCost.endPush(pipelineStart));
+            PIPELINE_BIND_NANOS += System.nanoTime() - pipelineStart;
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }
@@ -370,27 +370,42 @@ public final class VulkanImmediateTexturePipeline {
         // "VUID-vkCmdBindDescriptorSets-pDescriptorSets-06563: pDescriptorSets[0] (VkDescriptorSet 0x0) is not a
         // valid VkDescriptorSet", ten times - and leaving a statically unused set unbound is legal.
         if (descriptorSetToBind != 0L && bindCache[5] != descriptorSetToBind) {
+            long descriptorStart = System.nanoTime();
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
+            DESCRIPTOR_BIND_NANOS += System.nanoTime() - descriptorStart;
             bindCache[5] = descriptorSetToBind;
         }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
+        long viewStart = System.nanoTime();
         ByteBuffer clamped = this.clampedView.view(pushConstants, PUSH_CONSTANT_BYTES);
+        VIEW_NANOS += System.nanoTime() - viewStart;
         // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
         // past the range is a validation error, so only the declared bytes go out.
         
         if (!SKIP_PUSH_CALLS && !abSkipPush
                 && this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, clamped)) {
+            long pushStart = System.nanoTime();
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, clamped);
+            PUSH_CALL_NANOS += System.nanoTime() - pushStart;
         }
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
+        long meshStart = System.nanoTime();
         mesh.bindAndDraw(commandBuffer, bindCache);
+        MESH_BIND_NANOS += System.nanoTime() - meshStart;
     }
+
+    /** Nanoseconds spent in the two state binds, so the per-group cost can be attributed without guessing. */
+    public static long VIEW_NANOS;
+    public static long PUSH_CALL_NANOS;
+    public static long MESH_BIND_NANOS;
+    public static long PIPELINE_BIND_NANOS;
+    public static long DESCRIPTOR_BIND_NANOS;
 
     public int vertexBytes() {
         return VERTEX_BYTES;

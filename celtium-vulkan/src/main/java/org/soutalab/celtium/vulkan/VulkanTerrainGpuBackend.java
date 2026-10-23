@@ -2323,6 +2323,40 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.frameIntervalCount < this.frameIntervals.length) {
             return;
         }
+        // Snapshotted before the report is built, so the deltas describe the frames this report covers.
+        long pipelineBindTotal = VulkanImmediateTexturePipeline.PIPELINE_BIND_NANOS;
+        long descriptorBindTotal = VulkanImmediateTexturePipeline.DESCRIPTOR_BIND_NANOS;
+        long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
+        long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
+        long textureCountDelta = this.textureDrawCount - this.lastTextureDrawCount;
+        long itemCountDelta = this.itemDrawCount - this.lastItemDrawCount;
+        long blockCountDelta = this.blockDrawCount - this.lastBlockDrawCount;
+        long particleCountDelta = this.particleDrawCount - this.lastParticleDrawCount;
+        long genericCountDelta = this.genericDrawCount - this.lastGenericDrawCount;
+        this.lastTextureDrawCount = this.textureDrawCount;
+        this.lastItemDrawCount = this.itemDrawCount;
+        this.lastBlockDrawCount = this.blockDrawCount;
+        this.lastParticleDrawCount = this.particleDrawCount;
+        this.lastGenericDrawCount = this.genericDrawCount;
+        long textureDrawDelta = this.textureDrawNanos - this.lastTextureDrawNanos;
+        long itemDrawDelta = this.itemDrawNanos - this.lastItemDrawNanos;
+        long blockDrawDelta = this.blockDrawNanos - this.lastBlockDrawNanos;
+        long particleDrawDelta = this.particleDrawNanos - this.lastParticleDrawNanos;
+        long genericDrawDelta = this.genericDrawNanos - this.lastGenericDrawNanos;
+        this.lastTextureDrawNanos = this.textureDrawNanos;
+        this.lastItemDrawNanos = this.itemDrawNanos;
+        this.lastBlockDrawNanos = this.blockDrawNanos;
+        this.lastParticleDrawNanos = this.particleDrawNanos;
+        this.lastGenericDrawNanos = this.genericDrawNanos;
+        long viewDelta = VulkanImmediateTexturePipeline.VIEW_NANOS - this.lastViewNanos;
+        long pushDelta = VulkanImmediateTexturePipeline.PUSH_CALL_NANOS - this.lastPushCallNanos;
+        long meshDelta = VulkanImmediateTexturePipeline.MESH_BIND_NANOS - this.lastMeshBindNanos;
+        this.lastViewNanos = VulkanImmediateTexturePipeline.VIEW_NANOS;
+        this.lastPushCallNanos = VulkanImmediateTexturePipeline.PUSH_CALL_NANOS;
+        this.lastMeshBindNanos = VulkanImmediateTexturePipeline.MESH_BIND_NANOS;
+        this.lastPipelineBindNanos = pipelineBindTotal;
+        this.lastDescriptorBindNanos = descriptorBindTotal;
+
         long[] sorted = java.util.Arrays.copyOf(this.frameIntervals, this.frameIntervalCount);
         java.util.Arrays.sort(sorted);
         long p50 = sorted[sorted.length / 2];
@@ -2356,6 +2390,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
+                + " binds[pipelineMs=" + (pipelineBindDelta / 1_000_000L)
+                + " descriptorMs=" + (descriptorBindDelta / 1_000_000L) + "]"
+                + " variants[textureMs=" + (textureDrawDelta / 1_000_000L)
+                + " itemMs=" + (itemDrawDelta / 1_000_000L)
+                + " blockMs=" + (blockDrawDelta / 1_000_000L)
+                + " particleMs=" + (particleDrawDelta / 1_000_000L)
+                + " genericMs=" + (genericDrawDelta / 1_000_000L)
+                + " counts[texture=" + textureCountDelta + " item=" + itemCountDelta
+                + " block=" + blockCountDelta + " particle=" + particleCountDelta
+                + " generic=" + genericCountDelta + "]]"
+                + " drawParts[viewMs=" + (viewDelta / 1_000_000L)
+                + " pushCallMs=" + (pushDelta / 1_000_000L)
+                + " meshBindMs=" + (meshDelta / 1_000_000L) + "]"
                 // The frame's own serialisation: the fence wait on a slot, counted where vkWaitForFences is called. The
                 // pre-terrain flush reads 2.8 ms with zero groups, so this is the number that says whether that time is
                 // waiting for the GPU rather than working.
@@ -15003,6 +15050,31 @@ this.frameBufferOpen = false;
 
     private long lastTerrainIndirectCalls;
     private long lastDrawnGroups;
+    private long lastPipelineBindNanos;
+    private long lastViewNanos;
+    private long textureDrawNanos;
+    private long textureDrawCount;
+    private long itemDrawCount;
+    private long blockDrawCount;
+    private long particleDrawCount;
+    private long genericDrawCount;
+    private long lastTextureDrawCount;
+    private long lastItemDrawCount;
+    private long lastBlockDrawCount;
+    private long lastParticleDrawCount;
+    private long lastGenericDrawCount;
+    private long itemDrawNanos;
+    private long blockDrawNanos;
+    private long particleDrawNanos;
+    private long genericDrawNanos;
+    private long lastTextureDrawNanos;
+    private long lastItemDrawNanos;
+    private long lastBlockDrawNanos;
+    private long lastParticleDrawNanos;
+    private long lastGenericDrawNanos;
+    private long lastPushCallNanos;
+    private long lastMeshBindNanos;
+    private long lastDescriptorBindNanos;
 
     /** {@return the immediate groups drawn per frame over the report window}. */
     private long celtium$drawnGroupsPerFrame() {
@@ -17982,11 +18054,28 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
                     org.soutalab.celtium.vulkan.FramePassTimings.end("rcViewport");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
-                    if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                    else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                    else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                    else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                    else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);
+                    long variantStart = System.nanoTime();
+                    if (pipeline instanceof VulkanImmediateTexturePipeline value) {
+                        value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                        this.textureDrawNanos += System.nanoTime() - variantStart;
+                        this.textureDrawCount++;
+                    } else if (pipeline instanceof VulkanImmediateItemPipeline value) {
+                        value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                        this.itemDrawNanos += System.nanoTime() - variantStart;
+                        this.itemDrawCount++;
+                    } else if (pipeline instanceof VulkanImmediateBlockPipeline value) {
+                        value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                        this.blockDrawNanos += System.nanoTime() - variantStart;
+                        this.blockDrawCount++;
+                    } else if (pipeline instanceof VulkanImmediateParticlePipeline value) {
+                        value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                        this.particleDrawNanos += System.nanoTime() - variantStart;
+                        this.particleDrawCount++;
+                    } else {
+                        ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);
+                        this.genericDrawNanos += System.nanoTime() - variantStart;
+                        this.genericDrawCount++;
+                    }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                 }
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
