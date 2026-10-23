@@ -9,7 +9,7 @@ An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, 
 >
 > **native Vulkanで描画・提示する実装がありますが、描画・互換性・性能の受入は未完です。** 最新の判定と未解決項目は [現在表](<docs/plan.md>)だけで管理します。
 
-Status reviewed: **2026-10-17** (existing evidence re-audited; no new GPU runs).
+Status reviewed: **2026-10-23** (v0.0.15-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs).
 
 ## Current status
 
@@ -47,9 +47,9 @@ The supported development direction is Vulkan-only. Old bridge/probe experiments
 | Component | Current requirement / verification |
 | --- | --- |
 | Minecraft | 1.12.2 |
-| Loader | CleanroomMC; verified with 0.6.13-alpha. Cleanroom 0.7.x (SDL 3 instead of GLFW, Kirino Engine wired into the loader lifecycle) is **not yet a verified base** — the window creation path and the `glfwIconifyWindow` fixture would both change |
-| LWJGL | LWJGL3; verified with 3.4.1. Vulkan bindings/native libraries must match the Cleanroom installation |
-| Java for build and verified gameplay | JDK 25 |
+| Loader | CleanroomMC **0.7.11-alpha** (SDL 3). Builds from 0.0.14 on detect the SDL 3 binding and **refuse to start on the 0.6.x GLFW generation** by name, instead of failing later in `GL.createCapabilities` — the window creation path and the `glfwIconifyWindow` fixture would both change |
+| LWJGL | LWJGL3 **3.4.3** (the SDL 3 generation Cleanroom 0.7 ships). Vulkan bindings/native libraries must match the Cleanroom installation |
+| Java | JDK 25 to build; the verified gameplay JVM is **Java 27** (Cleanroom 0.7.11 on the SDL 3 loader) |
 | Celtium's own module bytecode | `--release 21`, class major 65 or lower; no Java 22+ API or preview dependency |
 | Vulkan | 1.2+ loader and physical device, with the required graphics/presentation, format and resource capabilities |
 | Verified GPUs / OS | RX 6400 and UHD 630 on Linux/Mesa |
@@ -59,7 +59,7 @@ The exact minimum feature/format contract is still being audited and reduced. **
 
 ## Downloads
 
-[**Celtium 0.0.5-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.0.5-alpha) (2026-10-15) is the newest published binary. [0.0.3-alpha](https://github.com/souta-lab/celtium/releases/tag/v0.0.3-alpha) is the latest non-prerelease tag; 0.0.1-alpha and 0.0.2-alpha are older pre-releases. All of them carry the same limitations described above — the fixes since 0.0.5-alpha (display lists, the Sodium-style backdrop, texture-less layouts) are in `main` and in development builds only.
+[**Celtium 0.0.15-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.0.15-alpha) (2026-10-23) is the newest published binary. **0.0.14-alpha must not be used**: its indirect draw path discarded the item and colour families instead of drawing them; 0.0.15 fixes that. [0.0.3-alpha](https://github.com/souta-lab/celtium/releases/tag/v0.0.3-alpha) is the latest non-prerelease tag; 0.0.1-alpha and 0.0.2-alpha are older pre-releases. All of them carry the same limitations described above — the fixes since 0.0.5-alpha (display lists, the Sodium-style backdrop, texture-less layouts) are in `main` and in development builds only.
 
 ## Building and trying a development build
 
@@ -82,6 +82,23 @@ For reproducible validation and development, use [the current development proced
 ## Performance
 
 **General gameplay performance relative to Celeritas is not yet accepted.** Earlier README figures mixed different fixture windows and were not a statement of ordinary-instance FPS. The process audit also found a misspelled dump-control property in runs described as “tax-free”; their raw observations remain records, but that explanation was unsupported.
+
+### What the current build measures (2026-10-23, v0.0.15-alpha)
+
+Pinned world scene (QMAGNET's distributed map), 1920x1080, validation on, `frameStats` steady windows:
+
+| GPU | steady frame p50 | verdict |
+| --- | --- | --- |
+| AMD RX 6400 (RADV) | **7.99 ms** (≈125 fps) | PASSED, 0 validation messages, picture gate matched |
+| Intel UHD Graphics 630 | **11.89 ms** (≈84 fps) | PASSED, 0 validation messages |
+
+These are whole-frame intervals on one fixture and one camera pose, not a Celeritas comparison and not a general gameplay claim. About two thirds of that frame is not the
+renderer: with every draw command removed the frame still measured 5.3 ms, and a client-thread profile attributes the bulk to the game's tick and its own entity, tile-entity and
+world-reference work. Reaching 300 fps (3.3 ms) therefore needs work outside the renderer's drawing, and the renderer's own accept path and draw loop have no single hotspot left
+(see [development notes](<docs/development.md>)).
+
+An optional indirect-draw path (`-Dceltium.vulkan.indirectImmediate=true -Dceltium.vulkan.sortOpaque=true`) exists and is **off by default**: in this scene almost every
+immediate group is blended, so runs are one group long and the machinery does not pay.
 
 The [current table](<docs/plan.md>) preserves scoped observations and limitations. [Measurement instructions](<docs/development.md>) distinguish capture/validation overhead, whole-frame intervals, render brackets and CPU/GPU timing. Acceptance requires matched Celeritas/Celtium scenes, p50/p95/p99 and correct images on both GPUs; isolated fast fixtures or lower draw counts are insufficient. See [the performance plan](<docs/performance_plan.md>) for design work.
 
