@@ -663,3 +663,14 @@ terrain 3.2 / terrainPrep 2.8 / terrainPreflush 2.8 / flushCloseGroup 0.0
 複数箇所にある `drawPendingImmediate` 呼び出しの**周辺処理**。
 次は `flushPendingBeforeGlDraw` の残り区間（先頭から `flush` bracket の終わりまで）を
 `flushTail` として計測し、そこを最後の分割点にする。
+
+**fps300 KPI: pre-terrain flush は毎フレーム 64〜67 グループを記録（2026-10-23 実測・計器修正後）**
+
+```
+preflush[groupsPerFrame=67]   (63〜67で推移)
+terrainPerFrame[calls=5 draws=48]
+terrainPreflush p50 = 2.8ms
+```
+⇒ 2.8ms / 67 ≒ **42µs/グループ**。グループ数は控えめ(67)で1件あたりが重い。
+削減目標: 20µs/グループ以下（2.8ms → 1.3ms）またはグループ合体で半減。
+内訳候補: グループごとの状態解決・パイプライン/ディスクリプタ束縛・push constant・コマンド記録。
