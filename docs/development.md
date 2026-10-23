@@ -1920,3 +1920,14 @@ gameScreenshotMean=113.74  nonBlackFraction=0.98308  black=false
 保存PNGのsha256 `24aafadd27d659c3d995070970d8d8980c979273ecd221038b400f20a6641d64`、
 証拠として `docs/evidence/v0.0.15-f2-screenshot-fixed.png` に保存。
 ⇒ **ゲーム自身のF2スクリーンショットが実画像を返すようになった**（不具合③は修正）。
+
+**フレーム画像のclear計測（2026-10-23・残像⑤の切り分け途中）**
+
+`GllessFrameTarget` に「acquire時にclear要求が無かった回数」を追加し、`-Dceltium.vulkan.handoffTimings=true` で
+`gameClears=[latched=435,live=869,noClear=2177]` を観測。
+
+**ただしこれは「ウィンドウ毎」の計数**で、1フレームに複数ウィンドウ（描画サイト毎）を開くため、
+2つ目以降のウィンドウは毎回 clear を持たないのが正常。したがって **2177 は「フレームがclearされなかった」証拠にはならない**。
+「フレーム単位でclearが漏れたか」を判定するには、フレーム開始でのみ計数する必要がある（次にやる）。
+
+⇒ 残像⑤の原因は未確定。今回の計器だけでは断定しない。

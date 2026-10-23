@@ -189,6 +189,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /** How many clears came from the latch and how many still had to be read live, for this target's summary. */
     private int latchedGameClears;
     private int liveGameClears;
+    /** Frames whose acquire found no clear request, which leave the previous frame's picture in place. */
+    private int framesWithoutClear;
     private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int abandonedFrames;
@@ -840,6 +842,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
         }
         if (clears == 0 && !first) {
+            // The game cleared none of its framebuffers this frame, so this image keeps the previous frame's pixels.
+            // Counted rather than assumed absent: a frame that draws the world always clears, and a frame that does
+            // not is exactly the shape a ghosted picture leaves behind (moving text staying behind the new frame).
+            this.framesWithoutClear++;
             return;
         }
         this.neverCleared = false;
@@ -1827,7 +1833,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         // second pair a bare "offTargetClears=" would be read as if it covered both images.
         return "glless target: no handoff, abandoned=" + this.abandonedFrames
                 + " lastAbandon=[" + this.lastAbandonReason + "]"
-                + " gameClears=[latched=" + this.latchedGameClears + ",live=" + this.liveGameClears + "]"
+                + " gameClears=[latched=" + this.latchedGameClears + ",live=" + this.liveGameClears
+                + ",noClear=" + this.framesWithoutClear + "]"
                 + " offTargetPairs=[" + pairSummary() + "]";
     }
 
