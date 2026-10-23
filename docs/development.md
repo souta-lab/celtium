@@ -640,3 +640,15 @@ preflush[groupsPerFrame=0]
 1. `vkQueueSubmit` 呼び出し回数と所要時間
 2. `host.waitForIdle` / フェンス待ち / フレームスロット待ち の有無と時間
 を計器化し、**待ちを消す（frames-in-flightを増やす・待機点をずらす）**方向で削る。
+
+**fps300 KPI: preflush 2.8ms の正体（続報 2026-10-23）**
+
+`flushPendingBeforeGlDraw()` の本体を読むと、内側で `FramePassTimings.begin("flush")` を開いている。
+つまり `terrainPreflush(2.8ms)` と `flush(inside world)(3.3ms)` は**同じ1回の呼び出しを二重に計測**したもので、
+独立した2つのコストではない。実体は「地形前の順序付けフラッシュ」1回。
+
+グループは0なのに2.8msかかるので、内訳は
+(1) `finishFrameBuffer()`/`vkQueueSubmit` 等の提出処理、
+(2) フレームスロットのフェンス待ち（`waitForSlot` → `vkWaitForFences`）
+のどちらか（または両方）。次はこの2つを個別に計器化する（submit回数/時間とスロット待ち時間）。
+待ちなら frames-in-flight を増やす、提出なら統合する。
