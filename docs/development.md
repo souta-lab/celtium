@@ -2672,3 +2672,20 @@ GPUからreadbackした6枚の平均   = 198.3 / 169.2 / 66.6 / 41.6 / 184.4 / 7
 **修正方針**: textured family に限り、**非恒等 modelview のグループは受理時に頂点へbake**する
 （`VulkanDynamicMesh.copyVerticesTransformed` は 3x4 全体を焼けるので回転も扱える）。
 bake 後 group.modelView を恒等にすれば、shader の前提（position は変換済み）と一致する。
+
+**修正第1版: textured family の非軸整列 affines を bake（2026-10-24 実測・効果なし）**
+
+`celtium$preTransformable` を拡張し、format 1/2/6 で modelview が affine なら
+回転・並進も bake するようにした（shader が行列を適用しない family のため）。
+
+結果:
+- **bake は発火した**（`CELTIUM_WINDOW_TILE_OFFSETS` が `(0.0078,...)` から `(0.0000,...)` に変化）
+- **しかし絵は変わらない**（mean 105.4 / saturated 0.040 / 参照との差 65.70%、修正前と同一）
+- ワールド受入は **PASSED 維持**
+
+⇒ bake に使った `this.glModelView` が、グループ行列として記録されていた行列と**別物**（bake時は恒等）で、
+実質何も変わっていない疑い。つまり「グループの行列」と「bakeに使う生きた行列」の**情報源が2つある**。
+
+**次の一手**: パノラマの受理時に `this.glModelView` の並進 (m[12],m[13]) を記録し、
+`currentGroupModelView` の値（0.0078）と一致するか比較。食い違うなら、
+グループ行列の捕捉元と bake元を同一にそろえる（これが真の修正）。
