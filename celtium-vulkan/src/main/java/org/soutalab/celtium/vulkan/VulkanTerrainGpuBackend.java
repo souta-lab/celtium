@@ -18340,6 +18340,17 @@ this.frameBufferOpen = false;
             }
             java.util.List<Integer> sizes = new java.util.ArrayList<Integer>(modelViewCounts.values());
             sizes.sort(java.util.Comparator.reverseOrder());
+            int identityModelViews = 0;
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                float[] mv = this.immediateGroups.get(i).modelView;
+                if (mv != null && Math.abs(mv[0] - 1.0f) < 1.0e-5f && Math.abs(mv[5] - 1.0f) < 1.0e-5f
+                        && Math.abs(mv[10] - 1.0f) < 1.0e-5f && Math.abs(mv[12]) < 1.0e-5f
+                        && Math.abs(mv[13]) < 1.0e-5f && Math.abs(mv[14]) < 1.0e-5f) {
+                    identityModelViews++;
+                }
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_IDENTITY_MV identityViews=" + identityModelViews
+                    + " groups=" + this.immediateGroups.size());
             System.out.println("[Celtium] CELTIUM_WINDOW_MODELVIEWS distinct=" + modelViewCounts.size()
                     + " groups=" + this.immediateGroups.size()
                     + " largest=" + (sizes.isEmpty() ? 0 : sizes.get(0).intValue())
