@@ -18510,6 +18510,11 @@ this.frameBufferOpen = false;
             // large windows a menu frame draws, and a log bounded to twelve cannot say that.
             this.largeWindowGroups += this.immediateGroups.size();
             this.largeWindows++;
+            if (this.largeWindows <= 12) {
+                System.out.println("[Celtium] CELTIUM_WINDOW_DRAW presents=" + this.presentHookCalls
+                        + " groups=" + this.immediateGroups.size() + " viewport=" + this.liveViewportWidth
+                        + "x" + this.liveViewportHeight + " target=0x" + Long.toHexString(target));
+            }
             if (this.largeWindows % 60 == 0) {
                 System.out.println("[Celtium] CELTIUM_LARGE_WINDOWS windows=" + this.largeWindows
                         + " groups=" + this.largeWindowGroups + " frame=" + this.frameId
