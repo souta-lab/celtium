@@ -1717,5 +1717,8 @@ offMerge 0.1 / offAppend 0.1 / setupTerrain 0.1 / sky 0.1
 frame 3.7ms のうち名前の付いたレンダラ分は約1.5msで、残り約2msがvanilla側（tick含む）。
 ※このrunはpassSplit有効（bracket税あり）。production（bracketなし）はさらに軽い。
 
-**KPIの現在地（実運用に近い条件）**: frame 3.7〜4.4ms ＝ **約230〜270fps**。
-300fps(3.3ms)まで残り **0.4〜1.1ms** で、内訳的にはvanilla側と窓オーバーヘッドが対象。
+**KPIの現在地（実運用に近い条件）**: 同じ jar の validation OFF で、定常窓 p50 は
+**3.7ms（passSplit run）／4.38ms（180s）／6.46ms（300s run の最終窓）** とばらつく。
+これはfixtureのワールド状態・カメラ・chunk量がrun間で揺れるためで、**単一窓p50をKPIにしない**。
+300fps(3.3ms)への距離は 0.4〜3.2ms と幅があり、**同一条件の複数run中央値で評価する必要がある**。
+計測プロトコル: validation OFF の 180s leg を最低3回、各runの最終窓 p50 の中央値を採る。
