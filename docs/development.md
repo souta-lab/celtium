@@ -2480,3 +2480,22 @@ pipeline blend有効/depth書き込み無効・route frame-image・射影・texM
 
 **次の一手**: この pipeline の `colorBlend`（srcColor/dstColor/srcAlpha/dstAlpha）を数値で出し、
 バニラの `tryBlendFuncSeparate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA)` と比較。
+
+**パノラマ①: ブレンド係数もバニラと一致（2026-10-24 実測）**
+
+```
+CELTIUM_WINDOW_PIPELINES ... blend=blend[rgb=6,7 a=1,0 op=0/0 mask=0x7]
+```
+Vulkanのenum値で rgb=(6,7)=**(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)**、alpha=(1,0)、加算命令(0,0)、
+書き込みマスク0x7=RGBのみ。バニラが `tryBlendFuncSeparate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE,
+ONE_MINUS_SRC_ALPHA)` で設定する色合成と**一致**している。
+
+⇒ 受理側の全項目＋アルファ＋ブレンド係数まで**すべて正しい**。
+
+**残る唯一の層 = テクスチャ画像の中身（アップロード/mip/サンプラ）**。
+ミラー登録ログでは id=34〜39 が `source=announcement ... opaque=65536/65536` と「内容はある」と出るが、
+これは**CPU側の記録**であり、GPU画像へ実際に書かれたかは別。もし画像が未アップロード（未初期化）なら
+サンプル結果は不定（白っぽい塊）になり、観測（淡い巨大な形）と整合する。
+
+**次の一手**: id=34〜39 が「fullyInitialized」かどうかを記録し、未初期化なら
+`uploadFromGlTexture` 経路（announcement からの供給）がメニュー時に走っているかを追う。

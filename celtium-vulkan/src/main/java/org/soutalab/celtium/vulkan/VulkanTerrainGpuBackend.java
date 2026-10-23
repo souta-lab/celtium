@@ -18494,7 +18494,8 @@ this.frameBufferOpen = false;
                 if (pipeline instanceof VulkanImmediateTexturePipeline texture) {
                     pipelineSummary.append("texture blends=").append(texture.celtium$blends())
                             .append(" depthWrite=").append(texture.celtium$depthWrites())
-                            .append(" depthTest=").append(texture.celtium$depthTests());
+                            .append(" depthTest=").append(texture.celtium$depthTests())
+                            .append(" blend=").append(texture.celtium$colorBlend().describe());
                 } else if (pipeline instanceof VulkanImmediateItemPipeline item) {
                     pipelineSummary.append("item blends=").append(item.celtium$blends())
                             .append(" depthWrite=").append(item.celtium$depthWrites())
