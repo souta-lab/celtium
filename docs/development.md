@@ -1165,3 +1165,21 @@ frame p50 10.68-13.51ms（ベースラインは 8.2〜9.2ms）← まだ遅い
 ドロー削減分を上回っている。次は run長の実測（`indirect[runs=, groups=, runsPerFrameX100=]`）を計器に追加し、
 `sortOpaque` 併用で run を長くする／item（lit）系のレコード変種を作る、のどちらが効くかを測る。
 既定offのまま（未達のため）。
+
+**fps300 KPI: indirect run が1グループ/runになる理由を特定（2026-10-23 実測・決定的）**
+
+`sortOrder[segments=1 ordered=1]` / `indirect[runs=1049 groups=1049]` ⇒ **1ウィンドウで間接経路に
+乗るのは約1〜3グループだけ**。残りは:
+- **blend有り**（HUD/フォント）＝間接経路の対象外（順序保存のため）
+- **item（lit）系**＝`VulkanImmediateTexturePipeline` ではなく `VulkanImmediateItemPipeline` なので対象外
+- bindForm（約9%）
+
+つまり **間接経路が対象にしている family が誤り**。ワールドの主役は item（124/フレーム）で、
+そのレコード読み変種（lit用）が無いため対象に入らない。
+
+**次の一手**: `immediate_tex_color_lit` のレコード読み変種（records + lighting + fog）を作り、
+`VulkanImmediateItemPipeline` に records モードを追加して対象を広げる。これが無い限り
+run は1グループのままで、run固定費（set束縛2つ＋208B push＋バッファ束縛）だけが増える。
+
+`sortOpaque` は **targetセグメント単位**で順序を付ける実装に変えた（別targetのグループは位置を保つ）。
+`sortedOrder[segments=, ordered=]` をレポートに追加。

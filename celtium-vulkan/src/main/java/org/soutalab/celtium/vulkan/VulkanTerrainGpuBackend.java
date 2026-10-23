@@ -2592,6 +2592,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
+                + " sortOrder[segments=" + this.drawOrderSegments + " ordered=" + this.drawOrderOpaque + "]"
                 + " indirect[runs=" + this.indirectRunsIssued + " groups=" + this.indirectGroupsIssued
                 + " runsPerFrameX100=" + this.celtium$indirectRunsPerFrameX100() + "]"
                 // How many groups the bake actually opened and how many splits still name the matrix: the bake only pays
@@ -13683,6 +13684,8 @@ this.frameBufferOpen = false;
     private long[] drawOrderKeys = new long[0];
     private int[] drawOrderIndices = new int[0];
     private int[] drawOrder = new int[0];
+    private int drawOrderSegments;
+    private int drawOrderOpaque;
 
     /**
      * {@return the order to record a flush's groups in}: the fully opaque groups by material first, then everything else
@@ -13702,62 +13705,62 @@ this.frameBufferOpen = false;
         long[] keys = this.drawOrderKeys;
         int[] indices = this.drawOrderIndices;
         int[] order = this.drawOrder;
-        int opaque = 0;
-        long sharedTarget = groups.get(0).target;
-        for (int i = 0; i < count; i++) {
-            ImmediateGroup group = groups.get(i);
-            // A target boundary keeps its position: the flush that switches target is what the loop below records around.
-            if (group.target != sharedTarget) {
-                return null;
-            }
-            PreparedImmediate prepared = group.prepared;
-            if (prepared == null || prepared.pipeline == null) {
-                continue;
-            }
-            Object pipeline = prepared.pipeline;
-            if (!(pipeline instanceof VulkanImmediatePipeline immediate)) {
-                continue;
-            }
-            if (!immediate.celtium$depthWrites() || !immediate.celtium$depthTests() || immediate.celtium$blends()) {
-                continue;
-            }
-            keys[opaque] = ((long) System.identityHashCode(pipeline) << 21) ^ (prepared.descriptor * 0x9E3779B97F4A7C15L);
-            indices[opaque] = i;
-            opaque++;
-        }
-        // Insertion sort on the opaque prefix: about 150 entries with 60 distinct keys, and the pair has to stay
-        // together, which the primitive arrays do without an object array per frame.
-        for (int i = 1; i < opaque; i++) {
-            long key = keys[i];
-            int index = indices[i];
-            int j = i - 1;
-            while (j >= 0 && keys[j] > key) {
-                keys[j + 1] = keys[j];
-                indices[j + 1] = indices[j];
-                j--;
-            }
-            keys[j + 1] = key;
-            indices[j + 1] = index;
-        }
         int pos = 0;
-        for (int i = 0; i < opaque; i++) {
-            order[pos++] = indices[i];
-        }
-        // The rest keeps arrival order. A group is "rest" if it was not collected above; recomputing the test is cheaper
-        // than a parallel flag array and cannot disagree with it.
-        for (int i = 0; i < count; i++) {
-            ImmediateGroup group = groups.get(i);
-            PreparedImmediate prepared = group.prepared;
-            boolean opaqueGroup = false;
-            if (prepared != null && prepared.pipeline instanceof VulkanImmediatePipeline immediate
-                    && immediate.celtium$depthWrites() && immediate.celtium$depthTests()
-                    && !immediate.celtium$blends()) {
-                opaqueGroup = true;
+        int segments = 0;
+        int segmentStart = 0;
+        // One target segment at a time: the loop below keeps groups of another target at their arrival position (they are
+        // handed to keptImmediateGroups), so only the runs of one target can be reordered against each other.
+        while (segmentStart < count) {
+            long segmentTarget = groups.get(segmentStart).target;
+            int segmentEnd = segmentStart;
+            while (segmentEnd < count && groups.get(segmentEnd).target == segmentTarget) {
+                segmentEnd++;
             }
-            if (!opaqueGroup) {
-                order[pos++] = i;
+            segments++;
+            int opaque = 0;
+            for (int i = segmentStart; i < segmentEnd; i++) {
+                ImmediateGroup group = groups.get(i);
+                PreparedImmediate prepared = group.prepared;
+                if (prepared == null || !(prepared.pipeline instanceof VulkanImmediateTexturePipeline texture)) {
+                    continue;
+                }
+                if (!texture.celtium$depthWrites() || !texture.celtium$depthTests() || texture.celtium$blends()) {
+                    continue;
+                }
+                keys[opaque] = (((long) System.identityHashCode(prepared.pipeline)) * 0x9E3779B97F4A7C15L)
+                        ^ (prepared.descriptor * 0x94D049BB133111EBL);
+                indices[opaque] = i;
+                opaque++;
             }
+            for (int i = 1; i < opaque; i++) {
+                long key = keys[i];
+                int index = indices[i];
+                int j = i - 1;
+                while (j >= 0 && keys[j] > key) {
+                    keys[j + 1] = keys[j];
+                    indices[j + 1] = indices[j];
+                    j--;
+                }
+                keys[j + 1] = key;
+                indices[j + 1] = index;
+            }
+            for (int i = 0; i < opaque; i++) {
+                order[pos++] = indices[i];
+            }
+            for (int i = segmentStart; i < segmentEnd; i++) {
+                ImmediateGroup group = groups.get(i);
+                PreparedImmediate prepared = group.prepared;
+                boolean opaqueGroup = prepared != null
+                        && prepared.pipeline instanceof VulkanImmediateTexturePipeline texture
+                        && texture.celtium$depthWrites() && texture.celtium$depthTests() && !texture.celtium$blends();
+                if (!opaqueGroup) {
+                    order[pos++] = i;
+                }
+            }
+            segmentStart = segmentEnd;
         }
+        this.drawOrderSegments = segments;
+        this.drawOrderOpaque = pos;
         return order;
     }
     private final java.util.Map<Long, Integer> drawKeyCounts = new java.util.HashMap<Long, Integer>();
