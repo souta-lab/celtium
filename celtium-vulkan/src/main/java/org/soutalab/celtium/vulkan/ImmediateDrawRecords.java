@@ -124,7 +124,8 @@ final class ImmediateDrawRecords {
      * @return the record's index, which is the indirect command's firstInstance, or -1 when the block is too short
      */
     int record(ByteBuffer pushBlock) {
-        if (pushBlock == null || pushBlock.capacity() < RECORD_BYTES) {
+        // 208 is the smallest push block the two families produce; the stride rounds that up to 224 with a zeroed pad.
+        if (pushBlock == null || pushBlock.capacity() < 208) {
             return -1;
         }
         if (this.records + 1 > this.capacity) {
@@ -136,7 +137,11 @@ final class ImmediateDrawRecords {
             }
         }
         long target = this.buffer.mappedAddress() + (long) this.records * RECORD_BYTES;
-        org.lwjgl.system.MemoryUtil.memCopy(org.lwjgl.system.MemoryUtil.memAddress(pushBlock), target, RECORD_BYTES);
+        // The textured family's block is 208 bytes and the lit family's 216, but the array's stride is 224: copy what the
+        // caller has and zero the rest, so the pad bytes are defined and the next record starts at the stride boundary.
+        int copy = Math.min(pushBlock.capacity(), RECORD_BYTES);
+        org.lwjgl.system.MemoryUtil.memCopy(org.lwjgl.system.MemoryUtil.memAddress(pushBlock), target, copy);
+        org.lwjgl.system.MemoryUtil.memSet(target + copy, 0, RECORD_BYTES - copy);
         return this.records++;
     }
 

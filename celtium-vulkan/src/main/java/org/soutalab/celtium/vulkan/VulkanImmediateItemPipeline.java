@@ -133,6 +133,10 @@ public final class VulkanImmediateItemPipeline {
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
 
     private final VulkanColorBlendState colorBlend;
+    /** Whether this instance is the record-reading variant (set 1 holds the draw records, no vertex push block). */
+    private boolean records;
+    /** The records set layout, owned by {@link ImmediateDrawRecords}; this pipeline only references it. */
+    private long recordsLayout = VK_NULL_HANDLE;
     private final boolean depthTest;
     private final boolean depthWrite;
     private final boolean cull;
@@ -202,6 +206,93 @@ public final class VulkanImmediateItemPipeline {
     /** {@return whether this variant samples the light map and carries the light-map term}. */
     public boolean lit() {
         return this.lit;
+    }
+
+    /**
+     * Creates the record-reading twin of a lit variant: same pipeline state, same per-texture set at set 0, with the
+     * draw records at set 1 and the vertex stage reading its block from them.
+     */
+    public static VulkanImmediateItemPipeline createRecords(VulkanContext context, long renderPass,
+                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+                            int depthCompareOp, long recordsSetLayout) {
+        VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, colorBlend,
+                depthTest, depthWrite, cull, depthCompareOp, true);
+        result.records = true;
+        result.recordsLayout = recordsSetLayout;
+        try {
+            result.createPipelineLayout();
+            result.createPipeline();
+        } catch (RuntimeException | LinkageError error) {
+            VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.incrementAndGet();
+            result.delete();
+            throw error;
+        }
+        return result;
+    }
+
+    /** {@return the render pass this pipeline was built for}. */
+    public long celtium$renderPass() {
+        return this.renderPass;
+    }
+
+    /** {@return the blend state this pipeline was built with}. */
+    public VulkanColorBlendState celtium$colorBlend() {
+        return this.colorBlend;
+    }
+
+    /** {@return whether face culling is on}. */
+    public boolean celtium$culls() {
+        return this.cull;
+    }
+
+    /** {@return the depth compare op this pipeline was built with}. */
+    public int celtium$depthCompareOp() {
+        return this.depthCompareOp;
+    }
+
+    /** {@return whether this pipeline writes depth}. */
+    public boolean celtium$depthWrites() {
+        return this.depthWrite;
+    }
+
+    /** {@return whether this pipeline tests depth}. */
+    public boolean celtium$depthTests() {
+        return this.depthTest;
+    }
+
+    /** {@return whether this pipeline blends}. */
+    public boolean celtium$blends() {
+        return this.colorBlend != null && this.colorBlend.celtium$blends();
+    }
+
+    /**
+     * Binds this record-reading pipeline for a run and issues one {@code vkCmdDrawIndexedIndirect}.
+     * <p>
+     * The fragment stage still reads the alpha reference and colour from the push block, so the run's block goes out
+     * here; the vertex stage reads everything else per record.
+     */
+    public void drawIndirectRange(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
+                                  long textureSet, long recordsSet, long[] bindCache, long indirectBuffer,
+                                  long indirectOffset, int drawCount) {
+        if (this.pipeline == VK_NULL_HANDLE || mesh == null || drawCount <= 0) {
+            return;
+        }
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
+        if (pushConstants != null) {
+            ByteBuffer clamped = this.clampedView.view(pushConstants, pushBytes());
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
+        }
+        if (textureSet != 0L && recordsSet != 0L) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    org.lwjgl.system.MemoryStack.stackGet().longs(textureSet, recordsSet), null);
+        }
+        mesh.bindAtZero(commandBuffer, bindCache);
+        org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, drawCount,
+                org.lwjgl.vulkan.VkDrawIndexedIndirectCommand.SIZEOF);
     }
 
     /** {@return the push range this pipeline's layout declares}, so the draw clamps a wider shared block. */
@@ -586,14 +677,25 @@ public final class VulkanImmediateItemPipeline {
                     "vkAllocateDescriptorSets(immediate item)");
             this.descriptorSet = setHandle.get(0);
             DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
+            VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default();
+            if (this.records) {
+                VkPushConstantRange.Buffer fragmentRange = VkPushConstantRange.calloc(1, stack);
+                // The fragment stage still declares the whole block, so the range covers it even though the vertex stage
+                // reads nothing from it; a range shorter than the declaration is a pipeline-creation error.
+                fragmentRange.get(0).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT).offset(0).size(pushBytes());
+                if (this.recordsLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the records pipeline needs the records set layout");
+                }
+                create.pSetLayouts(stack.longs(this.descriptorSetLayout, this.recordsLayout))
+                        .pPushConstantRanges(fragmentRange);
+            } else {
             VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
             // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
             // stages: declaring it for the vertex stage alone is a shader-interface mismatch.
             range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                     .offset(0).size(this.lit ? PUSH_CONSTANT_BYTES_LIT : PUSH_CONSTANT_BYTES);
-            VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
-                    .pSetLayouts(stack.longs(this.descriptorSetLayout))
-                    .pPushConstantRanges(range);
+            create.pSetLayouts(stack.longs(this.descriptorSetLayout)).pPushConstantRanges(range);
+            }
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreatePipelineLayout(this.context.device(), create, null, handle),
                     "vkCreatePipelineLayout(immediate)");
@@ -603,7 +705,9 @@ public final class VulkanImmediateItemPipeline {
 
     private void createPipeline() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer vertexCode = SpirvShaders.load(this.lit ? SpirvShaders.IMMEDIATE_TEX_COLOR_LIT_VERTEX
+            ByteBuffer vertexCode = SpirvShaders.load(this.records
+                    ? SpirvShaders.IMMEDIATE_TEX_COLOR_LIT_RECORDS_VERTEX
+                    : this.lit ? SpirvShaders.IMMEDIATE_TEX_COLOR_LIT_VERTEX
                     : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
             // BH-30: the lit variant has its own fragment without the fog input/math - its push block spends 128..215
             // on the lighting payload, so the shared fragment's fog block cannot be declared there (and with the shared

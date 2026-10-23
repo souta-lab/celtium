@@ -2249,6 +2249,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean INDIRECT_IMMEDIATE = Boolean.getBoolean("celtium.vulkan.indirectImmediate");
     private static final int INDIRECT_COMMAND_BYTES = 20;
     private final java.util.Map<Object, VulkanImmediateTexturePipeline> recordsPipelines = new java.util.IdentityHashMap<>();
+    private final java.util.Map<Object, VulkanImmediateItemPipeline> recordsItemPipelines = new java.util.IdentityHashMap<>();
+    private Object indirectRunPipelineObject;
     private VulkanHostBuffer indirectCommands;
     private int indirectCommandCount;
     private long indirectRunKey;
@@ -2284,13 +2286,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private boolean celtium$tryEnqueueIndirect(ImmediateGroup group, VulkanDynamicMesh mesh,
                                                PreparedImmediate prepared, java.nio.ByteBuffer push) {
-        if (!INDIRECT_IMMEDIATE || mesh == null || prepared == null || push == null || this.drawRecords == null
-                || !(prepared.pipeline instanceof VulkanImmediateTexturePipeline texture)) {
+        if (!INDIRECT_IMMEDIATE || mesh == null || prepared == null || push == null || this.drawRecords == null) {
             celtium$flushIndirectRun();
             return false;
         }
-        if (!texture.celtium$depthTests() || !texture.celtium$depthWrites() || texture.celtium$blends()
-                || group.postClears != null || mesh.layout() == null) {
+        // The two families that carry the frame: the textured one (sky, clouds, HUD) and the lit item one, which is the
+        // bulk at about 124 draws. They are separate classes, so each has its own record-reading twin.
+        boolean texturedFamily = prepared.pipeline instanceof VulkanImmediateTexturePipeline;
+        boolean itemFamily = prepared.pipeline instanceof VulkanImmediateItemPipeline item && item.lit();
+        if (!texturedFamily && !itemFamily) {
+            celtium$flushIndirectRun();
+            return false;
+        }
+        boolean opaque = texturedFamily
+                ? ((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$depthTests()
+                        && ((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$depthWrites()
+                        && !((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$blends()
+                : ((VulkanImmediateItemPipeline) prepared.pipeline).celtium$depthTests()
+                        && ((VulkanImmediateItemPipeline) prepared.pipeline).celtium$depthWrites()
+                        && !((VulkanImmediateItemPipeline) prepared.pipeline).celtium$blends();
+        if (!opaque || group.postClears != null || mesh.layout() == null) {
             celtium$flushIndirectRun();
             return false;
         }
@@ -2308,7 +2323,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         for (int offset = 112; offset < 128; offset++) {
             alphaKey = 31L * alphaKey + push.get(offset);
         }
-        long key = (((long) System.identityHashCode(texture)) * 0x9E3779B97F4A7C15L)
+        long key = (((long) System.identityHashCode(prepared.pipeline)) * 0x9E3779B97F4A7C15L)
                 ^ (prepared.descriptor * 0x94D049BB133111EBL)
                 ^ (((long) mesh.vertexBuffer()) * 31L) ^ ((long) mesh.indexBuffer())
                 ^ (alphaKey * 0xC2B2AE3D27D4EB4FL);
@@ -2326,7 +2341,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (!this.indirectRunActive) {
             this.indirectRunActive = true;
             this.indirectRunKey = key;
-            this.indirectRunPipeline = celtium$recordsPipeline(texture);
+            if (prepared.pipeline instanceof VulkanImmediateTexturePipeline texture) {
+                this.indirectRunPipeline = celtium$recordsPipeline(texture);
+                this.indirectRunPipelineObject = this.indirectRunPipeline;
+            } else {
+                VulkanImmediateItemPipeline itemState = (VulkanImmediateItemPipeline) prepared.pipeline;
+                VulkanImmediateItemPipeline twin = this.recordsItemPipelines.get(itemState);
+                if (twin == null) {
+                    twin = VulkanImmediateItemPipeline.createRecords(this.context, itemState.celtium$renderPass(),
+                            itemState.celtium$colorBlend(), itemState.celtium$depthTests(),
+                            itemState.celtium$depthWrites(), itemState.celtium$culls(),
+                            itemState.celtium$depthCompareOp(), this.drawRecords.descriptorSetLayout());
+                    this.recordsItemPipelines.put(itemState, twin);
+                }
+                this.indirectRunPipeline = null;
+                this.indirectRunPipelineObject = twin;
+            }
             this.indirectRunTextureSet = prepared.descriptor;
             this.indirectRunMesh = mesh;
             this.indirectRunFirstCommand = this.indirectCommandCount;
@@ -2360,10 +2390,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.indirectRunPipeline == null || this.indirectRunMesh == null || this.indirectRunCommands <= 0) {
             return;
         }
-        this.indirectRunPipeline.drawIndirectRange(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
-                this.indirectRunTextureSet, this.drawRecords.descriptorSet(), this.immediateBindCache,
-                this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
-                this.indirectRunCommands);
+        if (this.indirectRunPipeline != null) {
+            this.indirectRunPipeline.drawIndirectRange(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
+                    this.indirectRunTextureSet, this.drawRecords.descriptorSet(), this.immediateBindCache,
+                    this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
+                    this.indirectRunCommands);
+        } else if (this.indirectRunPipelineObject instanceof VulkanImmediateItemPipeline item) {
+            item.drawIndirectRange(this.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
+                    this.indirectRunTextureSet, this.drawRecords.descriptorSet(), this.immediateBindCache,
+                    this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
+                    this.indirectRunCommands);
+        }
         this.indirectRunsIssued++;
     }
     private int textureArrayLogs;
@@ -11870,6 +11907,10 @@ this.frameBufferOpen = false;
             records.delete();
         }
         this.recordsPipelines.clear();
+        for (VulkanImmediateItemPipeline records : this.recordsItemPipelines.values()) {
+            records.delete();
+        }
+        this.recordsItemPipelines.clear();
         if (this.indirectCommands != null) {
             this.indirectCommands.delete();
             this.indirectCommands = null;

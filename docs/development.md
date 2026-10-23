@@ -1195,3 +1195,22 @@ run は1グループのままで、run固定費（set束縛2つ＋208B push＋�
 
 これで「ワールドの主役＝item 124ドロー/フレーム」を間接経路に載せる前提が揃った。
 残り: `VulkanImmediateItemPipeline` に records モードを追加し、対象familyを広げて run長を再測定。
+
+**fps300 KPI: item系を間接経路に載せたら run長 ≈50グループになった（2026-10-23 実測・前進）**
+
+`VulkanImmediateItemPipeline` に recordsモード（set1=records、pushはfragment用range、シェーダは
+`immediate_tex_color_lit_records.vert`）を追加し、レコード長を224に統一して対象familyを拡大。
+さらにレコードwriterが **208バイトのpush block**も受け付けるよう修正（224未満で -1 を返していたため、
+前回は runs=0 になっていた）。
+
+```
+indirect[runs=308-701 groups=16801-35250]  → **run長 ≈ 50〜55グループ/run**
+runsPerFrameX100=256-327                   → **約3コマンド/フレーム**（194ドローを3回に集約）
+受入: PASSED・problems 0（画像gate通過）
+frame p50 15.67 → 9.95ms（ベースライン 8.07〜9.2ms）
+```
+⇒ **構造は狙い通り**（194ドロー → 約3コマンド）。ただし frame はまだベースライン同等〜やや悪い。
+最初の窓が遅いのは **recordsツインのパイプラインを状態ごとに遅延生成**しているためと考えられる（起動時コスト）。
+
+**次に測るべきこと**: (a) 定常窓だけの比較（生成コストを除外）、(b) ツイン生成を先読みする、
+(c) 残る約50ドロー（blend有りのHUD/フォント）は順序保存のため個別ドローのままであることの確認。
