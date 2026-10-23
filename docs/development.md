@@ -1959,3 +1959,23 @@ presented (kept): screenshots/celtium-presented-world-...-kept.png
 したがって残像⑤は**動きに依存する現象**（提示レイテンシ＝1フレーム遅れ、または入力と表示のずれ）の可能性が高い。
 次は fixture に「視点を動かしながら2フレーム撮る」段を足し、F2と提示画像の**位置ずれ**を測る。
 （静止画比較で0差分だったことは、動きの指標にはならない。）
+
+**提示の遅れを計測: 0フレーム（2026-10-23 実測）**
+
+presentが「ゲームが描いているフレーム」からどれだけ遅れているかを、submit時に記録したフレームIDと
+present時のフレームIDの差で計測（`framesNoClear` と同じ印字行に `presentLag=[max,one,more]`）。
+leg `preslag3`（AMD, world, 90s）:
+```
+gameClears=[latched=426,live=846,noClear=2120,framesNoClear=0 presentLag=[max=0,one=430,more=0]
+受入: PASSED
+```
+⇒ **提示は常に最新フレーム（差0）、2フレーム以上遅れた回は0**。
+**残像⑤の原因は「提示が古いフレームを出している」ことではない**（この仮説も棄却）。
+
+ここまでで⑤について棄却した仮説:
+1. フレーム画像のclear漏れ → `framesNoClear=0`
+2. 提示画像が古い/混ざる（静止） → F2画像と提示画像の差分0
+3. 提示のフレーム遅れ → `presentLag max=0, more=0`
+
+残る筋: ゲーム自身の入力→描画の遅延（Minecraft 1.12の1フレーム遅れは仕様）、
+またはGPU側の描画順（半透明の並び）で「見づらさ」が出ている可能性。④と同じ土台を疑う。

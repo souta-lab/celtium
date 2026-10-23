@@ -204,6 +204,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
     public void setFramesWithNoClear(long frames) {
         this.framesWithNoClear = frames;
     }
+
+    /** How far behind the game the presented frame was, as {max, at most one, more than one}. */
+    private long presentLagMax;
+    private long presentLagOne;
+    private long presentLagMore;
+
+    /** Sets the present-lag counters the summary reports. */
+    public void setPresentLag(long max, long one, long more) {
+        this.presentLagMax = max;
+        this.presentLagOne = one;
+        this.presentLagMore = more;
+    }
     private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int abandonedFrames;
@@ -1848,7 +1860,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 + " lastAbandon=[" + this.lastAbandonReason + "]"
                 + " gameClears=[latched=" + this.latchedGameClears + ",live=" + this.liveGameClears
                 + ",noClear=" + this.framesWithoutClear
-                + ",framesNoClear=" + this.framesWithNoClear + "]"
+                + ",framesNoClear=" + this.framesWithNoClear
+                + " presentLag=[max=" + this.presentLagMax + ",one=" + this.presentLagOne
+                + ",more=" + this.presentLagMore + "]"
                 + " offTargetPairs=[" + pairSummary() + "]";
     }
 

@@ -135,6 +135,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " presentHookCalls=" + VulkanTerrainGpuBackend.this.presentHookCalls);
             }
             VulkanTerrainGpuBackend.this.lastFrameReachedQueue = reached;
+            if (reached) {
+                VulkanTerrainGpuBackend.this.queuedFrameId = VulkanTerrainGpuBackend.this.frameId;
+            }
         }
     });
 
@@ -1255,6 +1258,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int firstGlErrorCode;
     /** A completed frame's content is in the shared image and has not been presented yet. */
     private boolean lastFrameReachedQueue;
+    /** The frame identity whose work was last queued, so a present can say how far behind the game it is. */
+    private long queuedFrameId = -1L;
+    private long presentLagMax;
+    private long presentLagOne;
+    private long presentLagMore;
     private boolean presentedImageDumpRequested;
     /** A presented frame has not reached the game's swap point yet, and how many swaps that skipped. */
     private boolean swapPendingFromVulkan;
@@ -6059,6 +6067,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             this.frameClearsAtLastBoundary = clears;
             gllessFrame.setFramesWithNoClear(this.framesWithNoClearAtAll);
+            gllessFrame.setPresentLag(this.presentLagMax, this.presentLagOne, this.presentLagMore);
         }
         this.frameId++;
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;
@@ -16513,8 +16522,21 @@ this.frameBufferOpen = false;
             // it is cleared when the next frame begins, and this call happens after that.
             return false;
         }
-        // Consumed: the next call presents the frame after this one.
+        // Consumed: the next call presents the frame after this one. What is worth measuring is how far the frame
+        // being presented is from the one the game is drawing: a still picture cannot show a trail, but a present that
+        // serves a frame two or more behind is exactly what a moving camera looks like when it lags.
         this.lastFrameReachedQueue = false;
+        if (this.queuedFrameId >= 0L) {
+            long lag = this.frameId - this.queuedFrameId;
+            if (lag > this.presentLagMax) {
+                this.presentLagMax = lag;
+            }
+            if (lag <= 1L) {
+                this.presentLagOne++;
+            } else {
+                this.presentLagMore++;
+            }
+        }
         try {
             if (!ensureFrameTarget()) {
                 this.presentSkipReason = "frame target not available";
