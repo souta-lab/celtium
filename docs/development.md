@@ -1042,3 +1042,20 @@ drawn[perFrame=190-216]（ドロー数は当然まだ減らない）
 2. run内の各グループを `copyVerticesTransformed` で**run用メッシュへ連結**（インデックスはrebasing済みのAPI使用）
 3. runあたり1回の bind+push+`vkCmdDrawIndexed`
 4. 対象は不透明グループのみ（ブレンド順序を壊さない）
+
+**fps300 KPI: 範囲ドローを単一プリミティブに統合（2026-10-23・受入済み）**
+
+`VulkanDynamicMesh` の描画コマンド発行を `drawRangeInternal(firstIndex, indexCount, vertexOffset)` に一本化し、
+全体描画（`bindAndDraw` の drawForm）も範囲描画（新API `bindAndDrawRange`）も同じ場所を通るようにした。
+```
+leg kpi-range: PASSED・problems 0
+drawn[perFrame=194]（挙動不変） frame p50 9.56-11.87ms（分散内）
+```
+これは次段（run用メッシュの部分範囲描画）に必要な道具で、既に全フレームで実行されている。
+
+**次段の実装手順（確定）**:
+1. フラッシュ先頭で run 用メッシュを1つ確保（`celtium$newImmediateMesh`）
+2. 各グループの頂点を `copyVerticesTransformed`（bake込み・インデックスrebasing内蔵）で run メッシュへ連結
+3. run の `(firstIndex, indexCount, vertexOffset)` を記録し、run境界で 1回の bind+push+`bindAndDrawRange`
+4. run境界の条件: pipeline・記述子・viewport/scissor・行列以外のpush内容（オフセット64〜156）が一致
+5. 対象は不透明かつ postClears の無いグループのみ（順序・クリア順を壊さない）

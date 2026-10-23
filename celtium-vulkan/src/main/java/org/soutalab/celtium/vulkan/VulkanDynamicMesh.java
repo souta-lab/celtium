@@ -309,10 +309,7 @@ public final class VulkanDynamicMesh {
             // The skip switch applies here as well: this is the path the immediate flush actually uses, so leaving it out
             // meant -Dceltium.debug.skipDrawCalls measured nothing on the one path that matters. With it, the difference
             // is the cost of the vkCmdDrawIndexed command itself.
-            if (!SKIP_DRAW_CALLS && !abSkipDraw) {
-                org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1,
-                        (int) (ibo / 4L), (int) (vbo / stride), 0);
-            }
+            drawRangeInternal(commandBuffer, (int) (ibo / 4L), this.indexCount, (int) (vbo / stride));
             if (timed) {
                 PacketCost.noteDraw(PacketCost.start() - drawStart);
                 PacketCost.notePacket(bound);
@@ -331,6 +328,49 @@ public final class VulkanDynamicMesh {
             bindCache[3] = ibo;
         }
         draw(commandBuffer);
+    }
+
+    /**
+     * Records a sub-range of this mesh - the shape a merged run needs, where several groups share one mesh and each run
+     * draws only the vertices it contributed.
+     * <p>
+     * The buffers are bound the same way {@link #bindAndDraw(VkCommandBuffer, long[])} binds them: once at offset 0 when
+     * the vertex offset converts to whole vertices, which is the case the frame arena's slice alignment guarantees for
+     * every position-first layout. The range rides in the draw call's firstIndex and vertexOffset, so a run costs the
+     * binding once and one command.
+     */
+    /** The one place the indexed draw command is recorded, shared by the whole-mesh and the range forms. */
+    private void drawRangeInternal(VkCommandBuffer commandBuffer, int firstIndex, int indexCount, int vertexOffset) {
+        if (indexCount <= 0) {
+            return;
+        }
+        if (SKIP_DRAW_CALLS || abSkipDraw) {
+            return;
+        }
+        org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, indexCount, 1, firstIndex, vertexOffset, 0);
+    }
+
+    public void bindAndDrawRange(VkCommandBuffer commandBuffer, long[] bindCache,
+                                 int firstIndex, int indexCount, int vertexOffset) {
+        if (this.destroyed) {
+            throw new IllegalStateException("a destroyed mesh cannot be drawn");
+        }
+        if (indexCount <= 0) {
+            return;
+        }
+        long vb = vertexBuffer();
+        long ib = indexBuffer();
+        if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L) {
+            org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+            org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(0L));
+            org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, 0L,
+                    org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+            bindCache[0] = vb;
+            bindCache[1] = ib;
+            bindCache[2] = 0L;
+            bindCache[3] = 0L;
+        }
+        drawRangeInternal(commandBuffer, firstIndex, indexCount, vertexOffset);
     }
 
     /** Appends a vertex and returns the index the caller should pass to {@link #index(int)}. */
