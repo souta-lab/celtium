@@ -1107,6 +1107,32 @@ public final class TextureCopyService {
     /** How many {@code glGetTexImage} serves have been logged. */
     private int getTexImageServes;
 
+    /**
+     * {@return the mean of a 16x16 block at the centre of an image, or -1 when it could not be read}.
+     * <p>
+     * Diagnostic only: it exists to answer whether a texture's GPU image holds the picture its CPU-side record carries,
+     * which is the one thing a mirror's own bookkeeping cannot state. The read is the copy path's, so it pays the same
+     * barriers a real readback does; the caller is a bounded debug line, not a per-frame path.
+     */
+    public float celtium$sampleImageMean(long image, int width, int height) {
+        if (image == 0L || width <= 0 || height <= 0) {
+            return -1.0f;
+        }
+        int size = Math.min(16, Math.min(width, height));
+        int[] pixels = readImageRectangle(image, Math.max(0, (width - size) / 2), Math.max(0, (height - size) / 2),
+                size, size);
+        if (pixels == null || pixels.length == 0) {
+            return -1.0f;
+        }
+        long sum = 0L;
+        for (int pixel : pixels) {
+            sum += (pixel >> 16) & 0xFF;
+            sum += (pixel >> 8) & 0xFF;
+            sum += pixel & 0xFF;
+        }
+        return (float) ((double) sum / (double) (pixels.length * 3));
+    }
+
     /** Bounded refusals for {@link #celtium$readPixels} and the serve count for the run report. */
     private int readPixelsRefusals;
     /** Reads of the window that the routing rule could not place and the frame image answered. */

@@ -3113,6 +3113,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 Float.valueOf(projection[14]));
     }
 
+    /** {@code -Dceltium.debug.sampleWindowImages=true}: read back the mean of each large window's textures. */
+    private static final boolean SAMPLE_WINDOW_IMAGES = Boolean.getBoolean("celtium.debug.sampleWindowImages");
     /** How many large windows have had their routing logged. */
     private int windowRouteLogs;
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
@@ -18471,6 +18473,24 @@ this.frameBufferOpen = false;
             }
             System.out.println("[Celtium] CELTIUM_WINDOW_TEXMATRIX withMatrix=" + textured
                     + " groups=" + this.immediateGroups.size() + " first=" + firstTextureMatrix);
+            if (SAMPLE_WINDOW_IMAGES) {
+                StringBuilder means = new StringBuilder();
+                int sampled = 0;
+                for (Object image : textureImages) {
+                    if (sampled++ >= 6) {
+                        break;
+                    }
+                    if (image instanceof VulkanGlTexture texture) {
+                        float mean = this.textureCopyService.celtium$sampleImageMean(texture.image(),
+                                texture.width(), texture.height());
+                        if (means.length() > 0) {
+                            means.append(' ');
+                        }
+                        means.append(String.format(java.util.Locale.ROOT, "%.1f", Float.valueOf(mean)));
+                    }
+                }
+                System.out.println("[Celtium] CELTIUM_WINDOW_IMAGE_MEANS means=[" + means + "]");
+            }
             System.out.println("[Celtium] CELTIUM_WINDOW_IMAGES distinct=" + textureImages.size()
                     + " images=[" + imageDetail + "]");
             System.out.println("[Celtium] CELTIUM_WINDOW_DESCRIPTORS distinct=" + descriptors.size()
