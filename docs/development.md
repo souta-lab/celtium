@@ -1247,3 +1247,18 @@ Intel UHD 630 も同フラグで **PASSED・problems 0**（`kpi-steadyintel`）�
 
 ⇒ レンダラ所有コストが下がり、**frame 8.1 → 6.45ms（fps 約155）**。300fpsの床（ドロー全削除で5.3ms）は
 別途vanilla側の削減が必要なことに変わりはない。
+
+**最適化後のプロファイル（2026-10-23・間接run既定on・AMD・validation ON）**
+
+JFR（ワールド滞在中, 377サンプル, Client thread）上位:
+```
+27 java.util.HashMap$TreeNode.getTreeNode   ← 内訳: EntityDataManager 9, TextureRegistry.get 3, retainAll 2, bindTexture 2, TESR 2, ModelQuadCapture 2 …
+24 submitImmediateBatchBody                 ← 受理経路（約6%）
+ 9 HashMap.putVal / 9 Long2ObjectOpenHashMap 反復 / 8 World.* 参照 / 8 BufferBuilder
+ 5 FontBatch.celtium$fontMatrixBoundary
+```
+⇒ ドロー削減後は**大きな単一ホットスポットが無い**。上位は「バニラのエンティティdata参照」と「受理経路」で、
+どちらも1件あたりは小さい。**残りはvanilla描画ロジック側**（ドロー全削除でも5.3ms残る実測と整合）。
+
+注: このrunは validation ON（diagnostics有効）なので、`bindTexture` 等のdiagnostics側の参照も含む。
+既定運用（validation OFF）ではその分は消える。
