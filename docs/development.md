@@ -831,3 +831,16 @@ diagnostics が理由で bracket が有効になるため、受入legでも毎�
 実測: leg `kpi-acc3` は **PASSED・problems 0**、frame p50 7.1ms / world 6.6ms。
 **p50では差が検出できない**（期待効果 < 0.1ms）。ただし受入legのように diagnostics が常時オンの条件では
 無駄な map 参照が確実に減るため、残す。断定はしない。
+
+**fps300 KPI: 受理経路は0.3ms/frameで無罪（2026-10-23 実測）**
+
+`acceptPerFrame[batches=0 decideMs=2-3 preflightMs=15-28 tailMs=0 appendMs=10-16]`（レポート窓=120フレーム）
+⇒ フレーム換算: decide 0.02ms / **preflight 0.13-0.23ms** / append 0.08-0.13ms ＝ **受理経路 合計 ≈0.3ms/frame**。
+`batches=0` は `immediateBatchesOffered()` がこの窓で動いていない（計器の意味を確認する必要あり）ため根拠にしない。
+
+⇒ `winRecord 2.5ms` の内訳は **受理ではなく描画**（item 1.07 + texture 0.60 + generic 0.13 + binds 0.22 +
+push 0.07 + mesh 0.32 ≈ 2.4ms）で確定。**削れるのはドロー回数のみ**という結論が補強された。
+
+さらに: MERGE_CENSUS の run キーは pipeline・記述子・viewport のみ（変換を含まない）で largestRun=1 だった。
+つまり**変換を焼き込んでも結合できない**（テクスチャ/パイプラインが毎回変わる）。結合には
+「テクスチャ配列/インデックス化＋indirect multi-draw」というアーキテクチャ変更が必須。

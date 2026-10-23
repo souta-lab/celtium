@@ -2328,6 +2328,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long descriptorBindTotal = VulkanImmediateTexturePipeline.DESCRIPTOR_BIND_NANOS;
         long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
         long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
+        long acceptDecideDelta = this.acceptDecideNanos - this.lastAcceptDecideNanos;
+        long acceptPreflightDelta = this.acceptPreflightNanos - this.lastAcceptPreflightNanos;
+        long acceptTailDelta = this.acceptTailNanos - this.lastAcceptTailNanos;
+        long appendDelta = this.immediateStatistics.appendNanos() - this.lastAppendNanos;
+        this.lastAcceptDecideNanos = this.acceptDecideNanos;
+        this.lastAcceptPreflightNanos = this.acceptPreflightNanos;
+        this.lastAcceptTailNanos = this.acceptTailNanos;
+        this.lastAppendNanos = this.immediateStatistics.appendNanos();
+        this.lastAcceptedBatches = this.immediateStatistics.immediateBatchesOffered();
         long drawFormDelta = VulkanDynamicMesh.DRAW_FORM_BINDS - this.lastDrawFormBinds;
         long bindFormDelta = VulkanDynamicMesh.BIND_FORM_BINDS - this.lastBindFormBinds;
         this.lastDrawFormBinds = VulkanDynamicMesh.DRAW_FORM_BINDS;
@@ -2419,6 +2428,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // cheap; re-binding a slice offset per group is the expensive one, and only happens when the slice
                 // offset is not a multiple of the vertex stride.
                 + " forms[draw=" + drawFormDelta + " bind=" + bindFormDelta + "]"
+                // The accept path's split per frame, not cumulatively: the JFR puts submitImmediateBatch at the top of
+                // the render thread and the counters for its parts existed, but only as run totals.
+                + " acceptPerFrame[batches=" + (this.immediateStatistics.immediateBatchesOffered() - this.lastAcceptedBatches)
+                + " decideMs=" + (acceptDecideDelta / 1_000_000L)
+                + " preflightMs=" + (acceptPreflightDelta / 1_000_000L)
+                + " tailMs=" + (acceptTailDelta / 1_000_000L)
+                + " appendMs=" + (appendDelta / 1_000_000L) + "]"
                 + " binds[pipelineMs=" + (pipelineBindDelta / 1_000_000L)
                 + " descriptorMs=" + (descriptorBindDelta / 1_000_000L) + "]"
                 + " variants[textureMs=" + (textureDrawDelta / 1_000_000L)
@@ -15108,6 +15124,11 @@ this.frameBufferOpen = false;
     private long lastTextureDrawNanos;
     private long lastArenaPromotions;
     private long lastDrawFormBinds;
+    private long lastAcceptDecideNanos;
+    private long lastAcceptPreflightNanos;
+    private long lastAcceptTailNanos;
+    private long lastAppendNanos;
+    private long lastAcceptedBatches;
     private long lastBindFormBinds;
     private long lastArenaBlocked;
     private long lastArenaFallbacks;
