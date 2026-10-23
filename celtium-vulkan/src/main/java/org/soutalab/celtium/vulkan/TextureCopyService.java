@@ -530,19 +530,6 @@ public final class TextureCopyService {
                 }
             }
             if (blitRefusal == null) {
-                // Unconditional, and the reason is measured: with the wait left to the hasPendingImmediateWork branch the
-                // blit copies an image the frame's own draws have not reached. The title screen copies the window's
-                // (0,0)-(256,256) corner six times a frame, and the background came out as the previous frame's GUI text
-                // magnified (mean 105.3, saturated 0.042 against 112.0 and 0.303 for the host route, which waits). One
-                // device round trip per copy is the price of the corner holding this frame's panorama.
-                if (COPY_ORDER_WITHOUT_IDLE) {
-                    this.host.context().celtium$flushBatchedSubmits();
-                }
-                if (!this.host.waitForIdle()) {
-                    blitRefusal = "the GPU did not confirm the source's draws before the native copy";
-                }
-            }
-            if (blitRefusal == null) {
                 VkCommandBuffer commands = this.host.context().beginCommands();
                 try {
                     String recorded = this.host.registry().blitInto(destName, commands, image,
