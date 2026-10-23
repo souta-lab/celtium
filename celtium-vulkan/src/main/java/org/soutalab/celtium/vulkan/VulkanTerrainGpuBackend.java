@@ -2328,6 +2328,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long descriptorBindTotal = VulkanImmediateTexturePipeline.DESCRIPTOR_BIND_NANOS;
         long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
         long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
+        long submitDelta = this.immediateSubmitNanos - this.lastImmediateSubmitNanos;
+        this.lastImmediateSubmitNanos = this.immediateSubmitNanos;
         long acceptDecideDelta = this.acceptDecideNanos - this.lastAcceptDecideNanos;
         long acceptPreflightDelta = this.acceptPreflightNanos - this.lastAcceptPreflightNanos;
         long acceptTailDelta = this.acceptTailNanos - this.lastAcceptTailNanos;
@@ -2434,7 +2436,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " decideMs=" + (acceptDecideDelta / 1_000_000L)
                 + " preflightMs=" + (acceptPreflightDelta / 1_000_000L)
                 + " tailMs=" + (acceptTailDelta / 1_000_000L)
-                + " appendMs=" + (appendDelta / 1_000_000L) + "]"
+                + " appendMs=" + (appendDelta / 1_000_000L)
+                // The batch method's whole time against the parts measured inside it. Whatever the gap is, is work in
+                // submitImmediateBatchTimed that no bracket named yet - the figure that decides whether the accept side
+                // can explain the ~2 ms the JFR attributes to it.
+                + " submitMs=" + (submitDelta / 1_000_000L) + "]"
                 + " binds[pipelineMs=" + (pipelineBindDelta / 1_000_000L)
                 + " descriptorMs=" + (descriptorBindDelta / 1_000_000L) + "]"
                 + " variants[textureMs=" + (textureDrawDelta / 1_000_000L)
@@ -15125,6 +15131,7 @@ this.frameBufferOpen = false;
     private long lastArenaPromotions;
     private long lastDrawFormBinds;
     private long lastAcceptDecideNanos;
+    private long lastImmediateSubmitNanos;
     private long lastAcceptPreflightNanos;
     private long lastAcceptTailNanos;
     private long lastAppendNanos;

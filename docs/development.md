@@ -844,3 +844,17 @@ push 0.07 + mesh 0.32 ≈ 2.4ms）で確定。**削れるのはドロー回数�
 さらに: MERGE_CENSUS の run キーは pipeline・記述子・viewport のみ（変換を含まない）で largestRun=1 だった。
 つまり**変換を焼き込んでも結合できない**（テクスチャ/パイプラインが毎回変わる）。結合には
 「テクスチャ配列/インデックス化＋indirect multi-draw」というアーキテクチャ変更が必須。
+
+**fps300 KPI: フレーム6.6msの最終内訳（2026-10-23 実測・確定）**
+
+`acceptPerFrame[... submitMs=74-107]`（窓=120フレーム）から:
+- **受理（submitImmediateBatchTimed 全体）: 0.6〜0.9ms/frame**（うち decide 0.02 / preflight 0.15 / append 0.12、残りは状態キャプチャ等）
+- **描画: 2.4ms/frame**（item 1.07 + texture 0.60 + generic 0.13 + binds 0.22 + push 0.07 + mesh 0.32）
+   - ここで meshMs ≒ 90ms/120 = 0.75ms、**23.6k回/120 = 196回/frame、1回 ≈3.8µs**
+     → **`vkCmdDrawIndexed` 1回が約3µs**（このドライバの実測床）
+- **terrain 記録: 0.5ms/frame**
+- **vanilla/Forge 側（stub経由の呼び出し・エンティティ・空・TESR）: 約2.8ms/frame**
+
+合計 ≈6.6ms（world）で矛盾なし。**300fps（3.3ms）には描画2.4msを約0.8msへ**（196→60ドロー）と
+vanilla側 2.8→1.5ms の両方が必要。前者はテクスチャ配列/インデックス＋indirect multi-draw（bindless）で、
+`VulkanContext` には descriptor indexing の機能判定が既にある（実装は未接続）。
