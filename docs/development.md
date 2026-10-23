@@ -1717,8 +1717,21 @@ offMerge 0.1 / offAppend 0.1 / setupTerrain 0.1 / sky 0.1
 frame 3.7ms のうち名前の付いたレンダラ分は約1.5msで、残り約2msがvanilla側（tick含む）。
 ※このrunはpassSplit有効（bracket税あり）。production（bracketなし）はさらに軽い。
 
-**KPIの現在地（実運用に近い条件）**: 同じ jar の validation OFF で、定常窓 p50 は
-**3.7ms（passSplit run）／4.38ms（180s）／6.46ms（300s run の最終窓）** とばらつく。
-これはfixtureのワールド状態・カメラ・chunk量がrun間で揺れるためで、**単一窓p50をKPIにしない**。
-300fps(3.3ms)への距離は 0.4〜3.2ms と幅があり、**同一条件の複数run中央値で評価する必要がある**。
-計測プロトコル: validation OFF の 180s leg を最低3回、各runの最終窓 p50 の中央値を採る。
+**KPIの現在地（実運用に近い条件, 2026-10-23 実測・プロトコル適用）**
+
+validation OFF・同一jar・180s leg を3回:
+
+| run | 定常窓 p50 | p95 |
+|---|---|---|
+| prod-p1 | 4.97ms | 12.21 |
+| prod-p2 | 4.43ms | 8.05 |
+| prod-p3 | 4.75ms | 8.62 |
+| **中央値** | **4.75ms ≒ 210fps** | ~8.6 |
+
+⇒ 300fps(3.3ms)まで **約1.45ms**。内訳（bracket有run）は 即時0.5 / terrain 0.5 / gui 0.3 /
+残り約2msがvanilla（tick・エンティティ/TESR・ワールド参照）。
+レンダラが所有するのは **約1.3〜1.5ms** で、そこを半分にしても届かない。**残りはvanilla側の削減が必要**。
+参考: validation ON の同条件は 7.99ms（レイヤが約3.2ms）。
+
+計測プロトコル: validation OFF の 180s leg ×3、各runの最終窓 p50 の中央値。単一窓p50は使わない
+（300s run で最終窓 6.46ms という外れ値も観測済み＝ワールド状態で動く）。
