@@ -1126,3 +1126,13 @@ hostBuffersCreated=123 / hostBuffersLive=121（レポート間で増加なし＝
 ```
 ⇒ この端末で storage buffer の set が作れること、窓ごとの生成・解放が健全であることを確認。
 **まだ描画には使っていない**（次段: パイプライン変種＋indirect記録）。
+
+**レコードのABIガード（2026-10-23）**
+
+`ImmediateDrawRecordAbiTest` を追加: レコード（208B）と、レコード読みシェーダの `struct DrawRecord` の
+**メンバー合計サイズ・順序（matrix → affines → alpha/colour → fog）・`std430`・`records[gl_InstanceIndex]`** を検査。
+```
+:celtium-vulkan:test --tests '*ImmediateDrawRecordAbiTest*' → tests=1 failures=0
+```
+型システムでは繋がっていない「writer が書くバイト列」と「shader が読む構造体」の契約を、片側だけ変えたときに落ちる形にした。
+**これはレイアウトのテストであり、描画の証拠ではない**。
