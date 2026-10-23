@@ -1,0 +1,2269 @@
+{
+  "scope": "runtime-lock; no rendering, compatibility or performance claim",
+  "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/rlcraft-097-probe",
+  "platform": "Linux-7.2.9-x64v3-xanmod1-x86_64-with-glibc2.43",
+  "git": {
+    "head": "a9d874c7bd4ff7819788b4ffda2ea98ba47b0b76",
+    "subject": "docs: the plan now records that the RLCraft profiles are the older host generation",
+    "dirty": false,
+    "dirtyFiles": []
+  },
+  "effectiveConfig": {
+    "profileJvmArgs": [],
+    "runnerJvmArgs": [
+      "-Dceltium.vulkan.presentedDumpEvery=0"
+    ],
+    "jvmArgs": [
+      "-Dceltium.vulkan.presentedDumpEvery=0"
+    ],
+    "tweakers": [
+      "net.minecraftforge.fml.common.launcher.FMLTweaker"
+    ],
+    "mainClass": "top.outlands.foundation.boot.Foundation",
+    "mainJar": "{'downloads': {'artifact': {'sha1': '0f275bc1547d01fa5f56ba34bdc87d981ee12daf', 'size': 10180113, 'url': 'https://piston-data.mojang.com/v1/objects/0f275bc1547d01fa5f56ba34bdc87d981ee12daf/client.jar'}}, 'name': 'com.mojang:minecraft:1.12.2:client'}"
+  },
+  "java": {
+    "executable": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/java-celtium.sh",
+    "version": "openjdk version \"27\" 2026-09-15\nOpenJDK Runtime Environment Temurin-27+35 (build 27+35)\nOpenJDK 64-Bit Server VM Temurin-27+35 (build 27+35, mixed mode, sharing)"
+  },
+  "components": [
+    {
+      "uid": "net.minecraft",
+      "version": "1.12.2",
+      "sha256": "e2b449c7a6f49f185659a2910b3ce9bb061b1431eda1849e4b6cd64589734d16"
+    },
+    {
+      "uid": "org.lwjgl",
+      "version": "3.4.3",
+      "sha256": "598ef277033893527022c247c41ffdfe64c85f35eeecd623d9f1229e9b5c2bc8"
+    },
+    {
+      "uid": "net.minecraftforge",
+      "version": "0.7.11-alpha",
+      "sha256": "1dcdd8f3a033e7145e318cd5c462618b9053d9c2d55775f32e550c7ab12a30e1"
+    }
+  ],
+  "libraries": [
+    {
+      "coordinate": "com.paulscode:codecjorbis:20101023",
+      "sha256": "6c4b4e50e608763564afa1bde2d25ece9dd715e7c9129540faa1faded4896506",
+      "size": 103871
+    },
+    {
+      "coordinate": "com.paulscode:codecwav:20101023",
+      "sha256": "bb7d17b340afe6abdfbfdaa03683bce4aef39a64887dbab0636eaff3cf2d59ba",
+      "size": 5618
+    },
+    {
+      "coordinate": "com.paulscode:libraryjavasound:20101123",
+      "sha256": "333bbefeff5eb1722dc9b8d2e26c38bc69c1efa07d0ca870480f29d8858aa336",
+      "size": 21679
+    },
+    {
+      "coordinate": "com.paulscode:librarylwjglopenal:20100824",
+      "sha256": "107d11509f6af59b8c2ba23df828bc5d3c4e067b58f3d858c7deb90ca5308f84",
+      "size": 18981
+    },
+    {
+      "coordinate": "com.paulscode:soundsystem:20120107",
+      "sha256": "2882d64550240dd0c026724da664d9f97ef205c91d6a85273d10790d88608f34",
+      "size": 65020
+    },
+    {
+      "coordinate": "com.mojang:authlib:1.5.25",
+      "sha256": "c8a095123be93c59d4ac29e4a0616495b3d479ac65913cb719a81ee583e9dfcd",
+      "size": 65621
+    },
+    {
+      "coordinate": "com.mojang:realms:1.10.22",
+      "sha256": "dca25458971e72c7b06d381af2dc5e1c3fc0358756f842beac18eafa6895101e",
+      "size": 7135057
+    },
+    {
+      "coordinate": "com.mojang:text2speech:1.10.3",
+      "sha256": "841d2f407824a4a9c3dd872c51ecd76d50381c569b79c3ea7b06b69eec2bba53",
+      "size": 11055
+    },
+    {
+      "coordinate": "org.lwjgl:lwjgl-freetype:3.4.3",
+      "sha256": "b331b9d2a29c1b330c3887d33c14dab9d7eed3f763bb8f5ca559eec02d73f075",
+      "size": 468438
+    },
+    {
+      "coordinate": "org.lwjgl:lwjgl-jemalloc:3.4.3",
+      "sha256": "f34062b6489454f7e2c3bf5979e37667e62c7c85cd00f73760f441557cb1978a",
+      "size": 48061
+    },
+    {
+      "coordinate": "org.lwjgl:lwjgl-openal:3.4.3",
+      "sha256": "4a0049c8554d6890718fee76507572f2f9f8f3f6144d25d7d2ea76bccc2d9605",
+      "size": 154573
+    },
+    {
+      "coordinate": "org.lwjgl:lwjgl-opengl:3.4.3",
+      "sha256": "a92cf30f25b6fb6066f3508511f83c5c4fe2a0cff14fc2e7373bc1f6c726374f",
+      "size": 953649
+    },
+    {
+      "coordinate": "org.lwjgl:lwjgl-sdl:3.4.3",
+      "sha256": "dcb33abcbd946553176bb668be80d7adc60cb9d919ab5c71fb01fc51cacc4c8f",
+      "size": 989769
+    },
+    {
+      "coordinate": "org.lwjgl:lwjgl-stb:3.4.3",
+      "sha256": "544753f5e49c53580949b9f1fc341f0e434991303c93d5a428fbaafaacc2cd69",
+      "size": 143041
+    },
+    {
+      "coordinate": "org.lwjgl:lwjgl:3.4.3",
+      "sha256": "46eeca5471833c3cf5da3c1da015b41e3bb3eb16dd3da03f366886da10096751",
+      "size": 1255440
+    },
+    {
+      "coordinate": "ca.weblite:java-objc-bridge:1.2",
+      "sha256": "c8b08b7747d746f04d41c52315399f7d2ea936ece30d3382f122eb756f782cd7",
+      "size": 1476301
+    },
+    {
+      "coordinate": "com.cleanroommc:cleanmix:0.7.4",
+      "sha256": "bbbe4b6c4d92ca65e867b5ec127870849df4500555fe55cbace6c90bfb18ab1f",
+      "size": 1097715
+    },
+    {
+      "coordinate": "com.cleanroommc:cleanroom:0.7.11-alpha:universal",
+      "sha256": "aa7183b8e693abd53550342caf4d30972ef3917954c0d79b8871da5b8e24d90d",
+      "size": 12727369
+    },
+    {
+      "coordinate": "com.cleanroommc:lwjgly:2.3.0",
+      "sha256": "3ce87bda137c33edb6714e59950784fc6253180cc7fc14d0bcaeda3db1e80bfa",
+      "size": 622421
+    },
+    {
+      "coordinate": "com.cleanroommc:mcttf:0.1.0",
+      "sha256": "663aa8db9327641b0ca31f55c8094e0be25060b77598d2573f16bbdec5db08c6",
+      "size": 58990
+    },
+    {
+      "coordinate": "com.cleanroommc:mixinextras-common:0.5.5",
+      "sha256": "6aa293132763b356fe6de570c18535acb93ab5509e0dd2e50fec8747373765e6",
+      "size": 725959
+    },
+    {
+      "coordinate": "com.github.oshi:oshi-common:7.7.1",
+      "sha256": "bb66b62dd9115aea4a33db40619b5b3c2333abcef775cb4bf9536407f3a408c4",
+      "size": 1080318
+    },
+    {
+      "coordinate": "com.github.oshi:oshi-core-ffm:7.7.1",
+      "sha256": "71a9e9075a9376c62859364346031472b9cb93645ae792746bc226ae85fa25a9",
+      "size": 719437
+    },
+    {
+      "coordinate": "com.google.code.findbugs:jsr305:2.0.1",
+      "sha256": "1e7f53fa5b8b5c807e986ba335665da03f18d660802d8bf061823089d1bee468",
+      "size": 31866
+    },
+    {
+      "coordinate": "com.google.code.gson:gson:2.14.0",
+      "sha256": "2cbd119bf1961c28788310963dc80ba65f58cdeec1dd139c8bdb1240faa2c36f",
+      "size": 313604
+    },
+    {
+      "coordinate": "com.google.errorprone:error_prone_annotations:2.48.0",
+      "sha256": "b49c5c958316ed67a09c699dda9aa749caf434d51d863dea599ef36a49b9c855",
+      "size": 20255
+    },
+    {
+      "coordinate": "com.google.guava:failureaccess:1.0.3",
+      "sha256": "cbfc3906b19b8f55dd7cfd6dfe0aa4532e834250d7f080bd8d211a3e246b59cb",
+      "size": 10763
+    },
+    {
+      "coordinate": "com.google.guava:guava:33.6.0-jre",
+      "sha256": "dc573e1fca4fd5454f4a5fd3d7da2df03002876a4175bafc14a95980dd7713b3",
+      "size": 3064793
+    },
+    {
+      "coordinate": "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
+      "sha256": "b372a037d4230aa57fbeffdef30fd6123f9c0c2db85d0aced00c91b974f33f99",
+      "size": 2199
+    },
+    {
+      "coordinate": "com.google.j2objc:j2objc-annotations:3.1",
+      "sha256": "84d3a150518485f8140ea99b8a985656749629f6433c92b80c75b36aba3b099b",
+      "size": 16762
+    },
+    {
+      "coordinate": "com.ibm.icu:icu4j:78.3",
+      "sha256": "e962c1758d9659ea1e1fbab99c58683f654d304e1126ace19aaabfe39e0edb25",
+      "size": 15156073
+    },
+    {
+      "coordinate": "com.sun.istack:istack-commons-runtime:4.2.0",
+      "sha256": "21025b7a096ef93f74de659c1be5990fa0c24e59a0f98a706e392e7088725ff6",
+      "size": 25789
+    },
+    {
+      "coordinate": "commons-codec:commons-codec:1.22.0",
+      "sha256": "d164fe79f262c32d9b18a0b5b2d317d1c27653d5e98fd2b998c24bf901c72ce4",
+      "size": 420480
+    },
+    {
+      "coordinate": "commons-io:commons-io:2.22.0",
+      "sha256": "2b9a7b1f726fb86216dbd2c8321eabe0221dbd5b1be81c18e1cb53811b104758",
+      "size": 609182
+    },
+    {
+      "coordinate": "commons-logging:commons-logging:1.4.0",
+      "sha256": "d175dbd751dd782a63bde28c7a039520e971f25e84b79c19b8435edc3603e0dc",
+      "size": 75828
+    },
+    {
+      "coordinate": "io.github.classgraph:classgraph:4.8.184",
+      "sha256": "6e564e29cec95a392268a609f09071d56199383d906ac70e91753a7998d1a3e8",
+      "size": 586966
+    },
+    {
+      "coordinate": "io.netty:netty-all:4.2.16.Final",
+      "sha256": "b27c6ad392d2186c2f29c263dd0fa2d832a3929666d51c2f080286a18acf81e0",
+      "size": 4924
+    },
+    {
+      "coordinate": "io.netty:netty-buffer:4.2.16.Final",
+      "sha256": "cc36ae9fbd0b03fe755eb4eb4424ca53b59cfd297d7fd47d49e5b1059beded6c",
+      "size": 378032
+    },
+    {
+      "coordinate": "io.netty:netty-codec-base:4.2.16.Final",
+      "sha256": "feb410225938d9970de6b624a0c031d079804fa5cc5e1ec6e9298f16db5998a7",
+      "size": 155355
+    },
+    {
+      "coordinate": "io.netty:netty-codec-classes-quic:4.2.16.Final",
+      "sha256": "9b2856532681b109ecc1d15ba81341665fea4ba1aab78788e3d74c1aff38ca00",
+      "size": 265344
+    },
+    {
+      "coordinate": "io.netty:netty-codec-compression:4.2.16.Final",
+      "sha256": "13c8565414dd2115281303ef4ad1f7cc69bd7771d8d12c7d2fb31307dff26d11",
+      "size": 183349
+    },
+    {
+      "coordinate": "io.netty:netty-codec-dns:4.2.16.Final",
+      "sha256": "f06a6f68d81877ab9da7bf29583a333ad1da5daaa2db26e27d344092499d8f19",
+      "size": 71406
+    },
+    {
+      "coordinate": "io.netty:netty-codec-haproxy:4.2.16.Final",
+      "sha256": "bada016d30eb0adcb0703bc5f34391482ed044675d111f830263d6f3e300675d",
+      "size": 39193
+    },
+    {
+      "coordinate": "io.netty:netty-codec-http2:4.2.16.Final",
+      "sha256": "fe1ffc7ed6bfb40f91c4e265fe76e3be7f9049deef0e8cf5a992420e4f02b542",
+      "size": 496150
+    },
+    {
+      "coordinate": "io.netty:netty-codec-http3:4.2.16.Final",
+      "sha256": "94a4b22187d0240bc299366a5135d439affd1fafd3b5162764e86d290d2e85a4",
+      "size": 225991
+    },
+    {
+      "coordinate": "io.netty:netty-codec-http:4.2.16.Final",
+      "sha256": "0d16f981de8d0d304a2ab1a81f0a674892089fbaa8a583100aebb4a5b00456ec",
+      "size": 678387
+    },
+    {
+      "coordinate": "io.netty:netty-codec-marshalling:4.2.16.Final",
+      "sha256": "9691818c6e59a97e454f8381c86dfe840302168d985098a278dca07781efc75e",
+      "size": 20377
+    },
+    {
+      "coordinate": "io.netty:netty-codec-memcache:4.2.16.Final",
+      "sha256": "f5fe075b58e60e9346cccdaf92b993981d35750e9b8649f37b9800e7b2cabbf8",
+      "size": 48502
+    },
+    {
+      "coordinate": "io.netty:netty-codec-mqtt:4.2.16.Final",
+      "sha256": "010329fabd6dd0913a64bd2464c8cc8ea3e4fbbce1f9b74744ddf3e2b1a5c63f",
+      "size": 113435
+    },
+    {
+      "coordinate": "io.netty:netty-codec-native-quic:4.2.16.Final:linux-aarch_64",
+      "sha256": "b338c76fee30c1b8b655e3e992e88dffa71591fecb35e1fed70089dc3696e0f6",
+      "size": 2602076
+    },
+    {
+      "coordinate": "io.netty:netty-codec-native-quic:4.2.16.Final:linux-x86_64",
+      "sha256": "3c29587f8b2953032bd37fc20e3eda5bb7270e5e1e09b496f2c024f8ac8b5dc1",
+      "size": 2748609
+    },
+    {
+      "coordinate": "io.netty:netty-codec-native-quic:4.2.16.Final:osx-aarch_64",
+      "sha256": "93c4fcc7a63888cbbc621ff2774632234344518503fca967b77d6cb7f241a8ce",
+      "size": 2343939
+    },
+    {
+      "coordinate": "io.netty:netty-codec-native-quic:4.2.16.Final:osx-x86_64",
+      "sha256": "15cecee5ab661a650fa5c3513fd0c6d84f27d5dcc0eddcdc1b9619649b08fe12",
+      "size": 2494977
+    },
+    {
+      "coordinate": "io.netty:netty-codec-native-quic:4.2.16.Final:windows-x86_64",
+      "sha256": "ebe477b5374382f0d34583907b7441dc59c52492c890f946154deff47883041d",
+      "size": 1546315
+    },
+    {
+      "coordinate": "io.netty:netty-codec-protobuf:4.2.16.Final",
+      "sha256": "bb66f23ccb543dd842ddda91b6c8e97e222220d2efa5459f6a46a22ade3b2170",
+      "size": 15108
+    },
+    {
+      "coordinate": "io.netty:netty-codec-redis:4.2.16.Final",
+      "sha256": "c0a444400f77cdd84e2ae2c038989251e0cc5c18eb424c66ef6b2ee04594a7ed",
+      "size": 48727
+    },
+    {
+      "coordinate": "io.netty:netty-codec-smtp:4.2.16.Final",
+      "sha256": "4ab037af210ba24ac08dee8ef94bec506c1be1992fdf0862a464bcb5f32537cf",
+      "size": 23729
+    },
+    {
+      "coordinate": "io.netty:netty-codec-socks:4.2.16.Final",
+      "sha256": "e5230b4c467755bb570c846c8e3c0ffadcb1b568c1cd9a3a4ee946734baae54d",
+      "size": 132178
+    },
+    {
+      "coordinate": "io.netty:netty-codec-stomp:4.2.16.Final",
+      "sha256": "b150e456535d05311657e14b6ac21c86c2cc6d3412788af51b56e37a7705fd17",
+      "size": 37284
+    },
+    {
+      "coordinate": "io.netty:netty-codec-xml:4.2.16.Final",
+      "sha256": "7c565870856fcdcaf44db041b58adcdfe4ae795d5a193d1b303d913e28821766",
+      "size": 23526
+    },
+    {
+      "coordinate": "io.netty:netty-codec:4.2.16.Final",
+      "sha256": "41868bcc428954e707e39a30686ceddc0bd238391d3989d04dfb72d5f0735926",
+      "size": 3953
+    },
+    {
+      "coordinate": "io.netty:netty-common:4.2.16.Final",
+      "sha256": "9825ee68a0dc4cd2b53e2f532502401b2211bad9b77e8b04882d9e64487283ff",
+      "size": 819965
+    },
+    {
+      "coordinate": "io.netty:netty-handler-proxy:4.2.16.Final",
+      "sha256": "c53706ebaffd2fcef17b5f675b81eab4be13a714886cb4b2a7d0b73275cd39fe",
+      "size": 26791
+    },
+    {
+      "coordinate": "io.netty:netty-handler-ssl-ocsp:4.2.16.Final",
+      "sha256": "d914fcf20ef940a9788680460bd95bd1b4086cd9fb68393b3824064946d8c22c",
+      "size": 29486
+    },
+    {
+      "coordinate": "io.netty:netty-handler:4.2.16.Final",
+      "sha256": "a259ca496da05ac1981f95cd856211f894a328056a6129e9cd70dbbd5df401f7",
+      "size": 587814
+    },
+    {
+      "coordinate": "io.netty:netty-resolver-dns-classes-macos:4.2.16.Final",
+      "sha256": "b56f3fb411435ce44c195355cf4e6b64efa4195697327b721809efcf62874371",
+      "size": 9842
+    },
+    {
+      "coordinate": "io.netty:netty-resolver-dns-native-macos:4.2.16.Final:osx-aarch_64",
+      "sha256": "49aad04e202267fe7ac0a291c2f2fa38bdebf7f1e13955d2afcc4648aa4bd406",
+      "size": 20781
+    },
+    {
+      "coordinate": "io.netty:netty-resolver-dns-native-macos:4.2.16.Final:osx-x86_64",
+      "sha256": "4b2e3959723db674f18bee8b602c7634e47c0bd9f42041d1069c428df464582c",
+      "size": 20433
+    },
+    {
+      "coordinate": "io.netty:netty-resolver-dns:4.2.16.Final",
+      "sha256": "4e8adad4d30e4344accf74922fc10d9cdbc162d72b2136bdf371bb3864e0b03d",
+      "size": 174347
+    },
+    {
+      "coordinate": "io.netty:netty-resolver:4.2.16.Final",
+      "sha256": "c9eca6a99036485cf1d186b4a6a595b0a54c53808319ee03924270eae04c32bb",
+      "size": 32975
+    },
+    {
+      "coordinate": "io.netty:netty-transport-classes-epoll:4.2.16.Final",
+      "sha256": "9f2b53210db9c8d24e787ed43f3896aaf30d686ed270c7afbb29ab6330c6aa23",
+      "size": 159935
+    },
+    {
+      "coordinate": "io.netty:netty-transport-classes-io_uring:4.2.16.Final",
+      "sha256": "2f0b189834aa2c945b2ef965fed301c9883b45a8c54408e2565724f46510a59e",
+      "size": 195522
+    },
+    {
+      "coordinate": "io.netty:netty-transport-classes-kqueue:4.2.16.Final",
+      "sha256": "6599b495f69420cb240ab0a1aa60a19a2df3bc72791729170e0993727637a689",
+      "size": 116819
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-epoll:4.2.16.Final:linux-aarch_64",
+      "sha256": "212cc7d81390e31b580a1fb91b6c8d963b43e762ed072c555e2b09ad4476e928",
+      "size": 43899
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-epoll:4.2.16.Final:linux-riscv64",
+      "sha256": "453eaeae88b7acf3edb17e0b01897dbc587825b3e8240c68b32f861915d6c0e9",
+      "size": 38194
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-epoll:4.2.16.Final:linux-x86_64",
+      "sha256": "2e00548e731948881d0c73ee79d2ead759254e750929406a1d595484758f0267",
+      "size": 42393
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-io_uring:4.2.16.Final:linux-aarch_64",
+      "sha256": "4eca317be67a3799e2e12e17a8bb4144128384217da7b72ed1b75fd8687914e9",
+      "size": 43044
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-io_uring:4.2.16.Final:linux-riscv64",
+      "sha256": "8a3066ea77d2c55d828cc7149903aa711604c72e4f9f0f5cb5df84f8ef1fe631",
+      "size": 37167
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-io_uring:4.2.16.Final:linux-x86_64",
+      "sha256": "9b6c6a6c50f4940401919b6d074e35da5a8c7239f24bd6fc530b6cac9c87ac49",
+      "size": 42589
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-kqueue:4.2.16.Final:osx-aarch_64",
+      "sha256": "796c503f7a80217177bd315f6448263134ee0f9042627d5fd698c760bcf99c8c",
+      "size": 27482
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-kqueue:4.2.16.Final:osx-x86_64",
+      "sha256": "05a09a4ab51f488f0c22f42ccce6c06935afbfac51173fae44170465aa072828",
+      "size": 26737
+    },
+    {
+      "coordinate": "io.netty:netty-transport-native-unix-common:4.2.16.Final",
+      "sha256": "41ca8fe192083d17917be7ddcecded4da4fc1db1d1656d03d0bcb14e2f431155",
+      "size": 46877
+    },
+    {
+      "coordinate": "io.netty:netty-transport-rxtx:4.2.16.Final",
+      "sha256": "01942a72d716db20ef24bec17eb313d9736b61ded7d1c4647cd1096df6bdae60",
+      "size": 18607
+    },
+    {
+      "coordinate": "io.netty:netty-transport-sctp:4.2.16.Final",
+      "sha256": "908271a2e1e4940a2ae9615e80bfb967394692f5dda005a332c545ed5b7dde2c",
+      "size": 53103
+    },
+    {
+      "coordinate": "io.netty:netty-transport-udt:4.2.16.Final",
+      "sha256": "0f072ebf51b5642adbc2129cf5d06f96d6a94b0912d7cae2cbb8287df73deaef",
+      "size": 33074
+    },
+    {
+      "coordinate": "io.netty:netty-transport:4.2.16.Final",
+      "sha256": "cfa3f654caff906653385f4b7ddaa539d795b78f5711a622482b17d2b73484c0",
+      "size": 549855
+    },
+    {
+      "coordinate": "it.unimi.dsi:fastutil:8.5.18",
+      "sha256": "9094ae67d01d0ad246f886f11ad557fc2e79c72cbf3feed83e1512a8ae90a74a",
+      "size": 23965563
+    },
+    {
+      "coordinate": "jakarta.activation:jakarta.activation-api:2.1.4",
+      "sha256": "c9db52100ce6c8aac95cc39075f95720d2e561b11f8051b81c121ad4effd7004",
+      "size": 67380
+    },
+    {
+      "coordinate": "jakarta.annotation:jakarta.annotation-api:3.0.0",
+      "sha256": "b01f55552284cfb149411e64eabca75e942d26d2e1786b32914250e4330afaa2",
+      "size": 26378
+    },
+    {
+      "coordinate": "jakarta.inject:jakarta.inject-api:2.0.1",
+      "sha256": "f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c",
+      "size": 10681
+    },
+    {
+      "coordinate": "jakarta.xml.bind:jakarta.xml.bind-api:4.0.5",
+      "sha256": "5e489b6c874c4119e003ff1403db523ee3a8959ec499f3de29e77245efccf216",
+      "size": 131219
+    },
+    {
+      "coordinate": "jakarta.xml.soap:jakarta.xml.soap-api:3.0.2",
+      "sha256": "62ecd5c3b5c107779e5ffe84922594c381f7a8e397320a05c3ee3957b5b7863f",
+      "size": 38035
+    },
+    {
+      "coordinate": "jakarta.xml.ws:jakarta.xml.ws-api:4.0.3",
+      "sha256": "e2244d1046363f21a1dbb9485d592f6697b219b8086de70de759c7c5d725517f",
+      "size": 77638
+    },
+    {
+      "coordinate": "java3d:vecmath:1.5.2",
+      "sha256": "09adf7955baa6bddf57a4bdbf9a91cf690261314969b59a18085ece1e05eccf9",
+      "size": 318956
+    },
+    {
+      "coordinate": "lzma:lzma:0.0.1",
+      "sha256": "0c3085cb93c3ef95d731c274b6f2dd195aa0405fe9328d69cab7f5e899d5e124",
+      "size": 5762
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna-platform:5.19.1",
+      "sha256": "3b3864f5b449e9c3c24b16861524b622b086563f44e0cd8384c8efc5a6052f82",
+      "size": 1416385
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna:5.19.1",
+      "sha256": "4fb141dd8ef6b0585ffceea4bc49602fbc6312fa977e2c488794ea3e6aafecae",
+      "size": 1950853
+    },
+    {
+      "coordinate": "net.java.jinput:jinput:2.0.10",
+      "sha256": "84386ea57160c17558a162761b4ca651f036933d0aabbc4892b0d3aaf6d92193",
+      "size": 205492
+    },
+    {
+      "coordinate": "net.sf.jopt-simple:jopt-simple:5.0.4",
+      "sha256": "df26cc58f235f477db07f753ba5a3ab243ebe5789d9f89ecf68dd62ea9a66c28",
+      "size": 78146
+    },
+    {
+      "coordinate": "net.sf.trove4j:core:3.1.0",
+      "sha256": "e1fed4d718a86d27c5ebb427810550fa5c03260e350e41a85ef2c2db6eac0856",
+      "size": 2560395
+    },
+    {
+      "coordinate": "net.sf.trove4j:experimental:3.1.0",
+      "sha256": "c19c74ec58007292412e038d0911b9cbad424dc21ce325963d6331bd3c90fd99",
+      "size": 83341
+    },
+    {
+      "coordinate": "org.apache.commons:commons-compress:1.28.0",
+      "sha256": "e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca",
+      "size": 1117221
+    },
+    {
+      "coordinate": "org.apache.commons:commons-lang3:3.20.0",
+      "sha256": "69e5c9fa35da7a51a5fd2099dfe56a2d8d32cf233e2f6d770e796146440263f4",
+      "size": 713862
+    },
+    {
+      "coordinate": "org.apache.commons:commons-text:1.15.0",
+      "sha256": "58d2da30f058512a1e7f914e39241deca4dff5c27a085b4ed2faa9e7208067f6",
+      "size": 264873
+    },
+    {
+      "coordinate": "org.apache.httpcomponents.client5:httpclient5:5.6.1",
+      "sha256": "1e3d8444c3c27772e4b9d42a790f06b3345a8ece4fd16d00981f2f2460e1e772",
+      "size": 1054142
+    },
+    {
+      "coordinate": "org.apache.httpcomponents.core5:httpcore5-h2:5.4.3",
+      "sha256": "c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6",
+      "size": 263675
+    },
+    {
+      "coordinate": "org.apache.httpcomponents.core5:httpcore5:5.4.3",
+      "sha256": "18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a",
+      "size": 955121
+    },
+    {
+      "coordinate": "org.apache.httpcomponents:httpclient:4.5.14",
+      "sha256": "c8bc7e1c51a6d4ce72f40d2ebbabf1c4b68bfe76e732104b04381b493478e9d6",
+      "size": 785639
+    },
+    {
+      "coordinate": "org.apache.httpcomponents:httpcore:4.4.16",
+      "sha256": "6c9b3dd142a09dc468e23ad39aad6f75a0f2b85125104469f026e52a474e464f",
+      "size": 327891
+    },
+    {
+      "coordinate": "org.apache.logging.log4j:log4j-api:2.26.0",
+      "sha256": "820de7bbaf430eaf2e3e5ccb92f23e2085797c5ac4d4f7fc6c8b660fbefa1dbc",
+      "size": 351126
+    },
+    {
+      "coordinate": "org.apache.logging.log4j:log4j-core:2.26.0",
+      "sha256": "406bb3132c47a5d322e5c571feb0787ca84496469f346eb51f1ef2ee45499902",
+      "size": 2015101
+    },
+    {
+      "coordinate": "org.apache.logging.log4j:log4j-slf4j2-impl:2.26.0",
+      "sha256": "cfc1bddbd39e684b698ae968291d8a3b3a55ee0ec2ef3d3ea5c2336a9e151598",
+      "size": 30211
+    },
+    {
+      "coordinate": "org.apache.maven:maven-artifact:3.9.16",
+      "sha256": "54cc1c1ef932e3d4a903352111b42b4d3c3ed8e7a1d0de73b625309d9c3ad3e8",
+      "size": 58857
+    },
+    {
+      "coordinate": "org.codehaus.plexus:plexus-utils:3.6.1",
+      "sha256": "05a63effd67e2d6b9d610cc82e2bd7473289d34802e57a529b28110f28af5679",
+      "size": 272101
+    },
+    {
+      "coordinate": "org.eclipse.angus:angus-activation:2.0.3",
+      "sha256": "a6bd35c538cf90fff941ad6258c40c08fca0b5c9c3f536c657114f27ce0527a7",
+      "size": 26729
+    },
+    {
+      "coordinate": "org.glassfish.corba:glassfish-corba-omgapi:5.0.2",
+      "sha256": "ecaa099572781b288662cc9969fb4eb20dd99b9d75d492d40c5f62de6f54cb51",
+      "size": 1411404
+    },
+    {
+      "coordinate": "org.glassfish.jaxb:jaxb-core:4.0.9",
+      "sha256": "6b014df25d22c8446cc2df0a378c5b2137747f197a731d99eb24c756b26f7e8d",
+      "size": 139417
+    },
+    {
+      "coordinate": "org.glassfish.jaxb:jaxb-runtime:4.0.9",
+      "sha256": "93e09b7316b6af68d6e2083e4c297daf28e8957f45d725077af812c0b12c39ab",
+      "size": 922445
+    },
+    {
+      "coordinate": "org.glassfish.jaxb:txw2:4.0.9",
+      "sha256": "d6343e5945d87266ca4e8974a0a2a876e1bd147a00fb65ed3f2e1a3a00f3a82a",
+      "size": 73276
+    },
+    {
+      "coordinate": "org.javassist:javassist:3.32.0-GA",
+      "sha256": "712ef75bc3406782bb4529b0408cce8155b53f2124c6ae03d2c5fbfa13d62c1c",
+      "size": 771960
+    },
+    {
+      "coordinate": "org.jctools:jctools-core:4.0.6",
+      "sha256": "374fb4660436a70ba131e15ca7bab8423424c737898a894fb276841c94bdd962",
+      "size": 499875
+    },
+    {
+      "coordinate": "org.jline:jline:4.1.3",
+      "sha256": "2bcf65bb28ee05c17e013624b2cb3af071a6d8e37f5c43faee59d2ac3eab4591",
+      "size": 1635198
+    },
+    {
+      "coordinate": "org.joml:joml:1.10.9",
+      "sha256": "feca4db853371704338621c120acc5cc32300d8af635fa42414b6213301e216b",
+      "size": 814581
+    },
+    {
+      "coordinate": "org.jspecify:jspecify:1.0.0",
+      "sha256": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab",
+      "size": 3819
+    },
+    {
+      "coordinate": "org.openjdk.nashorn:nashorn-core:15.7",
+      "sha256": "3f2b62e55b5458ba2e8a0cc4599aa3abe81b1422e31c38bb8294a7096ceee6f2",
+      "size": 2139093
+    },
+    {
+      "coordinate": "org.ow2.asm:asm-analysis:9.10.1",
+      "sha256": "dede75a21306b65974ecd8f87114ff6970f09fb794157a4ca09ab25c888c2bfc",
+      "size": 35140
+    },
+    {
+      "coordinate": "org.ow2.asm:asm-commons:9.10.1",
+      "sha256": "6d0abefb7cbf972ea16edb37ec14835372505063a45f976ab7ea889ed9497895",
+      "size": 74840
+    },
+    {
+      "coordinate": "org.ow2.asm:asm-deprecated:7.1",
+      "sha256": "774b81f7f282848b5e97e8e367b683fed2114ca8b39de3f56bc179d3e2a18f01",
+      "size": 9152
+    },
+    {
+      "coordinate": "org.ow2.asm:asm-tree:9.10.1",
+      "sha256": "3dfb0d5b6a106cd40b5b250e39935fbf2f927f4477546a5369a3ac609cf0506b",
+      "size": 51958
+    },
+    {
+      "coordinate": "org.ow2.asm:asm-util:9.10.1",
+      "sha256": "1bb99d091fba2597dc6d51193e9bbcf0d8447e7ed96bd8f0198b18152f09655c",
+      "size": 95628
+    },
+    {
+      "coordinate": "org.ow2.asm:asm:9.10.1",
+      "sha256": "ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb",
+      "size": 126151
+    },
+    {
+      "coordinate": "org.slf4j:slf4j-api:2.0.20",
+      "sha256": "7e1446499b359675d8aabe6af2de86b85e72ae8a2a932c0b40d0e5ba57097439",
+      "size": 70255
+    },
+    {
+      "coordinate": "org.tukaani:xz:1.12",
+      "sha256": "3e158a87bd73d8afb4b6e8239c013b7d049c48563f45860ce99cd2e448cf4a6b",
+      "size": 168792
+    },
+    {
+      "coordinate": "top.outlands:foundation:0.22.2",
+      "sha256": "bb4f5d328fdfe2825b07e3112c750f7cf49683dba2ad5b999123226e48207e25",
+      "size": 59266
+    },
+    {
+      "coordinate": "zone.rong:imaginebreaker:3.2",
+      "sha256": "8ae2765d78e23ea1dde8693a0a1c974131a73531f295551f81793afdebb062c6",
+      "size": 35799
+    },
+    {
+      "coordinate": "com.ibm.icu:icu4j-core-mojang:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "com.mojang:patchy:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "net.java.dev.jna:platform:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "net.java.jutils:jutils:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "org.lwjgl.lwjgl:lwjgl:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "org.lwjgl.lwjgl:lwjgl-platform:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "org.lwjgl.lwjgl:lwjgl_util:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "oshi-project:oshi-core:999999.0-empty",
+      "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+      "size": 22
+    },
+    {
+      "coordinate": "com.mojang:minecraft:1.12.2:client",
+      "sha256": "8ada07da5ee77dad3527bd7278fbd05ee1fc8a597813b216a871a2d7d64cc64f",
+      "size": 10180113
+    }
+  ],
+  "mods": [
+    {
+      "file": "+Fugue-0.24.4.jar",
+      "sha256": "438248925eb38d16b6b4bcbe6247339b2a745cfe586d4917985f7d925a5d8630",
+      "size": 309884
+    },
+    {
+      "file": "AIReducer-1.12.2-0.3.0.jar",
+      "sha256": "9e06e63ef116c8c621166e182e52d27f8d4b390683b9c0ab1b097fc800006d5b",
+      "size": 85307
+    },
+    {
+      "file": "AdHooks-1.12.2-3.3.1.0-build.0626.jar",
+      "sha256": "aae5b4181b71c1eee801e23a3e4d2b593862a8692294a456ee46e8e2a97d2c40",
+      "size": 99441
+    },
+    {
+      "file": "Advanced-Fishing-1.12.2-1.3.3.jar",
+      "sha256": "900a8a030eb8a24c70a949695dd1f36315b9092840b13043d5a6f63e9e50e1b7",
+      "size": 277112
+    },
+    {
+      "file": "Aquaculture-1.12.2-1.6.8.jar",
+      "sha256": "b9bdf522c6b2891e0d34dde10e40ac71a8df9169990e54fd6b9ccfe9868e1c9a",
+      "size": 186686
+    },
+    {
+      "file": "AutoRegLib-1.3-32.jar",
+      "sha256": "d8610a94da8f30815db4612b3291ecdcfd8204eaf1a4db8c5d0663c7b1191d91",
+      "size": 108306
+    },
+    {
+      "file": "BNBGamingLib-1.12.2-2.17.6.jar",
+      "sha256": "868c7810de85e43913dc42d8b1443d5316a71ecc19e5983e5aa6cda69ed4db5d",
+      "size": 132644
+    },
+    {
+      "file": "BQTweaker-1.3.5.jar",
+      "sha256": "c947f92623b22cc8baab77e82e58852710bb5b67123c85891b528b223ad4d3e5",
+      "size": 201577
+    },
+    {
+      "file": "BQ_Multiblock_Structure_Integration-1.0.9.jar",
+      "sha256": "9aef01baa65ce1c771b4b5d3e615c2246972a6d3304c839f93d9be642cc8549e",
+      "size": 64896
+    },
+    {
+      "file": "BattleTowers-1.12.2.jar",
+      "sha256": "21a402410869dad8d023e05f3a5488e7b34680ca11e8226560c572f6d06e53f1",
+      "size": 886037
+    },
+    {
+      "file": "Baubles-1.12-1.5.2.jar",
+      "sha256": "b32010b2f2778aa1188585e7ead91ad46d4cb2c715f9c778a61848ba7fe51f8d",
+      "size": 108450
+    },
+    {
+      "file": "BetterFoliage-MC1.12-2.3.3.jar",
+      "sha256": "567cbeb69e77bbf9e776045c790436c65f6477162b07457607a172b075d8ebfe",
+      "size": 864681
+    },
+    {
+      "file": "BetterMineshaftsForge-1.12.2-2.2.1.jar",
+      "sha256": "6380ad3f470c38337e545afec5418084e95bd7ec3cd75658f9da81e46a2288b1",
+      "size": 305086
+    },
+    {
+      "file": "BetterQuesting-3.5.329.jar",
+      "sha256": "f7803b91d54b98eb54b3e2f12143866e68a46e3f963d51997d1a1195b8469ba7",
+      "size": 1425671
+    },
+    {
+      "file": "BetterTabs-1.0.4.jar",
+      "sha256": "7f0f510696c136dc4152264622e54f42bde6aad715468fd5fe898d653f78e776",
+      "size": 21728
+    },
+    {
+      "file": "Bloodmoon-MC1.12.2-1.5.3.jar",
+      "sha256": "1d6082293067e1a1af002c65527a41df3919f8125eaa25a9c7c9d16ba25c4d06",
+      "size": 47505
+    },
+    {
+      "file": "Bountiful Baubles-1.12.2-0.1.8.jar",
+      "sha256": "aa4c7609455916fb9f6dea575f164f89304f20cfe42cf93dd681e77a87181a9d",
+      "size": 447825
+    },
+    {
+      "file": "Bountiful-1.12.2-2.2.3.jar",
+      "sha256": "0024f21e4c0a777949aabff6af6cf58632b531359fdebc296a3bb5a7ab4fe22c",
+      "size": 255987
+    },
+    {
+      "file": "Charm-1.12.2-1.4.1.jar",
+      "sha256": "88817c93e103382d7377c78e29da7c48e74d5a397f62cb1631532c6d64195258",
+      "size": 2383353
+    },
+    {
+      "file": "ChunkAnimator-1.12.2-1.2.1.jar",
+      "sha256": "a41da9077db8709be752f02e429b5af572fb7662b5713fad4e672f0c29981855",
+      "size": 24940
+    },
+    {
+      "file": "CollisionDamage-1.2.2.jar",
+      "sha256": "9cf3753d8da3d4ca10efb840f9341bdff150a0a04ba659374173fdc85e2f6c4e",
+      "size": 294329
+    },
+    {
+      "file": "CompatSkills-1.12.2-1.17.0.jar",
+      "sha256": "d12f25c2e724d8e957ead358f2af8e987ed1c2fff8f399c616cb13feb0026c90",
+      "size": 378621
+    },
+    {
+      "file": "ContentTweaker-1.12.2-4.10.0.jar",
+      "sha256": "3371fcccdda4c0701e0991d576db58e2806046c2cb27c22c1e52764080f0e3e9",
+      "size": 278152
+    },
+    {
+      "file": "Controlling-3.0.12.2.jar",
+      "sha256": "0f8c848d0e715142cb9e8af9a9b5cf369c89ab4bda784c200538083e556ef3a6",
+      "size": 28932
+    },
+    {
+      "file": "CoralReef-2.5-1.12.2.jar",
+      "sha256": "9398f88caa92f976eb765ac121aaa17fef94b0ac461aafa372b2c3874e246195",
+      "size": 73465
+    },
+    {
+      "file": "CraftTweaker2-1.12-4.1.20.687.jar",
+      "sha256": "7e731c752018d6d7eaccecf038ecf14b562a1fc87056b7d60e0ba579639011bf",
+      "size": 1586790
+    },
+    {
+      "file": "CreativeCore_v1.10.70_mc1.12.2.jar",
+      "sha256": "423220081e5d66eab253a966814e49e4fe9c16a1f051cb1e2213bee9109707a3",
+      "size": 1320474
+    },
+    {
+      "file": "CustomMainMenu-MC1.12.2-2.0.9.1.jar",
+      "sha256": "63b8e4d86b336739c9df8275d28e61519c73c815d0ba9ec18fb8d0cf8a218488",
+      "size": 91121
+    },
+    {
+      "file": "DoomlikeDungeons-1.14.12-MC1.12.2.jar",
+      "sha256": "a9debc52784b9402f9811e92b912c01c3c9c4cc319d905a4e5fff87eb37ff4e4",
+      "size": 725244
+    },
+    {
+      "file": "DynamicSurroundings-1.12.2-3.6.2.1.jar",
+      "sha256": "38ec972b7f1999754c598be8bfb4e0c15ea491b1b3364d69e049d86b52a257d3",
+      "size": 15040104
+    },
+    {
+      "file": "DynamicSurroundingsHuds-1.12.2-3.6.0.0.jar",
+      "sha256": "00167973cf283979337f5e99f748fd5c520603f9bf9e2810aeb3ff6ebfbdf582",
+      "size": 96279
+    },
+    {
+      "file": "DynamicTrees-1.12.2-0.9.29.jar",
+      "sha256": "82b779226d671ebbe305fca7d673a10fbc192508d7667273628b5c299e6fd83c",
+      "size": 909851
+    },
+    {
+      "file": "DynamicTreesTraverse-1.12.2-2.1.jar",
+      "sha256": "5f9841a081c99547f7da093c126d3cca6d87e5c5f559c672a1713396cbf7f26a",
+      "size": 5414741
+    },
+    {
+      "file": "ElenaiDodge-1.12.2-2.1.jar",
+      "sha256": "2e604ea44fa705758b496b14206e37d9975c83e1c7ad5b332993f1996d6cddf1",
+      "size": 228075
+    },
+    {
+      "file": "EnchantmentDescriptions-1.12.2-1.1.20.jar",
+      "sha256": "a67a4cf91eb47c7cf345ad8ae956688e29b55bb99b03024d43981595e4282b96",
+      "size": 17072
+    },
+    {
+      "file": "EnhancedVisuals_v1.4.4_mc1.12.2.jar",
+      "sha256": "4b8c538370ada6c25ab13990e90c903aed9e0bd0e63d59c34848ce59781fc966",
+      "size": 4725314
+    },
+    {
+      "file": "FamiliarFauna-1.12.2-1.0.11.jar",
+      "sha256": "c16fc847d7c67b85137597c6837f43d7f9f43b18bc7bda250d871a137f0d6555",
+      "size": 381455
+    },
+    {
+      "file": "FancyBlockParticles-1.12.x-2.4.1.jar",
+      "sha256": "ba46a592a9e51d32d3b2fbdfa167690365ba0c8ea0d0d2a80ddaefea550e8ed0",
+      "size": 177413
+    },
+    {
+      "file": "FantasticLib-1.12.2.047.jar",
+      "sha256": "138768f90c6e901743d581bb484a7b3ea03f98bf4c8592af17568e20bcfb06f0",
+      "size": 616968
+    },
+    {
+      "file": "FishingMadeBetter-1.12.2-2.2.6.jar",
+      "sha256": "9287b049af372e4c5d7f4af601a4967e9d108199c53d6d17b1a1d3b4ca3affc9",
+      "size": 648621
+    },
+    {
+      "file": "FoodExpansion1.3.3-1.12.2.jar",
+      "sha256": "35ac5d3f7ecdde3890f1c192b2f8efe8a580f0750b3af45d31b84cdca3f586ea",
+      "size": 81460
+    },
+    {
+      "file": "ForgeEndertech-1.12.2-4.5.6.1-build.0648.jar",
+      "sha256": "21e155cacd664ba822862ce459cd4b5c8aa56d4273d66d1408904b71b6115104",
+      "size": 950755
+    },
+    {
+      "file": "Forgelin-Continuous-2.4.20.0.jar",
+      "sha256": "9898d49661eb8f52e8b8ec0d4d8e8fd6ab09c3a068be9425b55260215406794d",
+      "size": 8020330
+    },
+    {
+      "file": "FriendlyEndermite_v1.0.1_mc1.12.2.jar",
+      "sha256": "f4c0329a90fdba8da9d82d7472715eec6a7d27044c9cbded6beae454c547aa9d",
+      "size": 2608
+    },
+    {
+      "file": "GlobalGameRules-1.12.2-2.2.7.jar",
+      "sha256": "1c446df3de8ee80758ab04e38a97b801854d17e3b70ff06afc808e312a0ac7dc",
+      "size": 24050
+    },
+    {
+      "file": "GooglyEyes-1.12.2-7.1.1.jar",
+      "sha256": "e3f8fae3738ffb5f85e434a1a0462b91434b93dee2df9b3441509b628264b448",
+      "size": 24273
+    },
+    {
+      "file": "HadEnoughItems_1.12.2-4.35.0.jar",
+      "sha256": "c39b0062ff5e72d6af7b624371909826a1c4420a9be8cfa343bcecd542fba489",
+      "size": 980126
+    },
+    {
+      "file": "ISeeDragons-1.2.1.jar",
+      "sha256": "c1c79a7bd5efbd6daa8a3c25040f332b81e818b3db50dfcb4a568ac7dd44c720",
+      "size": 65239
+    },
+    {
+      "file": "InfernalMobs-1.12.2.jar",
+      "sha256": "f1b0be3b482a2e36315f2c13198c64e305fe7cdace3babd5d54d9c6568b8f8a3",
+      "size": 186600
+    },
+    {
+      "file": "Inspirations-1.12.2-0.2.9.jar",
+      "sha256": "a49505102150958cda125c380dd0164376c1c3fc3df3b2c5d860d1490a19048e",
+      "size": 842254
+    },
+    {
+      "file": "InventoryTweaks-1.64+dev.151.jar",
+      "sha256": "8b3d8f2392e3e455de6c99fac30740f558908c6896adc7dd7948be009b418f52",
+      "size": 286144
+    },
+    {
+      "file": "ItemPhysic_Full_1.4.37_mc1.12.2.jar",
+      "sha256": "a0042bf4c1ad5eb4143f00927ad4b3d5383e7a603a6b17361b5644f617b54210",
+      "size": 52615
+    },
+    {
+      "file": "IvToolkit-1.3.3-1.12.jar",
+      "sha256": "ffb745111790e27cb7810a2e03d5270265dee7ebd3ef98fde897c409d58b1e59",
+      "size": 455763
+    },
+    {
+      "file": "Kiwi-1.12.2-0.5.3.32.jar",
+      "sha256": "b111a863a2bde3ab679b19b97f7967f18f56a3a9b87dee6218bad351d7fdb45c",
+      "size": 119062
+    },
+    {
+      "file": "LegendaryTooltips-1.12.2-1.1.9.jar",
+      "sha256": "e0987de7551d3568b93c034c8d3537adb7ea0aebfa1f929c0529701384ed202d",
+      "size": 36421
+    },
+    {
+      "file": "Level Up! 2-1.1.23-1.12.jar",
+      "sha256": "d4cd1e13e4e09dbaf14337b3f94bfce2d73cd35ea716888d3b95258713966521",
+      "size": 187346
+    },
+    {
+      "file": "LibrarianLib-Continuous-1.12.2-4.22-2.0-3.jar",
+      "sha256": "27cef30297b6551f96b3ed41980582de3b5836f459915ae9f5e9c4d2cccf6d13",
+      "size": 5526394
+    },
+    {
+      "file": "LoadingScreens-1.12.2-0.3.1.jar",
+      "sha256": "6df26be8acc4a1224a9ba8d3d31709a5065d3c1fcce939cb4a5b830782f0f923",
+      "size": 42647
+    },
+    {
+      "file": "Locks-1.12.2-3.0.0.jar",
+      "sha256": "cfe162b2c919aef2acf0bc35e5c9124847d95458bba25a1141a1c359be66d809",
+      "size": 1529957
+    },
+    {
+      "file": "LootTweaker-0.3.1+MC1.12.2.jar",
+      "sha256": "a9ced2493bb42fbc1b2d60f3655dec896d3b003dd3bc467f06bbc116006a2d6a",
+      "size": 111302
+    },
+    {
+      "file": "MTLib-3.0.7.jar",
+      "sha256": "e978ce61b6177ec07a9db231d05a64415239c836f43f5cbcc0cf01bd9da4b3e2",
+      "size": 30009
+    },
+    {
+      "file": "MainMenuScale-1.3.2.jar",
+      "sha256": "d2b59786e982b4b5a60714821edd9fd18b16a412a84bb3978b87f05be5c92a94",
+      "size": 4174
+    },
+    {
+      "file": "Mantle-1.12-1.3.3.55.jar",
+      "sha256": "0975ad3ef3b8b35fe43461feabe44d406b5521b0a2f3d1965c8d2f6a59ad2e65",
+      "size": 843486
+    },
+    {
+      "file": "MaterialTweaker-1.1.1.jar",
+      "sha256": "72b6cdae57d68a374ebe80db67bad772fa0b9d6450093c81fe021439696e8600",
+      "size": 23286
+    },
+    {
+      "file": "MmmMmmMmmMmm-1.12-1.14.jar",
+      "sha256": "def6e04f8ecb9b506447dc52ec0aa8e310c02463caaeb7f73955b612af59c252",
+      "size": 33622
+    },
+    {
+      "file": "MoBends_1.12.2-1.2.1-19.12.21.jar",
+      "sha256": "c29f1971acbf1603f5f733bc50e5f155287d0954f75c3794a26f386949f3e8cd",
+      "size": 770595
+    },
+    {
+      "file": "MouseTweaks-2.10.1-mc1.12.2.jar",
+      "sha256": "5e13315f4e0d0c96b1f9b800a42fecb89f519aca81d556c91df617c8751aa575",
+      "size": 80528
+    },
+    {
+      "file": "MultiMine-1.12.2.jar",
+      "sha256": "00ba55e0484a46cb5ad156bfe92868df31dc0a74d27b52ae45a8e0a8aec068b9",
+      "size": 64791
+    },
+    {
+      "file": "Neat 1.4-17.jar",
+      "sha256": "2062c99a371921fb2eb7cf6833d682c05244ca5a527db8f0c36e7f12c8ca1379",
+      "size": 18527
+    },
+    {
+      "file": "OreLib-1.12.2-3.6.0.1.jar",
+      "sha256": "4483d8cc2b0334b82b7d0f5bb6354a2020a0e00ce63a48379e8ba5eb7d79eef9",
+      "size": 341728
+    },
+    {
+      "file": "Placebo-1.12.2-1.6.0.jar",
+      "sha256": "c2110db8b8abec23d9e2e9c4a89be010f6fe1150d52595397179c8804d942ee3",
+      "size": 76902
+    },
+    {
+      "file": "PotionCore-1.9_for_1.12.2.jar",
+      "sha256": "0851c95e297efffc18539212b826e3b935e9fc189363d9e311df4bb6d62e27dd",
+      "size": 145329
+    },
+    {
+      "file": "PotionFingers-r1.0-8.jar",
+      "sha256": "e5553468144ae336df8c94f9d8a352483b5504e3d770467ba755ac087ffcc333",
+      "size": 11319
+    },
+    {
+      "file": "QualityTools-1.0.7_for_1.12.2.jar",
+      "sha256": "c979852ce107064f779a1d1a5260caf7caf6b1566dc7f7fa07ccf4eb80aa555a",
+      "size": 83553
+    },
+    {
+      "file": "QuarkRotN-r1.6-192.jar",
+      "sha256": "6cab5bd38b428cd9fd014861dfe75788faccc215344b3df5254076cfa0e9b97c",
+      "size": 3999983
+    },
+    {
+      "file": "RLArtifacts-1.1.2.jar",
+      "sha256": "6128d7da200a5d24e5262233dc24487e8a6ad827c64709b6f8173069636368f6",
+      "size": 687259
+    },
+    {
+      "file": "RLCombat-1.12.2-2.0.8.jar",
+      "sha256": "8400238bd7eb316c5b2c862f2bc572a513670533eddac997df8aeb49b8415616",
+      "size": 102741
+    },
+    {
+      "file": "RLMixins-1.2.15.jar",
+      "sha256": "f536f3278a2627358ceee875bc672dae3f0204530425344c0dd1cc1fcf734c8f",
+      "size": 1926432
+    },
+    {
+      "file": "RLTweaker-1.12.2-0.5.12.jar",
+      "sha256": "8d477062249747a115337499aa06ca19637539b2ba503c450023dbc9d9302ef3",
+      "size": 605678
+    },
+    {
+      "file": "RTG-1.12.2-6.1.0.0-snapshot.1.jar",
+      "sha256": "354317bea5c6b97d1dfe17f9431005fd741f853425fa57c8bedd801947f70f52",
+      "size": 2075023
+    },
+    {
+      "file": "ReachFix-1.12.2-1.0.8.jar",
+      "sha256": "c832090999c2f2574225c3300260c9d497a7d6ae7cdc0fdb23e50c07cb9ac7de",
+      "size": 48954
+    },
+    {
+      "file": "RealBench-1.12.2-1.3.3.jar",
+      "sha256": "5ab18aa65c41f57389ad08cc6e97442e67911501a2aaabb48cbb859324165a46",
+      "size": 17104
+    },
+    {
+      "file": "RealisticTorches-1.12.2-2.1.2.jar",
+      "sha256": "1b060fbd1ceefe2647a305d8143fbecec214b66a745183ff0df6c974410a7467",
+      "size": 75064
+    },
+    {
+      "file": "RebornCore-1.12.2-3.19.5-universal.jar",
+      "sha256": "31571a6c01b9fd8daf481fa2f22615bbc99335c21f5e474a5607ea149bf2b9aa",
+      "size": 2285146
+    },
+    {
+      "file": "RecurrentComplex-1.4.8.7.jar",
+      "sha256": "f0019fd07cfea901c2e52da75064d24195d23ce730cee2d1c4789fb6473a8819",
+      "size": 5750745
+    },
+    {
+      "file": "RenderLib-1.12.2-1.4.5.jar",
+      "sha256": "eeca6dc4ef5acf3069e4b8747e4dbfa253323cc44cd90c8ddb6d70587fe0d35f",
+      "size": 290334
+    },
+    {
+      "file": "Reskillable-1.12.2-1.13.0.jar",
+      "sha256": "4f753070e7614790141717277dea0548533894fe32ad4b131c7511cb19bd0305",
+      "size": 338650
+    },
+    {
+      "file": "ResourceLoader-MC1.12.1-1.5.3.jar",
+      "sha256": "5c5ee114dccab5caca1772e3487eca04e161c494baca4d53c8fddf5cf8722e56",
+      "size": 16612
+    },
+    {
+      "file": "RoguelikeDungeonsFnarEdition-1.12.2-2.4.4.jar",
+      "sha256": "101d8d75dec11d0c1c28491d90503cfd285119bcfe8cd1958caf472d40bda4d4",
+      "size": 973137
+    },
+    {
+      "file": "Ruins-1.12.2.jar",
+      "sha256": "c9d4c4761f88e9e2e453778fd48d33288b48e07846e1fc578a5eea56ba0b888c",
+      "size": 244703
+    },
+    {
+      "file": "SRParasites-1.12.2v1.9.11.jar",
+      "sha256": "802e25427786b93c82199f34432bd0b7fa45832451179d427f349b66fdf87f72",
+      "size": 17317930
+    },
+    {
+      "file": "Scalar Legacy-1.0.1.jar",
+      "sha256": "350d1c378f3b0ac8e7b3df0432482bbb5341c79d07df843c747be1d5fdc23cfe",
+      "size": 25464431
+    },
+    {
+      "file": "ScalingHealth-1.12.2-1.3.42+147.jar",
+      "sha256": "03ae1c25de660a2cf6677802892720b0b78df965fcf2af31686bb6c858569466",
+      "size": 369985
+    },
+    {
+      "file": "SereneSeasons-1.12.2-1.2.18-universal.jar",
+      "sha256": "f52033660557331cc4847337325fdab05b07df0ceaa851382cf46137286e243a",
+      "size": 185187
+    },
+    {
+      "file": "SetBonus-1.12.2.020.jar",
+      "sha256": "b4d74ff037002ad3c06f1e704f1fabcb40ee23483ca43810c137a271ddf13740",
+      "size": 75616
+    },
+    {
+      "file": "ShieldBreak-1.1.3.jar",
+      "sha256": "6fb5752bf9591362caa192277e32d8f8cc7f409586a96f7620067d78c4a35962",
+      "size": 58071
+    },
+    {
+      "file": "SilentLib-1.12.2-3.0.14+168.jar",
+      "sha256": "eabb5fc9bdbff1620db5e567663ac2f1bfedc02f7f3004313e7fdde66ec11d16",
+      "size": 369314
+    },
+    {
+      "file": "SimpleDifficulty-1.12.2-0.3.9.jar",
+      "sha256": "4c7f92455aae62e7dbc4171aad609c34983243c90d72add5a12ece1613fd1b4b",
+      "size": 502574
+    },
+    {
+      "file": "SnowRealMagic-1.12.2-0.7.1.jar",
+      "sha256": "a4e08b2d416ff374fe9144b70687a1166d0bfdeead93ac2991e0ab735d07abfa",
+      "size": 920900
+    },
+    {
+      "file": "SoManyEnchantments-0.5.5.jar",
+      "sha256": "e7f4785d666dcebce4caa9d1ff2d1254832dade4d48040b250f9f66a60a1a0b0",
+      "size": 606829
+    },
+    {
+      "file": "SoundFilters-0.12.1_for_1.12.jar",
+      "sha256": "6d9981db6aa738d025c732ff6457184abfa29d29b0035ee61069c56000e4a977",
+      "size": 43194
+    },
+    {
+      "file": "SpartanHUDBaubles-1.12.2-1.0.0.jar",
+      "sha256": "a96397568625dcb39061177b0cb1326c165822ed8213fdbb74724ec66968b184",
+      "size": 78418
+    },
+    {
+      "file": "SpartanShields-1.12.2-1.5.5.jar",
+      "sha256": "46b58f509e9023adda3ac087031ebd60acc9db8177125cd197a33099b8eea603",
+      "size": 430876
+    },
+    {
+      "file": "SpartanWeaponry-1.12.2-1.5.3.jar",
+      "sha256": "d7f376edce9581006b4115277c5015b8e7ac3e396171938217705ae7b6cc1d18",
+      "size": 1984899
+    },
+    {
+      "file": "SpawnerControl-1.6.3b.jar",
+      "sha256": "0a5cf401bf58bf4163c08aeb79237e75d7d97e6fe1f4afc6fc2618f9fa8fe763",
+      "size": 49537
+    },
+    {
+      "file": "StandardExpansion-3.4.173.jar",
+      "sha256": "405211aef15d442f857f92c4f755f051396283d6e6fc2de818f4f693091e89f9",
+      "size": 460454
+    },
+    {
+      "file": "ToolBelt-1.12.2-1.9.14.jar",
+      "sha256": "66f4a7c5b894fe2d1c134c1868094709d9eceee36a5ea2ecec70b01ef1f5079c",
+      "size": 161592
+    },
+    {
+      "file": "Traverse-1.12.2-1.6.0-69.jar",
+      "sha256": "be89ff855b55d10469779660089cbb13f1f438a9a934724ebffa49982f269414",
+      "size": 270133
+    },
+    {
+      "file": "Trinkets and Baubles-32.4.jar",
+      "sha256": "2d34e3a66ede5b0048784c1802250f060d5906590efa56d620688e549fe6ec05",
+      "size": 1974198
+    },
+    {
+      "file": "VariedCommodities_1.12.2-(31Mar23).jar",
+      "sha256": "bb1afc496b25e2afda523ffc02e3883b4f5a8e6c852c6d5818bd2d82afae6016",
+      "size": 1766394
+    },
+    {
+      "file": "Waystones_1.12.2-4.1.0.jar",
+      "sha256": "5e79f329154d9a6225130f2b29dbcb0f603e2e622637e39ca566f8179b02ca15",
+      "size": 178994
+    },
+    {
+      "file": "WearableBackpacks-RLCraft-1.12.2-3.2.6.jar",
+      "sha256": "f7fbe918d8db490a4f531c911ee10e4e2069b83794b555a03a5847ed59411a5d",
+      "size": 503299
+    },
+    {
+      "file": "WolfArmorAndStorage-3.8.1+1.12.2.alpha.1-SNAPSHOT-signed.jar",
+      "sha256": "0e53b91a8ebb9c83ba10df038f36caf2ea5fd674379f9794b2a93a5698bb9b95",
+      "size": 2075228
+    },
+    {
+      "file": "XPFromHarvest-1.12.2-1.2.0.jar",
+      "sha256": "d40e86e58730485e6260b2b2cdf789c3c68a2c95f3e6a9c7f0901f0e7cb9aa6d",
+      "size": 8479
+    },
+    {
+      "file": "YungsLaw-1.12.2-1.0.4.jar",
+      "sha256": "4e22359d9181f52f1df6a99f225298f234db280028f143b3fdce6239a5fc1253",
+      "size": 72145
+    },
+    {
+      "file": "alcatrazcore-1.0.4.jar",
+      "sha256": "10b245b2485c2803ca335f15e371e91df507ca5e0fab7db329a09c93dcb12670",
+      "size": 109321
+    },
+    {
+      "file": "antiqueatlas-1.12.2-4.6.3.jar",
+      "sha256": "ffd0b65060c1e8375b192acd34c7f71606fcd852bdd36b0f5e37f1c8b6536d1d",
+      "size": 1239580
+    },
+    {
+      "file": "antiquecities-1.2.1.jar",
+      "sha256": "b21085e692bdf26c5cab115bf3fabb81ccecbe32aeb7a4ac06089f60ba93e0a9",
+      "size": 132195
+    },
+    {
+      "file": "anvilpatch-1.1.1.jar",
+      "sha256": "be28628747aecea1a01e5781c02317fc19b88c7920b71466fafb7c7fd072f06b",
+      "size": 16936
+    },
+    {
+      "file": "armorunder-mc1.12.2-1.0.0.jar",
+      "sha256": "a4b1f9bab0cfd874d3a4357eb31696349c9d39e6f9f01507d6e0d4f033a936ac",
+      "size": 163703
+    },
+    {
+      "file": "astikorcarts-1.12.2-0.1.2.8.jar",
+      "sha256": "fcddb62c18abef66da15f504eca0388fb0e607d5014b3c3f92776d9286392cbb",
+      "size": 102639
+    },
+    {
+      "file": "base-1.12.2-3.14.0.jar",
+      "sha256": "5ec979220887e4e73772ecdb5dceb8a258b4da974bd4ece8fd85cade089913d4",
+      "size": 690000
+    },
+    {
+      "file": "better_survival-1.5.3.jar",
+      "sha256": "6cc9372e76a86bf428b6df446be138f8db3e622a127f2548cb73a4e4a887d1fb",
+      "size": 479203
+    },
+    {
+      "file": "betterbiomeblend-1.12.2-1.1.7-forge.jar",
+      "sha256": "fa0eb97e2e7ee0682c3ba8527bbfbf15c0eef69817a75444f4c6cf83a8a38bc8",
+      "size": 37657
+    },
+    {
+      "file": "bettercaves-1.12.2-2.0.4.jar",
+      "sha256": "b81b66c2b90431d0cd764f95a2d7ff4561052fa040e8e694b7e2b8e8fa974a00",
+      "size": 193604
+    },
+    {
+      "file": "betternether-0.1.8.6.jar",
+      "sha256": "6fffbb495ec446317f4cfdbc4f471a30bffa298c4f354adfed62e4ab5ab274b2",
+      "size": 1769238
+    },
+    {
+      "file": "callablehorses-1.12.2-1.1.1.jar",
+      "sha256": "ccc0857a5651244d35b4554a6fcf387b4703728b1ae7eb4e8ff28e152f09f1ac",
+      "size": 130065
+    },
+    {
+      "file": "carrotslib-mc1.12.2-1.0.0b1.jar",
+      "sha256": "b7ceac0f00126a3a30ea1a93cfc814b2d0608b82d7fbe4ecbc3af3ea94c0e521",
+      "size": 290843
+    },
+    {
+      "file": "carryon-1.12.2-1.12.7.23.jar",
+      "sha256": "02fb9cee20990687149d19f668cd6383164a2b275c3dce0e43ca2b6f6a03f070",
+      "size": 309188
+    },
+    {
+      "file": "celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+      "sha256": "c6c496892558ab2690c4984c0c7bf384283e56945278496c0dbbc29180e69642",
+      "size": 3215838
+    },
+    {
+      "file": "champions-1.12.2-1.0.11.10.jar",
+      "sha256": "3e7ea02af8016fe53690977d20b0521901f2e09d55e4c41f855190bd9b79e91f",
+      "size": 230539
+    },
+    {
+      "file": "classyhats-1.6.0.jar",
+      "sha256": "1ecdb155f2a0b619c2b5706a2e780a11ac415937202ac1afa9ebbbd38576f859",
+      "size": 325619
+    },
+    {
+      "file": "comforts-1.12.2-1.4.1.3.jar",
+      "sha256": "62183a1fa282032e2fea2c3ff6348611a03685a50769199243a42d38605d08a6",
+      "size": 167301
+    },
+    {
+      "file": "corpsecomplex-1.12.2-1.0.12.0.jar",
+      "sha256": "268969a20ce1744f878279f0cd8cfe3202b4d9c57a1fe4d9096452280fe8efab",
+      "size": 132594
+    },
+    {
+      "file": "craftablechainmail-1.0.jar",
+      "sha256": "4970a6ea89dcf1e12c280b21683c22a1e63f62b90ffabf96ee9a4670bd0803c0",
+      "size": 12600
+    },
+    {
+      "file": "defiledlands-1.12.2-1.4.3.jar",
+      "sha256": "62e8d6b2ecfd97c87b6a7f481e6d3b2ee28494b28cb9745b9e7151f2f0ee3f36",
+      "size": 780421
+    },
+    {
+      "file": "disenchanter[1.12]1.8.jar",
+      "sha256": "db6b3b16647cf5fa520aea8254c0aefef8262bff03ff55840349b9e1ba5e7832",
+      "size": 172724
+    },
+    {
+      "file": "dynamictreesdefiledlands-1.12.2-1.0.0.jar",
+      "sha256": "a7549e566b27ea420c404581ead2823832e60e8109e57a3c1eec3147ac813c78",
+      "size": 33264
+    },
+    {
+      "file": "firstaid-1.6.22.jar",
+      "sha256": "55dfe81a58d20575b6f6aa635d4296370c804fe52b77485b455aa99910da31a4",
+      "size": 493904
+    },
+    {
+      "file": "forgottenitems-1.12.2-1.3.1.4.jar",
+      "sha256": "51a1c5132f3629ebc2af2ec629b8781c9dcf8db1e2b25ff50d92a26e19f37cbd",
+      "size": 1106601
+    },
+    {
+      "file": "fxcontrol-1.12-0.1.15.jar",
+      "sha256": "475b901d1b715dfabd0d11740fdde0e3d951fe8cfbcc25cf4197d5d3325ee0fb",
+      "size": 121908
+    },
+    {
+      "file": "grapplemod-1.12.2-v12.3.jar",
+      "sha256": "b43614cb82ced93fc1522e65dbbb151cef3e0cba847366f0ae672feb550761af",
+      "size": 431927
+    },
+    {
+      "file": "iChunUtil-1.12.2-7.2.2.jar",
+      "sha256": "e0b90727cbe54a11fe568f3d60cd59d64ff3c14f82437e1d1c10b575886ab8a3",
+      "size": 581963
+    },
+    {
+      "file": "iceandfire-1.7.1-1.12.2.jar",
+      "sha256": "cdf4e45fccc93bc4bac61256747e1d30b77728a00960a204785f32c883e10c17",
+      "size": 16086478
+    },
+    {
+      "file": "incontrol-1.12-3.9.18.jar",
+      "sha256": "b249e9e59a20549fc7080108629f0089cab7f3f16241fea8f5070bb8178f83c3",
+      "size": 152687
+    },
+    {
+      "file": "itlt-1.12.x-1.0.4.jar",
+      "sha256": "e1bafe44c5a5c9b8119de308580f90183ab10075f640dd12c6e26c28019b0e87",
+      "size": 14649
+    },
+    {
+      "file": "llibrary-1.7.20-1.12.2.jar",
+      "sha256": "27fa8dbfc7428168229a445dad82a4696ba52cf0a6e054833bff0f93931d8ceb",
+      "size": 884550
+    },
+    {
+      "file": "lostcities-1.12-2.0.22.jar",
+      "sha256": "d29a3fb8fa4c4d74dfadb9deee2eb501e5840c6217be80e24370dcbb709d32b3",
+      "size": 789743
+    },
+    {
+      "file": "lycanitesmobs-1.12.2-2.0.8.9.jar",
+      "sha256": "0f75bb546a41b95a55238998db4d7aae1517163722cf205f4a3be8cc582c68ac",
+      "size": 94188233
+    },
+    {
+      "file": "mcw-bridges-1.0.6b-mc1.12.2.jar",
+      "sha256": "bc309b7c62f8157c65a7339b7fe69334767486aff78581f41678f3749de6debb",
+      "size": 373298
+    },
+    {
+      "file": "modtweaker-4.0.20.11.jar",
+      "sha256": "2c2db905cae947092fe46dba301d1f6777fdab9cc8e79140c050b09fe62dda7a",
+      "size": 493285
+    },
+    {
+      "file": "notreepunching-2.0.21.jar",
+      "sha256": "71ecc926da62348ea6dcdeb11385ea68b88f0121a700096da5c12e5b4022290c",
+      "size": 2096298
+    },
+    {
+      "file": "particleculling-1.12.2-v1.4.1.jar",
+      "sha256": "2790fc0c9072850874cc91c833d0d7132f202bfe74700b8408fa142508b58c29",
+      "size": 16945
+    },
+    {
+      "file": "pigstep-1.12.jar",
+      "sha256": "23daedd2e063ec9036749e5c255afae5e5aa9eb9014a1cd8679254752b301203",
+      "size": 4835065
+    },
+    {
+      "file": "playerbosses-1.12.2-1.1.0.jar",
+      "sha256": "3a185b0f3b1d136c12601645ccaf46ac5ec69f66df8f3eb74f8633c409b1d779",
+      "size": 109193
+    },
+    {
+      "file": "roughTweaks0.2.4-1.12.2.jar",
+      "sha256": "c0dd9bc20a83778c189156d1fa10b161efc854b8787d98c79bb36bd22c11f5f3",
+      "size": 25875
+    },
+    {
+      "file": "rustic-1.1.7.jar",
+      "sha256": "30976de836d72cf3819338469e3e62c0c6943f5b50a6a2b10221c73909f184d8",
+      "size": 1400465
+    },
+    {
+      "file": "sit-1.12.2-v1.3.jar",
+      "sha256": "3d4bb6569a06191fd2d8759c0995ae9a48e318a4b24323ecabdac148ab57ffc3",
+      "size": 10110
+    },
+    {
+      "file": "spartandefiled-1.0.jar",
+      "sha256": "3b8309ac86f6912cca8c4c6d55bc6f45d34fc7adef61211b6499b677c9b09dbf",
+      "size": 45467
+    },
+    {
+      "file": "spartanfire_rlcraft-1.1.0.jar",
+      "sha256": "79297d85f573791403e9038188d0aaef84550fcf1cedca51f04be830921e8417",
+      "size": 710631
+    },
+    {
+      "file": "switchbow-1.6.8.jar",
+      "sha256": "7f073fbe8ca85f8eb380981bfa0dbbed8832793cc792e0091cb6ca69bc4f165f",
+      "size": 496455
+    },
+    {
+      "file": "tnt_utilities-mc1.12-1.2.3.jar",
+      "sha256": "4b98430a706ba80397f99db8ab808017a4062d5bf8b246631754195b1c3c87ec",
+      "size": 31034
+    },
+    {
+      "file": "trumpetskeleton-1.12-1.0.2.1.jar",
+      "sha256": "9d3d96b8013a6697c58afc85b31c401d39516a367b66ecdce7512367d7ff1530",
+      "size": 42657
+    },
+    {
+      "file": "tschipplib-1.12.2-1.1.7.jar",
+      "sha256": "543a7cb0a4510771a3507b18e0e8d3739a0b4615b78404f6f2eeaab3c7a9da47",
+      "size": 70966
+    },
+    {
+      "file": "tumbleweed-1.12-0.4.7.jar",
+      "sha256": "ff78f5ac00574912d60022b4a4208cc00f9d4fccfa444efcea38cf1cbb76bcce",
+      "size": 87400
+    },
+    {
+      "file": "xptome-1.12.2-v1.1.6.jar",
+      "sha256": "470961851873acaede06d36864cb5b77a292ef4ae27e121b6ac10ab7dceb6672",
+      "size": 12161
+    }
+  ],
+  "extraTestLibraries": [
+    {
+      "file": "lwjgl-vulkan-3.4.3.jar",
+      "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+    }
+  ],
+  "testMods": [
+    {
+      "file": "+Fugue-0.24.4.jar",
+      "sha256": "438248925eb38d16b6b4bcbe6247339b2a745cfe586d4917985f7d925a5d8630"
+    },
+    {
+      "file": "AIReducer-1.12.2-0.3.0.jar",
+      "sha256": "9e06e63ef116c8c621166e182e52d27f8d4b390683b9c0ab1b097fc800006d5b"
+    },
+    {
+      "file": "AdHooks-1.12.2-3.3.1.0-build.0626.jar",
+      "sha256": "aae5b4181b71c1eee801e23a3e4d2b593862a8692294a456ee46e8e2a97d2c40"
+    },
+    {
+      "file": "Advanced-Fishing-1.12.2-1.3.3.jar",
+      "sha256": "900a8a030eb8a24c70a949695dd1f36315b9092840b13043d5a6f63e9e50e1b7"
+    },
+    {
+      "file": "Aquaculture-1.12.2-1.6.8.jar",
+      "sha256": "b9bdf522c6b2891e0d34dde10e40ac71a8df9169990e54fd6b9ccfe9868e1c9a"
+    },
+    {
+      "file": "AutoRegLib-1.3-32.jar",
+      "sha256": "d8610a94da8f30815db4612b3291ecdcfd8204eaf1a4db8c5d0663c7b1191d91"
+    },
+    {
+      "file": "BNBGamingLib-1.12.2-2.17.6.jar",
+      "sha256": "868c7810de85e43913dc42d8b1443d5316a71ecc19e5983e5aa6cda69ed4db5d"
+    },
+    {
+      "file": "BQTweaker-1.3.5.jar",
+      "sha256": "c947f92623b22cc8baab77e82e58852710bb5b67123c85891b528b223ad4d3e5"
+    },
+    {
+      "file": "BQ_Multiblock_Structure_Integration-1.0.9.jar",
+      "sha256": "9aef01baa65ce1c771b4b5d3e615c2246972a6d3304c839f93d9be642cc8549e"
+    },
+    {
+      "file": "BattleTowers-1.12.2.jar",
+      "sha256": "21a402410869dad8d023e05f3a5488e7b34680ca11e8226560c572f6d06e53f1"
+    },
+    {
+      "file": "Baubles-1.12-1.5.2.jar",
+      "sha256": "b32010b2f2778aa1188585e7ead91ad46d4cb2c715f9c778a61848ba7fe51f8d"
+    },
+    {
+      "file": "BetterFoliage-MC1.12-2.3.3.jar",
+      "sha256": "567cbeb69e77bbf9e776045c790436c65f6477162b07457607a172b075d8ebfe"
+    },
+    {
+      "file": "BetterMineshaftsForge-1.12.2-2.2.1.jar",
+      "sha256": "6380ad3f470c38337e545afec5418084e95bd7ec3cd75658f9da81e46a2288b1"
+    },
+    {
+      "file": "BetterQuesting-3.5.329.jar",
+      "sha256": "f7803b91d54b98eb54b3e2f12143866e68a46e3f963d51997d1a1195b8469ba7"
+    },
+    {
+      "file": "BetterTabs-1.0.4.jar",
+      "sha256": "7f0f510696c136dc4152264622e54f42bde6aad715468fd5fe898d653f78e776"
+    },
+    {
+      "file": "Bloodmoon-MC1.12.2-1.5.3.jar",
+      "sha256": "1d6082293067e1a1af002c65527a41df3919f8125eaa25a9c7c9d16ba25c4d06"
+    },
+    {
+      "file": "Bountiful Baubles-1.12.2-0.1.8.jar",
+      "sha256": "aa4c7609455916fb9f6dea575f164f89304f20cfe42cf93dd681e77a87181a9d"
+    },
+    {
+      "file": "Bountiful-1.12.2-2.2.3.jar",
+      "sha256": "0024f21e4c0a777949aabff6af6cf58632b531359fdebc296a3bb5a7ab4fe22c"
+    },
+    {
+      "file": "Charm-1.12.2-1.4.1.jar",
+      "sha256": "88817c93e103382d7377c78e29da7c48e74d5a397f62cb1631532c6d64195258"
+    },
+    {
+      "file": "ChunkAnimator-1.12.2-1.2.1.jar",
+      "sha256": "a41da9077db8709be752f02e429b5af572fb7662b5713fad4e672f0c29981855"
+    },
+    {
+      "file": "CollisionDamage-1.2.2.jar",
+      "sha256": "9cf3753d8da3d4ca10efb840f9341bdff150a0a04ba659374173fdc85e2f6c4e"
+    },
+    {
+      "file": "CompatSkills-1.12.2-1.17.0.jar",
+      "sha256": "d12f25c2e724d8e957ead358f2af8e987ed1c2fff8f399c616cb13feb0026c90"
+    },
+    {
+      "file": "ContentTweaker-1.12.2-4.10.0.jar",
+      "sha256": "3371fcccdda4c0701e0991d576db58e2806046c2cb27c22c1e52764080f0e3e9"
+    },
+    {
+      "file": "Controlling-3.0.12.2.jar",
+      "sha256": "0f8c848d0e715142cb9e8af9a9b5cf369c89ab4bda784c200538083e556ef3a6"
+    },
+    {
+      "file": "CoralReef-2.5-1.12.2.jar",
+      "sha256": "9398f88caa92f976eb765ac121aaa17fef94b0ac461aafa372b2c3874e246195"
+    },
+    {
+      "file": "CraftTweaker2-1.12-4.1.20.687.jar",
+      "sha256": "7e731c752018d6d7eaccecf038ecf14b562a1fc87056b7d60e0ba579639011bf"
+    },
+    {
+      "file": "CreativeCore_v1.10.70_mc1.12.2.jar",
+      "sha256": "423220081e5d66eab253a966814e49e4fe9c16a1f051cb1e2213bee9109707a3"
+    },
+    {
+      "file": "CustomMainMenu-MC1.12.2-2.0.9.1.jar",
+      "sha256": "63b8e4d86b336739c9df8275d28e61519c73c815d0ba9ec18fb8d0cf8a218488"
+    },
+    {
+      "file": "DoomlikeDungeons-1.14.12-MC1.12.2.jar",
+      "sha256": "a9debc52784b9402f9811e92b912c01c3c9c4cc319d905a4e5fff87eb37ff4e4"
+    },
+    {
+      "file": "DynamicSurroundings-1.12.2-3.6.2.1.jar",
+      "sha256": "38ec972b7f1999754c598be8bfb4e0c15ea491b1b3364d69e049d86b52a257d3"
+    },
+    {
+      "file": "DynamicSurroundingsHuds-1.12.2-3.6.0.0.jar",
+      "sha256": "00167973cf283979337f5e99f748fd5c520603f9bf9e2810aeb3ff6ebfbdf582"
+    },
+    {
+      "file": "DynamicTrees-1.12.2-0.9.29.jar",
+      "sha256": "82b779226d671ebbe305fca7d673a10fbc192508d7667273628b5c299e6fd83c"
+    },
+    {
+      "file": "DynamicTreesTraverse-1.12.2-2.1.jar",
+      "sha256": "5f9841a081c99547f7da093c126d3cca6d87e5c5f559c672a1713396cbf7f26a"
+    },
+    {
+      "file": "ElenaiDodge-1.12.2-2.1.jar",
+      "sha256": "2e604ea44fa705758b496b14206e37d9975c83e1c7ad5b332993f1996d6cddf1"
+    },
+    {
+      "file": "EnchantmentDescriptions-1.12.2-1.1.20.jar",
+      "sha256": "a67a4cf91eb47c7cf345ad8ae956688e29b55bb99b03024d43981595e4282b96"
+    },
+    {
+      "file": "EnhancedVisuals_v1.4.4_mc1.12.2.jar",
+      "sha256": "4b8c538370ada6c25ab13990e90c903aed9e0bd0e63d59c34848ce59781fc966"
+    },
+    {
+      "file": "FamiliarFauna-1.12.2-1.0.11.jar",
+      "sha256": "c16fc847d7c67b85137597c6837f43d7f9f43b18bc7bda250d871a137f0d6555"
+    },
+    {
+      "file": "FancyBlockParticles-1.12.x-2.4.1.jar",
+      "sha256": "ba46a592a9e51d32d3b2fbdfa167690365ba0c8ea0d0d2a80ddaefea550e8ed0"
+    },
+    {
+      "file": "FantasticLib-1.12.2.047.jar",
+      "sha256": "138768f90c6e901743d581bb484a7b3ea03f98bf4c8592af17568e20bcfb06f0"
+    },
+    {
+      "file": "FishingMadeBetter-1.12.2-2.2.6.jar",
+      "sha256": "9287b049af372e4c5d7f4af601a4967e9d108199c53d6d17b1a1d3b4ca3affc9"
+    },
+    {
+      "file": "FoodExpansion1.3.3-1.12.2.jar",
+      "sha256": "35ac5d3f7ecdde3890f1c192b2f8efe8a580f0750b3af45d31b84cdca3f586ea"
+    },
+    {
+      "file": "ForgeEndertech-1.12.2-4.5.6.1-build.0648.jar",
+      "sha256": "21e155cacd664ba822862ce459cd4b5c8aa56d4273d66d1408904b71b6115104"
+    },
+    {
+      "file": "Forgelin-Continuous-2.4.20.0.jar",
+      "sha256": "9898d49661eb8f52e8b8ec0d4d8e8fd6ab09c3a068be9425b55260215406794d"
+    },
+    {
+      "file": "FriendlyEndermite_v1.0.1_mc1.12.2.jar",
+      "sha256": "f4c0329a90fdba8da9d82d7472715eec6a7d27044c9cbded6beae454c547aa9d"
+    },
+    {
+      "file": "GlobalGameRules-1.12.2-2.2.7.jar",
+      "sha256": "1c446df3de8ee80758ab04e38a97b801854d17e3b70ff06afc808e312a0ac7dc"
+    },
+    {
+      "file": "GooglyEyes-1.12.2-7.1.1.jar",
+      "sha256": "e3f8fae3738ffb5f85e434a1a0462b91434b93dee2df9b3441509b628264b448"
+    },
+    {
+      "file": "HadEnoughItems_1.12.2-4.35.0.jar",
+      "sha256": "c39b0062ff5e72d6af7b624371909826a1c4420a9be8cfa343bcecd542fba489"
+    },
+    {
+      "file": "ISeeDragons-1.2.1.jar",
+      "sha256": "c1c79a7bd5efbd6daa8a3c25040f332b81e818b3db50dfcb4a568ac7dd44c720"
+    },
+    {
+      "file": "InfernalMobs-1.12.2.jar",
+      "sha256": "f1b0be3b482a2e36315f2c13198c64e305fe7cdace3babd5d54d9c6568b8f8a3"
+    },
+    {
+      "file": "Inspirations-1.12.2-0.2.9.jar",
+      "sha256": "a49505102150958cda125c380dd0164376c1c3fc3df3b2c5d860d1490a19048e"
+    },
+    {
+      "file": "InventoryTweaks-1.64+dev.151.jar",
+      "sha256": "8b3d8f2392e3e455de6c99fac30740f558908c6896adc7dd7948be009b418f52"
+    },
+    {
+      "file": "ItemPhysic_Full_1.4.37_mc1.12.2.jar",
+      "sha256": "a0042bf4c1ad5eb4143f00927ad4b3d5383e7a603a6b17361b5644f617b54210"
+    },
+    {
+      "file": "IvToolkit-1.3.3-1.12.jar",
+      "sha256": "ffb745111790e27cb7810a2e03d5270265dee7ebd3ef98fde897c409d58b1e59"
+    },
+    {
+      "file": "Kiwi-1.12.2-0.5.3.32.jar",
+      "sha256": "b111a863a2bde3ab679b19b97f7967f18f56a3a9b87dee6218bad351d7fdb45c"
+    },
+    {
+      "file": "LegendaryTooltips-1.12.2-1.1.9.jar",
+      "sha256": "e0987de7551d3568b93c034c8d3537adb7ea0aebfa1f929c0529701384ed202d"
+    },
+    {
+      "file": "Level Up! 2-1.1.23-1.12.jar",
+      "sha256": "d4cd1e13e4e09dbaf14337b3f94bfce2d73cd35ea716888d3b95258713966521"
+    },
+    {
+      "file": "LibrarianLib-Continuous-1.12.2-4.22-2.0-3.jar",
+      "sha256": "27cef30297b6551f96b3ed41980582de3b5836f459915ae9f5e9c4d2cccf6d13"
+    },
+    {
+      "file": "LoadingScreens-1.12.2-0.3.1.jar",
+      "sha256": "6df26be8acc4a1224a9ba8d3d31709a5065d3c1fcce939cb4a5b830782f0f923"
+    },
+    {
+      "file": "Locks-1.12.2-3.0.0.jar",
+      "sha256": "cfe162b2c919aef2acf0bc35e5c9124847d95458bba25a1141a1c359be66d809"
+    },
+    {
+      "file": "LootTweaker-0.3.1+MC1.12.2.jar",
+      "sha256": "a9ced2493bb42fbc1b2d60f3655dec896d3b003dd3bc467f06bbc116006a2d6a"
+    },
+    {
+      "file": "MTLib-3.0.7.jar",
+      "sha256": "e978ce61b6177ec07a9db231d05a64415239c836f43f5cbcc0cf01bd9da4b3e2"
+    },
+    {
+      "file": "MainMenuScale-1.3.2.jar",
+      "sha256": "d2b59786e982b4b5a60714821edd9fd18b16a412a84bb3978b87f05be5c92a94"
+    },
+    {
+      "file": "Mantle-1.12-1.3.3.55.jar",
+      "sha256": "0975ad3ef3b8b35fe43461feabe44d406b5521b0a2f3d1965c8d2f6a59ad2e65"
+    },
+    {
+      "file": "MaterialTweaker-1.1.1.jar",
+      "sha256": "72b6cdae57d68a374ebe80db67bad772fa0b9d6450093c81fe021439696e8600"
+    },
+    {
+      "file": "MmmMmmMmmMmm-1.12-1.14.jar",
+      "sha256": "def6e04f8ecb9b506447dc52ec0aa8e310c02463caaeb7f73955b612af59c252"
+    },
+    {
+      "file": "MoBends_1.12.2-1.2.1-19.12.21.jar",
+      "sha256": "c29f1971acbf1603f5f733bc50e5f155287d0954f75c3794a26f386949f3e8cd"
+    },
+    {
+      "file": "MouseTweaks-2.10.1-mc1.12.2.jar",
+      "sha256": "5e13315f4e0d0c96b1f9b800a42fecb89f519aca81d556c91df617c8751aa575"
+    },
+    {
+      "file": "MultiMine-1.12.2.jar",
+      "sha256": "00ba55e0484a46cb5ad156bfe92868df31dc0a74d27b52ae45a8e0a8aec068b9"
+    },
+    {
+      "file": "Neat 1.4-17.jar",
+      "sha256": "2062c99a371921fb2eb7cf6833d682c05244ca5a527db8f0c36e7f12c8ca1379"
+    },
+    {
+      "file": "OreLib-1.12.2-3.6.0.1.jar",
+      "sha256": "4483d8cc2b0334b82b7d0f5bb6354a2020a0e00ce63a48379e8ba5eb7d79eef9"
+    },
+    {
+      "file": "Placebo-1.12.2-1.6.0.jar",
+      "sha256": "c2110db8b8abec23d9e2e9c4a89be010f6fe1150d52595397179c8804d942ee3"
+    },
+    {
+      "file": "PotionCore-1.9_for_1.12.2.jar",
+      "sha256": "0851c95e297efffc18539212b826e3b935e9fc189363d9e311df4bb6d62e27dd"
+    },
+    {
+      "file": "PotionFingers-r1.0-8.jar",
+      "sha256": "e5553468144ae336df8c94f9d8a352483b5504e3d770467ba755ac087ffcc333"
+    },
+    {
+      "file": "QualityTools-1.0.7_for_1.12.2.jar",
+      "sha256": "c979852ce107064f779a1d1a5260caf7caf6b1566dc7f7fa07ccf4eb80aa555a"
+    },
+    {
+      "file": "QuarkRotN-r1.6-192.jar",
+      "sha256": "6cab5bd38b428cd9fd014861dfe75788faccc215344b3df5254076cfa0e9b97c"
+    },
+    {
+      "file": "RLArtifacts-1.1.2.jar",
+      "sha256": "6128d7da200a5d24e5262233dc24487e8a6ad827c64709b6f8173069636368f6"
+    },
+    {
+      "file": "RLCombat-1.12.2-2.0.8.jar",
+      "sha256": "8400238bd7eb316c5b2c862f2bc572a513670533eddac997df8aeb49b8415616"
+    },
+    {
+      "file": "RLMixins-1.2.15.jar",
+      "sha256": "f536f3278a2627358ceee875bc672dae3f0204530425344c0dd1cc1fcf734c8f"
+    },
+    {
+      "file": "RLTweaker-1.12.2-0.5.12.jar",
+      "sha256": "8d477062249747a115337499aa06ca19637539b2ba503c450023dbc9d9302ef3"
+    },
+    {
+      "file": "RTG-1.12.2-6.1.0.0-snapshot.1.jar",
+      "sha256": "354317bea5c6b97d1dfe17f9431005fd741f853425fa57c8bedd801947f70f52"
+    },
+    {
+      "file": "ReachFix-1.12.2-1.0.8.jar",
+      "sha256": "c832090999c2f2574225c3300260c9d497a7d6ae7cdc0fdb23e50c07cb9ac7de"
+    },
+    {
+      "file": "RealBench-1.12.2-1.3.3.jar",
+      "sha256": "5ab18aa65c41f57389ad08cc6e97442e67911501a2aaabb48cbb859324165a46"
+    },
+    {
+      "file": "RealisticTorches-1.12.2-2.1.2.jar",
+      "sha256": "1b060fbd1ceefe2647a305d8143fbecec214b66a745183ff0df6c974410a7467"
+    },
+    {
+      "file": "RebornCore-1.12.2-3.19.5-universal.jar",
+      "sha256": "31571a6c01b9fd8daf481fa2f22615bbc99335c21f5e474a5607ea149bf2b9aa"
+    },
+    {
+      "file": "RecurrentComplex-1.4.8.7.jar",
+      "sha256": "f0019fd07cfea901c2e52da75064d24195d23ce730cee2d1c4789fb6473a8819"
+    },
+    {
+      "file": "RenderLib-1.12.2-1.4.5.jar",
+      "sha256": "eeca6dc4ef5acf3069e4b8747e4dbfa253323cc44cd90c8ddb6d70587fe0d35f"
+    },
+    {
+      "file": "Reskillable-1.12.2-1.13.0.jar",
+      "sha256": "4f753070e7614790141717277dea0548533894fe32ad4b131c7511cb19bd0305"
+    },
+    {
+      "file": "ResourceLoader-MC1.12.1-1.5.3.jar",
+      "sha256": "5c5ee114dccab5caca1772e3487eca04e161c494baca4d53c8fddf5cf8722e56"
+    },
+    {
+      "file": "RoguelikeDungeonsFnarEdition-1.12.2-2.4.4.jar",
+      "sha256": "101d8d75dec11d0c1c28491d90503cfd285119bcfe8cd1958caf472d40bda4d4"
+    },
+    {
+      "file": "Ruins-1.12.2.jar",
+      "sha256": "c9d4c4761f88e9e2e453778fd48d33288b48e07846e1fc578a5eea56ba0b888c"
+    },
+    {
+      "file": "SRParasites-1.12.2v1.9.11.jar",
+      "sha256": "802e25427786b93c82199f34432bd0b7fa45832451179d427f349b66fdf87f72"
+    },
+    {
+      "file": "Scalar Legacy-1.0.1.jar",
+      "sha256": "350d1c378f3b0ac8e7b3df0432482bbb5341c79d07df843c747be1d5fdc23cfe"
+    },
+    {
+      "file": "ScalingHealth-1.12.2-1.3.42+147.jar",
+      "sha256": "03ae1c25de660a2cf6677802892720b0b78df965fcf2af31686bb6c858569466"
+    },
+    {
+      "file": "SereneSeasons-1.12.2-1.2.18-universal.jar",
+      "sha256": "f52033660557331cc4847337325fdab05b07df0ceaa851382cf46137286e243a"
+    },
+    {
+      "file": "SetBonus-1.12.2.020.jar",
+      "sha256": "b4d74ff037002ad3c06f1e704f1fabcb40ee23483ca43810c137a271ddf13740"
+    },
+    {
+      "file": "ShieldBreak-1.1.3.jar",
+      "sha256": "6fb5752bf9591362caa192277e32d8f8cc7f409586a96f7620067d78c4a35962"
+    },
+    {
+      "file": "SilentLib-1.12.2-3.0.14+168.jar",
+      "sha256": "eabb5fc9bdbff1620db5e567663ac2f1bfedc02f7f3004313e7fdde66ec11d16"
+    },
+    {
+      "file": "SimpleDifficulty-1.12.2-0.3.9.jar",
+      "sha256": "4c7f92455aae62e7dbc4171aad609c34983243c90d72add5a12ece1613fd1b4b"
+    },
+    {
+      "file": "SnowRealMagic-1.12.2-0.7.1.jar",
+      "sha256": "a4e08b2d416ff374fe9144b70687a1166d0bfdeead93ac2991e0ab735d07abfa"
+    },
+    {
+      "file": "SoManyEnchantments-0.5.5.jar",
+      "sha256": "e7f4785d666dcebce4caa9d1ff2d1254832dade4d48040b250f9f66a60a1a0b0"
+    },
+    {
+      "file": "SoundFilters-0.12.1_for_1.12.jar",
+      "sha256": "6d9981db6aa738d025c732ff6457184abfa29d29b0035ee61069c56000e4a977"
+    },
+    {
+      "file": "SpartanHUDBaubles-1.12.2-1.0.0.jar",
+      "sha256": "a96397568625dcb39061177b0cb1326c165822ed8213fdbb74724ec66968b184"
+    },
+    {
+      "file": "SpartanShields-1.12.2-1.5.5.jar",
+      "sha256": "46b58f509e9023adda3ac087031ebd60acc9db8177125cd197a33099b8eea603"
+    },
+    {
+      "file": "SpartanWeaponry-1.12.2-1.5.3.jar",
+      "sha256": "d7f376edce9581006b4115277c5015b8e7ac3e396171938217705ae7b6cc1d18"
+    },
+    {
+      "file": "SpawnerControl-1.6.3b.jar",
+      "sha256": "0a5cf401bf58bf4163c08aeb79237e75d7d97e6fe1f4afc6fc2618f9fa8fe763"
+    },
+    {
+      "file": "StandardExpansion-3.4.173.jar",
+      "sha256": "405211aef15d442f857f92c4f755f051396283d6e6fc2de818f4f693091e89f9"
+    },
+    {
+      "file": "ToolBelt-1.12.2-1.9.14.jar",
+      "sha256": "66f4a7c5b894fe2d1c134c1868094709d9eceee36a5ea2ecec70b01ef1f5079c"
+    },
+    {
+      "file": "Traverse-1.12.2-1.6.0-69.jar",
+      "sha256": "be89ff855b55d10469779660089cbb13f1f438a9a934724ebffa49982f269414"
+    },
+    {
+      "file": "Trinkets and Baubles-32.4.jar",
+      "sha256": "2d34e3a66ede5b0048784c1802250f060d5906590efa56d620688e549fe6ec05"
+    },
+    {
+      "file": "VariedCommodities_1.12.2-(31Mar23).jar",
+      "sha256": "bb1afc496b25e2afda523ffc02e3883b4f5a8e6c852c6d5818bd2d82afae6016"
+    },
+    {
+      "file": "Waystones_1.12.2-4.1.0.jar",
+      "sha256": "5e79f329154d9a6225130f2b29dbcb0f603e2e622637e39ca566f8179b02ca15"
+    },
+    {
+      "file": "WearableBackpacks-RLCraft-1.12.2-3.2.6.jar",
+      "sha256": "f7fbe918d8db490a4f531c911ee10e4e2069b83794b555a03a5847ed59411a5d"
+    },
+    {
+      "file": "WolfArmorAndStorage-3.8.1+1.12.2.alpha.1-SNAPSHOT-signed.jar",
+      "sha256": "0e53b91a8ebb9c83ba10df038f36caf2ea5fd674379f9794b2a93a5698bb9b95"
+    },
+    {
+      "file": "XPFromHarvest-1.12.2-1.2.0.jar",
+      "sha256": "d40e86e58730485e6260b2b2cdf789c3c68a2c95f3e6a9c7f0901f0e7cb9aa6d"
+    },
+    {
+      "file": "YungsLaw-1.12.2-1.0.4.jar",
+      "sha256": "4e22359d9181f52f1df6a99f225298f234db280028f143b3fdce6239a5fc1253"
+    },
+    {
+      "file": "alcatrazcore-1.0.4.jar",
+      "sha256": "10b245b2485c2803ca335f15e371e91df507ca5e0fab7db329a09c93dcb12670"
+    },
+    {
+      "file": "antiqueatlas-1.12.2-4.6.3.jar",
+      "sha256": "ffd0b65060c1e8375b192acd34c7f71606fcd852bdd36b0f5e37f1c8b6536d1d"
+    },
+    {
+      "file": "antiquecities-1.2.1.jar",
+      "sha256": "b21085e692bdf26c5cab115bf3fabb81ccecbe32aeb7a4ac06089f60ba93e0a9"
+    },
+    {
+      "file": "anvilpatch-1.1.1.jar",
+      "sha256": "be28628747aecea1a01e5781c02317fc19b88c7920b71466fafb7c7fd072f06b"
+    },
+    {
+      "file": "armorunder-mc1.12.2-1.0.0.jar",
+      "sha256": "a4b1f9bab0cfd874d3a4357eb31696349c9d39e6f9f01507d6e0d4f033a936ac"
+    },
+    {
+      "file": "astikorcarts-1.12.2-0.1.2.8.jar",
+      "sha256": "fcddb62c18abef66da15f504eca0388fb0e607d5014b3c3f92776d9286392cbb"
+    },
+    {
+      "file": "base-1.12.2-3.14.0.jar",
+      "sha256": "5ec979220887e4e73772ecdb5dceb8a258b4da974bd4ece8fd85cade089913d4"
+    },
+    {
+      "file": "better_survival-1.5.3.jar",
+      "sha256": "6cc9372e76a86bf428b6df446be138f8db3e622a127f2548cb73a4e4a887d1fb"
+    },
+    {
+      "file": "betterbiomeblend-1.12.2-1.1.7-forge.jar",
+      "sha256": "fa0eb97e2e7ee0682c3ba8527bbfbf15c0eef69817a75444f4c6cf83a8a38bc8"
+    },
+    {
+      "file": "bettercaves-1.12.2-2.0.4.jar",
+      "sha256": "b81b66c2b90431d0cd764f95a2d7ff4561052fa040e8e694b7e2b8e8fa974a00"
+    },
+    {
+      "file": "betternether-0.1.8.6.jar",
+      "sha256": "6fffbb495ec446317f4cfdbc4f471a30bffa298c4f354adfed62e4ab5ab274b2"
+    },
+    {
+      "file": "callablehorses-1.12.2-1.1.1.jar",
+      "sha256": "ccc0857a5651244d35b4554a6fcf387b4703728b1ae7eb4e8ff28e152f09f1ac"
+    },
+    {
+      "file": "carrotslib-mc1.12.2-1.0.0b1.jar",
+      "sha256": "b7ceac0f00126a3a30ea1a93cfc814b2d0608b82d7fbe4ecbc3af3ea94c0e521"
+    },
+    {
+      "file": "carryon-1.12.2-1.12.7.23.jar",
+      "sha256": "02fb9cee20990687149d19f668cd6383164a2b275c3dce0e43ca2b6f6a03f070"
+    },
+    {
+      "file": "champions-1.12.2-1.0.11.10.jar",
+      "sha256": "3e7ea02af8016fe53690977d20b0521901f2e09d55e4c41f855190bd9b79e91f"
+    },
+    {
+      "file": "classyhats-1.6.0.jar",
+      "sha256": "1ecdb155f2a0b619c2b5706a2e780a11ac415937202ac1afa9ebbbd38576f859"
+    },
+    {
+      "file": "comforts-1.12.2-1.4.1.3.jar",
+      "sha256": "62183a1fa282032e2fea2c3ff6348611a03685a50769199243a42d38605d08a6"
+    },
+    {
+      "file": "corpsecomplex-1.12.2-1.0.12.0.jar",
+      "sha256": "268969a20ce1744f878279f0cd8cfe3202b4d9c57a1fe4d9096452280fe8efab"
+    },
+    {
+      "file": "craftablechainmail-1.0.jar",
+      "sha256": "4970a6ea89dcf1e12c280b21683c22a1e63f62b90ffabf96ee9a4670bd0803c0"
+    },
+    {
+      "file": "defiledlands-1.12.2-1.4.3.jar",
+      "sha256": "62e8d6b2ecfd97c87b6a7f481e6d3b2ee28494b28cb9745b9e7151f2f0ee3f36"
+    },
+    {
+      "file": "disenchanter[1.12]1.8.jar",
+      "sha256": "db6b3b16647cf5fa520aea8254c0aefef8262bff03ff55840349b9e1ba5e7832"
+    },
+    {
+      "file": "dynamictreesdefiledlands-1.12.2-1.0.0.jar",
+      "sha256": "a7549e566b27ea420c404581ead2823832e60e8109e57a3c1eec3147ac813c78"
+    },
+    {
+      "file": "firstaid-1.6.22.jar",
+      "sha256": "55dfe81a58d20575b6f6aa635d4296370c804fe52b77485b455aa99910da31a4"
+    },
+    {
+      "file": "forgottenitems-1.12.2-1.3.1.4.jar",
+      "sha256": "51a1c5132f3629ebc2af2ec629b8781c9dcf8db1e2b25ff50d92a26e19f37cbd"
+    },
+    {
+      "file": "fxcontrol-1.12-0.1.15.jar",
+      "sha256": "475b901d1b715dfabd0d11740fdde0e3d951fe8cfbcc25cf4197d5d3325ee0fb"
+    },
+    {
+      "file": "grapplemod-1.12.2-v12.3.jar",
+      "sha256": "b43614cb82ced93fc1522e65dbbb151cef3e0cba847366f0ae672feb550761af"
+    },
+    {
+      "file": "iChunUtil-1.12.2-7.2.2.jar",
+      "sha256": "e0b90727cbe54a11fe568f3d60cd59d64ff3c14f82437e1d1c10b575886ab8a3"
+    },
+    {
+      "file": "iceandfire-1.7.1-1.12.2.jar",
+      "sha256": "cdf4e45fccc93bc4bac61256747e1d30b77728a00960a204785f32c883e10c17"
+    },
+    {
+      "file": "incontrol-1.12-3.9.18.jar",
+      "sha256": "b249e9e59a20549fc7080108629f0089cab7f3f16241fea8f5070bb8178f83c3"
+    },
+    {
+      "file": "itlt-1.12.x-1.0.4.jar",
+      "sha256": "e1bafe44c5a5c9b8119de308580f90183ab10075f640dd12c6e26c28019b0e87"
+    },
+    {
+      "file": "llibrary-1.7.20-1.12.2.jar",
+      "sha256": "27fa8dbfc7428168229a445dad82a4696ba52cf0a6e054833bff0f93931d8ceb"
+    },
+    {
+      "file": "lostcities-1.12-2.0.22.jar",
+      "sha256": "d29a3fb8fa4c4d74dfadb9deee2eb501e5840c6217be80e24370dcbb709d32b3"
+    },
+    {
+      "file": "lycanitesmobs-1.12.2-2.0.8.9.jar",
+      "sha256": "0f75bb546a41b95a55238998db4d7aae1517163722cf205f4a3be8cc582c68ac"
+    },
+    {
+      "file": "mcw-bridges-1.0.6b-mc1.12.2.jar",
+      "sha256": "bc309b7c62f8157c65a7339b7fe69334767486aff78581f41678f3749de6debb"
+    },
+    {
+      "file": "modtweaker-4.0.20.11.jar",
+      "sha256": "2c2db905cae947092fe46dba301d1f6777fdab9cc8e79140c050b09fe62dda7a"
+    },
+    {
+      "file": "notreepunching-2.0.21.jar",
+      "sha256": "71ecc926da62348ea6dcdeb11385ea68b88f0121a700096da5c12e5b4022290c"
+    },
+    {
+      "file": "particleculling-1.12.2-v1.4.1.jar",
+      "sha256": "2790fc0c9072850874cc91c833d0d7132f202bfe74700b8408fa142508b58c29"
+    },
+    {
+      "file": "pigstep-1.12.jar",
+      "sha256": "23daedd2e063ec9036749e5c255afae5e5aa9eb9014a1cd8679254752b301203"
+    },
+    {
+      "file": "playerbosses-1.12.2-1.1.0.jar",
+      "sha256": "3a185b0f3b1d136c12601645ccaf46ac5ec69f66df8f3eb74f8633c409b1d779"
+    },
+    {
+      "file": "roughTweaks0.2.4-1.12.2.jar",
+      "sha256": "c0dd9bc20a83778c189156d1fa10b161efc854b8787d98c79bb36bd22c11f5f3"
+    },
+    {
+      "file": "rustic-1.1.7.jar",
+      "sha256": "30976de836d72cf3819338469e3e62c0c6943f5b50a6a2b10221c73909f184d8"
+    },
+    {
+      "file": "sit-1.12.2-v1.3.jar",
+      "sha256": "3d4bb6569a06191fd2d8759c0995ae9a48e318a4b24323ecabdac148ab57ffc3"
+    },
+    {
+      "file": "spartandefiled-1.0.jar",
+      "sha256": "3b8309ac86f6912cca8c4c6d55bc6f45d34fc7adef61211b6499b677c9b09dbf"
+    },
+    {
+      "file": "spartanfire_rlcraft-1.1.0.jar",
+      "sha256": "79297d85f573791403e9038188d0aaef84550fcf1cedca51f04be830921e8417"
+    },
+    {
+      "file": "switchbow-1.6.8.jar",
+      "sha256": "7f073fbe8ca85f8eb380981bfa0dbbed8832793cc792e0091cb6ca69bc4f165f"
+    },
+    {
+      "file": "tnt_utilities-mc1.12-1.2.3.jar",
+      "sha256": "4b98430a706ba80397f99db8ab808017a4062d5bf8b246631754195b1c3c87ec"
+    },
+    {
+      "file": "trumpetskeleton-1.12-1.0.2.1.jar",
+      "sha256": "9d3d96b8013a6697c58afc85b31c401d39516a367b66ecdce7512367d7ff1530"
+    },
+    {
+      "file": "tschipplib-1.12.2-1.1.7.jar",
+      "sha256": "543a7cb0a4510771a3507b18e0e8d3739a0b4615b78404f6f2eeaab3c7a9da47"
+    },
+    {
+      "file": "tumbleweed-1.12-0.4.7.jar",
+      "sha256": "ff78f5ac00574912d60022b4a4208cc00f9d4fccfa444efcea38cf1cbb76bcce"
+    },
+    {
+      "file": "xptome-1.12.2-v1.1.6.jar",
+      "sha256": "470961851873acaede06d36864cb5b77a292ef4ae27e121b6ac10ab7dceb6672"
+    }
+  ],
+  "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-rlcft-probe"
+}

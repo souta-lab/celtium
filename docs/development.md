@@ -1627,3 +1627,23 @@ loop[frames=120 loopMean=11-12 tickMean=5 displayMean=4 renderMean=4-5]
 
 **次の判断が必要**: (a) 0.7.11専用のまま、パック側の移行を待つ / (b) 0.6.13用のGLFW提示バックエンドを実装する。
 どちらも「1ラウンドの修正」ではない。
+
+**RLCraft 2.9.3 を Cleanroom 0.7.11 + Fugue 0.24.4 で起動した結果（2026-10-23 実測）**
+
+検証用に `cleanroom-0.7.11-alpha` を複製し、RLCraft 2.9.3 の mod 166件＋config を入れ、
+**Fugue 0.23.7→0.24.4**（GitHub `CleanroomMC/Fugue` の `+Fugue-0.24.4.jar`, sha256 `43824892…`）に更新、
+`Scalar Legacy-1.0.1` を 0.7 用 `scalar-3.9.0` に差し替えて起動した。
+
+```
+結果: 起動24秒で Initializing game 中に停止（exit 255）
+java.lang.NoClassDefFoundError: com/cleanroommc/hackery/ReflectionHackery
+  at com.fantasticsource.tools.ReflectionTool.getField
+  at com.fantasticsource.mctools.MCTools.<clinit>
+  at com.fantasticsource.setbonus.config.ConfigHandler.<clinit>
+```
+⇒ **SetBonus（FantasticSource Tools 経由）が Cleanroom 0.6 の `com.cleanroommc.hackery.ReflectionHackery` を要求**する。
+このクラスは 0.7 には無い（Hackery は 0.6 系のライブラリ）。Fugue 0.24.4 では解消しない。
+
+**含意**: 「RLCraft 互換は Fugue 更新で解決」は、少なくとも **0.7.11 + Fugue 0.24.4 では成立しない**。
+残る候補は (a) Cleanroom 0.7.12 以降（互換修正入り）での再試行、(b) Fugue 0.25.x、
+(c) 0.6.13 用ビルド（前述のGLFWバックエンド問題）。**この順で試す価値がある**。
