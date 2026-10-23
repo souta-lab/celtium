@@ -1979,3 +1979,18 @@ gameClears=[latched=426,live=846,noClear=2120,framesNoClear=0 presentLag=[max=0,
 
 残る筋: ゲーム自身の入力→描画の遅延（Minecraft 1.12の1フレーム遅れは仕様）、
 またはGPU側の描画順（半透明の並び）で「見づらさ」が出ている可能性。④と同じ土台を疑う。
+
+**色付きガラスのチカチカ④: コードで確認できた範囲（2026-10-23）**
+
+- 半透明terrainのpipelineは `depthWriteEnable(depth && !this.blended)` ＝**blendedではdepth書き込みOFF**
+  （vanillaのtranslucentレイヤと同じ）。
+- 深度formatは `D32_SFLOAT` を第一候補（`VulkanDepthFormat`）。vanillaは24bitなので**精度は同等以上**で、
+  z-fightingが我々だけ悪化する理由にはならない。
+- よって「初歩的なstate誤り」では説明できず、**同距離セクションの並び順の非決定性**か
+  **透明面の重なり（同一平面）**が残る。
+
+**必要な計器**: 静止カメラで**連続2フレーム**を別ファイルにdumpし、ピクセル差分を取る。
+- 差分が大きい → フレーム間で描画順が変わっている（＝チカチカの直接証拠）
+- 差分が小さい → 並び順ではなく、視点依存のz-fight（見た目の問題）
+この2フレームdump段をfixtureに足すのが次の作業。撮影は `celtium$requestPresentedDump` を
+world撮影の直後と次tickで別名に対して発行し、ファイルを比較する。
