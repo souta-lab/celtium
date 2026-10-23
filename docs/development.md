@@ -2689,3 +2689,23 @@ bake 後 group.modelView を恒等にすれば、shader の前提（position は
 **次の一手**: パノラマの受理時に `this.glModelView` の並進 (m[12],m[13]) を記録し、
 `currentGroupModelView` の値（0.0078）と一致するか比較。食い違うなら、
 グループ行列の捕捉元と bake元を同一にそろえる（これが真の修正）。
+
+**修正第1版の撤回と、その理由（2026-10-24）**
+
+`copyVerticesTransformed` の実装を読むと、bake は
+```
+x' = sx*x + tx    y' = sy*y + ty    z' = sz*z + tz
+```
+の**対角＋並進のみ**（回転項は一切適用しない）。コメントにも
+「every off-axis element is zero, which is what the caller checks」とある。
+つまり適用条件を「affine一般」に広げた私の変更は、**回転を黙って落とす**（並進だけ焼く）ため、
+正しさの面で改善ではなく**別の不正確さ**を導入していた。
+
+さらに実測では絵が変わらなかった（mean 105.4／彩度0.040／参照差65.7%）。
+⇒ 撤回し、`celtium$preTransformable` は元の「軸整列のみ」に戻した。
+
+**次の一手（正しい順序）**:
+1. `copyVerticesTransformed` を**完全な3x3回転＋並進**に拡張する（1頂点あたり9積和、コストは増えるが
+   パノラマは384頂点×4＝1536頂点/フレームで無視できる）
+2. そのうえで textured family の affine 一般を bake 許可にし、メニュー画像と参照を比較
+3. ワールド受入（画像gate）で回帰が無いことを確認

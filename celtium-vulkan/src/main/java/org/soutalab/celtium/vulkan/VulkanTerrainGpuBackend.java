@@ -8209,19 +8209,7 @@ this.frameBufferOpen = false;
         if (this.fogEnabled) {
             return false;
         }
-        if (celtium$axisAlignedModelView()) {
-            return true;
-        }
-        // The textured family's vertex shader applies the projection only - immediate_tex_color.vert ends with
-        // gl_Position = u_ProjectionMatrix * a_Position and its push block carries the texture matrix, not the model view.
-        // A rotated or translated model view therefore reaches the GPU only if it is baked here; the alternative is not a
-        // small numeric difference but dropping the transform entirely. Measured on the title screen: its 384 panorama
-        // quads carry a per-tile translate and rotate, none was pre-transformed (identityViews=0), the shader ignored all
-        // of them, every quad landed on the same place and the alpha stack converged to one sharp photograph instead of a
-        // blur. Formats 1, 2 and 6 are the ones drawn through that family.
-        boolean affine = this.glModelView[3] == 0.0f && this.glModelView[7] == 0.0f
-                && this.glModelView[11] == 0.0f && this.glModelView[15] == 1.0f;
-        return affine && (formatId == 1 || formatId == 2 || formatId == 6);
+        return celtium$axisAlignedModelView();
     }
 
     /**
