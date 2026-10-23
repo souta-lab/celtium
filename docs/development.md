@@ -2403,3 +2403,23 @@ CELTIUM_WINDOW_IMAGES distinct=6 images=[256x256@0x7e.. 256x256@0x8c.. 256x256@0
 
 **次の一手**: 384グループの `textureMatrix`（アフィン6値）が非自明か、null（恒等）かを数える。
 パノラマはテクスチャ行列を使わないはずなので、**非nullが出たら誤適用**＝UVがずれる直接原因。
+
+**パノラマ①: テクスチャ行列は無し（2026-10-24 実測）**
+
+```
+CELTIUM_WINDOW_TEXMATRIX withMatrix=0 groups=384 first=none
+```
+⇒ 384グループはどれも texture matrix を持たない（＝恒等）。UVは頂点データのまま。
+
+これで受理側の**全項目**が正しいと確定:
+行列（384種）・並進（64）・回転（各配置6種）・テクスチャ名（34〜39）・descriptor（6種）・
+画像（6枚の256x256）・pipeline（blend有効/depth書き込み無効）・経路（frame-image）・射影・
+texture matrix（無し）。
+
+**残る候補は「頂点データの解釈（vertex format/UV）」か「draw時の束縛実効性」**。
+パノラマは `DefaultVertexFormats.POSITION_TEX_COLOR`（位置3f・UV2f・色4ub）で描かれ、
+ワールドの即時描画とは**別のvertex format**を使う。ここを取り違えるとUVだけが壊れ、
+「同じテクスチャの別領域を引く」＝巨大な別絵に見える。
+
+**次の一手**: この384グループの `formatId` を記録し、その format の属性オフセット/strideを
+`VulkanImmediateFormats` の定義と突き合わせる。POSITION_TEX_COLOR が正しくマップされているか確認。

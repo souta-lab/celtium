@@ -18434,6 +18434,21 @@ this.frameBufferOpen = false;
                     imageDetail.append(image == null ? "null" : image.getClass().getSimpleName());
                 }
             }
+            int textured = 0;
+            String firstTextureMatrix = "none";
+            for (int i = 0; i < this.immediateGroups.size(); i++) {
+                float[] texMatrix = this.immediateGroups.get(i).texMatrix;
+                if (texMatrix != null) {
+                    textured++;
+                    if ("none".equals(firstTextureMatrix)) {
+                        firstTextureMatrix = String.format(java.util.Locale.ROOT, "[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f]",
+                                Float.valueOf(texMatrix[0]), Float.valueOf(texMatrix[1]), Float.valueOf(texMatrix[2]),
+                                Float.valueOf(texMatrix[3]), Float.valueOf(texMatrix[4]), Float.valueOf(texMatrix[5]));
+                    }
+                }
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_TEXMATRIX withMatrix=" + textured
+                    + " groups=" + this.immediateGroups.size() + " first=" + firstTextureMatrix);
             System.out.println("[Celtium] CELTIUM_WINDOW_IMAGES distinct=" + textureImages.size()
                     + " images=[" + imageDetail + "]");
             System.out.println("[Celtium] CELTIUM_WINDOW_DESCRIPTORS distinct=" + descriptors.size()
