@@ -3144,6 +3144,35 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return ids.isEmpty() ? null : ids;
     }
 
+    /**
+     * {@code -Dceltium.debug.replaceTextures=23:10}: draw groups that sample the first id with the second id's
+     * descriptor, keeping the draw and its state. A replacement rather than a skip, because a skip changes what the
+     * frame has drawn and therefore the copy chain's cache keys, which is a confound a replacement does not have.
+     */
+    private static final java.util.Map<Integer, Integer> REPLACE_TEXTURE_IDS = replaceTextureIds();
+    private long replacedTextureDraws;
+
+    private static java.util.Map<Integer, Integer> replaceTextureIds() {
+        String spec = System.getProperty("celtium.debug.replaceTextures");
+        if (spec == null || spec.trim().isEmpty()) {
+            return null;
+        }
+        java.util.Map<Integer, Integer> pairs = new java.util.HashMap<Integer, Integer>();
+        for (String part : spec.split(",")) {
+            int colon = part.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            try {
+                pairs.put(Integer.valueOf(part.substring(0, colon).trim()),
+                        Integer.valueOf(part.substring(colon + 1).trim()));
+            } catch (NumberFormatException ignored) {
+                // A malformed pair selects nothing.
+            }
+        }
+        return pairs.isEmpty() ? null : pairs;
+    }
+
     /** {@code -Dceltium.debug.windowCensus=true}: name every window a menu frame draws. */
     private static final boolean WINDOW_CENSUS = Boolean.getBoolean("celtium.debug.windowCensus");
     private int windowCensusLines;
@@ -19213,9 +19242,25 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
                     boolean indirectConsumed = celtium$tryEnqueueIndirect(group, mesh, prepared, push);
                     if (!indirectConsumed) {
+                    long bindDescriptor = prepared.descriptor;
+                    if (REPLACE_TEXTURE_IDS != null && prepared.pipeline instanceof VulkanImmediateTexturePipeline
+                            && this.textureRegistry != null) {
+                        Integer replacement = REPLACE_TEXTURE_IDS.get(Integer.valueOf(group.texture));
+                        if (replacement != null) {
+                            VulkanGlTexture repTexture = this.textureRegistry.get(replacement.intValue());
+                            if (repTexture != null) {
+                                long repSet = ((VulkanImmediateTexturePipeline) prepared.pipeline)
+                                        .descriptorSetFor(repTexture);
+                                if (repSet != 0L) {
+                                    bindDescriptor = repSet;
+                                    this.replacedTextureDraws++;
+                                }
+                            }
+                        }
+                    }
                     long variantStart = System.nanoTime();
                     if (pipeline instanceof VulkanImmediateTexturePipeline value) {
-                        value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
+                        value.draw(this.commandBuffer, mesh, push, bindDescriptor, this.immediateBindCache);
                         this.textureDrawNanos += System.nanoTime() - variantStart;
                         this.textureDrawCount++;
                     } else if (pipeline instanceof VulkanImmediateItemPipeline value) {
