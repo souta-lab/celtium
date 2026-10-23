@@ -848,7 +848,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // was recorded as immediate work and is still queued. GL's order is call order, so those draws belong to the
         // frame BEFORE the terrain: leaving them queued submits them after this pass, and the void plane then paints
         // over the terrain it is supposed to be hidden behind.
-        flushPendingBeforeGlDraw();
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainPreflush");
+        try {
+            flushPendingBeforeGlDraw();
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainPreflush");
+        }
         // The pass' work before the first bracket: the pre-flush and the two gates below. Measured separately because
         // the pass reads 0.8 ms against 0.2 ms of brackets and this is the first of the spans that is not covered.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainSetup");
