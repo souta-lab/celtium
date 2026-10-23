@@ -1687,3 +1687,20 @@ Celtium 側でできることは無い（対照実験で切り分け済み）。
 - 300fps（3.3ms）までの残りは **約1.1ms**。以前の「床5.3msで到達不能」はvalidation込みの結論で、**再評価が必要**。
 - 以後の性能測定・最適化は **validation OFF** を基本にし、受入（validation ON）は別途記録する。
 - leg `novalid` は harness 上も PASSED（validation無効でも他gateは通る）。
+
+**RLCraft: Cleanroom 0.7.12-alpha でも同じ2つの壁（2026-10-23 実測）**
+
+指摘どおり Cleanroom を **0.7.12-alpha** に上げて再試行（`patches/*.json` と `cleanroom-0.7.12-alpha-universal.jar` を
+Prism libraries に配置して構成）:
+
+| Cleanroom | Fugue | 結果 |
+|---|---|---|
+| 0.7.11 | 0.24.4 | 24秒: `NoClassDefFoundError com.cleanroommc.hackery.ReflectionHackery` |
+| 0.7.11 | 0.25.5 | 44秒: `VerifyError EntityRenderer.func_78472_g @863` |
+| **0.7.12** | **0.24.4** | **同じ Hackery エラー**（変化なし） |
+| **0.7.12** | **0.25.5** | **同じ VerifyError**（Sound engine started まで進行、変化なし） |
+
+また 0.7.11 の実験で **celtium jar を外した対照でも同じ VerifyError** が出ることを確認済み。
+⇒ RLCraft 2.9.3 は 0.7.x + Fugue（0.24.4/0.25.5）+ Cleanroom 0.7.12 の組み合わせでは起動できず、
+**Celtium の関与しない外部互換問題**（SetBonus→FantasticSource Tools の Hackery 依存、Fugue/Cleanroom と
+RLCraft側パッチの `updateFogColor` バイトコード干渉）。Celtium側で打てる手は無い。
