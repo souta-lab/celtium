@@ -144,3 +144,14 @@ frame 7.0→5.3ms、winRecord 2.5→1.5ms と、ドローコマンドが1.0ms/fr
 「連続グループは決して同じ状態を共有しない」という以前の結論は、この**キー設計ミス**に基づいていた。
 正しいキー（pipeline identity + descriptor ハンドル）では **69キー / 194〜238グループ** で、
 ソートすれば3倍以上に畳める。censusで largestBucket が1なら、まずキー設計を疑うこと。
+
+## 罠: `matrixMirrorDelta` は自己差分で0になる
+
+`matrixMirrorDelta=proj:0.0,view:0.0` を「GL照会とミラーが一致している証拠」と読んだが、
+GL照会（`glGetFloatv(GL_MODELVIEW_MATRIX)` 等）自体が **ミラー（VulkanGlState）から答えている**
+（`celtium$mirroredModelView()` を返す実装）。したがってこの差分は**ミラーとミラーの比較**で、
+ミラーが完全に間違っていても 0.0 になる。
+
+⇒ 「matrixMirrorDelta=0」を**ミラーの正しさの証拠に使わない**。
+独立した証拠は「同じフレームのドロー間に、期待どおり異なる行列が捕捉されているか」で取る
+（例: パノラマの64並進×6面＝384種になるはずが172種、という観測）。
