@@ -461,6 +461,16 @@ public final class VulkanImmediateTexturePipeline {
                 org.lwjgl.vulkan.VkDrawIndexedIndirectCommand.SIZEOF);
     }
 
+    /** {@return whether this is the colourless position-only variant}, whose block and shader differ. */
+    public boolean celtium$positionOnly() {
+        return this.positionOnly;
+    }
+
+    /** {@return whether this is the position-without-texture variant}. */
+    public boolean celtium$positionNoTexture() {
+        return this.positionNoTexture;
+    }
+
     /** {@return whether this pipeline writes depth} - the indirect run only takes opaque groups. */
     public boolean celtium$depthWrites() {
         return this.depthWrite;

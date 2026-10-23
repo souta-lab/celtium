@@ -1311,3 +1311,21 @@ fog 128..207）を `set=1 binding=0` の SSBO から `gl_InstanceIndex` で読�
 
 これで「個別ドロー約20/フレーム」の generic（position系）を間接経路に載せる前提が揃った。
 残り: `VulkanImmediatePipeline` に records モード＋backend配線。
+
+**fps300 KPI: 位置系バリアントをツイン対象から外す防御（2026-10-23 実測/受入）**
+
+`VulkanImmediateTexturePipeline` には positionOnly / positionNoTexture の変種があり、
+**シェーダも push block の意味も違う**（色alphaは96、64/80はMV列でテクスチャではない）。
+一方 recordsツインはテクスチャ系のシェーダ固定なので、そのまま流すと**死んだデータでaffineを組んでサンプル**する。
+
+- `celtium$positionOnly()` / `celtium$positionNoTexture()` を追加
+- ツイン生成前に**対象外なら null を返す**ガードを追加（run開始前に判定するので半端なrunも残らない）
+
+```
+leg kpi-guard: PASSED・problems 0
+variants[texture=3328 item=0 particle=120 generic=2400]（窓120f）
+indirect[runs=11903 groups=102457]  frame p50 6.80 → 6.20ms
+```
+⇒ ガード後も性能は同等（6.20ms）。**残る個別ドロー**は texture 約28/フレーム、generic 約20/フレーム。
+generic は `VulkanImmediatePipeline`（`immediate_color.vert` の色family）で、records変種は
+**色family用のシェーダ**が必要（前ラウンドで作った position 系シェーダとは別）。

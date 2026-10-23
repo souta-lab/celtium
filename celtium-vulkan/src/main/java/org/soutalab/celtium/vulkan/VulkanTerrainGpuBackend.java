@@ -2270,8 +2270,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long indirectRunsIssued;
     private long indirectGroupsIssued;
 
-    /** {@return the record-reading twin of a texture pipeline, created on first use for that exact state}. */
+    /**
+     * {@return the record-reading twin of a texture pipeline, created on first use for that exact state}, or null when the
+     * state is one of the colourless position variants.
+     * <p>
+     * Those variants use a different shader and a different push block shape (the current colour's alpha at 96 and dead
+     * model-view columns where the textures sit), while the twin this class builds is the textured family's. Drawing one
+     * through the other would sample with an affine built from dead data, so they stay on the per-group path until their
+     * own record-reading shaders are wired.
+     */
     private VulkanImmediateTexturePipeline celtium$recordsPipeline(VulkanImmediateTexturePipeline state) {
+        if (state.celtium$positionOnly() || state.celtium$positionNoTexture()) {
+            return null;
+        }
         VulkanImmediateTexturePipeline twin = this.recordsPipelines.get(state);
         if (twin == null) {
             twin = VulkanImmediateTexturePipeline.createRecords(this.context, state.celtium$renderPass(),
@@ -2301,6 +2312,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         boolean texturedFamily = prepared.pipeline instanceof VulkanImmediateTexturePipeline;
         boolean itemFamily = prepared.pipeline instanceof VulkanImmediateItemPipeline item && item.lit();
         if (!texturedFamily && !itemFamily) {
+            celtium$flushIndirectRun();
+            return false;
+        }
+        // The colourless position variants have no record-reading twin yet; asking here, before a run is started, keeps a
+        // refused group from leaving a half-built run behind.
+        if (texturedFamily && (celtium$recordsPipeline((VulkanImmediateTexturePipeline) prepared.pipeline) == null)) {
             celtium$flushIndirectRun();
             return false;
         }
