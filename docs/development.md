@@ -1371,3 +1371,5 @@ variants[texture=2400 ...]     ← texture個別ドロー 27 → 20/フレーム
 frame p50 6.44 → **5.90ms**
 ```
 ⇒ 通算 **8.13 → 5.90ms（−27.4%、約169fps）**。
+**Intel UHD 630 でも PASSED・problems 0**（`kpi-alignintel`、`forms[draw=1827 bind=714]` と同じ改善）。
+

@@ -27,7 +27,7 @@
 
 | **起動（Wayland）** | **修正済み・25秒→72秒完走** | 実測 | 完了 | SDLのwindow propertyからwl_display/wl_surfaceを取って`vkCreateWaylandSurfaceKHR`（`SDL_Vulkan_CreateSurface`はSDL側dispatchで落ちる）。fullscreenは別根因だった: `Display.update()`→`Window.swapBuffers()`（SDL自身のEGL swap）が**同じwl_surfaceに二重提示**し、swayが`wp_linux_drm_syncobj error 4`で接続を切る→SDL QUIT→exit 0。`CeltiumGllessSdlSwapTransformer`でGL-less時のみno-op化（jar 0.0.10-alpha / headlessで72秒・presented1198・エラー0）。
 
-| **性能KPI: fps300（2026-10-23 利用者指示）** | **未達だが大幅前進（定常 8.13 → 6.09ms ＝ 約164fps @AMD RX 6400）。間接run（records＋`vkCmdDrawIndexedIndirect`）を既定on: item/colour familyは100%吸収、194ドロー → 約18run/フレーム。AMD/Intel とも PASSED・画像gate一致** | 残る個別描画は texture 約27/フレーム（postClears有り・bindForm）と particle 1。床: ドロー全削除でも5.3ms（vanilla描画ロジック＋受理＋terrain）→ 300fpsにはvanilla側最適化が必要 | レンダラ所有コスト 3.3ms以下
+| **性能KPI: fps300（2026-10-23 利用者指示）** | **未達だが大幅前進（定常 8.13 → 5.90ms ＝ 約169fps @AMD RX 6400）。間接run（records＋`vkCmdDrawIndexedIndirect`）＋素材ソート＋arenaのstride整列を既定on。item/colour familyは100%吸収、194ドロー → 約18run/フレーム、bindForm 2671→697。AMD/Intel とも PASSED・画像gate一致** | 残る個別描画は texture 約20/フレーム（postClears有り）と particle 1。床: ドロー全削除でも5.3ms（vanilla描画ロジック＋受理＋terrain）→ 300fpsにはvanilla側最適化が必要 | レンダラ所有コスト 3.3ms以下
 | **性能（v0.0.13時点）** | **world 1080p: frame CPU 8.1ms / 実FPS 91–110（上限OFF）・57–61（上限60）** | 実測 | **達成（60Hz）** | jar `80e3d8b3…`・AMD RX 6400・headless隔離sway・world scene・validation ON。内訳: world 8.0（terrain 5.3 / flush 3.7）、hand 0.1、clouds 0.1、residual 0.0。メニューは 30→62fps（`Display.sync`撤去＋ペーシング）。残る最適化余地は terrain pass と flush |
 | **影（pack側の担当）** | **Celtium本体の現在単位ではない** | — | pack/別mod | 利用者指示:「影はpackに任せろ」「パフォーマンスが終わってないのに影に取り組むな」。影は `shader-plan.md` の方針どおり**シェーダーパック（別成果物）として実装**する。Celtium本体は**性能**を先に終わらせる。参考としてpackの実シェーダがcompile→pipeline→描画→画素読み戻しまで通ることは実測済み |
 
