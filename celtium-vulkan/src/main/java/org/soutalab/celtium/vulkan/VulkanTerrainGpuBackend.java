@@ -13391,6 +13391,10 @@ this.frameBufferOpen = false;
     private final long[][] offerStageDeltas = new long[16][2];
 
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
+    /** {@code -Dceltium.debug.itemCensus=true}: name the groups the item pipeline draws, up to a bound. */
+    private static final boolean ITEM_CENSUS = Boolean.getBoolean("celtium.debug.itemCensus");
+    private static final int ITEM_CENSUS_LIMIT = Integer.getInteger("celtium.debug.itemCensusLimit", 40);
+    private int itemCensus;
     /** Keys the census run by pipeline alone, the ceiling a shared-descriptor design would reach (section 11.5). */
     private static final boolean CENSUS_BY_PIPELINE = Boolean.getBoolean("celtium.vulkan.mergeCensusPipelines");
     /** Refusals by the term that actually fired, filled only when {@link #MERGE_CENSUS} is on. */
@@ -17822,6 +17826,18 @@ this.frameBufferOpen = false;
                 // picture - and the question is whether the group carries the panorama sheet's name or the splash
                 // canvas's (the mirror and the stub keep separate last-bind values, so a capture that reads one for a
                 // bind only the other saw would show exactly this).
+                // Which groups the item pipeline actually draws: 124 of the frame's 194 draws are item draws, and a
+                // bare world should not need that many. One bounded line each says what they are (format, texture,
+                // batch count, vertices) instead of guessing from the material names.
+                if (ITEM_CENSUS && this.itemCensus < ITEM_CENSUS_LIMIT
+                        && group.prepared.pipeline instanceof VulkanImmediateItemPipeline) {
+                    this.itemCensus++;
+                    System.out.println("[Celtium] CELTIUM_ITEM_GROUP n=" + this.itemCensus
+                            + " frame=" + this.frameId + " format=" + group.formatId
+                            + " texture=" + group.texture + " batches=" + group.batches
+                            + " verts=" + mesh.vertexCount() + " target=" + group.target
+                            + " worldPass=" + this.worldPassActive);
+                }
                 if (this.menuGroupCensus < 24 && !this.worldPassActive) {
                     this.menuGroupCensus++;
                     System.out.println("[Celtium] CELTIUM_MENU_GROUP frame=" + this.frameId
