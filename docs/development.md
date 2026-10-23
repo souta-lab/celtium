@@ -1104,3 +1104,10 @@ owning でも種類は増えない）。つまり **indirect multi-drawの障害
 - 不透明・drawForm（`vbo % stride == 0`）・同一 (pipeline, descriptor, 頂点/インデックスバッファ, stride) の連続グループ
 - 各コマンドは自身の firstIndex/vertexOffset/indexCount を持ち、per-drawデータはレコードの firstInstance で引く
 - bind-form のグループ（実測で全体の約9%）は従来どおり個別ドローにフォールバック
+
+**fps300 KPI: レコードバッファを独自デスクリプタセット(set=1)へ（2026-10-23・コンパイル検証済み）**
+
+`immediate_tex_color_records.vert` の SSBO を `set = 1, binding = 0` に移した。
+理由: set 0 は即時描画がテクスチャ毎に作る (texture, lightmap) のペアで、そこへ binding 2 を足すと
+**全テクスチャセットのレイアウトを変える**ことになる。set 1 に置けば「1ウィンドウに1回束縛」で済み、
+既存のテクスチャセットは無変更。シェーダは 35本すべて再コンパイル成功。

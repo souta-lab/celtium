@@ -24,7 +24,10 @@ struct DrawRecord {
     vec4 u_FogRow2;            // 192
 };
 
-layout(std430, set = 0, binding = 2) readonly buffer DrawRecords {
+// Set 1, not set 0: set 0 is the per-texture pair the immediate path already writes (binding 0 the texture, binding 1
+// the light map), and those sets are created per texture. Keeping the records in their own set means one set bound once
+// per window, and the per-texture sets stay exactly as they are.
+layout(std430, set = 1, binding = 0) readonly buffer DrawRecords {
     DrawRecord records[];
 };
 
