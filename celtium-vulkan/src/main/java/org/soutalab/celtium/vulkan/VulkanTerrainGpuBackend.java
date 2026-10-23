@@ -820,6 +820,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     private void celtium$renderPass(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists,
             TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+        // The split's named parts stop at 0.5 ms of this pass's 3.4 ms, so the span before the recording - guards,
+        // snapshots, pipeline lookup, uniform capacity - is measured as one bracket. Whatever this reports is the cost
+        // that has no other name; it gets split further once it is visible.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainPrep");
+        boolean terrainPrepClosed = false;
         if (REFUSE_TERRAIN_PASS) {
             // Isolation switch: with the terrain pass out of the frame, whatever is still wrong in the picture
             // belongs to the immediate path, and the other way round.
@@ -941,7 +946,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         try {
             long handoffStart = System.nanoTime();
             this.frameSubmitReachedQueue = false;
-            org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainHandoff");
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainPrep");
+        terrainPrepClosed = true;
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainHandoff");
             this.frameTarget.beginFrame();
             this.windowOpen = true;
             this.frameOpens++;

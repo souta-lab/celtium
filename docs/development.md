@@ -560,3 +560,16 @@ terrainSetup/Target/Begin/End/Handoff/Close  p50=0.0ms
 
 次の判別: `celtium$renderPass` のリージョンループとuniformアップロードを新しいbracket（例 `terrainRegions`,
 `terrainUniforms`, `terrainLists`）で囲み、2.9msの所在を特定する。
+
+**fps300 KPI: terrain のコストは準備区間にある（2026-10-23・実測で確定）**
+
+新bracket `terrainPrep`（`celtium$renderPass` の recording 前の全区間）を計器化して測定:
+```
+terrain(inside world)  p50=3.7ms
+  terrainPrep          p50=3.2ms   ← ここが実体
+  terrainRecord        p50=0.5ms
+  terrainSubmit/Setup/Target/Ensure/Begin/End/Handoff/Close  すべて 0.0ms
+```
+⇒ **terrain のコストは描画記録ではなく「準備」**（3.2/3.7ms）。次はこの区間を分割して特定する:
+(a) `ensureUniformCapacity` と行列アップロード、(b) `pipelineFor(pass)` とパイプライン状態、(c) ワールドスナップショット/状態キャプチャ、
+(d) レンダーリスト・リージョン走査。この順に bracket を足して削る。
