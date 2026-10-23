@@ -1062,7 +1062,7 @@ drawn[perFrame=194]（挙動不変） frame p50 9.56-11.87ms（分散内）
 
 **fps300 KPI: 素材runのCPU連結マージは絵は正しいが大幅に遅い（2026-10-23 実測・反証）**
 
-記録時bake＋run用メッシュへの連結（`-Dceltium.vulkan.mergeBaked=true`）を実装し受入:
+記録時bake＋run用メッシュへの連結（実験用フラグ、実装後に撤去）を実装し受入:
 ```
 leg kpi-mergeb: PASSED・problems 0（画像gate通過＝マージ結果は正しい）
 frame p50 17.27-33.08ms（通常8.2〜9.6ms）← 約2〜3倍遅い
