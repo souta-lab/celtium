@@ -3115,6 +3115,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** {@code -Dceltium.debug.sampleWindowImages=true}: read back the mean of each large window's textures. */
     private static final boolean SAMPLE_WINDOW_IMAGES = Boolean.getBoolean("celtium.debug.sampleWindowImages");
+    /** Every window that carried a hundred groups or more, and the groups they carried. */
+    private long largeWindows;
+    private long largeWindowGroups;
     /** How many large windows have had their routing logged. */
     private int windowRouteLogs;
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
@@ -18320,6 +18323,17 @@ this.frameBufferOpen = false;
      */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+        if (this.immediateGroups.size() >= 100) {
+            // Counted every time, not only while the diagnostic line is allowed: the question this answers is how many
+            // large windows a menu frame draws, and a log bounded to twelve cannot say that.
+            this.largeWindowGroups += this.immediateGroups.size();
+            this.largeWindows++;
+            if (this.largeWindows % 60 == 0) {
+                System.out.println("[Celtium] CELTIUM_LARGE_WINDOWS windows=" + this.largeWindows
+                        + " groups=" + this.largeWindowGroups + " frame=" + this.frameId
+                        + " presents=" + this.presentHookCalls);
+            }
+        }
         if (this.windowRouteLogs < 12 && this.immediateGroups.size() >= 100) {
             this.windowRouteLogs++;
             boolean isMainTarget = target == this.targetRegistry.mainIdentity();
