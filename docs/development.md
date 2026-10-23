@@ -1384,3 +1384,15 @@ frame p50 8.60 → 8.07ms          ← 直前の5.90msから **約+2.2ms 悪化*
 ```
 ⇒ 吸収数が増えないうえに遅くなる。**runのflush位置を変えるとrunの連続性が壊れる**ため。
 挙動は revert した（未検証の最適化を残さない）。
+
+**証拠の紐づけ: 現在のHEADビルドと検証済みjarの一致（2026-10-23）**
+
+`main` (7df381287) から再ビルドした **renderer jar の sha256 は `0ab703c43d51f2af…`** で、
+AMD/Intel の受入を実施した `kpi-61` のステージと**同一**。つまり 5.90ms / PASSED の証拠は
+現在のHEADのコードにそのまま対応する（間のコミットはdocsのみ）。
+
+- forge jar: `0ab703c43d51f2afa7b2cea44763ae580550274b14d9fb6b6ddf3eccdadb2b53`
+- validation-client jar: 再ビルドで `24c5fb16…`（検証時 `31508d5a…`）。**fixture専用**で、
+  renderer 側の同一性は上のforge jarで担保される。混同しないこと。
+- バージョン表記は 0.0.13-alpha のまま（リリースするなら gradle.properties の版を上げて
+  **再ビルド→両GPU再受入**が必要。版を上げるとjarハッシュが変わるため、既存の受入証拠は使えない）。
