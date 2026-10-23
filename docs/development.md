@@ -1883,6 +1883,24 @@ gameScreenshotMean=0.00 nonBlackFraction=0.00000 black=true
 `ScreenShotHelper` は自作のFBOを作って色テクスチャを描き、そこから読むので、
 (a) そのFBOのミラー画像が黒、(b) 読みが別経路、のどちらか。
 
-**次**: `CeltiumGlStub.celtium$readPixels` の入口に到達ログを足して「呼ばれていない」を確定させ、
-呼ばれていないなら `ScreenShotHelper` が実際に使うGL関数（`glReadPixels` のIntBuffer版か、
-`GL30`/`GL12` の別名か）をバイトコードで確認する。黒スクショは未解決。
+**根因確定: ゲームのスクショは `glGetTexImage` を使う（2026-10-23 実測＋原典）**
+
+到達ログを足して判明: `celtium$readPixels` に届くのは fixture 自身の 8x8 centre sample だけで、
+スクショの読みは**一度も来ない**（`CELTIUM_READ_PIXELS_ENTRY readFbo=1 ... 8x8 ...` のみ）。
+
+原典（`.celtium-work/mc-sources/net/minecraft/util/ScreenShotHelper.java:createScreenshot`）:
+```java
+if (OpenGlHelper.isFramebufferEnabled()) {
+    GlStateManager.bindTexture(framebufferIn.framebufferTexture);
+    GlStateManager.glGetTexImage(3553, 0, 32993, 33639, pixelBuffer);   // 32993=GL_BGRA 33639=UNSIGNED_INT_8_8_8_8_REV
+} else {
+    GlStateManager.glReadPixels(0, 0, width, height, 32993, 33639, pixelBuffer);
+}
+```
+GL-less では `isFramebufferEnabled()` が真なので**必ず `glGetTexImage` 側**を通る。
+そして `glGetTexImage` は `CeltiumGlStub` の**ゼロ書き**リストに入っている（`celtium-vulkan/.../CeltiumGlStub.java:488`）。
+⇒ **バッファがゼロのままPNG化＝真っ黒**。transformer にも hint にも `glGetTexImage` の経路は無い。
+
+**修正方針**: `glGetTexImage(target=3553, level=0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, IntBuffer)` を
+transformer→hint→stub に配線し、バインド中のテクスチャ（=スクショ用FBOの色テクスチャ）のミラー画像から
+ピクセルを返す。読み出しは `TextureCopyService` の画像読み出しを使う。黒スクショは**未修正**。

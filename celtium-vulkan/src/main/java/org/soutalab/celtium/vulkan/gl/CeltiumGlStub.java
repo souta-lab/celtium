@@ -5940,6 +5940,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      * call is now counted and the served case writes real pixels.
      */
     private void serveReadPixels(int x, int y, int width, int height, int format, int type, long address) {
+        if (this.readPixelsEntries < 6) {
+            this.readPixelsEntries++;
+            System.out.println("[Celtium] CELTIUM_READ_PIXELS_ENTRY readFbo=" + this.readFbo
+                    + " rect=" + x + "," + y + " " + width + "x" + height
+                    + " format=0x" + Integer.toHexString(format) + " type=0x" + Integer.toHexString(type));
+        }
         String pboRefusal = pixelBufferRefusal(this.pixelPackBuffer, address, "glReadPixels");
         if (pboRefusal != null) {
             if (this.pixelBufferRefusals < 8) {
@@ -5971,6 +5977,8 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Bounded refusal log + the call count for {@link #serveReadPixels}. */
     private int readPixelsRefusals;
+    /** How many readback entries have been logged, so the path can be seen arriving. */
+    private int readPixelsEntries;
     private long readPixelsCalls;
 
     private static void celtium$putInt(long address, int value) {
