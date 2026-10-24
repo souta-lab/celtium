@@ -3285,3 +3285,25 @@ leg shadow-clear2（AMD RX 6400, world, 90s, validation ON）
 
 次の段: この行列を push constant で渡す深度専用パイプライン（`shadow_depth.vert`/空frag）と、
 terrain描画ループの2回目記録。
+
+**現行HEADのフレーム内訳（2026-10-24 22:00・実測）**
+
+KPI構成（`validation=false` / `presentReadback=false` / `presentedDumpEvery=0` / warm 400–600 / hold 620）で、
+JAR `fa32e6e9…`（HEAD `0536bee80` のclean buildと同一sha256）・AMD RX 6400・world/qmagnet。
+
+| 計器 | 値 |
+|---|---|
+| frame（`-Dceltium.vulkan.passSplit=true`, wall） | **p50 1.0ms**（world 0.9 / clouds 0.1） |
+| world の内訳（同） | terrain 0.2（record 0.1・prep 0.1・preflush 0.1）・flush 0.2（winRecord 0.1・wrecLoop 0.1・offMerge 0.1・grpDraw 0.1）・**残差 0.5** |
+| 同・CPU clock（`passSplitCpu=true`） | frame 1.6ms（wall との差はpreemption/待ち） |
+| accept経路（自身のtimer） | `immediateSubmitAvgNs=2050`（run平均）・`immediateSubmitWorldAvgNs=1909`、batch 2,458,954 / frameId 15,144 = **162 offer/frame ≒ 0.31ms/frame** |
+| offerの内訳（`-Dceltium.vulkan.batchTimings=true`, ns/到達） | s8=503 s10=575 s11=986（到達40%）s13=294。s11=preflight（pipeline/descriptor）、s10=fast-merge判定（fog/affine/scissorの値比較） |
+| JFR（Client thread 1,040サンプル, shipping構成） | accept 13.0%・TESR/block entity 9.6%・font/glyph 7.6%・terrain 7.3%・model instance 4.9%・particles 4.0%・end portal 3.8%・flush/record 3.5%・fixture 3.6% |
+
+**読み**: 平均フレーム1.17msのうち、**celtium自身の受理経路が約0.2–0.3ms（17–26%）で最大の単一要因**。
+ただし内訳は均されており（s8/s10/s11/s13が各300–1,000ns/offer）、1つの大物を消す最適化は存在しない。
+次の単位は「offer数と1件あたりの固定費を同時に減らす」方向（`new_architecture.md` Stage 1のpacket化、
+Stage 4のframe compiler）で、個別の数%のmicro-optでは比のノイズ（±7%）を超えない。
+
+なお、`gv-leg.sh` を素で走らせた測定（validation ON ほか）では同じJARが **warm p50 5.25ms** になる。
+KPI値と混ぜない（[検証の罠](<verification-traps.md>)）。

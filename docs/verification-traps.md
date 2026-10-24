@@ -155,3 +155,17 @@ GL照会（`glGetFloatv(GL_MODELVIEW_MATRIX)` 等）自体が **ミラー（Vulk
 ⇒ 「matrixMirrorDelta=0」を**ミラーの正しさの証拠に使わない**。
 独立した証拠は「同じフレームのドロー間に、期待どおり異なる行列が捕捉されているか」で取る
 （例: パノラマの64並進×6面＝384種になるはずが172種、という観測）。
+
+## KPIの数値と同じ土俵で leg を走らせずに比べる（2026-10-24）
+
+KPI harness は計測用に次の3つを**明示的に切る**（`scripts/gv_kpi.py:206-210`）:
+`-Dceltium.vulkan.validation=false`・`-Dceltium.vulkan.presentReadback=false`・`-Dceltium.vulkan.presentedDumpEvery=0`。
+素の `gv-leg.sh` はこれらを切らないので、**同じJARでも frame が数倍違う**。実測（同JAR `fa32e6e9…`, AMD, world）:
+
+| 走らせ方 | warm p50 | upload submit wait |
+|---|---|---|
+| KPI flags あり | 1.17–1.35ms | 0 |
+| `gv-leg.sh` そのまま（validation ON ほか） | **5.25ms** | 1376ms/1198frames |
+
+差は validation layer・present readback・周期 dump の計測税で、レンダラの退行ではない。
+**この2つを同じ表に入れない。** 「30秒後に5倍遅くなる」と読める観測が出たら、まず KPI flags の有無を確認する。
