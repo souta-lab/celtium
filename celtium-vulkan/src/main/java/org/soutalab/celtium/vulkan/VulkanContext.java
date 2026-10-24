@@ -2485,7 +2485,11 @@ public final class VulkanContext {
                 boolean runtimeArray = supported.runtimeDescriptorArray();
                 boolean afterBind = supported.descriptorBindingSampledImageUpdateAfterBind();
                 boolean partiallyBound = supported.descriptorBindingPartiallyBound();
-                this.textureArraySupported = nonUniform && runtimeArray && afterBind && partiallyBound;
+                // Writing a new array index while earlier frames that bound the set are still executing is only legal
+                // with UPDATE_UNUSED_WHILE_PENDING; the model instances register textures at exactly that time.
+                boolean unusedWhilePending = supported.descriptorBindingUpdateUnusedWhilePending();
+                this.textureArraySupported = nonUniform && runtimeArray && afterBind && partiallyBound
+                        && unusedWhilePending;
                 if (this.textureArraySupported) {
                     indexingFeatures = org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack)
                             .sType$Default()
@@ -2493,6 +2497,7 @@ public final class VulkanContext {
                             .runtimeDescriptorArray(true)
                             .descriptorBindingSampledImageUpdateAfterBind(true)
                             .descriptorBindingPartiallyBound(true)
+                            .descriptorBindingUpdateUnusedWhilePending(true)
                             .descriptorBindingVariableDescriptorCount(true);
                     if (createInfo.pNext() != 0L) {
                         org.lwjgl.system.MemoryUtil.memPutLong(indexingFeatures.address() + 8L, createInfo.pNext());

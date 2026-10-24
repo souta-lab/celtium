@@ -2940,6 +2940,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    /**
+     * Lit model display lists drawn as instance runs ({@link VulkanModelInstances}); on unless
+     * {@code -Dceltium.native.modelInstances=false}, and only on a device with the shared texture array.
+     */
+    private static final boolean MODEL_INSTANCES =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.native.modelInstances"));
+    private VulkanModelInstances modelInstances;
+    private boolean modelInstancesFailed;
+    /** The queued group that holds the open instance run, so a following replay can join it. */
+    private ImmediateGroup openModelRunGroup;
+    private final float[] modelInstanceMvp = new float[16];
+    private final float[] modelInstanceAffine = new float[6];
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texGenPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
@@ -4261,7 +4273,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     private boolean queuedGroupUsesTexture(int glTextureId) {
         for (ImmediateGroup group : this.immediateGroups) {
-            if (group.texture == glTextureId) {
+            if (group.texture == glTextureId || (group.modelRun != null && group.modelRun.usesTexture(glTextureId))) {
                 return true;
             }
         }
@@ -4787,8 +4799,121 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
+    /**
+     * Appends a lit model replay to the open instance run, or opens a run in a new queued group; {@return false} to
+     * leave the replay to the per-group path. Only lit replays on the main target take this path: the unlit ITEM
+     * family evaluates fog and the full alpha function, which the instance shaders do not carry, and an off-target
+     * replay is drawn in its own pass by the per-group code.
+     */
+    private boolean celtium$appendModelInstance(VulkanDynamicMesh mesh, int texture, int[] state, long key,
+            float[] projection, float[] modelView, int quads, float[] combineColor) {
+        if (this.modelInstancesFailed || state.length <= 8 || state[8] == 0 || !this.context.textureArraySupported()) {
+            return false;
+        }
+        long target = this.targetRegistry.currentIdentity();
+        if (target != this.targetRegistry.mainIdentity() || this.lightmapTexture == null) {
+            return false;
+        }
+        if (this.textureRegistry == null) {
+            this.textureRegistry = celtium$registry();
+        }
+        VulkanGlTexture image = this.textureRegistry.get(texture);
+        int textureIndex = image == null ? -1 : celtium$registerTexture(image);
+        int lightmapIndex = celtium$registerTexture(this.lightmapTexture);
+        if (textureIndex < 0 || lightmapIndex < 0 || this.textureArray == null) {
+            return false;
+        }
+        if (this.modelInstances == null) {
+            VulkanModelInstances created = new VulkanModelInstances(this.context, this.textureArray.layout());
+            try {
+                if (!created.create()) {
+                    created.delete();
+                    this.modelInstancesFailed = true;
+                    return false;
+                }
+            } catch (RuntimeException | LinkageError error) {
+                System.out.println("[Celtium] CELTIUM_MODEL_INSTANCES create failed: " + error);
+                created.delete();
+                this.modelInstancesFailed = true;
+                return false;
+            }
+            this.modelInstances = created;
+            created.beginFrame(this.frameId);
+        }
+        VulkanModelInstances instances = this.modelInstances;
+        instances.syncPool(this.modelGeometry.modelMeshes());
+        int listId = mesh.ownerList();
+        if (!instances.hasList(listId)) {
+            instances.noteMissing();
+            return false;
+        }
+        if (!instances.hasRoom()) {
+            return false;
+        }
+        VulkanTerrainPipeline terrainPipeline = this.terrain.pipelineFor(this.lastUiPass);
+        if (terrainPipeline == null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            return false;
+        }
+        long pass = terrainPipeline != null ? terrainPipeline.renderPass() : uiRenderPass();
+        int[] viewport = this.currentGroupViewportValues;
+        ImmediateGroup open = this.openModelRunGroup;
+        boolean extend = open != null && !this.immediateGroups.isEmpty()
+                && this.immediateGroups.get(this.immediateGroups.size() - 1) == open
+                && this.currentImmediateMesh == null
+                && open.stateKey == key && open.target == target
+                && open.modelRun.pipeline.renderPass == pass
+                && java.util.Arrays.equals(open.viewportValues, viewport)
+                && open.stamp != null && open.stamp.frameId == this.frameId
+                && instances.sameBuffers(open.modelRun);
+        if (!extend) {
+            VulkanModelInstances.Pipeline pipeline;
+            try {
+                pipeline = instances.pipelineFor(pass, key, celtium$blendState(state), state[3] != 0, state[4] != 0,
+                        state[5] != 0, celtium$vkCompareOp(state[7]));
+            } catch (RuntimeException | LinkageError error) {
+                System.out.println("[Celtium] CELTIUM_MODEL_INSTANCES pipeline failed: " + error);
+                this.modelInstancesFailed = true;
+                return false;
+            }
+            // Whatever the immediate path holds open is older than this replay and must be queued before it.
+            closeCurrentImmediateGroup();
+            ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView, VulkanImmediateFormats.ITEM,
+                    texture, key, state, target);
+            group.modelRun = instances.openRun(pipeline);
+            group.viewportValues = viewport;
+            group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
+            this.immediateGroups.add(group);
+            this.immediateStatistics.noteImmediateGroupsClosed();
+            this.openModelRunGroup = group;
+            open = group;
+        }
+        float[] mvp = this.modelInstanceMvp;
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; k++) {
+                    sum += projection[k * 4 + row] * modelView[column * 4 + k];
+                }
+                mvp[column * 4 + row] = sum;
+            }
+        }
+        float[] colour = this.colorMirrorHasValue
+                ? new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
+                        this.immediateState.colorBlue(), this.immediateState.colorAlpha()}
+                : null;
+        float[] affine = celtium$readTextureAffine(this.modelInstanceAffine) ? this.modelInstanceAffine : null;
+        instances.append(open.modelRun, listId, mvp, colour, combineColor, affine, Float.intBitsToFloat(state[6]),
+                celtium$lightParams(state, modelView), celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
+        open.batches += quads;
+        return true;
+    }
+
     private boolean celtium$enqueueModelMesh(VulkanDynamicMesh mesh, int texture, int[] state, long key,
             float[] projection, float[] modelView, int quads, float[] combineColor) {
+        if (MODEL_INSTANCES && mesh != null && !mesh.isEmpty()
+                && celtium$appendModelInstance(mesh, texture, state, key, projection, modelView, quads, combineColor)) {
+            return true;
+        }
         if (mesh == null || mesh.isEmpty()) {
             // Named, because the caller reports every false return with one message: "could not queue list N" merged
             // "the mesh is empty", "prepareImmediate found no pass/mirror/descriptor" and "the cached pipeline is
@@ -6234,6 +6359,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // the previous window's wait, so a slot whose groups are all released is normally free by now.
         if (this.frameArena != null) {
             this.frameArena.beginFrame(this.frameId, VulkanContext.completedEpoch());
+        }
+        if (this.modelInstances != null) {
+            this.modelInstances.beginFrame(this.frameId);
         }
         celtium$swapBatchReuseFrames();
         celtium$swapPushComponentFrame();
@@ -11062,6 +11190,8 @@ this.frameBufferOpen = false;
                 + " immediateState=" + this.immediateStatistics.immediateStateCalls() + " immediateOffered=" + this.immediateStatistics.immediateBatchesOffered()
                 + " frameId=" + this.frameId + " flushCount=" + this.immediateStatistics.flushCount()
                 + " textureArray=" + (this.textureArray == null ? "absent" : this.textureArray.report())
+                + " " + (this.modelInstances == null ? "modelInstances[absent failed=" + this.modelInstancesFailed + "]"
+                        : this.modelInstances.describe())
                 + " textureIndex=hit" + this.textureIndexHits + "/miss" + this.textureIndexMisses
                 + " orderPreservingFlushes=" + this.immediateStatistics.orderPreservingFlushes()
                 + " actualFlushes=" + this.immediateStatistics.actualFlushes()
@@ -12324,6 +12454,11 @@ this.frameBufferOpen = false;
             this.drawRecords.delete();
             this.drawRecords = null;
         }
+        if (this.modelInstances != null) {
+            this.modelInstances.delete();
+            this.modelInstances = null;
+        }
+        this.openModelRunGroup = null;
         if (this.textureArray != null) {
             this.textureArray.destroy();
             this.textureArray = null;
@@ -19136,6 +19271,10 @@ this.frameBufferOpen = false;
                         continue;
                     }
                 }
+                if (group.modelRun != null) {
+                    celtium$drawModelRun(group);
+                    continue;
+                }
                 VulkanDynamicMesh mesh = group.mesh;
                 if (MERGE_CENSUS) {
                     // One key per (variant, set, viewport, scissor) run: the number of distinct keys is the number of
@@ -19670,6 +19809,19 @@ this.frameBufferOpen = false;
             // old iterator.remove() would have left behind, in the same order.
             groups.clear();
             groups.addAll(this.keptImmediateGroups);
+            // The window counter is what is still queued, recomputed here rather than kept by per-group decrements:
+            // groups retired without drawing (stale target, stale world, self-composite) never decremented it, so it
+            // drifted upward, and the per-group model replays - decremented at draw but never counted at accept - had
+            // been hiding the drift. With model replays drawn as instance runs the drift reached the flush threshold
+            // and the window was flushed on almost every offer (leg prof-modelinst-1: 138 windows a frame, not 5).
+            int stillQueued = 0;
+            for (int i = 0; i < groups.size(); i++) {
+                ImmediateGroup kept = groups.get(i);
+                if (kept.modelRun == null && kept.mesh != null) {
+                    stillQueued += kept.mesh.indexCount();
+                }
+            }
+            this.pendingImmediateIndices = stillQueued;
             // Back to the pass's own rectangle: the groups above may have narrowed it, and whatever is drawn after this
             // flush - terrain, another pass, the final blit - expects the target's viewport, not the last GUI batch's.
             if (this.groupViewportNarrowed) {
@@ -19677,6 +19829,42 @@ this.frameBufferOpen = false;
                 setViewportAndScissor(stack);
             }
         }
+    }
+
+    /**
+     * Records one instance run in place of its group: the group's viewport, a zero depth bias (model replays carry
+     * none), then the run's one indirect call. The run binds its own pipeline layout, so the bind cache and the shared
+     * push cache are cleared for whatever group follows.
+     */
+    private void celtium$drawModelRun(ImmediateGroup group) {
+        if (this.openModelRunGroup == group) {
+            this.openModelRunGroup = null;
+        }
+        celtium$flushIndirectRun();
+        try (MemoryStack groupStack = MemoryStack.stackPush()) {
+            celtium$setGroupViewport(groupStack, group);
+        }
+        if (this.passBiasC != 0.0F || this.passBiasS != 0.0F) {
+            org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, 0.0F, 0.0F, 0.0F);
+            this.passBiasC = 0.0F;
+            this.passBiasS = 0.0F;
+        }
+        if (this.modelInstances != null && this.textureArray != null) {
+            this.modelInstances.draw(this.commandBuffer, group.modelRun, this.textureArray.set(),
+                    this.context.multiDrawIndirectEnabled());
+        }
+        java.util.Arrays.fill(this.immediateBindCache, -1L);
+        VulkanPushCache.SHARED.invalidate();
+        int batches = group.batches;
+        this.immediateStatistics.noteGroupDrawCount();
+        this.immediateStatistics.addImmediateRecordedBatches(batches);
+        this.immediateStatistics.noteImmediateGroupsDrawn();
+        this.immediateStatistics.noteImmediateFlushes();
+        this.frameDrawn++;
+        this.drawnByFormat[VulkanImmediateFormats.ITEM] += batches;
+        this.recordedImmediateGroups.add(group);
+        celtium$recordQueuedClearsInPass(group.postClears, group.target);
+        group.postClears = null;
     }
 
     /** Set when a group in the current flush asked for a sub-rectangle, so the pass viewport is restored once. */

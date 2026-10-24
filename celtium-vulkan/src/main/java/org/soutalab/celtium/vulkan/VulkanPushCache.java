@@ -78,6 +78,16 @@ final class VulkanPushCache {
         return false;
     }
 
+    /**
+     * Forgets the cached block. Called after a pipeline whose layout declares no push range was bound (the model
+     * instances): push constants are not guaranteed to survive a layout that is incompatible for them, so the next
+     * block must be pushed whatever the cache says.
+     */
+    void invalidate() {
+        this.commandBuffer = -1L;
+        this.pipelineLayout = -1L;
+    }
+
     /** Remembers the bytes of a push that was issued, so the next identical block can be elided. */
     void remember(long commandBuffer, long pipelineLayout, ByteBuffer data) {
         int length = data.remaining();

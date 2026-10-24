@@ -69,7 +69,8 @@ final class VulkanTextureArray {
             org.lwjgl.vulkan.VkDescriptorSetLayoutBindingFlagsCreateInfo flags =
                     org.lwjgl.vulkan.VkDescriptorSetLayoutBindingFlagsCreateInfo.calloc(stack).sType$Default();
             flags.pBindingFlags(stack.ints(VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT_EXT
-                    | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT));
+                    | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT
+                    | org.lwjgl.vulkan.EXTDescriptorIndexing.VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT_EXT));
 
             VkDescriptorSetLayoutCreateInfo layoutInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
                     .sType$Default()

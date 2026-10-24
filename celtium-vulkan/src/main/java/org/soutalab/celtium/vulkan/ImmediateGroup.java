@@ -68,6 +68,8 @@ public final class ImmediateGroup {
      * shared mesh does not.
      */
     public float[] texMatrix;
+    /** Set for a group that stands for a run of model instances ({@link VulkanModelInstances}); drawn as one call. */
+    VulkanModelInstances.Run modelRun;
     /**
      * The fixed-function lighting payload for a lit group: twenty floats laid out as five vec4 - the two light
      * directions already rotated into model space, the scene ambient, and each light's diffuse. {@code null} for an
@@ -282,6 +284,7 @@ public final class ImmediateGroup {
     }
 
     private void clearForReuse() {
+        this.modelRun = null;
         this.color = null;
         this.combineColor = null;
         this.texMatrix = null;

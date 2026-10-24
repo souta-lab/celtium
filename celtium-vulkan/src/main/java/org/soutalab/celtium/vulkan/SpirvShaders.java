@@ -92,6 +92,11 @@ public final class SpirvShaders {
     /** Fragment module for textured immediate-mode geometry. */
     public static final String IMMEDIATE_TEX_COLOR_FRAGMENT = "immediate_tex_color.frag";
 
+    /** Lit model display lists drawn as instances (VulkanModelInstances): records + texture array. */
+    public static final String MODEL_INSTANCE_VERTEX = "model_instance.vert";
+    /** The model instance fragment stage. */
+    public static final String MODEL_INSTANCE_FRAGMENT = "model_instance.frag";
+
     /** POSITION_COLOR under texture-coordinate generation (NativeTexGen): the end portal and end gateway. */
     public static final String IMMEDIATE_TEXGEN_VERTEX = "immediate_texgen.vert";
     /** The texgen family's fragment stage: the projective divide, the modulate and the fog. */
