@@ -125,6 +125,9 @@ public final class TextureCopyService {
          */
         boolean hasPendingImmediateWork();
 
+        /** {@return whether the world pass is the one drawing} - the copies that need the host route are the menu's. */
+        boolean worldPassActive();
+
         int recordedImmediateGroupCount();
 
         int currentGroupBatches();
@@ -472,12 +475,14 @@ public final class TextureCopyService {
         if (NATIVE_TEXTURE_COPY) {
             String blitRefusal = this.host.registry().blitRefusal(destName, image, this.host.targetWidth(),
                     this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
-            if (blitRefusal == null && !WINDOW_COPY_BLIT && windowAlphaSource(readFbo, image)) {
+            if (blitRefusal == null && windowAlphaSource(readFbo, image)
+                    && (!WINDOW_COPY_BLIT || this.host.worldPassActive())) {
                 // The host route is the comparison arm only: with alpha writes masked on the delivered frame the
                 // blit's verbatim copy already carries the alpha-1 the window's GL read owes. The switch stays so a
                 // leg can still measure the two routes against each other.
                 this.textureCopyWindowAlphaBlitsDeclined++;
-                blitRefusal = "the source is the window and windowCopyBlit is off (A/B arm)";
+                blitRefusal = "the source is the window outside a world pass (the background chain needs the read"
+                        + " that flushes and waits)";
             }
             if (blitRefusal == null) {
                 // Whatever is already recorded is submitted before this copy is recorded, unconditionally. Gating it on

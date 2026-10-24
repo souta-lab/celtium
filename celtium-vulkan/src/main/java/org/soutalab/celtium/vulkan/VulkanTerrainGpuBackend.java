@@ -8302,6 +8302,14 @@ this.frameBufferOpen = false;
         // which is what makes that legal: the title screen's panorama is sixty-four tiles, each rotated and offset, and
         // without this every one of its 384 quads landed on the same place and the alpha stack converged to a single
         // sharp photograph instead of a blur. Formats 1, 2 and 6 are the layouts drawn through that family.
+        // Outside a world pass only. Baking a rotated batch costs the general 3x3 product per vertex, and in the world
+        // that is paid by batches that do not need it - the measured cost of allowing it everywhere was 2.03-2.10 ms
+        // p50 against 1.54 ms for the same jar with the axis-aligned rule (KPI legs final1 against texmat-now, same
+        // machine, paired with the reference). The title screen's panorama is drawn outside a world pass, so the gate
+        // keeps the fix where it was needed and leaves the world's own batches on the cheap path.
+        if (this.worldPassActive) {
+            return false;
+        }
         boolean affine = this.glModelView[3] == 0.0f && this.glModelView[7] == 0.0f
                 && this.glModelView[11] == 0.0f && this.glModelView[15] == 1.0f;
         return affine && (formatId == 1 || formatId == 2 || formatId == 6);
@@ -17095,6 +17103,10 @@ this.frameBufferOpen = false;
         }
 
         @Override
+        public boolean worldPassActive() {
+            return VulkanTerrainGpuBackend.this.worldPassActive;
+        }
+
         public boolean hasPendingImmediateWork() {
             // The group being filled counts: the panorama copies a rectangle it drew into in the same call sequence,
             // so the draw is in this group and not in a queued one when the copy asks whether anything is pending.

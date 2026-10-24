@@ -3114,3 +3114,19 @@ menuのぼかしは「同じ (0,0)-(256,256) を7回、行き先オフセット�
 
 blitルート側も「無条件wait」を試した（menu71: mean 116.4 / 彩度 0.072 / 参照差 58.07%）が
 hostルートに一致しないため、**既定はhostルートのまま**。blitのy/提出順の不整合は未解決の負債。
+
+**性能回帰の追跡（2026-10-24）: affine bake が world を ~30% 遅くしていた**
+
+同一マシン・同一KPIハーネスでの測定（celtium warm p50 ms / paired ratio）:
+| JAR | 内容 | celtium p50 | 比 |
+|---|---|---|---|
+| `texmat` | affine bake 無し | 1.542 | **1.304x** |
+| `final1` | affine bake 全面 | 2.030–2.103 | 1.742x |
+| `final2` | bake を world 外に限定 | 1.991–2.035 | 1.682x |
+| `final3` | + window copy も world 外のみ host | 2.019–2.050 | 1.687x |
+
+⇒ `texmat` 比で final系は依然 **1.68x**。bake の world ゲートでは戻らなかったので、
+**残る回帰は別の変更**（world パスの窓コピー or その他）。二分探索の次の候補は `bake` JAR
+（bake あり・window修正前）。※KPIは `CELTIUM_INSTANCE_WORLD` を明示しないと
+0.6.13 instance を掴んで即死する（leg final3-blit が exitCode 255 / Cleanroom 0.6.13）ので、
+次回は必ず env を付ける。
