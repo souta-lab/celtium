@@ -2903,6 +2903,13 @@ public final class VulkanContext {
         long uploadSlotMask = 0L;
         try {
             try (MemoryStack stack = MemoryStack.stackPush()) {
+                // Write-after-read: an arena range freed by a rebuild or a translucent re-sort is handed out again at
+                // once, and frames already submitted may still be reading the old contents (four frames can be in
+                // flight). Submission order alone does not order execution, so without this the copy could overwrite
+                // indices a previous frame was drawing - the translucent layer's flicker (stained glass), whose index
+                // ranges are replaced on every sort. An execution dependency is enough for a read-then-write hazard.
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, null);
                 VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
                 for (PendingUpload pending : this.pendingUploads) {
                     // Resolved here, not at record time: a growth between the two replaced the handle, and the offset
@@ -3263,6 +3270,10 @@ public final class VulkanContext {
     private void recordStagingCopy(long destination, long destinationOffset, long length) {
         VkCommandBuffer commandBuffer = beginCommands();
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            // The same write-after-read dependency as the batched path (flushUploads): earlier frames may still read
+            // the destination range.
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, null);
             VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
             copy.get(0).srcOffset(0L).dstOffset(destinationOffset).size(length);
             vkCmdCopyBuffer(commandBuffer, this.stagingBuffer, destination, copy);
