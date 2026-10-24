@@ -246,6 +246,23 @@ public final class VulkanSwapchain {
     private static final boolean FLICKER_SAMPLE = Boolean.getBoolean("celtium.debug.flickerSample");
     private int[] flickerPrevious;
     private int flickerSamples;
+    /** {@code -Dceltium.debug.flickerDump=true}: write the two frames the flicker count compares. */
+    private static final boolean FLICKER_DUMP = Boolean.getBoolean("celtium.debug.flickerDump");
+
+    /** Writes an ARGB block to {@code /tmp/<name>}; diagnostic only. */
+    private static void writeIndexedPng(int[] pixels, int width, int height, String name) {
+        if (pixels == null || width <= 0 || height <= 0 || pixels.length < width * height) {
+            return;
+        }
+        try {
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                    java.awt.image.BufferedImage.TYPE_INT_RGB);
+            image.setRGB(0, 0, width, height, pixels, 0, width);
+            javax.imageio.ImageIO.write(image, "png", new java.io.File("/tmp", name));
+        } catch (java.io.IOException | RuntimeException ignored) {
+            // A diagnostic that cannot write says nothing; the count line above still reports.
+        }
+    }
     private int flickerSeen;
     /**
      * Per-stage wall nanos inside {@link #presentImage}: the acquire, the diagnostic readback (whose own submit waits
@@ -1305,6 +1322,12 @@ public final class VulkanSwapchain {
                             if (delta > maxDelta) {
                                 maxDelta = delta;
                             }
+                        }
+                        if (FLICKER_DUMP) {
+                            // The pair the count above is about, as images: where the differing pixels are says whether
+                            // the flicker sits on one object's edges (ordering) or across its whole surface (shading).
+                            writeIndexedPng(this.flickerPrevious, this.width, this.height, "celtium-flicker-prev.png");
+                            writeIndexedPng(pixels, this.width, this.height, "celtium-flicker-cur.png");
                         }
                         System.out.println("[Celtium] CELTIUM_FLICKER samples=2 changed=" + changed + "/" + count
                                 + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
