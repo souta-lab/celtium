@@ -4561,12 +4561,31 @@ public final class ValidationClient {
      * reference leg uncompilable rather than merely uninformative.
      */
     private static long celtium$staticCounter(String className, String field) {
+        // Looked up once per name, misses included: this runs three times a frame, and in the reference arm, where
+        // the class does not exist, each call threw a ClassNotFoundException (leg tickjfr-celeritas-1: 33 of 525
+        // client-thread samples) - a tax on the arm the ratio divides by.
+        String key = className + '#' + field;
+        java.lang.reflect.Field handle = celtium$staticCounterFields.get(key);
+        if (handle == null && !celtium$staticCounterFields.containsKey(key)) {
+            try {
+                handle = Class.forName(className).getField(field);
+            } catch (Throwable absent) {
+                handle = null;
+            }
+            celtium$staticCounterFields.put(key, handle);
+        }
+        if (handle == null) {
+            return -1L;
+        }
         try {
-            return Class.forName(className).getField(field).getLong(null);
-        } catch (Throwable absent) {
+            return handle.getLong(null);
+        } catch (Throwable unreadable) {
             return -1L;
         }
     }
+
+    private static final java.util.Map<String, java.lang.reflect.Field> celtium$staticCounterFields =
+            new java.util.HashMap<String, java.lang.reflect.Field>();
 
     /**
      * Differences the upload path's own wait counters over one frame and adds them to the window the frame is in.
@@ -5052,6 +5071,13 @@ public final class ValidationClient {
         }
         if (worldTicks < 200 || worldFrames < CAPTURE_MIN_WORLD_FRAMES) {
             return false;
+        }
+        // Past the deadline every branch below answers true, so once the capture has started the answer is latched.
+        // Without this the held warm window (ticks 400..600) re-ran the section-count poll on every frame - in the GL
+        // reference arm that poll builds and regex-parses the F3 strings (leg tickjfr-celeritas-1: 25 of 525 client
+        // thread samples) - and overwrote the condition that actually fired with a deadline string.
+        if (celtium$captureStarted && worldTicks >= CAPTURE_DEADLINE_TICK) {
+            return true;
         }
         // A cross-leg comparison needs both legs to hold the same world, and measured they do not: two legs of the
         // same jar and scene differed by 35.5% of pixels with 40 against 53 sections, and the entity scene's own
