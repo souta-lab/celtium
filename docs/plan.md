@@ -27,6 +27,12 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
   採否はpaired KPIで決める。
 - 移行は「一度に全部作り直さない」（設計§7）。各段で画像gate・validation 0・paired KPI（control arm）を取ってから次へ。
 
+### 2026-10-24: modelのinstance描画 → **AMDでCeleritas比 0.881x（NOT_SLOWER、初）**
+
+lit modelのdisplay list再生（約800/frame）を共有mesh pool＋256B record＋bindless texture＋indirect runに（`VulkanModelInstances`）。
+window counterのdriftも修正。KPI `modelinst-kpi-ref-2`（JAR `fa32e6e9…`、3 rep、比 0.869/0.908/0.881、p95 1.55–1.62 vs 2.58–2.64ms）。
+**注意**: 負荷が測定末に5.6、Celeritasが前回より遅め（1.27–1.35ms）→**再測定で確定が必要**。Intel未測定。受入 `modelinst-valid-amd-2` PASSED・validation 0。
+
 ### 2026-10-24: 描画ループのJIT化・arena slot・end portal producer → **Celeritas比 1.70x → 1.113x**
 
 `drawPendingImmediate` が8282 byte（HotSpotの8000 byte上限超過）で**常にinterpreter実行**＝client threadの29.9%。分割でJIT化し3.4%。
@@ -36,10 +42,7 @@ slot数をscheduler（4）+1に。end portalはlayerごと1 drawのproducerに�
 KPI `arena-kpi-ref-1`（JAR `d3dfb9ba…`、AMD、3 rep、disturbed無し）: p50 **1.113x（SLOWER）**、**p95はCeleritasより低い**（1.93–2.02 vs 2.02–2.18ms）。
 `HugeMethodLimitTest` が再発を止める。[証拠](<evidence/jit-arena-2026-10-24.md>)。Intel未測定。
 
-### 2026-10-24: 定常ログを既定で停止
-
-定常状態で毎秒約600行（ForgeのTracingPrintStreamがstackを辿る）を出していた周期ログを `-Dceltium.debug.periodicLogs=true` 時のみに。
-KPI `loggate-kpi-1` は control比0.977だが測定中に負荷が6.0へ上昇したため**速度主張なし**（構造上の仕事削減のみ確定）。
+### 2026-10-24: 定常ログを既定で停止（`-Dceltium.debug.periodicLogs=true`で復帰）。速度主張なし。
 
 ### 2026-10-24: client tickのアニメtexture転送待ちを除去（staging ring）
 
