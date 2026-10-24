@@ -132,7 +132,7 @@ public class CeleritasVintage {
     private static void celtium$noteF3Event(int event, long ignored, int ignoredLines, boolean reducedReturn) {
         if (event != 0) {
             f3Events++;
-            if (f3Events % 120 == 0) {
+            if (org.soutalab.celtium.vulkan.PeriodicLog.ENABLED && f3Events % 120 == 0) {
                 System.out.println("[Celtium] CELTIUM_F3_EVENT events=" + f3Events + " reducedDebugReturns="
                         + f3ReducedReturns + " showDebugInfo="
                         + Minecraft.getMinecraft().gameSettings.showDebugInfo + " hideGUI="

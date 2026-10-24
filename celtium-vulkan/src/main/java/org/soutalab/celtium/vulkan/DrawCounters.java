@@ -85,7 +85,7 @@ public final class DrawCounters {
      * @param frameId the frame the count belongs to
      */
     public static void reportIfDue(long frameId) {
-        if (frameId <= 0L || frameId % 200L != 0L || frameId == lastReportedFrame) {
+        if (!PeriodicLog.ENABLED || frameId <= 0L || frameId % 200L != 0L || frameId == lastReportedFrame) {
             return;
         }
         long indexed = INDEXED.get();

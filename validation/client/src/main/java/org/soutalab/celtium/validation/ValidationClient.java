@@ -6932,8 +6932,16 @@ public final class ValidationClient {
                 + " worldFrames=" + worldFrames + " presented=" + celtium$presentedFrameCount());
     }
 
+    /** Set once the GLFW lookup has failed; see {@link #celtium$windowHandle()}. */
+    private static boolean celtium$windowHandleUnavailable;
+
     /** The GLFW window the game is drawing into, by the same two routes the swapchain uses, or 0. */
     private static long celtium$windowHandle() {
+        // A platform without GLFW (Cleanroom 0.7's SDL3) fails the same way on every call, and this runs every tick:
+        // the class lookup, its exception and the log line were paid ~20 times a second for the whole leg.
+        if (celtium$windowHandleUnavailable) {
+            return 0L;
+        }
         try {
             Class<?> glfw = Class.forName("org.lwjgl.glfw.GLFW");
             Object current = glfw.getMethod("glfwGetCurrentContext").invoke(null);
@@ -6945,7 +6953,8 @@ public final class ValidationClient {
             Object handle = display.getMethod("getWindow").invoke(null);
             return handle instanceof Long ? ((Long) handle).longValue() : 0L;
         } catch (ReflectiveOperationException | LinkageError error) {
-            System.out.println("[Celtium] CELTIUM_RESIZE no window handle: " + error);
+            celtium$windowHandleUnavailable = true;
+            System.out.println("[Celtium] CELTIUM_RESIZE no window handle (not asked again this run): " + error);
             return 0L;
         }
     }

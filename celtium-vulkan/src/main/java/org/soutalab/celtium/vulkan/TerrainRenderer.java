@@ -755,7 +755,7 @@ public final class TerrainRenderer {
         // bridge leg read [0.3816, 0.4421, 0.545] and the GL-less leg [0.4786, 0.5544, 0.6834] with no way to tell
         // whether that was a difference between the backends or between the frames they happened to log.
         this.fogLogDraws++;
-        if (!uniformsLogged || this.fogLogDraws % FOG_LOG_EVERY == 0) {
+        if (!uniformsLogged || (PeriodicLog.ENABLED && this.fogLogDraws % FOG_LOG_EVERY == 0)) {
             uniformsLogged = true;
             // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
             System.out.println("[Celtium] CELTIUM_FOG draw=" + this.fogLogDraws + " fogColor=" + java.util.Arrays.toString(fogColor)

@@ -96,7 +96,7 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
      * implementation already has, throttled to a line every twenty frames.
      */
     private void celtium$reportTrackerState() {
-        if (--this.celtium$trackerReportCountdown > 0) {
+        if (!org.soutalab.celtium.vulkan.PeriodicLog.ENABLED || --this.celtium$trackerReportCountdown > 0) {
             return;
         }
         this.celtium$trackerReportCountdown = 20;
@@ -135,7 +135,7 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
         // is whether the render lists the backend iterates are empty. SectionCollector.visit adds a section to a
         // render list only when its flags are non-zero, and flags are set from build results - so an empty list
         // means the sections are visible but not built, which is a different next step from a culling one.
-        if (this.celtium$listReportCountdown-- <= 0) {
+        if (org.soutalab.celtium.vulkan.PeriodicLog.ENABLED && this.celtium$listReportCountdown-- <= 0) {
             this.celtium$listReportCountdown = 40;
             var manager = this.getRenderSectionManager();
             if (manager != null) {

@@ -99,7 +99,8 @@ public abstract class GlStateManagerMixin {
                     info.cancel();
                     org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
                     celtium$callListCancelled++;
-                    if (celtium$callListCancelled == 1 || celtium$callListCancelled % 500 == 0) {
+                    if (celtium$callListCancelled == 1
+                            || (org.soutalab.celtium.vulkan.PeriodicLog.ENABLED && celtium$callListCancelled % 500 == 0)) {
                         // Bounded, and printed from the cancelled path so it appears only in a run that really took a
                         // GL replay over. `executed` counts GL bodies that ran; equal counts with a non-zero
                         // cancellation count would mean the cancellation is not real.

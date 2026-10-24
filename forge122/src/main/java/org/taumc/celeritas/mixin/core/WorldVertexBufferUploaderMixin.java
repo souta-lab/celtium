@@ -149,7 +149,7 @@ public abstract class WorldVertexBufferUploaderMixin {
     @Inject(method = "func_181679_a", at = @At("RETURN"), require = 0)
     private void celtium$countGlUpload(BufferBuilder buffer, CallbackInfo info) {
         celtium$glUploads++;
-        if (celtium$offers % 500 == 0 && celtium$offers > 0) {
+        if (org.soutalab.celtium.vulkan.PeriodicLog.ENABLED && celtium$offers % 500 == 0 && celtium$offers > 0) {
             System.out.println("celtium uploads: offers=" + celtium$offers + " glUploads=" + celtium$glUploads);
         }
     }

@@ -4987,7 +4987,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private void celtium$reportGllessInvalidation(int glTextureId) {
         int kept = this.textureInvalidationsKeptGlless;
-        if (kept != 1 && kept % 100 != 0) {
+        if (kept != 1 && (!PeriodicLog.ENABLED || kept % 100 != 0)) {
             return;
         }
         System.out.println("[Celtium] CELTIUM_GLESS_INVALIDATE kept=" + kept + " glTexture=" + glTextureId
@@ -18700,7 +18700,7 @@ this.frameBufferOpen = false;
                         + " groups=" + this.immediateGroups.size() + " viewport=" + this.liveViewportWidth
                         + "x" + this.liveViewportHeight + " target=0x" + Long.toHexString(target));
             }
-            if (this.largeWindows % 60 == 0) {
+            if (PeriodicLog.ENABLED && this.largeWindows % 60 == 0) {
                 System.out.println("[Celtium] CELTIUM_LARGE_WINDOWS windows=" + this.largeWindows
                         + " groups=" + this.largeWindowGroups + " frame=" + this.frameId
                         + " presents=" + this.presentHookCalls);
@@ -19796,7 +19796,7 @@ this.frameBufferOpen = false;
         boolean restoredToFull = width == this.targetWidth && height == this.targetHeight;
         if (this.immediateNarrowViewports <= 3
                 || (restoredToFull && this.immediateNarrowViewportLogs < 8)
-                || this.immediateNarrowViewports % 256 == 0) {
+                || (PeriodicLog.ENABLED && this.immediateNarrowViewports % 256 == 0)) {
             if (restoredToFull) {
                 this.immediateNarrowViewportLogs++;
             }
