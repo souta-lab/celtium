@@ -3235,3 +3235,15 @@ native shadow mapは未実装（旧scaffold撤去済み）。実装は次の既�
   関数へ切り出し、影パスでも同じ chunk binding で2回目を記録するのが段階(b)(c)の本体
 - シェーダ側の名残: `terrain_solid_vanilla.vert` の shadow 行列コメント、`VulkanImmediateItemPipeline` の
   placeholder shadow image（bindingは既にある）
+
+**影 段階(a): `ShadowMapTarget` を追加（2026-10-24・未接続）**
+
+`celtium-vulkan/.../ShadowMapTarget.java` を追加した。中身:
+- D32（`VulkanDepthFormat.chosen`）の depth image + device-local memory + DEPTH aspect view
+- `VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER` + `compareEnable`/`compareOp=LESS_OR_EQUAL` の比較サンプラ
+- depth-only render pass（loadOp CLEAR 1.0 / storeOp STORE / UNDEFINED → **SHADER_READ_ONLY_OPTIMAL**）と framebuffer
+- `delete()` で全オブジェクト解放
+
+現状は**どこからも生成されていない**（意図的に未接続）。`compileJava`/`packageJar` は通る。
+次の段: フレーム先頭（`ensureFrameTarget()` の直後）で本ターゲットを生成し、クリアのみのパスを記録して
+`readDepthRectangle` で深度PNGをdump → パスとレイアウト遷移の証拠化。その後ライト行列＋深度専用パイプライン。
