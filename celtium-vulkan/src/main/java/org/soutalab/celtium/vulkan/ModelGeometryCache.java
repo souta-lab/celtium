@@ -149,11 +149,16 @@ public final class ModelGeometryCache {
             for (int id : ids) {
                 // Filled in place: the arrays are read until the next list and never kept, and this loop rebuilds every list whose
                 // generation moved on - which allocated 1.3 GB of float[] per run when each snapshot was a fresh copy.
+                // Matched on the generation before anything is copied: taking the snapshot of every list on every
+                // build made each newly compiled list (593 in the user's four-minute session) copy all model geometry.
+                VulkanDynamicMesh existing = built.get(Integer.valueOf(id));
+                if (existing != null && existing.matches(id, VulkanModelQuadCapture.generationOf(id))) {
+                    continue;
+                }
                 if (!VulkanModelQuadCapture.snapshotInto(id, this.snapshotScratch)) {
                     continue;
                 }
                 VulkanModelQuadCapture.Scratch snapshot = this.snapshotScratch;
-                VulkanDynamicMesh existing = built.get(Integer.valueOf(id));
                 if (existing != null && existing.matches(id, snapshot.generation)) {
                     continue;
                 }
