@@ -3139,3 +3139,17 @@ hostルートに一致しないため、**既定はhostルートのまま**。bl
   同一セッション後半で `celeritas` は 1.19–1.27ms と安定しているため、機械全体の速度変化でも説明しにくい。
   次の判別は **同じ commit 84c220575 のソースで JAR を今ビルドし直して測る**こと
   （当時の JAR は削除済み。git の3ファイル差し替えで再現可能）。
+
+**リリース v0.0.16-alpha（2026-10-24）**
+
+- JAR: `celtium-forge-mc1.12.2-0.0.16-alpha.jar`
+  sha256 `3aba97924eb881f4066aca51c1f069f5cd7b3d6b9e8b0e5482c22ba46f57998e`（3,229,034 bytes）
+- ビルド: このcommitで `-Pceltium_release_version=0.0.16-alpha`
+- 証拠（同一JAR）:
+  - world 受入 leg `release-world`（AMD RX 6400、validation ON、180s）**PASSED・problems 0**
+  - メニュー画像 leg `release-menu`（同JAR）: mean 111.8 / 彩度 0.315 / 参照差 42.75%
+    → `docs/evidence/2026-10-24-v0.0.16-menu.png`
+- 公開: https://github.com/souta-lab/celtium/releases/tag/v0.0.16-alpha
+- 未決: KPI warm p50 2.02–2.08ms（参照比 約1.7x）。同日午前の同一コード系は 1.56ms / 1.31x。
+  affine bake 無効化・window copy 経路切替のいずれでも不変で帰属未決。次は 84c220575 再ビルドJARとの A/B。
+- ディスク整理: 完了runは直近の `release-world` / `release-menu` のみ、staged jarは `jars/release` のみを残した。
