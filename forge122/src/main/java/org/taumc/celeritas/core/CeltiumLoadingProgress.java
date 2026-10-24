@@ -70,9 +70,7 @@ public final class CeltiumLoadingProgress {
         VulkanTerrainGpuBackend backend = (VulkanTerrainGpuBackend) current;
         if (!backend.celtium$isWindowBackend() || mc.displayWidth <= 0 || mc.displayHeight <= 0) return;
         refreshing = true;
-        // Forge's thread draws at up to 100 fps; 16 ms keeps the animated logo moving without the loader paying for
-        // more frames than the window can show.
-        nextRefresh = System.nanoTime() + 16_000_000L;
+        long frameStart = System.nanoTime();
         try {
             if (!assetsRead) {
                 assetsRead = true;
@@ -118,6 +116,11 @@ public final class CeltiumLoadingProgress {
             System.out.println("[Celtium] native loading progress failed: " + error);
         } finally {
             refreshing = false;
+            // This frame is drawn on the thread that is loading the game: at most ~30 frames a second, and never more
+            // than a fifth of the thread (the next frame waits four times as long as this one took). A leg whose
+            // refreshes ran every 16 ms spent the whole startup drawing the splash and never reached the menu.
+            long took = System.nanoTime() - frameStart;
+            nextRefresh = System.nanoTime() + Math.max(33_000_000L, 4L * took);
         }
     }
 

@@ -113,17 +113,22 @@ final class NativeLoadingScreen {
         } finally {
             g.dispose();
         }
-        this.pixels.clear();
-        // The shared presenter reads a bottom-origin source, as it does for the world's Vulkan frame image.
+        // The shared presenter reads a bottom-origin source, as it does for the world's Vulkan frame image. Converted
+        // from the raster's own int array: the per-row getRGB form cost most of a frame at 1920x1080, and this frame is
+        // drawn on the thread that is loading the game.
+        int[] argb = ((java.awt.image.DataBufferInt) this.canvas.getRaster().getDataBuffer()).getData();
+        java.nio.IntBuffer out = this.pixels.clear().order(java.nio.ByteOrder.LITTLE_ENDIAN).asIntBuffer();
         int[] row = new int[width];
-        for (int y = height - 1; y >= 0; y--) {
-            this.canvas.getRGB(0, y, width, 1, row, 0, width);
+        for (int y = height - 1, dst = 0; y >= 0; y--, dst += width) {
+            int src = y * width;
             for (int x = 0; x < width; x++) {
-                int argb = row[x];
-                this.pixels.put((byte) (argb >>> 16)).put((byte) (argb >>> 8)).put((byte) argb).put((byte) 255);
+                int c = argb[src + x];
+                // ARGB to the bytes R, G, B, A (opaque) of a little-endian int: 0xFF_BB_GG_RR.
+                row[x] = 0xFF000000 | ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >>> 16) & 0xFF);
             }
+            out.put(dst, row);
         }
-        this.pixels.flip();
+        this.pixels.limit(width * height * 4);
         if (this.image == null) this.image = VulkanGlTexture.create(this.context, width, height, true);
         this.image.uploadFromImage(width, height, this.pixels);
         return this.image;
