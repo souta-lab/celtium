@@ -42,35 +42,29 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
   **再開は利用者が明示した時だけ。**
 
 
-## 次の作業単位（2026-10-24 改訂）
+## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
 
-1. **実プレイのラグ（最優先）**: 利用者の qmagnet・1920×1080・日本語環境では基本20 FPSとの報告。
-   実ログの `CELTIUM_UNIT_BIND` **226,648行／46 MB**を発生させる上限判定の不具合は修正した。
-   実 `options.txt` を初期化時から渡すと旧JARで **703,428行／141 MB**を再現。修正版は96行。
-   同一fixture・実設定・Wayland・実セーブ位置の1組は warm p50 **3.368→1.644ms**
-   （[入力と限界](<evidence/user-options-2026-10-24.json>)、反復/guard付きKPIではない）。
-   同解像度・距離18・Unicode・固定視点の追加runは warm p50 1.061ms（[証拠](<evidence/native-loading-2026-10-24.json>)）だが、
-   24°/秒で2周する追加runは p50 2.085ms / p95 4.292ms（[回転画像・条件](<evidence/camera-sweep-2026-10-24.json>)）。
-   **実プレイの20 FPSは未再現・未解決、歩行は未検証**。固定・回転benchmarkで解決扱いにしない。
-   従来の同一JAR測定は **p50 1.027x（SLOWER、guard有効）／p95は3組ともCeleritasより低い**。
-   絶対値では v0.0.16-alpha の 2.02–2.08ms から 1.17–1.35ms へ下がっており（同日・同scene・AMD）、
-   改善自体は実在する。**残るのは平均フレームの最後の数%**で、比のノイズ（±7%）より大きい改善を入れないと
-   「Celeritasより速い」とは言えない。したがって次は推測ではなく**現行HEADのJFRを採り直し**、client thread上位から
-   1単位ずつ潰す（前回の内訳: TESR/entity 34%・即時window記録 30%・受理経路 10% は model instance 化と
-   portal producer の後で未再測定）。per-offer のJava仕事を消す再設計（`new_architecture.md` Stage 1/3/4）が本筋。
-   **読み込み進捗**は Forge の実際の ProgressBar を native Vulkan 所有の画面へ渡す経路を実装。
-   **終了後のボタン消失は未再現**（AMD 1280×720・1920×1080 Unicode、Intel 1280×720でボタン表示の実画像あり）。
-   追加監査で、native draw資源をGPU待機より先に破棄する順序を修正（[受入](<evidence/native-retirement-2026-10-24.json>)）。
-   実設定での終了テストは、停止済み統合サーバーの未完了Future待機で一度停止した。停止完了を監視する修正後は、実設定の日本語/Wayland/AMDとX11/Intelで再入場 PASSED・validation0
-   （[失敗と最終受入](<evidence/shutdown-await-2026-10-24.json>)、ボタン消失そのものは未再現）。
-   `worldSwitch` fixture の再入場先を同じ qmagnet に修正し、距離の報告値も実値にした。
-2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
+1. **実プレイ報告の状況**（利用者: 体感200fps＋スパイク、描画バグは少ない）
+   | 報告 | 状況 |
+   |---|---|
+   | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
+   | スパイク（入室直後・まれ） | 新model表ごとにpool全コピー＋全listのsnapshot複製を修正（`574a5f0f2`/`5706588fc`）。入室時は vanilla の chunk/テクスチャ同期読込も大きい。GCの停止は3–40msで主因ではない（`spike-hunt-1`） |
+   | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
+   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: upload copyの前に書込み前の実行依存（WAR）を追加。解放直後のindex領域を飛行中フレームが読んでいた |
+   | ワールド退出後ボタン無し | **未再現**（fixture: 既定・日本語/Unicode/1920×1080 とも表示）。手順差（ポーズ→終了・非16:9）の手掛かり待ち |
+   | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
+   | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`、`-Dceltium.debug.periodicLogs=true`で全出力） |
+2. **性能**: AMD warm p50 は Celeritas と同等（1.027x〜0.881x、再現性未確定）、**p95はCeleritasより低い**。
+   次は `goal.md` の基盤固有最適化と描画mod手法の吸収（EntityCulling型の遮蔽間引き、静的TESRのchunk mesh化、
+   `VkPipelineCache` 永続化、GUI/文字のbatch）を、paired KPIとスパイク計測で1つずつ。Intelは未測定。
+3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。
+4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
    Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では
    「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Celtium の Vulkan 経路との接続面に置き換える**作業になる。
    **別成果物（addon jar）**として実装し、Celtium core には取り込まない（`docs/shader-plan.md` の方針）。
-3. **組込影は scaffold に降格（既定OFF）**: `ShadowMapPass` は native 深度ターゲットと投影の検証用。既定 `false`。
-4. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来部分は LGPL-3.0、Actinium 由来は GPL-3.0、
+5. **組込影は scaffold に降格（既定OFF）**: `ShadowMapPass` は native 深度ターゲットと投影の検証用。既定 `false`。
+6. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来部分は LGPL-3.0、Actinium 由来は GPL-3.0、
    glsl-transformer は AGPL-3.0。**fork するなら fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
    LGPL 部分のチェリーピックはクレジット明記で可能（利用者指示③）。GLSM の丸ごと持ち込みはしない。
 

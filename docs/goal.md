@@ -1,6 +1,7 @@
 # Celtium — 製品目標と完成条件
 
-2026-10-21 再定義、2026-10-24 改訂（利用者指示: 新アーキテクチャへの全面移行と互換方針の変更）。
+2026-10-21 再定義、2026-10-24 改訂（利用者指示: 新アーキテクチャへの全面移行と互換方針の変更）、
+2026-10-25 改訂（利用者指示: 基盤固有の最適化の積極採用、描画modの最適化手法の一貫した吸収、巨大クラスの分割）。
 以前の性能値・原因断定・完了宣言は前提にしない。
 現在の実装と受入は [plan.md](<plan.md>)、目標設計は [new_architecture.md](<../new_architecture.md>)
 （採否と順序の評価は plan.md）、旧設計と実測の記録は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)、
@@ -17,6 +18,20 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
 - **Forge API以外のraw GLはstub**（2026-10-24 利用者指示）。どのstub呼出しが実画面に必要だったかを診断で示し、
   stubが何も描かないことを互換と呼ばない。
 - GLコンテキスト・GLによる描画fallbackに頼らない。拒否された描画は欠落であり、成功ではない。
+
+### 基盤固有の最適化と描画modの吸収（2026-10-25 利用者指示）
+
+- **SDL3 / Java 21 / LWJGL 3 / Cleanroom / Vulkan 1.2 でしかできない最適化を積極的に採る。**
+  GL互換や旧環境のための遠回りは残さない。例: Vulkan 1.2 の descriptor indexing・draw indirect count・
+  timeline semaphore・buffer device address、`VkPipelineCache` の永続化、LWJGL 3 の off-heap 構造体と `MemoryUtil`、
+  Java 21 のrecord/sealed/パターンマッチと世代別ZGC（起動引数の推奨として）、SDL3 の高精度タイマ・Wayland直結。
+  採否は実測（paired KPI・p95/p99・スパイク）で決め、効果の無いものは入れない。
+- **描画系modはすべて競合として排除し、その最適化手法はすべて本体に取り込む。一貫して。**
+  Celeritas/Sodium（地形）、EntityCulling（遮蔽によるentity/TESRの間引き）、ImmediatelyFast（GUI・文字・HUDのbatch）、
+  Enhanced Block Entities（静的TESRのchunk mesh化）、memory系（FoamFix/VintageFix の資源・テクスチャ遅延）などの
+  発想を、別modとの相互運用ではなく本体の一つのscene/可視性/提出経路として実装する。
+- **巨大クラスを分割する。** `VulkanTerrainGpuBackend`（約2万行）を所有権ごとの部品（状態owner・受理・記録・提出・
+  present・診断）へ分け、振る舞いを変えない段階的な抽出で進める。
 
 それ以外の実装方式は固定しない。既存CPUエンジン、公開内部API、shader、資源配置、描画順の表現、
 パッケージ構成、キャッシュ、スレッド分担、設定・互換方式は、性能と正しさに必要なら置き換える。
