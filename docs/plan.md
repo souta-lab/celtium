@@ -7,6 +7,17 @@
 
 ## 次の作業単位（2026-10-22 改訂・利用者指示）
 
+0. **影（製品要件）**: 現状native shadow mapは未実装（旧scaffoldは撤去済み、item/terrainシェーダには
+   影用のbinding/行列の名残があるだけ）。段階導入は次の順で:
+   (a) `ShadowMapTarget`（2048² D32_SFLOAT・depth-only render pass・比較サンプラ・初期layout
+   SHADER_READ_ONLY）を新規追加し、`-Dceltium.vulkan.shadowMap=true`（既定OFF）で生成だけ行う
+   (b) ライト行列（太陽方向＋カメラ周囲のortho箱）を算出し、深度専用パイプライン
+   `shadow_depth.vert`（COMPACT chunk頂点のposition＋push constant mat4）/空fragを追加
+   (c) terrain描画ループを関数へ切り出し、メインpassの直前に**同じchunk bindingで2回目**を記録
+   (d) 深度マップをPNG dumpする計器で証拠化 → その後 terrain fragment にPCF（比較サンプラ）と
+   `u_ShadowMatrix` push constantを追加
+   受入は「影が写った実画像＋world画像gate一致＋validation 0」で行う。
+
 1. **性能（最優先）**: 出荷構成は影なし。v0.0.16-alpha 時点の KPI（AMD RX 6400・world・validation off）は warm p50 2.02–2.08ms ＝ 参照 1.19–1.27ms に対し約1.7x。同日午前の同一コード系は 1.56ms / 1.31x で、affine bake 無効化でも window copy 経路切替でも動かず**帰属未決**。次は 84c220575 の再ビルドJARとの A/B。
    受け入れの算術（`architecture` §11/§12）では受理経路の内側の最適化では届かず、per-offer のJava仕事を消す再設計が要る。
 2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
