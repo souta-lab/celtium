@@ -10,7 +10,7 @@
 0. **影（製品要件）**: 現状native shadow mapは未実装（旧scaffoldは撤去済み、item/terrainシェーダには
    影用のbinding/行列の名残があるだけ）。段階導入は次の順で:
    (a) `ShadowMapTarget`（2048² D32_SFLOAT・depth-only render pass・比較サンプラ・初期layout
-   SHADER_READ_ONLY）を新規追加し、`-Dceltium.vulkan.shadowMap=true`（既定OFF）で生成だけ行う
+   SHADER_READ_ONLY）を新規追加し、有効化フラグ（既定OFF）で生成だけ行う
    (b) ライト行列（太陽方向＋カメラ周囲のortho箱）を算出し、深度専用パイプライン
    `shadow_depth.vert`（COMPACT chunk頂点のposition＋push constant mat4）/空fragを追加
    (c) terrain描画ループを関数へ切り出し、メインpassの直前に**同じchunk bindingで2回目**を記録
@@ -34,7 +34,6 @@
 
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
-| **v0.0.7-alpha をリリース（2026-10-22）** | **影の既定ONが主題** | 実測 | 公開済み・両GPU検証済 | https://github.com/souta-lab/celtium/releases/tag/v0.0.7-alpha 。asset `celtium-forge-mc1.12.2-0.0.7-alpha.jar`（3,201,172 bytes）は**ダウンロードしたsha256がローカルビルドと一致**（`7e3b6783…`）。梱包 `verified: true`・版数整合 `verified: True`・内容ハッシュ1079エントリ。ノートに**影ON/OFFの実測（AMD 0.92%・Intel 2.17%）**、アロケーション−41%、S0/S1/S2のパック状況、既知の問題（性能1.674xと尾・パック未接続・RLCraftはFugue待ち）を明記。**公開jarを両GPUで検証**: AMD/Intel とも world leg **PASSED・画像ゲート PASSED・validation 0件**（Intel は jar hash `7e3b6783…` 一致を確認）。**公開jarの測定**（負荷3.2-4.7・強制・交互5ペア）: **AMD 1.400x**（中央値。影OFF構成は1.387x＝この負荷帯では影の上乗せは小さい） |
 
 | **起動（Wayland）** | **修正済み・25秒→72秒完走** | 実測 | 完了 | SDLのwindow propertyからwl_display/wl_surfaceを取って`vkCreateWaylandSurfaceKHR`（`SDL_Vulkan_CreateSurface`はSDL側dispatchで落ちる）。fullscreenは別根因だった: `Display.update()`→`Window.swapBuffers()`（SDL自身のEGL swap）が**同じwl_surfaceに二重提示**し、swayが`wp_linux_drm_syncobj error 4`で接続を切る→SDL QUIT→exit 0。`CeltiumGllessSdlSwapTransformer`でGL-less時のみno-op化（jar 0.0.10-alpha / headlessで72秒・presented1198・エラー0）。
 
@@ -72,6 +71,8 @@
 - GPU pass時間、present/readback、アップロード量、GC、フレーム内訳の旧値は、artifact/区間が今回のビルドと一致しないため参考値としても使わない。
 - validation clean・`exitCode=0`・色数gateは、それぞれ描画不存在・正しい絵・画像一致を証明しない。
 
+最新リリース: **v0.0.16-alpha**（2026-10-24、[notes](<releases/0.0.16-alpha.md>)）。
+
 ## 更新と参照
 
 - この表は実装・根因・受入の意味が変わった時だけ更新する。round日記・毎回のPR作成は不要。
@@ -105,6 +106,4 @@ scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
 - パック: `-Dceltium.shaderpack.path=<zip>` ＋ `-Dceltium.shaderpack.compileProbe=true`、shaderc は `CELTIUM_LEG_EXTRA_LIBS=.gv-verify/lib/lwjgl-shaderc-3.4.3.jar`
 - ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
 
-最新リリース: **v0.0.13-alpha**（性能: リフレッシュ基準のフレーム上限（MAILBOX時のみ・スワップ後スリープ）、テレインアリーナ事前拡大、受理経路のボックス化除去。asset sha256 `80e3d8b3f8c85eed…`、AMD/Intel とも PASSED・gate PASSED・0違反。実測: 実ワールド1080pで p50 57–61fps（上限60で安定）） / 前版 v0.0.12-alpha（スプラッシュのローディングバー）
 
-| **配布** | **v0.0.14-alpha 公開済み**（2026-10-23）。forge jar sha256 `90a7c505…`、AMD/Intel 両GPUで PASSED。 |
