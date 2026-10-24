@@ -5,6 +5,16 @@
 製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
+## 2026-10-24: 影 stage (c)+(d計器) — ライト視点の深度が実GPUで埋まった
+
+`celtium$recordShadowTerrain` がsolid pass直前にメインpassと同じchunk bindingで深度専用passを記録。`ShadowDepthPipeline` は
+COMPACT/vanilla両decode（terrain_solid*.vertと照合一致）。dump計器は `-Dceltium.vulkan.shadowDump{Dir,Every,Count}`（既定OFF）。
+
+[実機証拠](<evidence/shadow-stage-c-2026-10-24.md>): leg `shadowc-amd-1`・JAR `c6a21a4c…`・AMD RX 6400・qmagnet較正gate一致・
+`presentedImageVerdict=PASSED`・accepted/exit 0・VUIDなし。`frame=120 stride=32 draws=25 total=2778`、
+`shadow-100/200.png`（2048²・coverage 6.81%・両dump一致＝固定時間の予定動作）に地形構造。
+**範囲**: stride=32のみ実GPU。影はまだ描画に使わない（PCF未実装・presented画像は影なしと同じ）。
+
 ## 2026-10-24: native state/resource owner
 
 `NativeRasterState` が blend/cull/色マスク/scissor/polygon offset、`NativeTextureBindings` が texture unit/binding を所有する。
@@ -16,18 +26,11 @@ AMD RX 6400/Intel UHD 630 のqmagnet、AMDのvideoSettingsは画像gate PASSED�
 menu/HEI inventory/recipeの実画像を保存したが、HEIの専用gateは未較正。性能は3pair測定したが負荷上昇（2.57→5.45）・1組のstarvationにより判定不能（残る比0.973/1.118）。改善を主張しない。
 描画要求の受付・実行全体の移管と影/packは未完。以前からの影の未commit変更はこの成果物に含まない。
 
-## 次の作業単位（2026-10-22 改訂・利用者指示）
+## 次の作業単位（2026-10-24 改訂）
 
-0. **影（製品要件）**: 現状native shadow mapは未実装（旧scaffoldは撤去済み、item/terrainシェーダには
-   影用のbinding/行列の名残があるだけ）。段階導入は次の順で:
-   (a) `ShadowMapTarget`（2048² D32_SFLOAT・depth-only render pass・比較サンプラ・初期layout
-   SHADER_READ_ONLY）を新規追加し、有効化フラグ（既定OFF）で生成だけ行う
-   (b) ライト行列（太陽方向＋カメラ周囲のortho箱）を算出し、深度専用パイプライン
-   `shadow_depth.vert`（COMPACT chunk頂点のposition＋push constant mat4）/空fragを追加
-   (c) terrain描画ループを関数へ切り出し、メインpassの直前に**同じchunk bindingで2回目**を記録
-   (d) 深度マップをPNG dumpする計器で証拠化 → その後 terrain fragment にPCF（比較サンプラ）と
-   `u_ShadowMatrix` push constantを追加
-   受入は「影が写った実画像＋world画像gate一致＋validation 0」で行う。
+0. **影（製品要件）**: (a)(b)(c)+(d)dump計器は**完了・実機証拠済み**（上節。stride=32のみ実GPU、COMPACTはdecode照合のみ）。
+   残りは **(d)後半**: terrain fragmentへPCF（比較サンプラ）+`u_ShadowMatrix` push constant、光源行列のゲーム内太陽への接続、
+   COMPACTの実確認。受入は「影が写った実画像＋world画像gate一致＋validation 0」（向き・濃さの較正を含む）。
 
 1. **性能（最優先）**: 出荷構成は影なし。v0.0.16-alpha 時点の KPI（AMD RX 6400・world・validation off）は warm p50 2.02–2.08ms ＝ 参照 1.19–1.27ms に対し約1.7x。同日午前の同一コード系は 1.56ms / 1.31x で、affine bake 無効化でも window copy 経路切替でも動かず**帰属未決**。次は 84c220575 の再ビルドJARとの A/B。
    受け入れの算術（`architecture` §11/§12）では受理経路の内側の最適化では届かず、per-offer のJava仕事を消す再設計が要る。

@@ -3100,6 +3100,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.gameClearLatch", "true"));
     private static final int PRESENTED_DUMP_EVERY =
             Integer.getInteger("celtium.vulkan.presentedDumpEvery", 40).intValue();
+    /** The shadow map's own depth dump: a directory names the run, 0/off by default because it fences the GPU. */
+    private static final String SHADOW_DUMP_DIR = System.getProperty("celtium.vulkan.shadowDumpDir");
+    private static final int SHADOW_DUMP_EVERY =
+            Integer.getInteger("celtium.vulkan.shadowDumpEvery", 200).intValue();
+    private static final int SHADOW_DUMP_COUNT =
+            Integer.getInteger("celtium.vulkan.shadowDumpCount", 4).intValue();
     private static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
     private static final int CHAIN_FRAME_DUMPS = Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue();
 
@@ -3207,7 +3213,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean SHADOW_MAP = Boolean.getBoolean("celtium.vulkan.shadowMap");
     private static final int SHADOW_MAP_SIZE = Integer.getInteger("celtium.vulkan.shadowMapSize", 2048).intValue();
     private ShadowMapTarget shadowMap;
+    private ShadowDepthPipeline shadowDepthPipeline;
+    private final float[] shadowLightMatrix = new float[16];
     private long shadowMapClearPasses;
+    private long shadowTerrainDrawFrame = Long.MIN_VALUE;
+    private long shadowTerrainDrawCommands;
+    private int shadowDumpsWritten;
 
     /** How many large windows have had their routing logged. */
     private int windowRouteLogs;
@@ -12099,6 +12110,11 @@ this.frameBufferOpen = false;
             pipeline.delete();
         }
         this.terrain.releasePipelines();
+        if (this.shadowDepthPipeline != null) {
+            this.shadowDepthPipeline.delete();
+            this.shadowDepthPipeline = null;
+        }
+        this.shadowTerrainDrawFrame = Long.MIN_VALUE;
         // The immediate caches are built against the terrain pass that was just destroyed, so they belong to this world
         // as much as the pipelines do: a state-keyed entry kept across a world change would name a dead render pass. The
         // queued groups that held references to them were retired above, so nothing here is still pointing at them.
@@ -12144,11 +12160,103 @@ this.frameBufferOpen = false;
         begin.renderArea().offset().set(0, 0);
         begin.renderArea().extent().set(this.shadowMap.size(), this.shadowMap.size());
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        // The window renderer can open this buffer before the world supplies a chunk vertex format. The pipeline
+        // therefore belongs at the first real terrain draw, not here in the pre-world clear pass.
         vkCmdEndRenderPass(this.commandBuffer);
         this.shadowMapClearPasses++;
     }
 
+    /** Records the opaque chunk batches from the sun's view, before the camera pass acquires its target. */
+    private void celtium$recordShadowTerrain(MemoryStack stack, ChunkRenderListIterable renderLists,
+            TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera,
+            boolean useBlockFaceCulling, ChunkPrimitiveType primitiveType) {
+        int stride = pass.vertexType().getVertexFormat().getStride();
+        if (stride != this.commonVertexStride) {
+            throw new IllegalStateException("shadow vertex stride " + stride + " differs from arena stride "
+                    + this.commonVertexStride);
+        }
+        if (this.shadowDepthPipeline == null) {
+            this.shadowDepthPipeline = ShadowDepthPipeline.create(this.context, this.shadowMap.renderPass(), stride);
+        }
+        // writeUniforms() stores offsets relative to camera.int+camera.frac. Use that SAME relative space here;
+        // a matrix centred on world origin with camera-relative vertex coordinates would clip the moving world.
+        System.arraycopy(ShadowLightMatrix.viewProjection(0.0f, -16.0f, 0.0f,
+                0.3f, 0.9f, 0.2f, 64.0f, 256.0f), 0, this.shadowLightMatrix, 0, 16);
+        ByteBuffer matrix = stack.malloc(64);
+        matrix.asFloatBuffer().put(this.shadowLightMatrix);
+        ByteBuffer regionOffset = stack.malloc(16);
+        org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
+        viewport.get(0).set(0.0f, 0.0f, this.shadowMap.size(), this.shadowMap.size(), 0.0f, 1.0f);
+        org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
+        scissor.get(0).offset().set(0, 0);
+        scissor.get(0).extent().set(this.shadowMap.size(), this.shadowMap.size());
+        VkClearValue.Buffer clear = VkClearValue.calloc(1, stack);
+        clear.get(0).depthStencil().depth(1.0f).stencil(0);
+        VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
+                .renderPass(this.shadowMap.renderPass()).framebuffer(this.shadowMap.framebuffer()).pClearValues(clear);
+        begin.renderArea().offset().set(0, 0);
+        begin.renderArea().extent().set(this.shadowMap.size(), this.shadowMap.size());
+        vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        long drawn = 0;
+        try {
+            vkCmdSetViewport(this.commandBuffer, 0, viewport);
+            vkCmdSetScissor(this.commandBuffer, 0, scissor);
+            this.shadowDepthPipeline.bind(this.commandBuffer, matrix);
+            SectionRenderDataStorage.BatchCacheParams cacheParams =
+                    new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling);
+            Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
+            while (iterator.hasNext()) {
+                ChunkRenderList renderList = iterator.next();
+                RenderRegion region = renderList.getRegion();
+                TerrainRenderer.RegionResources resources = this.terrain.resourcesIfPresent(region);
+                SectionRenderDataStorage storage = region.getStorage(pass);
+                if (resources == null || storage == null) {
+                    continue;
+                }
+                CachedBatch cached = storage.getCachedMultiDrawBatch(cacheParams);
+                if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
+                        renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
+                        occlusionCamera.intZ)) {
+                    cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
+                            useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
+                    storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                }
+                if (!(cached.getBatch() instanceof VulkanMultiDrawBatch) || cached.getBatch().isEmpty()) {
+                    continue;
+                }
+                VulkanMultiDrawBatch batch = (VulkanMultiDrawBatch) cached.getBatch();
+                regionOffset.asFloatBuffer().put(0, (region.getOriginX() - camera.intX) - camera.fracX)
+                        .put(1, (region.getOriginY() - camera.intY) - camera.fracY)
+                        .put(2, (region.getOriginZ() - camera.intZ) - camera.fracZ).put(3, 0.0f);
+                this.shadowDepthPipeline.bindRegion(this.commandBuffer, regionOffset);
+                this.terrain.bindVertexBuffer(this.commandBuffer, stack, resources);
+                for (int i = 0; i < batch.size(); i++) {
+                    long byteOffset = batch.indexByteOffset(i);
+                    if (byteOffset != 0 && resources.indexArena == null) {
+                        continue;
+                    }
+                    this.terrain.bindIndexBuffer(this.commandBuffer, byteOffset == 0
+                            ? this.sharedIndexBuffers.get(primitiveType) : resources.indexArena.buffer());
+                    vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(i), 1, (int) (byteOffset / 4),
+                            batch.baseVertex(i), 0);
+                    drawn++;
+                }
+            }
+        } finally {
+            vkCmdEndRenderPass(this.commandBuffer);
+        }
+        this.shadowTerrainDrawCommands += drawn;
+        if (this.shadowTerrainDrawFrame == Long.MIN_VALUE || this.frameId == 120) {
+            System.out.println("[Celtium] CELTIUM_SHADOW_TERRAIN frame=" + this.frameId + " stride=" + stride
+                    + " draws=" + drawn + " total=" + this.shadowTerrainDrawCommands);
+        }
+    }
+
     public void delete() {
+        if (this.shadowDepthPipeline != null) {
+            this.shadowDepthPipeline.delete();
+            this.shadowDepthPipeline = null;
+        }
         if (this.shadowMap != null) {
             this.shadowMap.delete();
             this.shadowMap = null;
@@ -12412,6 +12520,15 @@ this.frameBufferOpen = false;
         pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size(), this.frameSlot);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
+        }
+
+        // Fill the optional light-depth target before opening the camera pass. No frame image is acquired or
+        // modified here; the shadow pass and the main pass share only immutable region geometry.
+        if (SHADOW_MAP && this.shadowMap != null && "solid".equals(pass.name())
+                && this.shadowTerrainDrawFrame != this.frameId) {
+            celtium$recordShadowTerrain(stack, renderLists, pass, occlusionCamera, camera,
+                    useBlockFaceCulling, primitiveType);
+            this.shadowTerrainDrawFrame = this.frameId;
         }
 
         // The begin info lives past the barriers bracket: the render pass opens inside prepBegin.
@@ -16790,6 +16907,11 @@ this.frameBufferOpen = false;
         if (this.presentedDumpPath != null && dumpEvery > 0 && presented % dumpEvery == 0) {
             this.swapchain.requestPresentedImageDump(this.presentedDumpPath);
         }
+        if (SHADOW_DUMP_DIR != null && SHADOW_MAP && this.shadowMap != null && SHADOW_DUMP_EVERY > 0
+                && presented % SHADOW_DUMP_EVERY == 0 && this.shadowDumpsWritten < SHADOW_DUMP_COUNT) {
+            this.shadowDumpsWritten++;
+            dumpShadowMap(presented);
+        }
         String directory = System.getProperty("celtium.vulkan.frameDumpDir");
         if (directory == null) {
             return;
@@ -16803,6 +16925,59 @@ this.frameBufferOpen = false;
         }
         this.frameDumpsWritten++;
         celtium$dumpPresentedImage(java.nio.file.Paths.get(directory, "frame-" + presented + ".png"));
+    }
+
+    /**
+     * Writes the shadow map's depth out as a grayscale PNG, with the coverage statistics on the line that names it.
+     * <p>
+     * The map rests in SHADER_READ_ONLY_OPTIMAL between frames, so the read names that layout rather than the
+     * GENERAL the frame's own depth image uses. Bright means near the light; the clear value 1.0 is black, which is
+     * why an empty map is an all-black image with coverage=0 rather than a plausible picture. This is the stage (d)
+     * instrument of the shadow plan: {@code CELTIUM_SHADOW_TERRAIN} says how many draws were recorded, this PNG says
+     * where they landed.
+     */
+    private void dumpShadowMap(int presented) {
+        int size = this.shadowMap.size();
+        float[] depths = this.textureCopyService.readDepthRectangle(this.shadowMap.image(), 0, 0, size, size,
+                this.shadowMap.format(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (depths == null) {
+            System.out.println("[Celtium] CELTIUM_SHADOW_DUMP present=" + presented + " readback=failed");
+            return;
+        }
+        int covered = 0;
+        float min = 1.0f;
+        double coveredSum = 0.0;
+        for (float depth : depths) {
+            if (depth < 1.0f) {
+                covered++;
+                coveredSum += depth;
+                if (depth < min) {
+                    min = depth;
+                }
+            }
+        }
+        int[] pixels = new int[depths.length];
+        for (int pixel = 0; pixel < depths.length; pixel++) {
+            int bright = Math.max(0, Math.min(255, (int) ((1.0f - depths[pixel]) * 255.0f)));
+            pixels[pixel] = 0xFF000000 | bright << 16 | bright << 8 | bright;
+        }
+        java.nio.file.Path path = java.nio.file.Paths.get(SHADOW_DUMP_DIR, "shadow-" + presented + ".png");
+        boolean written = false;
+        try {
+            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(size, size,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            out.setRGB(0, 0, size, size, pixels, 0, size);
+            java.nio.file.Files.createDirectories(path.getParent());
+            written = javax.imageio.ImageIO.write(out, "png", path.toFile());
+        } catch (java.io.IOException | RuntimeException | LinkageError error) {
+            record("shadow map dump write failed: " + describe(error));
+        }
+        System.out.println("[Celtium] CELTIUM_SHADOW_DUMP present=" + presented + " path=" + path
+                + " written=" + written + " size=" + size + " coverage=" + (covered / (float) depths.length)
+                + " minDepth=" + min + " meanCoveredDepth="
+                + (covered == 0 ? "n/a" : String.format(java.util.Locale.ROOT, "%.4f",
+                        Double.valueOf(coveredSum / covered))));
     }
 
     /** Polls the window's events. The caller skips Display.update when a frame was presented, and that call polls them. */

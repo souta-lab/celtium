@@ -36,6 +36,8 @@ public final class SpirvShaders {
 
     /** Vertex module for the shadow map's depth-only pass: a light view-projection and the COMPACT position only. */
     public static final String SHADOW_DEPTH_VERTEX = "shadow_depth.vert";
+    /** Vertex module for the 32-byte vanilla-like chunk format. */
+    public static final String SHADOW_DEPTH_VANILLA_VERTEX = "shadow_depth_vanilla.vert";
     /** Fragment module for the shadow map's depth-only pass; it writes nothing, depth is the output. */
     public static final String SHADOW_DEPTH_FRAGMENT = "shadow_depth.frag";
 

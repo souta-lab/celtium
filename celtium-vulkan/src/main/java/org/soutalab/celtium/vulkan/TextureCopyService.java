@@ -1374,7 +1374,19 @@ public final class TextureCopyService {
         this.host.context().quarantineReadbackBuffer(buffer, memory, what + " not confirmed complete");
     }
 
+    /** The frame's depth image lives in GENERAL between frames, which is the layout every existing caller reads. */
     public float[] readDepthRectangle(long depthImage, int x, int y, int width, int height, int depthFormat) {
+        return readDepthRectangle(depthImage, x, y, width, height, depthFormat,
+                org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+    }
+
+    /**
+     * Same read with the layouts named by the caller, for an image whose resting layout is not GENERAL - the shadow
+     * map rests in SHADER_READ_ONLY_OPTIMAL after its render pass, and a barrier that claims GENERAL there is a
+     * layout-tracking validation error, not a stylistic difference.
+     */
+    public float[] readDepthRectangle(long depthImage, int x, int y, int width, int height, int depthFormat,
+            int readLayout, int restoreLayout) {
         long buffer = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
         long memory = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
         // Only a confirmed submission may free the buffer: see releaseOrQuarantine (#364).
@@ -1427,7 +1439,7 @@ public final class TextureCopyService {
             org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toTransfer =
                     org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
             toTransfer.get(0).sType$Default()
-                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
+                    .oldLayout(readLayout)
                     .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
                     .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
@@ -1446,7 +1458,7 @@ public final class TextureCopyService {
                     org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
             backToGeneral.get(0).sType$Default()
                     .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
+                    .newLayout(restoreLayout)
                     .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
                     .image(depthImage)

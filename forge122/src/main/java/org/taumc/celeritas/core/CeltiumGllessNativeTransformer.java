@@ -98,7 +98,36 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
 
+    /** The raw GL raster ABI is forwarded as typed arguments, with no per-call array or libffi trampoline. */
+    private static boolean emitNativeRasterAdapter(MethodVisitor method, String name, String descriptor) {
+        String entry = name.startsWith("ngl") ? name.substring(1) : name;
+        String expected;
+        switch (entry) {
+            case "glBlendFunc": expected = "(II)V"; break;
+            case "glBlendFuncSeparate": expected = "(IIII)V"; break;
+            case "glBlendEquation": expected = "(I)V"; break;
+            case "glBlendEquationSeparate": expected = "(II)V"; break;
+            case "glColorMask": expected = "(ZZZZ)V"; break;
+            case "glCullFace":
+            case "glFrontFace": expected = "(I)V"; break;
+            case "glPolygonOffset": expected = "(FF)V"; break;
+            case "glScissor": expected = "(IIII)V"; break;
+            default: return false;
+        }
+        if (!expected.equals(descriptor)) return false;
+        int slot = 0;
+        for (org.objectweb.asm.Type argument : org.objectweb.asm.Type.getArgumentTypes(descriptor)) {
+            method.visitVarInsn(argument.getOpcode(Opcodes.ILOAD), slot);
+            slot += argument.getSize();
+        }
+        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/vulkan/gl/NativeRasterAdapter",
+                entry, descriptor, false);
+        method.visitInsn(Opcodes.RETURN);
+        return true;
+    }
+
     private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
+        if (emitNativeRasterAdapter(method, name, descriptor)) return;
         String returnType = descriptor.substring(descriptor.indexOf(')') + 1);
         // Both the public wrapper's native and the "ngl" form take the name differently ((int) versus a pointer to
         // the encoded name), and LWJGL3 generates the pointer form - so match on the name and the return type rather
