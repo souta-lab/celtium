@@ -3221,3 +3221,17 @@ celeritas warm p50=1.432ms p95=2.4ms  samples=6520
 ```
 p95 28ms・サンプル1650は**外部負荷の混入**を示す（以前の静穏時は p95 2–5ms・4300–5700サンプル）。
 この状態の比は性能差の証拠にしない。静穏時の再測が次の条件。
+
+**影の実装起点（コード上のアンカー・2026-10-24 調査）**
+
+native shadow mapは未実装（旧scaffold撤去済み）。実装は次の既存コードを土台にする:
+- 深度イメージ生成の実例: `GllessFrameTarget.allocateImage(boolean color, int w, int h)`（`VulkanDepthFormat.chosen(physicalDevice)`、
+  usage `DEPTH_STENCIL_ATTACHMENT|TRANSFER_SRC|TRANSFER_DST|SAMPLED`、view は `VK_IMAGE_ASPECT_DEPTH_BIT`）
+- フレーム開始フック: `VulkanTerrainGpuBackend` の `ensureFrameTarget()` 呼び出し点（テレインpass直前）。
+  影パスはこの直前で記録する（メインpassより前、同じフレームのコマンドバッファ）
+- 深度のホスト読み出し: `TextureCopyService.readDepthRectangle(image, x, y, w, h, format)`（既存・probeで使用）
+  → 影深度のPNG dump計器はこれを使う
+- テレインの描画ループ: `VulkanTerrainGpuBackend` のテレインpass記録（`terrain.regionResources()` を回す箇所）を
+  関数へ切り出し、影パスでも同じ chunk binding で2回目を記録するのが段階(b)(c)の本体
+- シェーダ側の名残: `terrain_solid_vanilla.vert` の shadow 行列コメント、`VulkanImmediateItemPipeline` の
+  placeholder shadow image（bindingは既にある）
