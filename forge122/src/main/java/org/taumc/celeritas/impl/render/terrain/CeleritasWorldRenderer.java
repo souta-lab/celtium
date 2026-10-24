@@ -216,7 +216,15 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     public int renderBlockEntities(TileEntityRenderContext tileEntityRenderContext) {
         int pass = MinecraftForgeClient.getRenderPass();
         TileEntityRendererDispatcher.instance.preDrawBatch();
-        int count = super.renderBlockEntities(tileEntityRenderContext);
+        org.taumc.celeritas.impl.render.producer.EndPortalProducer.begin();
+        int count;
+        try {
+            count = super.renderBlockEntities(tileEntityRenderContext);
+        } finally {
+            // Drawn at the end of the pass, before Forge's own fast-TESR batch, and also when a renderer threw: a
+            // collected portal must never be carried into a later pass or frame.
+            org.taumc.celeritas.impl.render.producer.EndPortalProducer.flush();
+        }
         TileEntityRendererDispatcher.instance.drawBatch(pass);
         return count;
     }
