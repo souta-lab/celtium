@@ -144,6 +144,13 @@ public final class ValidationClient {
      * and stops at {@code warmToTick} (default 600).
      */
     private final List<Double> warmFrameIntervals = new ArrayList<Double>();
+    /** Opt-in moving-view replay after the fixed capture, so a stationary KPI cannot hide view-dependent stalls. */
+    private final float celtium$cameraSweepRate = Float.parseFloat(
+            System.getProperty("celtium.validation.cameraSweepDegreesPerSecond", "0"));
+    private final int celtium$cameraSweepFromTick =
+            Integer.getInteger("celtium.validation.cameraSweepFromTick", 400).intValue();
+    private int celtium$cameraSweepFrames;
+    private float celtium$cameraSweepLastYaw;
     /**
      * The {@link #SLOW_FRAME_MAX} slowest frames of the whole run, with the renderer's own report of what the frame
      * did: {@code worldTick=<n> <ms>ms <phase evidence> upload[thisFrameMs=... submitWaitMillis=... submitWaits=...
@@ -6368,6 +6375,10 @@ public final class ValidationClient {
      * with a warmed benchmark.
      */
     private void celtium$reportFrameIntervals() {
+        report.addProperty("cameraSweepDegreesPerSecond", celtium$cameraSweepRate);
+        report.addProperty("cameraSweepFromTick", celtium$cameraSweepFromTick);
+        report.addProperty("cameraSweepFrames", celtium$cameraSweepFrames);
+        report.addProperty("cameraSweepLastYaw", celtium$cameraSweepLastYaw);
         if (report.has("frameIntervalSampleCount")) {
             return;
         }
@@ -10798,6 +10809,22 @@ public final class ValidationClient {
      * drawn with them. See the note in {@link #frame(TickEvent.RenderTickEvent)} for why this is not in the END half.
      */
     private void celtium$applyClientPoseOverride(Minecraft mc) {
+        if (celtium$cameraSweepRate != 0.0F && mc.player != null && mc.world != null
+                && worldTicks >= celtium$cameraSweepFromTick) {
+            float yaw = celtium$pose.yaw + celtium$cameraSweepRate
+                    * (worldTicks - celtium$cameraSweepFromTick + mc.getRenderPartialTicks()) / 20.0F;
+            mc.player.rotationYaw = yaw;
+            mc.player.prevRotationYaw = yaw;
+            mc.player.rotationYawHead = yaw;
+            mc.player.prevRotationYawHead = yaw;
+            net.minecraft.entity.Entity view = mc.getRenderViewEntity();
+            if (view != null && view != mc.player) {
+                view.rotationYaw = yaw;
+                view.prevRotationYaw = yaw;
+            }
+            celtium$cameraSweepFrames++;
+            celtium$cameraSweepLastYaw = yaw;
+        }
         if (Boolean.getBoolean("celtium.validation.allBlocks") && mc.player != null) {
             // The block wall is tall enough that the default downward pitch cuts its top rows off; level view plus a
             // little tilt keeps all of it inside the frame at the wall's distance.

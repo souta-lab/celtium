@@ -35,3 +35,11 @@ Four screen evidence: returned menu above; [video settings](native-loading-video
 [HEI inventory](native-loading-inventory-2026-10-24.png) and [recipe](native-loading-recipe-2026-10-24.png)
 were visually inspected with zero VUIDs, but their gates are UNCALIBRATED (exit2), **not accepted**.
 The same renderer/fixture hashes were used for all six legs.
+
+The follow-up [moving-view replay](camera-sweep-2026-10-24.json) uses the same renderer, a new fixture
+`165e6fd56ea22c70c720d1a26b3c6769ad5b1ca8e3574b26242a2ea889d31ad4`, 1920×1080/distance18/Unicode,
+and 24 degrees per second from tick400 (two full turns). Warm ticks400..1000: 12,350 samples,
+p50 2.085024ms / p95 4.292191ms / p99 5.615022ms. [Actual moving view](camera-sweep-2026-10-24.png).
+The primary gate covers the earlier fixed view; this diagnostic moving image is not calibrated.
+Two retained warm outliers are tick463=364ms (unattributed) and tick503=314ms (the requested image dump overlaps).
+The user's sustained ~20 FPS remains unreplicated; translation is still unverified.
