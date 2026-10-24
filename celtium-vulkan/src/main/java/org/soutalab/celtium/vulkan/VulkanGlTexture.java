@@ -799,6 +799,8 @@ public final class VulkanGlTexture {
     /** Host address of the persistently mapped staging buffer, or 0 while it is not mapped. */
     private long stagingAddress;
     private long stagingCapacity;
+    /** The end of the last staging slice handed out; see {@link #reserveStagingSlice(long)}. */
+    private long stagingCursor;
     private boolean stagingCoherent;
     /**
      * The fence of this texture's most recent deferred upload submission, or 0. Uploads now submit without a wait
@@ -1623,8 +1625,11 @@ public final class VulkanGlTexture {
         }
 
         // All levels in one staging allocation: offsets stay multiples of four because every RGBA8 row is.
-        ensureStaging(packed);
+        // The allocation is a slice of the staging ring, so a run of patches - the atlas's animated sprites, one per
+        // call - does not wait for the previous patch's copy before writing its own bytes.
+        long base = reserveStagingSlice(packed);
         for (int level = 0; level < depth; level++) {
+            offsets[level] += base;
             putStagingPixels(stagingAddress + offsets[level], levels[level], pixelWidth >> level,
                     pixelHeight >> level);
         }
@@ -3552,6 +3557,8 @@ public final class VulkanGlTexture {
         // bytes on the queue, so nothing - a pixel write on the reuse path below, or the destroy on the growth path -
         // may touch the buffer until that submission's fence confirms it.
         awaitOutstandingUpload();
+        // Every caller writes from offset 0 after this, so the ring restarts past the bytes it is about to write.
+        stagingCursor = required;
         if (stagingBuffer != 0L && stagingCapacity >= required) {
             return;
         }
@@ -3618,6 +3625,36 @@ public final class VulkanGlTexture {
     private static long stagingReleases;
     /** Images whose creation failed part-way and whose remains were retired; see {@link #createImageResources}. */
     private static long imageReleases;
+
+    /**
+     * Reserves {@code required} bytes of the staging buffer for a patch, as the next slice of a ring, and returns the
+     * slice's offset.
+     * <p>
+     * Measured need (legs {@code tickjfr-celtium-2}, AMD, world): with one whole-buffer reservation per patch, every
+     * animated sprite waited on the previous sprite's copy ({@code ensureStaging -> awaitOutstandingUpload ->
+     * vkWaitForFences}, 73 of the 80 animation samples), a CPU-GPU round trip per sprite inside the client tick.
+     * A slice past the previous ones is not read by any pending copy, so it can be written at once. Only a wrap waits,
+     * and it waits on the latest upload: a fence's signal covers every earlier submission on the queue, so that one
+     * wait retires all the slices the wrap reuses. A buffer smaller than {@link #STAGING_RING_MIN_BYTES} grows on a
+     * wrap, so a texture that is patched often stops wrapping every few patches; one patched once keeps its size.
+     */
+    private long reserveStagingSlice(long required) {
+        long aligned = (stagingCursor + 15L) & ~15L;
+        if (stagingBuffer != 0L && aligned + required <= stagingCapacity) {
+            stagingCursor = aligned + required;
+            return aligned;
+        }
+        long capacity = Math.max(required, stagingCapacity);
+        if (stagingBuffer != 0L && capacity < STAGING_RING_MIN_BYTES) {
+            capacity = Math.max(required, Math.min(STAGING_RING_MIN_BYTES, stagingCapacity * 2L));
+        }
+        ensureStaging(capacity);
+        stagingCursor = required;
+        return 0L;
+    }
+
+    /** The size a frequently patched texture's staging ring grows to; see {@link #reserveStagingSlice(long)}. */
+    private static final long STAGING_RING_MIN_BYTES = 1L << 20;
 
     /** Awaits this texture's own last deferred upload, when there is one still unconfirmed. */
     private void awaitOutstandingUpload() {
