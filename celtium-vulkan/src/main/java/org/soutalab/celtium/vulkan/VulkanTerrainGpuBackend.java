@@ -151,9 +151,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     FrameImageTarget frameTarget;
     /** Standalone frame-compatible render pass for UI-only frames - only used when no terrain pass has run. */
-    private long uiRenderPass;
+    long uiRenderPass;
 
-    private long uiRenderPass() {
+    long uiRenderPass() {
         if (this.uiRenderPass == 0L) {
             this.uiRenderPass = VulkanTerrainPipeline.createFrameRenderPass(this.context);
             record("standalone UI render pass created for the no-terrain-pass frame");
@@ -283,7 +283,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private String lastOffTargetFailure = "none";
 
     private VulkanGlTexture atlasTexture;
-    private VulkanGlTexture lightmapTexture;
+    VulkanGlTexture lightmapTexture;
     private int atlasGlId = -1;
     private int lightmapGlId = -1;
     private long atlasRefreshCountdown;
@@ -369,7 +369,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.failImmediateSubmits = count;
     }
     private int currentGroupBatches;
-    private int[] currentGroupViewportValues;
+    int[] currentGroupViewportValues;
     /**
      * Groups closed because the game's clip rectangle moved between two otherwise identical batches.
      * <p>
@@ -433,7 +433,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean windowOpen;
     private int frameCloses;
     private int renderCalls;
-    private TerrainRenderPass lastUiPass;
+    TerrainRenderPass lastUiPass;
     private boolean swapchainProbeDone;
     VulkanSwapchain swapchain;
 
@@ -1120,9 +1120,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** The state the GlStateManager Mixin mirrors into; the draw entry turns it into a pipeline key. */
     final NativeRasterState rasterState = NativeRasterState.current();
-    private final VulkanGlState immediateState = new VulkanGlState(this.rasterState, NativeTextureBindings.current());
+    final VulkanGlState immediateState = new VulkanGlState(this.rasterState, NativeTextureBindings.current());
     /** The diagnostic reports (BackendDiagnostics); they read this backend's state and change nothing it draws. */
     final BackendDiagnostics reports = new BackendDiagnostics(this);
+
+    /** Native replay of compiled model display lists: the per-group mesh path and the instanced runs. */
+    final ModelReplay modelReplay = new ModelReplay(this);
+
+    public boolean celtium$drawModelList(int listId, int boundTextureId) {
+        return this.modelReplay.celtium$drawModelList(listId, boundTextureId);
+    }
 
     /** The shaderpack frontend's probes: load the pack once, compile a stage in process, build and record one draw. */
     final ShaderPackProbe shaderPackProbe = new ShaderPackProbe(this);
@@ -1232,7 +1239,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The last viewport's extent, for the diagnostic lines that ask where a window drew. */
     int liveViewportWidth = -1;
     int liveViewportHeight = -1;
-    private long currentGroupTarget = Long.MIN_VALUE;
+    long currentGroupTarget = Long.MIN_VALUE;
     private long currentGroupViewport = Long.MIN_VALUE;
     int passSplits;
     float steadyProjectionDelta;
@@ -1289,7 +1296,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int prepareNoPassRefusals;
     private long prepareNoPassFirstFrame = -1L;
     private long prepareNoPassLastFrame = -1L;
-    private String lastPrepareFailure = "none";
+    String lastPrepareFailure = "none";
     /** Cached highest line width the device can draw, or -1 before it has been asked. */
     private float maxLineWidth = -1.0F;
     /** Line batches drawn by the line pipeline, and how many were refused for their width. */
@@ -1496,15 +1503,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final PacketRunCensus packetRunCensus = new PacketRunCensus();
 
     /** The replay transform's composition, with its matrices and its cached inverse. */
-    private final ModelViewRelativizer modelViewRelativizer = new ModelViewRelativizer();
+    final ModelViewRelativizer modelViewRelativizer = new ModelViewRelativizer();
 
     /** The previous model replay's packet identity, so a replay that repeats it can be counted as mergeable. */
-    private final float[] lastModelProjection = new float[16];
+    final float[] lastModelProjection = new float[16];
     final float[] lastModelViewMatrix = new float[16];
-    private int lastModelTexture;
-    private long lastModelStateKey;
+    int lastModelTexture;
+    long lastModelStateKey;
     private int lastModelFormat;
-    private boolean lastModelSeen;
+    boolean lastModelSeen;
 
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
     java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
@@ -1698,7 +1705,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
     /** Announces that carried the size from the game instead of asking OpenGL for it. */
     /** Whether the game has set a colour yet, i.e. whether the state mirror's colour can be trusted. */
-    private boolean colorMirrorHasValue;
+    boolean colorMirrorHasValue;
     /** Which source the format-7 colour came from, reported so a run says whether the mirror is really in use. */
 
     /**
@@ -2247,7 +2254,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * pair is a correctness requirement, not an optimisation.
      */
     final java.util.List<ImmediateGroup> immediateGroups = new java.util.ArrayList<ImmediateGroup>();
-    private VulkanDynamicMesh currentImmediateMesh;
+    VulkanDynamicMesh currentImmediateMesh;
     RetainedGeometryCache retainedGeometry;
     private LeasedResource.Lease<VulkanDynamicMesh> currentGeometryLease;
     /**
@@ -2478,7 +2485,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** Issues the open run as one vkCmdDrawIndexedIndirect. */
-    private void celtium$flushIndirectRun() {
+    void celtium$flushIndirectRun() {
         if (!this.indirectRunActive) {
             return;
         }
@@ -2956,14 +2963,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * Lit model display lists drawn as instance runs ({@link VulkanModelInstances}); on unless
      * {@code -Dceltium.native.modelInstances=false}, and only on a device with the shared texture array.
      */
-    private static final boolean MODEL_INSTANCES =
+    static final boolean MODEL_INSTANCES =
             !"false".equalsIgnoreCase(System.getProperty("celtium.native.modelInstances"));
     VulkanModelInstances modelInstances;
     boolean modelInstancesFailed;
     /** The queued group that holds the open instance run, so a following replay can join it. */
-    private ImmediateGroup openModelRunGroup;
-    private final float[] modelInstanceMvp = new float[16];
-    private final float[] modelInstanceAffine = new float[6];
+    ImmediateGroup openModelRunGroup;
+    final float[] modelInstanceMvp = new float[16];
+    final float[] modelInstanceAffine = new float[6];
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texGenPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
@@ -3261,7 +3268,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
     private long framesWithNoClearAtAll;
     private int frameClearsAtLastBoundary = -1;
-    private boolean immediateWindowBusy;
+    boolean immediateWindowBusy;
     /**
      * A real frame identity (audit S11).
      * <p>
@@ -3373,7 +3380,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public static int batchCallOpeningCount;
 
     /** CPU time of the same handoffs, so wall minus CPU says how much of it is blocking in a native call. */
-    private int frameDrawn;
+    int frameDrawn;
     private int whiteTextureGlId;
     private int immediatePresentedFrames;
     private int immediateTextureInvalidations;
@@ -4047,7 +4054,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * Taken where the other per-group state is taken, so the group is drawn with the fog the game had set when the batch
      * was offered - which is the whole point, since {@code renderSky} brackets the dome with enable/disable.
      */
-    private float[] celtium$fogSnapshot() {
+    float[] celtium$fogSnapshot() {
         int selector = celtium$fogSelector();
         if (selector == 0) {
             return null;
@@ -4651,7 +4658,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return !java.util.Arrays.equals(celtium$texGenEyeRows(this.texGenScratch), captured);
     }
 
-    private float[] celtium$textureAffine() {
+    float[] celtium$textureAffine() {
         if (!celtium$readTextureAffine(this.textureAffineScratch)) {
             return null;
         }
@@ -4665,7 +4672,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      *
      * @return whether the live affine is anything other than the identity
      */
-    private boolean celtium$readTextureAffine(float[] out) {
+    boolean celtium$readTextureAffine(float[] out) {
         if (FORCE_IDENTITY_TEXMAT) {
             return false;
         }
@@ -4700,7 +4707,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * {@code dot(M^-T * N, L)} exactly for orthogonal transforms, which is every transform vanilla's lit draws use.
      * A disabled light's diffuse is zeroed rather than the direction skipped - the shader's dot stays a constant.
      */
-    private float[] celtium$lightParams(int[] state, float[] modelView) {
+    float[] celtium$lightParams(int[] state, float[] modelView) {
         if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
             return null;
         }
@@ -4756,7 +4763,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * effects that draw the same model twice through this combine, and the constant is their colour. Asked of GL at
      * replay time because the caller sets it per render - it is not part of the captured list.
      */
-    private float[] celtium$envCombineColor() {
+    float[] celtium$envCombineColor() {
         try {
             int active = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
             // Scan the units, not only the lightmap unit the vanilla code intends: GlStateManager.setActiveTexture
@@ -4801,247 +4808,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /**
-     * Appends a lit model replay to the open instance run, or opens a run in a new queued group; {@return false} to
-     * leave the replay to the per-group path. Only lit replays on the main target take this path: the unlit ITEM
-     * family evaluates fog and the full alpha function, which the instance shaders do not carry, and an off-target
-     * replay is drawn in its own pass by the per-group code.
-     */
-    private boolean celtium$appendModelInstance(VulkanDynamicMesh mesh, int texture, int[] state, long key,
-            float[] projection, float[] modelView, int quads, float[] combineColor) {
-        if (this.modelInstancesFailed || state.length <= 8 || state[8] == 0 || !this.context.textureArraySupported()) {
-            return false;
-        }
-        long target = this.targetRegistry.currentIdentity();
-        if (target != this.targetRegistry.mainIdentity() || this.lightmapTexture == null) {
-            return false;
-        }
-        if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
-        }
-        VulkanGlTexture image = this.textureRegistry.get(texture);
-        int textureIndex = image == null ? -1 : celtium$registerTexture(image);
-        int lightmapIndex = celtium$registerTexture(this.lightmapTexture);
-        if (textureIndex < 0 || lightmapIndex < 0 || this.textureArray == null) {
-            return false;
-        }
-        if (this.modelInstances == null) {
-            VulkanModelInstances created = new VulkanModelInstances(this.context, this.textureArray.layout());
-            try {
-                if (!created.create()) {
-                    created.delete();
-                    this.modelInstancesFailed = true;
-                    return false;
-                }
-            } catch (RuntimeException | LinkageError error) {
-                System.out.println("[Celtium] CELTIUM_MODEL_INSTANCES create failed: " + error);
-                created.delete();
-                this.modelInstancesFailed = true;
-                return false;
-            }
-            this.modelInstances = created;
-            created.beginFrame(this.frameId);
-        }
-        VulkanModelInstances instances = this.modelInstances;
-        instances.syncPool(this.modelGeometry.modelMeshes());
-        int listId = mesh.ownerList();
-        if (!instances.hasList(listId)) {
-            instances.noteMissing();
-            return false;
-        }
-        if (!instances.hasRoom()) {
-            return false;
-        }
-        VulkanTerrainPipeline terrainPipeline = this.terrain.pipelineFor(this.lastUiPass);
-        if (terrainPipeline == null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            return false;
-        }
-        long pass = terrainPipeline != null ? terrainPipeline.renderPass() : uiRenderPass();
-        int[] viewport = this.currentGroupViewportValues;
-        ImmediateGroup open = this.openModelRunGroup;
-        boolean extend = open != null && !this.immediateGroups.isEmpty()
-                && this.immediateGroups.get(this.immediateGroups.size() - 1) == open
-                && this.currentImmediateMesh == null
-                && open.stateKey == key && open.target == target
-                && open.modelRun.pipeline.renderPass == pass
-                && java.util.Arrays.equals(open.viewportValues, viewport)
-                && open.stamp != null && open.stamp.frameId == this.frameId
-                && instances.sameBuffers(open.modelRun);
-        if (!extend) {
-            VulkanModelInstances.Pipeline pipeline;
-            try {
-                pipeline = instances.pipelineFor(pass, key, celtium$blendState(state), state[3] != 0, state[4] != 0,
-                        state[5] != 0, celtium$vkCompareOp(state[7]));
-            } catch (RuntimeException | LinkageError error) {
-                System.out.println("[Celtium] CELTIUM_MODEL_INSTANCES pipeline failed: " + error);
-                this.modelInstancesFailed = true;
-                return false;
-            }
-            // Whatever the immediate path holds open is older than this replay and must be queued before it.
-            closeCurrentImmediateGroup();
-            ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView, VulkanImmediateFormats.ITEM,
-                    texture, key, state, target);
-            group.modelRun = instances.openRun(pipeline);
-            group.viewportValues = viewport;
-            group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
-            this.immediateGroups.add(group);
-            this.immediateStatistics.noteImmediateGroupsClosed();
-            this.openModelRunGroup = group;
-            open = group;
-        }
-        float[] mvp = this.modelInstanceMvp;
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                float sum = 0.0f;
-                for (int k = 0; k < 4; k++) {
-                    sum += projection[k * 4 + row] * modelView[column * 4 + k];
-                }
-                mvp[column * 4 + row] = sum;
-            }
-        }
-        float[] colour = this.colorMirrorHasValue
-                ? new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
-                        this.immediateState.colorBlue(), this.immediateState.colorAlpha()}
-                : null;
-        float[] affine = celtium$readTextureAffine(this.modelInstanceAffine) ? this.modelInstanceAffine : null;
-        instances.append(open.modelRun, listId, mvp, colour, combineColor, affine, Float.intBitsToFloat(state[6]),
-                celtium$lightParams(state, modelView), celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
-        open.batches += quads;
-        return true;
-    }
 
-    private boolean celtium$enqueueModelMesh(VulkanDynamicMesh mesh, int texture, int[] state, long key,
-            float[] projection, float[] modelView, int quads, float[] combineColor) {
-        if (MODEL_INSTANCES && mesh != null && !mesh.isEmpty()
-                && celtium$appendModelInstance(mesh, texture, state, key, projection, modelView, quads, combineColor)) {
-            return true;
-        }
-        if (mesh == null || mesh.isEmpty()) {
-            // Named, because the caller reports every false return with one message: "could not queue list N" merged
-            // "the mesh is empty", "prepareImmediate found no pass/mirror/descriptor" and "the cached pipeline is
-            // null", and the fix differs for each.
-            this.modelQueueRefusal = mesh == null ? "mesh absent" : "mesh empty";
-            return false;
-        }
-        // ITEM, because that is the format whose pipeline evaluates the fixed-function lighting: its lit variant reads
-        // the vertex normal and the push block's five vec4 (the two light directions in model space, the scene ambient
-        // and each light's diffuse) and multiplies the result into the vertex colour. The vertex stride is the same 28
-        // bytes the check at the top of prepareImmediate compares against, so the mesh built above is what it wants.
-        PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.ITEM, texture, key, state);
-        if (prepared == null || prepared.pipeline == null) {
-            this.modelQueueRefusal = prepared == null
-                    ? "prepareImmediate null (" + this.lastPrepareFailure + ")"
-                    : "pipeline null for format " + VulkanImmediateFormats.ITEM + " key=0x" + Long.toHexString(key)
-                            + " texture=" + texture;
-            return false;
-        }
-        long target = this.targetRegistry.currentIdentity();
-        if (this.modelMatrixLoggedCount < 8) {
-            // A handful of model enqueues, each saying which kind of projection it is drawn under. One row was not enough: the
-            // residual image still showed screen-space quads, so the question is whether the projection is wrong at every
-            // enqueue or only at some of them - and whether the modelview's rotation/scale rows are the ones the part was
-            // compiled with. projection[11] is -1 for a GL perspective and 0 for an orthographic projection.
-            this.modelMatrixLoggedCount++;
-            System.out.println("[Celtium] CELTIUM_MODEL_ENQ texture=" + texture
-                    // The target the group is stamped with, against the main identity: a model group whose target is not
-                    // the one the window draws is kept in the queue instead of drawn (`immediateGroupsKeptForOtherTargets`),
-                    // which is the shape of "accepted and never drawn" that the format histograms show for id4 and id9.
-                    + " target=0x" + Long.toHexString(target) + " main=0x" + Long.toHexString(this.targetRegistry.mainIdentity())
-                    + " mainBound=" + this.targetRegistry.currentIsMain()
-                    + " projKind=" + (Math.abs(projection[11] + 1.0f) < 0.01f ? "perspective" : "ortho")
-                    + " proj11=" + round3(projection[11]) + " proj10=" + round3(projection[10])
-                    + " proj14=" + round3(projection[14])
-                    + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
-                    + " mvRow0=" + round3(modelView[0]) + "," + round3(modelView[1]) + "," + round3(modelView[2])
-                    + " mvScale=" + round3((float) Math.sqrt(modelView[0] * modelView[0] + modelView[1] * modelView[1]
-                            + modelView[2] * modelView[2])));
-            System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
-                    + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
-        }
-        ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView,
-                VulkanImmediateFormats.ITEM, texture, key, state, target);
-        group.prepared = prepared;
-        group.combineColor = combineColor;
-        // The current glColor, which the fixed pipeline multiplies into the vertex colour: the immediate path carries
-        // it as the group colour for formats 6/7/9, and the ITEM replay needs the same feed - LayerSlimeGel's
-        // glColor(1,1,1,0.25) was dropped here and drew the gel opaque white, and the hurt red never reached the model
-        // vertices either. The lit vertex shader multiplies this into v_Color (skipped while a combine owns the
-        // colour slots, so the red flash constant cannot tint twice).
-        group.color = this.colorMirrorHasValue
-                ? new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
-                        this.immediateState.colorBlue(), this.immediateState.colorAlpha()}
-                : null;
-        group.texMatrix = celtium$textureAffine();
-        group.lightParams = celtium$lightParams(state, modelView);
-        // The same rule as the immediate path, and it is the light-map unit's enable state that decides it - not the
-        // pass. The model path's GUI-stage content is the inventory's player model and any TESR item (a chest, a
-        // shulker box, a banner: RenderItem.renderItem sends those through
-        // getTileEntityItemStackRenderer().renderByItem, RenderItem.java:144-148), and real OpenGL draws both with the
-        // unit disabled - GuiInventory.java:154-165 only *disables* the unit at the end of its draw and never enables
-        // it, so nothing lights the player model by the world either. A chest in the hotbar of a dark place was drawn
-        // with the cave's light because this line took the captured coordinate unconditionally.
-        group.lightmapCoords = celtium$lightmapForGroup();
-        group.fog = celtium$fogSnapshot();
-        group.batches = quads;
-        group.viewportValues = this.currentGroupViewportValues;
-        // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
-        // must not free it - which is the whole reason the stamp exists.
-        group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
-        // The model path creates its own group, so the per-identity texture census has to see it here as well: with the
-        // census only at the immediate path's creation site the verification line listed a single identity (the loading
-        // screen's) while the world and the GUI stage had both been drawn, which reads as "those stages never ran".
-        if (TARGET_CENSUS_ENABLED) {
-            celtium$noteTargetStage(target != Long.MIN_VALUE ? target : this.currentGroupTarget, texture, VulkanImmediateFormats.ITEM);
-        }
-        this.immediateGroups.add(group);
-        this.immediateStatistics.noteImmediateGroupsClosed();
-        if (GROUP_BOUNDS_DIAGNOSTICS) {
-            // The model path creates its own group, so the bounds report has to be asked for here too: measured on leg
-            // gv-cohort-dl16-bounds, a run filtered to format 4 spent its whole budget on the GUI groups (three per
-            // frame) and never reported this one - the group the question was about. The line carries the projected
-            // NDC bounds, which is what separates "outside the viewport" from "drawn and invisible".
-            this.reports.reportGroupBounds(group);
-        }
-        if (target != this.targetRegistry.mainIdentity()) {
-            // Off-target model batches are drawn in the pass that is open for their target, not carried in the queue.
-            // The immediate window draws the groups of `currentRenderTarget` only (`flushImmediateWindow`: "others remain
-            // owned in the queue") and runs on the main target later in the frame, so a group stamped with another
-            // identity waits for a pass that belongs to it - which for the entity-outline framebuffer never comes,
-            // because that framebuffer is cleared and consumed by the outline chain inside the same frame. That is the
-            // offer path's own rule, written down as audit A10 ("the queue never sees a non-main group afterwards"), and
-            // the model path has to follow it.
-            //
-            // Measured on the glow scene: 931 off-target model replays arrive from the outline pass
-            // (`CELTIUM_MODEL_OFFTARGET list=125 texture=124 target=… main=… inTable=true verts=24`) - the vanilla
-            // outline loop does replay the mobs' display lists - and with this flush each of them is recorded into the
-            // identity the chain adopts (`…_FLUSH batches+6 flushes+1 groupsLeft=0`, against
-            // `CELTIUM_OUTLINE_INPUT … identity=… texture=42`). Without it they sit in the queue: the visible frame
-            // gains the outline pass's geometry (creeper green 1.017/0.971/1.003 with the flush, against 1.28/1.27/1.21
-            // before it) and the outline image still holds only the item.
-            // Coalesced to one flush per target change within a frame: the first off-target batch of a pass flushes the
-            // batches of that pass, and the later batches of the same target/frame are left for the next change. Per
-            // batch this was a submit and a wait each time (`frameIntervalP95Ms=1946`, world frames 43-63 -> 48).
-            if (this.frameId != this.modelOffTargetFlushedFrame || target != this.modelOffTargetFlushedTarget) {
-                this.modelOffTargetFlushedFrame = this.frameId;
-                this.modelOffTargetFlushedTarget = target;
-                long recordedBefore = this.immediateStatistics.immediateRecordedBatches();
-                long flushesBefore = this.immediateStatistics.actualFlushes();
-                this.flushPendingBeforeGlDraw();
-                if (this.modelOffTargetFlushLogs < MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
-                    this.modelOffTargetFlushLogs++;
-                    System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+"
-                            + (this.immediateStatistics.immediateRecordedBatches() - recordedBefore)
-                            + " flushes+" + (this.immediateStatistics.actualFlushes() - flushesBefore)
-                            + " windowBusy=" + this.immediateWindowBusy
-                            + " target=" + target + " groupsLeft=" + this.immediateGroups.size()
-                            + " frame=" + this.frameId);
-                }
-            } else {
-                this.modelOffTargetCoalesced++;
-            }
-        }
-        return true;
-    }
 
     /** Reports the animation-driven mirror refreshes on stdout: the debug list is capped and would drop them. */
     private void reportDirectMirrorRefreshes() {
@@ -5902,7 +5669,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the world's and the GUI family's on leg r212-world-hud13. This census is kept for the immediate path only and is
      * not evidence of absence for anything else.
      */
-    private void celtium$noteTargetStage(long identity, int texture, int formatId) {
+    void celtium$noteTargetStage(long identity, int texture, int formatId) {
         // Every texture and format seen under each identity, so the stage an identity carries is readable from one line
         // even when the HUD's own families arrive long after that identity's first group. This is what places the HUD's
         // textures relative to the world's on the identity the routing sends to the chain pair.
@@ -5954,7 +5721,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * every closed group (~3600 groups/frame ≈ 0.5-1.0 ms/frame of pure diagnostic cost). Off by default;
      * {@code -Dceltium.vulkan.targetCensus=true} or a diagnostics run turns it back on.
      */
-    private static final boolean TARGET_CENSUS_ENABLED =
+    static final boolean TARGET_CENSUS_ENABLED =
             Boolean.getBoolean("celtium.vulkan.targetCensus") || VulkanDiagnostics.enabled();
     private final java.util.Set<Long> tracedTargetIdentities = new java.util.HashSet<Long>();
     private int targetImageLogs;
@@ -8349,7 +8116,7 @@ this.frameBufferOpen = false;
      */
     private final int[] celtium$stateScratch = new int[15];
 
-    private int[] celtium$captureState() {
+    int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
@@ -8478,7 +8245,7 @@ this.frameBufferOpen = false;
      * One place owns the GL-to-Vulkan mapping for the whole immediate path, and the pipeline factories take the result
      * rather than nine loose integers that can be passed in the wrong order.
      */
-    private static VulkanColorBlendState celtium$blendState(int[] state) {
+    static VulkanColorBlendState celtium$blendState(int[] state) {
         boolean blend = state[0] != 0;
         return VulkanColorBlendState.of(blend,
                 state[1],
@@ -8512,7 +8279,7 @@ this.frameBufferOpen = false;
      * verbatim; anything outside the eight standard functions falls back to LESS_OR_EQUAL, which is what the
      * pipeline used to bake unconditionally.
      */
-    private static int celtium$vkCompareOp(int glFunc) {
+    static int celtium$vkCompareOp(int glFunc) {
         switch (glFunc) {
             case 512: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_NEVER;
             case 513: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS;
@@ -8579,7 +8346,7 @@ this.frameBufferOpen = false;
         return text.append(']').toString();
     }
 
-    private static long celtium$stateKey(int formatId, int[] state) {
+    static long celtium$stateKey(int formatId, int[] state) {
         long key = formatId;
         for (int value : state) {
             key = (key * 31) + value;
@@ -8968,7 +8735,7 @@ this.frameBufferOpen = false;
     long flushBeforeGlDrawCalls;
     long flushBeforeGlDrawWithGroups;
 
-    private void flushPendingBeforeGlDraw() {
+    void flushPendingBeforeGlDraw() {
         this.flushBeforeGlDrawCalls++;
         if (this.immediateWindowBusy) return;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("flushCloseGroup");
@@ -9548,7 +9315,7 @@ this.frameBufferOpen = false;
      * descriptor decision call this, because the decision runs first and used to refuse instead (measured: 798 format-5
      * refusals per run, with the light map supply sitting below the decision that turned the batch away).
      */
-    private void ensureLightmapMirror() {
+    void ensureLightmapMirror() {
         if (this.lightmapTexture != null) {
             return;
         }
@@ -9814,7 +9581,7 @@ this.frameBufferOpen = false;
      * {@link PreparedImmediate} is final-fielded, so sharing one instance between two groups changes nothing a draw
      * reads.
      */
-    private PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
+    PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
         Object pass = this.lastUiPass;
         if (pass != this.prepareCachePass) {
             java.util.Arrays.fill(this.prepareCacheValue, null);
@@ -10695,7 +10462,7 @@ this.frameBufferOpen = false;
     /** Group starts forced by a close (window/pass boundary), not by the merge predicate refusing. */
     long groupClosesForcingStart;
 
-    private void closeCurrentImmediateGroup() {
+    void closeCurrentImmediateGroup() {
         if (MERGE_CENSUS && this.currentImmediateMesh != null) {
             // A close ends whatever group was open, so the next offer cannot merge into it and starts a new group for a
             // reason the merge predicate never evaluates. Counting the closes is the cheapest way to see whether these
@@ -12662,7 +12429,7 @@ this.frameBufferOpen = false;
      * of it. Called for drawn groups and for retired ones alike: a dropped group still leaves the clear that followed
      * it to apply.
      */
-    private void celtium$recordQueuedClearsInPass(java.util.List<QueuedClear> clears, long identity) {
+    void celtium$recordQueuedClearsInPass(java.util.List<QueuedClear> clears, long identity) {
         if (clears == null || clears.isEmpty() || !this.commandState.inRenderPass()) {
             return;
         }
@@ -13231,7 +12998,7 @@ this.frameBufferOpen = false;
      * is what says how many textures a window actually needs. The array is skipped entirely on a device without the
      * features, so the per-group path is what runs there.
      */
-    private int celtium$registerTexture(org.soutalab.celtium.vulkan.VulkanGlTexture texture) {
+    int celtium$registerTexture(org.soutalab.celtium.vulkan.VulkanGlTexture texture) {
         if (texture == null || !this.context.textureArraySupported()) {
             this.textureIndexMisses++;
             return -1;
@@ -13256,7 +13023,7 @@ this.frameBufferOpen = false;
         }
     }
 
-    private void celtium$buildModelMeshes() {
+    void celtium$buildModelMeshes() {
         // The table, its generation-driven builder and the lending rule moved to ModelGeometryCache (R3a).
         // The capture version is recorded first so the model draw path can ask for one extra build per new capture
         // and no more (see celtium$drawModelList): a list compiled after this build is not in the table.
@@ -13270,7 +13037,7 @@ this.frameBufferOpen = false;
      * build - which is the case being fixed; a per-list rule would rebuild once per list in a scene that compiles
      * many at once, and the first rebuild already covers them all.
      */
-    private int modelMeshBuiltCaptureVersion = -1;
+    int modelMeshBuiltCaptureVersion = -1;
 
     /** Whether the model meshes are built from the captured display lists (lab switch: off leaves GL drawing them). */
     // On by default since the staged acceptance: two scenes, both GPUs, the model draw inside the default's own
@@ -13288,9 +13055,9 @@ this.frameBufferOpen = false;
     static int modelDraws;
     int modelDrawRefusals;
     /** Model draws asked for with no display list current: immediate geometry, not a missing list. */
-    private int modelNoListCalls;
+    int modelNoListCalls;
     /** Bounded entry lines: whether the model draw path is reached at all, and with which state. */
-    private int modelEntryLogs;
+    int modelEntryLogs;
     /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
     /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
     /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
@@ -13314,27 +13081,27 @@ this.frameBufferOpen = false;
     private int groupDepthRowsSeen;
     /** One-shot: the matrices a model group is stored with. */
     /** How many model enqueues have printed their matrices. */
-    private int modelMatrixLoggedCount;
+    int modelMatrixLoggedCount;
     /** Model replays that arrived for a target other than the main one: the outline pass's, and anything else off-target. */
-    private int modelOffTargetCalls;
-    private int modelOffTargetDraws;
-    private final java.util.Set<String> modelOffTargetLogged = new java.util.HashSet<String>();
-    private int modelOffTargetLogs;
+    int modelOffTargetCalls;
+    int modelOffTargetDraws;
+    final java.util.Set<String> modelOffTargetLogged = new java.util.HashSet<String>();
+    int modelOffTargetLogs;
     /** The last off-target call count printed from the build, and how many such lines have printed. */
     /** How many flush-outcome lines have printed for off-target model batches, and the bound on them. */
-    private int modelOffTargetFlushLogs;
-    private static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
+    int modelOffTargetFlushLogs;
+    static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
     /** The frame and target the last coalesced off-target flush covered, and how many batches it coalesced. */
-    private long modelOffTargetFlushedFrame = -1L;
-    private long modelOffTargetFlushedTarget = Long.MIN_VALUE;
-    private int modelOffTargetCoalesced;
+    long modelOffTargetFlushedFrame = -1L;
+    long modelOffTargetFlushedTarget = Long.MIN_VALUE;
+    int modelOffTargetCoalesced;
     /** The bound on {@link #modelOffTargetLogs}: the entity scene has one list set per off-target pass. */
-    private static final int MODEL_OFFTARGET_LOG_LIMIT = 24;
+    static final int MODEL_OFFTARGET_LOG_LIMIT = 24;
     /** Display lists seen replayed under a texture other than their compile texture, so a layer prints once. */
-    private final java.util.Set<String> modelLayerLogged = new java.util.HashSet<String>();
-    private int modelLayerLogs;
+    final java.util.Set<String> modelLayerLogged = new java.util.HashSet<String>();
+    int modelLayerLogs;
     /** The bound on {@link #modelLayerLogs}: the entity scene has one layer (the spider's eyes) per texture. */
-    private static final int MODEL_LAYER_LOG_LIMIT = 16;
+    static final int MODEL_LAYER_LOG_LIMIT = 16;
     /** One-shot: the matrices an immediate group is stored with. */
     /** {@return whether the texture of the group being closed reports a complete mirror}. */
     private boolean groupTextureFull() {
@@ -13697,251 +13464,15 @@ this.frameBufferOpen = false;
     private boolean splashPairAfterCompositeArmed;
     private boolean splashPairAfterCompositeDone;
     private String lastGroupDepthRow = "";
-    /** Why the last model enqueue returned false; see {@link #celtium$enqueueModelMesh}. Reported with the refusal. */
-    private String modelQueueRefusal = "none";
+    /** Why the last model enqueue returned false; see {@link ModelReplay#celtium$enqueueModelMesh}. Reported with the refusal. */
+    String modelQueueRefusal = "none";
     /** One-shot: the state the model path is told about depth. */
-    private boolean modelStateLogged;
+    boolean modelStateLogged;
     /** Lines of {@code CELTIUM_MODEL_MATRIX} written this run; see {@link VulkanDiagnostics}. */
-    private int modelMatrixLines;
+    int modelMatrixLines;
     /** The bound for that line: it is per model list per frame, so it needs a cap even in a diagnostics run. */
-    private static final int MODEL_MATRIX_LINES = Integer.getInteger("celtium.vulkan.modelMatrixLines", 200);
+    static final int MODEL_MATRIX_LINES = Integer.getInteger("celtium.vulkan.modelMatrixLines", 200);
 
-    /**
-     * Draws one captured display list natively, at the moment GL would have replayed it.
-     * <p>
-     * The recipe is the immediate path's own: the format-6 {@code POSITION_TEX} pipeline, the atlas and light map
-     * descriptor, the combined matrix in the push constants, and a render pass opened for the duration because no pass
-     * is open at {@code callList} time (measured: passOpen 0, passClosed 2003). The display list's vertices were captured
-     * while {@code ModelRenderer} compiled it, and a display list is replayed under the current matrix rather than the
-     * one it was compiled with - also measured - so the matrix used here is the one in effect now.
-     * <p>
-     * Lab switch: off, because this is a new draw path and the default must not change until a matched pair says the
-     * image is the same. It was on for a while on the strength of terrain-only comparisons, which cannot see it: the
-     * terrain-only scenes remove every entity before the capture. The entity scene then showed the difference - with the
-     * draw on, the native path and the GL path differ on 18.49 % of the frame, and with only display list 2 taken
-     * natively the difference is still 2.10 %, so the model geometry is not right yet. Keep it off until that is 0.
-     */
-    public boolean celtium$drawModelList(int listId, int boundTextureId) {
-        // A display list name is at least 1 (GL reserves 0 for "no list"), so a non-positive id here means the caller
-        // asked for a model draw when no list was current. That is not a missing mesh and must not be counted as one:
-        // it was logged as CELTIUM_MODEL_MISSING list=-1 with texture=107 on gv-model1, which reads as "this list failed
-        // to capture" when the truth is "there was nothing to replay". Geometry drawn outside any list is immediate
-        // geometry and belongs to the immediate path, which is where the caller should send it.
-        if (listId <= 0) {
-            this.modelNoListCalls++;
-            return false;
-        }
-        if (VulkanDiagnostics.withinLimit(this.modelEntryLogs, 8)) {
-            this.modelEntryLogs++;
-            System.out.println("[Celtium] CELTIUM_MODEL_ENTRY list=" + listId + " texture=" + boundTextureId
-                    + " modelDraw=" + MODEL_DRAW + " targetKnown=" + this.targetRegistry.targetKnown()
-                    + " frame=" + this.frameId);
-        }
-        if (VulkanDiagnostics.enabled()) {
-            // Phase B sizing: how many model draws share one (list, texture) in a frame, i.e. what an indirect multi-draw
-            // would collapse. The collector reports on the frame change, so nothing new is printed from here.
-            CeltiumModelBatchGroups.note(this.frameId, listId, boundTextureId);
-        }
-        // Which render target each model replay lands on. The entity-outline pass binds its own framebuffer, sets
-        // renderOutlines and re-runs the same display lists through RenderLivingBase.renderModel
-        // (`RenderGlobal.java:683-694`), so the mobs' geometry arrives here with a target that is not the main one, and
-        // the group is stamped with it. A replay that is refused leaves the outline target empty and the glow invisible,
-        // and no counter distinguishes "refused here" from "never called": this line does.
-        long callTarget = this.targetRegistry.currentIdentity();
-        boolean offTargetCall = callTarget != this.targetRegistry.mainIdentity();
-        if (offTargetCall) {
-            this.modelOffTargetCalls++;
-            if (this.modelOffTargetLogged.add(listId + "@" + callTarget)
-                    && this.modelOffTargetLogs < MODEL_OFFTARGET_LOG_LIMIT) {
-                this.modelOffTargetLogs++;
-                VulkanDynamicMesh looked = this.modelGeometry.modelMeshes() == null
-                        ? null : this.modelGeometry.modelMeshes().get(Integer.valueOf(listId));
-                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId
-                        + " target=" + callTarget + " main=" + this.targetRegistry.mainIdentity()
-                        + " modelDraw=" + MODEL_DRAW + " frameTargetKnown=" + this.targetRegistry.targetKnown()
-                        + " meshes=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
-                        + " inTable=" + (looked != null) + " verts=" + (looked == null ? -1 : looked.vertexCount()));
-            }
-            if ((this.modelOffTargetCalls == 1 || this.modelOffTargetCalls % 32 == 0) && VulkanDiagnostics.enabled()) {
-                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + this.modelOffTargetCalls
-                        + " drawn=" + this.modelOffTargetDraws
-                        + " missingMeshes=" + this.modelGeometry.modelMissingMeshes()
-                        + " refusals=" + this.modelDrawRefusals
-                        + " lastRefusal=[" + this.modelLastRefusal + "]");
-            }
-        }
-        if (!MODEL_DRAW || !this.targetRegistry.targetKnown()) {
-            return false;
-        }
-        if (MODEL_ONLY_LIST != 0 && listId != MODEL_ONLY_LIST) {
-            return false;
-        }
-        java.util.Map<Integer, VulkanDynamicMesh> meshes = this.modelGeometry.modelMeshes();
-        VulkanDynamicMesh mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
-        if ((mesh == null || mesh.isEmpty()) && this.context != null
-                && this.modelMeshBuiltCaptureVersion != VulkanModelQuadCapture.captureVersion()
-                && VulkanModelQuadCapture.quadsForList(listId) > 0) {
-            // The table is built at the frame's first terrain pass, and a model's own replay can come before the
-            // next one: a list compiled in this frame is drawn for the first time in this frame, so the measured
-            // shape was `CELTIUM_MODEL_MISSING` for every list's first replay while every later replay drew (leg
-            // gv-cohort-dl11ent: 8 missing against 38538 draws). The geometry is already captured, so the build is
-            // asked for it here - the same call the pass makes, which reuses every mesh whose generation has not
-            // moved - and the lookup is retried once. A list nobody captured keeps the old path.
-            // Once per new capture at most: a scene that compiles many lists at once would otherwise rebuild the
-            // table once per new list, and the first rebuild already finds them all.
-            celtium$buildModelMeshes();
-            meshes = this.modelGeometry.modelMeshes();
-            mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
-        }
-        if (mesh == null || mesh.isEmpty()) {
-            // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
-            // body would draw and that nothing draws without a context. Counting it is what turns "the model is missing"
-            // into "list N, texture M, no mesh", which is the only form in which it can be fixed.
-            this.modelGeometry.noteMissingMesh();
-            if (this.modelGeometry.shouldLogMissingMesh(listId)) {
-                System.out.println("[Celtium] CELTIUM_MODEL_MISSING list=" + listId + " texture=" + boundTextureId
-                        + " (no captured mesh for this display list; the GL body runs and there is no context)");
-            }
-            return false;
-        }
-        // Declared outside the try because the finally below measures it: a local declared inside a try block is not
-        // in scope in its finally.
-        long modelEnqueueStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-        try {
-            // The texture the model is actually bound to, asked of GL at the moment of the replay: a player model samples
-            // its own skin, not the block atlas the immediate path last used.
-            int texture = boundTextureId != 0 ? boundTextureId : whiteTextureId();
-            if (boundTextureId != 0 && this.textureRegistry != null
-                    && this.textureRegistry.get(boundTextureId) == null) {
-                this.modelDrawRefusals++;
-                this.modelLastRefusal = "texture " + boundTextureId + " is not mirrored";
-                return false;
-            }
-            int[] state = celtium$captureState();
-            long key = celtium$stateKey(VulkanImmediateFormats.ITEM, state);
-            // The layer passes: a display list replayed under a texture other than the one it was compiled with. The
-            // spider's red eyes are one (LayerSpiderEyes rebinds the eyes texture and draws the same lists again with
-            // additive blending and full-brightness light-map coordinates), and it is the one model family whose
-            // measured ratio did not come to 1.0 after the lighting fix (0.99 r but 0.64-0.66 g/b). The body and the
-            // layer draw the same geometry, so the difference between them can only be the state printed here: the
-            // blend factors, the alpha test, the lighting flag and the resulting pipeline key.
-            if (boundTextureId != 0
-                    && boundTextureId != org.soutalab.celtium.vulkan.VulkanModelQuadCapture.textureForList(listId)
-                    && this.modelLayerLogged.add(listId + "|" + boundTextureId)
-                    && this.modelLayerLogs < MODEL_LAYER_LOG_LIMIT) {
-                this.modelLayerLogs++;
-                System.out.println("[Celtium] CELTIUM_MODEL_LAYER list=" + listId
-                        + " compileTexture=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.textureForList(listId)
-                        + " replayTexture=" + boundTextureId
-                        + " blend=" + state[0] + "(" + state[1] + "," + state[2] + ")"
-                        + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + state[5]
-                        + " alphaRef=" + round3(Float.intBitsToFloat(state[6]))
-                        + " depthFunc=" + state[7] + " lighting=" + state[8] + " key=" + key);
-            }
-            if (!this.modelStateLogged) {
-                // What the model path is told about the state it draws under, once: the one-quad image showed the quads
-                // over the terrain and the sky alike, and depth is the first thing that can do that.
-                this.modelStateLogged = true;
-                System.out.println("[Celtium] CELTIUM_MODEL_STATE list=" + listId + " depthTest=" + state[3]
-                        + " depthWrite=" + state[4] + " cull=" + state[5] + " blend=" + state[0]
-                        + " glDepthTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST)
-                        + " glDepthMask=" + org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK)
-                        + " key=" + key);
-            }
-            // Asked of GL here rather than taken from the immediate path's fields: a display list is replayed under the
-            // matrix in effect at that moment, and the projection gets the same clip-depth remap the immediate path uses.
-            // The mirror, not glGetFloatv. Asking GL here was measured to give the orthographic projection the HUD last
-            // installed - "proj=0.0,0.0,-1.0,-0.05" for the model group against the terrain's perspective
-            // "0,0,-1.001,-1" - which is exactly what the one-quad image showed: model quads laid out in screen space.
-            // The immediate path's matrices come from this mirror for the same reason.
-            // The mirror for both, which is the best measured pairing. Taking the model-view from GL instead was tested and
-            // made the difference worse (6.35 % -> 18.30 % of the entity frame), so the live model-view is not the entity's
-            // either - both sources report the camera there. That is consistent with what the capture records: a display
-            // list stores its vertices already transformed, so the parts carry their own placement and the matrix must not
-            // put them somewhere else. What the remaining difference is belongs to the capture's side of the pairing, not to
-            // the live state.
-            float[] projectionNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION).clone();
-            // A list's stored vertices are model space, so the replay transform is the camera's change since the list
-            // was captured: V_now * C_compile^-1 (ModelViewRelativizer, which short-circuits the identity the capture
-            // currently reports for every list).
-            // Identity was tried as an experiment - if the captured vertices carried their own placement, no model-view at all
-            // would be right - and it measured worse than the mirror (8.08 % against 5.80 % of the entity frame), so the
-            // camera rotation the mirror holds is needed. The mirror stays until the vertex space itself is settled.
-            // Six pairings were measured: the mirror 5.80 % of the entity frame, identity 8.08, the captured compile-time
-            // matrix 13.19, GL's live view 18.30, the mirror's rotation with GL's translation 18.40, GL's projection too
-            // 18.49. No translation helping and a rotation helping says the vertices are already in the view space of the
-            // moment they were captured in - so what has to be applied is the change of camera since then, which is exactly
-            // V_now * C_compile^-1. Both halves are in hand: the mirror is V_now, the capture kept C_compile.
-            float[] modelViewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
-            // V_now * C_compile^-1, with the matrices and the inverse reused and the identity short-circuited: the
-            // three Matrix4f temporaries and an inversion per replay were ~128 allocations a frame, and the capture
-            // answers the identity for every list, so nearly all of that work composed the live view with itself.
-            try {
-                this.modelViewRelativizer.makeRelative(modelViewNow, listId,
-                        org.soutalab.celtium.vulkan.VulkanModelQuadCapture.generationOf(listId));
-            } catch (RuntimeException | LinkageError error) {
-                this.modelLastRefusal = "relative view failed: " + error;
-            }
-            // The suspicion that the live projection had already been remapped was tested with a switch that copied it
-            // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
-            // switch was removed rather than kept.
-            float[] projectionRemapped = new float[16];
-            remapClipDepth(projectionNow, projectionRemapped);
-            // Gated and bounded: this line is per model list per frame, and on the operator's own session it was the
-            // flood that pushed the game's log past 100,000 lines with nothing but -Dceltium.vulkan.glless set.
-            if (VulkanDiagnostics.withinLimit(this.modelMatrixLines, MODEL_MATRIX_LINES)) {
-                this.modelMatrixLines++;
-                System.out.println("[Celtium] CELTIUM_MODEL_MATRIX list=" + listId
-                        + " liveMVt=(" + round3(modelViewNow[12]) + "," + round3(modelViewNow[13]) + ","
-                        + round3(modelViewNow[14]) + ")"
-                        + " capturedMVt=(" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredMatrixTranslation()
-                        + ")"
-                        + " liveProj=(" + round3(projectionNow[0]) + "," + round3(projectionNow[5]) + ","
-                        + round3(projectionNow[10]) + ")");
-            }
-
-            // A model is drawn through the lit ITEM pipeline, whose descriptor set needs the light map; with no mirror
-            // the descriptor is 0 and the enqueue refuses. The terrain pass recovers the mirror before it gives up
-            // (ensureLightmapMirror), and the model path has to do the same: the first-person arm is drawn before the
-            // frame's first terrain pass and was the one refusal per plain leg - measured reason, leg gv-cohort-dl15:
-            // "could not queue list 109 (prepareImmediate null (format=4 texture=108 (mirror has full content:
-            // descriptor creation failed) pipeline=present))". The recovery is idempotent and does nothing once the
-            // mirror exists, so this costs one null check per model draw in the steady state.
-            if (this.lightmapTexture == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                ensureLightmapMirror();
-            }
-            if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
-                    mesh.indexCount() / 6, celtium$envCombineColor())) {
-                this.modelDrawRefusals++;
-                this.modelLastRefusal = "could not queue list " + listId + " (" + this.modelQueueRefusal + ")";
-                return false;
-            }
-            // Queued, not drawn: the draw happens in the window's pass, and the group counters (submitted/completed) are
-            // what show that the queued batch was actually drawn. The caller cancels the GL replay on this basis.
-            this.modelStats.noteReplay(this.lastModelSeen
-                    && this.lastModelTexture == texture && this.lastModelStateKey == key
-                    && java.util.Arrays.equals(this.lastModelProjection, projectionRemapped)
-                    && java.util.Arrays.equals(this.lastModelViewMatrix, modelViewNow));
-            System.arraycopy(projectionRemapped, 0, this.lastModelProjection, 0, 16);
-            System.arraycopy(modelViewNow, 0, this.lastModelViewMatrix, 0, 16);
-            this.lastModelTexture = texture;
-            this.lastModelStateKey = key;
-            this.lastModelSeen = true;
-            this.modelDraws++;
-            if (offTargetCall) {
-                this.modelOffTargetDraws++;
-            }
-            return true;
-        } catch (RuntimeException | LinkageError error) {
-            this.modelDrawRefusals++;
-            this.modelLastRefusal = String.valueOf(error);
-            return false;
-        } finally {
-            // Timed only with the switch on: the question is whether a model replay's own CPU work is worth
-            // attacking, or whether its drawn packet is all the frame pays for.
-            if (BATCH_TIMINGS) this.modelStats.noteEnqueue(System.nanoTime() - modelEnqueueStart);
-        }
-    }
 
     /**
      * Presents this frame's content from Vulkan, and says whether it reached the queue.
@@ -16592,7 +16123,7 @@ this.frameBufferOpen = false;
     private static final boolean LIGHTMAP_FULL_BRIGHT_GUI = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.lightmapFullBrightGui", "true"));
 
-    private float[] celtium$lightmapForGroup() {
+    float[] celtium$lightmapForGroup() {
         if (!this.lightmapUnitEnabled && LIGHTMAP_FULL_BRIGHT_GUI) {
             this.immediateStatistics.noteLightmapFullBrightGroups();
             return FULL_BRIGHT_LIGHTMAP;
@@ -16699,7 +16230,7 @@ this.frameBufferOpen = false;
 
     /** Draws at most this many quads per list, for isolating a single quad (0 = all). */
     /** Draws only this display list, for isolating one list (0 = all). */
-    private static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
+    static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
 
     /**
      * Whether captured display lists are drawn natively.
@@ -16711,7 +16242,7 @@ this.frameBufferOpen = false;
      * and the GL replay is not cancelled, so the fallback is the replay that used to run anyway.
      * {@code -Dceltium.vulkan.modelDraw=false} restores the previous behaviour.
      */
-    private static final boolean MODEL_DRAW = Boolean.parseBoolean(
+    static final boolean MODEL_DRAW = Boolean.parseBoolean(
             System.getProperty("celtium.vulkan.modelDraw", "true"));
     /** Forces the fence wait to report a timeout, so the post-submit failure path can be exercised (lab switch). */
     private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
@@ -16798,7 +16329,7 @@ this.frameBufferOpen = false;
         }
     }
 
-    private VulkanTextureRegistry celtium$registry() {
+    VulkanTextureRegistry celtium$registry() {
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
@@ -17696,7 +17227,7 @@ this.frameBufferOpen = false;
                     }
                 }
                 if (group.modelRun != null) {
-                    celtium$drawModelRun(group);
+                    this.modelReplay.celtium$drawModelRun(group);
                     continue;
                 }
                 VulkanDynamicMesh mesh = group.mesh;
@@ -18258,41 +17789,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    /**
-     * Records one instance run in place of its group: the group's viewport, a zero depth bias (model replays carry
-     * none), then the run's one indirect call. The run binds its own pipeline layout, so the bind cache and the shared
-     * push cache are cleared for whatever group follows.
-     */
-    private void celtium$drawModelRun(ImmediateGroup group) {
-        if (this.openModelRunGroup == group) {
-            this.openModelRunGroup = null;
-        }
-        celtium$flushIndirectRun();
-        try (MemoryStack groupStack = MemoryStack.stackPush()) {
-            celtium$setGroupViewport(groupStack, group);
-        }
-        if (this.passBiasC != 0.0F || this.passBiasS != 0.0F) {
-            org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, 0.0F, 0.0F, 0.0F);
-            this.passBiasC = 0.0F;
-            this.passBiasS = 0.0F;
-        }
-        if (this.modelInstances != null && this.textureArray != null) {
-            this.modelInstances.draw(this.commandBuffer, group.modelRun, this.textureArray.set(),
-                    this.context.multiDrawIndirectEnabled());
-        }
-        java.util.Arrays.fill(this.immediateBindCache, -1L);
-        VulkanPushCache.SHARED.invalidate();
-        int batches = group.batches;
-        this.immediateStatistics.noteGroupDrawCount();
-        this.immediateStatistics.addImmediateRecordedBatches(batches);
-        this.immediateStatistics.noteImmediateGroupsDrawn();
-        this.immediateStatistics.noteImmediateFlushes();
-        this.frameDrawn++;
-        this.drawnByFormat[VulkanImmediateFormats.ITEM] += batches;
-        this.recordedImmediateGroups.add(group);
-        celtium$recordQueuedClearsInPass(group.postClears, group.target);
-        group.postClears = null;
-    }
 
     /** Set when a group in the current flush asked for a sub-rectangle, so the pass viewport is restored once. */
     private boolean groupViewportNarrowed;
@@ -18307,7 +17803,7 @@ this.frameBufferOpen = false;
      */
     private int passVpX, passVpY, passVpW, passVpH;
     private int passScX, passScY, passScW, passScH;
-    private float passBiasC = Float.NaN, passBiasS = Float.NaN;
+    float passBiasC = Float.NaN, passBiasS = Float.NaN;
     /**
      * OPT-12: {vertexBuffer, indexBuffer, vertexBindOffset, indexBindOffset, pipeline, descriptorSet} - what the
      * current command buffer actually has bound for the immediate-draw path. Consecutive groups in a flush repeat
@@ -18315,7 +17811,7 @@ this.frameBufferOpen = false;
      * group. Refilled at the head of every {@link #drawPendingImmediate} - a -1 can never be a real handle, and any
      * other pass's binds between windows leave this stale, which is exactly what the fill discards.
      */
-    private final long[] immediateBindCache = new long[6];
+    final long[] immediateBindCache = new long[6];
 
     /**
      * Applies one group's GL viewport as a Vulkan viewport and scissor.
@@ -18336,7 +17832,7 @@ this.frameBufferOpen = false;
      * already been corrected to the unflipped form ("No y flip ... the flipped conversion clipped the wrong band"),
      * which left it intersecting an unflipped box with a flipped rectangle.
      */
-    private void celtium$setGroupViewport(MemoryStack stack, ImmediateGroup group) {
+    void celtium$setGroupViewport(MemoryStack stack, ImmediateGroup group) {
         int[] viewport = group.viewportValues;
         if (viewport == null || viewport.length < 4) {
             return;
@@ -18546,7 +18042,7 @@ this.frameBufferOpen = false;
      * Writes {@code result = clipDepthRemap * projection}, the same z remap the terrain projection goes through, so a
      * matrix mirrored from OpenGL can be used unchanged for depth in Vulkan.
      */
-    private static void remapClipDepth(float[] projection, float[] result) {
+    static void remapClipDepth(float[] projection, float[] result) {
         float[] remap = new float[16];
         remap[0] = 1.0f;
         remap[5] = 1.0f;
