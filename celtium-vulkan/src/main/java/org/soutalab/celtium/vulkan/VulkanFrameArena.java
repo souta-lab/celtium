@@ -29,10 +29,13 @@ import org.lwjgl.vulkan.VK10;
  */
 public final class VulkanFrameArena {
     /**
-     * Two slots: one being recorded and one whose submission may still be in flight. More would only add memory; the
-     * completion gate, not the count, is what makes reuse correct.
+     * One slot per frame the submission scheduler lets be in flight, plus the one being recorded. The completion gate,
+     * not the count, is what makes reuse correct - but the count decides whether reuse is possible: with two slots and
+     * up to {@link FrameSubmissionScheduler#FRAME_SLOTS} frames in flight, a CPU that runs more than one frame ahead
+     * found both slots held and every group fell back to an owning mesh with its own {@code vkAllocateMemory}
+     * (leg {@code tickjfr-celtium-3}: 23,494 blocked openings, the allocation 695 of 2,831 client-thread samples).
      */
-    private static final int SLOT_COUNT = 2;
+    private static final int SLOT_COUNT = FrameSubmissionScheduler.FRAME_SLOTS + 1;
     /** Every slice starts on this boundary: it satisfies the 4-byte rule for vertex attributes and 32-bit indices. */
     private static final int SLICE_ALIGNMENT = 16;
     // The initial sizes are properties so the growth path (HostBuffer.ensureCapacity) can be crossed on demand: on the
