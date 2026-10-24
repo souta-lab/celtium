@@ -3266,3 +3266,22 @@ leg shadow-clear2（AMD RX 6400, world, 90s, validation ON）
 ダンプは**記録外**（present後など）で行う必要がある。ダンプ用ヘルパ
 `TextureCopyService.celtium$dumpDepthPng()` はその前提で用意した（段階(c)で使う）。
 なおクリアのみの段階で深度を読むと全画素 1.0（pngで255）が正しい（=何も描かれていない）。
+
+**影 段階(c)前半: ライト行列を実装＋単体テスト（2026-10-24 実測）**
+
+`ShadowLightMatrix.viewProjection(center, toSun, halfExtent, depthRange)` を追加した（純粋な数学・デバイス不要）。
+- ライトは中心から太陽方向へ `depthRange/2` 離れた位置、forward は -太陽方向
+- 直下のライトでは up の代替を **(0,0,-1)** にする（+z だと right が -x になり影が鏡像になる。
+  テストが `expected 0.5 but was -0.5` で検出した）
+- 射影は **Vulkan の [0,1] 深度**（near=0.5, far=depthRange+near）
+- 退化入力（方向0・extent0）は NaN ではなく恒等行列
+
+`ShadowLightMatrixTest`（JUnit5、**6件すべて成功**・`--rerun-tasks` で強制再実行して確認）:
+- 中心が地図の中央（x=y=0, depth が 0.05〜0.95）
+- 太陽側の点ほどライトに近い（depth が小さい）
+- halfExtent の半分で clip 座標 0.5、外側は |x|>1
+- 斜めライトでも中心近傍 ±10 で depth/x/y が範囲内
+- 退化入力で恒等行列
+
+次の段: この行列を push constant で渡す深度専用パイプライン（`shadow_depth.vert`/空frag）と、
+terrain描画ループの2回目記録。
