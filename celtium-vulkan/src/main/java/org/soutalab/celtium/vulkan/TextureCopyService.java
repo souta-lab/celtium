@@ -640,26 +640,13 @@ public final class TextureCopyService {
                 }
             }
         }
-        // One readback a present per identical source rectangle. The title screen copies the same (0,0)-(256,256)
-        // corner seven times into one texture, each time at a different destination offset to build the blur, so the
-        // pixels are identical and only the upload differs. Measured before this: seven readbacks and seven device
-        // waits a present (textureCopiesReusedInFrame=0, textureCopiesReServedAfterContentChange=648); the wait is what
-        // the copy's ordering needs, and it only has to be paid once per (present, rectangle).
-        long sourceKey = (((long) readFbo * 0x9E3779B1L) ^ ((long) x << 40) ^ ((long) y << 20)
-                ^ ((long) width << 10) ^ (long) height) * 31L + this.host.presentSerial();
-        int[] pixels = CACHE_COPY_SOURCE ? this.cachedCopySource(this.host.presentSerial(), sourceKey,
-                image, x, y, width, height) : null;
-        if (pixels == null) {
-            long readbackStartedNanos = System.nanoTime();
-            pixels = readImageRectangle(image, x, y, width, height);
-            this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;
-            this.textureCopyReadbacks++;
-            if (pixels != null) {
-                this.rememberCopySource(this.host.presentSerial(), sourceKey, pixels);
-            }
-        } else {
-            this.textureCopySourceCacheHits++;
-        }
+        // Read every time. The seven copies a present makes are separated by draws into the same corner - verifying a
+        // cached read against a fresh one showed 65374 of 65536 pixels differing - so a cache keyed on the rectangle is
+        // stale by construction and one keyed on the content marker never hits. The read is the copy's price.
+        long readbackStartedNanos = System.nanoTime();
+        int[] pixels = readImageRectangle(image, x, y, width, height);
+        this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;
+        this.textureCopyReadbacks++;
         if (pixels == null) {
             return refuseTextureCopy("the rectangle read of the owned image failed");
         }
@@ -910,32 +897,6 @@ public final class TextureCopyService {
         this.textureCopiesServed++;
         this.textureCopiesServedLastPresent++;
         return "served";
-    }
-
-    /**
-     * {@code -Dceltium.vulkan.cacheCopySource=false}: read every copy's pixels again instead of reusing one read per
-     * (present, source rectangle). On by default; the menu's blur chain is seven copies of one rectangle.
-     */
-    private static final boolean CACHE_COPY_SOURCE = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.cacheCopySource", "true"));
-    private final java.util.Map<Long, int[]> copySourceCache = new java.util.HashMap<Long, int[]>();
-    private long copySourceCachePresent = Long.MIN_VALUE;
-    private long textureCopySourceCacheHits;
-
-    private int[] cachedCopySource(long present, long key, long image, int x, int y, int width, int height) {
-        if (this.copySourceCachePresent != present) {
-            this.copySourceCache.clear();
-            this.copySourceCachePresent = present;
-        }
-        return this.copySourceCache.get(Long.valueOf(key));
-    }
-
-    private void rememberCopySource(long present, long key, int[] pixels) {
-        if (this.copySourceCachePresent != present) {
-            this.copySourceCache.clear();
-            this.copySourceCachePresent = present;
-        }
-        this.copySourceCache.put(Long.valueOf(key), pixels);
     }
 
     private long ownedReadImage(int readFbo) {
