@@ -1124,6 +1124,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The diagnostic reports (BackendDiagnostics); they read this backend's state and change nothing it draws. */
     final BackendDiagnostics reports = new BackendDiagnostics(this);
 
+    /** The shaderpack frontend's probes: load the pack once, compile a stage in process, build and record one draw. */
+    final ShaderPackProbe shaderPackProbe = new ShaderPackProbe(this);
+
     public String verificationSummary() {
         return this.reports.verificationSummary();
     }
@@ -1242,7 +1245,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private float worstModelViewDelta;
     boolean worldPassActive;
     /** Matrices for the frame's world pass, captured once at the camera boundary and used for drawing. */
-    private final float[] worldSnapshotProjection = new float[16];
+    final float[] worldSnapshotProjection = new float[16];
     private final float[] worldSnapshotModelView = new float[16];
     private boolean worldSnapshotValid;
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
@@ -1497,7 +1500,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** The previous model replay's packet identity, so a replay that repeats it can be counted as mergeable. */
     private final float[] lastModelProjection = new float[16];
-    private final float[] lastModelViewMatrix = new float[16];
+    final float[] lastModelViewMatrix = new float[16];
     private int lastModelTexture;
     private long lastModelStateKey;
     private int lastModelFormat;
@@ -8911,7 +8914,7 @@ this.frameBufferOpen = false;
             // frame image, or the frame's remaining draws and its composite run over it. Recording it after the last
             // window's pass is exactly that point - the pass has ended, the frame buffer is still open, and the present
             // has not been queued.
-            celtium$recordShaderPackDraw();
+            this.shaderPackProbe.celtium$recordShaderPackDraw();
             // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
             // which is the only way to price the command itself without the rest of the frame in the way.
             celtium$runDrawBench();
@@ -10078,7 +10081,7 @@ this.frameBufferOpen = false;
      * It stands in for "texturing is off": every immediate pipeline samples a texture, so the cheapest faithful
      * equivalent of no texture is a white one, which multiplies the vertex colours by one.
      */
-    private int whiteTextureId() {
+    int whiteTextureId() {
         if (this.whiteTextureGlId == 0) {
             if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -15268,39 +15271,39 @@ this.frameBufferOpen = false;
      * from it yet - the shadow map and the program dispatch are the next units - so this is an integration probe, not
      * a shaderpack feature.
      */
-    private static final String SHADER_PACK_PATH = System.getProperty("celtium.shaderpack.path", "");
+    static final String SHADER_PACK_PATH = System.getProperty("celtium.shaderpack.path", "");
 
     /** Whether the pack probe has run; it is a one-shot at the first present. */
-    private boolean shaderPackProbed;
-    private boolean shaderCompileProbed;
+    boolean shaderPackProbed;
+    boolean shaderCompileProbed;
     /** The loaded pack, kept for the S2 probe's program paths. */
-    private org.soutalab.celtium.shaderpack.PackManifest shaderPackManifest;
+    org.soutalab.celtium.shaderpack.PackManifest shaderPackManifest;
     /** {@code -Dceltium.shaderpack.drawProbe=true}: draw a triangle with the pack's shaders and record it. */
     /** {@code drawProbe=true} draws a triangle, {@code drawProbe=clear} clears the image instead; anything else is off. */
-    private static final String SHADER_PACK_DRAW_PROBE_MODE =
+    static final String SHADER_PACK_DRAW_PROBE_MODE =
             System.getProperty("celtium.shaderpack.drawProbe", "false");
-    private static final boolean SHADER_PACK_DRAW_PROBE = !"false".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
+    static final boolean SHADER_PACK_DRAW_PROBE = !"false".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
             && !SHADER_PACK_DRAW_PROBE_MODE.isEmpty();
-    private static final boolean SHADER_PACK_DRAW_CLEAR = "clear".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
+    static final boolean SHADER_PACK_DRAW_CLEAR = "clear".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
             || "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     /** {@code drawProbe=builtin}: the hard-coded triangle, for separating the draw state from the pack's own shaders. */
-    private static final boolean SHADER_PACK_DRAW_BUILTIN = "builtin".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
+    static final boolean SHADER_PACK_DRAW_BUILTIN = "builtin".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     /** {@code drawProbe=constant}: an attribute-free full-viewport triangle, for "does a draw rasterise at all". */
-    private static final boolean SHADER_PACK_DRAW_CONSTANT = "constant".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
+    static final boolean SHADER_PACK_DRAW_CONSTANT = "constant".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
     /** {@code drawProbe=blit}: transfer the pack-rendered image into the delivered frame. */
-    private static final boolean SHADER_PACK_DRAW_BLIT = "blit".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
-    private ShaderPackDrawProbe shaderPackDrawProbe;
+    static final boolean SHADER_PACK_DRAW_BLIT = "blit".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
+    ShaderPackDrawProbe shaderPackDrawProbe;
     /** The delivered image's size, from the frame target; the capture's size is not assumed to be it. */
-    private int frameTargetWidth = 1280;
-    private int frameTargetHeight = 720;
-    private int shaderPackDraws;
+    int frameTargetWidth = 1280;
+    int frameTargetHeight = 720;
+    int shaderPackDraws;
     private boolean packSubmitLogged;
     private int immediateOffersThisFrame;
 
     /** The first terrain-shaped batch's vertices, kept for the shaderpack probe's real-geometry draw. */
-    private static java.nio.ByteBuffer terrainCaptureVertices;
+    static java.nio.ByteBuffer terrainCaptureVertices;
     /** Set once the probe has adopted the captured terrain geometry, so the line prints once and late. */
-    private boolean packGeometryLogged;
+    boolean packGeometryLogged;
     /** Groups the pre-terrain flush handed over, and how many frames contributed. */
     private long preflushGroupsDrained;
     private long preflushFrames;
@@ -15392,11 +15395,11 @@ this.frameBufferOpen = false;
                 + " drawsPerCall=" + (callDelta == 0 ? 0 : drawDelta / callDelta) + "]";
     }
     /** Set once the shadow-map plumbing has been tried, so its line prints once. */
-    private boolean packShadowLogged;
+    boolean packShadowLogged;
     /** Set once the finalized multi-batch capture has been installed in the probe. */
-    private boolean packGeometryAdopted;
-    private boolean packReRenderLogged;
-    private boolean packGeometryReRenderLogged;
+    boolean packGeometryAdopted;
+    boolean packReRenderLogged;
+    boolean packGeometryReRenderLogged;
 
 
     long terrainBindNanos;
@@ -15418,11 +15421,11 @@ this.frameBufferOpen = false;
     private long boundarySubmitNanos;
     private long slotWaitNanos;
     private int boundaryFrames;
-    private static int terrainCaptureStride;
-    private static int terrainCaptureCount;
-    private static int terrainCaptureFormat;
+    static int terrainCaptureStride;
+    static int terrainCaptureCount;
+    static int terrainCaptureFormat;
     /** Set when no further batches are appended: the capture holds one format and is ready for the probe. */
-    private static boolean terrainCaptureFinalized;
+    static boolean terrainCaptureFinalized;
     /** Batches offered since the capture opened, across all layouts; the fallback close condition. */
     private static int terrainCaptureSeen;
     /** When the capture opened, for the wall-time close condition. */
@@ -15543,319 +15546,17 @@ this.frameBufferOpen = false;
         this.terrainCaptureFormat = formatId;
     }
     private int immediateOffersLastFrame;
-    private boolean shaderPackDrawProbeProgramChosen;
+    boolean shaderPackDrawProbeProgramChosen;
 
     /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
-    private static final boolean SHADER_COMPILE_PROBE =
+    static final boolean SHADER_COMPILE_PROBE =
             Boolean.getBoolean("celtium.shaderpack.compileProbe");
     /** The loaded manifest's one-line census, or the failure that stopped it. */
     String shaderPackSummary = "none";
     /** The pack's program entries, across dimensions. */
-    private int shaderPackPrograms;
+    int shaderPackPrograms;
     /** The pack's diagnostics by severity, as {@code ERROR/WARNING/UNSUPPORTED}. */
-    private final int[] shaderPackDiagnostics = new int[3];
-
-    /**
-     * Loads the configured shaderpack once, at the first present, and reports what the frontend made of it.
-     * <p>
-     * Runs here rather than in the mod's initialisation because the renderer is the component that will consume the
-     * manifest, and a failure must not take the game down: a pack the frontend rejects is reported and the run
-     * continues shaderless, which is the only safe direction for an experimental path.
-     */
-    /**
-     * Compiles one lowered Vulkan GLSL stage in process and reports what came back.
-     * <p>
-     * The S2 question is not whether a compiler exists on the development machine - the frontend's probe shells out to
-     * a glslangValidator executable there - but whether one can run inside the shipped game, where no executable can be
-     * installed. This is that compiler: LWJGL's shaderc binding, the same glslang, as a library. The source is the
-     * smallest pair of stages a pipeline can be built from, so a failure here is the compiler and not the shader.
-     */
-    private void celtium$probeShaderCompile() {
-        if (this.shaderCompileProbed || !SHADER_COMPILE_PROBE) {
-            return;
-        }
-        this.shaderCompileProbed = true;
-        ShadercGlslCompiler compiler = new ShadercGlslCompiler();
-        StringBuilder report = new StringBuilder("[Celtium] CELTIUM_SHADER_COMPILE compiler=").append(compiler.name())
-                .append(" available=").append(compiler.available())
-                .append(" reason=").append(compiler.unavailableReason());
-        try {
-            String vertex = "#version 450\n"
-                    + "layout(location = 0) in vec3 a_Position;\n"
-                    + "void main() { gl_Position = vec4(a_Position, 1.0); }\n";
-            String fragment = "#version 450\n"
-                    + "layout(location = 0) out vec4 o_Colour;\n"
-                    + "void main() { o_Colour = vec4(0.25, 0.5, 0.75, 1.0); }\n";
-            org.soutalab.celtium.shaderpack.SpirvModule vertexModule =
-                    compiler.compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertex);
-            org.soutalab.celtium.shaderpack.SpirvModule fragmentModule =
-                    compiler.compile(org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragment);
-            report.append(" vertexWords=").append(ShadercGlslCompiler.wordCount(vertexModule))
-                    .append(" vertexVersion=0x")
-                    .append(Integer.toHexString(ShadercGlslCompiler.headerVersion(vertexModule)))
-                    .append(" fragmentWords=").append(ShadercGlslCompiler.wordCount(fragmentModule))
-                    .append(" sha=").append(vertexModule.sha256(), 0, 12);
-        } catch (Throwable failure) {
-            report.append(" result=FAILED error=").append(failure);
-        }
-        System.out.println(report);
-        celtium$probePackProgram(compiler);
-    }
-
-    /**
-     * The S2 chain on a real program: expand the pack's own file, lower it, compile it.
-     * <p>
-     * This is the step that says whether the pieces fit a pack that was written for OptiFine rather than for this
-     * renderer. Every stage reports what it produced, and a failure at any of them is evidence about which stage needs
-     * work - the expansion (includes and the pack's conditionals), the lowering, or the compile.
-     */
-    private void celtium$probePackProgram(ShadercGlslCompiler compiler) {
-        if (SHADER_PACK_PATH.isEmpty() || !compiler.available()) {
-            // Say why: the probe returning silently made it look as though the pack's programs were being compiled when they were not, and the
-            // difference between "no path" and "no compiler" is the difference between a missing argument and a missing native library.
-            System.out.println("[Celtium] CELTIUM_PACK_PROGRAM skipped path=" + !SHADER_PACK_PATH.isEmpty()
-                    + " compiler=" + compiler.available());
-            return;
-        }
-        java.nio.file.Path pack = java.nio.file.Paths.get(SHADER_PACK_PATH);
-        if (this.shaderPackManifest == null) {
-            return;
-        }
-        // The program's paths come from the manifest, not from a guess: packs put their programs under a dimension
-        // folder (BSL's gbuffers_terrain lives at /shaders/world0/gbuffers_terrain.vsh), and the manifest is what
-        // resolved that. A hard-coded path reported "no such file in pack" for a pack that plainly has the program.
-        // Several programs, smallest first: whether the stack overflow is a property of these packs' terrain programs
-        // or of the chain itself is decided by where it starts, and one program cannot answer it.
-        java.util.List<org.soutalab.celtium.shaderpack.PackPath> wanted = new java.util.ArrayList<>();
-        // Which program the probe draws with. The smallest one (gbuffers_basic) proves the chain but draws no texture:
-        // its fragment stage samples nothing, so the picture is flat colour. gbuffers_terrain is the program that
-        // samples the block atlas, and selecting it is what turns the probe's output into something recognisably world.
-        String programChoice = System.getProperty("celtium.shaderpack.program", "").trim();
-        java.util.List<String> preference = programChoice.isEmpty()
-                ? java.util.List.of("gbuffers_basic", "gbuffers_skybasic", "gbuffers_textured", "gbuffers_terrain")
-                : java.util.List.of(programChoice);
-        for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : this.shaderPackManifest.dimensions()) {
-            for (org.soutalab.celtium.shaderpack.ProgramEntry program : dimension.programs()) {
-                if (program.isComputeOnly() || preference.stream().noneMatch(w -> program.name().contains(w))) {
-                    continue;
-                }
-                wanted.addAll(program.stages().values());
-                if (wanted.size() >= 6) {
-                    break;
-                }
-            }
-            if (wanted.size() >= 6) {
-                break;
-            }
-        }
-        if (SHADER_PACK_DRAW_CONSTANT && this.shaderPackDrawProbe == null) {
-            try {
-                this.shaderPackDrawProbe = ShaderPackDrawProbe.createConstant(this.context, compiler,
-                        org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM, org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
-                System.out.println("[Celtium] CELTIUM_PACK_DRAW constant=prepared");
-                System.out.println("[Celtium] CELTIUM_PACK_DRAW constantLeg=");
-            } catch (Throwable failure) {
-                System.out.println("[Celtium] CELTIUM_PACK_DRAW constant=FAILED error=" + failure);
-            }
-        }
-        if (SHADER_PACK_DRAW_BUILTIN && this.shaderPackDrawProbe == null) {
-            try {
-                this.shaderPackDrawProbe = ShaderPackDrawProbe.createBuiltin(this.context, compiler,
-                        org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM, org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
-                System.out.println("[Celtium] CELTIUM_PACK_DRAW builtin=prepared");
-            } catch (Throwable failure) {
-                System.out.println("[Celtium] CELTIUM_PACK_DRAW builtin=FAILED error=" + failure);
-            }
-        }
-        if (!SHADER_PACK_DRAW_CONSTANT && !SHADER_PACK_DRAW_BUILTIN) {
-            // A constant or built-in probe was created above for a different question; the pack probe would replace it
-            // and the leg would measure the pack's triangle while believing it measured the constant one.
-            celtium$probePackPipeline(compiler, pack);
-        }
-        for (org.soutalab.celtium.shaderpack.PackPath path : wanted) {
-            String file = path.toString();
-            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_PACK_PROGRAM file=").append(file);
-            try {
-                org.soutalab.celtium.shaderpack.Stage stage =
-                        org.soutalab.celtium.shaderpack.LegacyGlslLowering.stageOf(file);
-                String expanded = org.soutalab.celtium.shaderpack.ShaderPackLoader.expand(pack, path,
-                        java.util.Map.of("MC_VERSION", "11202"));
-                line.append(" expandedBytes=").append(expanded.length());
-                org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result lowered =
-                        org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(stage, expanded, java.util.Map.of());
-                line.append(" loweredBytes=").append(lowered.source().length())
-                        .append(" attributes=").append(lowered.attributes())
-                        .append(" varyings=").append(lowered.varyings().size())
-                        .append(" samplers=").append(lowered.samplers())
-                        .append(" unsupported=").append(lowered.unsupported().size());
-                org.soutalab.celtium.shaderpack.SpirvModule module = compiler.compile(stage, lowered.source());
-                line.append(" spirvWords=").append(ShadercGlslCompiler.wordCount(module))
-                        .append(" result=OK");
-                // The Vulkan objects the draw will be assembled from: a shader module, and set 0 with the transform
-                // block, the pack's own uniforms and one binding per sampler. Created and released here because this is
-                // a probe; the pipeline itself needs render targets whose formats match the program's outputs, which is
-                // the next unit.
-                ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(this.context);
-                try (ShaderPackPipelineFactory.ModuleHandle handle = factory.createModule(module);
-                     ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayoutRebased(lowered, 2)) {
-                    line.append(" module=").append(handle.module() != 0L ? "ok" : "null")
-                            .append(" descriptorLayout=").append(layout.descriptorSetLayout() != 0L ? "ok" : "null")
-                            .append(" pipelineLayout=").append(layout.pipelineLayout() != 0L ? "ok" : "null")
-                            .append(" uniformBlock=").append(layout.uniformBlockBinding())
-                            .append(" samplers=").append(layout.samplerBindings().size());
-                }
-            } catch (Throwable failure) {
-                String text = String.valueOf(failure);
-                line.append(" result=FAILED error=").append(text.length() > 300 ? text.substring(0, 300) : text);
-            }
-            System.out.println(line);
-        }
-    }
-
-    /**
-     * The first pack pipeline: one program's two stages, lowered, compiled, and turned into a graphics pipeline that
-     * declares its render targets through dynamic rendering rather than a render pass.
-     * <p>
-     * The formats here are the delivered image's own (R8G8B8A8 colour, D32 depth). They are hard-coded in the probe
-     * because it creates the pipeline without rendering into anything; the draw will take them from the target it draws
-     * to. What the probe is for is the step the rest of the work depends on: that a pack's shaders come out of the
-     * lowering and the compiler as something Vulkan will accept as a pipeline.
-     */
-    private void celtium$probePackPipeline(ShadercGlslCompiler compiler, java.nio.file.Path pack) {
-        if (this.shaderPackManifest == null) {
-            return;
-        }
-        for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : this.shaderPackManifest.dimensions()) {
-            for (org.soutalab.celtium.shaderpack.ProgramEntry program : dimension.programs()) {
-                if (program.isComputeOnly() || program.stages().size() < 2) {
-                    continue;
-                }
-                // gbuffers_basic first: its vertex stage is the one whose transform the probe can satisfy - an
-                // identity model-view-projection and no shadow-pass uniforms - so a triangle drawn with it lands in
-                // the viewport. The first program the manifest lists is the shadow program, whose vertices depend on
-                // the shadow matrices; with a zeroed uniform block it projects to zero and is clipped away, which is
-                // exactly how the first attempts recorded a draw and showed nothing.
-                String programFilter = System.getProperty("celtium.shaderpack.program", "").trim();
-                if (!programFilter.isEmpty()) {
-                    // A named program is honoured here as well as in the preference list: this loop is what actually
-                    // creates the probe, and its basic/textured filter is what kept gbuffers_terrain out.
-                    if (!program.name().contains(programFilter)) {
-                        continue;
-                    }
-                } else if (!this.shaderPackDrawProbeProgramChosen
-                        && !program.name().contains("basic") && !program.name().contains("textured")) {
-                    continue;
-                }
-                this.shaderPackDrawProbeProgramChosen = true;
-                org.soutalab.celtium.shaderpack.PackPath vertexPath =
-                        program.stages().get(org.soutalab.celtium.shaderpack.Stage.VERTEX);
-                org.soutalab.celtium.shaderpack.PackPath fragmentPath =
-                        program.stages().get(org.soutalab.celtium.shaderpack.Stage.FRAGMENT);
-                if (vertexPath == null || fragmentPath == null) {
-                    continue;
-                }
-                StringBuilder line = new StringBuilder("[Celtium] CELTIUM_PACK_PIPELINE program=")
-                        .append(program.name());
-                ShaderPackPipelineFactory factory = new ShaderPackPipelineFactory(this.context);
-                try {
-                    String vertexSource = org.soutalab.celtium.shaderpack.ShaderPackLoader.expand(pack, vertexPath,
-                            java.util.Map.of("MC_VERSION", "11202"));
-                    String fragmentSource = org.soutalab.celtium.shaderpack.ShaderPackLoader.expand(pack, fragmentPath,
-                            java.util.Map.of("MC_VERSION", "11202"));
-                    // One contract for both stages: the union of what each of them declared, so the two shaders name
-                    // the same block types at the same bindings.
-                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Needs vertexNeeds =
-                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.scan(vertexSource);
-                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Needs fragmentNeeds =
-                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.scan(fragmentSource);
-                    java.util.Map<String, String> contractUniforms = new java.util.LinkedHashMap<>(vertexNeeds.uniforms());
-                    contractUniforms.putAll(fragmentNeeds.uniforms());
-                    boolean contractTransforms = vertexNeeds.transforms() || fragmentNeeds.transforms();
-                    // Blocks take 0 and 1; samplers start at 2. Letting the lowering number them from 0 put the first
-                    // sampler on the transform block's binding - "pBindings[2].binding and pBindings[0].binding are
-                    // both 0" - which then made the layout's type disagree with the vertex shader's use of binding 0.
-                    java.util.Map<String, Integer> samplerBindings = new java.util.LinkedHashMap<>();
-                    java.util.List<String> allSamplers = new java.util.ArrayList<>(vertexNeeds.samplers());
-                    for (String sampler : fragmentNeeds.samplers()) {
-                        if (!allSamplers.contains(sampler)) {
-                            allSamplers.add(sampler);
-                        }
-                    }
-                    for (int i = 0; i < allSamplers.size(); i++) {
-                        samplerBindings.put(allSamplers.get(i), Integer.valueOf(2 + i));
-                    }
-                    // The varying interface is a contract too: a vertex output the fragment stage does not declare is
-                    // WARNING-Shader-OutputNotConsumed, and the acceptance gate counts messages, not just errors.
-                    java.util.List<String> contractVaryings = new java.util.ArrayList<>(vertexNeeds.varyings());
-                    for (String varying : fragmentNeeds.varyings()) {
-                        if (!contractVaryings.contains(varying)) {
-                            contractVaryings.add(varying);
-                        }
-                    }
-                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result vertex =
-                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
-                                    org.soutalab.celtium.shaderpack.Stage.VERTEX, vertexSource, java.util.Map.of(),
-                                    samplerBindings, contractUniforms, contractTransforms, contractVaryings);
-                    org.soutalab.celtium.shaderpack.LegacyGlslLowering.Result fragment =
-                            org.soutalab.celtium.shaderpack.LegacyGlslLowering.lower(
-                                    org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragmentSource, java.util.Map.of(),
-                                    samplerBindings, contractUniforms, contractTransforms, contractVaryings);
-                    org.soutalab.celtium.shaderpack.SpirvModule vertexModule =
-                            compiler.compile(org.soutalab.celtium.shaderpack.Stage.VERTEX, vertex.source());
-                    org.soutalab.celtium.shaderpack.SpirvModule fragmentModule =
-                            compiler.compile(org.soutalab.celtium.shaderpack.Stage.FRAGMENT, fragment.source());
-                    if (SHADER_PACK_DRAW_PROBE) {
-                        // The draw probe owns the pipeline, the descriptor set and the vertex buffers, and records a
-                        // triangle with them once. It is created from the same interfaces and modules the pipeline
-                        // check above uses, so what it draws is the same program.
-                        org.soutalab.celtium.vulkan.VulkanGlTexture white = this.textureRegistry.get(this.whiteTextureId());
-                        // The probe compiles its own vertex module: the pack's TAA jitter rewrites gl_Position.xy from
-                        // frame uniforms a probe only approximates, and a non-finite position there removes the triangle
-                        // before rasterisation while the pipeline check above still passes. Everything except that one
-                        // statement is the pack's own stage.
-                        org.soutalab.celtium.shaderpack.SpirvModule probeVertexModule = compiler.compile(
-                                org.soutalab.celtium.shaderpack.Stage.VERTEX,
-                                ShaderPackDrawProbe.sanitiseProbeVertex(vertex.source()));
-                        this.shaderPackDrawProbe = ShaderPackDrawProbe.create(this.context, vertex, fragment,
-                                probeVertexModule, fragmentModule, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                                org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT, white);
-                        line.append(" drawProbe=prepared attributes=").append(vertex.attributes().size())
-                                .append(" result=OK");
-                        // The execution evidence that does not depend on the delivery path: the pack's shaders render
-                        // into an image this probe owns, and the pixels are read back.
-                        line.append(" offscreen=[").append(this.shaderPackDrawProbe.sampleOffscreen(64)).append(']');
-
-                        this.shaderPackDrawProbe.dumpVertexContract();
-                        if (Boolean.getBoolean("celtium.shaderpack.drawProbeDebug")) {
-                            // What the two stages actually say about gl_Position and the fragment colour: the pipeline
-                            // and the vertex data are now known to be sound (the constant triangle draws), so the next
-                            // fact to read is the shader text itself.
-                            System.out.println("[Celtium] CELTIUM_PACK_SHADER_DUMP vertex=\n"
-                                    + vertex.source() + "\n--- fragment ---\n" + fragment.source());
-                        }
-                    } else {
-                        try (ShaderPackPipelineFactory.ModuleHandle vertexHandle = factory.createModule(vertexModule);
-                             ShaderPackPipelineFactory.ModuleHandle fragmentHandle = factory.createModule(fragmentModule);
-                             ShaderPackPipelineFactory.LayoutHandle layout = factory.createLayout(vertex, fragment)) {
-                            long pipeline = factory.createPipeline(layout.pipelineLayout(), vertexHandle,
-                                    fragmentHandle, vertex, org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                                    org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT);
-                            line.append(" pipeline=").append(pipeline != 0L ? "ok" : "null")
-                                    .append(" attributes=").append(vertex.attributes().size())
-                                    .append(" result=OK");
-                            org.lwjgl.vulkan.VK10.vkDestroyPipeline(this.context.device(), pipeline, null);
-                        }
-                    }
-                } catch (Throwable failure) {
-                    String text = String.valueOf(failure);
-                    line.append(" result=FAILED error=")
-                            .append(text.substring(0, Math.min(240, text.length())));
-                }
-                System.out.println(line);
-                return;
-            }
-        }
-    }
+    final int[] shaderPackDiagnostics = new int[3];
 
 
 
@@ -15865,160 +15566,13 @@ this.frameBufferOpen = false;
 
 
 
-    private void celtium$recordShaderPackDraw() {
-        if (this.shaderPackDrawProbe == null) {
-            return;
-        }
-        if (!(this.frameTarget instanceof GllessFrameTarget target)) {
-            return;
-        }
-        if (!this.frameBufferOpen || this.commandState.inRenderPass()) {
-            // The probe draws at a frame boundary: the frame buffer must still be open and no pass may be running.
-            return;
-        }
-        // Every frame, not once: the first frame after the probe is prepared is a loading screen, and a draw recorded
-        // there is in a frame nobody captures. One triangle a frame is not a cost worth a flag.
-        if (this.shaderPackDraws < 3) {
-            System.out.println("[Celtium] CELTIUM_PACK_DRAW_HOOK cb=" + Long.toHexString(this.commandBuffer.address())
-                    + " open=" + this.frameBufferOpen + " recording=" + this.commandState.recording()
-                    + " inPass=" + this.commandState.inRenderPass() + " slot=" + this.frameSlot);
-        }
-        if (this.terrainCaptureVertices != null && this.terrainCaptureFinalized && !this.packGeometryAdopted) {
-            // Applied here rather than where the probe is prepared: the pack loads long before the world's first terrain
-            // batch arrives, so the capture is only complete by the time a draw is being recorded. It also waits for the
-            // capture to close, so the first adopted geometry is several sections rather than one.
-            String adopted = this.shaderPackDrawProbe.replaceGeometry(this.terrainCaptureFormat,
-                    this.terrainCaptureVertices, this.terrainCaptureStride, this.terrainCaptureCount);
-            // Logged on the adoption itself, not on an early frame: the capture arrives after the probe has already drawn,
-            // so gating this on shaderPackDraws == 0 hid the one line that says the geometry was installed.
-            if (adopted != null) {
-                this.packGeometryAdopted = true;
-                this.packGeometryLogged = true;
-                System.out.println("[Celtium] CELTIUM_PACK_GEOMETRY " + adopted);
-            }
-        }
 
-        if (SHADER_PACK_DRAW_BLIT) {
-            // The delivery experiment: the pixels the pack's shaders already produced, transferred into the delivered
-            // image at the frame boundary - no draw into the frame, no partial render area.
-            if (target.colorImage() != 0L) {
-                // Re-render the probe's image with whatever geometry has been installed (the capture arrives after the
-                // probe is created), so the blit delivers the world through the pack's stages rather than the triangle.
-                if (Boolean.getBoolean("celtium.shaderpack.probeShadow") && !this.packShadowLogged
-                        && this.packGeometryAdopted) {
-                    this.packShadowLogged = true;
-                    System.out.println("[Celtium] CELTIUM_PACK_SHADOW "
-                            + this.shaderPackDrawProbe.renderShadowDepthPlumbing());
-                }
-                this.shaderPackDrawProbe.setWorldMatrices(this.worldSnapshotProjection, this.lastModelViewMatrix);
-                String reRendered = this.shaderPackDrawProbe.renderOffscreen();
-                if (reRendered != null && !this.packReRenderLogged && reRendered.contains("vertices=3 ")) {
-                    this.packReRenderLogged = true;
-                    System.out.println("[Celtium] CELTIUM_PACK_RERENDER " + reRendered);
-                } else if (reRendered != null && this.packReRenderLogged && !this.packGeometryReRenderLogged
-                        && !reRendered.contains("vertices=3 ")) {
-                    this.packGeometryReRenderLogged = true;
-                    System.out.println("[Celtium] CELTIUM_PACK_RERENDER_GEOMETRY " + reRendered);
-                }
-                // Centre of the frame rather than the corner: the corner rectangle is uniform in the capture and the
-                // probe image is not, so the location is the one thing an experiment can move to separate "the blit
-                // carries the wrong content" from "something paints over the corner of the picture".
-                // Full-screen by default: the question the picture has to answer now is "does the pack's output look
-                // like the world", and a 256x256 rectangle in a corner answers a delivery question instead. The scaled
-                // blit is the same transfer with a different destination extent.
-                if (Boolean.parseBoolean(System.getProperty("celtium.shaderpack.probeFullscreen", "false"))) {
-                    this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), 0, 0,
-                            this.frameTargetWidth, this.frameTargetHeight);
-                } else {
-                    int blitX = Math.max(0, (this.frameTargetWidth - 256) / 2);
-                    int blitY = Math.max(0, (this.frameTargetHeight - 256) / 2);
-                    this.shaderPackDrawProbe.blitToFrame(this.commandBuffer, target.colorImage(), blitX, blitY, 256, 256);
-                }
-                if (this.shaderPackDraws++ <= 2) {
-                    // Which image the blit wrote, and which image the present will read: the delivery question is a
-                    // question about identities, and the answer belongs in the log rather than in an inference from a
-                    // picture that has several ways of not changing.
-                    System.out.println("[Celtium] CELTIUM_PACK_DRAW blit=true draws=" + this.shaderPackDraws
-                            + " frameId=" + this.frameId
-                            + " wroteImage=0x" + Long.toHexString(target.colorImage())
-                            + " frameTargetImage=0x" + Long.toHexString(this.frameTarget.colorImage())
-                            + " sameImage=" + (target.colorImage() == this.frameTarget.colorImage())
-                            + " rect=0,0 256x256 layout=GENERAL");
-                }
-            }
-            return;
-        }
-        if (SHADER_PACK_DRAW_CLEAR) {
-            if ("small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)) {
-                // Two rectangles in one frame, in two colours: a half-size one (the image's real dimensions matter here,
-                // so they are logged) and a 64x64 one at the origin. One leg then answers both "does a partial area
-                // take at all" and "does a small one".
-                int width = this.frameTargetWidth;
-                int height = this.frameTargetHeight;
-                System.out.println("[Celtium] CELTIUM_PACK_DRAW targetSize=" + width + "x" + height);
-                this.shaderPackDrawProbe.recordClear(this.commandBuffer, target, 0, 0,
-                        Math.max(1, width / 2), Math.max(1, height / 2), 1.0f, 0.0f, 1.0f);
-                this.shaderPackDrawProbe.recordClear(this.commandBuffer, target, 0, 0, 64, 64, 0.0f, 1.0f, 0.0f);
-            } else {
-                this.shaderPackDrawProbe.recordClear(this.commandBuffer, target, 0, 0, this.frameTargetWidth,
-                        this.frameTargetHeight, 1.0f, 0.0f, 1.0f);
-            }
-        } else {
-            this.shaderPackDrawProbe.record(this.commandBuffer, target);
-        }
-        this.frameTargetWidth = target.width();
-        this.frameTargetHeight = target.height();
-        this.shaderPackDraws++;
-        if (this.shaderPackDraws <= 3 || this.shaderPackDraws % 300 == 0) {
-            System.out.println("[Celtium] CELTIUM_PACK_DRAW recorded=true draws=" + this.shaderPackDraws);
-        }
-    }
 
-    private void celtium$probeShaderPack() {
-        if (this.shaderPackProbed || SHADER_PACK_PATH.isEmpty()) {
-            return;
-        }
-        this.shaderPackProbed = true;
-        try {
-            java.nio.file.Path path = java.nio.file.Paths.get(SHADER_PACK_PATH);
-            long started = System.nanoTime();
-            org.soutalab.celtium.shaderpack.PackManifest manifest =
-                    org.soutalab.celtium.shaderpack.ShaderPackLoader.load(path);
-            this.shaderPackManifest = manifest;
-            // After the manifest, not before: the program probe reads the manifest to find the pack's own paths, and the
-            // first version ran it first, so it returned early with nothing to report.
-            celtium$probeShaderCompile();
-            long millis = (System.nanoTime() - started) / 1000000L;
-            for (org.soutalab.celtium.shaderpack.DimensionPlan dimension : manifest.dimensions()) {
-                this.shaderPackPrograms += dimension.programs().size();
-            }
-            for (org.soutalab.celtium.shaderpack.Diagnostic diagnostic : manifest.diagnostics()) {
-                switch (diagnostic.severity()) {
-                    case ERROR: this.shaderPackDiagnostics[0]++; break;
-                    case WARNING: this.shaderPackDiagnostics[1]++; break;
-                    default: this.shaderPackDiagnostics[2]++; break;
-                }
-            }
-            this.shaderPackSummary = "pack=" + manifest.label() + " files=" + manifest.fileCount()
-                    + " dimensions=" + manifest.dimensions().size()
-                    + " programs=" + this.shaderPackPrograms
-                    + " features=" + manifest.activeFeatures().size()
-                    + " options=" + manifest.options().size()
-                    + " disabled=" + manifest.disabledPrograms().size()
-                    + " errors=" + this.shaderPackDiagnostics[0]
-                    + " warnings=" + this.shaderPackDiagnostics[1]
-                    + " unsupported=" + this.shaderPackDiagnostics[2]
-                    + " hasErrors=" + manifest.hasErrors()
-                    + " loadMillis=" + millis;
-            System.out.println("[Celtium] CELTIUM_SHADERPACK " + this.shaderPackSummary);
-        } catch (Throwable error) {
-            this.shaderPackSummary = "failed path=" + SHADER_PACK_PATH + " reason=" + describe(error);
-            System.out.println("[Celtium] CELTIUM_SHADERPACK " + this.shaderPackSummary);
-        }
-    }
+
+
 
     public boolean celtium$presentFrame() {
-        celtium$probeShaderPack();
+        this.shaderPackProbe.celtium$probeShaderPack();
         long presentStartedNanos = System.nanoTime();
         try {
             return celtium$presentFrameImpl();
@@ -17652,7 +17206,7 @@ this.frameBufferOpen = false;
      * of the same frame only re-points the aliases below - one vkReset+vkBegin, one end, one submission per frame
      * instead of one per recording. Cleared at the frame's boundary submit and at every mid-frame reset path.
      */
-    private boolean frameBufferOpen;
+    boolean frameBufferOpen;
     /**
      * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
      * boundary. OFF by default: with it the flush wall time falls from 3.82 to 2.35-2.41 ms per frame (AMD RX 6400,
@@ -17688,7 +17242,7 @@ this.frameBufferOpen = false;
      */
     private final VulkanCommandBufferState[] slotCommandStates = new VulkanCommandBufferState[FRAME_SLOTS];
     /** Slot this recording belongs to, and the slot the next recording will take. */
-    private int frameSlot;
+    int frameSlot;
     private int nextFrameSlot;
     private long submitSequence;
     /** Highest submission sequence confirmed complete; retirement is gated on it. */
