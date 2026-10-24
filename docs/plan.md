@@ -27,6 +27,15 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
   採否はpaired KPIで決める。
 - 移行は「一度に全部作り直さない」（設計§7）。各段で画像gate・validation 0・paired KPI（control arm）を取ってから次へ。
 
+### 2026-10-24: 描画ループのJIT化・arena slot・end portal producer → **Celeritas比 1.70x → 1.113x**
+
+`drawPendingImmediate` が8282 byte（HotSpotの8000 byte上限超過）で**常にinterpreter実行**＝client threadの29.9%。分割でJIT化し3.4%。
+速くなったCPUがGPUより2frame以上先行し、2 slotのframe arenaが枯渇→groupごとに`vkAllocateMemory`（695/2831サンプル）。
+slot数をscheduler（4）+1に。end portalはlayerごと1 drawのproducerに。fixtureがCeleritas armに毎frame課していた税
+（ClassNotFoundException×3・F3再解析、58/525サンプル）を除去＝**以前の比は実態より良く見えていた**。
+KPI `arena-kpi-ref-1`（JAR `d3dfb9ba…`、AMD、3 rep、disturbed無し）: p50 **1.113x（SLOWER）**、**p95はCeleritasより低い**（1.93–2.02 vs 2.02–2.18ms）。
+`HugeMethodLimitTest` が再発を止める。[証拠](<evidence/jit-arena-2026-10-24.md>)。Intel未測定。
+
 ### 2026-10-24: 定常ログを既定で停止
 
 定常状態で毎秒約600行（ForgeのTracingPrintStreamがstackを辿る）を出していた周期ログを `-Dceltium.debug.periodicLogs=true` 時のみに。
@@ -34,12 +43,7 @@ KPI `loggate-kpi-1` は control比0.977だが測定中に負荷が6.0へ上昇�
 
 ### 2026-10-24: client tickのアニメtexture転送待ちを除去（staging ring）
 
-アニメsprite 1枚ごとに `uploadPatchedLevels→ensureStaging→awaitOutstandingUpload→vkWaitForFences`
-（tick内でspriteごとにCPU↔GPU往復）。stagingをringで切り出し、wrap時だけ最新fenceを待つ形に変更。
-KPI（`ring-kpi-1`、JAR `6c041aa3…`、control `652075c9…`＝変更前HEAD、AMD RX 6400、world、validation off、3 rep交互）:
-warm p95 **3.39/3.68/3.42ms（control 5.51/6.90/6.01ms）**、warm区間のframe数 4388/4044/4531（control 4193/3606/4299）。
-p50は control比 1.007（中立）、Celeritas比 1.699x のまま。validation ON leg `ring-valid-amd-1` PASSED・validation 0・画像gate PASSED。
-[証拠](<evidence/staging-ring-2026-10-24.md>)。
+spriteごとの`vkWaitForFences`をstaging ringで除去。KPI `ring-kpi-1`: warm p95 5.5–6.9→3.4–3.7ms、p50中立。[証拠](<evidence/staging-ring-2026-10-24.md>)。
 
 ## 2026-10-24: 本体内の影は停止（利用者指示）
 
@@ -60,7 +64,7 @@ menu/HEI inventory/recipeの実画像を保存したが、HEIの専用gateは未
 
 ## 次の作業単位（2026-10-24 改訂）
 
-1. **性能（最優先）**: 出荷構成は影なし。v0.0.16-alpha 時点の KPI（AMD RX 6400・world・validation off）は warm p50 2.02–2.08ms ＝ 参照 1.19–1.27ms に対し約1.7x。同日午前の 1.56ms / 1.31x は、84c220575 の再ビルドJARでも 2.05ms になり**再現せず＝マシン状態**だった（`469ffc4a2`、決着）。次の焦点は **tail**: warm区間のサンプル数がCeleritasの1/3〜1/2、p95 10–20ms（Celeritas 2.4ms）。client tick（fixture計測 mean 4–5ms・p95 約10ms）との対応を対照armで判別中。
+1. **性能（最優先）**: 2026-10-24夕の KPI は **1.113x**（上記）。v0.0.16-alpha 時点は約1.7x。同日午前の 1.56ms / 1.31x は、84c220575 の再ビルドJARでも 2.05ms になり**再現せず＝マシン状態**だった（`469ffc4a2`、決着）。次の焦点は **tail**: warm区間のサンプル数がCeleritasの1/3〜1/2、p95 10–20ms（Celeritas 2.4ms）。client tick（fixture計測 mean 4–5ms・p95 約10ms）との対応を対照armで判別中。
    受け入れの算術（`architecture` §11/§12）では受理経路の内側の最適化では届かず、per-offer のJava仕事を消す再設計が要る。
 2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
