@@ -144,6 +144,23 @@ public final class ValidationClient {
      * and stops at {@code warmToTick} (default 600).
      */
     private final List<Double> warmFrameIntervals = new ArrayList<Double>();
+
+    /** Adds {@code <prefix>MaxMs} and the counts of frames over 16.7, 33.3 and 50 ms for one sorted window. */
+    private static void celtium$reportSpikes(com.google.gson.JsonObject report, String prefix, List<Double> sorted) {
+        int over16 = 0;
+        int over33 = 0;
+        int over50 = 0;
+        for (Double interval : sorted) {
+            double ms = interval.doubleValue();
+            if (ms > 16.7D) over16++;
+            if (ms > 33.3D) over33++;
+            if (ms > 50.0D) over50++;
+        }
+        report.addProperty(prefix + "MaxMs", sorted.isEmpty() ? -1.0D : sorted.get(sorted.size() - 1).doubleValue());
+        report.addProperty(prefix + "Over16Ms", over16);
+        report.addProperty(prefix + "Over33Ms", over33);
+        report.addProperty(prefix + "Over50Ms", over50);
+    }
     /** Opt-in moving-view replay after the fixed capture, so a stationary KPI cannot hide view-dependent stalls. */
     private final float celtium$cameraSweepRate = Float.parseFloat(
             System.getProperty("celtium.validation.cameraSweepDegreesPerSecond", "0"));
@@ -6394,6 +6411,10 @@ public final class ValidationClient {
         report.addProperty("frameIntervalWarmP50Ms", percentile(warmFrameIntervals, 0.50));
         report.addProperty("frameIntervalWarmP95Ms", percentile(warmFrameIntervals, 0.95));
         report.addProperty("frameIntervalWarmP99Ms", percentile(warmFrameIntervals, 0.99));
+        // Spikes: a percentile hides a handful of long frames, which is what a player feels as a hitch. Counted over
+        // both windows: the maximum and the frames longer than one 60 Hz, two and three 60 Hz refreshes.
+        celtium$reportSpikes(report, "frameIntervalWarm", warmFrameIntervals);
+        celtium$reportSpikes(report, "frameIntervalCold", frameIntervals);
         report.addProperty("frameIntervalWindows",
                 "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this"
                         + " one) warm=worldTicks " + Integer.getInteger("celtium.validation.warmFromTick", 400) + ".."

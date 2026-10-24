@@ -1802,6 +1802,39 @@ public final class VulkanContext {
     }
 
     private static volatile long sharedPipelineCache = VK_NULL_HANDLE;
+
+    /**
+     * Creates graphics pipelines through the shared cache, and times it: a pipeline the cache does not hold is compiled
+     * on the thread that asked, which is the client thread for every pipeline a new draw state needs - a hitch the
+     * first time an effect appears. Each creation over 2 ms is logged (bounded by the log limiter) with the running
+     * totals, which {@link #pipelineCreationSummary()} also reports.
+     */
+    public static int createGraphicsPipelines(org.lwjgl.vulkan.VkDevice device,
+            org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer info, java.nio.LongBuffer pipelines) {
+        long start = System.nanoTime();
+        int result = vkCreateGraphicsPipelines(device, sharedPipelineCache, info, null, pipelines);
+        long took = System.nanoTime() - start;
+        pipelineCreations++;
+        pipelineCreationNanos += took;
+        if (took > pipelineCreationWorstNanos) {
+            pipelineCreationWorstNanos = took;
+        }
+        if (took > 2_000_000L) {
+            System.out.println("[Celtium] CELTIUM_PIPELINE_SLOW ms=" + took / 1_000_000L + " thread="
+                    + Thread.currentThread().getName() + " " + pipelineCreationSummary());
+        }
+        return result;
+    }
+
+    /** {@return the pipeline creations so far}: count, total and worst milliseconds. */
+    public static String pipelineCreationSummary() {
+        return "pipelineCreations=" + pipelineCreations + " pipelineCreationMs=" + pipelineCreationNanos / 1_000_000L
+                + " pipelineCreationWorstMs=" + pipelineCreationWorstNanos / 1_000_000L;
+    }
+
+    private static long pipelineCreations;
+    private static long pipelineCreationNanos;
+    private static long pipelineCreationWorstNanos;
     private long pipelineCache = VK_NULL_HANDLE;
 
     private static java.nio.file.Path pipelineCacheFile() {

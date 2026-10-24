@@ -46,6 +46,9 @@
 
 ## 変更・記録の単位
 
+- 利用者指示（2026-10-25）: **worktree・ローカルbranchは main の1つだけ**。検証runと成果物は直近の1セットだけを保持する
+  （paired KPIの各arm・repは1セット）。次の検証へ移る時に古いローカルrun・stage・JFRを削除する。
+  実行中のjob・ビルド依存・利用者のPrism原本・git管理する証拠は削除対象にしない。
 - roundは継続の刻みであり、実装・commit・PR・担当起動のノルマではない。同じ未完単位・branch・TODOを引き継ぐ。
   並列化は独立した仕事だけ。書込み範囲を分け、主担当が最終差分と受入を確認する。
 - PR直前に **`git diff origin/main --name-only` と内容**を確認する。通常のround経過だけのdocs-only branch/PR/即マージを作らない。
