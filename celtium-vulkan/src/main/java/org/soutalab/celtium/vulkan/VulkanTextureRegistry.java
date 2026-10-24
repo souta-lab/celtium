@@ -422,6 +422,24 @@ public final class VulkanTextureRegistry {
         return texture;
     }
 
+    /** Creates a renderer-owned texture directly from RGBA bytes, without binding or creating any GL object. */
+    public int createTexture2d(int width, int height, boolean nearestFilter, java.nio.ByteBuffer rgba) {
+        int id = RenderObjectIds.reserve(1);
+        VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
+        try {
+            texture.uploadFromNamedImage(id, width, height, rgba);
+        } catch (RuntimeException | Error failure) {
+            texture.delete();
+            throw failure;
+        }
+        this.entries.put(Integer.valueOf(id), new Entry(id, width, height, texture));
+        this.mutations++;
+        this.memoTextureId = Integer.MIN_VALUE;
+        this.mirrorCount++;
+        recordApplication(id, true);
+        return id;
+    }
+
     /** Records that the whole image has been filled, which a partial patch alone cannot establish. */
     public void markFullyInitialized(int glTextureId) {
         if (glTextureId != 0) {

@@ -31,22 +31,12 @@ public final class VulkanGlState {
     private final ArrayDeque<float[]> textureStack1 = new ArrayDeque<float[]>();
 
     private int matrixMode = MATRIX_MODE_MODELVIEW;
-    private boolean blendEnabled;
-    private int blendSrcRgb = BLEND_SRC_ALPHA;
-    private int blendDstRgb = BLEND_ONE_MINUS_SRC_ALPHA;
-    private int blendSrcAlpha = BLEND_ONE;
-    private int blendDstAlpha = BLEND_ONE_MINUS_SRC_ALPHA;
     /** GL's two blend equations; {@code GL_FUNC_ADD} is GL's initial state and what the pipelines baked alone. */
-    private int blendEquationRgb = BLEND_FUNC_ADD;
-    private int blendEquationAlpha = BLEND_FUNC_ADD;
     /** Which channels a write may touch: bit 0 red, 1 green, 2 blue, 3 alpha (Vulkan's own component bits). */
-    private int colorMask = COLOR_CHANNEL_ALL;
     private boolean depthTestEnabled = true;
     /** The OpenGL depth-function constant (GL_LEQUAL &c.), not an ordinal: the pipeline maps it to a compare op. */
     private int depthFunc = 515;
     private boolean depthMask = true;
-    private boolean cullEnabled;
-    private int cullFace = CULL_BACK;
     private boolean alphaTestEnabled;
     private int alphaFunc = ALPHA_GREATER;
     private float alphaRef = 0.1f;
@@ -61,9 +51,7 @@ public final class VulkanGlState {
     private int lightsEnabledMask;
     /** Bumped by every lighting setter; see {@link #lightGeneration()}. */
     private long lightGeneration;
-    private boolean texture2dEnabled = true;
     /** The GL name of the bound texture; 0 means none, which is what the immediate path refuses to draw with. */
-    private int boundTextureName;
     private float alphaFuncReference = 0.1f;
     private int shadeModel = SHADE_SMOOTH;
     private float colorRed = 1.0f;
@@ -71,7 +59,6 @@ public final class VulkanGlState {
     private float colorBlue = 1.0f;
     private float colorAlpha = 1.0f;
     private long boundTexture;
-    private int activeTextureUnit;
     /**
      * The first caller this state model saw each texture name bound through. The stub's bind-site map covers the two
      * routes its own records know (the {@code GlStateManager.bindTexture} hook and the function-table dispatch), but
@@ -139,7 +126,20 @@ public final class VulkanGlState {
     public static final int SHADE_FLAT = 0;
     public static final int SHADE_SMOOTH = 1;
 
+    private final NativeRasterState raster;
+    private final NativeTextureBindings textures;
+
     public VulkanGlState() {
+        this(new NativeRasterState());
+    }
+
+    VulkanGlState(NativeRasterState raster) {
+        this(raster, new NativeTextureBindings(raster));
+    }
+
+    VulkanGlState(NativeRasterState raster, NativeTextureBindings textures) {
+        this.raster = raster;
+        this.textures = textures;
         this.modelViewStack.push(newIdentity());
         this.projectionStack.push(newIdentity());
         this.textureStack0.push(newIdentity());
@@ -375,11 +375,11 @@ public final class VulkanGlState {
     }
 
     public boolean blendEnabled() {
-        return this.blendEnabled;
+        return this.raster.blendEnabled();
     }
 
     public void blendEnabled(boolean enabled) {
-        this.blendEnabled = enabled;
+        this.raster.blendEnabled(enabled);
     }
 
     /**
@@ -390,30 +390,27 @@ public final class VulkanGlState {
      * question to ask.
      */
     public boolean blendMixes() {
-        return this.blendSrcRgb != BLEND_ONE || this.blendDstRgb != BLEND_ZERO;
+        return this.raster.blendSrcRgb() != BLEND_ONE || this.raster.blendDstRgb() != BLEND_ZERO;
     }
 
     public void blendFunc(int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
-        this.blendSrcRgb = srcRgb;
-        this.blendDstRgb = dstRgb;
-        this.blendSrcAlpha = srcAlpha;
-        this.blendDstAlpha = dstAlpha;
+        this.raster.blendFunc(srcRgb, dstRgb, srcAlpha, dstAlpha);
     }
 
     public int blendSrcRgb() {
-        return this.blendSrcRgb;
+        return this.raster.blendSrcRgb();
     }
 
     public int blendDstRgb() {
-        return this.blendDstRgb;
+        return this.raster.blendDstRgb();
     }
 
     public int blendSrcAlpha() {
-        return this.blendSrcAlpha;
+        return this.raster.blendSrcAlpha();
     }
 
     public int blendDstAlpha() {
-        return this.blendDstAlpha;
+        return this.raster.blendDstAlpha();
     }
 
     /**
@@ -425,16 +422,15 @@ public final class VulkanGlState {
      * to drop the call); ADD is GL's initial state and what every pipeline baked alone before this field existed.
      */
     public int blendEquationRgb() {
-        return this.blendEquationRgb;
+        return this.raster.blendEquationRgb();
     }
 
     public int blendEquationAlpha() {
-        return this.blendEquationAlpha;
+        return this.raster.blendEquationAlpha();
     }
 
     public void blendEquation(int rgb, int alpha) {
-        this.blendEquationRgb = rgb;
-        this.blendEquationAlpha = alpha;
+        this.raster.blendEquation(rgb, alpha);
     }
 
     /**
@@ -446,11 +442,11 @@ public final class VulkanGlState {
      * that follows it are the same pipeline, and the depth pass paints colour.
      */
     public int colorMask() {
-        return this.colorMask;
+        return this.raster.colorMask();
     }
 
     public void colorMask(int mask) {
-        this.colorMask = mask;
+        this.raster.colorMask(mask);
     }
 
     public boolean depthTestEnabled() {
@@ -487,19 +483,19 @@ public final class VulkanGlState {
     }
 
     public boolean cullEnabled() {
-        return this.cullEnabled;
+        return this.raster.cullEnabled();
     }
 
     public void cullEnabled(boolean enabled) {
-        this.cullEnabled = enabled;
+        this.raster.cullEnabled(enabled);
     }
 
     public int cullFace() {
-        return this.cullFace;
+        return this.raster.cullFace();
     }
 
     public void cullFace(int face) {
-        this.cullFace = face;
+        this.raster.cullFace(face);
     }
 
     public boolean alphaTestEnabled() {
@@ -651,13 +647,7 @@ public final class VulkanGlState {
      * are indexed by the unit number {@code activeTextureUnit} already tracks; unit 0 is the base sampler the
      * immediate path and {@code invalidateBoundTexture} read, and it keeps the old no-argument accessors' meaning.
      */
-    private final int[] boundTextureByUnit = new int[8];
-    private final boolean[] texture2dEnabledByUnit = new boolean[] {
-        true, true, true, true, true, true, true, true };
 
-    private int unitIndex(int unit) {
-        return unit >= 0 && unit < this.boundTextureByUnit.length ? unit : 0;
-    }
 
     /** Binds seen on a unit other than 0, and binds seen on unit 0 - the BH-06 observable in a leg. */
     private static long bindsOnOtherUnits;
@@ -685,7 +675,7 @@ public final class VulkanGlState {
 
     /** Records the GL name of the bound texture on the <em>active</em> unit, as {@code GlStateManager.func_179144_i} does. */
     public void bindTexture(int glTextureId) {
-        if (this.activeTextureUnit == 0) {
+        if (this.textures.activeUnit() == 0) {
             bindsOnUnitZero++;
         } else {
             bindsOnOtherUnits++;
@@ -699,14 +689,10 @@ public final class VulkanGlState {
                 unitLogs++;
             }
             System.out.println("[Celtium] CELTIUM_UNIT_BIND bind texture=" + glTextureId
-                    + " activeUnit=" + this.activeTextureUnit + " bindsOnUnit0=" + bindsOnUnitZero
+                    + " activeUnit=" + this.textures.activeUnit() + " bindsOnUnit0=" + bindsOnUnitZero
                     + " bindsOnOtherUnits=" + bindsOnOtherUnits);
         }
-        this.boundTextureByUnit[unitIndex(this.activeTextureUnit)] = glTextureId;
-        // Kept in step for the single-value readers that predate the per-unit model (the field is otherwise unused).
-        if (this.activeTextureUnit == 0) {
-            this.boundTextureName = glTextureId;
-        }
+        this.textures.bindTexture2d(glTextureId);
         // A diagnostic, and not a free one: for a name it has not seen, this walks the stack. It used to run on every
         // bind - including the ones the font path issues per glyph - and the size check came *after* the lookup, so the
         // cost stayed after the table was full. Off unless diagnostics are asked for, and the size check first.
@@ -753,12 +739,12 @@ public final class VulkanGlState {
 
     /** {@return the GL name bound on {@code unit}}, or 0 when nothing is bound there. */
     public int boundTextureName(int unit) {
-        return this.boundTextureByUnit[unitIndex(unit)];
+        return this.textures.texture2d(unit);
     }
 
     /** {@return the GL name bound on unit 0}, the base sampler the immediate path reads. */
     public int boundTextureName() {
-        return this.boundTextureByUnit[0];
+        return this.textures.texture2d(0);
     }
 
     /**
@@ -773,25 +759,22 @@ public final class VulkanGlState {
      * hook - is not duplicated by it.
      */
     public boolean bindWouldChangeNothing(int glTextureId) {
-        return this.boundTextureByUnit[unitIndex(this.activeTextureUnit)] == glTextureId;
+        return this.textures.unchanged(glTextureId);
     }
 
     /** {@return whether {@code TEXTURE_2D} is enabled on unit 0}, the base sampler's unit. */
     public boolean texture2dEnabled() {
-        return this.texture2dEnabledByUnit[0];
+        return this.textures.enabled2d(0);
     }
 
     /** {@return whether {@code TEXTURE_2D} is enabled on {@code unit}}. */
     public boolean texture2dEnabled(int unit) {
-        return this.texture2dEnabledByUnit[unitIndex(unit)];
+        return this.textures.enabled2d(unit);
     }
 
     /** Enables or disables {@code TEXTURE_2D} on the <em>active</em> unit, as {@code GlStateManager} does. */
     public void texture2dEnabled(boolean enabled) {
-        this.texture2dEnabledByUnit[unitIndex(this.activeTextureUnit)] = enabled;
-        if (this.activeTextureUnit == 0) {
-            this.texture2dEnabled = enabled;
-        }
+        this.textures.enabled2d(enabled);
     }
 
     public int shadeModel() {
@@ -834,11 +817,11 @@ public final class VulkanGlState {
     }
 
     public int activeTextureUnit() {
-        return this.activeTextureUnit;
+        return this.textures.activeUnit();
     }
 
     public void activeTextureUnit(int unit) {
-        this.activeTextureUnit = unit;
+        this.textures.activeUnit(unit);
         if (unitSwitchLogs < UNIT_LOG_LIMIT) {
             unitSwitchLogs++;
             System.out.println("[Celtium] CELTIUM_UNIT_SWITCH unit=" + unit
@@ -856,20 +839,20 @@ public final class VulkanGlState {
      */
     public long pipelineKey(int vertexFormatHash) {
         long key = vertexFormatHash;
-        key = (key * 31) + (this.blendEnabled ? 1 : 0);
-        key = (key * 31) + (this.blendEnabled ? this.blendSrcRgb : 0);
-        key = (key * 31) + (this.blendEnabled ? this.blendDstRgb : 0);
-        key = (key * 31) + (this.blendEnabled ? this.blendSrcAlpha : 0);
-        key = (key * 31) + (this.blendEnabled ? this.blendDstAlpha : 0);
+        key = (key * 31) + (this.raster.blendEnabled() ? 1 : 0);
+        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendSrcRgb() : 0);
+        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendDstRgb() : 0);
+        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendSrcAlpha() : 0);
+        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendDstAlpha() : 0);
         // BH-07, BH-10: the equations and the colour write mask bake into the same attachment and must therefore
         // close a pipeline the way the factors do. Before this they were not in the mirror at all, so the Fancy
         // cloud's depth-only pass and the visible pass shared one pipeline and the first pass painted colour.
-        key = (key * 31) + (this.blendEnabled ? this.blendEquationRgb : 0);
-        key = (key * 31) + (this.blendEnabled ? this.blendEquationAlpha : 0);
-        key = (key * 31) + this.colorMask;
+        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendEquationRgb() : 0);
+        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendEquationAlpha() : 0);
+        key = (key * 31) + this.raster.colorMask();
         key = (key * 31) + (this.depthTestEnabled ? this.depthFunc + 1 : 0);
         key = (key * 31) + (this.depthMask ? 1 : 0);
-        key = (key * 31) + (this.cullEnabled ? this.cullFace + 1 : 0);
+        key = (key * 31) + (this.raster.cullEnabled() ? this.raster.cullFace() + 1 : 0);
         key = (key * 31) + (this.alphaTestEnabled ? this.alphaFunc + 1 : 0);
         key = (key * 31) + (this.lightingEnabled ? 1 : 0);
         key = (key * 31) + this.shadeModel;
@@ -878,12 +861,12 @@ public final class VulkanGlState {
 
     /** {@return a one-line description of the state that affects pipeline selection}, for diagnostics */
     public String describe() {
-        return "blend=" + this.blendEnabled + "(" + this.blendSrcRgb + "," + this.blendDstRgb + ","
-                + this.blendSrcAlpha + "," + this.blendDstAlpha + ") eq=" + this.blendEquationRgb + "/"
-                + this.blendEquationAlpha + " writeMask=0x" + Integer.toHexString(this.colorMask)
+        return "blend=" + this.raster.blendEnabled() + "(" + this.raster.blendSrcRgb() + "," + this.raster.blendDstRgb() + ","
+                + this.raster.blendSrcAlpha() + "," + this.raster.blendDstAlpha() + ") eq=" + this.raster.blendEquationRgb() + "/"
+                + this.raster.blendEquationAlpha() + " writeMask=0x" + Integer.toHexString(this.raster.colorMask())
                 + " depthTest=" + this.depthTestEnabled
-                + " depthFunc=" + this.depthFunc + " depthMask=" + this.depthMask + " cull=" + this.cullEnabled
-                + "(" + this.cullFace + ") alphaTest=" + this.alphaTestEnabled + "(" + this.alphaFunc + ","
+                + " depthFunc=" + this.depthFunc + " depthMask=" + this.depthMask + " cull=" + this.raster.cullEnabled()
+                + "(" + this.raster.cullFace() + ") alphaTest=" + this.alphaTestEnabled + "(" + this.alphaFunc + ","
                 + this.alphaRef + ") lighting=" + this.lightingEnabled + " shade=" + this.shadeModel;
     }
 
@@ -892,7 +875,7 @@ public final class VulkanGlState {
             case MATRIX_MODE_PROJECTION:
                 return this.projectionStack;
             case MATRIX_MODE_TEXTURE:
-                return this.activeTextureUnit == 1 ? this.textureStack1 : this.textureStack0;
+                return this.textures.activeUnit() == 1 ? this.textureStack1 : this.textureStack0;
             case MATRIX_MODE_MODELVIEW:
             default:
                 return this.modelViewStack;

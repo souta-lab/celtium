@@ -193,17 +193,9 @@ public final class VulkanModelQuadCapture {
                 // It is filed under a synthetic id so the census still separates the two cases.
                 listId = NO_LIST;
             }
-            // GlStateManager.bindTexture skips the GL call when its per-unit cache already holds the name, and under
-            // GL-less the call it does make is rewritten before any trampoline sees it, so GL_TEXTURE_BINDING_2D
-            // answers 0 for a texture that is bound. The name is recorded where the bind is visible
-            // (GlStateManagerMixin) and read back here; the queries stay as the fallback for a hybrid run, where a real
-            // context exists and its answer is the right one.
-            texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
-            if (texture <= 0) {
-                texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(
-                        org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-            }
-            if (texture <= 0) {
+            if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
+                texture = NativeTextureBindings.current().texture2d(0);
+            } else {
                 texture = celtium$glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
             }
             if (texture <= 0) {

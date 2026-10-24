@@ -62,30 +62,34 @@ public abstract class GlStateManagerMixin {
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
                 if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                    // Asked of GL here: the model's own texture is bound at replay time, and it is not the texture the
-                    // immediate path happened to leave behind.
-                    int boundTexture = 0;
-                    int activeUnit = -1;
-                    try {
-                        activeUnit = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x84E0);
-                        // The name the game last bound, which is the model's own: this hook runs at the replay, and
-                        // the GL query cannot answer it under GL-less (measured: it read 0 for every model list).
-                        boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
-                        if (boundTexture <= 0) {
-                            boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
+                    int boundTexture;
+                    if (org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) {
+                        boundTexture = org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
+                    } else {
+                        // Asked of GL here: the model's own texture is bound at replay time, and it is not the texture the
+                        // immediate path happened to leave behind.
+                        int activeUnit = -1;
+                        try {
+                            activeUnit = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x84E0);
+                            // The name the game last bound, which is the model's own: this hook runs at the replay, and
+                            // the GL query cannot answer it under GL-less (measured: it read 0 for every model list).
+                            boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+                            if (boundTexture <= 0) {
+                                boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
+                            }
+                            if (activeUnit == Integer.MIN_VALUE) {
+                                activeUnit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+                            }
+                            if (boundTexture <= 0) {
+                                boundTexture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                            }
+                            if (!org.soutalab.celtium.vulkan.VulkanDisplayListCensus.textureLogged(list)) {
+                                System.out.println("[Celtium] CELTIUM_MODEL_TEXTURE list=" + list + " unit=" + activeUnit
+                                        + " texture=" + boundTexture);
+                            }
+                        } catch (RuntimeException | LinkageError ignored) {
+                            boundTexture = 0;
                         }
-                        if (activeUnit == Integer.MIN_VALUE) {
-                            activeUnit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-                        }
-                        if (boundTexture <= 0) {
-                            boundTexture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-                        }
-                        if (!org.soutalab.celtium.vulkan.VulkanDisplayListCensus.textureLogged(list)) {
-                            System.out.println("[Celtium] CELTIUM_MODEL_TEXTURE list=" + list + " unit=" + activeUnit
-                                    + " texture=" + boundTexture);
-                        }
-                    } catch (RuntimeException | LinkageError ignored) {
-                        boundTexture = 0;
                     }
                     drawn = vulkan.celtium$drawModelList(list, boundTexture);
                 }
@@ -219,37 +223,14 @@ public abstract class GlStateManagerMixin {
     }
 
     /** Bounded caller census for BH-06: which code binds, and whether it is the light-map id. */
-    private static int celtium$bindCallerLogs;
 
     @Inject(method = "func_179144_i", at = @At("HEAD"), require = 0)
     private static void celtium$bindTexture(int glTextureId, CallbackInfo info) {
-        // The stub's own glBindTexture case does not run under GL-less: the call is rewritten to CeltiumGllessHint by
-        // the coremod transformer before any trampoline sees it (measured: the stub's function census carries only the
-        // capability query). So the name is recorded here, which is the layer that does see every bind, and the model
-        // capture reads it back through CeltiumGlStub. Recorded before the skip below: the skip is about this class's
-        // own mirror, and a value it already holds must not leave the stub's map empty for that unit.
-        try {
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteBoundTexture(glTextureId);
-        } catch (RuntimeException | LinkageError ignored) {
-            // A mirror that fails is a model drawn untextured, not a frame lost.
+        if (org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) {
+            // The API owns this binding even before backend/device creation; mod GL is only another writer.
+            org.soutalab.celtium.vulkan.NativeTextureBindings.current().bindTexture2d(glTextureId);
+            return;
         }
-        if (celtium$bindCallerLogs < 12) {
-            celtium$bindCallerLogs++;
-            StackTraceElement[] frames = Thread.currentThread().getStackTrace();
-            StringBuilder caller = new StringBuilder();
-            for (int i = 2; i < Math.min(frames.length, 6); i++) {
-                caller.append(frames[i].getClassName().replaceAll(".*\\.", "")).append('.')
-                        .append(frames[i].getMethodName()).append(':').append(frames[i].getLineNumber()).append(" <- ");
-            }
-            System.out.println("[Celtium] CELTIUM_BIND_CALLER id=" + glTextureId + " callers=[" + caller + "]");
-        }
-        // The skip: this hook is injected at the method's HEAD, so it runs on every call - including the ones the
-        // game's own per-unit cache (GlStateManager.java:481-488) turns into a no-op before GL ever sees them. The
-        // font renderer binds the same sheet once per glyph, measured at 1,628,711 arrivals for 1,280,000 glyphs, and
-        // a bind the mirror already holds would be written back with the same value. Vanilla's filter sits upstream of
-        // this hook and cannot reach it, so this is not a second filter on the same decision; it removes our own work
-        // per arrival, which is the half of the chain we own. The comparison is per unit inside the mirror, so a
-        // light-map bind on unit 1 is never skipped because unit 0 happens to hold the same name.
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend != null && backend.skipUnchangedBind(glTextureId)) {
             return;

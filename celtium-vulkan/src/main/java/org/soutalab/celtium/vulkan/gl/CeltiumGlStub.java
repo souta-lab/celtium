@@ -547,7 +547,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * of an unbound (unit,target) returns -1 - never a valid GL name. */
     private final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
-    private int activeTexture;
     /**
      * First caller each texture name was bound through, either route - a bound-but-never-uploaded name cannot have
      * its producer reconstructed from the upload records (there are none), which is exactly the state the "no mirror
@@ -564,14 +563,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private static final boolean BIND_SITE_DIAGNOSTICS = Boolean.getBoolean("celtium.debug.bindSites");
     private static final int MAX_BIND_SITES = 4096;
-    /**
-     * A shared ordinal every bind takes, whichever route carried it. The direct-route bind ({@code glBindTexture}
-     * rewritten to a stub call) records the ordinal it took in {@link #directBindOrdinal}; when that equals the shared
-     * clock no bind has superseded it, which is the question the immediate path asks before it applies a direct bind
-     * to the state model - a {@code GlStateManager.bindTexture} after the direct one must not be overwritten.
-     */
-    private int bindSerial;
-    private int directBindOrdinal;
     /** Recorded image extents: key {@code (textureName << 16) | level}, proxy targets key on a name of -target. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
@@ -1295,27 +1286,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         return 0;
     }
 
-    /**
-     * Records the name the game bound, from the layer that sees the bind.
-     *
-     * <p>{@code GL_TEXTURE_BINDING_2D} cannot answer this: there is no context under GL-less, and the stub's own
-     * {@code glBindTexture} case does not run either, because the bind goes through the transformer to
-     * {@code CeltiumGllessHint} first - measured, the stub's function census carries only the capability query.
-     *
-     * <p>Kept in a field of its own rather than in {@link #textureBindings}: that map is the attribution source for
-     * uploads ({@code uploadTargetName}), and it is deliberately empty under GL-less, where the upload path identifies
-     * its texture from the announcement instead. Writing binds into it was measured to black out the terrain - leg
-     * {@code gv-cohort-dl10} with the map written against {@code gv-cohort-dl10old}, the identical scene and flags
-     * with the previous jar, which passed - so this reader gets its own value and changes nothing else.
-     */
+    /** Compatibility entry for callers publishing a 2D bind; normal Minecraft binding writes the native owner. */
     public static void celtium$noteBoundTexture(int texture) {
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
         }
+        stub.textures.bindTexture2d(texture);
         stub.lastBoundTexture = texture;
         stub.noteBindSite(texture);
-        stub.bindSerial++;
     }
 
     /**
@@ -1332,10 +1311,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        stub.textureBindings.put(stub.texBindKey(target), texture);
+        if (target == GL_TEXTURE_2D) stub.textures.bindTexture2d(texture);
+        else stub.textureBindings.put(stub.texBindKey(target), texture);
         stub.lastBoundTexture = texture;
         stub.noteBindSite(texture);
-        stub.directBindOrdinal = ++stub.bindSerial;
     }
 
     /** Records a {@code glActiveTexture} the transformer's route carries, the same record the dispatch case makes. */
@@ -1344,7 +1323,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        stub.activeTexture = Math.max(0, unit - 0x84C0);
+        stub.textures.activeUnit(unit - 0x84C0);
     }
 
     /**
@@ -1360,20 +1339,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         for (int i = 0; i < count; i++) {
             int name = memGetInt(names + (long) i * 4L);
             stub.liveNames.remove(name);
-            stub.forgetTexture(name);
+            stub.deleteTexture(name);
         }
-    }
-
-    /** {@return the shared ordinal of the most recent bind through any route}, for the supersede check. */
-    public static int bindSerial() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.bindSerial;
-    }
-
-    /** {@return the ordinal the most recent direct-route {@code glBindTexture} took}, or 0 when none ran. */
-    public static int directBindOrdinal() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.directBindOrdinal;
     }
 
     /**
@@ -1389,7 +1356,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 || this.firstBindSites.containsKey(Integer.valueOf(texture))) {
             return;
         }
-        this.firstBindSites.put(Integer.valueOf(texture), celtium$callSite() + " unit=" + this.activeTexture);
+        this.firstBindSites.put(Integer.valueOf(texture), celtium$callSite() + " unit=" + this.textures.activeUnit());
     }
 
     /**
@@ -1596,14 +1563,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
     public static int celtium$boundTexture() {
         CeltiumGlStub stub = installed;
-        return stub == null ? -1 : stub.lastBoundTexture;
+        return stub == null ? -1 : stub.textures.texture2d(0);
     }
 
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
     private static final int GL_SCISSOR_TEST = 0x0C11;
 
     /**
-     * GL_DEPTH_TEST: one of the capabilities a deferred draw can outlive. See {@link #drawStateBoundaryHook}.
+     * GL_DEPTH_TEST: one of the capabilities a deferred draw can outlive. See the native state boundary.
      */
     private static final int GL_DEPTH_TEST = 0x0B71;
 
@@ -1620,25 +1587,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      * the main pass's strokes - 585 of 797 shadow pixels lost their main ink in the HEI screen leg (instrument
      * {@code scripts/cpu-contract/font-shadow-main-check.py}).
      */
-    private static volatile Runnable drawStateBoundaryHook;
-
-    /** Registers the draw-state boundary hook; {@code null} clears it. One backend exists at a time. */
+    /** Compatibility registration; the callback belongs to the native state owner. */
     public static void celtium$setDrawStateBoundaryHook(Runnable hook) {
-        drawStateBoundaryHook = hook;
+        org.soutalab.celtium.vulkan.NativeRasterState.current().beforeChange(hook);
     }
 
-    /**
-     * Fires the boundary hook before a tracked record changes. Swallowed errors: a flush failure inside a stub call
-     * must not break the game's own state change, matching every other caller-tolerant path here.
-     */
     private void noteDrawStateBoundary() {
-        Runnable hook = drawStateBoundaryHook;
-        if (hook != null) {
-            try {
-                hook.run();
-            } catch (RuntimeException | LinkageError ignored) {
-            }
-        }
+        this.raster.flushBeforeChange();
     }
 
     /** {@return whether {@code capability} is one whose record the group's capture can read or key a run by}. */
@@ -1651,22 +1606,19 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_POLYGON_OFFSET_FILL = 0x8037;
 
     /** glPolygonOffset's two arguments, in GL's own convention (factor first, then units). */
-    private float polygonOffsetFactor;
-    private float polygonOffsetUnits;
-    private volatile boolean polygonOffsetCalled;
     /** How many glPolygonOffset calls this process made; 0 means the call never reached the stub. */
     private long polygonOffsetCalls;
 
     /** {@return GL's polygon offset factor}, 0 when glPolygonOffset has not been called. */
     public static float polygonOffsetFactor() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0.0F : stub.polygonOffsetFactor;
+        return stub == null ? 0.0F : stub.raster.polygonOffsetFactor();
     }
 
     /** {@return GL's polygon offset units}, 0 when glPolygonOffset has not been called. */
     public static float polygonOffsetUnits() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0.0F : stub.polygonOffsetUnits;
+        return stub == null ? 0.0F : stub.raster.polygonOffsetUnits();
     }
 
     /** {@return how many glPolygonOffset calls reached this stub}. */
@@ -1678,7 +1630,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return whether glPolygonOffset has been called at all}: (0,0) is a legal offset, so the call is the fact. */
     public static boolean polygonOffsetCalled() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.polygonOffsetCalled;
+        return stub != null && stub.raster.polygonOffsetCalled();
     }
 
     /**
@@ -1688,7 +1640,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static boolean polygonOffsetFillEnabled() {
         CeltiumGlStub stub = installed;
         return stub != null
-                && stub.enables[GL_POLYGON_OFFSET_FILL] != 0;
+                && stub.raster.polygonOffsetFillEnabled();
     }
     // BH-08: the cull capability and the two face constants, spelled here the way this class spells GL_SCISSOR_TEST -
     // it deliberately carries no org.lwjgl.opengl import, so the numbers are named where they are used.
@@ -1699,7 +1651,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_CW = 0x0900;
 
     /** The game's clip rectangle as glScissor last set it, in GL's bottom-left coordinates. */
-    private final int[] scissorBox = {0, 0, 1280, 720};
 
     /**
      * Initialize the two context rectangles from the actual drawable, once at window creation.
@@ -1712,10 +1663,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.viewportY = 0;
         stub.viewportW = width;
         stub.viewportH = height;
-        stub.scissorBox[0] = 0;
-        stub.scissorBox[1] = 0;
-        stub.scissorBox[2] = width;
-        stub.scissorBox[3] = height;
+        stub.raster.initializeScissor(width, height);
     }
 
     /** Records the viewport selected through Minecraft's API or LWJGL3's native entry point. */
@@ -1752,11 +1700,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private long scissorToggleCount;
 
     /** Whether glScissor has been called at all: a box of zeros is a legal clip, so the call is what is recorded. */
-    private volatile boolean scissorCalled;
 
     /** The game's cull face and front winding, recorded by their semantic cases (BH-08). */
-    private int cullFaceValue = GL_BACK;
-    private int frontFaceValue = GL_CCW;
     private volatile boolean cullFaceCalled;
     private volatile boolean frontFaceCalled;
 
@@ -1770,19 +1715,19 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static boolean cullEnabled() {
         CeltiumGlStub stub = installed;
         return stub != null
-                && stub.enables[GL_CULL_FACE] != 0;
+                && stub.raster.cullEnabled();
     }
 
     /** {@return the last {@code glCullFace} argument}, or {@code GL_BACK} when it has not been called. */
     public static int cullFace() {
         CeltiumGlStub stub = installed;
-        return stub == null || !stub.cullFaceCalled ? GL_BACK : stub.cullFaceValue;
+        return stub == null || !stub.cullFaceCalled ? GL_BACK : stub.raster.cullFace();
     }
 
     /** {@return the last {@code glFrontFace} argument}, or {@code GL_CCW} when it has not been called. */
     public static int frontFace() {
         CeltiumGlStub stub = installed;
-        return stub == null || !stub.frontFaceCalled ? GL_CCW : stub.frontFaceValue;
+        return stub == null || !stub.frontFaceCalled ? GL_CCW : stub.raster.frontFace();
     }
 
     // BH-07: the blend state, spelled the way this class spells the cull pair above - it deliberately carries no
@@ -1798,16 +1743,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_SRC_ALPHA = 0x0302;
     private static final int GL_ONE_MINUS_SRC_ALPHA = 0x0303;
 
-    private int blendSrcRgb = 1;               // GL_ONE
-    private int blendDstRgb = 0;               // GL_ZERO
-    private int blendSrcAlpha = 1;
-    private int blendDstAlpha = 0;
-    private int blendEquationRgb = GL_FUNC_ADD;
-    private int blendEquationAlpha = GL_FUNC_ADD;
     private volatile boolean blendFactorsCalled;
     private volatile boolean blendEquationCalled;
     /** Bit 0 red, 1 green, 2 blue, 3 alpha: the same nibble Vulkan's VK_COLOR_COMPONENT_*_BIT uses, spelled here. */
-    private volatile int colorMaskBits = 0xF;
     private volatile boolean colorMaskCalled;
 
     /** Calls of each recorded entry point, so "the path was reached" is a number rather than an expectation. */
@@ -1819,7 +1757,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return whether GL_BLEND is enabled}, read from the same {@code enables} map glEnable/glDisable write. */
     public static boolean blendEnabled() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.enables[GL_BLEND] != 0;
+        return stub != null && stub.raster.blendEnabled();
     }
 
     public static boolean blendEnableRecorded() {
@@ -1840,37 +1778,37 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return the RGB source factor GL was last given}, or GL's initial {@code ONE} when it was never told. */
     public static int blendSrcRgb() {
         CeltiumGlStub stub = installed;
-        return stub == null ? GL_SRC_ALPHA : stub.blendSrcRgb;
+        return stub == null ? GL_SRC_ALPHA : stub.raster.blendSrcRgb();
     }
 
     /** {@return the RGB destination factor GL was last given}, or GL's initial {@code ZERO}. */
     public static int blendDstRgb() {
         CeltiumGlStub stub = installed;
-        return stub == null ? GL_ONE_MINUS_SRC_ALPHA : stub.blendDstRgb;
+        return stub == null ? GL_ONE_MINUS_SRC_ALPHA : stub.raster.blendDstRgb();
     }
 
     /** {@return the alpha source factor GL was last given}, or GL's initial {@code ONE}. */
     public static int blendSrcAlpha() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 1 : stub.blendSrcAlpha;
+        return stub == null ? 1 : stub.raster.blendSrcAlpha();
     }
 
     /** {@return the alpha destination factor GL was last given}, or GL's initial {@code ZERO}. */
     public static int blendDstAlpha() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.blendDstAlpha;
+        return stub == null ? 0 : stub.raster.blendDstAlpha();
     }
 
     /** {@return the RGB blend equation GL was last given}, or GL's initial {@code GL_FUNC_ADD}. */
     public static int blendEquationRgb() {
         CeltiumGlStub stub = installed;
-        return stub == null ? GL_FUNC_ADD : stub.blendEquationRgb;
+        return stub == null ? GL_FUNC_ADD : stub.raster.blendEquationRgb();
     }
 
     /** {@return the alpha blend equation GL was last given}, or GL's initial {@code GL_FUNC_ADD}. */
     public static int blendEquationAlpha() {
         CeltiumGlStub stub = installed;
-        return stub == null ? GL_FUNC_ADD : stub.blendEquationAlpha;
+        return stub == null ? GL_FUNC_ADD : stub.raster.blendEquationAlpha();
     }
 
     /**
@@ -1879,7 +1817,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static int colorMask() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0xF : stub.colorMaskBits;
+        return stub == null ? 0xF : stub.raster.colorMask();
     }
 
     /** {@return whether any of the two blend-factor entry points was called at all}. */
@@ -1911,19 +1849,19 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " colorMaskCalls=" + stub.colorMaskCalls.get()
                 + " factorsCalled=" + stub.blendFactorsCalled + " equationCalled=" + stub.blendEquationCalled
                 + " colorMaskCalled=" + stub.colorMaskCalled
-                + " lastFactors=(" + stub.blendSrcRgb + "," + stub.blendDstRgb + ","
-                + stub.blendSrcAlpha + "," + stub.blendDstAlpha + ")"
-                + " lastEquations=(" + stub.blendEquationRgb + "," + stub.blendEquationAlpha + ")"
-                + " lastColorMask=0x" + Integer.toHexString(stub.colorMaskBits);
+                + " lastFactors=(" + stub.raster.blendSrcRgb() + "," + stub.raster.blendDstRgb() + ","
+                + stub.raster.blendSrcAlpha() + "," + stub.raster.blendDstAlpha() + ")"
+                + " lastEquations=(" + stub.raster.blendEquationRgb() + "," + stub.raster.blendEquationAlpha() + ")"
+                + " lastColorMask=0x" + Integer.toHexString(stub.raster.colorMask());
     }
 
     /** {@return the game's clip rectangle}, or {@code null} when glScissor has not been called in this process. */
     public static int[] scissorBox() {
         CeltiumGlStub stub = installed;
-        if (stub == null || !stub.scissorCalled) {
+        if (stub == null || !stub.raster.scissorCalled()) {
             return null;
         }
-        return new int[] {stub.scissorBox[0], stub.scissorBox[1], stub.scissorBox[2], stub.scissorBox[3]};
+        return new int[] {stub.raster.scissorX(), stub.raster.scissorY(), stub.raster.scissorWidth(), stub.raster.scissorHeight()};
     }
 
     /**
@@ -1944,7 +1882,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     public static boolean scissorTest() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.enables[GL_SCISSOR_TEST] != 0;
+        return stub != null && stub.raster.scissorTest();
     }
 
     /**
@@ -1957,27 +1895,27 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static boolean scissorCalled() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.scissorCalled;
+        return stub != null && stub.raster.scissorCalled();
     }
 
     public static int scissorX() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.scissorBox[0];
+        return stub == null ? 0 : stub.raster.scissorX();
     }
 
     public static int scissorY() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.scissorBox[1];
+        return stub == null ? 0 : stub.raster.scissorY();
     }
 
     public static int scissorWidth() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.scissorBox[2];
+        return stub == null ? 0 : stub.raster.scissorWidth();
     }
 
     public static int scissorHeight() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.scissorBox[3];
+        return stub == null ? 0 : stub.raster.scissorHeight();
     }
 
     /** The stream the exit census is written to: the process's own stdout, not the logger Forge put in front of it. */
@@ -2389,7 +2327,22 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " bytes=" + bytes;
     }
 
+    private final org.soutalab.celtium.vulkan.NativeRasterState raster;
+    private final org.soutalab.celtium.vulkan.NativeTextureBindings textures;
+
     private CeltiumGlStub() {
+        this(org.soutalab.celtium.vulkan.NativeRasterState.current(),
+                org.soutalab.celtium.vulkan.NativeTextureBindings.current());
+    }
+
+    private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster) {
+        this(raster, new org.soutalab.celtium.vulkan.NativeTextureBindings(raster));
+    }
+
+    private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster,
+            org.soutalab.celtium.vulkan.NativeTextureBindings textures) {
+        this.raster = raster;
+        this.textures = textures;
         // -1 is "no binding recorded": texture and buffer names are generated ids and never negative, while 0 is
         // the GL "unbound" name a caller can legitimately store.
         this.textureBindings.defaultReturnValue(-1);
@@ -3098,7 +3051,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_GET_STRINGI:
                 return stringIndexed((int) a0, (int) a1);
             case SEM_IS_ENABLED:
-                return ((int) a0 >= 0 && (int) a0 < this.enables.length && this.enables[(int) a0] != 0) ? 1L : 0L;
+                return enabledCap((int) a0) ? 1L : 0L;
             case SEM_ENABLE:
                 setCapability((int) a0, true);
                 return 0L;
@@ -3106,105 +3059,45 @@ public final class CeltiumGlStub implements FunctionProvider {
                 setCapability((int) a0, false);
                 return 0L;
             case SEM_CULL_FACE:
-                if (this.cullFaceValue != (int) a0) {
-                    noteDrawStateBoundary();
-                }
-                this.cullFaceValue = (int) a0;
+                this.raster.cullFace((int) a0);
                 this.cullFaceCalled = true;
                 return 0L;
             case SEM_FRONT_FACE:
-                this.frontFaceValue = (int) a0;
+                this.raster.frontFace((int) a0);
                 this.frontFaceCalled = true;
                 return 0L;
             case SEM_BLEND_FUNC:
-                // glBlendFunc sets the RGB *and* the alpha factors to the same pair (GL 1.0's rule, and what
-                // GlStateManager.blendFunc(int,int) relies on when it forwards the pair unchanged).
                 this.blendFuncCalls.incrementAndGet();
-                if (this.blendSrcRgb != (int) a0 || this.blendDstRgb != (int) a1
-                        || this.blendSrcAlpha != (int) a0 || this.blendDstAlpha != (int) a1) {
-                    noteDrawStateBoundary();
-                }
-                this.blendSrcRgb = (int) a0;
-                this.blendDstRgb = (int) a1;
-                this.blendSrcAlpha = (int) a0;
-                this.blendDstAlpha = (int) a1;
+                this.raster.blendFunc((int) a0, (int) a1, (int) a0, (int) a1);
                 this.blendFactorsCalled = true;
                 return 0L;
             case SEM_BLEND_FUNC_SEPARATE:
-                // The canonical separate entry (OpenGlHelper.glBlendFunc -> GL14.glBlendFuncSeparate). The enum
-                // overload of GlStateManager.tryBlendFuncSeparate delegates to the int one, which lands here, so
-                // recording here and in the mixin writes the same four values rather than two competing ones.
                 this.blendSeparateCalls.incrementAndGet();
-                // Four arguments: the dispatch only names a0/a1 (the two slots most cases need), so the last two
-                // come from the raw slot array - the same trap that bit the scissor case.
-                if (this.blendSrcRgb != (int) c[0] || this.blendDstRgb != (int) c[1]
-                        || this.blendSrcAlpha != (int) c[2] || this.blendDstAlpha != (int) c[3]) {
-                    noteDrawStateBoundary();
-                }
-                this.blendSrcRgb = (int) c[0];
-                this.blendDstRgb = (int) c[1];
-                this.blendSrcAlpha = (int) c[2];
-                this.blendDstAlpha = (int) c[3];
+                this.raster.blendFunc((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 this.blendFactorsCalled = true;
                 return 0L;
             case SEM_BLEND_EQUATION:
-                // glBlendEquation sets both equations; glBlendEquationSeparate below splits them.
                 this.blendEquationCalls.incrementAndGet();
-                if (this.blendEquationRgb != (int) a0 || this.blendEquationAlpha != (int) a0) {
-                    noteDrawStateBoundary();
-                }
-                this.blendEquationRgb = (int) a0;
-                this.blendEquationAlpha = (int) a0;
+                this.raster.blendEquation((int) a0, (int) a0);
                 this.blendEquationCalled = true;
                 return 0L;
             case SEM_BLEND_EQUATION_SEPARATE:
                 this.blendEquationCalls.incrementAndGet();
-                if (this.blendEquationRgb != (int) a0 || this.blendEquationAlpha != (int) a1) {
-                    noteDrawStateBoundary();
-                }
-                this.blendEquationRgb = (int) a0;
-                this.blendEquationAlpha = (int) a1;
+                this.raster.blendEquation((int) a0, (int) a1);
                 this.blendEquationCalled = true;
                 return 0L;
             case SEM_COLOR_MASK:
-                // GLboolean arguments; anything non-zero is "write". Kept as the VK_COLOR_COMPONENT nibble because
-                // that is the form the pipeline attachment takes, and the two bit assignments are the same (R=1,
-                // G=2, B=4, A=8) - spelled out here rather than assumed at the use site.
                 this.colorMaskCalls.incrementAndGet();
-                int newColorMask = ((int) c[0] != 0 ? 0x1 : 0) | ((int) c[1] != 0 ? 0x2 : 0)
-                        | ((int) c[2] != 0 ? 0x4 : 0) | ((int) c[3] != 0 ? 0x8 : 0);
-                if (this.colorMaskBits != newColorMask) {
-                    noteDrawStateBoundary();
-                }
-                this.colorMaskBits = newColorMask;
+                this.raster.colorMask(((int) c[0] != 0 ? 0x1 : 0) | ((int) c[1] != 0 ? 0x2 : 0)
+                        | ((int) c[2] != 0 ? 0x4 : 0) | ((int) c[3] != 0 ? 0x8 : 0));
                 this.colorMaskCalled = true;
                 return 0L;
             case SEM_POLYGON_OFFSET:
-                // BH-11: glPolygonOffset(factor, units) - the two are A_FLOAT slots, so the raw IEEE-754 bits arrive
-                // here and are decoded the way glTexParameterf next door already decodes its float slot. Vanilla's
-                // block-entity and overlay draws call this with (-1, -1) or (-3, -3) to pull coplanar geometry in
-                // front of the face it sits on; with the offset dropped the TESR and the block face z-fight.
-                this.polygonOffsetFactor = Float.intBitsToFloat((int) c[0]);
-                this.polygonOffsetUnits = Float.intBitsToFloat((int) c[1]);
-                this.polygonOffsetCalled = true;
+                this.raster.polygonOffset(Float.intBitsToFloat((int) c[0]), Float.intBitsToFloat((int) c[1]));
                 this.polygonOffsetCalls++;
                 return 0L;
             case SEM_SCISSOR:
-                // GL's rectangle is in the window's own coordinates, bottom-left origin. The Vulkan scissor needs the
-                // top-left flip, which the backend applies where the group's rectangle becomes the scissor - the raw
-                // values are recorded here so the one place that knows the target's height does that arithmetic.
-                if (this.scissorBox[0] != (int) c[0] || this.scissorBox[1] != (int) c[1]
-                        || this.scissorBox[2] != (int) c[2] || this.scissorBox[3] != (int) c[3]) {
-                    noteDrawStateBoundary();
-                }
-                this.scissorBox[0] = (int) c[0];
-                this.scissorBox[1] = (int) c[1];
-                this.scissorBox[2] = (int) c[2];
-                this.scissorBox[3] = (int) c[3];
-                this.scissorCalled = true;
-                // BH-09's deciding number: whether the scene clips at all. A zero here means the leg never touched the
-                // path - a scene gap to name - while a nonzero one means the clip exists and the capture is what is
-                // wrong. lineBatchesNarrowed cannot tell those apart, which is why two legs were read as failures.
+                this.raster.scissor((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 this.scissorCallCount++;
                 return 0L;
             case SEM_GET_INTEGERV:
@@ -3240,14 +3133,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 return 0L;
             case SEM_BIND_TEXTURE:
-                this.textureBindings.put(texBindKey((int) a0), (int) a1);
+                if ((int) a0 == GL_TEXTURE_2D) this.textures.bindTexture2d((int) a1);
+                else this.textureBindings.put(texBindKey((int) a0), (int) a1);
                 noteBindSite((int) a1);
                 return 0L;
             case SEM_ACTIVE_TEXTURE:
                 // The unit index, not the raw enum: the getter adds the GL_TEXTURE0 base back, and a stored enum made
                 // every save/restore round trip add another base (measured as the 0x84C0 ladder in the game's own
                 // active-unit reads), which sent every unit-keyed binding record to a key no reader looked up.
-                this.activeTexture = Math.max(0, (int) a0 - 0x84C0);
+                this.textures.activeUnit((int) a0 - 0x84C0);
                 return 0L;
             case SEM_TEXIMAGE:
                 texImage(c);
@@ -4035,7 +3929,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 int name = memGetInt(names + (long) i * 4L);
                 this.liveNames.remove(name);
                 if (textures) {
-                    forgetTexture(name);
+                    deleteTexture(name);
                 }
                 if (buffers) {
                     forgetBuffer(name);
@@ -4103,6 +3997,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    private void deleteTexture(int name) {
+        this.textures.delete(name);
+        it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
+        while (bindings.hasNext()) {
+            if (this.textureBindings.get(bindings.nextLong()) == name) bindings.remove();
+        }
+        forgetTexture(name);
+    }
+
+    /** Invalidates storage/content for replacement. Unlike deletion, allocation must preserve the current binding. */
     private void forgetTexture(int name) {
         // Parameters are recorded per texture name, and TextureUtil.allocateTexture deletes a name and re-uploads to the
         // same one. Leaving the parameters behind handed the new object the old wrap/filter (measured: WRAP_S stayed
@@ -4114,15 +4018,6 @@ public final class CeltiumGlStub implements FunctionProvider {
             long key = keys.nextLong();
             if ((key & 0xFFFFFFFF00000000L) == keySpace) {
                 keys.remove();
-            }
-        }
-        // Every texture binding that names the deleted object is retired: GL unbinds the target of a deleted texture,
-        // and a later upload to a reused name must not inherit the binding.
-        it.unimi.dsi.fastutil.longs.LongIterator bindingKeys = this.textureBindings.keySet().iterator();
-        while (bindingKeys.hasNext()) {
-            long key = bindingKeys.nextLong();
-            if (this.textureBindings.get(key) == name) {
-                bindingKeys.remove();
             }
         }
         for (int level = 0; level < 256; level++) {
@@ -4253,14 +4148,24 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
     private int getIntegerValue(int pname) {
         switch (pname) {
+            case 0x0BE1: // GL_BLEND_SRC
+            case 0x80C9: return this.raster.blendSrcRgb(); // GL_BLEND_SRC_RGB
+            case 0x0BE0: // GL_BLEND_DST
+            case 0x80C8: return this.raster.blendDstRgb(); // GL_BLEND_DST_RGB
+            case 0x80CB: return this.raster.blendSrcAlpha();
+            case 0x80CA: return this.raster.blendDstAlpha();
+            case 0x8009: return this.raster.blendEquationRgb();
+            case 0x883D: return this.raster.blendEquationAlpha();
+            case 0x0B45: return this.raster.cullFace();
+            case 0x0B46: return this.raster.frontFace();
+
             case 0x8894: // GL_ARRAY_BUFFER_BINDING, including a native API resource's opaque identity
                 return NativeGeometryBuffer.boundId();
             case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
-                int bound = this.textureBindings.get(texBindKey(0x0DE1));
-                return bound < 0 ? 0 : bound;
+                return this.textures.texture2d();
             }
             case 0x84E0: // GL_ACTIVE_TEXTURE
-                return 0x84C0 + this.activeTexture;
+                return 0x84C0 + this.textures.activeUnit();
             case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
                 return this.drawFbo;
             case 0x8CA5: // GL_READ_FRAMEBUFFER_BINDING
@@ -4336,10 +4241,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 memPutInt(out + 12, this.viewportH);
                 return;
             case 0x0C10: // GL_SCISSOR_BOX - independent of the viewport, even when scissor is disabled
-                memPutInt(out, this.scissorBox[0]);
-                memPutInt(out + 4, this.scissorBox[1]);
-                memPutInt(out + 8, this.scissorBox[2]);
-                memPutInt(out + 12, this.scissorBox[3]);
+                memPutInt(out, this.raster.scissorX());
+                memPutInt(out + 4, this.raster.scissorY());
+                memPutInt(out + 8, this.raster.scissorWidth());
+                memPutInt(out + 12, this.raster.scissorHeight());
                 return;
             case 0x8872: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
                 value = 32;
@@ -4482,9 +4387,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         // [0,85,85,85] because only the first byte was written and it was false (#388).
         switch (pname) {
             case 0x0C23: { // GL_COLOR_WRITEMASK
-                int mask = this.colorMaskBits;
+                int mask = this.raster.colorMask();
                 for (int i = 0; i < 4; i++) {
-                    MemoryUtil.memPutByte(out + i, (byte) (((mask >>> (3 - i)) & 1) != 0 ? 1 : 0));
+                    MemoryUtil.memPutByte(out + i, (byte) (((mask >>> i) & 1) != 0 ? 1 : 0));
                 }
                 return;
             }
@@ -4533,6 +4438,14 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return whether a capability this stub records is enabled}. */
     private boolean enabledCap(int cap) {
+        switch (cap) {
+            case GL_BLEND: return this.raster.blendEnabled();
+            case GL_CULL_FACE: return this.raster.cullEnabled();
+            case GL_SCISSOR_TEST: return this.raster.scissorTest();
+            case GL_POLYGON_OFFSET_FILL: return this.raster.polygonOffsetFillEnabled();
+            case GL_TEXTURE_2D: return this.textures.enabled2d(this.textures.activeUnit());
+            default: break;
+        }
         return cap >= 0 && cap < this.enables.length && this.enables[cap] != 0;
     }
 
@@ -4646,8 +4559,15 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         byte next = (byte) (enabled ? 1 : 0);
-        if (this.enables[capability] != next && isDrawStateCapability(capability)) {
-            noteDrawStateBoundary();
+        switch (capability) {
+            case GL_BLEND: this.raster.blendEnabled(enabled); break;
+            case GL_CULL_FACE: this.raster.cullEnabled(enabled); break;
+            case GL_SCISSOR_TEST: this.raster.scissorTest(enabled); break;
+            case GL_POLYGON_OFFSET_FILL: this.raster.polygonOffsetFillEnabled(enabled); break;
+            case GL_TEXTURE_2D: this.textures.enabled2d(enabled); break;
+            default:
+                if (this.enables[capability] != next && isDrawStateCapability(capability)) noteDrawStateBoundary();
+                break;
         }
         this.enables[capability] = next;
         this.capabilityObserved[capability] = true;
@@ -4659,7 +4579,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private long texBindKey(int target) {
-        return ((long) this.activeTexture << 16) | (target & 0xFFFFL);
+        return ((long) this.textures.activeUnit() << 16) | (target & 0xFFFFL);
     }
 
     /**
@@ -4679,7 +4599,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (isProxyTarget(target)) {
             return -target;
         }
-        int bound = this.textureBindings.get(texBindKey(target));
+        int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
         if (bound < 0) {
             // The per-unit map is empty under GL-less, by design: GlStateManager.bindTexture skips the GL call when its
             // own cache already holds the binding, so no glBindTexture arrives for the unit a texture was first bound
@@ -5192,7 +5112,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void forgetTextureAllocation(int name) {
         CeltiumGlStub stub = installed;
         if (stub != null && name > 0) {
-            stub.forgetTexture(name);
+            stub.deleteTexture(name);
         }
     }
 
@@ -5417,7 +5337,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final float[][] texEnvColor = new float[32][4];
 
     private int celtium$texUnit() {
-        return this.activeTexture >= 0 && this.activeTexture < 32 ? this.activeTexture : 0;
+        return this.textures.activeUnit() >= 0 && this.textures.activeUnit() < 32 ? this.textures.activeUnit() : 0;
     }
 
     private void celtium$setTexEnvInt(int target, int pname, int param) {
@@ -5660,7 +5580,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             // A proxy target carries no image and binds to nothing; GL accepts the call and it means nothing.
             return;
         }
-        int bound = this.textureBindings.get(texBindKey(target));
+        int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
         if (bound < 0) {
             // Under GL-less the per-unit map is empty by design: the bind is rewritten before any trampoline sees it
             // (see celtium$noteBoundTexture), so the record is asked for the name the manager last bound. Without this
@@ -5883,7 +5803,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private void celtium$noteTextureCopy(String name, int target, int level, int xoffset, int yoffset,
                                           int x, int y, int width, int height) {
         this.textureCopyRequests++;
-        int dest = this.textureBindings.get(texBindKey(target));
+        int dest = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
         if (dest < 0) {
             // The per-unit map is empty under GL-less by design (the bind is rewritten before any trampoline sees it),
             // so the destination is asked for the name the manager last bound - the same fallback the texture
@@ -5935,7 +5855,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-            vulkan.celtium$getTexImage(stub.lastBoundTexture, level, format, type, address);
+            vulkan.celtium$getTexImage(stub.textures.texture2d(), level, format, type, address);
         }
     }
 
@@ -6995,7 +6915,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             int paramPname = (int) c[1];
             int textureName = 0;
             if (!isProxyTarget(target)) {
-                int bound = this.textureBindings.get(texBindKey(target));
+                int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
                 textureName = bound < 0 ? 0 : bound;
             }
             int value = textureParameterValue(textureName, paramPname);

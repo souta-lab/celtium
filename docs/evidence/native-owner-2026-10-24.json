@@ -1,0 +1,718 @@
+{
+  "sourceRevision": "8fa7923c37e5634c0f650bfcdc0e8e30479f285b",
+  "rendererSha256": "8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe",
+  "fixtureSha256": "e11955be222fe4bfb5cd63a900220055ee854be7a10f2270dd144a9f0dff99b5",
+  "scope": "Vulkan raster/texture binding ownership; pre-existing shadow pipeline work excluded. These CPU contract tests and images do not establish a performance improvement or shaderpack/shadow support.",
+  "cpuTests": {
+    "vulkan": 135,
+    "scriptTests": 69,
+    "failures": 0
+  },
+  "performance": {
+    "initialGuardRejection": "load 3.27 > 2.0",
+    "pairedRun": "native-owner-paired",
+    "input": {
+      "inputs": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/native-owner-clean-20261024/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/native-owner-clean-20261024/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "e11955be222fe4bfb5cd63a900220055ee854be7a10f2270dd144a9f0dff99b5"
+        },
+        "reference": null,
+        "buildProvenance": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/native-owner-clean-20261024/build-provenance.json",
+          "sha256": "60e8dab10c49d4852f968f36ba7eee93a3e4c7594b88984df21e283fe414c39a",
+          "gitHead": "8fa7923c37e5634c0f650bfcdc0e8e30479f285b",
+          "dirtyFiles": []
+        },
+        "control": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/shadow5/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "aa51e39f7d2111126a58768d2d46f65a946c59f51d5330d0d72c93d3139a6d79"
+        },
+        "controlFixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/shadow5/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "4e8616baa7ef11490e0682d03d557d3c6da0d4d8f5de01c1cad67f3c9fe5be3c"
+        },
+        "controlFixtureDiffers": true
+      },
+      "gpu": "amd",
+      "mode": "world",
+      "reps": 3,
+      "duration": 120,
+      "sharedFlags": [
+        "-Dceltium.vulkan.frameDumpEvery=0"
+      ],
+      "celtiumOnlyFlags": [],
+      "initialLoadAverage": 2.57080078125,
+      "loadLimit": 4.0,
+      "loadGuardBypassed": false
+    },
+    "result": {
+      "inputs": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/native-owner-clean-20261024/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/native-owner-clean-20261024/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "e11955be222fe4bfb5cd63a900220055ee854be7a10f2270dd144a9f0dff99b5"
+        },
+        "reference": null,
+        "buildProvenance": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/native-owner-clean-20261024/build-provenance.json",
+          "sha256": "60e8dab10c49d4852f968f36ba7eee93a3e4c7594b88984df21e283fe414c39a",
+          "gitHead": "8fa7923c37e5634c0f650bfcdc0e8e30479f285b",
+          "dirtyFiles": []
+        },
+        "control": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/shadow5/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "aa51e39f7d2111126a58768d2d46f65a946c59f51d5330d0d72c93d3139a6d79"
+        },
+        "controlFixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/shadow5/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "4e8616baa7ef11490e0682d03d557d3c6da0d4d8f5de01c1cad67f3c9fe5be3c"
+        },
+        "controlFixtureDiffers": true
+      },
+      "metric": "frameIntervalWarmP50Ms",
+      "windowWorldTicks": [
+        400,
+        600
+      ],
+      "pairs": [
+        {
+          "repetition": 1,
+          "celtium": {
+            "p50Ms": 2.583964,
+            "p95Ms": 20.266819,
+            "samples": 1847,
+            "worldTicksAtEnd": 619,
+            "rendererSha256": "8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe",
+            "fixtureSha256": "e11955be222fe4bfb5cd63a900220055ee854be7a10f2270dd144a9f0dff99b5",
+            "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+            "jvmArgs": [
+              "-Dceltium.vulkan.glless=true",
+              "-Dceltium.vulkan.presentReadback=true",
+              "-Dfml.readTimeout=120",
+              "-Dceltium.vulkan.validation=true",
+              "-Dceltium.validation=true",
+              "-Dceltium.validation.scene=world",
+              "-Dceltium.validation.keepGui=true",
+              "-Dceltium.validation.minWorldFrames=5",
+              "-Dceltium.validation.pinSections=64",
+              "-Dceltium.validation.screenshotAtTick=200",
+              "-Dceltium.validation.dumpPresentedImage=true",
+              "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-paired-celtium-r1/framedump",
+              "-Dceltium.vulkan.validation=false",
+              "-Dceltium.vulkan.presentReadback=false",
+              "-Dceltium.vulkan.presentedDumpEvery=0",
+              "-Dceltium.vulkan.frameDumpEvery=0",
+              "-Dceltium.validation.warmFromTick=400",
+              "-Dceltium.validation.warmToTick=600",
+              "-Dceltium.validation.holdUntilTick=620"
+            ],
+            "source": {
+              "head": "28fc1c0919da2f6e567f4274a232e75a07706887",
+              "dirty": true,
+              "dirtyFiles": [
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java",
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureBindings.java",
+                " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java",
+                "MM celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+                " M celtium-vulkan/src/main/shaders/shadow_depth.vert",
+                "A  celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeRasterStateOwnershipTest.java",
+                "MM docs/instruments.md",
+                "M  forge122/build.gradle.kts",
+                "M  forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java",
+                "M  forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+                "A  forge122/src/main/resources/icon.png",
+                "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ShadowDepthPipeline.java",
+                "?? celtium-vulkan/src/main/shaders/shadow_depth_vanilla.vert"
+              ]
+            },
+            "conditions": {
+              "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+              "saveSlot": "qmagnet",
+              "renderDistanceUsed": 18,
+              "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+              "captureWidth": 1280,
+              "captureHeight": 720,
+              "renderCloudsAtCapture": 2,
+              "pinnedWorldTime": 6000,
+              "framerateLimitSetting": 260,
+              "vsyncEnabled": false
+            },
+            "leg": "native-owner-paired-celtium-r1"
+          },
+          "control": {
+            "p50Ms": 2.461069,
+            "p95Ms": 8.698924,
+            "samples": 2807,
+            "worldTicksAtEnd": 619,
+            "rendererSha256": "aa51e39f7d2111126a58768d2d46f65a946c59f51d5330d0d72c93d3139a6d79",
+            "fixtureSha256": "4e8616baa7ef11490e0682d03d557d3c6da0d4d8f5de01c1cad67f3c9fe5be3c",
+            "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+            "jvmArgs": [
+              "-Dceltium.vulkan.glless=true",
+              "-Dceltium.vulkan.presentReadback=true",
+              "-Dfml.readTimeout=120",
+              "-Dceltium.vulkan.validation=true",
+              "-Dceltium.validation=true",
+              "-Dceltium.validation.scene=world",
+              "-Dceltium.validation.keepGui=true",
+              "-Dceltium.validation.minWorldFrames=5",
+              "-Dceltium.validation.pinSections=64",
+              "-Dceltium.validation.screenshotAtTick=200",
+              "-Dceltium.validation.dumpPresentedImage=true",
+              "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-paired-control-r1/framedump",
+              "-Dceltium.vulkan.validation=false",
+              "-Dceltium.vulkan.presentReadback=false",
+              "-Dceltium.vulkan.presentedDumpEvery=0",
+              "-Dceltium.vulkan.frameDumpEvery=0",
+              "-Dceltium.validation.warmFromTick=400",
+              "-Dceltium.validation.warmToTick=600",
+              "-Dceltium.validation.holdUntilTick=620"
+            ],
+            "source": {
+              "head": "28fc1c0919da2f6e567f4274a232e75a07706887",
+              "dirty": true,
+              "dirtyFiles": [
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java",
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureBindings.java",
+                " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java",
+                "MM celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+                " M celtium-vulkan/src/main/shaders/shadow_depth.vert",
+                "A  celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeRasterStateOwnershipTest.java",
+                "MM docs/instruments.md",
+                "M  forge122/build.gradle.kts",
+                "M  forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java",
+                "M  forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+                "A  forge122/src/main/resources/icon.png",
+                "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ShadowDepthPipeline.java",
+                "?? celtium-vulkan/src/main/shaders/shadow_depth_vanilla.vert"
+              ]
+            },
+            "conditions": {
+              "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+              "saveSlot": "qmagnet",
+              "renderDistanceUsed": 18,
+              "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+              "captureWidth": 1280,
+              "captureHeight": 720,
+              "renderCloudsAtCapture": 2,
+              "pinnedWorldTime": 6000,
+              "framerateLimitSetting": 260,
+              "vsyncEnabled": false
+            },
+            "leg": "native-owner-paired-control-r1"
+          }
+        },
+        {
+          "repetition": 2,
+          "control": {
+            "p50Ms": 2.602471,
+            "p95Ms": 17.620403,
+            "samples": 2005,
+            "worldTicksAtEnd": 619,
+            "rendererSha256": "aa51e39f7d2111126a58768d2d46f65a946c59f51d5330d0d72c93d3139a6d79",
+            "fixtureSha256": "4e8616baa7ef11490e0682d03d557d3c6da0d4d8f5de01c1cad67f3c9fe5be3c",
+            "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+            "jvmArgs": [
+              "-Dceltium.vulkan.glless=true",
+              "-Dceltium.vulkan.presentReadback=true",
+              "-Dfml.readTimeout=120",
+              "-Dceltium.vulkan.validation=true",
+              "-Dceltium.validation=true",
+              "-Dceltium.validation.scene=world",
+              "-Dceltium.validation.keepGui=true",
+              "-Dceltium.validation.minWorldFrames=5",
+              "-Dceltium.validation.pinSections=64",
+              "-Dceltium.validation.screenshotAtTick=200",
+              "-Dceltium.validation.dumpPresentedImage=true",
+              "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-paired-control-r2/framedump",
+              "-Dceltium.vulkan.validation=false",
+              "-Dceltium.vulkan.presentReadback=false",
+              "-Dceltium.vulkan.presentedDumpEvery=0",
+              "-Dceltium.vulkan.frameDumpEvery=0",
+              "-Dceltium.validation.warmFromTick=400",
+              "-Dceltium.validation.warmToTick=600",
+              "-Dceltium.validation.holdUntilTick=620"
+            ],
+            "source": {
+              "head": "28fc1c0919da2f6e567f4274a232e75a07706887",
+              "dirty": true,
+              "dirtyFiles": [
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java",
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureBindings.java",
+                " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java",
+                "MM celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+                " M celtium-vulkan/src/main/shaders/shadow_depth.vert",
+                "A  celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeRasterStateOwnershipTest.java",
+                "MM docs/instruments.md",
+                "M  forge122/build.gradle.kts",
+                "M  forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java",
+                "M  forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+                "A  forge122/src/main/resources/icon.png",
+                "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ShadowDepthPipeline.java",
+                "?? celtium-vulkan/src/main/shaders/shadow_depth_vanilla.vert"
+              ]
+            },
+            "conditions": {
+              "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+              "saveSlot": "qmagnet",
+              "renderDistanceUsed": 18,
+              "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+              "captureWidth": 1280,
+              "captureHeight": 720,
+              "renderCloudsAtCapture": 2,
+              "pinnedWorldTime": 6000,
+              "framerateLimitSetting": 260,
+              "vsyncEnabled": false
+            },
+            "leg": "native-owner-paired-control-r2"
+          },
+          "celtium": {
+            "p50Ms": 2.531652,
+            "p95Ms": 16.44765,
+            "samples": 2417,
+            "worldTicksAtEnd": 619,
+            "rendererSha256": "8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe",
+            "fixtureSha256": "e11955be222fe4bfb5cd63a900220055ee854be7a10f2270dd144a9f0dff99b5",
+            "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+            "jvmArgs": [
+              "-Dceltium.vulkan.glless=true",
+              "-Dceltium.vulkan.presentReadback=true",
+              "-Dfml.readTimeout=120",
+              "-Dceltium.vulkan.validation=true",
+              "-Dceltium.validation=true",
+              "-Dceltium.validation.scene=world",
+              "-Dceltium.validation.keepGui=true",
+              "-Dceltium.validation.minWorldFrames=5",
+              "-Dceltium.validation.pinSections=64",
+              "-Dceltium.validation.screenshotAtTick=200",
+              "-Dceltium.validation.dumpPresentedImage=true",
+              "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-paired-celtium-r2/framedump",
+              "-Dceltium.vulkan.validation=false",
+              "-Dceltium.vulkan.presentReadback=false",
+              "-Dceltium.vulkan.presentedDumpEvery=0",
+              "-Dceltium.vulkan.frameDumpEvery=0",
+              "-Dceltium.validation.warmFromTick=400",
+              "-Dceltium.validation.warmToTick=600",
+              "-Dceltium.validation.holdUntilTick=620"
+            ],
+            "source": {
+              "head": "28fc1c0919da2f6e567f4274a232e75a07706887",
+              "dirty": true,
+              "dirtyFiles": [
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java",
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureBindings.java",
+                " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java",
+                "MM celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+                " M celtium-vulkan/src/main/shaders/shadow_depth.vert",
+                "A  celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeRasterStateOwnershipTest.java",
+                "MM docs/instruments.md",
+                "M  forge122/build.gradle.kts",
+                "M  forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java",
+                "M  forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+                "A  forge122/src/main/resources/icon.png",
+                "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ShadowDepthPipeline.java",
+                "?? celtium-vulkan/src/main/shaders/shadow_depth_vanilla.vert"
+              ]
+            },
+            "conditions": {
+              "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+              "saveSlot": "qmagnet",
+              "renderDistanceUsed": 18,
+              "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+              "captureWidth": 1280,
+              "captureHeight": 720,
+              "renderCloudsAtCapture": 2,
+              "pinnedWorldTime": 6000,
+              "framerateLimitSetting": 260,
+              "vsyncEnabled": false
+            },
+            "leg": "native-owner-paired-celtium-r2"
+          }
+        },
+        {
+          "repetition": 3,
+          "celtium": {
+            "p50Ms": 2.55632,
+            "p95Ms": 9.842649,
+            "samples": 2767,
+            "worldTicksAtEnd": 619,
+            "rendererSha256": "8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe",
+            "fixtureSha256": "e11955be222fe4bfb5cd63a900220055ee854be7a10f2270dd144a9f0dff99b5",
+            "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+            "jvmArgs": [
+              "-Dceltium.vulkan.glless=true",
+              "-Dceltium.vulkan.presentReadback=true",
+              "-Dfml.readTimeout=120",
+              "-Dceltium.vulkan.validation=true",
+              "-Dceltium.validation=true",
+              "-Dceltium.validation.scene=world",
+              "-Dceltium.validation.keepGui=true",
+              "-Dceltium.validation.minWorldFrames=5",
+              "-Dceltium.validation.pinSections=64",
+              "-Dceltium.validation.screenshotAtTick=200",
+              "-Dceltium.validation.dumpPresentedImage=true",
+              "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-paired-celtium-r3/framedump",
+              "-Dceltium.vulkan.validation=false",
+              "-Dceltium.vulkan.presentReadback=false",
+              "-Dceltium.vulkan.presentedDumpEvery=0",
+              "-Dceltium.vulkan.frameDumpEvery=0",
+              "-Dceltium.validation.warmFromTick=400",
+              "-Dceltium.validation.warmToTick=600",
+              "-Dceltium.validation.holdUntilTick=620"
+            ],
+            "source": {
+              "head": "28fc1c0919da2f6e567f4274a232e75a07706887",
+              "dirty": true,
+              "dirtyFiles": [
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java",
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureBindings.java",
+                " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java",
+                "MM celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+                " M celtium-vulkan/src/main/shaders/shadow_depth.vert",
+                "A  celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeRasterStateOwnershipTest.java",
+                "MM docs/instruments.md",
+                "M  forge122/build.gradle.kts",
+                "M  forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java",
+                "M  forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+                "A  forge122/src/main/resources/icon.png",
+                "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ShadowDepthPipeline.java",
+                "?? celtium-vulkan/src/main/shaders/shadow_depth_vanilla.vert"
+              ]
+            },
+            "conditions": {
+              "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+              "saveSlot": "qmagnet",
+              "renderDistanceUsed": 18,
+              "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+              "captureWidth": 1280,
+              "captureHeight": 720,
+              "renderCloudsAtCapture": 2,
+              "pinnedWorldTime": 6000,
+              "framerateLimitSetting": 260,
+              "vsyncEnabled": false
+            },
+            "leg": "native-owner-paired-celtium-r3"
+          },
+          "control": {
+            "p50Ms": 2.286468,
+            "p95Ms": 6.060303,
+            "samples": 3918,
+            "worldTicksAtEnd": 619,
+            "rendererSha256": "aa51e39f7d2111126a58768d2d46f65a946c59f51d5330d0d72c93d3139a6d79",
+            "fixtureSha256": "4e8616baa7ef11490e0682d03d557d3c6da0d4d8f5de01c1cad67f3c9fe5be3c",
+            "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+            "jvmArgs": [
+              "-Dceltium.vulkan.glless=true",
+              "-Dceltium.vulkan.presentReadback=true",
+              "-Dfml.readTimeout=120",
+              "-Dceltium.vulkan.validation=true",
+              "-Dceltium.validation=true",
+              "-Dceltium.validation.scene=world",
+              "-Dceltium.validation.keepGui=true",
+              "-Dceltium.validation.minWorldFrames=5",
+              "-Dceltium.validation.pinSections=64",
+              "-Dceltium.validation.screenshotAtTick=200",
+              "-Dceltium.validation.dumpPresentedImage=true",
+              "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-paired-control-r3/framedump",
+              "-Dceltium.vulkan.validation=false",
+              "-Dceltium.vulkan.presentReadback=false",
+              "-Dceltium.vulkan.presentedDumpEvery=0",
+              "-Dceltium.vulkan.frameDumpEvery=0",
+              "-Dceltium.validation.warmFromTick=400",
+              "-Dceltium.validation.warmToTick=600",
+              "-Dceltium.validation.holdUntilTick=620"
+            ],
+            "source": {
+              "head": "28fc1c0919da2f6e567f4274a232e75a07706887",
+              "dirty": true,
+              "dirtyFiles": [
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java",
+                "A  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureBindings.java",
+                " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java",
+                "MM celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+                "M  celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+                " M celtium-vulkan/src/main/shaders/shadow_depth.vert",
+                "A  celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeRasterStateOwnershipTest.java",
+                "MM docs/instruments.md",
+                "M  forge122/build.gradle.kts",
+                "M  forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java",
+                "M  forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+                "A  forge122/src/main/resources/icon.png",
+                "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ShadowDepthPipeline.java",
+                "?? celtium-vulkan/src/main/shaders/shadow_depth_vanilla.vert"
+              ]
+            },
+            "conditions": {
+              "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+              "saveSlot": "qmagnet",
+              "renderDistanceUsed": 18,
+              "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+              "captureWidth": 1280,
+              "captureHeight": 720,
+              "renderCloudsAtCapture": 2,
+              "pinnedWorldTime": 6000,
+              "framerateLimitSetting": 260,
+              "vsyncEnabled": false
+            },
+            "leg": "native-owner-paired-control-r3"
+          }
+        }
+      ],
+      "pairRatios": [],
+      "medianPairRatio": null,
+      "verdict": "NO_SPEED_VERDICT",
+      "scope": "fixture frame intervals; startup/build reported separately; includes simulation, GUI and limiter; no automatic noise margin or significance claim; repetitions [1] produced fewer than two thirds of their peers' frames, so the arms did not run on the same machine - no verdict from them; measured under external load 2.57 -> 5.45 (limit 4, override recorded): ratios only, not absolute frame times; load rose during the run (2.57 -> 5.45): the pairs compare different machine states, so no verdict is safe",
+      "disturbedRepetitions": [
+        1
+      ],
+      "controlRatios": [
+        0.9727877851472696,
+        1.1180213324656194
+      ],
+      "medianControlRatio": 1.0454045588064445,
+      "controlScope": "candidate against the control build, interleaved in the same repetitions; cancels between-leg machine drift, does not compare against the reference",
+      "environment": {
+        "initialLoadAverage": 2.57080078125,
+        "finalLoadAverage": 5.4501953125,
+        "loadLimit": 4.0,
+        "cpuCount": 6,
+        "guardBypassed": false
+      }
+    },
+    "conclusion": "NO_SPEED_VERDICT. Load rose 2.57 -> 5.45; repetition 1 was starved. Two remaining ratios 0.973/1.118 disagree. Nominal median 1.045 is not evidence of improvement or regression."
+  },
+  "legs": [
+    {
+      "leg": "native-owner-clean-amd",
+      "accepted": true,
+      "fixtureStatus": "PASSED",
+      "gpu": "AMD Radeon RX 6400 (RADV NAVI24)",
+      "gpuRequirementMet": true,
+      "validationClean": true,
+      "validationMessageCount": 0,
+      "scene": "world",
+      "camera": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+      "flags": [
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=world",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-clean-amd/framedump",
+        "-Dceltium.validation.gameScreenshot=true",
+        "-Dceltium.validation.menuHoldTicks=60",
+        "-Dceltium.validation.dumpPresentedMenuTick=40"
+      ],
+      "pictures": {
+        "world-amd": "docs/evidence/native-owner-world-amd-2026-10-24.png",
+        "menu": "docs/evidence/native-owner-menu-2026-10-24.png"
+      },
+      "gameScreenshotBlack": false,
+      "scope": "calibrated scene gate",
+      "gameScreenshotEqualsPresented": true
+    },
+    {
+      "leg": "native-owner-clean-intel",
+      "accepted": true,
+      "fixtureStatus": "PASSED",
+      "gpu": "Intel(R) UHD Graphics 630 (CFL GT2)",
+      "gpuRequirementMet": true,
+      "validationClean": true,
+      "validationMessageCount": 0,
+      "scene": "world",
+      "camera": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+      "flags": [
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=world",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-clean-intel/framedump",
+        "-Dceltium.validation.gameScreenshot=true"
+      ],
+      "pictures": {
+        "world-intel": "docs/evidence/native-owner-world-intel-2026-10-24.png"
+      },
+      "gameScreenshotBlack": false,
+      "scope": "calibrated scene gate",
+      "gameScreenshotEqualsPresented": true
+    },
+    {
+      "leg": "native-owner-clean-video",
+      "accepted": true,
+      "fixtureStatus": "PASSED",
+      "gpu": "AMD Radeon RX 6400 (RADV NAVI24)",
+      "gpuRequirementMet": true,
+      "validationClean": true,
+      "validationMessageCount": 0,
+      "scene": "videoSettings",
+      "camera": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+      "flags": [
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-clean-video/framedump",
+        "-Dceltium.validation.scene=videoSettings"
+      ],
+      "pictures": {
+        "video-settings": "docs/evidence/native-owner-video-settings-2026-10-24.png"
+      },
+      "gameScreenshotBlack": null,
+      "scope": "calibrated scene gate"
+    },
+    {
+      "leg": "native-owner-clean-recipe",
+      "accepted": false,
+      "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+      "gpu": "AMD Radeon RX 6400 (RADV NAVI24)",
+      "gpuRequirementMet": true,
+      "validationClean": true,
+      "validationMessageCount": 0,
+      "scene": "terrain",
+      "camera": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+      "flags": [
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-clean-recipe/framedump",
+        "-Dceltium.validation.jeiScreen=true",
+        "-Dceltium.validation.jeiRecipe=true",
+        "-Dceltium.validation.keepInventoryScreen=true"
+      ],
+      "pictures": {
+        "hei-recipe": "docs/evidence/native-owner-hei-recipe-2026-10-24.png"
+      },
+      "gameScreenshotBlack": null,
+      "scope": "UNCALIBRATED: captured and visually inspected, not calibrated acceptance"
+    },
+    {
+      "leg": "native-owner-clean-hei",
+      "accepted": false,
+      "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+      "gpu": "AMD Radeon RX 6400 (RADV NAVI24)",
+      "gpuRequirementMet": true,
+      "validationClean": true,
+      "validationMessageCount": 0,
+      "scene": "terrain",
+      "camera": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+      "flags": [
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=terrain",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-owner-clean-hei/framedump",
+        "-Dceltium.validation.jeiScreen=true",
+        "-Dceltium.validation.keepInventoryScreen=true"
+      ],
+      "pictures": {
+        "hei-inventory": "docs/evidence/native-owner-hei-inventory-2026-10-24.png"
+      },
+      "gameScreenshotBlack": null,
+      "scope": "UNCALIBRATED: captured and visually inspected, not calibrated acceptance"
+    }
+  ],
+  "rejectedAttempts": [
+    {
+      "leg": "raster-owner-amd-a",
+      "verdict": "FAILED",
+      "fixtureStatus": null,
+      "reason": "wrong 0.6 profile/LWJGL generation"
+    },
+    {
+      "leg": "texture-owner-amd-a",
+      "verdict": "FAILED",
+      "fixtureStatus": "FAILED_PRESENTED_IMAGE",
+      "reason": "texture allocation incorrectly removed current binding; superseded by clean source revision above"
+    },
+    {
+      "leg": "texture-owner-amd-b",
+      "verdict": "FAILED",
+      "fixtureStatus": "FAILED_PRESENTED_IMAGE",
+      "reason": "texture allocation incorrectly removed current binding; superseded by clean source revision above"
+    },
+    {
+      "leg": "texture-owner-amd-c",
+      "verdict": "FAILED",
+      "fixtureStatus": "FAILED_PRESENTED_IMAGE",
+      "reason": "texture allocation incorrectly removed current binding; superseded by clean source revision above"
+    },
+    {
+      "leg": "texture-owner-diagnostic",
+      "verdict": "FAILED",
+      "fixtureStatus": "FAILED_PRESENTED_IMAGE",
+      "reason": "texture allocation incorrectly removed current binding; superseded by clean source revision above"
+    }
+  ]
+}

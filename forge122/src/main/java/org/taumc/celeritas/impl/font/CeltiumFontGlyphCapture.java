@@ -1335,6 +1335,9 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@return the GL name the font's own texture is bound under, or 0 when the read fails}. */
     private static int celtium$boundTexture() {
+        if (org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) {
+            return org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
+        }
         try {
             return org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
         } catch (RuntimeException | LinkageError error) {

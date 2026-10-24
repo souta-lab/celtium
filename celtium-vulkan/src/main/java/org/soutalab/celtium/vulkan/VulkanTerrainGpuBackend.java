@@ -1072,7 +1072,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     // ---------------------------------------------------------------- immediate-mode drawing (Forge API swap)
 
     /** The state the GlStateManager Mixin mirrors into; the draw entry turns it into a pipeline key. */
-    private final VulkanGlState immediateState = new VulkanGlState();
+    private final NativeRasterState rasterState = NativeRasterState.current();
+    private final VulkanGlState immediateState = new VulkanGlState(this.rasterState, NativeTextureBindings.current());
     private String immediateLastRefusal = "unrecorded";
     /**
      * The shape the unrecorded marker stands for, stored primitive: the offer path used to build the full
@@ -1494,14 +1495,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             @Override public boolean cullEnabled() { return VulkanTerrainGpuBackend.this.immediateState.cullEnabled(); }
             @Override public int colorMask() { return VulkanTerrainGpuBackend.this.immediateState.colorMask(); }
             @Override public long scissorKey() {
-                if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
-                        || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled()) {
+                if (!VulkanTerrainGpuBackend.this.rasterState.scissorTest()
+                        || !VulkanTerrainGpuBackend.this.rasterState.scissorCalled()) {
                     return 0L;
                 }
-                return ((long) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorX() << 48)
-                        | ((long) (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorY() & 0xFFFF) << 32)
-                        | ((long) (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorWidth() & 0xFFFF) << 16)
-                        | (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorHeight() & 0xFFFF);
+                return ((long) VulkanTerrainGpuBackend.this.rasterState.scissorX() << 48)
+                        | ((long) (VulkanTerrainGpuBackend.this.rasterState.scissorY() & 0xFFFF) << 32)
+                        | ((long) (VulkanTerrainGpuBackend.this.rasterState.scissorWidth() & 0xFFFF) << 16)
+                        | (VulkanTerrainGpuBackend.this.rasterState.scissorHeight() & 0xFFFF);
             }
         });
         this.fontBatch.celtium$setFontRunSink(new FontBatch.RunSink() {
@@ -1509,11 +1510,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return VulkanTerrainGpuBackend.this.celtium$submitFontRun(run);
             }
         });
-        // The boundary for the callers that bypass the mirror: raw GL11 calls change the stub's records - which the
-        // group's capture reads live for blend, cull, colour mask and scissor - without touching the setters above, so
-        // the stub itself reports those writes. The mixin-bridged setters already flush before the mirror moves.
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$setDrawStateBoundaryHook(
-                () -> celtium$fontDrawStateBoundary());
+        // Both native API setters and raw-GL adapter writes flush deferred glyphs before changing shared state.
+        this.rasterState.beforeChange(() -> celtium$fontDrawStateBoundary());
     }
 
 
@@ -1568,8 +1566,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     private int lazyMirrorSupplies;
     private int lazyMirrorFailures;
-    /** The direct-route bind ordinal already folded into the state model; see the sync in submitImmediateBatch. */
-    private int lastDirectBindApplied;
     /**
      * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
      * that failed. A texture the game allocated empty (a framebuffer attachment, say) carries no pixels for the supply
@@ -4266,7 +4262,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * renderer where a GL query buys something a hook cannot supply.
      */
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
-        int bound = this.immediateState.boundTextureName();
+        int bound = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))
+                ? NativeTextureBindings.current().texture2d() : this.immediateState.boundTextureName();
         compareBoundTextureWithGl(bound);
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
@@ -4570,10 +4567,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return true;
         }
         int[] captured = this.currentGroupScissor;
-        return captured[0] == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorX()
-                && captured[1] == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorY()
-                && captured[2] == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorWidth()
-                && captured[3] == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorHeight();
+        return captured[0] == this.rasterState.scissorX()
+                && captured[1] == this.rasterState.scissorY()
+                && captured[2] == this.rasterState.scissorWidth()
+                && captured[3] == this.rasterState.scissorHeight();
     }
 
     /** Scratch for the per-offer fog comparison: eight floats reused instead of allocated ~280 times a frame. */
@@ -4947,7 +4944,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     @Override
     public void invalidateBoundTexture() {
         this.lastInvalidationOrigin = "invalidateBoundTexture";
-        int bound = this.immediateState.boundTextureName();
+        int bound = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))
+                ? NativeTextureBindings.current().texture2d() : this.immediateState.boundTextureName();
         if (bound != 0) {
             invalidateTexture(bound);
         }
@@ -7131,24 +7129,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 compareMirroredAndLiveMatrices();
             }
             int boundTexture = this.immediateState.boundTextureName();
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                // A mod that binds with raw GL11.glBindTexture changes the binding the same way a GlStateManager
-                // call does, but it never passes the mixin - until the transformer route existed the call was a
-                // no-op, which is what left texture 506's upload filed under the game's last bind. The route records
-                // the bind; the shared ordinal answers whether anything superseded it since, so a GlStateManager
-                // bind after the direct one is not overwritten.
-                int directOrdinal = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.directBindOrdinal();
-                if (directOrdinal != 0 && directOrdinal == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.bindSerial()
-                        && directOrdinal != this.lastDirectBindApplied) {
-                    this.lastDirectBindApplied = directOrdinal;
-                    int direct = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                            .celtium$getInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-                    if (direct != Integer.MIN_VALUE && direct != boundTexture) {
-                        this.immediateState.bindTexture(direct);
-                        boundTexture = direct;
-                    }
-                }
-            }
             this.currentImmediateTexture = boundTexture;
             if (boundTexture != 0 && VulkanTextureFault.shouldFail("immediate")) {
                 this.textureUploadFailures++;
@@ -7413,9 +7393,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // this group either. The rectangle is compared against the one captured when the group opened, at the
             // offer, and the four value readers are used rather than scissorBox() because this runs on every batch
             // and that method builds an array.
-            boolean liveScissorApplies = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
-                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled();
+            boolean liveScissorApplies = this.rasterState.scissorTest()
+                    && this.rasterState.scissorCalled();
             boolean scissorMoved = GROUP_SCISSOR && this.currentImmediateMesh != null
                     && !celtium$sameScissor(liveScissorApplies);
             if (scissorMoved) {
@@ -7646,20 +7625,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // BH-09/OPT-10: the clip rectangle the batch was offered under, captured here rather than read at
                 // flush time. Reading it live applied the last rectangle of a scissor change to every batch in the
                 // group, which is the same "state must reach the group" rule the fog and the state follow.
-                int[] liveScissor = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox() : null;
+                int[] liveScissor = this.rasterState.scissorBox();
                 this.currentGroupScissor = liveScissor == null ? null : liveScissor.clone();
                 this.currentGroupScissorEnabled = liveScissor != null
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest();
+                        && this.rasterState.scissorTest();
                 // BH-11: the polygon offset the batch was offered under, captured here for the same reason - vanilla
                 // brackets the break overlay's draws with enable/disable, so reading it at draw time loses it.
-                this.currentGroupPolygonOffsetEnabled = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled();
-                this.currentGroupPolygonOffsetFactor = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFactor() : 0.0F;
-                this.currentGroupPolygonOffsetUnits = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetUnits() : 0.0F;
+                this.currentGroupPolygonOffsetEnabled = this.rasterState.polygonOffsetCalled()
+                        && this.rasterState.polygonOffsetFillEnabled();
+                this.currentGroupPolygonOffsetFactor = this.rasterState.polygonOffsetFactor();
+                this.currentGroupPolygonOffsetUnits = this.rasterState.polygonOffsetUnits();
                 // BH-05: the lighting belongs to the batch that opened the group, so it is read from the state saved
                 // two lines above while that state is still the live one. Reading it at close time instead let a later
                 // light change shade vertices that had already been accepted.
@@ -8348,9 +8323,8 @@ this.frameBufferOpen = false;
         }
         // BH-09: the clip rectangle is per-draw state, compared against the group's opening capture.
         if (GROUP_SCISSOR && !celtium$sameScissor(
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled())) {
+                this.rasterState.scissorTest()
+                        && this.rasterState.scissorCalled())) {
             return false;
         }
         // BH-04: the current colour is group state for the colourless layouts (and for 9, the same rule as the slow path).
@@ -8388,39 +8362,7 @@ this.frameBufferOpen = false;
      */
     private final int[] celtium$stateScratch = new int[15];
 
-    /** Merge only state the callback provider actually observed, never its untouched defaults. */
-    private void celtium$mergeRecordedDrawState() {
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendFactorsRecorded()) {
-                this.immediateState.blendFunc(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcRgb(),
-                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstRgb(),
-                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcAlpha(),
-                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstAlpha());
-            }
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationRecorded()) {
-                this.immediateState.blendEquation(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationRgb(),
-                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationAlpha());
-            }
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMaskRecorded()) {
-                this.immediateState.colorMask(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMask());
-            }
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEnableRecorded()) {
-                this.immediateState.blendEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEnabled());
-            }
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnableRecorded()) {
-                this.immediateState.cullEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnabled());
-            }
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFaceRecorded()) {
-                this.immediateState.cullFace(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFace());
-            }
-        }
-    }
-
     private int[] celtium$captureState() {
-        // LWJGL3's native replacement can bypass callback dispatch while Minecraft's wrapper hooks still
-        // capture state. Installing the provider does not mean its defaults are observations. Erasing the
-        // wrapper's blend state made the multiplicative vignette an opaque fullscreen overwrite.
-        celtium$mergeRecordedDrawState();
         boolean blend = this.immediateState.blendEnabled();
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
@@ -9622,7 +9564,12 @@ this.frameBufferOpen = false;
         if (this.lightmapTexture != null) {
             return;
         }
-        if (this.lightmapGlId <= 0 && this.lightmapUnit > 0) {
+        boolean nativeFrontend = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
+        if (nativeFrontend) {
+            int resource = LightmapIdSource.lightmapTextureId();
+            if (resource > 0) this.lightmapGlId = resource;
+        }
+        if (!nativeFrontend && this.lightmapGlId <= 0 && this.lightmapUnit > 0) {
             // The id is asked of GL on the unit the mod side named, rather than remembered: the reallocation path zeroes
             // it. The previous active unit is restored, so this is a query and not a state change.
             try {
@@ -10142,15 +10089,12 @@ this.frameBufferOpen = false;
      */
     private int whiteTextureId() {
         if (this.whiteTextureGlId == 0) {
-            int id = org.lwjgl.opengl.GL11.glGenTextures();
-            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, id);
-            java.nio.ByteBuffer pixel = java.nio.ByteBuffer.allocateDirect(4);
-            pixel.put((byte) 0xFF).put((byte) 0xFF).put((byte) 0xFF).put((byte) 0xFF).flip();
-            org.lwjgl.opengl.GL11.glTexImage2D(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_RGBA, 1, 1,
-                    0, org.lwjgl.opengl.GL11.GL_RGBA, org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE, pixel);
-            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D,
-                    this.immediateState.boundTextureName());
-            this.whiteTextureGlId = id;
+            if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                ByteBuffer pixel = stack.malloc(4);
+                pixel.putInt(0, -1);
+                this.whiteTextureGlId = this.textureRegistry.createTexture2d(1, 1, true, pixel);
+            }
         }
         return this.whiteTextureGlId;
     }
@@ -10910,10 +10854,9 @@ this.frameBufferOpen = false;
             int[] clipBox = this.currentGroupScissor;
             boolean clipEnabled = this.currentGroupScissorEnabled;
             if (!clipEnabled && GROUP_SCISSOR
-                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
-                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled()) {
-                int[] lateClip = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox();
+                    && this.rasterState.scissorTest()
+                    && this.rasterState.scissorCalled()) {
+                int[] lateClip = this.rasterState.scissorBox();
                 if (lateClip != null) {
                     clipBox = lateClip.clone();
                     clipEnabled = true;
@@ -11173,8 +11116,8 @@ this.frameBufferOpen = false;
                 + " terrainBatchMillis=" + (this.terrain.indirectBatchNanos() / 1_000_000L)
                 + " terrainPassBeginMillis=" + (this.terrainPassBeginNanos / 1_000_000L)
                 + " terrainUniformMillis=" + (this.terrainUniformNanos / 1_000_000L)
-                + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
-                + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
+                + " polygonOffsetFillEnabled=" + this.rasterState.polygonOffsetFillEnabled()
+                + " polygonOffsetCalled=" + this.rasterState.polygonOffsetCalled()
                 // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
                 // to the shared chain pair, so the counter is what says the fix fired and the owner is what makes it
                 // attributable - the panorama's faces were wiped by exactly such a clear before this existed.
@@ -12353,6 +12296,7 @@ this.frameBufferOpen = false;
         if (this.textureRegistry != null) {
             this.textureRegistry.delete();
             this.textureRegistry = null;
+            this.whiteTextureGlId = 0;
             released++;
         }
         if (this.swapchain != null) {
@@ -17934,7 +17878,10 @@ this.frameBufferOpen = false;
     }
 
     private void refreshTextures() {
-        int atlasId = boundTextureId(0);
+        boolean nativeFrontend = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
+        // A terrain material names the atlas and lightmap resources. Whichever GUI/entity texture happened to be
+        // bound last is not the terrain material, and querying that binding must not mutate the active unit.
+        int atlasId = nativeFrontend ? LightmapIdSource.atlasTextureId() : boundTextureId(0);
         if (atlasId <= 0) {
             // The GL answer is not available without a GL context - the stub records bindings it is told about,
             // and 1.12.2 binds the atlas through paths that skip the call. Measured on leg gv-cohort-dev10:
@@ -17944,7 +17891,7 @@ this.frameBufferOpen = false;
                 atlasId = fromGame;
             }
         }
-        int lightmapId = boundTextureId(1);
+        int lightmapId = nativeFrontend ? LightmapIdSource.lightmapTextureId() : boundTextureId(1);
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
         // nothing the game is drawing can be disturbed.
@@ -18039,6 +17986,9 @@ this.frameBufferOpen = false;
     }
 
     private static int boundTextureId(int unit) {
+        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
+            return NativeTextureBindings.current().texture2d(unit);
+        }
         int previous = org.lwjgl.opengl.GL11C.glGetInteger(org.lwjgl.opengl.GL13C.GL_ACTIVE_TEXTURE);
         org.lwjgl.opengl.GL13C.glActiveTexture(org.lwjgl.opengl.GL13C.GL_TEXTURE0 + unit);
         int texture = org.lwjgl.opengl.GL11C.glGetInteger(org.lwjgl.opengl.GL11C.GL_TEXTURE_BINDING_2D);
@@ -19606,8 +19556,8 @@ this.frameBufferOpen = false;
         if (!GROUP_SCISSOR) {
             // The measurement control: the pre-fix shape read the live record here, so a group that spanned a
             // rectangle change was clipped by whatever the game had set by the time the group was flushed.
-            clip = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox();
-            clipEnabled = clip != null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest();
+            clip = this.rasterState.scissorBox();
+            clipEnabled = clip != null && this.rasterState.scissorTest();
         }
         if (clip != null && clipEnabled) {
             // The group carried a clip of its own: counted separately from the intersection below, so a run says

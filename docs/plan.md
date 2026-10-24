@@ -5,6 +5,17 @@
 製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
+## 2026-10-24: native state/resource owner
+
+`NativeRasterState` が blend/cull/色マスク/scissor/polygon offset、`NativeTextureBindings` が texture unit/binding を所有する。
+通常drawでのGL記録の再取り込み・bind ordinal照合を削除。白textureもGL名生成/一時bindを経由せずVulkan画像を作る。
+再確保時のstorage破棄と名前削除を分離し、atlasのbindingを保持する。
+
+[実機証拠](<evidence/native-owner-2026-10-24.json>): JAR `8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe`、
+AMD RX 6400/Intel UHD 630 のqmagnet、AMDのvideoSettingsは画像gate PASSED・validation 0。F2は提示画像と一致。
+menu/HEI inventory/recipeの実画像を保存したが、HEIの専用gateは未較正。性能は3pair測定したが負荷上昇（2.57→5.45）・1組のstarvationにより判定不能（残る比0.973/1.118）。改善を主張しない。
+描画要求の受付・実行全体の移管と影/packは未完。以前からの影の未commit変更はこの成果物に含まない。
+
 ## 次の作業単位（2026-10-22 改訂・利用者指示）
 
 0. **影（製品要件）**: 現状native shadow mapは未実装（旧scaffoldは撤去済み、item/terrainシェーダには
@@ -44,7 +55,6 @@
 
 | **性能: draw-manager（§11.5-11.8）** | **土台3/5段（①②③完了）** | 実測+画像 | 実装中 | ①descriptor indexing 4機能を両GPUで有効（`textureArray=true`・PASSED/0件, jar `3e3dc1a5`） ②共有テクスチャ配列セット実装＝**35枚/4096・書き込み35回**（jar `6cf90a00`） ③groupへ配列index＝**hit 178407/miss0（AMD）・hit 114673/miss0（Intel）**（jar `75bea5b3`） 残り＝④シェーダをindex化（まずtexture系1 family、push定数index）⑤pipelineソート＋geometry arena＋`vkCmdDrawIndexedIndirect`で **159→約11 draw/window**。**①②③は未だ描画に使わず速度未計測**。影削除を含む現ツリーは jar `0b3b49d8…` で AMD/Intel とも PASSED・画像gate PASSED・validation 0件 |
 
-| **影: native実装を完全削除（2026-10-22）** | **コードから消えた（両GPU検証済み）** | 実測＋画像 | 完了 | 利用者指示「native影実装消して」。受信シェーダ全系統・backendの影パス一式・カメラ位置フック（mixin含む）・`ShadowMapPass`本体・専用シェーダ・パイプライン3本のプレースホルダ/binding/spec定数/fan-out・`TerrainRenderer`の簿記（range捕捉・indirect捕捉・カメラ位置フィールド）を削除。**AMD/Intel とも PASSED・画像gate PASSED・validation 0件**（jar `398533cd…`）。残るのはコメント1箇所のみ。影とパックは Demonica fork（`shader-plan.md` §0）が持つ |
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | world scene は `cleanroom-0.7.11-alpha` の `minecraft/saves/qmagnet`（配布マップ）を使用。v0.0.14-alpha のforge jar `90a7c505…` は world で **AMD/Intel とも PASSED・validation 0・画像gate一致**。**0.6.13-alpha（GLFW/LWJGL 3.4.1）は起動不可**＝SDL3バインディング不在を検出して`CeltiumGllessHint` がバージョンを名指しして拒否（クラッシュレポートに理由が残る）。0.6.13 で受入を主張するには0.6用の別ビルドが必要 |
 | **RLCraft 2.9.3 互換** | **Celtium側では無い。0.7.11 + Fugue 0.25.5 でも外部要因で停止（対照実験済み）** | 実測 2026-10-23（probe: 0.7.11 clone + RLCraft mods 166 + scalar-3.9.0） | 外部待ち | Fugue 0.24.4 → `NoClassDefFoundError com.cleanroommc.hackery.ReflectionHackery`（SetBonus）。Fugue 0.25.5 → 44秒まで進行（Sound engine started）後 `VerifyError: EntityRenderer.func_78472_g`。**celtium jar を外した対照でも同じ VerifyError** のため Celtium の不具合ではない。次の候補は Cleanroom 0.7.12-alpha 以降での再試行 |
 | **シェーダパック/影: 休止（2026-10-23 利用者指示）** | **S3の探索は到達点を残して停止** | 実測済み | 利用者の判断待ち | 実測到達点: `gbuffers_terrain`が実地形を描く（`packblit-27`）、ライト視点（`packblit-29`）、影マップに65,536キャスタ・被覆60.2%（`packblit-32`）。『影を3回やっている』と利用者から指摘があり停止。 再開条件: 利用者がpack統合を優先すると明示した時。 |

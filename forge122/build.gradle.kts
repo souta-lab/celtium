@@ -253,8 +253,6 @@ tasks.processResources.configure {
         expand(mapOf("version" to inputs.properties["version"]))
     }
 
-    val repositoryRoot = rootProject.findProperty("celtium_repository_root") ?: rootProject.projectDir
-    from(file("$repositoryRoot/modern/src/main/resources/icon.png"))
 }
 
 publishing {
