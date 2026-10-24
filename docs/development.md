@@ -3231,7 +3231,7 @@ native shadow mapは未実装（旧scaffold撤去済み）。実装は次の既�
   影パスはこの直前で記録する（メインpassより前、同じフレームのコマンドバッファ）
 - 深度のホスト読み出し: `TextureCopyService.readDepthRectangle(image, x, y, w, h, format)`（既存・probeで使用）
   → 影深度のPNG dump計器はこれを使う
-- テレインの描画ループ: `VulkanTerrainGpuBackend` のテレインpass記録（`terrain.regionResources()` を回す箇所）を
+- テレインの描画ループ: `VulkanTerrainGpuBackend.celtium$renderPass(ChunkRenderMatrices, ChunkRenderListIterable, ...)`（`terrain.regionResources()` を回す箇所）を
   関数へ切り出し、影パスでも同じ chunk binding で2回目を記録するのが段階(b)(c)の本体
 - シェーダ側の名残: `terrain_solid_vanilla.vert` の shadow 行列コメント、`VulkanImmediateItemPipeline` の
   placeholder shadow image（bindingは既にある）
