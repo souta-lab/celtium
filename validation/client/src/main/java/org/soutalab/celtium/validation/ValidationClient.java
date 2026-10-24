@@ -3149,6 +3149,314 @@ public final class ValidationClient {
         blockQuadFrames++;
     }
 
+    /** The second half of {@link #tick}: progress, exit hook and the scripted world actions; see the call site. */
+    private void celtium$tickRest(Minecraft mc) {
+        celtium$installExitHook(mc);
+        // Taken here, on the render thread, where the world, the player and the screen are the client's to read. The
+        // shutdown hook only ever reads this value.
+        celtium$progress = new ProgressSnapshot(worldTicks, worldFrames, celtium$captureStarted, celtium$captureStartTick,
+                mc.player == null ? Integer.MIN_VALUE : mc.player.dimension,
+                mc.world == null ? Integer.MIN_VALUE : mc.world.provider.getDimension(),
+                mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName(),
+                mc.gameDir.toPath().resolve("logs/celtium-validation.json"));
+            celtium$blockSweep(mc);
+            // The fixture's camera. It used to be a client-side setPositionAndRotation at tick 20 and nothing else,
+            // and the server's own movement check rejected a 500-block step as "moved too quickly" and put the client
+            // back where the server had it - so the camera was wherever the run's drift and the inherited save left the
+            // player, and two runs of one scene captured different pictures (measured: x=512.5 z=-12.5 against z=-8.5).
+            // Setting it on the server through the game's own teleport moves the tracked position too, so no correction
+            // follows, and re-applying it on the client every tick holds it against gravity, fluids and the partial
+            // tick. What the camera actually was at the capture is measured and gated below.
+            if (worldTicks == celtium$poseTick && !celtium$poseRequested) {
+                celtium$poseRequested = true;
+                celtium$poseResult = celtium$teleportPoseOnServer(mc);
+            }
+            if (worldTicks >= celtium$poseTick) {
+                celtium$applyPose(mc);
+                celtium$poseAppliedAtTick = worldTicks;
+                celtium$poseAppliedTicks++;
+            }
+            // A GUI scene's screen is opened here, on the client tick after the world frame was captured: inside the
+            // world render pass it would have been half of the frame it was captured in as well as of the next.
+            if (celtium$guiOpenPending && worldTicks >= celtium$captureStartTick + 1) {
+                celtium$guiOpenPending = false;
+                celtium$openGuiScene(mc);
+            }
+            if (worldTicks >= 20 && !celtium$flyingSet) {
+                celtium$flyingSet = true;
+                mc.player.capabilities.isFlying = true;
+                // Early, so a run that never reaches its capture still says which scene, which run id and which pose
+                // it was: the report is the only thing a failed run leaves behind. The gate's provenance is recorded
+                // here too, so a run that dies before its verdict still names the reference its floors came from.
+                report.addProperty("scene", celtium$scene.name);
+                report.addProperty("sceneGuiStage", Boolean.valueOf(celtium$scene.guiStage));
+                report.addProperty("runId", celtium$runId);
+                report.addProperty("cameraRequested", celtium$pose.describe());
+                report.addProperty("sceneGateSource", celtium$gateSource());
+                report.addProperty("sceneGateReferenceRuns", celtium$gate.referenceRuns);
+                report.addProperty("sceneGateReferenceNumbers", celtium$gate.referenceNumbers);
+                report.addProperty("sceneGateMargin", celtium$gate.margin);
+                report.addProperty("sceneGateGuiFloors", celtium$gate.guiFloors.calibrated
+                        ? "gui stage: nonBackgroundFraction>=" + celtium$gate.guiFloors.minNonBackgroundFraction
+                                + " verticalBands>=" + celtium$gate.guiFloors.minVerticalBands + " blackFraction<="
+                                + celtium$gate.guiFloors.maxBlackFraction
+                        : "gui stage: " + celtium$gate.guiFloors.source);
+                report.addProperty("sceneGateCalibrated", Boolean.valueOf(celtium$gate.calibrated));
+                boolean earlyVariantMeasured = celtium$variantMeasuredAtVerdict();
+                report.addProperty("sceneGateFloorsEnforced",
+                        Boolean.valueOf(celtium$gate.calibrated && earlyVariantMeasured));
+                report.addProperty("sceneVariant", celtium$sceneVariantDescription());
+                report.addProperty("sceneCalibrationKey", celtium$runCalibrationKey());
+                report.addProperty("sceneReferenceCalibrationKey", celtium$referenceCalibrationKey(celtium$scene));
+                report.addProperty("sceneCalibrationKeyMatches", Boolean.valueOf(earlyVariantMeasured));
+                if (!celtium$gate.calibrated || !earlyVariantMeasured) {
+                    report.addProperty("floorsNotCalibrated", "FLOORS NOT CALIBRATED for scene " + celtium$scene.name
+                            + " (" + celtium$sceneDimension() + "): " + celtium$gate.referenceRuns + "; the picture is"
+                            + " held to the smoke test, its identity, the frame binding and the camera pose only, and"
+                            + " the verdict is UNCALIBRATED_PRESENTED_IMAGE (not PASSED, not FAILED). "
+                            + celtium$gate.reference);
+                }
+                if (!"none".equals(celtium$sceneError)) {
+                    report.addProperty("sceneError", celtium$sceneError);
+                }
+            }
+            if (worldTicks >= 100 && !commandsRun) {
+                commandsRun = true;
+                boolean present = ClientCommandHandler.instance.getCommands().containsKey("celtium");
+                report.addProperty("celtiumCommandRegistered", present);
+                if (present) {
+                    report.addProperty("statusCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium"));
+                    report.addProperty("probeCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium probe"));
+                    report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
+                }
+            }
+            if (worldTicks >= 60 && !celtium$shadowStageBuilt
+                    && Boolean.getBoolean("celtium.validation.shadowStage")) {
+                celtium$shadowStageBuilt = true;
+                celtium$buildShadowStage(mc);
+            }
+            if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
+                celtium$entitiesSpawned = true;
+                // An entity scene, for the coverage that the terrain-only comparison deliberately leaves out. The mobs are
+                // named explicitly rather than left to natural spawning so the scene is the same set every run: one of each
+                // family that draws through its own path (monster model, spider legs, enderman's TESR-ish layering).
+                // The player faces -Z (yaw 180, pitch 20): the spawns sit in that view cone, at ground level, so the
+                // comparison sees the models rather than measuring particles behind an out-of-frame mob.
+                // Eight to twelve blocks ahead, where pitch-20-down keeps a ground-standing model inside the frame:
+                // anything closer lands below the view cone's lower edge and the comparison only measures particles.
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -10.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -8.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -12.0D);
+                // TESR and item coverage in the same view cone: a chest and a sign draw through their special
+                // renderers (a model display list plus the sign's text quads), and the dropped item is the item
+                // entity's baked-model path rather than an entity model list.
+                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
+                int gy = mc.world.getHeight(px, pz - 6);
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px - 1, gy, pz - 6),
+                        net.minecraft.init.Blocks.CHEST.getDefaultState(), 3);
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + 1, gy, pz - 7),
+                        net.minecraft.init.Blocks.STANDING_SIGN.getDefaultState(), 3);
+                net.minecraft.item.ItemStack droppedStack = new net.minecraft.item.ItemStack(net.minecraft.init.Items.APPLE);
+                if (Boolean.getBoolean("celtium.validation.enchantItem")) {
+                    // An enchantment makes the item's glint pass draw: two texture-matrix-modulated passes over the
+                    // same model, which is the state the texture-matrix work exists for.
+                    droppedStack.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
+                }
+                // Two blocks right of centre so the selection-outline stone at (px, pz-3) does not sit in front of
+                // it - the item is the lit ITEM-format path the pixel comparison needs actually visible.
+                net.minecraft.entity.item.EntityItem dropped = new net.minecraft.entity.item.EntityItem(mc.world,
+                        mc.player.posX + 2.5D, gy + 0.5D, mc.player.posZ - 5.0D,
+                        droppedStack);
+                dropped.motionX = 0.0D; dropped.motionY = 0.0D; dropped.motionZ = 0.0D;
+                dropped.setNoDespawn();
+                celtium$spawnEntity(mc, dropped, 2.5D, -5.0D);
+                // A block on the crosshair's line and inside the creative reach, so the selection outline draws: the eye
+                // is ~1.62 above posY and the pitch-20-down ray crosses y~8.5 at ~3 blocks out, so a block whose top face
+                // is there is what the ray points at.
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px, (int) Math.floor(mc.player.posY), pz - 3),
+                        net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
+                System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
+                        + " nonPlayer=" + countNonPlayerEntities(mc));
+            }
+            if (worldTicks >= 60 && (!celtium$hurtSpawned || celtium$hurtSlime != null && celtium$hurtSlime.isDead)
+                    && Boolean.getBoolean("celtium.validation.hurtEntity")) {
+                boolean respawn = celtium$hurtSpawned;
+                celtium$hurtSpawned = true;
+                // A zombie pinned mid-frame and kept permanently "just hit": RenderLivingBase.setBrightness drives
+                // the fixed-function env-combine path every frame, so a leg measures the hurt tint instead of
+                // hoping an unscripted mob got hit inside the capture window. The pose is the run's own look ray,
+                // not a fixed offset: the earlier fixed-offset spawn sat outside the frustum in the pack world, the
+                // ray hits the look-at block at ~1.6 m so the ray itself suffocates a spawn (slimes also died on
+                // their first tick regardless - respawned every tick in plain-hurt1), while a zombie under the same
+                // pinning survives - the keepEntities cohort spawned this way does - and still exercises the same
+                // RenderLivingBase env-combine path.
+                net.minecraft.util.math.Vec3d eyes = mc.player.getPositionEyes(1.0F);
+                net.minecraft.util.math.Vec3d look = mc.player.getLook(1.0F);
+                net.minecraft.entity.monster.EntityZombie zombie =
+                        new net.minecraft.entity.monster.EntityZombie(mc.world);
+                zombie.setPosition(eyes.x + look.x * 1.5D, eyes.y + look.y * 1.5D - 0.6D,
+                        eyes.z + look.z * 1.5D);
+                zombie.motionX = 0.0D;
+                zombie.motionY = 0.0D;
+                zombie.motionZ = 0.0D;
+                zombie.setNoGravity(true);
+                zombie.setNoAI(true);
+                zombie.enablePersistence();
+                boolean added = mc.world.spawnEntity(zombie);
+                celtium$hurtSlime = zombie;
+                System.out.println("[Celtium] CELTIUM_HURT_SPAWNED tick=" + worldTicks + (respawn ? " respawn" : "")
+                        + " added=" + added
+                        + " pos=" + (int) zombie.posX + "," + (int) zombie.posY + "," + (int) zombie.posZ);
+            }
+            if (celtium$hurtSlime != null && !celtium$hurtSlime.isDead) {
+                // Vanilla counts hurtTime down once per tick; holding it just above zero keeps the overlay on for
+                // the whole scene instead of for the ten ticks a real hit gives.
+                celtium$hurtSlime.hurtTime = 9;
+            }
+            if (worldTicks >= 60 && !celtium$rendererlessSpawned
+                    && Boolean.getBoolean("celtium.validation.rendererlessEntities")) {
+                celtium$rendererlessSpawned = true;
+                // The renderer-less entity: a bare Entity, for which RenderManager.getEntityRenderObject returns the
+                // fallback RenderEntity registered against Entity.class, whose doRender is a single call to
+                // Render.renderOffsetAABB - the white box. That is the only user of DefaultVertexFormats.POSITION_NORMAL
+                // in the game, and under the GL-less window the box is drawn by nobody unless the immediate path takes
+                // the layout, so this is the fixture half of that acceptance.
+                //
+                // Its own flag rather than part of keepEntities: it changes the picture, so it changes the scene's
+                // calibration key, and the measured references were taken without it.
+                int lx = (int) Math.floor(mc.player.posX), lz = (int) Math.floor(mc.player.posZ);
+                int lg = mc.world.getHeight(lx, lz - 8);
+                net.minecraft.entity.Entity rendererless = new celtium$RendererlessEntity(mc.world);
+                rendererless.setPositionAndUpdate(mc.player.posX - 1.5D, lg + 0.5D, mc.player.posZ - 8.0D);
+                rendererless.motionX = 0.0D; rendererless.motionY = 0.0D; rendererless.motionZ = 0.0D;
+                // A ground height, not the player's own y: the generic spawn helper puts an entity at the eye's level,
+                // which is inside the ground here. Placed like this the box stands on the surface in the view cone.
+                mc.world.spawnEntity(rendererless);
+                System.out.println("[Celtium] CELTIUM_RENDERERLESS_ENTITY_SPAWNED tick=" + worldTicks
+                        + " pos=" + rendererless.posX + "," + rendererless.posY + "," + rendererless.posZ
+                        + " box=" + rendererless.getEntityBoundingBox()
+                        + " nonPlayer=" + countNonPlayerEntities(mc));
+            }
+            if (worldTicks >= 60 && !celtium$wallBuilt && Boolean.getBoolean("celtium.validation.allBlocks")) {
+                celtium$wallBuilt = true;
+                // The registry sweep: one of every registered block, laid out as a wall the camera sees whole, so
+                // the comparison exercises every block model the terrain passes can draw rather than the handful a
+                // flat world happens to contain. Blocks that need a tile entity to show anything (the chest, the
+                // sign) draw as nothing here, which is honest - their render path is the TESR's, not the chunk's.
+                // Each test position gets a stone block under it so standing-on blocks stay placed; liquids and
+                // gravity blocks would flow or fall out of the sweep, so they are skipped.
+                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
+                int gy = mc.world.getHeight(px, pz - 30);
+                int placed = 0, index = 0;
+                net.minecraft.block.state.IBlockState support = net.minecraft.init.Blocks.STONE.getDefaultState();
+                for (net.minecraft.block.Block block : net.minecraft.block.Block.REGISTRY) {
+                    if (block == net.minecraft.init.Blocks.AIR || block == net.minecraft.init.Blocks.WATER
+                            || block == net.minecraft.init.Blocks.FLOWING_WATER || block == net.minecraft.init.Blocks.LAVA
+                            || block == net.minecraft.init.Blocks.FLOWING_LAVA || block == net.minecraft.init.Blocks.FIRE
+                            || block instanceof net.minecraft.block.BlockFalling) {
+                        continue;
+                    }
+                    int x = px - 20 + (index % 41), y = gy + 2 * (index / 41) + 1;
+                    index++;
+                    try {
+                        net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(x, y, pz - 30);
+                        mc.world.setBlockState(pos.down(), support, 3);
+                        if (mc.world.setBlockState(pos, block.getDefaultState(), 3)) {
+                            placed++;
+                        }
+                    } catch (RuntimeException | LinkageError error) {
+                        // A block whose default state cannot stand alone (a door half, a technical block) skips rather
+                        // than ending the sweep.
+                    }
+                }
+                System.out.println("[Celtium] CELTIUM_ALL_BLOCKS placed=" + placed + " tried=" + index);
+            }
+            if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")
+                    && !Boolean.getBoolean("celtium.validation.keepEntities")) {
+                // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
+                // non-player entity and particle well before the capture. Entity and TESR behaviour stays on the
+                // existing GL path and is deliberately outside what this comparison measures - unless keepEntities asks
+                // for the entity scene, in which case the mobs above stay and the capture is a coverage capture.
+                entitiesRemoved += removeNonPlayerEntities(mc);
+            }
+            // The hurt flash: keeping hurtTime non-zero on the kept mobs makes their second model pass run under the
+        // texture-env interpolate the flash is drawn through, which is the state the coverage check wants exercised.
+        if (Boolean.getBoolean("celtium.validation.hurtEntities") && worldTicks >= 150 && worldTicks <= 205) {
+            for (Object obj : mc.world.loadedEntityList) {
+                if (obj instanceof net.minecraft.entity.EntityLivingBase && obj != mc.player) {
+                    ((net.minecraft.entity.EntityLivingBase) obj).hurtTime = 10;
+                    ((net.minecraft.entity.EntityLivingBase) obj).maxHurtTime = 10;
+                }
+            }
+        }
+        // The glow outline: the glowing tag routes every kept mob through the entityOutline framebuffer and its
+        // silhouette composite, the same post-process shape the spectator effects take.
+        if (Boolean.getBoolean("celtium.validation.glowEntities") && worldTicks >= 150 && worldTicks <= 205) {
+            for (Object obj : mc.world.loadedEntityList) {
+                if (obj instanceof net.minecraft.entity.Entity && obj != mc.player) {
+                    ((net.minecraft.entity.Entity) obj).setGlowing(true);
+                }
+            }
+        }
+        if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
+                // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
+                // that the next render builds, and pinning the world time keeps the sun angle identical.
+                flickerPinned = pinLightmapFlicker(mc);
+                mc.world.setWorldTime(PINNED_WORLD_TIME);
+                // BH-09: force the GUI scale while a world exists, so it is already in effect when the GUI stage
+                // opens the options screen later in this run. Set here rather than at the screen because the screen
+                // is opened by a path that may be the mod's own, and the scale has to be right before it lays out.
+                // Restore: the condition asks for change, restore and reload, and only the change was ever
+                // exercised. Setting the scale back to the vanilla default of 0 (auto) at a chosen tick is the
+                // restore half, and it is recorded so a leg can say it happened.
+                if (GUI_SCALE_RESTORE_AT_TICK > 0 && worldTicks >= GUI_SCALE_RESTORE_AT_TICK
+                        && mc.gameSettings.guiScale != 0) {
+                    mc.gameSettings.guiScale = 0;
+                    if (!celtium$guiScaleRestoredReported) {
+                        celtium$guiScaleRestoredReported = true;
+                        report.addProperty("guiScaleRestoredAtTick", Integer.valueOf(worldTicks));
+                        report.addProperty("guiScaleRestoredTo", Integer.valueOf(0));
+                    }
+                }
+                if (FORCED_GUI_SCALE > 0 && mc.gameSettings.guiScale != FORCED_GUI_SCALE
+                        && !(GUI_SCALE_RESTORE_AT_TICK > 0 && worldTicks >= GUI_SCALE_RESTORE_AT_TICK)) {
+                    mc.gameSettings.guiScale = FORCED_GUI_SCALE;
+                    if (!celtium$guiScaleForcedReported) {
+                        celtium$guiScaleForcedReported = true;
+                        report.addProperty("guiScaleForced", Integer.valueOf(FORCED_GUI_SCALE));
+                    }
+                }
+                // The cloud setting, for the same reason the time is pinned: the user's complaint names clouds, and no
+                // run of this fixture could contain a cloud pixel because nothing set the game's own cloud option. The
+                // default is -1 = "leave the game's value alone", so every existing leg and calibration key is
+                // bit-for-bit unchanged; the value the run used is reported either way.
+                int cloudOption = Integer.getInteger("celtium.validation.renderClouds", -1).intValue();
+                if (cloudOption >= 0 && cloudOption <= 2) {
+                    // 1.12.2's field is `clouds` (int 0/1/2); `renderClouds` is only the options.txt key and the
+                    // translation key, which is what the first version of this edit mistook it for.
+                    mc.gameSettings.clouds = cloudOption;
+                }
+                // The F3 overlay, for the same reason the time and the clouds are pinned: task-59's F3-on vs F3-off
+                // pair needs the overlay really on, and the F3 key cannot be synthesised honestly - so the run sets
+                // the game's own field and the report says it was enabled through the field. Default = leave the
+                // game's value alone, so no existing leg or calibration key moves.
+                String debugOption = System.getProperty("celtium.validation.showDebugInfo", "");
+                if (!debugOption.isEmpty()) {
+                    mc.gameSettings.showDebugInfo = Boolean.parseBoolean(debugOption);
+                }
+                // Rebuilding every chunk mesh once, after the world time is pinned, answers a question the frame alone
+                // cannot: if the terrain brightens, the light level was baked into the per-vertex colour when the mesh was
+                // built and is never refreshed while that mesh lives, rather than the light map texture being wrong.
+                int reloadAtTick = Integer.getInteger("celtium.validation.reloadAtTick", 0).intValue();
+                if (reloadAtTick > 0 && worldTicks == reloadAtTick && !reloadDone) {
+                    reloadDone = true;
+                    mc.renderGlobal.loadRenderers();
+                    report.addProperty("renderersReloadedAtTick", worldTicks);
+                }
+            }
+    }
+
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
         if (!enabled || finished) return;
@@ -3732,310 +4040,9 @@ public final class ValidationClient {
                 finish(mc);
                 return;
             }
-        celtium$installExitHook(mc);
-        // Taken here, on the render thread, where the world, the player and the screen are the client's to read. The
-        // shutdown hook only ever reads this value.
-        celtium$progress = new ProgressSnapshot(worldTicks, worldFrames, celtium$captureStarted, celtium$captureStartTick,
-                mc.player == null ? Integer.MIN_VALUE : mc.player.dimension,
-                mc.world == null ? Integer.MIN_VALUE : mc.world.provider.getDimension(),
-                mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName(),
-                mc.gameDir.toPath().resolve("logs/celtium-validation.json"));
-            celtium$blockSweep(mc);
-            // The fixture's camera. It used to be a client-side setPositionAndRotation at tick 20 and nothing else,
-            // and the server's own movement check rejected a 500-block step as "moved too quickly" and put the client
-            // back where the server had it - so the camera was wherever the run's drift and the inherited save left the
-            // player, and two runs of one scene captured different pictures (measured: x=512.5 z=-12.5 against z=-8.5).
-            // Setting it on the server through the game's own teleport moves the tracked position too, so no correction
-            // follows, and re-applying it on the client every tick holds it against gravity, fluids and the partial
-            // tick. What the camera actually was at the capture is measured and gated below.
-            if (worldTicks == celtium$poseTick && !celtium$poseRequested) {
-                celtium$poseRequested = true;
-                celtium$poseResult = celtium$teleportPoseOnServer(mc);
-            }
-            if (worldTicks >= celtium$poseTick) {
-                celtium$applyPose(mc);
-                celtium$poseAppliedAtTick = worldTicks;
-                celtium$poseAppliedTicks++;
-            }
-            // A GUI scene's screen is opened here, on the client tick after the world frame was captured: inside the
-            // world render pass it would have been half of the frame it was captured in as well as of the next.
-            if (celtium$guiOpenPending && worldTicks >= celtium$captureStartTick + 1) {
-                celtium$guiOpenPending = false;
-                celtium$openGuiScene(mc);
-            }
-            if (worldTicks >= 20 && !celtium$flyingSet) {
-                celtium$flyingSet = true;
-                mc.player.capabilities.isFlying = true;
-                // Early, so a run that never reaches its capture still says which scene, which run id and which pose
-                // it was: the report is the only thing a failed run leaves behind. The gate's provenance is recorded
-                // here too, so a run that dies before its verdict still names the reference its floors came from.
-                report.addProperty("scene", celtium$scene.name);
-                report.addProperty("sceneGuiStage", Boolean.valueOf(celtium$scene.guiStage));
-                report.addProperty("runId", celtium$runId);
-                report.addProperty("cameraRequested", celtium$pose.describe());
-                report.addProperty("sceneGateSource", celtium$gateSource());
-                report.addProperty("sceneGateReferenceRuns", celtium$gate.referenceRuns);
-                report.addProperty("sceneGateReferenceNumbers", celtium$gate.referenceNumbers);
-                report.addProperty("sceneGateMargin", celtium$gate.margin);
-                report.addProperty("sceneGateGuiFloors", celtium$gate.guiFloors.calibrated
-                        ? "gui stage: nonBackgroundFraction>=" + celtium$gate.guiFloors.minNonBackgroundFraction
-                                + " verticalBands>=" + celtium$gate.guiFloors.minVerticalBands + " blackFraction<="
-                                + celtium$gate.guiFloors.maxBlackFraction
-                        : "gui stage: " + celtium$gate.guiFloors.source);
-                report.addProperty("sceneGateCalibrated", Boolean.valueOf(celtium$gate.calibrated));
-                boolean earlyVariantMeasured = celtium$variantMeasuredAtVerdict();
-                report.addProperty("sceneGateFloorsEnforced",
-                        Boolean.valueOf(celtium$gate.calibrated && earlyVariantMeasured));
-                report.addProperty("sceneVariant", celtium$sceneVariantDescription());
-                report.addProperty("sceneCalibrationKey", celtium$runCalibrationKey());
-                report.addProperty("sceneReferenceCalibrationKey", celtium$referenceCalibrationKey(celtium$scene));
-                report.addProperty("sceneCalibrationKeyMatches", Boolean.valueOf(earlyVariantMeasured));
-                if (!celtium$gate.calibrated || !earlyVariantMeasured) {
-                    report.addProperty("floorsNotCalibrated", "FLOORS NOT CALIBRATED for scene " + celtium$scene.name
-                            + " (" + celtium$sceneDimension() + "): " + celtium$gate.referenceRuns + "; the picture is"
-                            + " held to the smoke test, its identity, the frame binding and the camera pose only, and"
-                            + " the verdict is UNCALIBRATED_PRESENTED_IMAGE (not PASSED, not FAILED). "
-                            + celtium$gate.reference);
-                }
-                if (!"none".equals(celtium$sceneError)) {
-                    report.addProperty("sceneError", celtium$sceneError);
-                }
-            }
-            if (worldTicks >= 100 && !commandsRun) {
-                commandsRun = true;
-                boolean present = ClientCommandHandler.instance.getCommands().containsKey("celtium");
-                report.addProperty("celtiumCommandRegistered", present);
-                if (present) {
-                    report.addProperty("statusCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium"));
-                    report.addProperty("probeCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium probe"));
-                    report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
-                }
-            }
-            if (worldTicks >= 60 && !celtium$shadowStageBuilt
-                    && Boolean.getBoolean("celtium.validation.shadowStage")) {
-                celtium$shadowStageBuilt = true;
-                celtium$buildShadowStage(mc);
-            }
-            if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
-                celtium$entitiesSpawned = true;
-                // An entity scene, for the coverage that the terrain-only comparison deliberately leaves out. The mobs are
-                // named explicitly rather than left to natural spawning so the scene is the same set every run: one of each
-                // family that draws through its own path (monster model, spider legs, enderman's TESR-ish layering).
-                // The player faces -Z (yaw 180, pitch 20): the spawns sit in that view cone, at ground level, so the
-                // comparison sees the models rather than measuring particles behind an out-of-frame mob.
-                // Eight to twelve blocks ahead, where pitch-20-down keeps a ground-standing model inside the frame:
-                // anything closer lands below the view cone's lower edge and the comparison only measures particles.
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -10.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -8.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -12.0D);
-                // TESR and item coverage in the same view cone: a chest and a sign draw through their special
-                // renderers (a model display list plus the sign's text quads), and the dropped item is the item
-                // entity's baked-model path rather than an entity model list.
-                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
-                int gy = mc.world.getHeight(px, pz - 6);
-                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px - 1, gy, pz - 6),
-                        net.minecraft.init.Blocks.CHEST.getDefaultState(), 3);
-                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + 1, gy, pz - 7),
-                        net.minecraft.init.Blocks.STANDING_SIGN.getDefaultState(), 3);
-                net.minecraft.item.ItemStack droppedStack = new net.minecraft.item.ItemStack(net.minecraft.init.Items.APPLE);
-                if (Boolean.getBoolean("celtium.validation.enchantItem")) {
-                    // An enchantment makes the item's glint pass draw: two texture-matrix-modulated passes over the
-                    // same model, which is the state the texture-matrix work exists for.
-                    droppedStack.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
-                }
-                // Two blocks right of centre so the selection-outline stone at (px, pz-3) does not sit in front of
-                // it - the item is the lit ITEM-format path the pixel comparison needs actually visible.
-                net.minecraft.entity.item.EntityItem dropped = new net.minecraft.entity.item.EntityItem(mc.world,
-                        mc.player.posX + 2.5D, gy + 0.5D, mc.player.posZ - 5.0D,
-                        droppedStack);
-                dropped.motionX = 0.0D; dropped.motionY = 0.0D; dropped.motionZ = 0.0D;
-                dropped.setNoDespawn();
-                celtium$spawnEntity(mc, dropped, 2.5D, -5.0D);
-                // A block on the crosshair's line and inside the creative reach, so the selection outline draws: the eye
-                // is ~1.62 above posY and the pitch-20-down ray crosses y~8.5 at ~3 blocks out, so a block whose top face
-                // is there is what the ray points at.
-                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px, (int) Math.floor(mc.player.posY), pz - 3),
-                        net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
-                System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
-                        + " nonPlayer=" + countNonPlayerEntities(mc));
-            }
-            if (worldTicks >= 60 && (!celtium$hurtSpawned || celtium$hurtSlime != null && celtium$hurtSlime.isDead)
-                    && Boolean.getBoolean("celtium.validation.hurtEntity")) {
-                boolean respawn = celtium$hurtSpawned;
-                celtium$hurtSpawned = true;
-                // A zombie pinned mid-frame and kept permanently "just hit": RenderLivingBase.setBrightness drives
-                // the fixed-function env-combine path every frame, so a leg measures the hurt tint instead of
-                // hoping an unscripted mob got hit inside the capture window. The pose is the run's own look ray,
-                // not a fixed offset: the earlier fixed-offset spawn sat outside the frustum in the pack world, the
-                // ray hits the look-at block at ~1.6 m so the ray itself suffocates a spawn (slimes also died on
-                // their first tick regardless - respawned every tick in plain-hurt1), while a zombie under the same
-                // pinning survives - the keepEntities cohort spawned this way does - and still exercises the same
-                // RenderLivingBase env-combine path.
-                net.minecraft.util.math.Vec3d eyes = mc.player.getPositionEyes(1.0F);
-                net.minecraft.util.math.Vec3d look = mc.player.getLook(1.0F);
-                net.minecraft.entity.monster.EntityZombie zombie =
-                        new net.minecraft.entity.monster.EntityZombie(mc.world);
-                zombie.setPosition(eyes.x + look.x * 1.5D, eyes.y + look.y * 1.5D - 0.6D,
-                        eyes.z + look.z * 1.5D);
-                zombie.motionX = 0.0D;
-                zombie.motionY = 0.0D;
-                zombie.motionZ = 0.0D;
-                zombie.setNoGravity(true);
-                zombie.setNoAI(true);
-                zombie.enablePersistence();
-                boolean added = mc.world.spawnEntity(zombie);
-                celtium$hurtSlime = zombie;
-                System.out.println("[Celtium] CELTIUM_HURT_SPAWNED tick=" + worldTicks + (respawn ? " respawn" : "")
-                        + " added=" + added
-                        + " pos=" + (int) zombie.posX + "," + (int) zombie.posY + "," + (int) zombie.posZ);
-            }
-            if (celtium$hurtSlime != null && !celtium$hurtSlime.isDead) {
-                // Vanilla counts hurtTime down once per tick; holding it just above zero keeps the overlay on for
-                // the whole scene instead of for the ten ticks a real hit gives.
-                celtium$hurtSlime.hurtTime = 9;
-            }
-            if (worldTicks >= 60 && !celtium$rendererlessSpawned
-                    && Boolean.getBoolean("celtium.validation.rendererlessEntities")) {
-                celtium$rendererlessSpawned = true;
-                // The renderer-less entity: a bare Entity, for which RenderManager.getEntityRenderObject returns the
-                // fallback RenderEntity registered against Entity.class, whose doRender is a single call to
-                // Render.renderOffsetAABB - the white box. That is the only user of DefaultVertexFormats.POSITION_NORMAL
-                // in the game, and under the GL-less window the box is drawn by nobody unless the immediate path takes
-                // the layout, so this is the fixture half of that acceptance.
-                //
-                // Its own flag rather than part of keepEntities: it changes the picture, so it changes the scene's
-                // calibration key, and the measured references were taken without it.
-                int lx = (int) Math.floor(mc.player.posX), lz = (int) Math.floor(mc.player.posZ);
-                int lg = mc.world.getHeight(lx, lz - 8);
-                net.minecraft.entity.Entity rendererless = new celtium$RendererlessEntity(mc.world);
-                rendererless.setPositionAndUpdate(mc.player.posX - 1.5D, lg + 0.5D, mc.player.posZ - 8.0D);
-                rendererless.motionX = 0.0D; rendererless.motionY = 0.0D; rendererless.motionZ = 0.0D;
-                // A ground height, not the player's own y: the generic spawn helper puts an entity at the eye's level,
-                // which is inside the ground here. Placed like this the box stands on the surface in the view cone.
-                mc.world.spawnEntity(rendererless);
-                System.out.println("[Celtium] CELTIUM_RENDERERLESS_ENTITY_SPAWNED tick=" + worldTicks
-                        + " pos=" + rendererless.posX + "," + rendererless.posY + "," + rendererless.posZ
-                        + " box=" + rendererless.getEntityBoundingBox()
-                        + " nonPlayer=" + countNonPlayerEntities(mc));
-            }
-            if (worldTicks >= 60 && !celtium$wallBuilt && Boolean.getBoolean("celtium.validation.allBlocks")) {
-                celtium$wallBuilt = true;
-                // The registry sweep: one of every registered block, laid out as a wall the camera sees whole, so
-                // the comparison exercises every block model the terrain passes can draw rather than the handful a
-                // flat world happens to contain. Blocks that need a tile entity to show anything (the chest, the
-                // sign) draw as nothing here, which is honest - their render path is the TESR's, not the chunk's.
-                // Each test position gets a stone block under it so standing-on blocks stay placed; liquids and
-                // gravity blocks would flow or fall out of the sweep, so they are skipped.
-                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
-                int gy = mc.world.getHeight(px, pz - 30);
-                int placed = 0, index = 0;
-                net.minecraft.block.state.IBlockState support = net.minecraft.init.Blocks.STONE.getDefaultState();
-                for (net.minecraft.block.Block block : net.minecraft.block.Block.REGISTRY) {
-                    if (block == net.minecraft.init.Blocks.AIR || block == net.minecraft.init.Blocks.WATER
-                            || block == net.minecraft.init.Blocks.FLOWING_WATER || block == net.minecraft.init.Blocks.LAVA
-                            || block == net.minecraft.init.Blocks.FLOWING_LAVA || block == net.minecraft.init.Blocks.FIRE
-                            || block instanceof net.minecraft.block.BlockFalling) {
-                        continue;
-                    }
-                    int x = px - 20 + (index % 41), y = gy + 2 * (index / 41) + 1;
-                    index++;
-                    try {
-                        net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(x, y, pz - 30);
-                        mc.world.setBlockState(pos.down(), support, 3);
-                        if (mc.world.setBlockState(pos, block.getDefaultState(), 3)) {
-                            placed++;
-                        }
-                    } catch (RuntimeException | LinkageError error) {
-                        // A block whose default state cannot stand alone (a door half, a technical block) skips rather
-                        // than ending the sweep.
-                    }
-                }
-                System.out.println("[Celtium] CELTIUM_ALL_BLOCKS placed=" + placed + " tried=" + index);
-            }
-            if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")
-                    && !Boolean.getBoolean("celtium.validation.keepEntities")) {
-                // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
-                // non-player entity and particle well before the capture. Entity and TESR behaviour stays on the
-                // existing GL path and is deliberately outside what this comparison measures - unless keepEntities asks
-                // for the entity scene, in which case the mobs above stay and the capture is a coverage capture.
-                entitiesRemoved += removeNonPlayerEntities(mc);
-            }
-            // The hurt flash: keeping hurtTime non-zero on the kept mobs makes their second model pass run under the
-        // texture-env interpolate the flash is drawn through, which is the state the coverage check wants exercised.
-        if (Boolean.getBoolean("celtium.validation.hurtEntities") && worldTicks >= 150 && worldTicks <= 205) {
-            for (Object obj : mc.world.loadedEntityList) {
-                if (obj instanceof net.minecraft.entity.EntityLivingBase && obj != mc.player) {
-                    ((net.minecraft.entity.EntityLivingBase) obj).hurtTime = 10;
-                    ((net.minecraft.entity.EntityLivingBase) obj).maxHurtTime = 10;
-                }
-            }
-        }
-        // The glow outline: the glowing tag routes every kept mob through the entityOutline framebuffer and its
-        // silhouette composite, the same post-process shape the spectator effects take.
-        if (Boolean.getBoolean("celtium.validation.glowEntities") && worldTicks >= 150 && worldTicks <= 205) {
-            for (Object obj : mc.world.loadedEntityList) {
-                if (obj instanceof net.minecraft.entity.Entity && obj != mc.player) {
-                    ((net.minecraft.entity.Entity) obj).setGlowing(true);
-                }
-            }
-        }
-        if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
-                // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
-                // that the next render builds, and pinning the world time keeps the sun angle identical.
-                flickerPinned = pinLightmapFlicker(mc);
-                mc.world.setWorldTime(PINNED_WORLD_TIME);
-                // BH-09: force the GUI scale while a world exists, so it is already in effect when the GUI stage
-                // opens the options screen later in this run. Set here rather than at the screen because the screen
-                // is opened by a path that may be the mod's own, and the scale has to be right before it lays out.
-                // Restore: the condition asks for change, restore and reload, and only the change was ever
-                // exercised. Setting the scale back to the vanilla default of 0 (auto) at a chosen tick is the
-                // restore half, and it is recorded so a leg can say it happened.
-                if (GUI_SCALE_RESTORE_AT_TICK > 0 && worldTicks >= GUI_SCALE_RESTORE_AT_TICK
-                        && mc.gameSettings.guiScale != 0) {
-                    mc.gameSettings.guiScale = 0;
-                    if (!celtium$guiScaleRestoredReported) {
-                        celtium$guiScaleRestoredReported = true;
-                        report.addProperty("guiScaleRestoredAtTick", Integer.valueOf(worldTicks));
-                        report.addProperty("guiScaleRestoredTo", Integer.valueOf(0));
-                    }
-                }
-                if (FORCED_GUI_SCALE > 0 && mc.gameSettings.guiScale != FORCED_GUI_SCALE
-                        && !(GUI_SCALE_RESTORE_AT_TICK > 0 && worldTicks >= GUI_SCALE_RESTORE_AT_TICK)) {
-                    mc.gameSettings.guiScale = FORCED_GUI_SCALE;
-                    if (!celtium$guiScaleForcedReported) {
-                        celtium$guiScaleForcedReported = true;
-                        report.addProperty("guiScaleForced", Integer.valueOf(FORCED_GUI_SCALE));
-                    }
-                }
-                // The cloud setting, for the same reason the time is pinned: the user's complaint names clouds, and no
-                // run of this fixture could contain a cloud pixel because nothing set the game's own cloud option. The
-                // default is -1 = "leave the game's value alone", so every existing leg and calibration key is
-                // bit-for-bit unchanged; the value the run used is reported either way.
-                int cloudOption = Integer.getInteger("celtium.validation.renderClouds", -1).intValue();
-                if (cloudOption >= 0 && cloudOption <= 2) {
-                    // 1.12.2's field is `clouds` (int 0/1/2); `renderClouds` is only the options.txt key and the
-                    // translation key, which is what the first version of this edit mistook it for.
-                    mc.gameSettings.clouds = cloudOption;
-                }
-                // The F3 overlay, for the same reason the time and the clouds are pinned: task-59's F3-on vs F3-off
-                // pair needs the overlay really on, and the F3 key cannot be synthesised honestly - so the run sets
-                // the game's own field and the report says it was enabled through the field. Default = leave the
-                // game's value alone, so no existing leg or calibration key moves.
-                String debugOption = System.getProperty("celtium.validation.showDebugInfo", "");
-                if (!debugOption.isEmpty()) {
-                    mc.gameSettings.showDebugInfo = Boolean.parseBoolean(debugOption);
-                }
-                // Rebuilding every chunk mesh once, after the world time is pinned, answers a question the frame alone
-                // cannot: if the terrain brightens, the light level was baked into the per-vertex colour when the mesh was
-                // built and is never refreshed while that mesh lives, rather than the light map texture being wrong.
-                int reloadAtTick = Integer.getInteger("celtium.validation.reloadAtTick", 0).intValue();
-                if (reloadAtTick > 0 && worldTicks == reloadAtTick && !reloadDone) {
-                    reloadDone = true;
-                    mc.renderGlobal.loadRenderers();
-                    report.addProperty("renderersReloadedAtTick", worldTicks);
-                }
-            }
+        // The rest of the tick lives in its own method: inline, this handler was 8034 bytes of bytecode, over HotSpot's
+        // 8000-byte HugeMethodLimit, so it ran interpreted on every tick of both arms.
+        celtium$tickRest(mc);
         } catch (Throwable error) {
             fail(mc, error);
         }
@@ -5211,88 +5218,8 @@ public final class ValidationClient {
         return false;
     }
 
-    @SubscribeEvent
-    public void frame(TickEvent.RenderTickEvent event) {
-        if (!enabled || finished) return;
-        // Which halves of which events actually arrive, in the log. The 268-mod leg never called
-        // celtium$completePendingDumps, and that call is on the END half of this handler - so either the event was not
-        // delivered, or only its START half was, or the handler threw before reaching the call. Those are three
-        // different faults and the fixture could not tell them apart: the only trace of this handler was its effect,
-        // and an absent effect reads exactly like an absent event. START and END are logged separately, once each, so a
-        // leg that shows START and no END names the fault instead of leaving it to be inferred.
-        if (event.phase == TickEvent.Phase.START) {
-            if (celtium$frameStartSeen++ == 0) {
-                System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=START first clientTicks=" + celtium$clientTicks);
-            }
-            // The scene's own camera overrides are applied BEFORE the frame is rendered, which is where a pose has to be
-            // set to be the pose that gets drawn. They used to live in the END half of this handler, next to the code
-            // that inspects the finished frame - and since celtium$applyPose re-applies the scene pose from the client
-            // tick, the two writers fought over the same field at different points of the loop and the rendered pitch
-            // interpolated between them. Measured: GL-less frames sat at +20 while the bridge's screenshot caught about
-            // -14, so the two legs were not at the same camera and a real-GL run failed with "the camera at the capture
-            // is not the pose ... measured pitch=-14". A pose comparison across legs is only a comparison if both legs
-            // render the same pose.
-            celtium$applyClientPoseOverride(Minecraft.getMinecraft());
-            return;
-        }
-        if (celtium$frameEndSeen++ == 0) {
-            System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=END first clientTicks=" + celtium$clientTicks);
-        }
-        Minecraft mc = Minecraft.getMinecraft();
-        // Every render tick: see whether a requested dump has been written, and complete its identity from the
-        // renderer's own counters if it has. This is the frame-bound step - the identity is taken from the observation
-        // that the file appeared while the presented-frame counter had advanced by exactly one from the request.
-        celtium$completePendingDumps();
-        // Stage two of a GL-less capture: the present between the two render ticks has written the frame the capture
-        // asked for, so the picture verdict and the report belong to this frame rather than to the last one. The
-        // verdict reads the identity completed above and the capture-time snapshot; it never compares a live counter
-        // with a capture-time one, which is how a passing Intel run failed at shutdown with
-        // "presentedImageFramesAtCapture=150 is not within one of worldFrames=152".
-        if (celtium$presentedVerdictPendingAtTick >= 0) {
-            if (!celtium$pendingVerdictEvidenceComplete()) {
-                // The present that writes the picture happens after this event (updateDisplay is the last thing in the
-                // loop iteration), so the frame the capture asked for is not on disk yet. Judging here judged the file
-                // from before the request; the verdict now waits for the identity the write completes.
-                return;
-            }
-            celtium$presentedVerdictPendingAtTick = -1;
-            report.addProperty("presentedImageVerificationTick", Integer.valueOf(worldTicks));
-            report.addProperty("presentedImageVerificationWorldFrames", Integer.valueOf(worldFrames));
-            report.addProperty("presentedImageVerificationPresentedFrames", Integer.valueOf(celtium$presentedFrameCount()));
-            celtium$judgePictures(mc, "on the frame after the capture");
-            celtium$setStatusFromPictures();
-            celtium$requestFinish(mc);
-            return;
-        }
-        // The GUI stage: the video settings screen has been opened and is being laid out; once it has had its ticks
-        // and frames, capture it - the screen is drawn before this event, so the picture holds it - and leave the
-        // verdict to the next frame for the same reason a GL-less world capture does.
-        if (celtium$stage >= 1) {
-            celtium$advanceGuiStage(mc);
-            return;
-        }
-        long now = System.nanoTime();
-        if (worldTicks >= 120 && worldTicks < 200 && previousFrame != 0) {
-            frameIntervals.add((now - previousFrame) / 1_000_000.0);
-        }
-        int warmFrom = Integer.getInteger("celtium.validation.warmFromTick", 400).intValue();
-        int warmTo = Integer.getInteger("celtium.validation.warmToTick", 600).intValue();
-        if (worldTicks >= warmFrom && worldTicks < warmTo && previousFrame != 0) {
-            warmFrameIntervals.add((now - previousFrame) / 1_000_000.0);
-        }
-        // A slow frame's phase evidence, captured at the frame it happened in. The acceptance for the user's lag is the
-        // p95/p99 pair rather than the median, and a distribution cannot say which phase produced a spike: this records
-        // the renderer's own report beside the interval, so a slow frame comes back with named phases and with what the
-        // upload path cost that frame, instead of a bare number. Bounded, and it costs nothing until a frame crosses
-        // the threshold.
-        long uploadThisFrameMillis = celtium$sampleUploadWait();
-        if (previousFrame != 0) {
-            double intervalMs = (now - previousFrame) / 1_000_000.0;
-            if (intervalMs >= Integer.getInteger("celtium.validation.slowFrameMs", 50).intValue()) {
-                celtium$recordSlowFrame(intervalMs, uploadThisFrameMillis);
-            }
-        }
-        previousFrame = now;
+    /** The scripted per-leg actions {@link #frame} runs once their tick arrives; see the call site. */
+    private void celtium$frameScriptedActions(Minecraft mc) {
         if (worldTicks >= 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
             celtium$reloaded = true;
             // Resource reload, the way F3+T does it: every chunk renderer is rebuilt and every texture is re-stitched.
@@ -5603,6 +5530,93 @@ public final class ValidationClient {
             // other scenes are calibrated without the screen.
             mc.displayGuiScreen(null);
         }
+    }
+
+    @SubscribeEvent
+    public void frame(TickEvent.RenderTickEvent event) {
+        if (!enabled || finished) return;
+        // Which halves of which events actually arrive, in the log. The 268-mod leg never called
+        // celtium$completePendingDumps, and that call is on the END half of this handler - so either the event was not
+        // delivered, or only its START half was, or the handler threw before reaching the call. Those are three
+        // different faults and the fixture could not tell them apart: the only trace of this handler was its effect,
+        // and an absent effect reads exactly like an absent event. START and END are logged separately, once each, so a
+        // leg that shows START and no END names the fault instead of leaving it to be inferred.
+        if (event.phase == TickEvent.Phase.START) {
+            if (celtium$frameStartSeen++ == 0) {
+                System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=START first clientTicks=" + celtium$clientTicks);
+            }
+            // The scene's own camera overrides are applied BEFORE the frame is rendered, which is where a pose has to be
+            // set to be the pose that gets drawn. They used to live in the END half of this handler, next to the code
+            // that inspects the finished frame - and since celtium$applyPose re-applies the scene pose from the client
+            // tick, the two writers fought over the same field at different points of the loop and the rendered pitch
+            // interpolated between them. Measured: GL-less frames sat at +20 while the bridge's screenshot caught about
+            // -14, so the two legs were not at the same camera and a real-GL run failed with "the camera at the capture
+            // is not the pose ... measured pitch=-14". A pose comparison across legs is only a comparison if both legs
+            // render the same pose.
+            celtium$applyClientPoseOverride(Minecraft.getMinecraft());
+            return;
+        }
+        if (celtium$frameEndSeen++ == 0) {
+            System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=END first clientTicks=" + celtium$clientTicks);
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        // Every render tick: see whether a requested dump has been written, and complete its identity from the
+        // renderer's own counters if it has. This is the frame-bound step - the identity is taken from the observation
+        // that the file appeared while the presented-frame counter had advanced by exactly one from the request.
+        celtium$completePendingDumps();
+        // Stage two of a GL-less capture: the present between the two render ticks has written the frame the capture
+        // asked for, so the picture verdict and the report belong to this frame rather than to the last one. The
+        // verdict reads the identity completed above and the capture-time snapshot; it never compares a live counter
+        // with a capture-time one, which is how a passing Intel run failed at shutdown with
+        // "presentedImageFramesAtCapture=150 is not within one of worldFrames=152".
+        if (celtium$presentedVerdictPendingAtTick >= 0) {
+            if (!celtium$pendingVerdictEvidenceComplete()) {
+                // The present that writes the picture happens after this event (updateDisplay is the last thing in the
+                // loop iteration), so the frame the capture asked for is not on disk yet. Judging here judged the file
+                // from before the request; the verdict now waits for the identity the write completes.
+                return;
+            }
+            celtium$presentedVerdictPendingAtTick = -1;
+            report.addProperty("presentedImageVerificationTick", Integer.valueOf(worldTicks));
+            report.addProperty("presentedImageVerificationWorldFrames", Integer.valueOf(worldFrames));
+            report.addProperty("presentedImageVerificationPresentedFrames", Integer.valueOf(celtium$presentedFrameCount()));
+            celtium$judgePictures(mc, "on the frame after the capture");
+            celtium$setStatusFromPictures();
+            celtium$requestFinish(mc);
+            return;
+        }
+        // The GUI stage: the video settings screen has been opened and is being laid out; once it has had its ticks
+        // and frames, capture it - the screen is drawn before this event, so the picture holds it - and leave the
+        // verdict to the next frame for the same reason a GL-less world capture does.
+        if (celtium$stage >= 1) {
+            celtium$advanceGuiStage(mc);
+            return;
+        }
+        long now = System.nanoTime();
+        if (worldTicks >= 120 && worldTicks < 200 && previousFrame != 0) {
+            frameIntervals.add((now - previousFrame) / 1_000_000.0);
+        }
+        int warmFrom = Integer.getInteger("celtium.validation.warmFromTick", 400).intValue();
+        int warmTo = Integer.getInteger("celtium.validation.warmToTick", 600).intValue();
+        if (worldTicks >= warmFrom && worldTicks < warmTo && previousFrame != 0) {
+            warmFrameIntervals.add((now - previousFrame) / 1_000_000.0);
+        }
+        // A slow frame's phase evidence, captured at the frame it happened in. The acceptance for the user's lag is the
+        // p95/p99 pair rather than the median, and a distribution cannot say which phase produced a spike: this records
+        // the renderer's own report beside the interval, so a slow frame comes back with named phases and with what the
+        // upload path cost that frame, instead of a bare number. Bounded, and it costs nothing until a frame crosses
+        // the threshold.
+        long uploadThisFrameMillis = celtium$sampleUploadWait();
+        if (previousFrame != 0) {
+            double intervalMs = (now - previousFrame) / 1_000_000.0;
+            if (intervalMs >= Integer.getInteger("celtium.validation.slowFrameMs", 50).intValue()) {
+                celtium$recordSlowFrame(intervalMs, uploadThisFrameMillis);
+            }
+        }
+        previousFrame = now;
+        // The scripted per-leg actions live in their own method: inline, this handler was 8678 bytes of bytecode, over
+        // HotSpot's 8000-byte HugeMethodLimit, so it ran interpreted on every frame of both arms.
+        celtium$frameScriptedActions(mc);
         // A scene whose world time advances between runs is not the same scene: two runs of one jar had identical
         // pose, dimension and entity count and differed on 16% of their pixels, and the only value that differed was
         // totalWorldTime (219 against 229). Hold the clock so the captured frame is comparable at all.
