@@ -475,8 +475,13 @@ public final class TextureCopyService {
         if (NATIVE_TEXTURE_COPY) {
             String blitRefusal = this.host.registry().blitRefusal(destName, image, this.host.targetWidth(),
                     this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
+            // The host route is for the title screen's background chain: it needs the read that flushes and waits,
+            // because the blit copies an image this frame's draws have not reached. Inside a world pass the copy is the
+            // sun glare's own screen grab, where the blit is both correct and much cheaper - taking the host route there
+            // cost the world 2.03-2.05 ms p50 against 1.56 ms for the same jar with the blit (KPI legs final3 against
+            // bake, same machine), which is why the condition is "outside a world pass", not "always".
             if (blitRefusal == null && windowAlphaSource(readFbo, image)
-                    && (!WINDOW_COPY_BLIT || this.host.worldPassActive())) {
+                    && (!WINDOW_COPY_BLIT && !this.host.worldPassActive())) {
                 // The host route is the comparison arm only: with alpha writes masked on the delivered frame the
                 // blit's verbatim copy already carries the alpha-1 the window's GL read owes. The switch stays so a
                 // leg can still measure the two routes against each other.

@@ -8302,12 +8302,18 @@ this.frameBufferOpen = false;
         // which is what makes that legal: the title screen's panorama is sixty-four tiles, each rotated and offset, and
         // without this every one of its 384 quads landed on the same place and the alpha stack converged to a single
         // sharp photograph instead of a blur. Formats 1, 2 and 6 are the layouts drawn through that family.
-        // Outside a world pass only. Baking a rotated batch costs the general 3x3 product per vertex, and in the world
-        // that is paid by batches that do not need it - the measured cost of allowing it everywhere was 2.03-2.10 ms
-        // p50 against 1.54 ms for the same jar with the axis-aligned rule (KPI legs final1 against texmat-now, same
-        // machine, paired with the reference). The title screen's panorama is drawn outside a world pass, so the gate
-        // keeps the fix where it was needed and leaves the world's own batches on the cheap path.
-        if (this.worldPassActive) {
+        // Only for batches drawn into a viewport narrower than the target - which is exactly the title screen's panorama:
+        // GuiMainMenu draws its cube faces at a 256x256 viewport and copies that rectangle. The discriminator is the
+        // viewport rather than "inside a world pass", because the world's own immediate batches are offered outside the
+        // world pass brackets and so the pass gate never fired for them: every jar measured with that gate (final2,
+        // final3, final4, final5) stayed at 2.02-2.20 ms p50 against 1.558 ms for the same code without the affine bath,
+        // i.e. the slow path was still being taken. worldPassActive is also not the property that separates them.
+        if (Boolean.getBoolean("celtium.debug.noAffineBake")) {
+            return false;
+        }
+        boolean narrowerViewport = this.liveViewportWidth < this.targetWidth
+                || this.liveViewportHeight < this.targetHeight;
+        if (!narrowerViewport) {
             return false;
         }
         boolean affine = this.glModelView[3] == 0.0f && this.glModelView[7] == 0.0f

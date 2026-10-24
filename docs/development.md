@@ -3130,3 +3130,12 @@ hostルートに一致しないため、**既定はhostルートのまま**。bl
 （bake あり・window修正前）。※KPIは `CELTIUM_INSTANCE_WORLD` を明示しないと
 0.6.13 instance を掴んで即死する（leg final3-blit が exitCode 255 / Cleanroom 0.6.13）ので、
 次回は必ず env を付ける。
+
+**性能: 回帰の帰属は未決（2026-10-24 追記）**
+
+- `-Dceltium.debug.noAffineBake=true` で affine bake を実行時に切っても **2.083ms / 1.727x**（変わらず）。
+- world leg のコピー統計は readbacks=0 / blits=0 → **コピー経路は world に関与していない**。
+- したがって「texmat/bake JAR が 1.56ms」という以前の測定との差は、affine bake でもコピー経路でもない。
+  同一セッション後半で `celeritas` は 1.19–1.27ms と安定しているため、機械全体の速度変化でも説明しにくい。
+  次の判別は **同じ commit 84c220575 のソースで JAR を今ビルドし直して測る**こと
+  （当時の JAR は削除済み。git の3ファイル差し替えで再現可能）。
