@@ -1606,18 +1606,18 @@ public final class VulkanPostChain {
         try (MemoryStack stack = stackPush()) {
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(2, stack);
             VkDescriptorImageInfo.Buffer inInfo = VkDescriptorImageInfo.calloc(1, stack);
-            // SHADER_READ_ONLY_OPTIMAL, not GENERAL: this descriptor samples, and its image is moved to that layout by
-            // the sampling side before the draw (`ensureSampledLayout` for a published frame texture, and the layout
-            // the immediate pipelines declare). Declaring GENERAL here is what the HEI leg reported as
-            // `VUID-vkCmdDraw-None-09600 ... expects VkImage 0x370000000037 to be in layout VK_IMAGE_LAYOUT_GENERAL -
-            // instead, current layout is VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL` at vkQueueSubmit. The field is a
-            // declaration the driver ignores but the validation layer checks, and two consumers of one image may not
-            // declare two different layouts.
+            // GENERAL: the layout every image this chain samples is in when the pass reads it. The chain's targets and
+            // the frame image are attachments of this chain's render pass (initial and final layout GENERAL), and
+            // shaderReadBarrier keeps them in GENERAL. Declaring SHADER_READ_ONLY_OPTIMAL here (commit dd0b0389c, a
+            // guess that its own HEI leg showed did not remove that leg's messages) contradicted that: the first
+            // vanilla chain that actually ran (creeper.json, leg postshader2-creeper-amd-1) reported
+            // VUID-vkCmdDraw-imageLayout-00344 "SHADER_READ_ONLY_OPTIMAL ... doesn't match the previous known layout
+            // VK_IMAGE_LAYOUT_GENERAL" for DiffuseSampler on both the frame image and the chain's own target.
             inInfo.get(0).sampler(this.sampler).imageView(inView)
-                    .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
             VkDescriptorImageInfo.Buffer auxInfo = VkDescriptorImageInfo.calloc(1, stack);
             auxInfo.get(0).sampler(this.sampler).imageView(auxView)
-                    .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
             writes.get(0).sType$Default().dstSet(set).dstBinding(0).descriptorCount(1)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).pImageInfo(inInfo);
             writes.get(1).sType$Default().dstSet(set).dstBinding(1).descriptorCount(1)

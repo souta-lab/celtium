@@ -54,10 +54,11 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | ワールド退出後ボタン無し | **未再現**（fixture: 既定・日本語/Unicode/1920×1080 とも表示）。手順差（ポーズ→終了・非16:9）の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`、`-Dceltium.debug.periodicLogs=true`で全出力） |
+   | vanilla post shader（観戦時のcreeper/spider等・発光outline） | **creeper/spiderはnativeで描画**（leg `postshader4-creeper/spider-amd-1` PASSED・validation 0）。以前はGL-lessで読込自体が失敗し無効だった（compile状態の問合せ署名違い・uniform位置-1・行列の転置・descriptor layout）。**発光outlineは未完**: chainは毎frame走りoutline画像も正しいが、mainへの合成が画面に出ない（`postshader6-glow-amd-1`）。次の判別: 合成groupが受理・記録されるか、どの画像をsampleするか |
 2. **性能**: AMD warm p50 は Celeritas と同等（1.027x〜0.881x、再現性未確定）、**p95はCeleritasより低い**。
    次は `goal.md` の基盤固有最適化と描画mod手法の吸収（EntityCulling型の遮蔽間引き、静的TESRのchunk mesh化、
    `VkPipelineCache` 永続化、GUI/文字のbatch）を、paired KPIとスパイク計測で1つずつ。Intelは未測定。
-3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。
+3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
    Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では

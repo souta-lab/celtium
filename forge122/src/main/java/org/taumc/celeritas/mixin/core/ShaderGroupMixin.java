@@ -67,6 +67,7 @@ public abstract class ShaderGroupMixin {
         TerrainGpuBackend current = TerrainGpuBackends.current();
         if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)
                 || !backend.celtium$postChainAvailable()) {
+            celtium$skip("unavailable");
             return;
         }
         if (!mainIsGame) {
@@ -76,6 +77,7 @@ public abstract class ShaderGroupMixin {
             // is constructed with Minecraft.getFramebuffer() - but a mod can) would have its "main" passes sample and
             // write the wrong image while reporting the chain as run, so that group keeps its GL chain instead. The
             // audit's N04 rule: accept a chain only when its real input can be supplied natively.
+            celtium$skip("main-not-game");
             return;
         }
         // The framebuffer the chain reads first - its entry point. For every chain that starts from the game's main
@@ -87,6 +89,7 @@ public abstract class ShaderGroupMixin {
         boolean inputIsGame = chainInput == null || chainInput == minecraft.getFramebuffer();
         if (!inputIsGame && chainInput.framebufferTexture <= 0) {
             // An input the game filled without a colour texture cannot stand for anything.
+            celtium$skip("input-without-texture");
             return;
         }
         int inputIdentity = 0;
@@ -124,6 +127,7 @@ public abstract class ShaderGroupMixin {
             if (pass == null) {
                 // A pass that cannot be described natively keeps the whole group on GL - partial chains are not a
                 // mode the GL and native outputs can be compared on.
+                celtium$skip("pass-not-collected");
                 return;
             }
             passes.add(pass);
@@ -162,7 +166,17 @@ public abstract class ShaderGroupMixin {
         }
         if (backend.celtium$postChainRun(passes)) {
             info.cancel();
+        } else {
+            celtium$skip("run-refused");
         }
+    }
+
+    /**
+     * A chain left to GL draws nothing on the GL-less path, so each way out is named (the log limiter bounds the line
+     * per tag): the outline group ran once and never again in leg postshader4-glow-amd-1 with no line saying why.
+     */
+    private static void celtium$skip(String reason) {
+        System.out.println("[Celtium] CELTIUM_CHAIN_SKIP reason=" + reason);
     }
 
     /** {@return the framebuffer the chain's first pass reads}, or null when the group has no pass at all. */
@@ -246,6 +260,7 @@ public abstract class ShaderGroupMixin {
             }
             return pass;
         } catch (RuntimeException | LinkageError error) {
+            celtium$skip("collect-error " + error);
             return null;
         }
     }
@@ -336,6 +351,20 @@ public abstract class ShaderGroupMixin {
             FloatBuffer buffer = accessor.celtium$uniformFloatBuffer();
             if (buffer == null) {
                 return false;
+            }
+            // Matrices (types 8-10: 2x2, 3x3, 4x4) are stored row by row - ShaderUniform.set(Matrix4f) writes m00, m01,
+            // ... and vanilla uploads them with glUniformMatrix*(transpose = true). The block is read by GLSL as
+            // column-major, so they are transposed here. Copied as stored, ProjMat arrived transposed and blit.vsh,
+            // which drops w, put every chain quad in one quadrant of its target (leg postshader3-creeper-amd-1: the
+            // first pass wrote 230400 of 921600 pixels).
+            int order = type == 10 && count == 16 ? 4 : type == 9 && count == 9 ? 3 : type == 8 && count == 4 ? 2 : 0;
+            if (order != 0) {
+                for (int row = 0; row < order; ++row) {
+                    for (int column = 0; column < order; ++column) {
+                        block[byteOffset / 4 + column * order + row] = buffer.get(row * order + column);
+                    }
+                }
+                return true;
             }
             for (int i = 0; i < count; ++i) {
                 block[byteOffset / 4 + i] = buffer.get(i);

@@ -646,6 +646,26 @@ public final class CeltiumGllessHint {
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
     }
 
+    /**
+     * {@return a uniform location for a NUL-terminated name}: never -1, and the same for the same name, so vanilla's
+     * {@code ShaderManager} keeps the uniform. Read straight from the native string; called at shader setup and once
+     * per sampler per {@code useShader}.
+     */
+    public static int glUniformLocation(long name) {
+        if (name == 0L) {
+            return -1;
+        }
+        int hash = 0;
+        for (long p = name; ; p++) {
+            byte b = org.lwjgl.system.MemoryUtil.memGetByte(p);
+            if (b == 0) {
+                break;
+            }
+            hash = 31 * hash + b;
+        }
+        return hash & 0x3FFFFFFF;
+    }
+
     /** {@return the integer answer for the single-value shader and program queries} */
     public static int glGetShaderProgrami(int pname) {
         switch (pname) {

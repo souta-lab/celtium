@@ -191,6 +191,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // Uniform locations are the exception: vanilla's ShaderManager drops every uniform and sampler whose location
+        // is -1, and the native post chain (ShaderGroupMixin) reads exactly those ShaderUniform objects, so -1 left
+        // every post shader without its uniforms ("Uniform 'BlurDir' does not exist", entity_outline.json; leg
+        // postshader-creeper-amd-1). The answer is a stable non-negative location derived from the name; the glUniform
+        // calls that receive it are no-ops here.
+        if ("(IJ)I".equals(descriptor) && (name.endsWith("nglGetUniformLocation")
+                || name.endsWith("nglGetUniformLocationARB"))) {
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glUniformLocation", "(J)I", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         if (returnType.equals("I") && (name.endsWith("glGetUniformLocation") || name.endsWith("glGetAttribLocation")
                 || name.endsWith("glGetSubroutineUniformLocation") || name.endsWith("glGetSubroutineIndex")
                 || name.endsWith("glGetFragDataLocation") || name.endsWith("glGetFragDataIndex"))) {
@@ -265,22 +278,24 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         // Shader and program status queries: the caller reads the buffer (iv forms) or the return value (i forms), and
-        // vanilla decides from them whether a shader is usable. Same family as glGetIntegerv, same reason.
-        if (returnType.equals("V") && (name.endsWith("nglGetShaderiv") || name.endsWith("nglGetProgramiv"))
-                && descriptor.startsWith("(IJ)")) {
-            method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitVarInsn(Opcodes.LLOAD, 1);
+        // vanilla decides from them whether a shader is usable. Same family as glGetIntegerv, same reason. LWJGL 3's
+        // natives carry the object first - nglGetShaderiv(int shader, int pname, long params), (IIJ)V - so the answer
+        // is chosen by the second argument. Matching "(IJ)" here, as this did before, never matched a real native:
+        // the generic fallback wrote 0 for GL_COMPILE_STATUS and every vanilla post shader failed to load
+        // ("Invalid shaders/program/sobel.vsh: Couldn't compile vertex program", leg split4-creeper-amd-1).
+        if ("(IIJ)V".equals(descriptor) && (name.endsWith("nglGetShaderiv") || name.endsWith("nglGetProgramiv")
+                || name.endsWith("nglGetObjectParameterivARB"))) {
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glGetShaderProgramiv", "(IJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (returnType.equals("I") && (name.endsWith("nglGetShaderi") || name.endsWith("nglGetProgrami"))
-                && descriptor.startsWith("(II)")) {
-            method.visitVarInsn(Opcodes.ILOAD, 0);
+        if ("(II)I".equals(descriptor) && (name.endsWith("nglGetShaderi") || name.endsWith("nglGetProgrami"))) {
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
-                    "glGetShaderProgrami", "(II)I", false);
+                    "glGetShaderProgrami", "(I)I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
