@@ -12451,6 +12451,21 @@ this.frameBufferOpen = false;
     }
 
     public void delete() {
+        if (this.gpuStalled) {
+            // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
+            // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
+            // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
+            this.submissionStatistics.noteStalledTeardownSkips();
+            return;
+        }
+        // Nothing may be released while a submission is still reading it: the audit reproduced
+        // vkDestroyBuffer/-Pipeline/-DescriptorPool/-RenderPass/-Framebuffer while a command buffer was in use, on the
+        // reload and world-leave paths. Ending the queue's work first is the difference between freeing a resource and
+        // pulling it out from under the GPU.
+        if (!settleGpu("backend delete")) {
+            // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
+            return;
+        }
         if (this.shadowDepthPipeline != null) {
             this.shadowDepthPipeline.delete();
             this.shadowDepthPipeline = null;
@@ -12487,21 +12502,6 @@ this.frameBufferOpen = false;
         if (this.textureArray != null) {
             this.textureArray.destroy();
             this.textureArray = null;
-        }
-        if (this.gpuStalled) {
-            // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
-            // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
-            // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
-            this.submissionStatistics.noteStalledTeardownSkips();
-            return;
-        }
-        // Nothing may be released while a submission is still reading it: the audit reproduced
-        // vkDestroyBuffer/-Pipeline/-DescriptorPool/-RenderPass/-Framebuffer while a command buffer was in use, on the
-        // reload and world-leave paths. Ending the queue's work first is the difference between freeing a resource and
-        // pulling it out from under the GPU.
-        if (!settleGpu("backend delete")) {
-            // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
-            return;
         }
         if (this.windowOwned) {
             // The world renderer is leaving, not the window. Release what the world owns, detach the world's objects and

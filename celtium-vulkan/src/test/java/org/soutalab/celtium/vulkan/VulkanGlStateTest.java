@@ -14,6 +14,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class VulkanGlStateTest {
     @Test
+    void repeatedRangeTextureBindsCannotKeepDiagnosticsOpenOrSuppressBinding() throws Exception {
+        // Replay the real failure: every observed bind was in 40..60, so the ordinary budget never advanced.
+        var ordinaryBudget = VulkanGlState.class.getDeclaredField("unitLogs");
+        var rangeBudget = VulkanGlState.class.getDeclaredField("unitRangeLogs");
+        ordinaryBudget.setAccessible(true);
+        rangeBudget.setAccessible(true);
+        int ordinaryBefore = ordinaryBudget.getInt(null);
+        int rangeBefore = rangeBudget.getInt(null);
+        var previousOut = System.out;
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var output = new java.io.PrintStream(bytes)) {
+            System.setOut(output);
+            ordinaryBudget.setInt(null, 0);
+            rangeBudget.setInt(null, 0);
+            var raster = new NativeRasterState();
+            var state = new VulkanGlState(raster, new NativeTextureBindings(raster));
+            for (int i = 0; i < 4096; i++) state.bindTexture(40 + i % 21);
+            assertEquals(40 + 4095 % 21, state.boundTextureName(), "the log cap must not cap the actual binds");
+            long lines = bytes.toString().lines().filter(line -> line.contains("CELTIUM_UNIT_BIND")).count();
+            assertTrue(lines > 0 && lines <= 100, "diagnostics must be exercised and bounded, got " + lines);
+        } finally {
+            System.setOut(previousOut);
+            ordinaryBudget.setInt(null, ordinaryBefore);
+            rangeBudget.setInt(null, rangeBefore);
+        }
+    }
+
+    @Test
     void pushAndPopRestoreTheActiveMatrix() {
         VulkanGlState state = new VulkanGlState();
         float[] identity = state.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);

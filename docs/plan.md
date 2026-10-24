@@ -46,6 +46,9 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 
 1. **実プレイのラグ（最優先）**: 利用者の qmagnet・1920×1080・日本語環境では基本20 FPSとの報告。
    実ログの `CELTIUM_UNIT_BIND` **226,648行／46 MB**を発生させる上限判定の不具合は修正した。
+   実 `options.txt` を初期化時から渡すと旧JARで **703,428行／141 MB**を再現。修正版は96行。
+   同一fixture・実設定・Wayland・実セーブ位置の1組は warm p50 **3.368→1.644ms**
+   （[入力と限界](<evidence/user-options-2026-10-24.json>)、反復/guard付きKPIではない）。
    同解像度・距離18・Unicode・固定視点の追加runは warm p50 1.061ms（[証拠](<evidence/native-loading-2026-10-24.json>)）だが、
    24°/秒で2周する追加runは p50 2.085ms / p95 4.292ms（[回転画像・条件](<evidence/camera-sweep-2026-10-24.json>)）。
    **実プレイの20 FPSは未再現・未解決、歩行は未検証**。固定・回転benchmarkで解決扱いにしない。
@@ -57,6 +60,9 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    portal producer の後で未再測定）。per-offer のJava仕事を消す再設計（`new_architecture.md` Stage 1/3/4）が本筋。
    **読み込み進捗**は Forge の実際の ProgressBar を native Vulkan 所有の画面へ渡す経路を実装。
    **終了後のボタン消失は未再現**（AMD 1280×720・1920×1080 Unicode、Intel 1280×720でボタン表示の実画像あり）。
+   追加監査で、native draw資源をGPU待機より先に破棄する順序を修正（[受入](<evidence/native-retirement-2026-10-24.json>)）。
+   実設定での終了テストは、停止済み統合サーバーの未完了Future待機で一度停止した。停止完了を監視する修正後は、実設定の日本語/Wayland/AMDとX11/Intelで再入場 PASSED・validation0
+   （[失敗と最終受入](<evidence/shutdown-await-2026-10-24.json>)、ボタン消失そのものは未再現）。
    `worldSwitch` fixture の再入場先を同じ qmagnet に修正し、距離の報告値も実値にした。
 2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。

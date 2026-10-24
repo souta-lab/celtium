@@ -1,0 +1,566 @@
+{
+  "scope": "GPU retirement ordering on world unload; normal transitions, not an injected in-flight failure reproduction.",
+  "rendererSha256": "fcfb581f9667989ce3bf75dcffb2b96e0322d252862c3b3a562d8f54be8dfda0",
+  "fixtureSha256": "32d40dc473c696dd6acd0032662f8f4f19ed674455bb272a42959206d34bbc5a",
+  "sourceFinding": "delete() destroyed shadow/records/model pipelines, indirect/record/model buffers and the texture-array descriptor pool before checking gpuStalled or waiting for device completion. The completion gate now precedes all destruction.",
+  "legs": [
+    {
+      "leg": "native-retirement-amd",
+      "wrapper": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "fcfb581f9667989ce3bf75dcffb2b96e0322d252862c3b3a562d8f54be8dfda0"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "32d40dc473c696dd6acd0032662f8f4f19ed674455bb272a42959206d34bbc5a"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-22d73d4401cc-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 32.01982453499659,
+        "leg": "native-retirement-amd"
+      },
+      "command": [
+        "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/java-celtium.sh",
+        "-Xms512m",
+        "-Xmx2g",
+        "--enable-native-access=ALL-UNNAMED",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=world",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-amd/framedump",
+        "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+        "-Dceltium.validation.worldSwitch=true",
+        "-Dceltium.validation.worldSwitchMenuHoldTicks=60",
+        "-Dceltium.validation.fixedWorldTime=true",
+        "-Dceltium.validation.worldTime=1500",
+        "-Dceltium.validation=true",
+        "-cp",
+        "/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/codecjorbis/20101023/codecjorbis-20101023.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/codecwav/20101023/codecwav-20101023.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/libraryjavasound/20101123/libraryjavasound-20101123.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/librarylwjglopenal/20100824/librarylwjglopenal-20100824.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/soundsystem/20120107/soundsystem-20120107.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/authlib/1.5.25/authlib-1.5.25.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/realms/1.10.22/realms-1.10.22.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/text2speech/1.10.3/text2speech-1.10.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-jemalloc/3.4.3/lwjgl-jemalloc-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-openal/3.4.3/lwjgl-openal-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-opengl/3.4.3/lwjgl-opengl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-sdl/3.4.3/lwjgl-sdl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-stb/3.4.3/lwjgl-stb-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl/3.4.3/lwjgl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/ca/weblite/java-objc-bridge/1.2/java-objc-bridge-1.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/cleanmix/0.7.4/cleanmix-0.7.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/cleanroom/0.7.11-alpha/cleanroom-0.7.11-alpha-universal.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/lwjgly/2.3.0/lwjgly-2.3.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/mcttf/0.1.0/mcttf-0.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/mixinextras-common/0.5.5/mixinextras-common-0.5.5.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/github/oshi/oshi-common/7.7.1/oshi-common-7.7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/github/oshi/oshi-core-ffm/7.7.1/oshi-core-ffm-7.7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/code/findbugs/jsr305/2.0.1/jsr305-2.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/code/gson/gson/2.14.0/gson-2.14.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/errorprone/error_prone_annotations/2.48.0/error_prone_annotations-2.48.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/failureaccess/1.0.3/failureaccess-1.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/j2objc/j2objc-annotations/3.1/j2objc-annotations-3.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/ibm/icu/icu4j/78.3/icu4j-78.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/sun/istack/istack-commons-runtime/4.2.0/istack-commons-runtime-4.2.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-codec/commons-codec/1.22.0/commons-codec-1.22.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-io/commons-io/2.22.0/commons-io-2.22.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-logging/commons-logging/1.4.0/commons-logging-1.4.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/github/classgraph/classgraph/4.8.184/classgraph-4.8.184.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-all/4.2.16.Final/netty-all-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-buffer/4.2.16.Final/netty-buffer-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-base/4.2.16.Final/netty-codec-base-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-classes-quic/4.2.16.Final/netty-codec-classes-quic-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-compression/4.2.16.Final/netty-codec-compression-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-dns/4.2.16.Final/netty-codec-dns-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-haproxy/4.2.16.Final/netty-codec-haproxy-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http2/4.2.16.Final/netty-codec-http2-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http3/4.2.16.Final/netty-codec-http3-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http/4.2.16.Final/netty-codec-http-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-marshalling/4.2.16.Final/netty-codec-marshalling-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-memcache/4.2.16.Final/netty-codec-memcache-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-mqtt/4.2.16.Final/netty-codec-mqtt-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-windows-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-protobuf/4.2.16.Final/netty-codec-protobuf-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-redis/4.2.16.Final/netty-codec-redis-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-smtp/4.2.16.Final/netty-codec-smtp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-socks/4.2.16.Final/netty-codec-socks-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-stomp/4.2.16.Final/netty-codec-stomp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-xml/4.2.16.Final/netty-codec-xml-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec/4.2.16.Final/netty-codec-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-common/4.2.16.Final/netty-common-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler-proxy/4.2.16.Final/netty-handler-proxy-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler-ssl-ocsp/4.2.16.Final/netty-handler-ssl-ocsp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler/4.2.16.Final/netty-handler-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-classes-macos/4.2.16.Final/netty-resolver-dns-classes-macos-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-native-macos/4.2.16.Final/netty-resolver-dns-native-macos-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-native-macos/4.2.16.Final/netty-resolver-dns-native-macos-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns/4.2.16.Final/netty-resolver-dns-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver/4.2.16.Final/netty-resolver-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-epoll/4.2.16.Final/netty-transport-classes-epoll-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-io_uring/4.2.16.Final/netty-transport-classes-io_uring-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-kqueue/4.2.16.Final/netty-transport-classes-kqueue-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-riscv64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-riscv64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-kqueue/4.2.16.Final/netty-transport-native-kqueue-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-kqueue/4.2.16.Final/netty-transport-native-kqueue-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-unix-common/4.2.16.Final/netty-transport-native-unix-common-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-rxtx/4.2.16.Final/netty-transport-rxtx-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-sctp/4.2.16.Final/netty-transport-sctp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-udt/4.2.16.Final/netty-transport-udt-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport/4.2.16.Final/netty-transport-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/it/unimi/dsi/fastutil/8.5.18/fastutil-8.5.18.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/activation/jakarta.activation-api/2.1.4/jakarta.activation-api-2.1.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/annotation/jakarta.annotation-api/3.0.0/jakarta.annotation-api-3.0.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/bind/jakarta.xml.bind-api/4.0.5/jakarta.xml.bind-api-4.0.5.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/soap/jakarta.xml.soap-api/3.0.2/jakarta.xml.soap-api-3.0.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/ws/jakarta.xml.ws-api/4.0.3/jakarta.xml.ws-api-4.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/java3d/vecmath/1.5.2/vecmath-1.5.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/lzma/lzma/0.0.1/lzma-0.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/dev/jna/jna-platform/5.19.1/jna-platform-5.19.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/dev/jna/jna/5.19.1/jna-5.19.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/jinput/jinput/2.0.10/jinput-2.0.10.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/trove4j/core/3.1.0/core-3.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/trove4j/experimental/3.1.0/experimental-3.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-compress/1.28.0/commons-compress-1.28.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-lang3/3.20.0/commons-lang3-3.20.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-text/1.15.0/commons-text-1.15.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/client5/httpclient5/5.6.1/httpclient5-5.6.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/httpclient/4.5.14/httpclient-4.5.14.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/httpcore/4.4.16/httpcore-4.4.16.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-api/2.26.0/log4j-api-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-core/2.26.0/log4j-core-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-slf4j2-impl/2.26.0/log4j-slf4j2-impl-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/maven/maven-artifact/3.9.16/maven-artifact-3.9.16.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/codehaus/plexus/plexus-utils/3.6.1/plexus-utils-3.6.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/eclipse/angus/angus-activation/2.0.3/angus-activation-2.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/corba/glassfish-corba-omgapi/5.0.2/glassfish-corba-omgapi-5.0.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/jaxb-core/4.0.9/jaxb-core-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/jaxb-runtime/4.0.9/jaxb-runtime-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/txw2/4.0.9/txw2-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/javassist/javassist/3.32.0-GA/javassist-3.32.0-GA.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jctools/jctools-core/4.0.6/jctools-core-4.0.6.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jline/jline/4.1.3/jline-4.1.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/joml/joml/1.10.9/joml-1.10.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/openjdk/nashorn/nashorn-core/15.7/nashorn-core-15.7.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-analysis/9.10.1/asm-analysis-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-commons/9.10.1/asm-commons-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-deprecated/7.1/asm-deprecated-7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-util/9.10.1/asm-util-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/slf4j/slf4j-api/2.0.20/slf4j-api-2.0.20.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/tukaani/xz/1.12/xz-1.12.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/top/outlands/foundation/0.22.2/foundation-0.22.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/zone/rong/imaginebreaker/3.2/imaginebreaker-3.2.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/icu4j-core-mojang-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/patchy-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/platform-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/jutils-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl-platform-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl_util-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/oshi-core-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/minecraft/1.12.2/minecraft-1.12.2-client.jar:/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-amd/test-libraries/lwjgl-vulkan-3.4.3.jar",
+        "top.outlands.foundation.boot.Foundation",
+        "--username",
+        "CeltiumValidation",
+        "--version",
+        "1.12.2",
+        "--gameDir",
+        "/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-amd",
+        "--assetsDir",
+        "/home/s0u7a/.local/share/PrismLauncher/assets",
+        "--assetIndex",
+        "1.12",
+        "--uuid",
+        "f6b9d4d43ca230c7a3bc36e4d859f29c",
+        "--accessToken",
+        "0",
+        "--userType",
+        "legacy",
+        "--versionType",
+        "release",
+        "--width",
+        "1280",
+        "--height",
+        "720",
+        "--tweakClass",
+        "net.minecraftforge.fml.common.launcher.FMLTweaker"
+      ],
+      "process": {
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "gpuRequirementMet": true
+      },
+      "report": {
+        "saveSlot": "qmagnet",
+        "rejoinedSaveSlot": "qmagnet",
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "renderDistance": 18,
+        "worldSwitchMenuDumpClientTick": 151,
+        "presentedImageVerdict": "PASSED"
+      },
+      "nativeWaylandSurfaceObserved": false,
+      "pictures": {
+        "menu": {
+          "path": ".gv-verify/run-native-retirement-amd/screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d-kept.png",
+          "sha256": "b5f352221ed35ecd2ae8f59c9aaa2872eda1c55fc589f4590a6b59276161d3b6",
+          "identity": {
+            "runId": "run-22d73d4401cc-7a81197d",
+            "scene": "world",
+            "stage": "world-switch-menu",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d.png",
+            "worldTick": 100,
+            "worldFrames": 247,
+            "presentedFrame": 278,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -1308095703,
+            "requestedAtTick": 100,
+            "requestedWorldFrames": 247,
+            "requestedPresentedFrame": 277,
+            "completedAtTick": 100,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792849915551
+          }
+        },
+        "world": {
+          "path": ".gv-verify/run-native-retirement-amd/screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d-kept.png",
+          "sha256": "b5f352221ed35ecd2ae8f59c9aaa2872eda1c55fc589f4590a6b59276161d3b6",
+          "identity": {
+            "runId": "run-22d73d4401cc-7a81197d",
+            "scene": "world",
+            "stage": "world-switch-menu",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-switch-menu-run-22d73d4401cc-7a81197d.png",
+            "worldTick": 100,
+            "worldFrames": 247,
+            "presentedFrame": 278,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -1308095703,
+            "requestedAtTick": 100,
+            "requestedWorldFrames": 247,
+            "requestedPresentedFrame": 277,
+            "completedAtTick": 100,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792849915551
+          }
+        }
+      }
+    },
+    {
+      "leg": "native-retirement-intel",
+      "wrapper": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "fcfb581f9667989ce3bf75dcffb2b96e0322d252862c3b3a562d8f54be8dfda0"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "32d40dc473c696dd6acd0032662f8f4f19ed674455bb272a42959206d34bbc5a"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-234233ed218b-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 35.42041023099591,
+        "leg": "native-retirement-intel"
+      },
+      "command": [
+        "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/java-celtium.sh",
+        "-Xms512m",
+        "-Xmx2g",
+        "--enable-native-access=ALL-UNNAMED",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=world",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-intel/framedump",
+        "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+        "-Dceltium.validation.worldSwitch=true",
+        "-Dceltium.validation.worldSwitchMenuHoldTicks=60",
+        "-Dceltium.validation.fixedWorldTime=true",
+        "-Dceltium.validation.worldTime=1500",
+        "-Dceltium.validation=true",
+        "-cp",
+        "/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/codecjorbis/20101023/codecjorbis-20101023.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/codecwav/20101023/codecwav-20101023.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/libraryjavasound/20101123/libraryjavasound-20101123.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/librarylwjglopenal/20100824/librarylwjglopenal-20100824.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/soundsystem/20120107/soundsystem-20120107.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/authlib/1.5.25/authlib-1.5.25.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/realms/1.10.22/realms-1.10.22.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/text2speech/1.10.3/text2speech-1.10.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-jemalloc/3.4.3/lwjgl-jemalloc-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-openal/3.4.3/lwjgl-openal-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-opengl/3.4.3/lwjgl-opengl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-sdl/3.4.3/lwjgl-sdl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-stb/3.4.3/lwjgl-stb-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl/3.4.3/lwjgl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/ca/weblite/java-objc-bridge/1.2/java-objc-bridge-1.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/cleanmix/0.7.4/cleanmix-0.7.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/cleanroom/0.7.11-alpha/cleanroom-0.7.11-alpha-universal.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/lwjgly/2.3.0/lwjgly-2.3.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/mcttf/0.1.0/mcttf-0.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/mixinextras-common/0.5.5/mixinextras-common-0.5.5.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/github/oshi/oshi-common/7.7.1/oshi-common-7.7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/github/oshi/oshi-core-ffm/7.7.1/oshi-core-ffm-7.7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/code/findbugs/jsr305/2.0.1/jsr305-2.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/code/gson/gson/2.14.0/gson-2.14.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/errorprone/error_prone_annotations/2.48.0/error_prone_annotations-2.48.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/failureaccess/1.0.3/failureaccess-1.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/j2objc/j2objc-annotations/3.1/j2objc-annotations-3.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/ibm/icu/icu4j/78.3/icu4j-78.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/sun/istack/istack-commons-runtime/4.2.0/istack-commons-runtime-4.2.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-codec/commons-codec/1.22.0/commons-codec-1.22.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-io/commons-io/2.22.0/commons-io-2.22.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-logging/commons-logging/1.4.0/commons-logging-1.4.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/github/classgraph/classgraph/4.8.184/classgraph-4.8.184.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-all/4.2.16.Final/netty-all-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-buffer/4.2.16.Final/netty-buffer-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-base/4.2.16.Final/netty-codec-base-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-classes-quic/4.2.16.Final/netty-codec-classes-quic-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-compression/4.2.16.Final/netty-codec-compression-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-dns/4.2.16.Final/netty-codec-dns-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-haproxy/4.2.16.Final/netty-codec-haproxy-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http2/4.2.16.Final/netty-codec-http2-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http3/4.2.16.Final/netty-codec-http3-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http/4.2.16.Final/netty-codec-http-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-marshalling/4.2.16.Final/netty-codec-marshalling-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-memcache/4.2.16.Final/netty-codec-memcache-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-mqtt/4.2.16.Final/netty-codec-mqtt-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-windows-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-protobuf/4.2.16.Final/netty-codec-protobuf-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-redis/4.2.16.Final/netty-codec-redis-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-smtp/4.2.16.Final/netty-codec-smtp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-socks/4.2.16.Final/netty-codec-socks-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-stomp/4.2.16.Final/netty-codec-stomp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-xml/4.2.16.Final/netty-codec-xml-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec/4.2.16.Final/netty-codec-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-common/4.2.16.Final/netty-common-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler-proxy/4.2.16.Final/netty-handler-proxy-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler-ssl-ocsp/4.2.16.Final/netty-handler-ssl-ocsp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler/4.2.16.Final/netty-handler-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-classes-macos/4.2.16.Final/netty-resolver-dns-classes-macos-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-native-macos/4.2.16.Final/netty-resolver-dns-native-macos-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-native-macos/4.2.16.Final/netty-resolver-dns-native-macos-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns/4.2.16.Final/netty-resolver-dns-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver/4.2.16.Final/netty-resolver-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-epoll/4.2.16.Final/netty-transport-classes-epoll-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-io_uring/4.2.16.Final/netty-transport-classes-io_uring-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-kqueue/4.2.16.Final/netty-transport-classes-kqueue-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-riscv64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-riscv64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-kqueue/4.2.16.Final/netty-transport-native-kqueue-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-kqueue/4.2.16.Final/netty-transport-native-kqueue-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-unix-common/4.2.16.Final/netty-transport-native-unix-common-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-rxtx/4.2.16.Final/netty-transport-rxtx-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-sctp/4.2.16.Final/netty-transport-sctp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-udt/4.2.16.Final/netty-transport-udt-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport/4.2.16.Final/netty-transport-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/it/unimi/dsi/fastutil/8.5.18/fastutil-8.5.18.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/activation/jakarta.activation-api/2.1.4/jakarta.activation-api-2.1.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/annotation/jakarta.annotation-api/3.0.0/jakarta.annotation-api-3.0.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/bind/jakarta.xml.bind-api/4.0.5/jakarta.xml.bind-api-4.0.5.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/soap/jakarta.xml.soap-api/3.0.2/jakarta.xml.soap-api-3.0.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/ws/jakarta.xml.ws-api/4.0.3/jakarta.xml.ws-api-4.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/java3d/vecmath/1.5.2/vecmath-1.5.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/lzma/lzma/0.0.1/lzma-0.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/dev/jna/jna-platform/5.19.1/jna-platform-5.19.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/dev/jna/jna/5.19.1/jna-5.19.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/jinput/jinput/2.0.10/jinput-2.0.10.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/trove4j/core/3.1.0/core-3.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/trove4j/experimental/3.1.0/experimental-3.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-compress/1.28.0/commons-compress-1.28.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-lang3/3.20.0/commons-lang3-3.20.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-text/1.15.0/commons-text-1.15.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/client5/httpclient5/5.6.1/httpclient5-5.6.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/httpclient/4.5.14/httpclient-4.5.14.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/httpcore/4.4.16/httpcore-4.4.16.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-api/2.26.0/log4j-api-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-core/2.26.0/log4j-core-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-slf4j2-impl/2.26.0/log4j-slf4j2-impl-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/maven/maven-artifact/3.9.16/maven-artifact-3.9.16.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/codehaus/plexus/plexus-utils/3.6.1/plexus-utils-3.6.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/eclipse/angus/angus-activation/2.0.3/angus-activation-2.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/corba/glassfish-corba-omgapi/5.0.2/glassfish-corba-omgapi-5.0.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/jaxb-core/4.0.9/jaxb-core-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/jaxb-runtime/4.0.9/jaxb-runtime-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/txw2/4.0.9/txw2-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/javassist/javassist/3.32.0-GA/javassist-3.32.0-GA.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jctools/jctools-core/4.0.6/jctools-core-4.0.6.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jline/jline/4.1.3/jline-4.1.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/joml/joml/1.10.9/joml-1.10.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/openjdk/nashorn/nashorn-core/15.7/nashorn-core-15.7.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-analysis/9.10.1/asm-analysis-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-commons/9.10.1/asm-commons-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-deprecated/7.1/asm-deprecated-7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-util/9.10.1/asm-util-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/slf4j/slf4j-api/2.0.20/slf4j-api-2.0.20.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/tukaani/xz/1.12/xz-1.12.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/top/outlands/foundation/0.22.2/foundation-0.22.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/zone/rong/imaginebreaker/3.2/imaginebreaker-3.2.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/icu4j-core-mojang-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/patchy-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/platform-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/jutils-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl-platform-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl_util-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/oshi-core-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/minecraft/1.12.2/minecraft-1.12.2-client.jar:/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-intel/test-libraries/lwjgl-vulkan-3.4.3.jar",
+        "top.outlands.foundation.boot.Foundation",
+        "--username",
+        "CeltiumValidation",
+        "--version",
+        "1.12.2",
+        "--gameDir",
+        "/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-intel",
+        "--assetsDir",
+        "/home/s0u7a/.local/share/PrismLauncher/assets",
+        "--assetIndex",
+        "1.12",
+        "--uuid",
+        "f6b9d4d43ca230c7a3bc36e4d859f29c",
+        "--accessToken",
+        "0",
+        "--userType",
+        "legacy",
+        "--versionType",
+        "release",
+        "--width",
+        "1280",
+        "--height",
+        "720",
+        "--tweakClass",
+        "net.minecraftforge.fml.common.launcher.FMLTweaker"
+      ],
+      "process": {
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "nativeDeviceUuid": "8680923e000000000002000000000000",
+        "gpuRequirementMet": true
+      },
+      "report": {
+        "saveSlot": "qmagnet",
+        "rejoinedSaveSlot": "qmagnet",
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "renderDistance": 18,
+        "worldSwitchMenuDumpClientTick": 151,
+        "presentedImageVerdict": "PASSED"
+      },
+      "nativeWaylandSurfaceObserved": false,
+      "pictures": {
+        "menu": {
+          "path": ".gv-verify/run-native-retirement-intel/screenshots/celtium-presented-world-switch-menu-run-234233ed218b-7a81197d-kept.png",
+          "sha256": "8c7ad391bdffd9c7fe9e7d02eebdc13b4d25b9eaade2471f3e2d8a64f3b8ec39",
+          "identity": {
+            "runId": "run-234233ed218b-7a81197d",
+            "scene": "world",
+            "stage": "world-switch-menu",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-switch-menu-run-234233ed218b-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-switch-menu-run-234233ed218b-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-switch-menu-run-234233ed218b-7a81197d.png",
+            "worldTick": 100,
+            "worldFrames": 195,
+            "presentedFrame": 221,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -1155137741,
+            "requestedAtTick": 100,
+            "requestedWorldFrames": 195,
+            "requestedPresentedFrame": 220,
+            "completedAtTick": 100,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792850378044
+          }
+        },
+        "world": {
+          "path": ".gv-verify/run-native-retirement-intel/screenshots/celtium-presented-world-run-234233ed218b-7a81197d-kept.png",
+          "sha256": "8240c4ac33035e271e0d813f4fca38ac1230440a1ac8f32b32f5c36a2724084e",
+          "identity": {
+            "runId": "run-234233ed218b-7a81197d",
+            "scene": "world",
+            "stage": "world",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-run-234233ed218b-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-run-234233ed218b-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-run-234233ed218b-7a81197d.png",
+            "worldTick": 208,
+            "worldFrames": 537,
+            "presentedFrame": 342,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -1311094678,
+            "requestedAtTick": 208,
+            "requestedWorldFrames": 537,
+            "requestedPresentedFrame": 341,
+            "completedAtTick": 213,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792850385631
+          }
+        }
+      }
+    },
+    {
+      "leg": "native-retirement-wayland",
+      "wrapper": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "fcfb581f9667989ce3bf75dcffb2b96e0322d252862c3b3a562d8f54be8dfda0"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "32d40dc473c696dd6acd0032662f8f4f19ed674455bb272a42959206d34bbc5a"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-23261a36e796-7a81197d-kept.png",
+          "size": [
+            1920,
+            1080
+          ]
+        },
+        "elapsedSeconds": 34.270557996002026,
+        "leg": "native-retirement-wayland"
+      },
+      "command": [
+        "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/java-celtium.sh",
+        "-Xms512m",
+        "-Xmx2g",
+        "--enable-native-access=ALL-UNNAMED",
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=world",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-wayland/framedump",
+        "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+        "-Dceltium.validation.worldSwitch=true",
+        "-Dceltium.validation.worldSwitchMenuHoldTicks=60",
+        "-Dceltium.validation.unicodeFont=true",
+        "-Dceltium.validation.guiScale=3",
+        "-Dceltium.validation.fixedWorldTime=true",
+        "-Dceltium.validation.worldTime=1500",
+        "-Dceltium.validation=true",
+        "-cp",
+        "/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/codecjorbis/20101023/codecjorbis-20101023.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/codecwav/20101023/codecwav-20101023.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/libraryjavasound/20101123/libraryjavasound-20101123.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/librarylwjglopenal/20100824/librarylwjglopenal-20100824.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/paulscode/soundsystem/20120107/soundsystem-20120107.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/authlib/1.5.25/authlib-1.5.25.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/realms/1.10.22/realms-1.10.22.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/text2speech/1.10.3/text2speech-1.10.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-jemalloc/3.4.3/lwjgl-jemalloc-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-openal/3.4.3/lwjgl-openal-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-opengl/3.4.3/lwjgl-opengl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-sdl/3.4.3/lwjgl-sdl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl-stb/3.4.3/lwjgl-stb-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/lwjgl/lwjgl/3.4.3/lwjgl-3.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/ca/weblite/java-objc-bridge/1.2/java-objc-bridge-1.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/cleanmix/0.7.4/cleanmix-0.7.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/cleanroom/0.7.11-alpha/cleanroom-0.7.11-alpha-universal.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/lwjgly/2.3.0/lwjgly-2.3.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/mcttf/0.1.0/mcttf-0.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/cleanroommc/mixinextras-common/0.5.5/mixinextras-common-0.5.5.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/github/oshi/oshi-common/7.7.1/oshi-common-7.7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/github/oshi/oshi-core-ffm/7.7.1/oshi-core-ffm-7.7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/code/findbugs/jsr305/2.0.1/jsr305-2.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/code/gson/gson/2.14.0/gson-2.14.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/errorprone/error_prone_annotations/2.48.0/error_prone_annotations-2.48.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/failureaccess/1.0.3/failureaccess-1.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/google/j2objc/j2objc-annotations/3.1/j2objc-annotations-3.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/ibm/icu/icu4j/78.3/icu4j-78.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/sun/istack/istack-commons-runtime/4.2.0/istack-commons-runtime-4.2.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-codec/commons-codec/1.22.0/commons-codec-1.22.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-io/commons-io/2.22.0/commons-io-2.22.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/commons-logging/commons-logging/1.4.0/commons-logging-1.4.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/github/classgraph/classgraph/4.8.184/classgraph-4.8.184.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-all/4.2.16.Final/netty-all-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-buffer/4.2.16.Final/netty-buffer-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-base/4.2.16.Final/netty-codec-base-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-classes-quic/4.2.16.Final/netty-codec-classes-quic-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-compression/4.2.16.Final/netty-codec-compression-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-dns/4.2.16.Final/netty-codec-dns-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-haproxy/4.2.16.Final/netty-codec-haproxy-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http2/4.2.16.Final/netty-codec-http2-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http3/4.2.16.Final/netty-codec-http3-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-http/4.2.16.Final/netty-codec-http-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-marshalling/4.2.16.Final/netty-codec-marshalling-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-memcache/4.2.16.Final/netty-codec-memcache-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-mqtt/4.2.16.Final/netty-codec-mqtt-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-native-quic/4.2.16.Final/netty-codec-native-quic-4.2.16.Final-windows-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-protobuf/4.2.16.Final/netty-codec-protobuf-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-redis/4.2.16.Final/netty-codec-redis-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-smtp/4.2.16.Final/netty-codec-smtp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-socks/4.2.16.Final/netty-codec-socks-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-stomp/4.2.16.Final/netty-codec-stomp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec-xml/4.2.16.Final/netty-codec-xml-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-codec/4.2.16.Final/netty-codec-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-common/4.2.16.Final/netty-common-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler-proxy/4.2.16.Final/netty-handler-proxy-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler-ssl-ocsp/4.2.16.Final/netty-handler-ssl-ocsp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-handler/4.2.16.Final/netty-handler-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-classes-macos/4.2.16.Final/netty-resolver-dns-classes-macos-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-native-macos/4.2.16.Final/netty-resolver-dns-native-macos-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns-native-macos/4.2.16.Final/netty-resolver-dns-native-macos-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver-dns/4.2.16.Final/netty-resolver-dns-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-resolver/4.2.16.Final/netty-resolver-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-epoll/4.2.16.Final/netty-transport-classes-epoll-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-io_uring/4.2.16.Final/netty-transport-classes-io_uring-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-classes-kqueue/4.2.16.Final/netty-transport-classes-kqueue-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-riscv64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-riscv64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-io_uring/4.2.16.Final/netty-transport-native-io_uring-4.2.16.Final-linux-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-kqueue/4.2.16.Final/netty-transport-native-kqueue-4.2.16.Final-osx-aarch_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-kqueue/4.2.16.Final/netty-transport-native-kqueue-4.2.16.Final-osx-x86_64.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-native-unix-common/4.2.16.Final/netty-transport-native-unix-common-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-rxtx/4.2.16.Final/netty-transport-rxtx-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-sctp/4.2.16.Final/netty-transport-sctp-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport-udt/4.2.16.Final/netty-transport-udt-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/io/netty/netty-transport/4.2.16.Final/netty-transport-4.2.16.Final.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/it/unimi/dsi/fastutil/8.5.18/fastutil-8.5.18.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/activation/jakarta.activation-api/2.1.4/jakarta.activation-api-2.1.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/annotation/jakarta.annotation-api/3.0.0/jakarta.annotation-api-3.0.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/bind/jakarta.xml.bind-api/4.0.5/jakarta.xml.bind-api-4.0.5.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/soap/jakarta.xml.soap-api/3.0.2/jakarta.xml.soap-api-3.0.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/jakarta/xml/ws/jakarta.xml.ws-api/4.0.3/jakarta.xml.ws-api-4.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/java3d/vecmath/1.5.2/vecmath-1.5.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/lzma/lzma/0.0.1/lzma-0.0.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/dev/jna/jna-platform/5.19.1/jna-platform-5.19.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/dev/jna/jna/5.19.1/jna-5.19.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/java/jinput/jinput/2.0.10/jinput-2.0.10.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/trove4j/core/3.1.0/core-3.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/net/sf/trove4j/experimental/3.1.0/experimental-3.1.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-compress/1.28.0/commons-compress-1.28.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-lang3/3.20.0/commons-lang3-3.20.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/commons/commons-text/1.15.0/commons-text-1.15.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/client5/httpclient5/5.6.1/httpclient5-5.6.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/httpclient/4.5.14/httpclient-4.5.14.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/httpcomponents/httpcore/4.4.16/httpcore-4.4.16.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-api/2.26.0/log4j-api-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-core/2.26.0/log4j-core-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-slf4j2-impl/2.26.0/log4j-slf4j2-impl-2.26.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/apache/maven/maven-artifact/3.9.16/maven-artifact-3.9.16.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/codehaus/plexus/plexus-utils/3.6.1/plexus-utils-3.6.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/eclipse/angus/angus-activation/2.0.3/angus-activation-2.0.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/corba/glassfish-corba-omgapi/5.0.2/glassfish-corba-omgapi-5.0.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/jaxb-core/4.0.9/jaxb-core-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/jaxb-runtime/4.0.9/jaxb-runtime-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/glassfish/jaxb/txw2/4.0.9/txw2-4.0.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/javassist/javassist/3.32.0-GA/javassist-3.32.0-GA.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jctools/jctools-core/4.0.6/jctools-core-4.0.6.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jline/jline/4.1.3/jline-4.1.3.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/joml/joml/1.10.9/joml-1.10.9.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/openjdk/nashorn/nashorn-core/15.7/nashorn-core-15.7.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-analysis/9.10.1/asm-analysis-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-commons/9.10.1/asm-commons-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-deprecated/7.1/asm-deprecated-7.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm-util/9.10.1/asm-util-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/slf4j/slf4j-api/2.0.20/slf4j-api-2.0.20.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/org/tukaani/xz/1.12/xz-1.12.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/top/outlands/foundation/0.22.2/foundation-0.22.2.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/zone/rong/imaginebreaker/3.2/imaginebreaker-3.2.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/icu4j-core-mojang-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/patchy-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/platform-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/jutils-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl-platform-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/lwjgl_util-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/libraries/oshi-core-999999.0-empty.jar:/home/s0u7a/.local/share/PrismLauncher/libraries/com/mojang/minecraft/1.12.2/minecraft-1.12.2-client.jar:/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-wayland/test-libraries/lwjgl-vulkan-3.4.3.jar",
+        "top.outlands.foundation.boot.Foundation",
+        "--username",
+        "CeltiumValidation",
+        "--version",
+        "1.12.2",
+        "--gameDir",
+        "/home/s0u7a/projects/celtium/.gv-verify/run-native-retirement-wayland",
+        "--assetsDir",
+        "/home/s0u7a/.local/share/PrismLauncher/assets",
+        "--assetIndex",
+        "1.12",
+        "--uuid",
+        "f6b9d4d43ca230c7a3bc36e4d859f29c",
+        "--accessToken",
+        "0",
+        "--userType",
+        "legacy",
+        "--versionType",
+        "release",
+        "--width",
+        "1920",
+        "--height",
+        "1080",
+        "--tweakClass",
+        "net.minecraftforge.fml.common.launcher.FMLTweaker"
+      ],
+      "process": {
+        "validationClean": true,
+        "validationMessageCount": 0,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "gpuRequirementMet": true
+      },
+      "report": {
+        "saveSlot": "qmagnet",
+        "rejoinedSaveSlot": "qmagnet",
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "renderDistance": 18,
+        "worldSwitchMenuDumpClientTick": 140,
+        "presentedImageVerdict": "PASSED"
+      },
+      "nativeWaylandSurfaceObserved": true,
+      "pictures": {
+        "menu": {
+          "path": ".gv-verify/run-native-retirement-wayland/screenshots/celtium-presented-world-switch-menu-run-23261a36e796-7a81197d-kept.png",
+          "sha256": "bb44734da6006632e269c89aff7c09446360f84d361fbce7d58fc70e7ec00d18",
+          "identity": {
+            "runId": "run-23261a36e796-7a81197d",
+            "scene": "world",
+            "stage": "world-switch-menu",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-switch-menu-run-23261a36e796-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-switch-menu-run-23261a36e796-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-switch-menu-run-23261a36e796-7a81197d.png",
+            "worldTick": 100,
+            "worldFrames": 145,
+            "presentedFrame": 170,
+            "width": 1920,
+            "height": 1080,
+            "imageHash": 1401344108,
+            "requestedAtTick": 100,
+            "requestedWorldFrames": 145,
+            "requestedPresentedFrame": 169,
+            "completedAtTick": 100,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792850255338
+          }
+        },
+        "world": {
+          "path": ".gv-verify/run-native-retirement-wayland/screenshots/celtium-presented-world-run-23261a36e796-7a81197d-kept.png",
+          "sha256": "4338e598ed411ae3d860d6d12911410c2896531d12785338179800fb75a7e3a1",
+          "identity": {
+            "runId": "run-23261a36e796-7a81197d",
+            "scene": "world",
+            "stage": "world",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-run-23261a36e796-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-run-23261a36e796-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-run-23261a36e796-7a81197d.png",
+            "worldTick": 213,
+            "worldFrames": 507,
+            "presentedFrame": 362,
+            "width": 1920,
+            "height": 1080,
+            "imageHash": 1858305615,
+            "requestedAtTick": 213,
+            "requestedWorldFrames": 507,
+            "requestedPresentedFrame": 361,
+            "completedAtTick": 219,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1792850263413
+          }
+        }
+      }
+    }
+  ],
+  "failedJapaneseTransition": {
+    "leg": "native-retirement-ja-menu",
+    "wrapper": {
+      "accepted": false,
+      "exitCode": 1,
+      "verdict": "FAILED",
+      "harnessExitCode": 124,
+      "problems": [
+        "harness exited 124",
+        "process did not finish with the required validation exit status",
+        "fixture did not produce a passing/calibrated verdict",
+        "picture verdict does not match the fixture status",
+        "missing/inconsistent presented-dump picture evidence"
+      ],
+      "copiedArtifacts": [
+        {
+          "role": "renderer",
+          "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "fcfb581f9667989ce3bf75dcffb2b96e0322d252862c3b3a562d8f54be8dfda0"
+        },
+        {
+          "role": "fixture",
+          "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "32d40dc473c696dd6acd0032662f8f4f19ed674455bb272a42959206d34bbc5a"
+        }
+      ],
+      "fixtureStatus": "NO_CAPTURE",
+      "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+      "rendererKind": "native-vulkan",
+      "elapsedSeconds": 181.36321142400266,
+      "leg": "native-retirement-ja-menu"
+    },
+    "threadDumpSha256": "4cdcc2efd2eb70203b9350e12aad7818536e94f9204bb922944dd69b0adb601e",
+    "clientThread": [
+      "\"Client thread\" #3 [124376] prio=5 os_prio=0 cpu=19812.53ms elapsed=160.13s tid=0x00007f1ba8031480 nid=124376 waiting on condition  [0x00007f1bad3fd000]",
+      "   java.lang.Thread.State: WAITING (parking)",
+      "\tat jdk.internal.misc.Unsafe.park(java.base@27/Native Method)",
+      "\t- parking to wait for  <0x00000000bcbbb088> (a com.google.common.util.concurrent.ListenableFutureTask)",
+      "\tat java.util.concurrent.locks.LockSupport.park(java.base@27/LockSupport.java:223)",
+      "\tat java.util.concurrent.FutureTask.awaitDone(java.base@27/FutureTask.java:513)",
+      "\tat java.util.concurrent.FutureTask.get(java.base@27/FutureTask.java:192)",
+      "\tat com.google.common.util.concurrent.Uninterruptibles.getUninterruptibly(Uninterruptibles.java:277)",
+      "\tat com.google.common.util.concurrent.Futures.getUnchecked(Futures.java:1367)",
+      "\tat net.minecraft.server.integrated.IntegratedServer.func_71263_m(IntegratedServer.java:366)",
+      "\tat net.minecraft.client.Minecraft.func_71353_a(Minecraft.java:2079)",
+      "\tat net.minecraft.client.Minecraft.func_71403_a(Minecraft.java:2065)",
+      "\tat org.soutalab.celtium.validation.ValidationClient.tick(ValidationClient.java:3917)",
+      "\tat org.soutalab.celtium.validation.ValidationClient$$Lambda/0x0000000015dfbc00.accept(Unknown Source)",
+      "\tat net.minecraftforge.fml.common.eventhandler.ASMEventHandler.invoke(ASMEventHandler.java:79)",
+      "\tat net.minecraftforge.fml.common.eventhandler.EventBus.post(EventBus.java:197)",
+      "\tat net.minecraftforge.fml.common.FMLCommonHandler.onPostClientTick(FMLCommonHandler.java:360)",
+      "\tat net.minecraft.client.Minecraft.func_71407_l(Minecraft.java:1667)",
+      "\tat net.minecraft.client.Minecraft.func_71411_J(Minecraft.java:1005)",
+      "\tat net.minecraft.client.Minecraft.func_99999_d(Minecraft.java:411)",
+      "\tat net.minecraft.client.main.Main.main(Main.java:110)",
+      "\tat java.lang.invoke.LambdaForm$DMH/0x0000000015424c00.invokeStaticInit(java.base@27/LambdaForm$DMH)",
+      "\tat java.lang.invoke.LambdaForm$MH/0x000000001526c000.invoke(java.base@27/LambdaForm$MH)",
+      "\tat java.lang.invoke.LambdaForm$MH/0x0000000015730000.invoke_MT(java.base@27/LambdaForm$MH)",
+      "\tat top.outlands.foundation.LaunchHandler.launch(LaunchHandler.java:125)",
+      "\tat java.lang.invoke.DirectMethodHandle$Holder.invokeVirtual(java.base@27/DirectMethodHandle$Holder)",
+      "\tat java.lang.invoke.LambdaForm$MH/0x0000000015180c00.invoke(java.base@27/LambdaForm$MH)",
+      "\tat java.lang.invoke.LambdaForm$MH/0x00000000151bc800.invoke_MT(java.base@27/LambdaForm$MH)",
+      "\tat top.outlands.foundation.boot.Foundation.main(Foundation.java:59)"
+    ],
+    "serverThreadPresent": false,
+    "scope": "The client awaited IntegratedServer.initiateShutdown before renderer teardown. No final menu image exists for this failed leg."
+  }
+}

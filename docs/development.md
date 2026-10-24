@@ -66,6 +66,11 @@ scripts/gv-leg.sh <different-leg> .gv-verify/jars/<tag> cohort intel 900
 
 - mode: `plain` / `cohort` / `world` / `e2e` / `recipe`。recipeはRLCraft移行profileでresources/structures/scriptsも要求する。
   profileの内容が完全かは別途確認し、mode名・mod数だけで完全pack互換を主張しない。
+- ウィンドウ方式は既定 X11。実プレイの native Wayland を再現する時は `CELTIUM_LEG_WINDOW_SYSTEM=wayland`。
+  manifest の要求値に加え、実ログの `CELTIUM_SURFACE_WAYLAND` で確認する。
+- 実設定を再現する時は `CELTIUM_LEG_SEED_OPTIONS=/absolute/path/options.txt`。
+  source は変更せず、隔離先へ初期値としてコピーし、manifest に source hash を保存する。
+  後から `unicodeFont=true` にするだけでは、初期化時の言語・資源名割当順まで再現しない。
 - **`world` は実プレイ標準**（2026-10-19の利用者指示で平坦fixtureから移行）。配布ワールド
   QMAGNET's Test Map（CurseForge project 71679 / file 2467609、`.celtium-work/worlds/` に展開・来歴は同dirのREADME）を
   save `qmagnet` として持つclone instanceで走り、fixtureの `scene=world` がマップのspawnポーズ・描画距離18で撮影し、

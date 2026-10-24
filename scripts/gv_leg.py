@@ -232,6 +232,10 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     if busy:
         raise LegError(f"another Foundation client is running (pids {busy}); no client was launched")
     environment = os.environ.copy()
+    window_system = os.environ.get("CELTIUM_LEG_WINDOW_SYSTEM", "x11").strip().lower() or "x11"
+    if window_system not in ("x11", "wayland"):
+        raise LegError("CELTIUM_LEG_WINDOW_SYSTEM must be x11 or wayland")
+    environment["SDL_VIDEODRIVER"] = window_system
     # The canonical script imports its sibling helper. Never prepend a stale .gv-verify module copy.
     environment.pop("PYTHONPATH", None)
     environment.pop("MESA_VK_DEVICE_SELECT", None)
@@ -262,6 +266,10 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         if not re.fullmatch(r"[0-9]{3,4}x[0-9]{3,4}", window_size):
             raise LegError("CELTIUM_LEG_WINDOW_SIZE must look like 1280x720")
         command.extend(["--window-size", window_size])
+    options_file = os.environ.get("CELTIUM_LEG_SEED_OPTIONS", "").strip()
+    seeded_options = require_file(Path(options_file)) if options_file else None
+    if seeded_options is not None:
+        command.extend(["--seed-options", str(seeded_options)])
     for extra in extra_libraries:
         command.extend(["--library", str(extra)])
     for pattern in instance_exclusions:
@@ -271,19 +279,25 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     for name in supplemental:
         command.extend(["--copy-pack-dir", name])
     command.extend(f"--jvm-arg={arg}" for arg in jvm_args)
-    command.extend(["--run", "--validate", "--duration", str(duration), "--headless", "--force-x11",
+    if window_system == "x11":
+        command.append("--force-x11")
+    command.extend(["--run", "--validate", "--duration", str(duration), "--headless",
                     "--render-node", render_node, "--require-gpu", required_gpu])
     artifacts = {name: {"source": str(path), "sha256": sha256(path)} for name, path in
                  (("renderer", renderer), ("fixture", fixture), ("harness", harness), ("headless", headless))}
+    if seeded_options is not None:
+        artifacts["seedOptions"] = {"source": str(seeded_options), "sha256": sha256(seeded_options)}
     dependencies = [{"path": f"mods/{p.name}", "source": str(p.resolve()), "sha256": sha256(p)} for p in mods]
     dependencies.append({"path": f"test-libraries/{library.name}", "source": str(library), "sha256": sha256(library)})
     manifest = {"schemaVersion": 1, "scope": "renderer input provenance; not an acceptance verdict",
                 "rendererKind": "opengl-reference" if reference_renderer else "native-vulkan",
-                "leg": leg, "mode": mode, "gpu": gpu, "durationSeconds": duration, "slotWaitSeconds": SLOT_WAIT,
+                "leg": leg, "mode": mode, "gpu": gpu, "windowSystemRequested": window_system,
+                "durationSeconds": duration, "slotWaitSeconds": SLOT_WAIT,
                 "sourceInstance": str(instance), "isolatedGameDirectory": str(paths["game"]),
                 "artifacts": artifacts, "dependencies": dependencies, "git": git_state(root),
                 "instanceModExclusions": instance_exclusions, "jvmArgs": jvm_args, "command": command,
-                "deviceEnvironment": {key: environment.get(key) for key in ("DRI_PRIME", "MESA_VK_DEVICE_SELECT")}}
+                "deviceEnvironment": {key: environment.get(key) for key in
+                                      ("DRI_PRIME", "MESA_VK_DEVICE_SELECT", "SDL_VIDEODRIVER")}}
     return Plan(root, leg, mode, gpu, duration, paths, renderer, fixture, required_gpu, command, environment, manifest,
                 bool(reference_renderer))
 

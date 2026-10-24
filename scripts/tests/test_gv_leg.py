@@ -144,6 +144,8 @@ class LegRunnerTests(unittest.TestCase):
                             "CELTIUM_INSTANCE_E2E": str(self.instance), "CELTIUM_INSTANCE_RECIPE": str(self.instance),
                             "FAKE_SCENARIO": "passed", "E2E_EXCLUDE": "", "CLASH_DIR": "",
                             "CELTIUM_LEG_REFERENCE_RENDERER": ""}
+        self.environment["CELTIUM_LEG_WINDOW_SYSTEM"] = "x11"
+        self.environment["CELTIUM_LEG_SEED_OPTIONS"] = ""
         self.env_patch = patch.dict(os.environ, self.environment)
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
@@ -154,6 +156,28 @@ class LegRunnerTests(unittest.TestCase):
     def execute(self, scenario="passed", **kwargs):
         os.environ["FAKE_SCENARIO"] = scenario
         return runner.execute(self.plan(**kwargs), timeout=5, terminate_grace=.1)
+
+    def test_window_system_is_explicit_and_wayland_keeps_its_socket(self):
+        plan = self.plan()
+        self.assertIn("--force-x11", plan.command)
+        self.assertEqual(plan.environment["SDL_VIDEODRIVER"], "x11")
+        os.environ["CELTIUM_LEG_WINDOW_SYSTEM"] = "wayland"
+        plan = self.plan()
+        self.assertNotIn("--force-x11", plan.command)
+        self.assertEqual(plan.environment["SDL_VIDEODRIVER"], "wayland")
+        self.assertEqual(plan.manifest["windowSystemRequested"], "wayland")
+        os.environ["CELTIUM_LEG_WINDOW_SYSTEM"] = "typo"
+        with self.assertRaises(runner.LegError):
+            self.plan()
+
+    def test_seeded_user_options_are_explicit_and_hash_pinned(self):
+        options = self.root / "Japanese options.txt"
+        options.write_text("lang:ja_jp\nrenderDistance:18\n")
+        os.environ["CELTIUM_LEG_SEED_OPTIONS"] = str(options)
+        plan = self.plan()
+        position = plan.command.index("--seed-options")
+        self.assertEqual(plan.command[position + 1], str(options))
+        self.assertEqual(plan.manifest["artifacts"]["seedOptions"]["sha256"], runner.sha256(options))
 
     def test_explicit_gl_reference_uses_its_real_gpu_and_screenshot_evidence(self):
         reference = self.root / "celeritas-reference.jar"
