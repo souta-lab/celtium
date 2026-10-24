@@ -569,12 +569,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private NativeLoadingScreen loadingScreen;
     private boolean loadingProgressDumped;
 
-    /** Forge's loader supplies only progress data. This path owns its image, transfer and Vulkan presentation. */
-    public void presentLoadingProgress(int width, int height, java.awt.image.BufferedImage logo,
-            String[] labels, int[] steps, int[] totals) {
+    /**
+     * Presents Forge's loading screen ({@link NativeLoadingScreen}): Forge's loader supplies the progress and the
+     * splash configuration, this path draws Forge's frame into its own image and presents it.
+     *
+     * @param colors background, barBorder, bar, barBackground, memoryGood, memoryWarn, memoryLow (RGB)
+     */
+    public void presentLoadingProgress(int width, int height, int[] colors, boolean showMemory, boolean rotate,
+            int logoOffset, java.awt.image.BufferedImage logo, java.awt.image.BufferedImage forge,
+            java.awt.image.BufferedImage font, String[] titles, String[] messages, int[] steps, int[] totals,
+            int angle) {
         if (!this.windowBackend || this.gpuStalled || !ensureSwapchain()) return;
         if (this.loadingScreen == null) this.loadingScreen = new NativeLoadingScreen(this.context);
-        VulkanGlTexture image = this.loadingScreen.update(width, height, logo, labels, steps, totals);
+        NativeLoadingScreen.Style style = new NativeLoadingScreen.Style();
+        style.background = colors[0];
+        style.barBorder = colors[1];
+        style.bar = colors[2];
+        style.barBackground = colors[3];
+        style.memoryGood = colors[4];
+        style.memoryWarn = colors[5];
+        style.memoryLow = colors[6];
+        style.showMemory = showMemory;
+        style.rotate = rotate;
+        style.logoOffset = logoOffset;
+        NativeLoadingScreen.Bar[] bars = new NativeLoadingScreen.Bar[titles.length];
+        for (int i = 0; i < bars.length; i++) {
+            bars[i] = new NativeLoadingScreen.Bar(titles[i], messages[i], steps[i], totals[i]);
+        }
+        VulkanGlTexture image = this.loadingScreen.update(width, height, style, logo, forge, font, bars, angle);
         String directory = System.getProperty("celtium.vulkan.frameDumpDir");
         if (!this.loadingProgressDumped && directory != null
                 && Boolean.getBoolean("celtium.validation.dumpLoadingProgress") && steps.length > 0 && steps[0] > 0) {
