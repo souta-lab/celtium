@@ -5,15 +5,11 @@
 製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
-## 2026-10-24: 影 stage (c)+(d計器) — ライト視点の深度が実GPUで埋まった
+## 2026-10-24: 本体内の影は停止（利用者指示）
 
-`celtium$recordShadowTerrain` がsolid pass直前にメインpassと同じchunk bindingで深度専用passを記録。`ShadowDepthPipeline` は
-COMPACT/vanilla両decode（terrain_solid*.vertと照合一致）。dump計器は `-Dceltium.vulkan.shadowDump{Dir,Every,Count}`（既定OFF）。
-
-[実機証拠](<evidence/shadow-stage-c-2026-10-24.md>): leg `shadowc-amd-1`・JAR `c6a21a4c…`・AMD RX 6400・qmagnet較正gate一致・
-`presentedImageVerdict=PASSED`・accepted/exit 0・VUIDなし。`frame=120 stride=32 draws=25 total=2778`、
-`shadow-100/200.png`（2048²・coverage 6.81%・両dump一致＝固定時間の予定動作）に地形構造。
-**範囲**: stride=32のみ実GPU。影はまだ描画に使わない（PCF未実装・presented画像は影なしと同じ）。
+影はDemonica forkで作る（下の2.）。本体の優先は**性能→互換性**。本体内の影stage (a)〜(c)+(d計器)はcommit済み・既定OFF
+（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。PCF受け側の未commit差分は `git stash` の
+「paused: in-core shadow PCF receiver」（leg `shadowpcf-amd-1` PASSED・JAR `275e622e…`、影の視覚効果は未確認）。再開は利用者が明示した時だけ。
 
 ## 2026-10-24: native state/resource owner
 
@@ -28,11 +24,7 @@ menu/HEI inventory/recipeの実画像を保存したが、HEIの専用gateは未
 
 ## 次の作業単位（2026-10-24 改訂）
 
-0. **影（製品要件）**: (a)(b)(c)+(d)dump計器は**完了・実機証拠済み**（上節。stride=32のみ実GPU、COMPACTはdecode照合のみ）。
-   残りは **(d)後半**: terrain fragmentへPCF（比較サンプラ）+`u_ShadowMatrix` push constant、光源行列のゲーム内太陽への接続、
-   COMPACTの実確認。受入は「影が写った実画像＋world画像gate一致＋validation 0」（向き・濃さの較正を含む）。
-
-1. **性能（最優先）**: 出荷構成は影なし。v0.0.16-alpha 時点の KPI（AMD RX 6400・world・validation off）は warm p50 2.02–2.08ms ＝ 参照 1.19–1.27ms に対し約1.7x。同日午前の同一コード系は 1.56ms / 1.31x で、affine bake 無効化でも window copy 経路切替でも動かず**帰属未決**。次は 84c220575 の再ビルドJARとの A/B。
+1. **性能（最優先）**: 出荷構成は影なし。v0.0.16-alpha 時点の KPI（AMD RX 6400・world・validation off）は warm p50 2.02–2.08ms ＝ 参照 1.19–1.27ms に対し約1.7x。同日午前の 1.56ms / 1.31x は、84c220575 の再ビルドJARでも 2.05ms になり**再現せず＝マシン状態**だった（`469ffc4a2`、決着）。次の焦点は **tail**: warm区間のサンプル数がCeleritasの1/3〜1/2、p95 10–20ms（Celeritas 2.4ms）。client tick（fixture計測 mean 4–5ms・p95 約10ms）との対応を対照armで判別中。
    受け入れの算術（`architecture` §11/§12）では受理経路の内側の最適化では届かず、per-offer のJava仕事を消す再設計が要る。
 2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。

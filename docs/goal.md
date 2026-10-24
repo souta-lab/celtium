@@ -31,8 +31,9 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
 4. **互換**：E2E 1.93a、RLCraft 2.9.3、主要描画/GUI/最適化Modの代表場面で、欠落・ちらつき・順序・状態漏れがない。
    公開描画APIとraw GLを混用するMod、resize、resource reload、world切替、GUI/FBOの寿命も検証する。
    依存Modを削除した別packの起動を、完全packの受入にしない。
-5. **影とshaderpack**：native shadow mapを両GPUの実画面で確認し、BSLの読み込みだけでなく描画反映・主要効果・破綻を確認する。
-   実装済みという理由だけで既存shaderpack経路を完成扱いしない。
+5. **影とshaderpack**：**Celtium本体ではなく、Demonica forkの別成果物（AGPL-3.0のaddon jar）**で実現する（2026-10-24 利用者指示）。
+   本体の責務は、そのaddonが接続できる境界（terrain描画・pass・資源の受け渡し）を壊さないこと。受入はaddon側で、
+   両GPUの実画面で影とBSLの描画反映・主要効果・破綻を確認する。本体の優先は①性能→④互換で、影はその後。
 6. **配布**：packaged JARとテスト済み実装が一致し、対応環境・依存・ライセンス・設定・既知の非対応・導入手順が正確。
    初回導入と長時間プレイでdriver/device lost・資源リーク・受入外の無言の欠落がない。
 
