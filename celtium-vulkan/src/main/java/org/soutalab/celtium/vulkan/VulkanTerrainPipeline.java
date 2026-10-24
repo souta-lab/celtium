@@ -1341,7 +1341,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
                     .basePipelineHandle(VK_NULL_HANDLE)
                     .basePipelineIndex(-1);
             LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, create, null, handle),
+            check(vkCreateGraphicsPipelines(device, VulkanContext.sharedPipelineCache(), create, null, handle),
                     "vkCreateGraphicsPipelines(" + passName + ")");
             pipeline = handle.get(0);
         } finally {

@@ -135,7 +135,7 @@ public final class ShadowDepthPipeline {
                         .renderPass(renderPass)
                         .subpass(0);
                 LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, create, null, pipelineHandle),
+                check(vkCreateGraphicsPipelines(device, VulkanContext.sharedPipelineCache(), create, null, pipelineHandle),
                         "vkCreateGraphicsPipelines(shadow depth)");
                 pipeline = pipelineHandle.get(0);
             } finally {

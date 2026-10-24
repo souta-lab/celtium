@@ -206,7 +206,7 @@ public final class ShaderPackPipelineFactory {
                     .renderPass(VK_NULL_HANDLE)
                     .pNext(rendering.address());
             LongBuffer handle = stack.mallocLong(1);
-            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            int result = vkCreateGraphicsPipelines(context.device(), VulkanContext.sharedPipelineCache(), info, null, handle);
             if (result != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateGraphicsPipelines failed: " + result);
             }
@@ -284,7 +284,7 @@ public final class ShaderPackPipelineFactory {
                     .pMultisampleState(multisample).pDepthStencilState(depthState).pColorBlendState(blend)
                     .pDynamicState(dynamic).layout(pipelineLayout).renderPass(renderPass);
             LongBuffer handle = stack.mallocLong(1);
-            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            int result = vkCreateGraphicsPipelines(context.device(), VulkanContext.sharedPipelineCache(), info, null, handle);
             if (result != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateGraphicsPipelines(render pass) failed: " + result);
             }
@@ -340,7 +340,7 @@ public final class ShaderPackPipelineFactory {
                     .pDynamicState(dynamic).layout(pipelineLayout).renderPass(VK_NULL_HANDLE)
                     .pNext(rendering.address());
             LongBuffer handle = stack.mallocLong(1);
-            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            int result = vkCreateGraphicsPipelines(context.device(), VulkanContext.sharedPipelineCache(), info, null, handle);
             if (result != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateGraphicsPipelines(attribute-free) failed: " + result);
             }
@@ -422,7 +422,7 @@ public final class ShaderPackPipelineFactory {
                     .pMultisampleState(multisample).pDepthStencilState(depthState).pDynamicState(dynamic)
                     .layout(pipelineLayout).renderPass(VK_NULL_HANDLE).pNext(rendering.address());
             LongBuffer handle = stack.mallocLong(1);
-            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            int result = vkCreateGraphicsPipelines(context.device(), VulkanContext.sharedPipelineCache(), info, null, handle);
             if (result != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateGraphicsPipelines(depth-only with input) failed: " + result);
             }
@@ -462,7 +462,7 @@ public final class ShaderPackPipelineFactory {
                     .pMultisampleState(multisample).pDepthStencilState(depthState).pDynamicState(dynamic)
                     .layout(pipelineLayout).renderPass(VK_NULL_HANDLE).pNext(rendering.address());
             LongBuffer handle = stack.mallocLong(1);
-            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            int result = vkCreateGraphicsPipelines(context.device(), VulkanContext.sharedPipelineCache(), info, null, handle);
             if (result != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateGraphicsPipelines(depth-only) failed: " + result);
             }
@@ -519,7 +519,7 @@ public final class ShaderPackPipelineFactory {
                     .pDynamicState(dynamic).layout(pipelineLayout).renderPass(VK_NULL_HANDLE)
                     .pNext(rendering.address());
             LongBuffer handle = stack.mallocLong(1);
-            int result = vkCreateGraphicsPipelines(context.device(), VK_NULL_HANDLE, info, null, handle);
+            int result = vkCreateGraphicsPipelines(context.device(), VulkanContext.sharedPipelineCache(), info, null, handle);
             if (result != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateGraphicsPipelines(builtin) failed: " + result);
             }

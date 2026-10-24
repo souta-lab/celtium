@@ -451,7 +451,7 @@ public final class VulkanImmediateParticlePipeline {
                         .renderPass(this.renderPass)
                         .subpass(0);
                 LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(vkCreateGraphicsPipelines(this.context.device(), VK_NULL_HANDLE, create, null, pipelineHandle),
+                check(vkCreateGraphicsPipelines(this.context.device(), VulkanContext.sharedPipelineCache(), create, null, pipelineHandle),
                         "vkCreateGraphicsPipelines(immediate)");
                 this.pipeline = pipelineHandle.get(0);
             } finally {

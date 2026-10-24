@@ -1758,6 +1758,7 @@ public final class VulkanContext {
             this.idleDeferredFences.clear();
             destroyStaging();
             destroyUploadRing();
+            savePipelineCache();
             if (this.commandPool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
                 this.commandPool = VK_NULL_HANDLE;
@@ -1788,12 +1789,110 @@ public final class VulkanContext {
         this.deviceUuid = null;
     }
 
+    /**
+     * The device's pipeline cache, shared by every pipeline the renderer creates, or {@code VK_NULL_HANDLE}.
+     * <p>
+     * Every pipeline used to be created with no cache: each first use of a state combination compiled from scratch, in
+     * every session, on the frame that needed it. The cache is seeded from {@code celtium/pipeline-cache.bin} under the
+     * game directory and written back when the device is destroyed; the driver validates the header (vendor, device,
+     * cache UUID) and ignores data from another device or driver version, so a stale file costs nothing.
+     */
+    public static long sharedPipelineCache() {
+        return sharedPipelineCache;
+    }
+
+    private static volatile long sharedPipelineCache = VK_NULL_HANDLE;
+    private long pipelineCache = VK_NULL_HANDLE;
+
+    private static java.nio.file.Path pipelineCacheFile() {
+        String configured = System.getProperty("celtium.vulkan.pipelineCacheFile");
+        return configured != null ? java.nio.file.Paths.get(configured)
+                : java.nio.file.Paths.get(System.getProperty("user.dir"), "celtium", "pipeline-cache.bin");
+    }
+
+    private void createPipelineCache() {
+        if ("false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pipelineCache"))) {
+            return;
+        }
+        byte[] seed = null;
+        try {
+            java.nio.file.Path file = pipelineCacheFile();
+            if (java.nio.file.Files.isRegularFile(file)) {
+                seed = java.nio.file.Files.readAllBytes(file);
+            }
+        } catch (java.io.IOException | RuntimeException error) {
+            System.out.println("[Celtium] CELTIUM_PIPELINE_CACHE unreadable, starting empty: " + error);
+        }
+        java.nio.ByteBuffer initial = seed == null || seed.length == 0 ? null : MemoryUtil.memAlloc(seed.length);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            if (initial != null) {
+                initial.put(seed).flip();
+            }
+            org.lwjgl.vulkan.VkPipelineCacheCreateInfo info = org.lwjgl.vulkan.VkPipelineCacheCreateInfo.calloc(stack)
+                    .sType$Default().pInitialData(initial);
+            LongBuffer handle = stack.mallocLong(1);
+            int result = org.lwjgl.vulkan.VK10.vkCreatePipelineCache(this.device, info, null, handle);
+            if (result != VK_SUCCESS && initial != null) {
+                // A rejected seed is not a reason to have no cache at all.
+                info.pInitialData(null);
+                result = org.lwjgl.vulkan.VK10.vkCreatePipelineCache(this.device, info, null, handle);
+            }
+            if (result == VK_SUCCESS) {
+                this.pipelineCache = handle.get(0);
+                sharedPipelineCache = this.pipelineCache;
+                System.out.println("[Celtium] CELTIUM_PIPELINE_CACHE created seedBytes=" + (seed == null ? 0 : seed.length));
+            }
+        } finally {
+            if (initial != null) {
+                MemoryUtil.memFree(initial);
+            }
+        }
+    }
+
+    /** Writes the cache back (atomically) and destroys it; called before the device is destroyed. */
+    private void savePipelineCache() {
+        if (this.pipelineCache == VK_NULL_HANDLE) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.PointerBuffer size = stack.mallocPointer(1);
+            if (org.lwjgl.vulkan.VK10.vkGetPipelineCacheData(this.device, this.pipelineCache, size, null) == VK_SUCCESS
+                    && size.get(0) > 0) {
+                java.nio.ByteBuffer data = MemoryUtil.memAlloc((int) size.get(0));
+                try {
+                    if (org.lwjgl.vulkan.VK10.vkGetPipelineCacheData(this.device, this.pipelineCache, size, data)
+                            == VK_SUCCESS) {
+                        byte[] bytes = new byte[(int) size.get(0)];
+                        data.get(bytes);
+                        java.nio.file.Path file = pipelineCacheFile();
+                        java.nio.file.Files.createDirectories(file.getParent());
+                        java.nio.file.Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
+                        java.nio.file.Files.write(temporary, bytes);
+                        java.nio.file.Files.move(temporary, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                    }
+                } finally {
+                    MemoryUtil.memFree(data);
+                }
+            }
+        } catch (java.io.IOException | RuntimeException error) {
+            System.out.println("[Celtium] CELTIUM_PIPELINE_CACHE not saved: " + error);
+        } finally {
+            org.lwjgl.vulkan.VK10.vkDestroyPipelineCache(this.device, this.pipelineCache, null);
+            if (sharedPipelineCache == this.pipelineCache) {
+                sharedPipelineCache = VK_NULL_HANDLE;
+            }
+            this.pipelineCache = VK_NULL_HANDLE;
+        }
+    }
+
     private void initialize(String applicationName, GlDeviceIdentity openGl) {
         this.interopPath = openGl != null;
         createInstance(applicationName);
         matchPhysicalDevice(openGl);
         createLogicalDevice();
         createQueueAndCommandPool();
+        createPipelineCache();
         reportDeviceContractIfReady();
         this.memoryProperties = VkPhysicalDeviceMemoryProperties.calloc();
         vkGetPhysicalDeviceMemoryProperties(this.physicalDevice, this.memoryProperties);
