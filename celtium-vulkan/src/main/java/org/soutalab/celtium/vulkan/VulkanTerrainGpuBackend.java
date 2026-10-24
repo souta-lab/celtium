@@ -18638,14 +18638,8 @@ this.frameBufferOpen = false;
         drawPendingImmediate(null);
     }
 
-    /**
-     * Draws the pending groups, optionally only those belonging to one render target.
-     * <p>
-     * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
-     * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
-     */
-    private void drawPendingImmediate(Long onlyTarget) {
-        long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+    /** The bounded window diagnostics {@link #drawPendingImmediate(Long)} used to run inline; see the call site. */
+    private void celtium$windowDiagnostics(long target) {
         if (DUMP_TEXTURE_IDS != null && this.dumpedTextureImages < 8 && this.presentHookCalls >= 120) {
             for (int di = 0; di < this.immediateGroups.size(); di++) {
                 ImmediateGroup dumpGroup = this.immediateGroups.get(di);
@@ -19010,6 +19004,20 @@ this.frameBufferOpen = false;
                     + " route=" + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
                     + " projection=" + projectionSummary(this.immediateGroups.get(0).projection));
         }
+    }
+
+    /**
+     * Draws the pending groups, optionally only those belonging to one render target.
+     * <p>
+     * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
+     * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
+     */
+    private void drawPendingImmediate(Long onlyTarget) {
+        long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+        // The window diagnostics live in their own method: with them inline this method was 8282 bytes of bytecode,
+        // over HotSpot's 8000-byte HugeMethodLimit, so it was never JIT-compiled and ran interpreted - 29.9% of the
+        // client thread in leg tickjfr-celtium-2 (JFR frame type "Interpreted").
+        celtium$windowDiagnostics(target);
         if (this.drawRecords == null) {
             ImmediateDrawRecords records = new ImmediateDrawRecords(this.context);
             if (records.create()) {
