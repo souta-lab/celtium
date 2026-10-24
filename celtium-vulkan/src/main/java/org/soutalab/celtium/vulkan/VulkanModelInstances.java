@@ -124,6 +124,12 @@ final class VulkanModelInstances {
     private Object poolSource;
     /** listId -> {firstIndex, vertexOffset, indexCount}. */
     private final Map<Integer, int[]> poolEntries = new HashMap<Integer, int[]>();
+    /** The mesh object each pooled list was copied from, so an unchanged list is not copied again. */
+    private final Map<Integer, VulkanDynamicMesh> poolMeshes = new HashMap<Integer, VulkanDynamicMesh>();
+    private long poolVertexUsed;
+    private long poolIndexUsed;
+    private long poolAppends;
+    private long poolGrowths;
     private final List<Object[]> retiredPools = new ArrayList<Object[]>();
 
     private long appended;
@@ -210,38 +216,58 @@ final class VulkanModelInstances {
         if (meshes == null || meshes == this.poolSource) {
             return;
         }
-        long vertexBytes = 0L;
-        long indexBytes = 0L;
-        for (VulkanDynamicMesh mesh : meshes.values()) {
-            if (mesh != null && !mesh.isEmpty() && mesh.layout() != null && mesh.layout().stride == VERTEX_BYTES) {
-                vertexBytes += (long) mesh.vertexCount() * VERTEX_BYTES;
-                indexBytes += (long) mesh.indexCount() * 4L;
-            }
-        }
-        if (this.poolVertices != null) {
-            this.retiredPools.add(new Object[] {this.poolVertices, this.poolIndices, Long.valueOf(this.frameId)});
-        }
-        this.poolVertices = new VulkanHostBuffer(this.context, Math.max(64L, vertexBytes), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        this.poolIndices = new VulkanHostBuffer(this.context, Math.max(64L, indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-        this.poolEntries.clear();
-        long vertexCursor = 0L;
-        long indexCursor = 0L;
+        // Incremental: the model cache hands out a new table every time a display list is compiled - 593 times in the
+        // user's four-minute session, a few at a time as new mobs and block entities came into view - and copying the
+        // whole pool into fresh buffers each time was a frame spike per new model. A list whose mesh object is the one
+        // already copied keeps its slice; a new or rebuilt list is appended; only a full pool grows (doubling), and the
+        // grown buffers take the used bytes in one copy.
+        java.util.Set<Integer> live = new java.util.HashSet<Integer>();
         for (Map.Entry<Integer, VulkanDynamicMesh> entry : meshes.entrySet()) {
             VulkanDynamicMesh mesh = entry.getValue();
             if (mesh == null || mesh.isEmpty() || mesh.layout() == null || mesh.layout().stride != VERTEX_BYTES) {
                 continue;
             }
+            live.add(entry.getKey());
+            if (this.poolMeshes.get(entry.getKey()) == mesh) {
+                continue;
+            }
             long vBytes = (long) mesh.vertexCount() * VERTEX_BYTES;
             long iBytes = (long) mesh.indexCount() * 4L;
-            MemoryUtil.memCopy(mesh.vertexAddress(), this.poolVertices.mappedAddress() + vertexCursor, vBytes);
-            MemoryUtil.memCopy(mesh.indexAddress(), this.poolIndices.mappedAddress() + indexCursor, iBytes);
-            this.poolEntries.put(entry.getKey(), new int[] {(int) (indexCursor / 4L),
-                    (int) (vertexCursor / VERTEX_BYTES), mesh.indexCount()});
-            vertexCursor += vBytes;
-            indexCursor += iBytes;
+            ensurePoolCapacity(this.poolVertexUsed + vBytes, this.poolIndexUsed + iBytes);
+            MemoryUtil.memCopy(mesh.vertexAddress(), this.poolVertices.mappedAddress() + this.poolVertexUsed, vBytes);
+            MemoryUtil.memCopy(mesh.indexAddress(), this.poolIndices.mappedAddress() + this.poolIndexUsed, iBytes);
+            this.poolEntries.put(entry.getKey(), new int[] {(int) (this.poolIndexUsed / 4L),
+                    (int) (this.poolVertexUsed / VERTEX_BYTES), mesh.indexCount()});
+            this.poolMeshes.put(entry.getKey(), mesh);
+            this.poolVertexUsed += vBytes;
+            this.poolIndexUsed += iBytes;
+            this.poolAppends++;
         }
+        // Lists the cache no longer holds are forgotten; their bytes stay until the next growth reclaims nothing (the
+        // pool is append-only between growths, which is what keeps every in-flight run's offsets valid).
+        this.poolEntries.keySet().retainAll(live);
+        this.poolMeshes.keySet().retainAll(live);
         this.poolSource = meshes;
         this.poolBuilds++;
+    }
+
+    /** Grows the pool to hold at least the given used bytes; the old buffers retire behind the frames in flight. */
+    private void ensurePoolCapacity(long vertexBytes, long indexBytes) {
+        if (this.poolVertices != null && vertexBytes <= this.poolVertices.size() && indexBytes <= this.poolIndices.size()) {
+            return;
+        }
+        long vCapacity = Math.max(1L << 20, Math.max(vertexBytes, this.poolVertices == null ? 0L : this.poolVertices.size() * 2L));
+        long iCapacity = Math.max(1L << 18, Math.max(indexBytes, this.poolIndices == null ? 0L : this.poolIndices.size() * 2L));
+        VulkanHostBuffer vertices = new VulkanHostBuffer(this.context, vCapacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        VulkanHostBuffer indices = new VulkanHostBuffer(this.context, iCapacity, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        if (this.poolVertices != null) {
+            MemoryUtil.memCopy(this.poolVertices.mappedAddress(), vertices.mappedAddress(), this.poolVertexUsed);
+            MemoryUtil.memCopy(this.poolIndices.mappedAddress(), indices.mappedAddress(), this.poolIndexUsed);
+            this.retiredPools.add(new Object[] {this.poolVertices, this.poolIndices, Long.valueOf(this.frameId)});
+        }
+        this.poolVertices = vertices;
+        this.poolIndices = indices;
+        this.poolGrowths++;
     }
 
     /** {@return whether the pool holds this list}. */
@@ -315,8 +341,8 @@ final class VulkanModelInstances {
         } else {
             MemoryUtil.memPutFloat(r + 120, 0.0f);
         }
-        // A combine replaces the alpha test, as the per-group block does by carrying -amount in the reference slot.
-        MemoryUtil.memPutFloat(r + 124, combined ? 0.0f : alphaRef);
+        // The alpha test holds under the combine as well (GL's COMBINE_ALPHA keeps the texture alpha the test reads).
+        MemoryUtil.memPutFloat(r + 124, alphaRef);
         for (int i = 0; i < 20; i++) {
             MemoryUtil.memPutFloat(r + 128 + i * 4L, light[i]);
         }
@@ -369,6 +395,7 @@ final class VulkanModelInstances {
     String describe() {
         return "modelInstances[appended=" + this.appended + " runs=" + this.runs + " declinedFull=" + this.declinedFull
                 + " declinedMissing=" + this.declinedMissing + " poolBuilds=" + this.poolBuilds
+                + " poolAppends=" + this.poolAppends + " poolGrowths=" + this.poolGrowths
                 + " poolLists=" + this.poolEntries.size() + " pipelines=" + this.pipelines.size() + "]";
     }
 
@@ -402,6 +429,10 @@ final class VulkanModelInstances {
             this.poolIndices = null;
         }
         this.poolSource = null;
+        this.poolEntries.clear();
+        this.poolMeshes.clear();
+        this.poolVertexUsed = 0L;
+        this.poolIndexUsed = 0L;
         if (this.records != null) {
             this.records.delete();
             this.records = null;

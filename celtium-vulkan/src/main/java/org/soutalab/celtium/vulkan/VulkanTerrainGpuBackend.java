@@ -19518,11 +19518,14 @@ this.frameBufferOpen = false;
                     // alpha reference marks the combine (alpha tests use non-negative references only) and the RGB
                     // slots carry the constant colour; the fragment shader mixes instead of discarding.
                     push.putFloat(112, -group.combineColor[3]);
+                    // The alpha reference the combine marker displaces, so the shaders keep GL's alpha test (GREATER).
+                    push.putFloat(104, Float.intBitsToFloat(state[6]));
                     push.putFloat(116, group.combineColor[0]);
                     push.putFloat(120, group.combineColor[1]);
                     push.putFloat(124, group.combineColor[2]);
                 } else {
                     push.putFloat(112, Float.intBitsToFloat(state[6]));
+                    push.putFloat(104, 0.0f);
                     float[] color = group.color;
                     push.putFloat(116, color == null ? 1 : color[0]);
                     push.putFloat(120, color == null ? 1 : color[1]);

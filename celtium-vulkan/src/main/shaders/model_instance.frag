@@ -15,10 +15,11 @@ layout(location = 0) out vec4 fragColor;
 
 void main() {
     vec4 colour = texture(textures[nonuniformEXT(v_Texture)], v_TexCoord) * v_Color;
+    if (v_AlphaRef > 0.0 && colour.a < v_AlphaRef) {
+        discard;
+    }
     if (v_Combine.w > 0.0) {
         colour.rgb = mix(colour.rgb, v_Combine.rgb, v_Combine.w);
-    } else if (v_AlphaRef > 0.0 && colour.a < v_AlphaRef) {
-        discard;
     }
     fragColor = colour;
 }

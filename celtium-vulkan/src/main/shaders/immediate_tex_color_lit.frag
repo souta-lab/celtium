@@ -36,6 +36,12 @@ layout(push_constant) uniform PushConstants {
 void main() {
     vec4 colour = texture(u_Texture, v_TexCoord) * v_Color;
     if (celtium.u_AlphaRef < 0.0) {
+        // The alpha test still applies under the combine: GL's COMBINE_ALPHA takes the texture's alpha and the test
+        // runs on it. Without this the transparent overlay boxes of a hurt mob (a skeleton's headwear) were drawn as
+        // solid tinted boxes. The reference the combine displaced from 112 travels at 104.
+        if (celtium.u_MvColumn2.z > 0.0 && colour.a <= celtium.u_MvColumn2.z) {
+            discard;
+        }
         // The GL_COMBINE interpolate the fixed pipeline applies for the hurt flash and the team outline: a negative
         // alpha reference marks the combine (alpha tests use non-negative references only), the constant sits in the
         // colour slots and its alpha is the mix factor. Alpha comes through unchanged - the combine setup leaves it on
