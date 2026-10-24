@@ -1,13 +1,13 @@
 # Celtium 現状表（唯一の現在状態表）
 
-開発ベース **0.0.10-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開版とは別。
+開発ベース **0.0.13-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開最新版は **v0.0.16-alpha**（2026-10-24、[release notes](<releases/0.0.16-alpha.md>)）。
 2026-10-21 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
 ## 次の作業単位（2026-10-22 改訂・利用者指示）
 
-1. **性能（最優先）**: 出荷構成は影なし。参照実装に対する AMD 1.387x / Intel 1.738x を 1.0 に近づける。
+1. **性能（最優先）**: 出荷構成は影なし。v0.0.16-alpha 時点の KPI（AMD RX 6400・world・validation off）は warm p50 2.02–2.08ms ＝ 参照 1.19–1.27ms に対し約1.7x。同日午前の同一コード系は 1.56ms / 1.31x で、affine bake 無効化でも window copy 経路切替でも動かず**帰属未決**。次は 84c220575 の再ビルドJARとの A/B。
    受け入れの算術（`architecture` §11/§12）では受理経路の内側の最適化では届かず、per-offer のJava仕事を消す再設計が要る。
 2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
