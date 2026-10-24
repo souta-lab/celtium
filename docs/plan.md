@@ -27,48 +27,29 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
   採否はpaired KPIで決める。
 - 移行は「一度に全部作り直さない」（設計§7）。各段で画像gate・validation 0・paired KPI（control arm）を取ってから次へ。
 
-### 2026-10-24: modelのinstance描画 → **AMDでCeleritas比 0.881x（NOT_SLOWER、初）**
+### 2026-10-24 の実測ダイジェスト（詳細は [archive](<history/plan-archive-2026-10-24.md>)）
 
-lit modelのdisplay list再生（約800/frame）を共有mesh pool＋256B record＋bindless texture＋indirect runに（`VulkanModelInstances`）。
-window counterのdriftも修正。KPI `modelinst-kpi-ref-2`（JAR `fa32e6e9…`、3 rep、比 0.869/0.908/0.881、p95 1.55–1.62 vs 2.58–2.64ms）。
-**注意**: 負荷が測定末に5.6、Celeritasが前回より遅め（1.27–1.35ms）→**再測定で確定が必要**。Intel未測定。受入 `modelinst-valid-amd-2` PASSED・validation 0。
+| 変更 | 判定（AMD RX 6400・world・paired vs Celeritas 2.5.0-dev） |
+|---|---|
+| model instance producer（`VulkanModelInstances`、約800 replay/frame） | p50 **0.881x → 再測 1.027x（SLOWER）＝「速い」は非再現**。**p95は3組ともCeleritasより低い**（[証拠](<evidence/modelinst-kpi-2026-10-24.md>)） |
+| `drawPendingImmediate` のJIT分割・frame arena slot・end portal producer | 1.70x → **1.113x**、p95は参照より低い（[証拠](<evidence/jit-arena-2026-10-24.md>)） |
+| アニメtexture staging ring | p95 5.5–6.9 → **3.4–3.7ms**、p50中立（[証拠](<evidence/staging-ring-2026-10-24.md>)） |
+| native raster/texture owner・end portal texgen | AMD/Intel world 受入 PASSED・validation 0、画像gate一致（[証拠](<evidence/native-owner-2026-10-24.json>)） |
+| 定常ログ既定OFF（`-Dceltium.debug.periodicLogs=true` で復帰） | 速度主張なし |
 
-### 2026-10-24: 描画ループのJIT化・arena slot・end portal producer → **Celeritas比 1.70x → 1.113x**
+- **影**: 利用者指示により本体内は停止。stage (a)–(d計器) は commit 済み・**既定OFF**（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
+  PCF受け側は `git stash`「paused: in-core shadow PCF receiver」（leg `shadowpcf-amd-1` PASSED、視覚効果は未確認）。
+  **再開は利用者が明示した時だけ。**
 
-`drawPendingImmediate` が8282 byte（HotSpotの8000 byte上限超過）で**常にinterpreter実行**＝client threadの29.9%。分割でJIT化し3.4%。
-速くなったCPUがGPUより2frame以上先行し、2 slotのframe arenaが枯渇→groupごとに`vkAllocateMemory`（695/2831サンプル）。
-slot数をscheduler（4）+1に。end portalはlayerごと1 drawのproducerに。fixtureがCeleritas armに毎frame課していた税
-（ClassNotFoundException×3・F3再解析、58/525サンプル）を除去＝**以前の比は実態より良く見えていた**。
-KPI `arena-kpi-ref-1`（JAR `d3dfb9ba…`、AMD、3 rep、disturbed無し）: p50 **1.113x（SLOWER）**、**p95はCeleritasより低い**（1.93–2.02 vs 2.02–2.18ms）。
-`HugeMethodLimitTest` が再発を止める。[証拠](<evidence/jit-arena-2026-10-24.md>)。Intel未測定。
-
-### 2026-10-24: 定常ログを既定で停止（`-Dceltium.debug.periodicLogs=true`で復帰）。速度主張なし。
-
-### 2026-10-24: client tickのアニメtexture転送待ちを除去（staging ring）
-
-spriteごとの`vkWaitForFences`をstaging ringで除去。KPI `ring-kpi-1`: warm p95 5.5–6.9→3.4–3.7ms、p50中立。[証拠](<evidence/staging-ring-2026-10-24.md>)。
-
-## 2026-10-24: 本体内の影は停止（利用者指示）
-
-影はDemonica forkで作る（下の2.）。本体の優先は**性能→互換性**。本体内の影stage (a)〜(c)+(d計器)はcommit済み・既定OFF
-（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。PCF受け側の未commit差分は `git stash` の
-「paused: in-core shadow PCF receiver」（leg `shadowpcf-amd-1` PASSED・JAR `275e622e…`、影の視覚効果は未確認）。再開は利用者が明示した時だけ。
-
-## 2026-10-24: native state/resource owner
-
-`NativeRasterState` が blend/cull/色マスク/scissor/polygon offset、`NativeTextureBindings` が texture unit/binding を所有する。
-通常drawでのGL記録の再取り込み・bind ordinal照合を削除。白textureもGL名生成/一時bindを経由せずVulkan画像を作る。
-再確保時のstorage破棄と名前削除を分離し、atlasのbindingを保持する。
-
-[実機証拠](<evidence/native-owner-2026-10-24.json>): JAR `8baddf8701bb623be0f28bdd0be5dfc4124db28c5b924deb147e76c291013dbe`、
-AMD RX 6400/Intel UHD 630 のqmagnet、AMDのvideoSettingsは画像gate PASSED・validation 0。F2は提示画像と一致。
-menu/HEI inventory/recipeの実画像を保存したが、HEIの専用gateは未較正。性能は3pair測定したが負荷上昇（2.57→5.45）・1組のstarvationにより判定不能（残る比0.973/1.118）。改善を主張しない。
-描画要求の受付・実行全体の移管と影/packは未完。以前からの影の未commit変更はこの成果物に含まない。
 
 ## 次の作業単位（2026-10-24 改訂）
 
-1. **性能（最優先）**: 2026-10-24夕の KPI は **1.113x**（上記）。v0.0.16-alpha 時点は約1.7x。同日午前の 1.56ms / 1.31x は、84c220575 の再ビルドJARでも 2.05ms になり**再現せず＝マシン状態**だった（`469ffc4a2`、決着）。次の焦点は **tail**: warm区間のサンプル数がCeleritasの1/3〜1/2、p95 10–20ms（Celeritas 2.4ms）。client tick（fixture計測 mean 4–5ms・p95 約10ms）との対応を対照armで判別中。
-   受け入れの算術（`architecture` §11/§12）では受理経路の内側の最適化では届かず、per-offer のJava仕事を消す再設計が要る。
+1. **性能（最優先）**: 現在の同一JAR測定は **p50 1.027x（SLOWER、guard有効）／p95は3組ともCeleritasより低い**。
+   絶対値では v0.0.16-alpha の 2.02–2.08ms から 1.17–1.35ms へ下がっており（同日・同scene・AMD）、
+   改善自体は実在する。**残るのは平均フレームの最後の数%**で、比のノイズ（±7%）より大きい改善を入れないと
+   「Celeritasより速い」とは言えない。したがって次は推測ではなく**現行HEADのJFRを採り直し**、client thread上位から
+   1単位ずつ潰す（前回の内訳: TESR/entity 34%・即時window記録 30%・受理経路 10% は model instance 化と
+   portal producer の後で未再測定）。per-offer のJava仕事を消す再設計（`new_architecture.md` Stage 1/3/4）が本筋。
 2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
    Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では
