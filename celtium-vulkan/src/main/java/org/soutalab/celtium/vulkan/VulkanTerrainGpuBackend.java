@@ -1074,6 +1074,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The state the GlStateManager Mixin mirrors into; the draw entry turns it into a pipeline key. */
     private final NativeRasterState rasterState = NativeRasterState.current();
     private final VulkanGlState immediateState = new VulkanGlState(this.rasterState, NativeTextureBindings.current());
+    {
+        // Eye planes are fixed under the model view at the glTexGen call, which is this mirror's.
+        NativeTexGen.current().bindMatrices(this.immediateState);
+    }
     private String immediateLastRefusal = "unrecorded";
     /**
      * The shape the unrecorded marker stands for, stored primitive: the offer path used to build the full
@@ -1902,6 +1906,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final int[] envCombineSeen = new int[4];
     /** The texture matrix the currently open group was accepted under; {@code null} for identity. */
     private float[] currentGroupTexMatrix;
+    /** The open texgen group's eye rows (NativeTexGen.eyeRows), or null for every other group. */
+    private float[] currentGroupTexGen;
+    private final float[] texGenScratch = new float[12];
+    private final float[] texGenPushScratch = new float[12];
     /** Groups drawn under a non-identity texture matrix - the glint and the renderer's own transforms. */
     private int observedBlendSrc = -1;
     private int observedBlendDst = -1;
@@ -2329,7 +2337,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         // The colourless position variants have no record-reading twin yet; asking here, before a run is started, keeps a
         // refused group from leaving a half-built run behind.
-        if (texturedFamily && (celtium$recordsPipeline((VulkanImmediateTexturePipeline) prepared.pipeline) == null)) {
+        if (texturedFamily && (((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$texGen()
+                || celtium$recordsPipeline((VulkanImmediateTexturePipeline) prepared.pipeline) == null)) {
             celtium$flushIndirectRun();
             return false;
         }
@@ -2930,6 +2939,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> texGenPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateBlockPipeline>();
@@ -4609,6 +4621,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private static final boolean FORCE_IDENTITY_TEXMAT = Boolean.getBoolean("celtium.forceIdentityTexmat");
+
+    /** {@return {@code out}, filled with the live texgen eye rows under unit 0's texture matrix}. */
+    private float[] celtium$texGenEyeRows(float[] out) {
+        NativeTexGen.current().eyeRows(this.immediateState.peekTextureMatrix(0), out);
+        return out;
+    }
+
+    /** {@return whether the live texgen rows differ from the open group's}; the end portal's layers differ only here. */
+    private boolean celtium$texGenMoved() {
+        float[] captured = this.currentGroupTexGen;
+        if (captured == null) {
+            return true;
+        }
+        return !java.util.Arrays.equals(celtium$texGenEyeRows(this.texGenScratch), captured);
+    }
 
     private float[] celtium$textureAffine() {
         if (!celtium$readTextureAffine(this.textureAffineScratch)) {
@@ -6726,6 +6753,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        if (formatId == VulkanImmediateFormats.POSITION_COLOR && NativeTexGen.current().eyeLinearST()) {
+            // Texture-coordinate generation turns an untextured layout into a textured draw (the end portal's layers).
+            formatId = VulkanImmediateFormats.POSITION_COLOR_TEXGEN;
+        }
         {
             // Repeatability: if a frame's batch traffic is byte-for-byte the previous frame's, its recording could be
             // reused instead of rebuilt. This hashes what decides a batch - format, state, texture, vertex count and the
@@ -7504,6 +7535,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // under a different fog bracket are the two shapes this closes. Both comparisons are null-safe:
                     // null means "identity affine" and "fog off" respectively, and those are states to compare too.
                     || (affineRelevant && this.celtium$textureAffineMoved())
+                    || (formatId == VulkanImmediateFormats.POSITION_COLOR_TEXGEN && this.celtium$texGenMoved())
                     || this.celtium$fogMoved()
                     || lightParamsMoved) {
                 // Which term refused the open group, counted. Asked only where a group is actually created (a few
@@ -7728,6 +7760,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // shaders have no texture coordinate and do not declare the push slots, so recording whatever the
                 // mirror last held would put a value in the group's identity that no batch in it can draw with.
                 this.currentGroupTexMatrix = affineRelevant ? celtium$textureAffine() : null;
+                this.currentGroupTexGen = formatId == VulkanImmediateFormats.POSITION_COLOR_TEXGEN
+                        ? celtium$texGenEyeRows(new float[12]) : null;
                 if (affineRelevant) {
                     this.groupSplitCensus.noteTextureAffine(this.currentGroupTexMatrix);
                 }
@@ -8856,6 +8890,7 @@ this.frameBufferOpen = false;
         released += releaseTexturePipelineCache(this.positionNormalPipelineCache);
         released += releaseTexturePipelineCache(this.positionTexPipelineCache);
         released += releaseTexturePipelineCache(this.texturedPipelineCache);
+        released += releaseTexturePipelineCache(this.texGenPipelineCache);
         for (VulkanImmediateItemPipeline item : this.itemPipelineCache.values()) {
             released += releaseDirect(item == null ? null : () -> item.delete());
         }
@@ -9988,6 +10023,12 @@ this.frameBufferOpen = false;
                     k -> VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
                             state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
+        } else if (format == VulkanImmediateFormats.POSITION_COLOR_TEXGEN) {
+            VulkanImmediateTexturePipeline value = this.texGenPipelineCache.computeIfAbsent(key,
+                    k -> VulkanImmediateTexturePipeline.createForTexGen(this.context, pass, celtium$blendState(state),
+                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
+            descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare");
+            pipeline = value;
         } else if (format >= 2) {
             java.util.Map<Long, VulkanImmediateTexturePipeline> cache = format == 10 ? this.positionNormalPipelineCache
                     : format == 9 ? this.positionTexNormalPipelineCache
@@ -10848,7 +10889,9 @@ this.frameBufferOpen = false;
             // reads it instead of binding a set of its own; the field exists now so the conversion has its input.
             group.textureArrayIndex = this.currentGroupTextureIndex;
             group.viewportValues = this.currentGroupViewportValues;
-            group.texMatrix = this.currentGroupTexMatrix;
+            // A texgen group carries its twelve generated-coordinate rows in the same slot; the push writer tells the two
+            // apart by length.
+            group.texMatrix = this.currentGroupTexGen != null ? this.currentGroupTexGen : this.currentGroupTexMatrix;
             // BH-05: the payload captured when this group was opened, not one rebuilt from the live light state now.
             group.lightParams = this.currentGroupLightParams;
             // The coordinate captured when the group was opened, not the live one: a group the world pass left pending
@@ -19328,6 +19371,14 @@ this.frameBufferOpen = false;
                 // never reads it (a negative alpha reference selects the mix path before the comparison).
                 int alphaSelector = celtium$alphaFuncSelector(state);
                 push.putFloat(100, alphaSelector);
+                if (texMat != null && texMat.length == 12) {
+                    // A texgen group: the generated-coordinate rows over this group's positions fill 64..111, which
+                    // the texgen shaders declare instead of the affine, the colour alpha and the alpha selector.
+                    NativeTexGen.rowsForPosition(texMat, group.modelView, this.texGenPushScratch);
+                    for (int i = 0; i < 12; i++) {
+                        push.putFloat(64 + i * 4, this.texGenPushScratch[i]);
+                    }
+                }
                 this.alphaSelectorCounts.addTo(alphaSelector, 1L);
                 this.lastAlphaSelector = alphaSelector;
                 this.immediateStatistics.setLastAlphaPushReference(state.length > 6 ? Float.intBitsToFloat(state[6]) : Float.NaN);

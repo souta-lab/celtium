@@ -124,6 +124,8 @@ public final class VulkanImmediateTexturePipeline {
      * default is only reached when none of the three is set.
      */
     private int explicitStride;
+    /** POSITION_COLOR drawn with generated texture coordinates; see {@link #createForTexGen}. */
+    private boolean texGen;
 
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -237,6 +239,24 @@ public final class VulkanImmediateTexturePipeline {
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
         return pipeline.build();
+    }
+
+    /**
+     * Creates the texgen variant: {@code POSITION_COLOR} vertices (16 bytes, no texture coordinate) sampling the bound
+     * texture at the coordinate {@link NativeTexGen} generates, which the backend writes as three rows at 64/80/96.
+     */
+    public static VulkanImmediateTexturePipeline createForTexGen(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp);
+        pipeline.texGen = true;
+        pipeline.explicitStride = 16;
+        return pipeline.build();
+    }
+
+    /** {@return whether this is the texgen variant}, which the backend's push writer fills differently. */
+    public boolean celtium$texGen() {
+        return this.texGen;
     }
 
     /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
@@ -963,10 +983,12 @@ public final class VulkanImmediateTexturePipeline {
             // BH-30: the shared pair carries the world fog block at 128..207, which this layout declares 208 bytes for
             // and the backend writes for every group without a lighting payload. The lit ITEM variant has its own
             // fragment (IMMEDIATE_TEX_COLOR_LIT_FRAGMENT) because its block spends 128..215 on lighting.
-            ByteBuffer vertexCode = SpirvShaders.load(this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX
+            ByteBuffer vertexCode = SpirvShaders.load(this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_VERTEX
+                    : this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX
                     : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
                     : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
-            ByteBuffer fragmentCode = SpirvShaders.load(this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT
+            ByteBuffer fragmentCode = SpirvShaders.load(this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_FRAGMENT
+                : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT
                 : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_FRAGMENT : SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
             long vertexModule = VK_NULL_HANDLE;
             long fragmentModule = VK_NULL_HANDLE;
@@ -999,15 +1021,18 @@ public final class VulkanImmediateTexturePipeline {
 
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
                 binding.get(0).binding(0).stride(vertexStride()).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
-                VkVertexInputAttributeDescription.Buffer attributes =
-                        VkVertexInputAttributeDescription.calloc(this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
+                VkVertexInputAttributeDescription.Buffer attributes = VkVertexInputAttributeDescription.calloc(
+                        this.texGen ? 2 : this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                if (!this.positionNoTexture) {
+                if (this.texGen) {
+                    // POSITION_COLOR: the colour follows the position directly; there is no texture coordinate.
+                    attributes.get(1).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(12);
+                } else if (!this.positionNoTexture) {
                     // Only the variants that declare a texture coordinate have anything at offset 12; writing this
                     // struct for the one-attribute layouts wrote 16 bytes past the end of a one-element array.
                     attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
                 }
-                if (!this.positionOnly && !this.positionNoTexture) {
+                if (!this.texGen && !this.positionOnly && !this.positionNoTexture) {
                     // The colourless format has nothing at offset 20 - describing an attribute there would read past
                     // the end of every vertex.
                     attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(20);

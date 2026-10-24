@@ -92,6 +92,11 @@ public final class SpirvShaders {
     /** Fragment module for textured immediate-mode geometry. */
     public static final String IMMEDIATE_TEX_COLOR_FRAGMENT = "immediate_tex_color.frag";
 
+    /** POSITION_COLOR under texture-coordinate generation (NativeTexGen): the end portal and end gateway. */
+    public static final String IMMEDIATE_TEXGEN_VERTEX = "immediate_texgen.vert";
+    /** The texgen family's fragment stage: the projective divide, the modulate and the fog. */
+    public static final String IMMEDIATE_TEXGEN_FRAGMENT = "immediate_texgen.frag";
+
     /**
      * Fragment module for the lit ITEM variant (BH-30's collision fix). It is the shared
      * {@link #IMMEDIATE_TEX_COLOR_FRAGMENT} without the fog input and fog math, because the lit family's push block

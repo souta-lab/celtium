@@ -173,16 +173,23 @@ public final class VulkanImmediateFormats {
      */
     public static final int POSITION_NORMAL = 10;
 
+    /**
+     * {@code POSITION_COLOR} drawn while texture-coordinate generation is on ({@link NativeTexGen}): the same 16-byte
+     * vertices, sampling the bound texture at the generated coordinate. Not a layout the uploader maps - the backend
+     * selects it for a {@code POSITION_COLOR} batch when the texgen state asks for it (the end portal and gateway).
+     */
+    public static final int POSITION_COLOR_TEXGEN = 12;
+
     /** One past the highest id, for every array, mask and range check that has to cover them all. */
     /** Ids are dense and allocated in order, so the arrays the census keeps are sized from the highest one. */
-    public static final int COUNT = POSITION_TEX_NORMAL_FLOAT + 1;
+    public static final int COUNT = POSITION_COLOR_TEXGEN + 1;
 
     /** Ids the acceptance mask admits by default: every layout this class names. */
     /**
      * The formats the immediate path accepts by default. Id 11 joined the list with the layout itself: a mapped but
      * unaccepted format is still refused, and the 268-mod E2E pack draws 24,143 batches in it.
      */
-    public static final String DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9,10,11";
+    public static final String DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9,10,11,12";
 
     /**
      * {@return the id whose element list is exactly the given one at the given width, or 0 when no known layout matches}.

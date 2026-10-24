@@ -433,6 +433,40 @@ public abstract class GlStateManagerMixin {
     }
 
     /**
+     * Texture-coordinate generation, mirrored into {@link org.soutalab.celtium.vulkan.NativeTexGen}: the raw-GL stub
+     * treats {@code glTexGen*} as no-ops, so without these the end portal's layers drew untextured. Names from
+     * {@code scripts/mc-sources.sh --srg}: {@code func_179087_a} enableTexGenCoord, {@code func_179100_b}
+     * disableTexGenCoord, {@code func_179149_a} texGen(coord, mode), {@code func_179105_a} texGen(coord, pname, plane).
+     * The mode setter is hooked rather than its GL call because GlStateManager skips the call when the mode is
+     * unchanged, and the plane is read without moving the caller's buffer position.
+     */
+    @Inject(method = "func_179087_a", at = @At("HEAD"), require = 0)
+    private static void celtium$enableTexGen(GlStateManager.TexGen coord, CallbackInfo info) {
+        org.soutalab.celtium.vulkan.NativeTexGen.current().setEnabled(coord.ordinal(), true);
+    }
+
+    @Inject(method = "func_179100_b", at = @At("HEAD"), require = 0)
+    private static void celtium$disableTexGen(GlStateManager.TexGen coord, CallbackInfo info) {
+        org.soutalab.celtium.vulkan.NativeTexGen.current().setEnabled(coord.ordinal(), false);
+    }
+
+    @Inject(method = "func_179149_a", at = @At("HEAD"), require = 0)
+    private static void celtium$texGenMode(GlStateManager.TexGen coord, int mode, CallbackInfo info) {
+        org.soutalab.celtium.vulkan.NativeTexGen.current().setMode(coord.ordinal(), mode);
+    }
+
+    @Inject(method = "func_179105_a", at = @At("HEAD"), require = 0)
+    private static void celtium$texGenPlane(GlStateManager.TexGen coord, int pname, java.nio.FloatBuffer plane,
+            CallbackInfo info) {
+        if (plane == null || plane.remaining() < 4) {
+            return;
+        }
+        int at = plane.position();
+        org.soutalab.celtium.vulkan.NativeTexGen.current().setPlane(coord.ordinal(), pname, plane.get(at),
+                plane.get(at + 1), plane.get(at + 2), plane.get(at + 3));
+    }
+
+    /**
      * The alpha test's enable pair, and the lighting pair, on the names the SRG table actually gives them.
      * <p>
      * <b>Corrected.</b> The two hooks that used to stand here were named {@code celtium$enableLighting} /
