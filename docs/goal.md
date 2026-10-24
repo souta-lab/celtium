@@ -1,16 +1,21 @@
 # Celtium — 製品目標と完成条件
 
-2026-10-21 再定義。以前の性能値・原因断定・完了宣言は前提にしない。
-現在の実装と受入は [plan.md](<plan.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)、
+2026-10-21 再定義、2026-10-24 改訂（利用者指示: 新アーキテクチャへの全面移行と互換方針の変更）。
+以前の性能値・原因断定・完了宣言は前提にしない。
+現在の実装と受入は [plan.md](<plan.md>)、目標設計は [new_architecture.md](<../new_architecture.md>)
+（採否と順序の評価は plan.md）、旧設計と実測の記録は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)、
 実行手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
 
 ## 目的と唯一の描画制約
 
-Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性能と実用的なMod互換性**を持つレンダラを作る。
+Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性能**と、**Forge標準描画経路の正しさ**を持つレンダラを作る。
 
-- **native Vulkan-only。Minecraft/Forgeの描画・資源・状態をnative frontendが所有する。**
-- GL変換は**Modが直接使うGL APIの互換アダプタだけ**に限定し、同じnative rendererへ接続する。
-  バニラのGL呼出しをスタブへ転送して「native化」と呼ばない。HUD/GUI/loadingも例外ではない。
+- **native Vulkan-only。Minecraft/Forgeの描画・資源・状態・可視性・提出をnative rendererが所有する。**
+  全描画物（地形・entity・TESR・item・particle・text・GUI・空・手・post）は1つのscene database・可視性・
+  frame compilerに載る（[new_architecture.md](<../new_architecture.md>)）。バニラのGL呼出しをスタブへ転送して
+  「native化」と呼ばない。HUD/GUI/loadingも例外ではない。
+- **Forge API以外のraw GLはstub**（2026-10-24 利用者指示）。どのstub呼出しが実画面に必要だったかを診断で示し、
+  stubが何も描かないことを互換と呼ばない。
 - GLコンテキスト・GLによる描画fallbackに頼らない。拒否された描画は欠落であり、成功ではない。
 
 それ以外の実装方式は固定しない。既存CPUエンジン、公開内部API、shader、資源配置、描画順の表現、
@@ -28,8 +33,11 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
    Minecraft/Forge経路が、GL互換層を逆呼出しせずnativeに描画される。状態query・texture・framebufferも含めて監査する。
 3. **画質**：loading / home / game / settingsの4画面とQMAGNET's Test Mapを、原寸画像・参照・機能別の対照で確認する。
    粗い色数gateとvalidation cleanだけで画質一致とはしない。
-4. **互換**：E2E 1.93a、RLCraft 2.9.3、主要描画/GUI/最適化Modの代表場面で、欠落・ちらつき・順序・状態漏れがない。
-   公開描画APIとraw GLを混用するMod、resize、resource reload、world切替、GUI/FBOの寿命も検証する。
+4. **互換（2026-10-24 改訂・利用者指示）**：Forge APIの公開契約と、**Forge/vanillaの標準描画経路に載るコンテンツ**が
+   欠落・ちらつき・順序・状態漏れなく描かれる。resize、resource reload、world切替、GUI/FBOの寿命も検証する。
+   **描画に手を加えるMod（renderer置換・culling/batching/FPS系・独自shader・描画順/GUI描画の差替え等）は競合として非サポート**で、
+   判明している競合はmod ID・transformer/mixin target・renderer置換の署名で起動時にfail-fastする（曖昧な推測で正常Modを排除しない）。
+   E2E 1.93a / RLCraft 2.9.3 は「競合Modを除いた、標準描画経路のコンテンツ」で受入を再定義し、完全packの動作保証とは呼ばない。
    依存Modを削除した別packの起動を、完全packの受入にしない。
 5. **影とshaderpack**：**Celtium本体ではなく、Demonica forkの別成果物（AGPL-3.0のaddon jar）**で実現する（2026-10-24 利用者指示）。
    本体の責務は、そのaddonが接続できる境界（terrain描画・pass・資源の受け渡し）を壊さないこと。受入はaddon側で、

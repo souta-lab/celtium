@@ -2,8 +2,44 @@
 
 開発ベース **0.0.13-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開最新版は **v0.0.16-alpha**（2026-10-24、[release notes](<releases/0.0.16-alpha.md>)）。
 2026-10-21 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
-製品の出口は [goal.md](<goal.md>)、設計は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
+製品の出口は [goal.md](<goal.md>)、目標設計は [new_architecture.md](<../new_architecture.md>)、旧設計と実測は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
+
+## 2026-10-24: 新アーキテクチャへ全面移行（利用者指示）
+
+目標設計は [new_architecture.md](<../new_architecture.md>)（scene database・Native Everything Culling・frame compiler・
+Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理・capture・record仕事を消す）と一致し、互換方針の変更
+（描画改変Modは競合として非サポート）でproducerまで所有できるため。**順序は実測コストで並べ替える**
+（leg `tickjfr-celtium-2`・JAR `652075c9…`・AMD・world・validation off・warm窓のclient threadサンプル692）:
+
+| 項目 | client thread占有（inclusive） | 対応するstage |
+|---|---|---|
+| block entity描画（TESR→GL stub→受理→即時window） | 34%（end portal 14.6%・看板 6.8%） | Stage 3（TESR/entity/itemのnative producer・retained mesh）。end portalは描画の正しさのみ修正済み（texgen）、1 block×15 layerのCPU費用は未削減 |
+| 即時windowの記録 `recordImmediateOnlyPass` | 30% | Stage 4（frame compiler）＋**executor thread**（下記） |
+| 受理経路 `submitGeometryBatch` | 10% | Stage 1（packet化）で消す |
+| client tick内のアニメtexture転送待ち | 3.6%（vkWaitForFences） | 修正済み（staging ring、下） |
+| tick以外のvanilla（tick/世界処理） | 約6% | 対象外（共有コスト） |
+
+- **Stage 2（CPU Everything Culling）は後ろへ**: TESR/entityはvanillaが既にfrustum判定しており、KPI sceneの削減は小さい見込み。
+- **Stage 5（GPU Hi-Z）は最後**: AMDのフレームは解像度非依存＝CPU律速（architecture §11）。GPU cullingはCPU時間を減らさない。
+- **設計への追加（より速い可能性がある案）**: frame packetを不変にできれば、**記録・提出を専用executor threadへ移す**
+  （main threadがframe N+1のpacketを作る間にNを記録）。記録30%がmain threadから外れる。遅延は最大1frame、キュー長1。
+  採否はpaired KPIで決める。
+- 移行は「一度に全部作り直さない」（設計§7）。各段で画像gate・validation 0・paired KPI（control arm）を取ってから次へ。
+
+### 2026-10-24: 定常ログを既定で停止
+
+定常状態で毎秒約600行（ForgeのTracingPrintStreamがstackを辿る）を出していた周期ログを `-Dceltium.debug.periodicLogs=true` 時のみに。
+KPI `loggate-kpi-1` は control比0.977だが測定中に負荷が6.0へ上昇したため**速度主張なし**（構造上の仕事削減のみ確定）。
+
+### 2026-10-24: client tickのアニメtexture転送待ちを除去（staging ring）
+
+アニメsprite 1枚ごとに `uploadPatchedLevels→ensureStaging→awaitOutstandingUpload→vkWaitForFences`
+（tick内でspriteごとにCPU↔GPU往復）。stagingをringで切り出し、wrap時だけ最新fenceを待つ形に変更。
+KPI（`ring-kpi-1`、JAR `6c041aa3…`、control `652075c9…`＝変更前HEAD、AMD RX 6400、world、validation off、3 rep交互）:
+warm p95 **3.39/3.68/3.42ms（control 5.51/6.90/6.01ms）**、warm区間のframe数 4388/4044/4531（control 4193/3606/4299）。
+p50は control比 1.007（中立）、Celeritas比 1.699x のまま。validation ON leg `ring-valid-amd-1` PASSED・validation 0・画像gate PASSED。
+[証拠](<evidence/staging-ring-2026-10-24.md>)。
 
 ## 2026-10-24: 本体内の影は停止（利用者指示）
 
@@ -41,33 +77,19 @@ menu/HEI inventory/recipeの実画像を保存したが、HEIの専用gateは未
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **起動（Wayland）** | **修正済み・25秒→72秒完走** | 実測 | 完了 | SDLのwindow propertyからwl_display/wl_surfaceを取って`vkCreateWaylandSurfaceKHR`（`SDL_Vulkan_CreateSurface`はSDL側dispatchで落ちる）。fullscreenは別根因だった: `Display.update()`→`Window.swapBuffers()`（SDL自身のEGL swap）が**同じwl_surfaceに二重提示**し、swayが`wp_linux_drm_syncobj error 4`で接続を切る→SDL QUIT→exit 0。`CeltiumGllessSdlSwapTransformer`でGL-less時のみno-op化（jar 0.0.10-alpha / headlessで72秒・presented1198・エラー0）。
-
-| **利用者報告の不具合（2026-10-23）** | **未修正・トリアージ済み** | 利用者の実機報告＋画面 | 修正中 | ①メニューのパノラマが壊れて重い＝**修正済み**（window読みのコピーをhostルート既定に。leg menu69/70、AMD RX 6400、参照差 65.63%→43.35%、彩度0.042→0.303、画像 `docs/evidence/2026-10-24-menu-panorama-fixed.png`、ワールド受入 `windowfix-acc` PASSED。menuの1present最大7コピーぶんの体感速度は未測定） ②エンドポータル内の描画がおかしい ③F2スクショ真っ黒＝**修正済み**（`nglGetTexImage`ルート、leg shot-test6 PASSED・非黒98.3%）④色付きガラスがチカチカ ⑤視点移動時に看板文字などが残像。**⑤は静止条件で棄却済み**（`framesNoClear=0`・F2画像と提示画像が0差分）＝動き依存（提示レイテンシ等）として次段で測定。判明: ③は既定framebuffer(0)からのreadPixels経路（TextureCopyService 890-901のgate）がメニュー/スクショ文脈で拒否されるため。④⑤はフレーム画像の再利用・掃除とブレンド順の疑い。①はメニュー経路（パノラマはworld描画＋GUI）で同じ土台の疑い。次は③から直し、④⑤→①→②の順 |
-| **性能KPI: fps300（2026-10-23 利用者指示）** | **未達。validation OFF の定常窓p50 中央値 4.75ms（≒210fps, AMD RX 6400）** | 実測 2026-10-23（180s leg×3: 4.97/4.43/4.75ms, 中央値4.75） | 残り約1.45ms | 全KPIの従来値はvalidationレイヤ込み（ON 7.99ms → OFF 中央値4.75ms、レイヤ約3.2ms）。レンダラ所有分は約1.3〜1.5ms（即時0.5/terrain 0.5/gui 0.3）、残り約2msはvanilla（tick・エンティティ/TESR等）。**300fpsにはvanilla側の削減が必要** |
-| **性能（v0.0.13時点）** | **world 1080p: frame CPU 8.1ms / 実FPS 91–110（上限OFF）・57–61（上限60）** | 実測 | **達成（60Hz）** | jar `80e3d8b3…`・AMD RX 6400・headless隔離sway・world scene・validation ON。内訳: world 8.0（terrain 5.3 / flush 3.7）、hand 0.1、clouds 0.1、residual 0.0。メニューは 30→62fps（`Display.sync`撤去＋ペーシング）。残る最適化余地は terrain pass と flush |
-| **影（pack側の担当）** | **Celtium本体の現在単位ではない** | — | pack/別mod | 利用者指示:「影はpackに任せろ」「パフォーマンスが終わってないのに影に取り組むな」。影は `shader-plan.md` の方針どおり**シェーダーパック（別成果物）として実装**する。Celtium本体は**性能**を先に終わらせる。参考としてpackの実シェーダがcompile→pipeline→描画→画素読み戻しまで通ることは実測済み |
+| **利用者報告の不具合（2026-10-23）** | **未修正・トリアージ済み** | 利用者の実機報告＋画面 | 修正中 | ①メニューのパノラマが壊れて重い＝**修正済み**（window読みのコピーをhostルート既定に。leg menu69/70、AMD RX 6400、参照差 65.63%→43.35%、彩度0.042→0.303、画像 `docs/evidence/2026-10-24-menu-panorama-fixed.png`、ワールド受入 `windowfix-acc` PASSED。menuの1present最大7コピーぶんの体感速度は未測定） ②エンドポータル内の描画がおかしい＝**修正済み**（glTexGenがstubでno-op→`NativeTexGen`＋texgen pipeline、portal面の参照差 平均13.5/21.9/18.1→5.5/9.5/10.2、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)、Intel未実行） ③F2スクショ真っ黒＝**修正済み**（`nglGetTexImage`ルート、leg shot-test6 PASSED・非黒98.3%）④色付きガラスがチカチカ ⑤視点移動時に看板文字などが残像。**⑤は静止条件で棄却済み**（`framesNoClear=0`・F2画像と提示画像が0差分）＝動き依存（提示レイテンシ等）として次段で測定。判明: ③は既定framebuffer(0)からのreadPixels経路（TextureCopyService 890-901のgate）がメニュー/スクショ文脈で拒否されるため。④⑤はフレーム画像の再利用・掃除とブレンド順の疑い。①はメニュー経路（パノラマはworld描画＋GUI）で同じ土台の疑い。次は③から直し、④⑤→①→②の順 |
 
 | **性能: draw-manager（§11.5-11.8）** | **土台3/5段（①②③完了）** | 実測+画像 | 実装中 | ①descriptor indexing 4機能を両GPUで有効（`textureArray=true`・PASSED/0件, jar `3e3dc1a5`） ②共有テクスチャ配列セット実装＝**35枚/4096・書き込み35回**（jar `6cf90a00`） ③groupへ配列index＝**hit 178407/miss0（AMD）・hit 114673/miss0（Intel）**（jar `75bea5b3`） 残り＝④シェーダをindex化（まずtexture系1 family、push定数index）⑤pipelineソート＋geometry arena＋`vkCmdDrawIndexedIndirect`で **159→約11 draw/window**。**①②③は未だ描画に使わず速度未計測**。影削除を含む現ツリーは jar `0b3b49d8…` で AMD/Intel とも PASSED・画像gate PASSED・validation 0件 |
 
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | world scene は `cleanroom-0.7.11-alpha` の `minecraft/saves/qmagnet`（配布マップ）を使用。v0.0.14-alpha のforge jar `90a7c505…` は world で **AMD/Intel とも PASSED・validation 0・画像gate一致**。**0.6.13-alpha（GLFW/LWJGL 3.4.1）は起動不可**＝SDL3バインディング不在を検出して`CeltiumGllessHint` がバージョンを名指しして拒否（クラッシュレポートに理由が残る）。0.6.13 で受入を主張するには0.6用の別ビルドが必要 |
 | **RLCraft 2.9.3 互換** | **Celtium側では無い。0.7.11 + Fugue 0.25.5 でも外部要因で停止（対照実験済み）** | 実測 2026-10-23（probe: 0.7.11 clone + RLCraft mods 166 + scalar-3.9.0） | 外部待ち | Fugue 0.24.4 → `NoClassDefFoundError com.cleanroommc.hackery.ReflectionHackery`（SetBonus）。Fugue 0.25.5 → 44秒まで進行（Sound engine started）後 `VerifyError: EntityRenderer.func_78472_g`。**celtium jar を外した対照でも同じ VerifyError** のため Celtium の不具合ではない。次の候補は Cleanroom 0.7.12-alpha 以降での再試行 |
-| **シェーダパック/影: 休止（2026-10-23 利用者指示）** | **S3の探索は到達点を残して停止** | 実測済み | 利用者の判断待ち | 実測到達点: `gbuffers_terrain`が実地形を描く（`packblit-27`）、ライト視点（`packblit-29`）、影マップに65,536キャスタ・被覆60.2%（`packblit-32`）。『影を3回やっている』と利用者から指摘があり停止。 再開条件: 利用者がpack統合を優先すると明示した時。 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①**受理経路をnativeへ**（Java補足ではなく所有権移動。`architecture` §12が規模の算術）②影の尾の削減（二重バッファ化 or cadenceと品質のトレード）③`shader-plan.md` の既存modベースでBSL接続 ④state/texture/render target所有のnative化（未完） |
-| **測定の現状** | **出荷構成のフレーム内訳を実測** | 実測 | 継続 | leg `perf-struct-1`（jar `a78b1f53…`・影OFF・CPUクロック・instrument ON）: `frame p50 2.5ms / world 2.4-2.5`、内訳は **winRecord 0.6（flush 0.7 の内側）・terrainRecord 0.2（terrain 0.8 の内側）**、`terrainSubmit 0.0・present 0.0・gui 0.1・clouds 0.1`、**worldの残差 約0.8msは未bracket**。※以前「passSplitが無出力」と書いたのは私のgrepミス（正しくは `CELTIUM_FRAME_PASS_SPLIT`）。計器は正常。 |
 
-## 撤回した前提（再入条件つき）
+## 撤回した前提
 
-| 主張 | 判定 | 再入条件 |
-|---|---|---|
-| KPI 2.29x が変更後の比較 | **無効**。4 legが同一 sha `ca77e4a5…`（2026-10-20 21:34）を測定 | 今回の`gv_kpi.py`でprovenance一致を確認してから |
-| 2.29x が FPS 判定 | **無効**。`frameIntervalP50Ms` はworldTicks 120..200＝チャンク構築中 | warm区間を完走したlegのみ |
-| 「draw 6〜9/frame＝1:1変換なし」 | **無効**。`VulkanDynamicMesh` の2点だけの部分計数 | 全発行点の合計を計数してから |
-| 「per-call最適化の余地は尽きた」 | **撤回**。同一条件のA/Bが成立していない | provenance一致のpaired測定 |
-| 「GCがp95の主因」 | **撤回**。両armほぼ同一（停止数・時間） | 同一scene・同一区間での再測 |
-| 「GLスタブ経由は解消済み」 | **撤回**。`CeltiumNativeDraw` はスタブを直接呼んでいた。今回owner移行を開始 | 各入口の所有者がnativeになった時点で個別に判定 |
+[archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因・GLスタブ解消済み 等。再入条件つき）。
 
 ## 未確定（数値を前提にしない）
 
@@ -110,5 +132,4 @@ scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
 - 影は native 実装を削除済み（pack 側の影は Demonica fork で実装する）。比較画像は presented dump の最終枚を使う
 - パック: `-Dceltium.shaderpack.path=<zip>` ＋ `-Dceltium.shaderpack.compileProbe=true`、shaderc は `CELTIUM_LEG_EXTRA_LIBS=.gv-verify/lib/lwjgl-shaderc-3.4.3.jar`
 - ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
-
 

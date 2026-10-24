@@ -316,3 +316,29 @@ plan.md は16KiBの入口予算を持つため、確定済み・過去の行を�
 
 
 | **影・BSL・配布** | **未完** | — | — | native shadow mapの両GPU実画面、BSLの描画反映、配布物と実装の一致 |
+
+
+## 2026-10-24 移動（plan.mdの予算超過のため。履歴であり現在の判定ではない）
+
+### 旧「現在の優先順」行
+
+| 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
+|---|---|---|---|---|
+| **起動（Wayland）** | **修正済み・25秒→72秒完走** | 実測 | 完了 | SDLのwindow propertyからwl_display/wl_surfaceを取って`vkCreateWaylandSurfaceKHR`（`SDL_Vulkan_CreateSurface`はSDL側dispatchで落ちる）。fullscreenは別根因だった: `Display.update()`→`Window.swapBuffers()`（SDL自身のEGL swap）が**同じwl_surfaceに二重提示**し、swayが`wp_linux_drm_syncobj error 4`で接続を切る→SDL QUIT→exit 0。`CeltiumGllessSdlSwapTransformer`でGL-less時のみno-op化（jar 0.0.10-alpha / headlessで72秒・presented1198・エラー0）。
+| **性能KPI: fps300（2026-10-23 利用者指示）** | **未達。validation OFF の定常窓p50 中央値 4.75ms（≒210fps, AMD RX 6400）** | 実測 2026-10-23（180s leg×3: 4.97/4.43/4.75ms, 中央値4.75） | 残り約1.45ms | 全KPIの従来値はvalidationレイヤ込み（ON 7.99ms → OFF 中央値4.75ms、レイヤ約3.2ms）。レンダラ所有分は約1.3〜1.5ms（即時0.5/terrain 0.5/gui 0.3）、残り約2msはvanilla（tick・エンティティ/TESR等）。**300fpsにはvanilla側の削減が必要** |
+| **性能（v0.0.13時点）** | **world 1080p: frame CPU 8.1ms / 実FPS 91–110（上限OFF）・57–61（上限60）** | 実測 | **達成（60Hz）** | jar `80e3d8b3…`・AMD RX 6400・headless隔離sway・world scene・validation ON。内訳: world 8.0（terrain 5.3 / flush 3.7）、hand 0.1、clouds 0.1、residual 0.0。メニューは 30→62fps（`Display.sync`撤去＋ペーシング）。残る最適化余地は terrain pass と flush |
+| **影（pack側の担当）** | **Celtium本体の現在単位ではない** | — | pack/別mod | 利用者指示:「影はpackに任せろ」「パフォーマンスが終わってないのに影に取り組むな」。影は `shader-plan.md` の方針どおり**シェーダーパック（別成果物）として実装**する。Celtium本体は**性能**を先に終わらせる。参考としてpackの実シェーダがcompile→pipeline→描画→画素読み戻しまで通ることは実測済み |
+| **シェーダパック/影: 休止（2026-10-23 利用者指示）** | **S3の探索は到達点を残して停止** | 実測済み | 利用者の判断待ち | 実測到達点: `gbuffers_terrain`が実地形を描く（`packblit-27`）、ライト視点（`packblit-29`）、影マップに65,536キャスタ・被覆60.2%（`packblit-32`）。『影を3回やっている』と利用者から指摘があり停止。 再開条件: 利用者がpack統合を優先すると明示した時。 |
+| **測定の現状** | **出荷構成のフレーム内訳を実測** | 実測 | 継続 | leg `perf-struct-1`（jar `a78b1f53…`・影OFF・CPUクロック・instrument ON）: `frame p50 2.5ms / world 2.4-2.5`、内訳は **winRecord 0.6（flush 0.7 の内側）・terrainRecord 0.2（terrain 0.8 の内側）**、`terrainSubmit 0.0・present 0.0・gui 0.1・clouds 0.1`、**worldの残差 約0.8msは未bracket**。※以前「passSplitが無出力」と書いたのは私のgrepミス（正しくは `CELTIUM_FRAME_PASS_SPLIT`）。計器は正常。 |
+
+### 撤回した前提（再入条件つき）
+
+| 主張 | 判定 | 再入条件 |
+|---|---|---|
+| KPI 2.29x が変更後の比較 | **無効**。4 legが同一 sha `ca77e4a5…`（2026-10-20 21:34）を測定 | 今回の`gv_kpi.py`でprovenance一致を確認してから |
+| 2.29x が FPS 判定 | **無効**。`frameIntervalP50Ms` はworldTicks 120..200＝チャンク構築中 | warm区間を完走したlegのみ |
+| 「draw 6〜9/frame＝1:1変換なし」 | **無効**。`VulkanDynamicMesh` の2点だけの部分計数 | 全発行点の合計を計数してから |
+| 「per-call最適化の余地は尽きた」 | **撤回**。同一条件のA/Bが成立していない | provenance一致のpaired測定 |
+| 「GCがp95の主因」 | **撤回**。両armほぼ同一（停止数・時間） | 同一scene・同一区間での再測 |
+| 「GLスタブ経由は解消済み」 | **撤回**。`CeltiumNativeDraw` はスタブを直接呼んでいた。今回owner移行を開始 | 各入口の所有者がnativeになった時点で個別に判定 |
+
