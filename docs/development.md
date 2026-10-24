@@ -3210,3 +3210,14 @@ leg blit-flip（windowCopyBlit=true）: mean 122.0 / 彩度 0.050 / 参照差 71
 ```
 host経路（111.7〜112.1 / 0.30 / 42〜44%）より悪化。**y反転は原因ではない**ので変更は撤回した。
 blit経路の不一致は未解決の負債のまま（既定はhost経路）。
+
+**性能再測（2026-10-24 夕・v0.0.16-alpha JAR）: 環境ノイズで判定不能**
+
+leg `v16-quiet`（1rep、240s、release JAR）:
+```
+celtium  warm p50=2.538ms p95=28.0ms samples=1650
+celeritas warm p50=1.432ms p95=2.4ms  samples=6520
+→ median paired ratio=1.772x
+```
+p95 28ms・サンプル1650は**外部負荷の混入**を示す（以前の静穏時は p95 2–5ms・4300–5700サンプル）。
+この状態の比は性能差の証拠にしない。静穏時の再測が次の条件。
