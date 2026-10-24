@@ -682,8 +682,10 @@ public final class VulkanGlState {
         }
         // Raised bound plus a separately bounded line for the panorama ids (45-49): the first ~22 binds never
         // reached them, which is the one measurement left between the panorama's mirror and the faces' group.
-        if (unitLogs < 96 || (glTextureId >= 40 && glTextureId <= 60 && unitRangeLogs < UNIT_RANGE_LOG_LIMIT)) {
-            if (glTextureId >= 40 && glTextureId <= 60) {
+        boolean panoramaRange = glTextureId >= 40 && glTextureId <= 60;
+        if ((panoramaRange && unitRangeLogs < UNIT_RANGE_LOG_LIMIT)
+                || (!panoramaRange && unitLogs < 96)) {
+            if (panoramaRange) {
                 unitRangeLogs++;
             } else {
                 unitLogs++;

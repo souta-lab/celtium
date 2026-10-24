@@ -186,6 +186,9 @@ public final class ValidationClient {
     private boolean enabled;
     private boolean launched;
     private boolean celtium$leftWorld;
+    private String celtium$openedSaveSlot;
+    private int celtium$worldSwitchMenuTicks;
+    private boolean celtium$worldSwitchMenuDumpRequested;
     /**
      * Capture staging.
      * <p>
@@ -3658,6 +3661,7 @@ public final class ValidationClient {
                     // instance's saves into, loaded the way the game's own selection screen loads it - the real
                     // terrain/entity mix the flat world cannot show.
                     report.addProperty("saveSlot", saveSlot);
+                    celtium$openedSaveSlot = saveSlot;
                     mc.launchIntegratedServer(saveSlot, saveSlot, null);
                 } else {
                     mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
@@ -3908,6 +3912,18 @@ public final class ValidationClient {
                 celtium$rejoinPending = true;
             }
             if (celtium$rejoinPending && mc.world == null && mc.currentScreen instanceof GuiMainMenu) {
+                int holdTicks = Integer.getInteger("celtium.validation.worldSwitchMenuHoldTicks", 0).intValue();
+                if (celtium$worldSwitchMenuTicks++ < holdTicks) {
+                    if (!celtium$worldSwitchMenuDumpRequested
+                            && celtium$worldSwitchMenuTicks >= Math.max(2, holdTicks / 2)) {
+                        celtium$worldSwitchMenuDumpRequested = true;
+                        report.addProperty("worldSwitchMenuDumpClientTick", celtium$clientTicks);
+                        celtium$requestPresentedDump(mc, "world-switch-menu");
+                        celtium$captureGlScreenshot(mc, "celtium-validation-world-switch-menu.png",
+                                "world-switch-menu");
+                    }
+                    return;
+                }
                 celtium$rejoinPending = false;
                 report.addProperty("rejoinedAtTick", worldTicks);
                 // A second world starts a new window for the presented-frame assertion: the renderer adopts the
@@ -3917,7 +3933,12 @@ public final class ValidationClient {
                 celtium$noteWorldStart("rejoin at tick " + worldTicks);
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 settings.setGeneratorOptions(celtium$worldLayers);
-                mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
+                if (celtium$openedSaveSlot != null) {
+                    report.addProperty("rejoinedSaveSlot", celtium$openedSaveSlot);
+                    mc.launchIntegratedServer(celtium$openedSaveSlot, celtium$openedSaveSlot, null);
+                } else {
+                    mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
+                }
             }
             if (mc.world == null || mc.player == null) return;
             // The world-phase resize: once, at the requested tick, with a world loaded and the window-owned renderer
@@ -6270,7 +6291,7 @@ public final class ValidationClient {
             camera.addProperty("pitch", mc.player.rotationPitch);
             report.add("camera", camera);
             report.addProperty("seed", 12345678L);
-            report.addProperty("renderDistance", 8);
+            report.addProperty("renderDistance", mc.gameSettings.renderDistanceChunks);
             // The interval windows are written by celtium$reportFrameIntervals, from finish(): they belong to the run
             // and not to the picture, and writing them here left every leg that missed the capture without an interval.
             if (!interopRun) {

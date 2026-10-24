@@ -22,11 +22,13 @@ import org.objectweb.asm.Opcodes;
  */
 public class CeltiumGllessSplashTransformer implements IClassTransformer {
     private static final String TARGET = "net.minecraftforge.fml.client.SplashProgress";
+    private static final String CLIENT = "net.minecraftforge.fml.client.FMLClientHandler";
     private static final int ASM_API = 9 << 16;
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
-        if (basicClass == null || !TARGET.equals(name) && !TARGET.equals(transformedName)) {
+        boolean client = CLIENT.equals(name) || CLIENT.equals(transformedName);
+        if (basicClass == null || !client && !TARGET.equals(name) && !TARGET.equals(transformedName)) {
             return basicClass;
         }
         if ("false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
@@ -39,6 +41,17 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
             public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
                     String[] exceptions) {
                 MethodVisitor target = super.visitMethod(access, methodName, descriptor, signature, exceptions);
+                if (client) {
+                    if (!"processWindowMessages".equals(methodName) || !"()V".equals(descriptor)) return target;
+                    return new MethodVisitor(ASM_API, target) {
+                        @Override
+                        public void visitCode() {
+                            super.visitCode();
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                    "org/taumc/celeritas/core/CeltiumLoadingProgress", "refresh", "()V", false);
+                        }
+                    };
+                }
                 // The maximum texture size is measured by probing GL_PROXY_TEXTURE_2D and reading it back with
                 // glGetTexLevelParameteriv, which answers zero without a GL context, so Forge's own method returns
                 // -1 and TextureMap builds Stitcher(-1, -1) - measured on this same leg as
@@ -60,9 +73,10 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
                 if (!splashEntryPoint) {
                     return target;
                 }
-                // An empty body in place of the original: nothing of the splash runs, so there is no thread to start
-                // and none to check the state of later.
+                // Replace the shared-GL-context thread with the native loading-screen lifetime.
                 target.visitCode();
+                target.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        "org/taumc/celeritas/core/CeltiumLoadingProgress", methodName, "()V", false);
                 target.visitInsn(Opcodes.RETURN);
                 target.visitMaxs(0, 0);
                 target.visitEnd();

@@ -44,12 +44,19 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 
 ## 次の作業単位（2026-10-24 改訂）
 
-1. **性能（最優先）**: 現在の同一JAR測定は **p50 1.027x（SLOWER、guard有効）／p95は3組ともCeleritasより低い**。
+1. **実プレイのラグ（最優先）**: 利用者の qmagnet・1920×1080・日本語環境では基本20 FPSとの報告。
+   実ログの `CELTIUM_UNIT_BIND` **226,648行／46 MB**を発生させる上限判定の不具合は修正した。
+   同解像度・距離18・Unicode・固定視点の追加runは warm p50 1.061ms（[証拠](<evidence/native-loading-2026-10-24.json>)）だが、
+   **移動・視点変更を含む実プレイの20 FPSは未再現・未解決**。静止benchmarkで解決扱いにしない。
+   従来の同一JAR測定は **p50 1.027x（SLOWER、guard有効）／p95は3組ともCeleritasより低い**。
    絶対値では v0.0.16-alpha の 2.02–2.08ms から 1.17–1.35ms へ下がっており（同日・同scene・AMD）、
    改善自体は実在する。**残るのは平均フレームの最後の数%**で、比のノイズ（±7%）より大きい改善を入れないと
    「Celeritasより速い」とは言えない。したがって次は推測ではなく**現行HEADのJFRを採り直し**、client thread上位から
    1単位ずつ潰す（前回の内訳: TESR/entity 34%・即時window記録 30%・受理経路 10% は model instance 化と
    portal producer の後で未再測定）。per-offer のJava仕事を消す再設計（`new_architecture.md` Stage 1/3/4）が本筋。
+   **読み込み進捗**は Forge の実際の ProgressBar を native Vulkan 所有の画面へ渡す経路を実装。
+   **終了後のボタン消失は未再現**（AMD 1280×720・1920×1080 Unicode、Intel 1280×720でボタン表示の実画像あり）。
+   `worldSwitch` fixture の再入場先を同じ qmagnet に修正し、距離の報告値も実値にした。
 2. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
    Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では

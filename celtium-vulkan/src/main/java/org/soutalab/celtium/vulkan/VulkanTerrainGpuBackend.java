@@ -566,6 +566,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return backend;
     }
 
+    private NativeLoadingScreen loadingScreen;
+    private boolean loadingProgressDumped;
+
+    /** Forge's loader supplies only progress data. This path owns its image, transfer and Vulkan presentation. */
+    public void presentLoadingProgress(int width, int height, java.awt.image.BufferedImage logo,
+            String[] labels, int[] steps, int[] totals) {
+        if (!this.windowBackend || this.gpuStalled || !ensureSwapchain()) return;
+        if (this.loadingScreen == null) this.loadingScreen = new NativeLoadingScreen(this.context);
+        VulkanGlTexture image = this.loadingScreen.update(width, height, logo, labels, steps, totals);
+        String directory = System.getProperty("celtium.vulkan.frameDumpDir");
+        if (!this.loadingProgressDumped && directory != null
+                && Boolean.getBoolean("celtium.validation.dumpLoadingProgress") && steps.length > 0 && steps[0] > 0) {
+            this.swapchain.requestPresentedImageDump(java.nio.file.Paths.get(directory, "forge-loading-progress.png"));
+            this.loadingProgressDumped = true;
+        }
+        this.swapchain.presentImage(image.image(), image.samplingLayout(), width, height);
+    }
+
+    public void finishLoadingProgress() {
+        if (this.loadingScreen != null && settleGpu("loading screen finished")) {
+            this.loadingScreen.delete();
+            this.loadingScreen = null;
+        }
+    }
+
     /** True while this instance exists only for the window and no world renderer has adopted it yet. */
     private boolean windowBackend;
     /**
@@ -12490,6 +12515,10 @@ this.frameBufferOpen = false;
             this.fogService = null;
             this.windowBackend = true;
             return;
+        }
+        if (this.loadingScreen != null) {
+            this.loadingScreen.delete();
+            this.loadingScreen = null;
         }
         // The model meshes belong to this backend and hold buffers this device owns. settleGpu succeeded just above, so
         // the last submission has completed and nothing more will be recorded: the release is immediate and counted as
