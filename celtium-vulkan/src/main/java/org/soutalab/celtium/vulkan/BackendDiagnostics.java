@@ -238,7 +238,7 @@ final class BackendDiagnostics {
                 + " selfCompositeSkips=" + b.immediateStatistics.selfCompositeSkips()
                 + " pairNameSamplingDraws=" + b.pairNameSamplingDraws
                 + " presentedDumpFailure=" + (b.swapchain == null ? "none" : b.swapchain.lastDumpFailure())
-                + " " + b.celtium$pairLayoutSummary()
+                + " " + b.postChainBridge.celtium$pairLayoutSummary()
                 + " matrixSplits=" + b.immediateStatistics.matrixSplits()
                 + " groupSplits[" + b.groupSplitCensus.summary() + "]"
                 + " groupCloses=" + b.groupClosesForcingStart
