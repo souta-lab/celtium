@@ -121,7 +121,7 @@ final class VulkanTextureArray {
 
     /** {@return the index this wrapper occupies, registering it on first use; -1 when the array is full or absent}. */
     int indexFor(MemoryStack stack, VulkanGlTexture texture, int expectedKeySlots) {
-        if (this.set == VK_NULL_HANDLE || texture == null) {
+        if (this.set == VK_NULL_HANDLE || texture == null || !texture.hasFullContent()) {
             return -1;
         }
         Integer known = this.indexByKey.get(Long.valueOf(texture.key()));

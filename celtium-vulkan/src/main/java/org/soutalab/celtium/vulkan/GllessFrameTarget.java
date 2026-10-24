@@ -1225,6 +1225,19 @@ public final class GllessFrameTarget implements FrameImageTarget {
         chainPairFor(identity).ensure(width, height);
     }
 
+    /**
+     * A framebuffer can be sampled before its first draw (vanilla's empty outline target does this every frame).
+     * Initialize the owned attachment, rather than manufacturing an unwritten texture mirror under its name.
+     * This one-time bootstrap completes before publication; subsequent sampling adds no submission or wait.
+     */
+    public void initializeChainPairForSampling(long identity) {
+        Pair pair = existingChainPair(identity);
+        if (pair == null || !pair.exists() || pair.colorLayout() != VK_IMAGE_LAYOUT_UNDEFINED) return;
+        VkCommandBuffer command = this.context.beginCommands();
+        pair.clearWith(command, 0x4100, new float[4], 1.0);
+        this.context.endCommands(command, "initialize framebuffer before first sample");
+    }
+
     public void clearChainPair(long identity, VkCommandBuffer command) {
         Pair pair = existingChainPair(identity);
         if (pair != null) {

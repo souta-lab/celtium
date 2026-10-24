@@ -426,8 +426,12 @@ b.frameBufferOpen = false;
         // Which image this name stands for decides the layout a descriptor from it declares: a pair image is attached
         // by a pass that declares GENERAL, so with -Dceltium.vulkan.pairStayGeneral it must declare GENERAL too.
         GllessFrameTarget offTarget = b.offTargetTarget();
-        published.notePairImage(offTarget != null && (offTarget.isChainPairColorImage(image)
-                || image == offTarget.offTargetColorImage()));
+        // The native main attachment also stays in GENERAL. Treating only auxiliary pairs this way let its
+        // published sampler move the main image to SHADER_READ_ONLY behind the native target owner's back;
+        // the next world/menu acquisition then disagreed with the wrapper's remembered layout.
+        published.notePairImage((b.frameTarget instanceof GllessFrameTarget && image == b.frameTarget.colorImage())
+                || (offTarget != null && (offTarget.isChainPairColorImage(image)
+                || image == offTarget.offTargetColorImage())));
         if (offTarget != null) {
             long owner = offTarget.chainPairIdentityForImage(image);
             if (owner != Long.MIN_VALUE) {

@@ -1,0 +1,235 @@
+{
+  "scope": "Diagnostic replay; no product spike fix or Celeritas speed comparison claimed. Vulkan validation disabled.",
+  "rendererSha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db",
+  "fixtureSha256": "e9beedd3b2fb4f08e2ccdd6bc268a1225674ab9a9eb8b0e729ff6d56e5a07f9e",
+  "leg": "spike-current-amd",
+  "gpu": "AMD Radeon RX 6400 (RADV NAVI24)",
+  "rendererKind": "native-vulkan",
+  "result": {
+    "accepted": true,
+    "exitCode": 0,
+    "verdict": "PASSED",
+    "harnessExitCode": 0,
+    "problems": [],
+    "copiedArtifacts": [
+      {
+        "role": "renderer",
+        "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+        "sha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db"
+      },
+      {
+        "role": "fixture",
+        "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+        "sha256": "e9beedd3b2fb4f08e2ccdd6bc268a1225674ab9a9eb8b0e729ff6d56e5a07f9e"
+      }
+    ],
+    "fixtureStatus": "PASSED",
+    "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+    "rendererKind": "native-vulkan",
+    "picture": {
+      "path": "screenshots/celtium-presented-world-run-2bfeffbb4b55-7cca494b-kept.png",
+      "size": [
+        1920,
+        1080
+      ]
+    },
+    "elapsedSeconds": 86.87974540099822,
+    "leg": "spike-current-amd"
+  },
+  "camera": {
+    "x": 217.5,
+    "y": 48.0,
+    "z": 217.5,
+    "yaw": 180.0,
+    "pitch": 10.0
+  },
+  "flags": null,
+  "windows": {
+    "cameraSweepDegreesPerSecond": 36.0,
+    "cameraSweepFromTick": 400,
+    "cameraSweepFrames": 11954,
+    "cameraSweepLastYaw": 1259.964,
+    "frameIntervalSampleCount": 1285,
+    "frameIntervalP50Ms": 2.85507,
+    "frameIntervalP95Ms": 5.051292,
+    "frameIntervalP99Ms": 7.064992,
+    "frameIntervalWarmFromTick": 400,
+    "frameIntervalWarmToTick": 980,
+    "frameIntervalWarmSampleCount": 11231,
+    "frameIntervalWarmP50Ms": 2.214127,
+    "frameIntervalWarmP95Ms": 4.57764,
+    "frameIntervalWarmP99Ms": 5.925591,
+    "frameIntervalWarmMaxMs": 17.015244,
+    "frameIntervalWarmOver16Ms": 2,
+    "frameIntervalWarmOver33Ms": 0,
+    "frameIntervalWarmOver50Ms": 0,
+    "frameIntervalColdMaxMs": 12.187693,
+    "frameIntervalColdOver16Ms": 0,
+    "frameIntervalColdOver33Ms": 0,
+    "frameIntervalColdOver50Ms": 0,
+    "frameIntervalWindows": "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this one) warm=worldTicks 400..980 (post-startup tick window; tick number alone does not establish idle chunk loading)"
+  },
+  "pipelineSummary": [
+    "pipelineCreations=52 pipelineCreationMs=17 pipelineCreationWorstMs=3"
+  ],
+  "rawJfrSha256": "52739e92a68dc2deba89e288a6539ac0689219b94a6bea3220ca240dd3c9bae5",
+  "observations": [
+    "Warm [400,980) world ticks: zero intervals over 50 ms during 36 degrees/sec camera sweep.",
+    "Pipeline creation worst 3 ms; no attribution of large initial stalls to this operation.",
+    "JFR main thread is named main, even though runtime logger calls it Client thread.",
+    "Startup GC allocation pause reached 61 ms; startup chunk/class loading and sound-monitor waits were observed. These do not explain every initial long frame."
+  ],
+  "limitations": [
+    "JFR overhead, private compositor and startup machine load; user desktop rare spike not reproduced in warm interval.",
+    "Retained slow-frame entries include capture work and entry; pass split was disabled."
+  ],
+  "manifest": {
+    "schemaVersion": 1,
+    "scope": "renderer input provenance; not an acceptance verdict",
+    "rendererKind": "native-vulkan",
+    "leg": "spike-current-amd",
+    "mode": "world",
+    "gpu": "amd",
+    "windowSystemRequested": "wayland",
+    "durationSeconds": 180,
+    "slotWaitSeconds": 120,
+    "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+    "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-spike-current-amd",
+    "artifacts": {
+      "renderer": {
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+        "sha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db"
+      },
+      "fixture": {
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/celtium-validation-client-0.0.13-alpha.jar",
+        "sha256": "e9beedd3b2fb4f08e2ccdd6bc268a1225674ab9a9eb8b0e729ff6d56e5a07f9e"
+      },
+      "harness": {
+        "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+        "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+      },
+      "headless": {
+        "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+        "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+      },
+      "seedOptions": {
+        "source": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/minecraft/options.txt",
+        "sha256": "b365d1485cd2ddf1a5ca94dae51784ad2c2ab202db281b6f915e20a19b291768"
+      }
+    },
+    "dependencies": [
+      {
+        "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+        "sha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db"
+      },
+      {
+        "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/celtium-validation-client-0.0.13-alpha.jar",
+        "sha256": "e9beedd3b2fb4f08e2ccdd6bc268a1225674ab9a9eb8b0e729ff6d56e5a07f9e"
+      },
+      {
+        "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+        "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+      }
+    ],
+    "git": {
+      "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+      "dirty": false,
+      "dirtyFiles": []
+    },
+    "instanceModExclusions": [
+      "celtium-*pre-stub-changes.jar"
+    ],
+    "jvmArgs": [
+      "-Dceltium.vulkan.glless=true",
+      "-Dceltium.vulkan.presentReadback=true",
+      "-Dfml.readTimeout=120",
+      "-Dceltium.vulkan.validation=true",
+      "-Dceltium.validation=true",
+      "-Dceltium.validation.scene=world",
+      "-Dceltium.validation.keepGui=true",
+      "-Dceltium.validation.minWorldFrames=5",
+      "-Dceltium.validation.pinSections=64",
+      "-Dceltium.validation.screenshotAtTick=200",
+      "-Dceltium.validation.dumpPresentedImage=true",
+      "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-spike-current-amd/framedump",
+      "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+      "-Dceltium.validation.fixedWorldTime=true",
+      "-Dceltium.validation.worldTime=1500",
+      "-Dceltium.vulkan.validation=false",
+      "-Dceltium.vulkan.presentReadback=false",
+      "-Dceltium.vulkan.presentedDumpEvery=0",
+      "-Dceltium.validation.holdUntilTick=1000",
+      "-Dceltium.validation.warmToTick=980",
+      "-Dceltium.validation.cameraSweepFromTick=400",
+      "-Dceltium.validation.cameraSweepDegreesPerSecond=36",
+      "-XX:FlightRecorderOptions=stackdepth=128",
+      "-XX:StartFlightRecording=filename=/home/s0u7a/projects/celtium/.celtium-work/latest-spikes.jfr,settings=profile,dumponexit=true"
+    ],
+    "command": [
+      "/usr/bin/python3",
+      "-B",
+      "-E",
+      "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+      "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+      "--output",
+      "/home/s0u7a/projects/celtium/.gv-verify/spike-current-amd-lock.json",
+      "--game-dir",
+      "/home/s0u7a/projects/celtium/.gv-verify/run-spike-current-amd",
+      "--library",
+      "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+      "--slot-wait",
+      "120",
+      "--window-size",
+      "1920x1080",
+      "--seed-options",
+      "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha/minecraft/options.txt",
+      "--exclude-instance-mod",
+      "celtium-*pre-stub-changes.jar",
+      "--mod",
+      "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+      "--mod",
+      "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/celtium-validation-client-0.0.13-alpha.jar",
+      "--jvm-arg=-Dceltium.vulkan.glless=true",
+      "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+      "--jvm-arg=-Dfml.readTimeout=120",
+      "--jvm-arg=-Dceltium.vulkan.validation=true",
+      "--jvm-arg=-Dceltium.validation=true",
+      "--jvm-arg=-Dceltium.validation.scene=world",
+      "--jvm-arg=-Dceltium.validation.keepGui=true",
+      "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+      "--jvm-arg=-Dceltium.validation.pinSections=64",
+      "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+      "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+      "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-spike-current-amd/framedump",
+      "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+      "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+      "--jvm-arg=-Dceltium.validation.worldTime=1500",
+      "--jvm-arg=-Dceltium.vulkan.validation=false",
+      "--jvm-arg=-Dceltium.vulkan.presentReadback=false",
+      "--jvm-arg=-Dceltium.vulkan.presentedDumpEvery=0",
+      "--jvm-arg=-Dceltium.validation.holdUntilTick=1000",
+      "--jvm-arg=-Dceltium.validation.warmToTick=980",
+      "--jvm-arg=-Dceltium.validation.cameraSweepFromTick=400",
+      "--jvm-arg=-Dceltium.validation.cameraSweepDegreesPerSecond=36",
+      "--jvm-arg=-XX:FlightRecorderOptions=stackdepth=128",
+      "--jvm-arg=-XX:StartFlightRecording=filename=/home/s0u7a/projects/celtium/.celtium-work/latest-spikes.jfr,settings=profile,dumponexit=true",
+      "--run",
+      "--validate",
+      "--duration",
+      "180",
+      "--headless",
+      "--render-node",
+      "/dev/dri/by-path/pci-0000:03:00.0-render",
+      "--require-gpu",
+      "RX 6400"
+    ],
+    "deviceEnvironment": {
+      "DRI_PRIME": null,
+      "MESA_VK_DEVICE_SELECT": null,
+      "SDL_VIDEODRIVER": "wayland"
+    }
+  }
+}

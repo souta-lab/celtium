@@ -1962,9 +1962,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** One-shot count for the injected device-lost fence result. */
     private int injectedDeviceLosses;
     /** Caps the env-combine report so a hurt mob does not log every frame. */
-    private int envCombineLogged;
-    private int envCombineSeenLogged;
-    private final int[] envCombineSeen = new int[4];
     /** The texture matrix the currently open group was accepted under; {@code null} for identity. */
     private float[] currentGroupTexMatrix;
     /** The open texgen group's eye rows (NativeTexGen.eyeRows), or null for every other group. */
@@ -4769,55 +4766,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return params;
     }
 
-    /**
-     * The texture-environment constant the fixed pipeline would mix in on the lightmap unit, or {@code null} when the
-     * environment is not set to {@code GL_INTERPOLATE}: the hurt flash and the team outline are the two vanilla
-     * effects that draw the same model twice through this combine, and the constant is their colour. Asked of GL at
-     * replay time because the caller sets it per render - it is not part of the captured list.
-     */
+    /** Native material snapshot; no GL query, unit switching or state reconciliation at model replay. */
     float[] celtium$envCombineColor() {
-        try {
-            int active = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-            // Scan the units, not only the lightmap unit the vanilla code intends: GlStateManager.setActiveTexture
-            // short-circuits on its own cached unit while direct OpenGlHelper.setActiveTexture calls move the real
-            // state under it, so setBrightness's unit-1 texenv writes can land on unit 0 instead - measured, a hurt
-            // entity produced COMBINE_RGB=INTERPOLATE on unit 0 and never on unit 1. The fixed pipeline evaluates
-            // whatever the writes actually configured; unit 0 is in the chain too and still tints. The colour comes
-            // from the unit that carries the combine, because the env-colour write follows the same active unit.
-            // A bounded histogram of what the units actually carry at model-list replay, so "the hurt entity
-            // rendered but did not tint" separates "setBrightness wrote nothing" (all reads 0) from "INTERPOLATE
-            // landed on a unit the scan missed" (present on unit n) without another leg.
-            int[] seen = this.envCombineSeen;
-            for (int unit = 0; unit < 4; unit++) {
-                org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE0 + unit);
-                int combine = org.lwjgl.opengl.GL11.glGetTexEnvi(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
-                        org.lwjgl.opengl.GL13.GL_COMBINE_RGB);
-                seen[unit] = combine;
-                if (combine == org.lwjgl.opengl.GL13.GL_INTERPOLATE) {
-                    java.nio.FloatBuffer env = org.lwjgl.BufferUtils.createFloatBuffer(4);
-                    org.lwjgl.opengl.GL11.glGetTexEnvfv(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
-                            org.lwjgl.opengl.GL11.GL_TEXTURE_ENV_COLOR, env);
-                    float[] color = new float[] { env.get(0), env.get(1), env.get(2), env.get(3) };
-                    if (this.envCombineLogged < 6) {
-                        this.envCombineLogged++;
-                        System.out.println("[Celtium] CELTIUM_ENV_COMBINE unit=" + unit + " rgba="
-                                + round3(color[0]) + "," + round3(color[1]) + "," + round3(color[2])
-                                + "," + round3(color[3]));
-                    }
-                    org.lwjgl.opengl.GL13.glActiveTexture(active);
-                    return color;
-                }
-            }
-            if (this.envCombineSeenLogged < 20 && (seen[0] != 0 || seen[1] != 0 || seen[2] != 0 || seen[3] != 0)) {
-                this.envCombineSeenLogged++;
-                System.out.println("[Celtium] CELTIUM_ENV_SEEN u0=" + seen[0] + " u1=" + seen[1]
-                        + " u2=" + seen[2] + " u3=" + seen[3]);
-            }
-            org.lwjgl.opengl.GL13.glActiveTexture(active);
-            return null;
-        } catch (RuntimeException | LinkageError error) {
-            return null;
-        }
+        return NativeTextureEnvironment.current().combinedColor();
     }
 
 
@@ -5878,6 +5829,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if ("chain-pair".equals(route)) {
                 offTarget.ensureChainPair(identity, width > 0 ? width : this.targetWidth,
                         height > 0 ? height : this.targetHeight);
+                offTarget.initializeChainPairForSampling(identity);
                 image = offTarget.chainPairColorImage(identity);
                 view = offTarget.chainPairColorView(identity);
             } else {
@@ -8592,6 +8544,10 @@ this.frameBufferOpen = false;
      * The UI pipeline is not part of this: it is built against the standalone UI render pass, which the window keeps.
      */
     private int celtium$releaseImmediatePipelines() {
+        // Prepared materials retain these pipeline objects too. Terrain pass enums survive a world switch, so
+        // comparing lastUiPass alone cannot invalidate materials whose Vulkan pipelines were just destroyed.
+        java.util.Arrays.fill(this.prepareCacheValue, null);
+        this.prepareCachePass = null;
         int released = 0;
         for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
             released += releaseDirect(block == null ? null : () -> block.delete());
@@ -9663,7 +9619,7 @@ this.frameBufferOpen = false;
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
         long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
-        if (texture == null && textureId != 0) {
+        if (textureId != 0 && (texture == null || !texture.hasFullContent())) {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
             // into is what it stands for (see celtium$publishFramebufferColorTexture). Resolved here, where a bound
             // name becomes a descriptor, so every sampling path gets the same rule.
@@ -9699,6 +9655,12 @@ this.frameBufferOpen = false;
                     + " stateBoundBy=[" + this.immediateState.firstBindSite(textureId)
                     + " sites=" + this.immediateState.bindSiteCount()
                     + " unit0=" + this.immediateState.boundTextureName() + "])";
+            return null;
+        }
+        if (VulkanImmediateFormats.samplesTexture(format) && !texture.hasFullContent()) {
+            this.prepareDescriptorFailures++;
+            this.lastPrepareFailure = "format=" + format + " texture=" + textureId
+                    + " (no complete native image or initialized framebuffer attachment)";
             return null;
         }
         long pass = terrain != null ? terrain.renderPass() : uiRenderPass();

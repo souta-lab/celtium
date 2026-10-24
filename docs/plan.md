@@ -48,14 +48,18 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | 報告 | 状況 |
    |---|---|
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
-   | スパイク（入室直後・まれ） | 新model表ごとにpool全コピー＋全listのsnapshot複製を修正（`574a5f0f2`/`5706588fc`）。入室時は vanilla の chunk/テクスチャ同期読込も大きい。GCの停止は3–40msで主因ではない（`spike-hunt-1`） |
+   | スパイク（入室直後・まれ） | model pool/snapshot全コピー修正済み。10/25の日本語・1920×1080・Wayland・視点回転profileではwarm [400,980) の50ms超0枚・最大17.015ms。入室停止の全帰属は未完、実デスクトップのまれなspikeは未再現（[証拠](evidence/spikes-2026-10-25.json)） |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
    | 色付きガラスのチカチカ | **修正（実機確認待ち）**: upload copyの前に書込み前の実行依存（WAR）を追加。解放直後のindex領域を飛行中フレームが読んでいた |
    | ワールド退出後ボタン無し | **未再現**（fixture: 既定・日本語/Unicode/1920×1080 とも表示）。手順差（ポーズ→終了・非16:9）の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`、`-Dceltium.debug.periodicLogs=true`で全出力） |
    | vanilla post shader（観戦時のcreeper/spider等・発光outline） | **creeper/spiderはnativeで描画**（leg `postshader4-creeper/spider-amd-1` PASSED・validation 0）。以前はGL-lessで読込自体が失敗し無効だった（compile状態の問合せ署名違い・uniform位置-1・行列の転置・descriptor layout）。**発光outlineは未完**: chainは毎frame走りoutline画像も正しいが、mainへの合成が画面に出ない（`postshader6-glow-amd-1`）。次の判別: 合成groupが受理・記録されるか、どの画像をsampleするか |
-2. **性能**: AMD warm p50 は Celeritas と同等（1.027x〜0.881x、再現性未確定）、**p95はCeleritasより低い**。
+   native texture environment 所有へ移行し、モデルごとのGL問合せを撤去。REPLACE/CONSTANT の発光用materialを修正したが、glowのmain合成は未完。
+   空framebufferのnative初期化・公開cache失効・main imageのGENERAL契約・world終了時material cache寿命を修正。
+   **同一最終JARでAMD/Intelのworld往復 PASSED・画像gate PASSED・validation ON 0件**。
+   4画面＋qmagnetを保存（HEI2画面は未較正、合格には数えない）。[実装・失敗・検証](evidence/native-texture-owner-2026-10-25.md)。
+2. **性能**: 10/25の3-arm×3回ではCeleritas比1.0342x・変更前比1.0313x。load 0.46→2.67 > 上限2のため **NO_SPEED_VERDICT**。高速化未確認。
    次は `goal.md` の基盤固有最適化と描画mod手法の吸収（EntityCulling型の遮蔽間引き、静的TESRのchunk mesh化、
    `VkPipelineCache` 永続化、GUI/文字のbatch）を、paired KPIとスパイク計測で1つずつ。Intelは未測定。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
@@ -76,7 +80,6 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 
 | **利用者報告の不具合（2026-10-23）** | **未修正・トリアージ済み** | 利用者の実機報告＋画面 | 修正中 | ①メニューのパノラマが壊れて重い＝**修正済み**（window読みのコピーをhostルート既定に。leg menu69/70、AMD RX 6400、参照差 65.63%→43.35%、彩度0.042→0.303、画像 `docs/evidence/2026-10-24-menu-panorama-fixed.png`、ワールド受入 `windowfix-acc` PASSED。menuの1present最大7コピーぶんの体感速度は未測定） ②エンドポータル内の描画がおかしい＝**修正済み**（glTexGenがstubでno-op→`NativeTexGen`＋texgen pipeline、portal面の参照差 平均13.5/21.9/18.1→5.5/9.5/10.2、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)、Intel未実行） ③F2スクショ真っ黒＝**修正済み**（`nglGetTexImage`ルート、leg shot-test6 PASSED・非黒98.3%）④色付きガラスがチカチカ ⑤視点移動時に看板文字などが残像。**⑤は静止条件で棄却済み**（`framesNoClear=0`・F2画像と提示画像が0差分）＝動き依存（提示レイテンシ等）として次段で測定。判明: ③は既定framebuffer(0)からのreadPixels経路（TextureCopyService 890-901のgate）がメニュー/スクショ文脈で拒否されるため。④⑤はフレーム画像の再利用・掃除とブレンド順の疑い。①はメニュー経路（パノラマはworld描画＋GUI）で同じ土台の疑い。次は③から直し、④⑤→①→②の順 |
 
-| **性能: draw-manager（§11.5-11.8）** | **土台3/5段（①②③完了）** | 実測+画像 | 実装中 | ①descriptor indexing 4機能を両GPUで有効（`textureArray=true`・PASSED/0件, jar `3e3dc1a5`） ②共有テクスチャ配列セット実装＝**35枚/4096・書き込み35回**（jar `6cf90a00`） ③groupへ配列index＝**hit 178407/miss0（AMD）・hit 114673/miss0（Intel）**（jar `75bea5b3`） 残り＝④シェーダをindex化（まずtexture系1 family、push定数index）⑤pipelineソート＋geometry arena＋`vkCmdDrawIndexedIndirect`で **159→約11 draw/window**。**①②③は未だ描画に使わず速度未計測**。影削除を含む現ツリーは jar `0b3b49d8…` で AMD/Intel とも PASSED・画像gate PASSED・validation 0件 |
 
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | world scene は `cleanroom-0.7.11-alpha` の `minecraft/saves/qmagnet`（配布マップ）を使用。v0.0.14-alpha のforge jar `90a7c505…` は world で **AMD/Intel とも PASSED・validation 0・画像gate一致**。**0.6.13-alpha（GLFW/LWJGL 3.4.1）は起動不可**＝SDL3バインディング不在を検出して`CeltiumGllessHint` がバージョンを名指しして拒否（クラッシュレポートに理由が残る）。0.6.13 で受入を主張するには0.6用の別ビルドが必要 |
 | **RLCraft 2.9.3 互換** | **Celtium側では無い。0.7.11 + Fugue 0.25.5 でも外部要因で停止（対照実験済み）** | 実測 2026-10-23（probe: 0.7.11 clone + RLCraft mods 166 + scalar-3.9.0） | 外部待ち | Fugue 0.24.4 → `NoClassDefFoundError com.cleanroommc.hackery.ReflectionHackery`（SetBonus）。Fugue 0.25.5 → 44秒まで進行（Sound engine started）後 `VerifyError: EntityRenderer.func_78472_g`。**celtium jar を外した対照でも同じ VerifyError** のため Celtium の不具合ではない。次の候補は Cleanroom 0.7.12-alpha 以降での再試行 |

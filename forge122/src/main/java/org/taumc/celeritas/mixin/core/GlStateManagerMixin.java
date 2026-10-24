@@ -432,6 +432,34 @@ public abstract class GlStateManagerMixin {
         celtium$multMatrix(buffer);
     }
 
+    @Inject(method = "glTexEnvi", at = @At("HEAD"), cancellable = true, require = 0)
+    private static void celtium$nativeTextureEnvironmentInt(int target, int pname, int value, CallbackInfo info) {
+        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, value);
+        info.cancel();
+    }
+
+    @Inject(method = "glTexEnvf", at = @At("HEAD"), cancellable = true, require = 0)
+    private static void celtium$nativeTextureEnvironmentFloat(int target, int pname, float value, CallbackInfo info) {
+        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, Math.round(value));
+        info.cancel();
+    }
+
+    @Inject(method = "glTexEnv", at = @At("HEAD"), cancellable = true, require = 0)
+    private static void celtium$nativeTextureEnvironmentColor(int target, int pname, java.nio.FloatBuffer values,
+            CallbackInfo info) {
+        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
+        var env = org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
+        int p = values.position();
+        if (pname == org.soutalab.celtium.vulkan.NativeTextureEnvironment.COLOR) {
+            env.color(target, pname, values.get(p), values.get(p + 1), values.get(p + 2), values.get(p + 3));
+        } else {
+            env.parameter(target, pname, Math.round(values.get(p)));
+        }
+        info.cancel();
+    }
+
     /**
      * Texture-coordinate generation, mirrored into {@link org.soutalab.celtium.vulkan.NativeTexGen}: the raw-GL stub
      * treats {@code glTexGen*} as no-ops, so without these the end portal's layers drew untextured. Names from

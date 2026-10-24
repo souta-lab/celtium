@@ -1273,17 +1273,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return 0;
         }
-        int unit = stub.celtium$texUnit();
-        if (pname == GL_COMBINE_RGB) {
-            return stub.texEnvCombineRgb[unit];
-        }
-        if (pname == GL_COMBINE_ALPHA) {
-            return stub.texEnvCombineAlpha[unit];
-        }
-        if (pname == GL_TEXTURE_ENV_MODE) {
-            return stub.texEnvMode[unit] == 0 ? GL_MODULATE : stub.texEnvMode[unit];
-        }
-        return 0;
+        return org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().activeParameter(target, pname);
     }
 
     /** Compatibility entry for callers publishing a 2D bind; normal Minecraft binding writes the native owner. */
@@ -5328,90 +5318,35 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_COMBINE_ALPHA = 0x8572;
     private static final int GL_TEXTURE_ENV_COLOR = 0x2201;
     private static final int GL_MODULATE = 0x2100;
-    /** One mode per unit; the default is the fixed pipeline's MODULATE. */
-    private final int[] texEnvMode = new int[32];
-    private final int[] texEnvCombineRgb = new int[32];
-    private int texEnvWriteLogged;
-    private final int[] texEnvCombineAlpha = new int[32];
-    /** RGBA environment colour per unit; the default is transparent black, as GL's is. */
-    private final float[][] texEnvColor = new float[32][4];
-
-    private int celtium$texUnit() {
-        return this.textures.activeUnit() >= 0 && this.textures.activeUnit() < 32 ? this.textures.activeUnit() : 0;
-    }
-
     private void celtium$setTexEnvInt(int target, int pname, int param) {
-        if (target != GL_TEXTURE_ENV) {
-            return;
-        }
-        int unit = celtium$texUnit();
-        switch (pname) {
-            case GL_TEXTURE_ENV_MODE:
-                this.texEnvMode[unit] = param;
-                break;
-            case GL_COMBINE_RGB:
-                this.texEnvCombineRgb[unit] = param;
-                // The hurt-tint write is COMBINE_RGB=INTERPOLATE; if this line never appears in a leg that rendered
-                // a hurt entity, the env write never reached the stub and the read side is blameless.
-                if (param == GL_INTERPOLATE && this.texEnvWriteLogged < 6) {
-                    this.texEnvWriteLogged++;
-                    System.out.println("[Celtium] CELTIUM_ENV_WRITE unit=" + unit
-                            + " pname=COMBINE_RGB value=INTERPOLATE");
-                }
-                break;
-            case GL_COMBINE_ALPHA:
-                this.texEnvCombineAlpha[unit] = param;
-                break;
-            default:
-                break;
-        }
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, param);
     }
 
     private void celtium$setTexEnvFloats(int target, int pname, long values) {
-        if (target != GL_TEXTURE_ENV || values == 0L) {
-            return;
-        }
+        if (values == 0L || target != GL_TEXTURE_ENV) return;
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment env =
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
         if (pname == GL_TEXTURE_ENV_COLOR) {
-            int unit = celtium$texUnit();
-            for (int i = 0; i < 4; i++) {
-                this.texEnvColor[unit][i] = MemoryUtil.memGetFloat(values + (long) i * 4L);
-            }
-            return;
-        }
-        // BH-34's other half: glTexEnvfv carries the same values as glTexEnvi for the enum-valued pnames, as floats.
-        // Reading the first element and rounding it is what GL does when it converts the float parameter to the enum
-        // the state stores, so the array form and the scalar form now agree instead of the array form being dropped.
-        if (pname == GL_TEXTURE_ENV_MODE || pname == GL_COMBINE_RGB || pname == GL_COMBINE_ALPHA) {
-            celtium$setTexEnvInt(target, pname, Math.round(MemoryUtil.memGetFloat(values)));
+            env.color(target, pname, MemoryUtil.memGetFloat(values), MemoryUtil.memGetFloat(values + 4),
+                    MemoryUtil.memGetFloat(values + 8), MemoryUtil.memGetFloat(values + 12));
+        } else {
+            env.parameter(target, pname, Math.round(MemoryUtil.memGetFloat(values)));
         }
     }
 
     private void celtium$getTexEnvInt(int target, int pname, long out) {
-        if (out == 0L) {
-            return;
-        }
-        int unit = celtium$texUnit();
-        int value;
-        if (pname == GL_COMBINE_RGB) {
-            value = this.texEnvCombineRgb[unit];
-        } else if (pname == GL_COMBINE_ALPHA) {
-            value = this.texEnvCombineAlpha[unit];
-        } else if (pname == GL_TEXTURE_ENV_MODE) {
-            value = this.texEnvMode[unit] == 0 ? GL_MODULATE : this.texEnvMode[unit];
-        } else {
-            value = 0;
-        }
-        celtium$putInt(out, value);
+        if (out != 0L) celtium$putInt(out,
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().activeParameter(target, pname));
     }
 
     private void celtium$getTexEnvFloats(int target, int pname, long out) {
-        if (out == 0L) {
-            return;
-        }
-        int unit = celtium$texUnit();
-        float[] colour = this.texEnvColor[unit];
-        for (int i = 0; i < 4; i++) {
-            MemoryUtil.memPutFloat(out + (long) i * 4L, colour[i]);
+        if (out == 0L || target != GL_TEXTURE_ENV) return;
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment env =
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
+        if (pname == GL_TEXTURE_ENV_COLOR) {
+            for (int i = 0; i < 4; i++) MemoryUtil.memPutFloat(out + i * 4L, env.colorComponent(i));
+        } else {
+            MemoryUtil.memPutFloat(out, env.activeParameter(target, pname));
         }
     }
 

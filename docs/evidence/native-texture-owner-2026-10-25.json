@@ -1,0 +1,3461 @@
+{
+  "intermediate": {
+    "environment-world-intel": {
+      "result": {
+        "accepted": false,
+        "exitCode": 1,
+        "verdict": "FAILED",
+        "harnessExitCode": 1,
+        "problems": [
+          "harness exited 1",
+          "process did not finish with the required validation exit status",
+          "validation is dirty or its clean result is missing"
+        ],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2d4fba8af4ce-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 28.01541955400171,
+        "leg": "environment-world-intel"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "environment-world-intel",
+        "mode": "world",
+        "gpu": "intel",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 150,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-intel",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-intel/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/environment-world-intel-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-intel",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-intel/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "150",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:00:02.0-render",
+          "--require-gpu",
+          "UHD Graphics 630"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": "pci-0000_00_02_0!",
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "validation": {
+        "validationMessageCount": 10,
+        "validationFirstMessages": [
+          "severity=ERROR vkQueueSubmit(): pSubmits[0] command buffer VkCommandBuffer 0x7fa90e00dc90 expects VkImage 0x2250000000225 (subresource: aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, mipLevel = 0, arrayLayer = 0) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED. The Vulkan spec states: If a descriptor with type equal to any of VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, or VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT is accessed as a result of this command, all image subresources identified by that descriptor must be in the image layout identified when the descriptor was written (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-09600)",
+          "severity=ERROR vkQueueSubmit(): pSubmits[0] command buffer VkCommandBuffer 0x7fa90e00dc90 expects VkImage 0x2250000000225 (subresource: aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, mipLevel = 1, arrayLayer = 0) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED. The Vulkan spec states: If a descriptor with type equal to any of VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, or VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT is accessed as a result of this command, all image subresources identified by that descriptor must be in the image layout identified when the descriptor was written (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-09600)",
+          "severity=ERROR vkQueueSubmit(): pSubmits[0] command buffer VkCommandBuffer 0x7fa90e00dc90 expects VkImage 0x2250000000225 (subresource: aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, mipLevel = 2, arrayLayer = 0) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED. The Vulkan spec states: If a descriptor with type equal to any of VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, or VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT is accessed as a result of this command, all image subresources identified by that descriptor must be in the image layout identified when the descriptor was written (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-09600)"
+        ],
+        "validationClean": false,
+        "gpuRequirementMet": true
+      }
+    },
+    "environment-control-intel": {
+      "result": {
+        "accepted": false,
+        "exitCode": 1,
+        "verdict": "FAILED",
+        "harnessExitCode": 1,
+        "problems": [
+          "harness exited 1",
+          "process did not finish with the required validation exit status",
+          "validation is dirty or its clean result is missing"
+        ],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "e9beedd3b2fb4f08e2ccdd6bc268a1225674ab9a9eb8b0e729ff6d56e5a07f9e"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2d72e3fdfe5f-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 27.665703847997065,
+        "leg": "environment-control-intel"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "environment-control-intel",
+        "mode": "world",
+        "gpu": "intel",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 150,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-environment-control-intel",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "e9beedd3b2fb4f08e2ccdd6bc268a1225674ab9a9eb8b0e729ff6d56e5a07f9e"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "e9beedd3b2fb4f08e2ccdd6bc268a1225674ab9a9eb8b0e729ff6d56e5a07f9e"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-control-intel/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/environment-control-intel-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-environment-control-intel",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-control-intel/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "150",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:00:02.0-render",
+          "--require-gpu",
+          "UHD Graphics 630"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": "pci-0000_00_02_0!",
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "validation": {
+        "validationMessageCount": 10,
+        "validationFirstMessages": [
+          "severity=ERROR vkQueueSubmit(): pSubmits[0] command buffer VkCommandBuffer 0x7f60462ad960 expects VkImage 0x2250000000225 (subresource: aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, mipLevel = 0, arrayLayer = 0) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED. The Vulkan spec states: If a descriptor with type equal to any of VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, or VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT is accessed as a result of this command, all image subresources identified by that descriptor must be in the image layout identified when the descriptor was written (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-09600)",
+          "severity=ERROR vkQueueSubmit(): pSubmits[0] command buffer VkCommandBuffer 0x7f60462ad960 expects VkImage 0x2250000000225 (subresource: aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, mipLevel = 1, arrayLayer = 0) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED. The Vulkan spec states: If a descriptor with type equal to any of VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, or VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT is accessed as a result of this command, all image subresources identified by that descriptor must be in the image layout identified when the descriptor was written (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-09600)",
+          "severity=ERROR vkQueueSubmit(): pSubmits[0] command buffer VkCommandBuffer 0x7f60462ad960 expects VkImage 0x2250000000225 (subresource: aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, mipLevel = 2, arrayLayer = 0) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED. The Vulkan spec states: If a descriptor with type equal to any of VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, or VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT is accessed as a result of this command, all image subresources identified by that descriptor must be in the image layout identified when the descriptor was written (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-09600)"
+        ],
+        "validationClean": false,
+        "gpuRequirementMet": true
+      }
+    },
+    "environment-world-amd": {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2d493d90256b-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 27.84952781999891,
+        "leg": "environment-world-amd"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "environment-world-amd",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 150,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-amd",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-amd/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/environment-world-amd-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-amd",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-world-amd/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "150",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "validation": {
+        "validationMessageCount": 0,
+        "validationFirstMessages": null,
+        "validationClean": true,
+        "gpuRequirementMet": true
+      }
+    },
+    "environment-glow-amd": {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2d42ad567666-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 28.514037761997315,
+        "leg": "environment-glow-amd"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "environment-glow-amd",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 150,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-environment-glow-amd",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-glow-amd/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.keepEntities=true",
+          "-Dceltium.validation.glowEntities=true",
+          "-Dceltium.validation.keepGui=false",
+          "-Dceltium.vulkan.chainFrameDump=true",
+          "-Dceltium.vulkan.chainFrameDumpPath=/home/s0u7a/projects/celtium/.gv-verify/native-environment-chain.png"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/environment-glow-amd-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-environment-glow-amd",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-glow-amd/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.keepEntities=true",
+          "--jvm-arg=-Dceltium.validation.glowEntities=true",
+          "--jvm-arg=-Dceltium.validation.keepGui=false",
+          "--jvm-arg=-Dceltium.vulkan.chainFrameDump=true",
+          "--jvm-arg=-Dceltium.vulkan.chainFrameDumpPath=/home/s0u7a/projects/celtium/.gv-verify/native-environment-chain.png",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "150",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "validation": {
+        "validationMessageCount": 0,
+        "validationFirstMessages": null,
+        "validationClean": true,
+        "gpuRequirementMet": true
+      }
+    },
+    "environment-hurt-amd": {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2d797e3d42ad-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 34.92830067199975,
+        "leg": "environment-hurt-amd"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "environment-hurt-amd",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 150,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-environment-hurt-amd",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "3c27057d8bfef2bb7d5c4e9babe347aebdcc068f0e7af570f4b98ca8bd3c53ff"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-hurt-amd/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dceltium.validation.keepEntities=true",
+          "-Dceltium.validation.hurtEntities=true",
+          "-Dceltium.validation.keepGui=false"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/environment-hurt-amd-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-environment-hurt-amd",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-environment-hurt-amd/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dceltium.validation.keepEntities=true",
+          "--jvm-arg=-Dceltium.validation.hurtEntities=true",
+          "--jvm-arg=-Dceltium.validation.keepGui=false",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "150",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "validation": {
+        "validationMessageCount": 0,
+        "validationFirstMessages": null,
+        "validationClean": true,
+        "gpuRequirementMet": true
+      }
+    },
+    "texture-owner-intel": {
+      "result": {
+        "accepted": false,
+        "exitCode": 1,
+        "verdict": "FAILED",
+        "harnessExitCode": 1,
+        "problems": [
+          "harness exited 1",
+          "process did not finish with the required validation exit status",
+          "validation is dirty or its clean result is missing"
+        ],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "38e4de4a6f3a652114beed06fef14a07c0037279f005c088f2b29c9656db6223"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "ecff355acfb2032eb1ffcf694559705a3869fa61b15e571ba07731b92570bed5"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2dec42c2b1e2-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 31.054546639003092,
+        "leg": "texture-owner-intel"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-owner-intel",
+        "mode": "world",
+        "gpu": "intel",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-intel",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "38e4de4a6f3a652114beed06fef14a07c0037279f005c088f2b29c9656db6223"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "ecff355acfb2032eb1ffcf694559705a3869fa61b15e571ba07731b92570bed5"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "38e4de4a6f3a652114beed06fef14a07c0037279f005c088f2b29c9656db6223"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "ecff355acfb2032eb1ffcf694559705a3869fa61b15e571ba07731b92570bed5"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-intel/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.worldSwitch=true",
+          "-Dceltium.validation.worldSwitchMenuHoldTicks=20"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-owner-intel-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-intel",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-intel/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.worldSwitch=true",
+          "--jvm-arg=-Dceltium.validation.worldSwitchMenuHoldTicks=20",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:00:02.0-render",
+          "--require-gpu",
+          "UHD Graphics 630"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": "pci-0000_00_02_0!",
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "validation": {
+        "validationMessageCount": 7,
+        "validationFirstMessages": [
+          "severity=ERROR vkCmdPipelineBarrier(): pImageMemoryBarriers[0].image (VkImage 0x400000000040) cannot transition the layout of aspect=VK_IMAGE_ASPECT_COLOR_BIT, level=0, layer=0 from VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL when the previous known layout is VK_IMAGE_LAYOUT_GENERAL. The Vulkan spec states: If layouts are not ignored, oldLayout must be VK_IMAGE_LAYOUT_UNDEFINED or the current layout of the image subresources affected by the barrier (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkImageMemoryBarrier-oldLayout-01197)",
+          "severity=ERROR vkCmdPipelineBarrier(): pImageMemoryBarriers[0].image (VkImage 0x400000000040) cannot transition the layout of aspect=VK_IMAGE_ASPECT_COLOR_BIT, level=0, layer=0 from VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL when the previous known layout is VK_IMAGE_LAYOUT_GENERAL. The Vulkan spec states: If layouts are not ignored, oldLayout must be VK_IMAGE_LAYOUT_UNDEFINED or the current layout of the image subresources affected by the barrier (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkImageMemoryBarrier-oldLayout-01197)",
+          "severity=ERROR vkCmdPipelineBarrier(): pImageMemoryBarriers[0].image (VkImage 0x400000000040) cannot transition the layout of aspect=VK_IMAGE_ASPECT_COLOR_BIT, level=0, layer=0 from VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL when the previous known layout is VK_IMAGE_LAYOUT_GENERAL. The Vulkan spec states: If layouts are not ignored, oldLayout must be VK_IMAGE_LAYOUT_UNDEFINED or the current layout of the image subresources affected by the barrier (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkImageMemoryBarrier-oldLayout-01197)"
+        ],
+        "validationClean": false,
+        "gpuRequirementMet": true
+      }
+    }
+  },
+  "limitations": [
+    "GLow/hurt variants are uncalibrated; neither is accepted by the standard picture gate.",
+    "Two initial concurrent build attempts conflicted in the test result directory; both exited unsuccessfully. Serialized build and 146 tests then passed."
+  ],
+  "final": {
+    "texture-final-intel": {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2e32fdb7d6d4-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 35.02179470899864,
+        "leg": "texture-final-intel"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-final-intel",
+        "mode": "world",
+        "gpu": "intel",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-intel",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-intel/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.worldSwitch=true",
+          "-Dceltium.validation.worldSwitchMenuHoldTicks=20"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-final-intel-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-intel",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-intel/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.worldSwitch=true",
+          "--jvm-arg=-Dceltium.validation.worldSwitchMenuHoldTicks=20",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:00:02.0-render",
+          "--require-gpu",
+          "UHD Graphics 630"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": "pci-0000_00_02_0!",
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "world",
+        "saveSlot": "qmagnet",
+        "renderDistance": 18,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500,
+        "captureTotalWorldTime": 23964194,
+        "presentedImageVerdict": "PASSED",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": true,
+        "screenshotAtTickScreen": "none",
+        "jeiRecipeOpened": null
+      },
+      "process": {
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "gpuRequirementMet": true,
+        "validationFirstMessages": null
+      },
+      "picture": {
+        "committedPath": "docs/evidence/native-texture-intel-2026-10-25.png",
+        "sha256": "594d0e576b0d0bf9715e70f714d34ec17a0e349b36a2a8238a258b01e9ff79e6",
+        "identity": {
+          "runId": "run-2e32fdb7d6d4-7a81197d",
+          "scene": "world",
+          "stage": "world",
+          "source": "presented-dump",
+          "image": "screenshots/celtium-presented-world-run-2e32fdb7d6d4-7a81197d-kept.png",
+          "requestedImage": "screenshots/celtium-presented-world-run-2e32fdb7d6d4-7a81197d.png",
+          "keptFrom": "screenshots/celtium-presented-world-run-2e32fdb7d6d4-7a81197d.png",
+          "worldTick": 209,
+          "worldFrames": 534,
+          "presentedFrame": 337,
+          "width": 1280,
+          "height": 720,
+          "imageHash": 1771499132,
+          "requestedAtTick": 209,
+          "requestedWorldFrames": 534,
+          "requestedPresentedFrame": 336,
+          "completedAtTick": 214,
+          "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+          "identitySource": "fixture-observed-completion",
+          "completionError": "none",
+          "writtenAtMillis": 1792862414969
+        }
+      }
+    },
+    "texture-final-amd": {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2e3b28c3a43f-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 29.086334945001,
+        "leg": "texture-final-amd"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-final-amd",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-amd",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-amd/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.worldSwitch=true",
+          "-Dceltium.validation.worldSwitchMenuHoldTicks=20"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-final-amd-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-amd",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-amd/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.worldSwitch=true",
+          "--jvm-arg=-Dceltium.validation.worldSwitchMenuHoldTicks=20",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "world",
+        "saveSlot": "qmagnet",
+        "renderDistance": 18,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500,
+        "captureTotalWorldTime": 23964129,
+        "presentedImageVerdict": "PASSED",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": true,
+        "screenshotAtTickScreen": "none",
+        "jeiRecipeOpened": null
+      },
+      "process": {
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "gpuRequirementMet": true,
+        "validationFirstMessages": null
+      },
+      "picture": {
+        "committedPath": "docs/evidence/native-texture-amd-2026-10-25.png",
+        "sha256": "c07e1771a00c56de35f81140a75cef54a302e3383b3251b5927f075fbd147e88",
+        "identity": {
+          "runId": "run-2e3b28c3a43f-7a81197d",
+          "scene": "world",
+          "stage": "world",
+          "source": "presented-dump",
+          "image": "screenshots/celtium-presented-world-run-2e3b28c3a43f-7a81197d-kept.png",
+          "requestedImage": "screenshots/celtium-presented-world-run-2e3b28c3a43f-7a81197d.png",
+          "keptFrom": "screenshots/celtium-presented-world-run-2e3b28c3a43f-7a81197d.png",
+          "worldTick": 206,
+          "worldFrames": 757,
+          "presentedFrame": 515,
+          "width": 1280,
+          "height": 720,
+          "imageHash": -903386138,
+          "requestedAtTick": 206,
+          "requestedWorldFrames": 757,
+          "requestedPresentedFrame": 514,
+          "completedAtTick": 211,
+          "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+          "identitySource": "fixture-observed-completion",
+          "completionError": "none",
+          "writtenAtMillis": 1792862444131
+        }
+      }
+    },
+    "texture-final-glow": {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2e423084a322-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 28.6157902460036,
+        "leg": "texture-final-glow"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-final-glow",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-glow",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-glow/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.keepEntities=true",
+          "-Dceltium.validation.glowEntities=true",
+          "-Dceltium.validation.keepGui=false"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-final-glow-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-glow",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-glow/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.keepEntities=true",
+          "--jvm-arg=-Dceltium.validation.glowEntities=true",
+          "--jvm-arg=-Dceltium.validation.keepGui=false",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "UNCALIBRATED_PRESENTED_IMAGE",
+        "scene": "world",
+        "saveSlot": "qmagnet",
+        "renderDistance": 18,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500,
+        "captureTotalWorldTime": 23964122,
+        "presentedImageVerdict": "UNCALIBRATED_PRESENTED_IMAGE",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": false,
+        "screenshotAtTickScreen": "none",
+        "jeiRecipeOpened": null
+      },
+      "process": {
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "gpuRequirementMet": true,
+        "validationFirstMessages": null
+      },
+      "picture": {
+        "committedPath": "docs/evidence/native-texture-glow-2026-10-25.png",
+        "sha256": "97a62f5f34aeda75c63d1dc728adfc838d3a185e144c48c5ac95232a45a9180d",
+        "identity": {
+          "runId": "run-2e423084a322-7a81197d",
+          "scene": "world",
+          "stage": "world",
+          "source": "presented-dump",
+          "image": "screenshots/celtium-presented-world-run-2e423084a322-7a81197d-kept.png",
+          "requestedImage": "screenshots/celtium-presented-world-run-2e423084a322-7a81197d.png",
+          "keptFrom": "screenshots/celtium-presented-world-run-2e423084a322-7a81197d.png",
+          "worldTick": 210,
+          "worldFrames": 618,
+          "presentedFrame": 618,
+          "width": 1280,
+          "height": 720,
+          "imageHash": -2528807,
+          "requestedAtTick": 210,
+          "requestedWorldFrames": 618,
+          "requestedPresentedFrame": 617,
+          "completedAtTick": 215,
+          "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+          "identitySource": "fixture-observed-completion",
+          "completionError": "none",
+          "writtenAtMillis": 1792862472785
+        }
+      }
+    },
+    "texture-final-hurt": {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2e48c8c59b28-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 28.453734456001257,
+        "leg": "texture-final-hurt"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-final-hurt",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-hurt",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-hurt/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.keepEntities=true",
+          "-Dceltium.validation.hurtEntities=true",
+          "-Dceltium.validation.keepGui=false"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-final-hurt-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-hurt",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-hurt/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.keepEntities=true",
+          "--jvm-arg=-Dceltium.validation.hurtEntities=true",
+          "--jvm-arg=-Dceltium.validation.keepGui=false",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "UNCALIBRATED_PRESENTED_IMAGE",
+        "scene": "world",
+        "saveSlot": "qmagnet",
+        "renderDistance": 18,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500,
+        "captureTotalWorldTime": 23964126,
+        "presentedImageVerdict": "UNCALIBRATED_PRESENTED_IMAGE",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": false,
+        "screenshotAtTickScreen": "none",
+        "jeiRecipeOpened": null
+      },
+      "process": {
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "gpuRequirementMet": true,
+        "validationFirstMessages": null
+      },
+      "picture": {
+        "committedPath": "docs/evidence/native-texture-hurt-2026-10-25.png",
+        "sha256": "acf0b5ca99cf7ddc83f242f70f962a075857ba1b01563596ff94483e7b3d63a5",
+        "identity": {
+          "runId": "run-2e48c8c59b28-7a81197d",
+          "scene": "world",
+          "stage": "world",
+          "source": "presented-dump",
+          "image": "screenshots/celtium-presented-world-run-2e48c8c59b28-7a81197d-kept.png",
+          "requestedImage": "screenshots/celtium-presented-world-run-2e48c8c59b28-7a81197d.png",
+          "keptFrom": "screenshots/celtium-presented-world-run-2e48c8c59b28-7a81197d.png",
+          "worldTick": 208,
+          "worldFrames": 707,
+          "presentedFrame": 707,
+          "width": 1280,
+          "height": 720,
+          "imageHash": -1696927633,
+          "requestedAtTick": 208,
+          "requestedWorldFrames": 707,
+          "requestedPresentedFrame": 706,
+          "completedAtTick": 213,
+          "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+          "identitySource": "fixture-observed-completion",
+          "completionError": "none",
+          "writtenAtMillis": 1792862501361
+        }
+      }
+    },
+    "texture-final-video": {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-gui-run-2e5036b4bc09-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 44.065266472993244,
+        "leg": "texture-final-video"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-final-video",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-video",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-video/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.scene=videoSettings",
+          "-Dceltium.validation.guiScale=3"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-final-video-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-video",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-video/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.scene=videoSettings",
+          "--jvm-arg=-Dceltium.validation.guiScale=3",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "videoSettings",
+        "saveSlot": null,
+        "renderDistance": 8,
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500,
+        "captureTotalWorldTime": 418,
+        "presentedImageVerdict": "PASSED",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": true,
+        "screenshotAtTickScreen": "none",
+        "jeiRecipeOpened": null
+      },
+      "process": {
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "gpuRequirementMet": true,
+        "validationFirstMessages": null
+      },
+      "picture": {
+        "committedPath": "docs/evidence/native-texture-video-2026-10-25.png",
+        "sha256": "98076f4d6c0c80db5fd9a0f0db70f1faa599e046625b88e1bea560db74e90a97",
+        "identity": {
+          "runId": "run-2e5036b4bc09-7a81197d",
+          "scene": "videoSettings",
+          "stage": "gui",
+          "source": "presented-dump",
+          "image": "screenshots/celtium-presented-gui-run-2e5036b4bc09-7a81197d-kept.png",
+          "requestedImage": "screenshots/celtium-presented-gui-run-2e5036b4bc09-7a81197d.png",
+          "keptFrom": "screenshots/celtium-presented-gui-run-2e5036b4bc09-7a81197d.png",
+          "worldTick": 424,
+          "worldFrames": 762,
+          "presentedFrame": 762,
+          "width": 1280,
+          "height": 720,
+          "imageHash": -604159970,
+          "requestedAtTick": 424,
+          "requestedWorldFrames": 762,
+          "requestedPresentedFrame": 761,
+          "completedAtTick": 428,
+          "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+          "identitySource": "fixture-observed-completion",
+          "completionError": "none",
+          "writtenAtMillis": 1792862545408
+        }
+      }
+    },
+    "texture-final-inventory": {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2e59963c8c8e-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 45.375121113000205,
+        "leg": "texture-final-inventory"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-final-inventory",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-inventory",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-inventory/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.jeiScreen=true",
+          "-Dceltium.validation.keepInventoryScreen=true",
+          "-Dceltium.validation.screenshotAtTick=60"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-final-inventory-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-inventory",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-inventory/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.jeiScreen=true",
+          "--jvm-arg=-Dceltium.validation.keepInventoryScreen=true",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=60",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "UNCALIBRATED_PRESENTED_IMAGE",
+        "scene": "world",
+        "saveSlot": "qmagnet",
+        "renderDistance": 18,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500,
+        "captureTotalWorldTime": 23964477,
+        "presentedImageVerdict": "UNCALIBRATED_PRESENTED_IMAGE",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": false,
+        "screenshotAtTickScreen": "net.minecraft.client.gui.inventory.GuiContainerCreative",
+        "jeiRecipeOpened": null
+      },
+      "process": {
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "gpuRequirementMet": true,
+        "validationFirstMessages": null
+      },
+      "picture": {
+        "committedPath": "docs/evidence/native-texture-inventory-2026-10-25.png",
+        "sha256": "bd7ce64a70f9927434233bbc08954ddd7e686a36f4b887dfe65c08ea42e092ea",
+        "identity": {
+          "runId": "run-2e59963c8c8e-7a81197d",
+          "scene": "world",
+          "stage": "world",
+          "source": "presented-dump",
+          "image": "screenshots/celtium-presented-world-run-2e59963c8c8e-7a81197d-kept.png",
+          "requestedImage": "screenshots/celtium-presented-world-run-2e59963c8c8e-7a81197d.png",
+          "keptFrom": "screenshots/celtium-presented-world-run-2e59963c8c8e-7a81197d.png",
+          "worldTick": 400,
+          "worldFrames": 1482,
+          "presentedFrame": 1482,
+          "width": 1280,
+          "height": 720,
+          "imageHash": 1345989158,
+          "requestedAtTick": 400,
+          "requestedWorldFrames": 1482,
+          "requestedPresentedFrame": 1481,
+          "completedAtTick": 406,
+          "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+          "identitySource": "fixture-observed-completion",
+          "completionError": "none",
+          "writtenAtMillis": 1792862591112
+        }
+      }
+    },
+    "texture-final-recipe": {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-2e642b9ec965-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 37.11872553600551,
+        "leg": "texture-final-recipe"
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "texture-final-recipe",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-recipe",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+            "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+            "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+            " M docs/instruments.md",
+            " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+            "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+            "?? docs/evidence/native-texture-owner-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.json",
+            "?? docs/evidence/spikes-2026-10-25.png"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-recipe/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dmixin.debug.export=true",
+          "-Dceltium.validation.jeiScreen=true",
+          "-Dceltium.validation.jeiRecipe=true",
+          "-Dceltium.validation.keepInventoryScreen=true",
+          "-Dceltium.validation.screenshotAtTick=60"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/texture-final-recipe-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-recipe",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-final-recipe/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dmixin.debug.export=true",
+          "--jvm-arg=-Dceltium.validation.jeiScreen=true",
+          "--jvm-arg=-Dceltium.validation.jeiRecipe=true",
+          "--jvm-arg=-Dceltium.validation.keepInventoryScreen=true",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=60",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "UNCALIBRATED_PRESENTED_IMAGE",
+        "scene": "world",
+        "saveSlot": "qmagnet",
+        "renderDistance": 18,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500,
+        "captureTotalWorldTime": 23964314,
+        "presentedImageVerdict": "UNCALIBRATED_PRESENTED_IMAGE",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": false,
+        "screenshotAtTickScreen": "mezz.jei.gui.recipes.RecipesGui",
+        "jeiRecipeOpened": true
+      },
+      "process": {
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "gpuRequirementMet": true,
+        "validationFirstMessages": null
+      },
+      "picture": {
+        "committedPath": "docs/evidence/native-texture-recipe-2026-10-25.png",
+        "sha256": "1ade07f53a6e67f649e8ad0a696f59feda465f8f8c6bc6bf7f13cbaef1f322ce",
+        "identity": {
+          "runId": "run-2e642b9ec965-7a81197d",
+          "scene": "world",
+          "stage": "world",
+          "source": "presented-dump",
+          "image": "screenshots/celtium-presented-world-run-2e642b9ec965-7a81197d-kept.png",
+          "requestedImage": "screenshots/celtium-presented-world-run-2e642b9ec965-7a81197d.png",
+          "keptFrom": "screenshots/celtium-presented-world-run-2e642b9ec965-7a81197d.png",
+          "worldTick": 400,
+          "worldFrames": 1623,
+          "presentedFrame": 1623,
+          "width": 1280,
+          "height": 720,
+          "imageHash": 1514586786,
+          "requestedAtTick": 400,
+          "requestedWorldFrames": 1623,
+          "requestedPresentedFrame": 1622,
+          "completedAtTick": 405,
+          "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+          "identitySource": "fixture-observed-completion",
+          "completionError": "none",
+          "writtenAtMillis": 1792862628242
+        }
+      }
+    }
+  },
+  "rendererSha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8",
+  "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+  "sourceProvenance": {
+    "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+    "dirtyFiles": [
+      " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+      " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+      " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+      " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+      " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+      " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+      " M docs/instruments.md",
+      " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+      "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+      "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+      "?? docs/evidence/native-texture-owner-2026-10-25.json",
+      "?? docs/evidence/spikes-2026-10-25.json",
+      "?? docs/evidence/spikes-2026-10-25.png"
+    ],
+    "buildExitCode": 0,
+    "artifacts": {
+      "celtium-forge-mc1.12.2-0.0.13-alpha.jar": {
+        "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8",
+        "sizeBytes": 3325642
+      },
+      "celtium-validation-client-0.0.13-alpha.jar": {
+        "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+        "sizeBytes": 164492
+      }
+    },
+    "source.patchSha256": "1b4e2a1a9fde6fe53659d8be2c1c1b6529c76190f9cc264748fa9c9a758be837",
+    "NativeTextureEnvironment.javaSha256": "c128e6279de8681746892a18855601af209b466038a076f781eac20a00f16ce2"
+  },
+  "menu": {
+    "leg": "texture-final-amd",
+    "committedPath": "docs/evidence/native-texture-menu-2026-10-25.png",
+    "sha256": "64a15256db20c03d3297d5b92adf36911fb435c247590bae8c2bc9366e084161",
+    "identity": {
+      "runId": "run-2e3b28c3a43f-7a81197d",
+      "scene": "world",
+      "stage": "world-switch-menu",
+      "source": "presented-dump",
+      "image": "screenshots/celtium-presented-world-switch-menu-run-2e3b28c3a43f-7a81197d-kept.png",
+      "requestedImage": "screenshots/celtium-presented-world-switch-menu-run-2e3b28c3a43f-7a81197d.png",
+      "keptFrom": "screenshots/celtium-presented-world-switch-menu-run-2e3b28c3a43f-7a81197d.png",
+      "worldTick": 100,
+      "worldFrames": 242,
+      "presentedFrame": 246,
+      "width": 1280,
+      "height": 720,
+      "imageHash": 478521151,
+      "requestedAtTick": 100,
+      "requestedWorldFrames": 242,
+      "requestedPresentedFrame": 245,
+      "completedAtTick": 100,
+      "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+      "identitySource": "fixture-observed-completion",
+      "completionError": "none",
+      "writtenAtMillis": 1792862437960
+    },
+    "scope": "visual inspection: all menu buttons/labels visible; no calibrated menu gate for this held transition"
+  },
+  "kpi": {
+    "inputs": {
+      "renderer": {
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+        "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+      },
+      "fixture": {
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+        "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+      },
+      "reference": {
+        "source": "/home/s0u7a/ダウンロード/01-celeritas-forge-mc12.2-2.5.0-dev.jar",
+        "sha256": "567dcf8aadd6f4f4d5d594b02549c7997385b7dc8ade5e9722d1e9756056092c"
+      },
+      "buildProvenance": {
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/build-provenance.json",
+        "sha256": "0f308b363e2e2ea39c6d32e7a81c6ac3788e0025e3b780c2b982ba3673025694",
+        "gitHead": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+        "dirtyFiles": [
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+          " M docs/instruments.md",
+          " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+          "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+          "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+          "?? docs/evidence/native-texture-owner-2026-10-25.json",
+          "?? docs/evidence/spikes-2026-10-25.json",
+          "?? docs/evidence/spikes-2026-10-25.png"
+        ]
+      },
+      "control": {
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+        "sha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db"
+      },
+      "controlFixture": {
+        "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/control/celtium-validation-client-0.0.13-alpha.jar",
+        "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+      },
+      "controlFixtureDiffers": false
+    },
+    "metric": "frameIntervalWarmP50Ms",
+    "windowWorldTicks": [
+      400,
+      600
+    ],
+    "pairs": [
+      {
+        "repetition": 1,
+        "celtium": {
+          "p50Ms": 1.074948,
+          "p95Ms": 1.340784,
+          "samples": 8782,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-celtium-r1/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-celtium-r1"
+        },
+        "celeritas": {
+          "p50Ms": 1.06766,
+          "p95Ms": 1.355965,
+          "samples": 8882,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "567dcf8aadd6f4f4d5d594b02549c7997385b7dc8ade5e9722d1e9756056092c",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (radeonsi, navi24, ACO, DRM 3.64, 7.2.9-x64v3-xanmod1)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-celeritas-r1/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-celeritas-r1"
+        },
+        "control": {
+          "p50Ms": 1.080889,
+          "p95Ms": 1.378926,
+          "samples": 8679,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-control-r1/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-control-r1"
+        }
+      },
+      {
+        "repetition": 2,
+        "control": {
+          "p50Ms": 1.077705,
+          "p95Ms": 1.354429,
+          "samples": 8713,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-control-r2/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-control-r2"
+        },
+        "celeritas": {
+          "p50Ms": 1.069616,
+          "p95Ms": 1.352374,
+          "samples": 8853,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "567dcf8aadd6f4f4d5d594b02549c7997385b7dc8ade5e9722d1e9756056092c",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (radeonsi, navi24, ACO, DRM 3.64, 7.2.9-x64v3-xanmod1)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-celeritas-r2/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-celeritas-r2"
+        },
+        "celtium": {
+          "p50Ms": 1.114588,
+          "p95Ms": 1.425798,
+          "samples": 8401,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-celtium-r2/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-celtium-r2"
+        }
+      },
+      {
+        "repetition": 3,
+        "celtium": {
+          "p50Ms": 1.109425,
+          "p95Ms": 1.423586,
+          "samples": 8460,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-celtium-r3/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-celtium-r3"
+        },
+        "celeritas": {
+          "p50Ms": 1.072732,
+          "p95Ms": 1.375998,
+          "samples": 8839,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "567dcf8aadd6f4f4d5d594b02549c7997385b7dc8ade5e9722d1e9756056092c",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (radeonsi, navi24, ACO, DRM 3.64, 7.2.9-x64v3-xanmod1)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-celeritas-r3/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-celeritas-r3"
+        },
+        "control": {
+          "p50Ms": 1.075743,
+          "p95Ms": 1.348174,
+          "samples": 8724,
+          "worldTicksAtEnd": 619,
+          "rendererSha256": "e8f6849a440a9359352a964a881b7569692ddf3d19e9f6c9e4415aa17b35a2db",
+          "fixtureSha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7",
+          "device": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "jvmArgs": [
+            "-Dceltium.vulkan.glless=true",
+            "-Dceltium.vulkan.presentReadback=true",
+            "-Dfml.readTimeout=120",
+            "-Dceltium.vulkan.validation=true",
+            "-Dceltium.validation=true",
+            "-Dceltium.validation.scene=world",
+            "-Dceltium.validation.keepGui=true",
+            "-Dceltium.validation.minWorldFrames=5",
+            "-Dceltium.validation.pinSections=64",
+            "-Dceltium.validation.screenshotAtTick=200",
+            "-Dceltium.validation.dumpPresentedImage=true",
+            "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-owner-kpi-control-r3/framedump",
+            "-Dceltium.vulkan.validation=false",
+            "-Dceltium.vulkan.presentReadback=false",
+            "-Dceltium.vulkan.presentedDumpEvery=0",
+            "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+            "-Dceltium.validation.fixedWorldTime=true",
+            "-Dceltium.validation.worldTime=1500",
+            "-Dceltium.validation.warmFromTick=400",
+            "-Dceltium.validation.warmToTick=600",
+            "-Dceltium.validation.holdUntilTick=620"
+          ],
+          "source": {
+            "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+            "dirty": true,
+            "dirtyFiles": [
+              "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+              " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+              " M docs/instruments.md",
+              " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+              "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+              "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+              "?? docs/evidence/native-texture-owner-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.json",
+              "?? docs/evidence/spikes-2026-10-25.png"
+            ]
+          },
+          "conditions": {
+            "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+            "saveSlot": "qmagnet",
+            "renderDistanceUsed": 18,
+            "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+            "captureWidth": 1280,
+            "captureHeight": 720,
+            "renderCloudsAtCapture": 2,
+            "pinnedWorldTime": 1500,
+            "framerateLimitSetting": 260,
+            "vsyncEnabled": false
+          },
+          "leg": "texture-owner-kpi-control-r3"
+        }
+      }
+    ],
+    "pairRatios": [
+      1.0068261431541876,
+      1.0420449955872013,
+      1.034205188248323
+    ],
+    "medianPairRatio": 1.034205188248323,
+    "verdict": "NO_SPEED_VERDICT",
+    "scope": "fixture frame intervals; startup/build reported separately; includes simulation, GUI and limiter; no automatic noise margin or significance claim; measured under external load 0.46 -> 2.67 (limit 2, override recorded): ratios only, not absolute frame times; load rose during the run (0.46 -> 2.67): the pairs compare different machine states, so no verdict is safe",
+    "disturbedRepetitions": [],
+    "controlRatios": [
+      0.9945035984268505,
+      1.0342236511846934,
+      1.0313104524035948
+    ],
+    "medianControlRatio": 1.0313104524035948,
+    "controlScope": "candidate against the control build, interleaved in the same repetitions; cancels between-leg machine drift, does not compare against the reference",
+    "environment": {
+      "initialLoadAverage": 0.46044921875,
+      "finalLoadAverage": 2.67236328125,
+      "loadLimit": 2.0,
+      "cpuCount": 6,
+      "guardBypassed": false
+    }
+  },
+  "nativeSilhouette": {
+    "leg": "environment-glow-amd",
+    "rendererSha256": "c75b86e74a37d616b0bc3975f2472d3c734343a240f5db4b9949aae57bdc6883",
+    "path": "docs/evidence/native-texture-silhouette-2026-10-25.png",
+    "sha256": "6266d502537aa328b7e4ce69d72c7f900439919781412c121e3ed1a74e546a3c",
+    "scope": "owned image readback after the outline chain, not the final main composite; RGB uses the team constant while the alpha channel contains the edges",
+    "camera": {
+      "x": 217.5,
+      "y": 48.0,
+      "z": 217.5,
+      "yaw": 180.0,
+      "pitch": 10.0
+    }
+  }
+}

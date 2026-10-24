@@ -286,6 +286,10 @@ public final class VulkanTextureRegistry {
             return null;
         }
         this.externalImages.put(id, shared);
+        // Publishing also supersedes an owned mirror or a previous negative lookup. Queued groups must resolve
+        // the new owner even when this is the name's first external publication (no retireExternal call occurred).
+        this.mutations++;
+        this.memoTextureId = Integer.MIN_VALUE;
         this.fullyInitialized.add(id);
         this.staleIds.remove(id);
         this.externalPublished++;
@@ -340,6 +344,7 @@ public final class VulkanTextureRegistry {
 
     private void retireExternal(final VulkanGlTexture wrapper, String why) {
         this.mutations++;
+        this.memoTextureId = Integer.MIN_VALUE;
         if (this.externalRetireLogs < 8) {
             this.externalRetireLogs++;
             System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE dropped: " + why
