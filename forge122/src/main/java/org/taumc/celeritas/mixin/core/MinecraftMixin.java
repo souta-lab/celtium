@@ -445,6 +445,9 @@ public class MinecraftMixin {
 
     @Unique
     private static void celtium$ensureWindowRenderer() {
+        // Re-checked on every tick: Forge replaces System.out with its tracing stream after the display exists, so the
+        // first install can be undone; the check is one instanceof once installed.
+        org.soutalab.celtium.vulkan.CeltiumLogLimiter.install();
         // Latched on success, not on the attempt: latching the attempt would leave the menu blank for the whole session
         // after one transient device-creation failure. The retries are bounded and spaced so a configuration that
         // cannot have a window renderer prints its reason a handful of times instead of every tick.
