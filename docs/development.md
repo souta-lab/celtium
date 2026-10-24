@@ -3200,3 +3200,13 @@ CELTIUM_COPY_CACHE_VERIFY present=1 differing=65374/65536
 leg `no-cache`（AMD、メニュー保持）: mean 111.9 / 彩度 0.304 / 参照差 42.49%・PASSED。
 キャッシュ有り（112.2 / 0.321 / 43.84%）と画質同等で、**staleの危険だけが消える**。
 v0.0.16-alpha には矩形キーのキャッシュが入っている（画質差は測れていない）ので、次版で本修正を載せる。
+
+**blit経路のwindow読み: y反転では直らない（2026-10-24 実測・不採用）**
+
+host経路が `readImageRectangle` でyを反転しているのに対し、blitは Vulkan の画像座標をそのまま使う。
+そこで**window読みのblitだけコピー元yを反転**して試した:
+```
+leg blit-flip（windowCopyBlit=true）: mean 122.0 / 彩度 0.050 / 参照差 71.88%
+```
+host経路（111.7〜112.1 / 0.30 / 42〜44%）より悪化。**y反転は原因ではない**ので変更は撤回した。
+blit経路の不一致は未解決の負債のまま（既定はhost経路）。
