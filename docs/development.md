@@ -3247,3 +3247,22 @@ native shadow mapは未実装（旧scaffold撤去済み）。実装は次の既�
 現状は**どこからも生成されていない**（意図的に未接続）。`compileJava`/`packageJar` は通る。
 次の段: フレーム先頭（`ensureFrameTarget()` の直後）で本ターゲットを生成し、クリアのみのパスを記録して
 `readDepthRectangle` で深度PNGをdump → パスとレイアウト遷移の証拠化。その後ライト行列＋深度専用パイプライン。
+
+**影 段階(b): 影ターゲット＋クリアpassを実機で検証（2026-10-24 実測・VUID 0）**
+
+`-Dceltium.vulkan.shadowMap=true` で、フレームのコマンドバッファを開始した直後（render pass未open）に
+`ShadowMapTarget` を遅延生成し、クリアのみのdepth passを毎フレーム記録するようにした。
+
+```
+leg shadow-clear2（AMD RX 6400, world, 90s, validation ON）
+  結果: PASSED・problems 0・VUID 0
+  target: size=2048 format=126（=VK_FORMAT_D32_SFLOAT） clears=31（ダンプ試行時のログ）
+```
+- 深度イメージは `UNDEFINED → SHADER_READ_ONLY_OPTIMAL` へpass内で遷移し、以降サンプル可能
+- 生成/記録/解放（`delete()`）がvalidationクリーンであることを確認
+
+**判明した罠**: フレーム記録の途中で `waitForIdle()` して深度をreadbackすると
+`VUID-vkCmdDraw-None-09600`（コマンドバッファが期待するレイアウトと実際の遷移の不一致）が出る。
+ダンプは**記録外**（present後など）で行う必要がある。ダンプ用ヘルパ
+`TextureCopyService.celtium$dumpDepthPng()` はその前提で用意した（段階(c)で使う）。
+なおクリアのみの段階で深度を読むと全画素 1.0（pngで255）が正しい（=何も描かれていない）。

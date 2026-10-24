@@ -899,6 +899,37 @@ public final class TextureCopyService {
         return "served";
     }
 
+    /**
+     * Writes a depth image to a PNG, grayscale from 0 (near) to 255 (far), for the shadow work's evidence. Diagnostic
+     * only, and it waits for the device first because the read is from the host.
+     */
+    public boolean celtium$dumpDepthPng(long depthImage, int width, int height, int depthFormat,
+            java.nio.file.Path path) {
+        if (depthImage == 0L || width <= 0 || height <= 0 || path == null) {
+            return false;
+        }
+        this.host.waitForIdle();
+        float[] depth = readDepthRectangle(depthImage, 0, 0, width, height, depthFormat);
+        if (depth == null || depth.length < width * height) {
+            return false;
+        }
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                float value = depth[y * width + x];
+                int level = (int) (Math.min(1.0f, Math.max(0.0f, value)) * 255.0f + 0.5f);
+                image.setRGB(x, y, (level << 16) | (level << 8) | level);
+            }
+        }
+        try {
+            java.nio.file.Files.createDirectories(path.toAbsolutePath().getParent());
+            return javax.imageio.ImageIO.write(image, "png", path.toFile());
+        } catch (java.io.IOException | RuntimeException error) {
+            return false;
+        }
+    }
+
     private long ownedReadImage(int readFbo) {
         GllessFrameTarget glless = this.host.offTargetTarget();
         if (readFbo != 0) {

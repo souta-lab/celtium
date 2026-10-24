@@ -34,6 +34,7 @@ import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
 import org.lwjgl.vulkan.VkCommandPoolCreateInfo;
 import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkRenderPassBeginInfo;
+import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkSubmitInfo;
 
 import java.nio.ByteBuffer;
@@ -3200,6 +3201,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Every window that carried a hundred groups or more, and the groups they carried. */
     private long largeWindows;
     private long largeWindowGroups;
+    /**
+     * {@code -Dceltium.vulkan.shadowMap=true}: create the shadow target and record its clear pass each frame.
+     * <p>
+     * Stage (b) of the plan's shadow work: the target and its pass are exercised on the real device before a light
+     * matrix or a depth pipeline exists, so the pass, its layout transition and its lifetime are validated by
+     * themselves rather than tangled into the first drawing code that uses them.
+     */
+    private static final boolean SHADOW_MAP = Boolean.getBoolean("celtium.vulkan.shadowMap");
+    private static final int SHADOW_MAP_SIZE = Integer.getInteger("celtium.vulkan.shadowMapSize", 2048).intValue();
+    private ShadowMapTarget shadowMap;
+    private long shadowMapClearPasses;
+
     /** How many large windows have had their routing logged. */
     private int windowRouteLogs;
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
@@ -12170,7 +12183,33 @@ this.frameBufferOpen = false;
         record("world teardown: terrain resources released, the window device and swapchain are kept");
     }
 
+    /**
+     * Records the shadow target's clear-only pass into the frame's command buffer. The buffer was just reset and
+     * begun, so no render pass is open; the target's own pass moves the image from UNDEFINED to
+     * SHADER_READ_ONLY_OPTIMAL in one transition, which is the layout every later sampling stage needs.
+     */
+    private void celtium$recordShadowClear(MemoryStack stack) {
+        if (this.shadowMap == null) {
+            this.shadowMap = new ShadowMapTarget(this.context, SHADOW_MAP_SIZE);
+        }
+        VkClearValue.Buffer clear = VkClearValue.calloc(1, stack);
+        clear.get(0).depthStencil().depth(1.0f).stencil(0);
+        VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
+                .renderPass(this.shadowMap.renderPass())
+                .framebuffer(this.shadowMap.framebuffer())
+                .pClearValues(clear);
+        begin.renderArea().offset().set(0, 0);
+        begin.renderArea().extent().set(this.shadowMap.size(), this.shadowMap.size());
+        vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdEndRenderPass(this.commandBuffer);
+        this.shadowMapClearPasses++;
+    }
+
     public void delete() {
+        if (this.shadowMap != null) {
+            this.shadowMap.delete();
+            this.shadowMap = null;
+        }
         for (VulkanImmediateTexturePipeline records : this.recordsPipelines.values()) {
             records.delete();
         }
@@ -18289,6 +18328,9 @@ this.frameBufferOpen = false;
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
             VulkanGlTexture.beginLayoutRecording(this.commandBuffer);
+            if (SHADOW_MAP) {
+                celtium$recordShadowClear(stack);
+            }
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
