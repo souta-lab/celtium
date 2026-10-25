@@ -4508,6 +4508,16 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Bounded, so a mod that rebuilds its framebuffer every frame cannot flood the log. */
     private static int framebufferAttachmentLogs;
 
+    /** {@return a texture's level-0 width and height as GL last defined them}, or null when nothing was recorded. */
+    public static int[] celtium$textureExtent(int glTextureName) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || glTextureName == 0) {
+            return null;
+        }
+        int[] level = stub.texLevels.get(texLevelKey(glTextureName, 0));
+        return level == null ? null : new int[] {level[0], level[1]};
+    }
+
     /** {@return the colour texture of a raw framebuffer, or 0 when none was recorded}. */
     public static int celtium$framebufferColorTexture(int glFramebufferName) {
         CeltiumGlStub stub = installed;
@@ -4992,6 +5002,23 @@ public final class CeltiumGlStub implements FunctionProvider {
      * unpack alignment; a row length or a pixel/row skip that is not the default is refused rather than misread.
      */
     private ByteBuffer uploadToRgba8(int width, int height, int format, int type, long pixels) {
+        if (this.pixelUnpackBuffer > 0) {
+            // With an unpack buffer bound, pixels is an offset into it. The buffer's storage is this stub's own block,
+            // so the offset is resolved to an address inside it - bounds-checked against the rows GL would read.
+            ByteBuffer storage = this.bufferStore.get(this.pixelUnpackBuffer);
+            long needed = (long) width * (long) height * 4L;
+            if (storage != null && pixels >= 0L && width > 0 && height > 0
+                    && pixels + needed <= storage.capacity()) {
+                pixels = memAddress(storage) + pixels;
+                int bound = this.pixelUnpackBuffer;
+                this.pixelUnpackBuffer = 0;
+                try {
+                    return uploadToRgba8(width, height, format, type, pixels);
+                } finally {
+                    this.pixelUnpackBuffer = bound;
+                }
+            }
+        }
         String pboRefusal = pixelBufferRefusal(this.pixelUnpackBuffer, pixels, "texture upload");
         if (pboRefusal != null) {
             if (this.pixelBufferRefusals < 8) {
@@ -5170,6 +5197,15 @@ public final class CeltiumGlStub implements FunctionProvider {
      * itself for {@code glNamedBufferData}.
      */
     private int boundBuffer(int target) {
+        // The pixel buffers keep their own binding fields (celtium$bindBuffer stores them there), so a buffer-data or
+        // map call against GL_PIXEL_UNPACK_BUFFER has to read them here; it used to read the generic table, which never
+        // holds them, and dropped Xaero's Minimap's PBO allocation on the floor.
+        if (target == GL_PIXEL_UNPACK_BUFFER) {
+            return this.pixelUnpackBuffer;
+        }
+        if (target == GL_PIXEL_PACK_BUFFER) {
+            return this.pixelPackBuffer;
+        }
         return target == GL_ARRAY_BUFFER ? NativeGeometryBuffer.boundId()
                 : target >= 0 && target < this.bufferBindings.length ? this.bufferBindings[target] : 0;
     }
@@ -5265,14 +5301,37 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private long mapBuffer(Fn fn, long[] c) {
-        int name = bufferFor(fn, c);
+        boolean range = fn.args.length == 4;
+        return mapBufferFor(bufferFor(fn, c), range, range ? c[1] : 0L, range ? c[2] : 0L, range ? c[3] : 0L);
+    }
+
+    /**
+     * {@code glMapBuffer}/{@code glMapBufferRange} from the native transformer's route: LWJGL's {@code nglMapBuffer}
+     * used to fall through to the default zero, which LWJGL hands the caller as a null buffer - Xaero's Minimap then
+     * crashed on its first tile upload ({@code PixelBuffers.glMapBuffer(...) is null}).
+     */
+    public static long celtium$mapBuffer(int target, boolean range, long offset, long length, int access) {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0L : stub.mapBufferFor(stub.boundBuffer(target), range, offset, length, access);
+    }
+
+    /** {@code glUnmapBuffer}: the storage is the caller's memory already, so there is nothing to flush. */
+    public static boolean celtium$unmapBuffer(int target) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return true;
+        }
+        NativeGeometryBuffer mapped = NativeGeometryBuffer.find(stub.boundBuffer(target));
+        return mapped == null || mapped.unmap();
+    }
+
+    private long mapBufferFor(int name, boolean range, long rangeOffset, long rangeLength, long access) {
         NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
         if (nativeBuffer != null) {
             this.mapBufferCalls++;
             // VertexBuffer API storage is transiently mappable, not persistent/coherent mapped storage.
-            long address = fn.args.length == 4 && (c[3] & 0xC0L) != 0L ? 0L
-                    : nativeBuffer.map(fn.args.length == 4 ? c[1] : 0,
-                            fn.args.length == 4 ? c[2] : nativeBuffer.byteSize());
+            long address = range && (access & 0xC0L) != 0L ? 0L
+                    : nativeBuffer.map(range ? rangeOffset : 0, range ? rangeLength : nativeBuffer.byteSize());
             if (address == 0L) this.mapBufferRefusals++;
             return address;
         }
@@ -5283,18 +5342,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             storage = ByteBuffer.allocateDirect(0);
         }
         long base = memAddress(storage);
-        if (fn.args.length == 4) {
+        if (range) {
             // glMapBufferRange(target, offset, length, access): the range is validated, not corrected. Returning base +
             // a clamped offset turned an invalid request into a valid-looking mapping (audit #361 measured offset = -1
             // answered as 0, and a length past the end simply ignored), which lets a caller write outside the buffer it
             // thinks it mapped. GL returns NULL for a range that is not within the buffer, and so does this.
-            long offset = mapRangeOffset(c[1], c[2], this.logicalSizeOf(name, storage.capacity()));
+            long offset = mapRangeOffset(rangeOffset, rangeLength, this.logicalSizeOf(name, storage.capacity()));
             this.mapBufferCalls++;
             if (offset < 0L) {
                 this.mapBufferRefusals++;
                 if (this.mapBufferRefusals <= 3) {
-                    System.out.println("[Celtium] CELTIUM_MAP_RANGE_REFUSED buffer=" + name + " offset=" + c[1]
-                            + " length=" + c[2] + " capacity=" + storage.capacity());
+                    System.out.println("[Celtium] CELTIUM_MAP_RANGE_REFUSED buffer=" + name + " offset=" + rangeOffset
+                            + " length=" + rangeLength + " capacity=" + storage.capacity());
                 }
                 return 0L;
             }

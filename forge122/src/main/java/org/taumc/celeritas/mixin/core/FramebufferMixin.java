@@ -47,6 +47,22 @@ public abstract class FramebufferMixin {
         info.cancel();
     }
 
+    // The vanilla methods that bind raw GL framebuffers themselves (create, delete, bind, unbind). While one runs, its
+    // own reports to the renderer stand; the raw bind inside it is not reported again (CeltiumGllessHint).
+    @Inject(method = {"func_147610_a", "func_147609_e", "func_147605_b", "func_147608_a"}, at = @At("HEAD"),
+            require = 0)
+    private void celtium$enterVanillaFramebuffer(CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaFramebufferDepth++;
+    }
+
+    @Inject(method = {"func_147610_a", "func_147609_e", "func_147605_b", "func_147608_a"}, at = @At("RETURN"),
+            require = 0)
+    private void celtium$leaveVanillaFramebuffer(CallbackInfo info) {
+        if (org.taumc.celeritas.core.CeltiumGllessHint.vanillaFramebufferDepth > 0) {
+            org.taumc.celeritas.core.CeltiumGllessHint.vanillaFramebufferDepth--;
+        }
+    }
+
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
         // Announce a framebuffer replacement before the bind below, so the flush that a target change would otherwise do

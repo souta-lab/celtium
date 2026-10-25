@@ -95,6 +95,60 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
     }
 
+    /**
+     * The raw GL11 matrix natives, forwarded to CeltiumGllessHint's mirror routes (which skip calls made inside a vanilla
+     * GlStateManager method). Floats are widened to the double routes so each operation has one entry point.
+     * glMultMatrix is deliberately not routed: vanilla's camera calls it raw through Project.gluPerspective, which
+     * GluProjectionMixin already mirrors - routing it too drew the world with the projection applied twice (blank).
+     */
+    private static boolean emitRawMatrixRoute(MethodVisitor method, String name, String descriptor) {
+        String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
+        switch (name + descriptor) {
+            case "glPushMatrix()V":
+            case "glPopMatrix()V":
+            case "glLoadIdentity()V":
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, name, "()V", false);
+                break;
+            case "glMatrixMode(I)V":
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, name, "(I)V", false);
+                break;
+            case "glOrtho(DDDDDD)V":
+                for (int slot = 0; slot < 12; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glOrtho", "(DDDDDD)V", false);
+                break;
+            case "glTranslated(DDD)V":
+            case "glScaled(DDD)V":
+                for (int slot = 0; slot < 6; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, name, "(DDD)V", false);
+                break;
+            case "glTranslatef(FFF)V":
+            case "glScalef(FFF)V":
+                for (int slot = 0; slot < 3; slot++) {
+                    method.visitVarInsn(Opcodes.FLOAD, slot);
+                    method.visitInsn(Opcodes.F2D);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint,
+                        name.startsWith("glTranslate") ? "glTranslated" : "glScaled", "(DDD)V", false);
+                break;
+            case "glRotated(DDDD)V":
+                for (int slot = 0; slot < 8; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glRotated", "(DDDD)V", false);
+                break;
+            case "glRotatef(FFFF)V":
+                for (int slot = 0; slot < 4; slot++) {
+                    method.visitVarInsn(Opcodes.FLOAD, slot);
+                    method.visitInsn(Opcodes.F2D);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glRotated", "(DDDD)V", false);
+                break;
+            default:
+                return false;
+        }
+        method.visitInsn(Opcodes.RETURN);
+        return true;
+    }
+
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
 
@@ -418,6 +472,39 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        if ("(II)J".equals(descriptor) && (name.endsWith("nglMapBuffer") || name.endsWith("nglMapBufferARB"))) {
+            // target, access -> address. The default zero became a null ByteBuffer in LWJGL's wrapper, which is
+            // where Xaero's Minimap crashed (its PBO tile upload); the stub's buffer storage answers instead.
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitInsn(Opcodes.ICONST_0);
+            method.visitInsn(Opcodes.LCONST_0);
+            method.visitInsn(Opcodes.LCONST_0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glMapBuffer", "(IZJJI)J", false);
+            method.visitInsn(Opcodes.LRETURN);
+            return;
+        }
+        if ("(IJJI)J".equals(descriptor) && name.endsWith("nglMapBufferRange")) {
+            // target, offset, length, access -> address, range-checked by the stub.
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitInsn(Opcodes.ICONST_1);
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitVarInsn(Opcodes.ILOAD, 5);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glMapBuffer", "(IZJJI)J", false);
+            method.visitInsn(Opcodes.LRETURN);
+            return;
+        }
+        if ("(I)Z".equals(descriptor) && (name.endsWith("glUnmapBuffer") || name.endsWith("glUnmapBufferARB"))) {
+            // GL returns false only when the store was corrupted; the default false told callers it was.
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glUnmapBuffer", "(I)Z", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         // Display lists. glNewList(list, mode), glEndList() and glCallList(list) all return void, so without this
         // they land in the zero-writer below and do nothing at all - which is why the model capture read list=0 from
         // GL_LIST_INDEX and refused every quad with `reason=unknown-list`, and why captured stayed at 0. A model
@@ -425,6 +512,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // is false, and the quads only run inside it), so that one refusal costs the model its only chance.
         // The hint tracks the open list and answers GL_LIST_INDEX from it; these three calls are what set and use it.
         // Both spellings again: GL11 keeps some legacy natives under their bare name, as glGenLists does.
+        if (emitRawMatrixRoute(method, name, descriptor)) {
+            return;
+        }
         if (returnType.equals("V")) {
             if ("glNewList".equals(name) || "nglNewList".equals(name)) {
                 // (II)V - the natives are static, so the arguments are at slots 0 and 1.

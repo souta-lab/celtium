@@ -538,11 +538,61 @@ public final class CeltiumGllessHint {
     public static void glFramebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferTexture2D(target, attachment, textarget,
                 texture, level);
+        if (vanillaFramebufferDepth == 0 && target != GL_READ_FRAMEBUFFER) {
+            reportRawFramebuffer(rawDrawFramebuffer);
+        }
+    }
+
+    /**
+     * Raised by FramebufferMixin while a vanilla {@code Framebuffer} method runs: those already report their binds to
+     * the renderer with the object's own identity, and the raw bind they make inside must not report a second one.
+     */
+    public static int vanillaFramebufferDepth;
+
+    private static final int GL_READ_FRAMEBUFFER = 0x8CA8;
+
+    /** The draw framebuffer the last raw bind named; 0 is the default framebuffer. */
+    private static int rawDrawFramebuffer;
+
+    /** Raw framebuffer names get identities of their own, outside the range identityHashCode returns. */
+    private static final long RAW_FRAMEBUFFER_IDENTITY = 1L << 40;
+
+    /**
+     * Tells the renderer which target a raw framebuffer bind makes current, and which colour texture stands for it.
+     * <p>
+     * A mod framebuffer whose class overrides the vanilla bind with raw GL - Xaero's Minimap's ImprovedFramebuffer -
+     * reached only the stub's binding record, so the renderer kept drawing into the game's image: the minimap's clear
+     * blacked out the world, its tile draws landed on the screen at the framebuffer's viewport (the "wrong position"
+     * the user reported), and the HUD quad that samples its texture found nothing.
+     */
+    private static void reportRawFramebuffer(int framebuffer) {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) {
+            return;
+        }
+        if (framebuffer == 0) {
+            backend.bindFramebuffer(0L, false);
+            return;
+        }
+        long identity = RAW_FRAMEBUFFER_IDENTITY | (framebuffer & 0xFFFFFFFFL);
+        backend.bindFramebuffer(identity, false);
+        int color = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer);
+        int[] extent = color == 0 ? null : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureExtent(color);
+        if (extent != null && extent[0] > 0 && extent[1] > 0) {
+            backend.bindFramebufferColorTexture(identity, color, extent[0], extent[1]);
+        }
     }
 
     /** Which framebuffer is bound; the attachment record above is filed under it. */
     public static void glBindFramebuffer(int target, int framebuffer) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindFramebuffer(target, framebuffer);
+        if (target != GL_READ_FRAMEBUFFER) {
+            rawDrawFramebuffer = framebuffer;
+            if (vanillaFramebufferDepth == 0) {
+                reportRawFramebuffer(framebuffer);
+            }
+        }
     }
 
     /**
@@ -563,6 +613,84 @@ public final class CeltiumGllessHint {
      */
     public static void glGetTexImage(int target, int level, int format, int type, long pixels) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexImage(target, level, format, type, pixels);
+    }
+
+    /**
+     * The raw matrix call a vanilla GlStateManager method is about to make, set by its mixin hook (which has already
+     * mirrored it); 0 when none. The raw route skips exactly one call of that kind and clears it, so nothing can
+     * accumulate - a depth counter here grew without bound because some hooked methods never reached their RETURN.
+     */
+    public static int vanillaMatrixCall;
+    public static final int MATRIX_PUSH = 1, MATRIX_POP = 2, MATRIX_MODE = 3, MATRIX_IDENTITY = 4, MATRIX_ORTHO = 5,
+            MATRIX_TRANSLATE = 6, MATRIX_SCALE = 7, MATRIX_ROTATE = 8;
+
+    /**
+     * {@return the backend to mirror a raw GL11 matrix call into}, or null when the call is the one a vanilla
+     * GlStateManager method just mirrored itself, or there is no backend.
+     * <p>
+     * Mods that call {@code GL11.glPushMatrix/glPopMatrix/glRotatef} themselves - Xaero's Minimap pushes and pops the
+     * projection that way around its framebuffer pass - reached no mirror at all: the natives were no-ops, so the HUD
+     * after the minimap kept the minimap's projection and drew in the wrong place.
+     */
+    private static org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend rawMatrix(int kind) {
+        if (vanillaMatrixCall != 0) {
+            boolean vanilla = vanillaMatrixCall == kind;
+            vanillaMatrixCall = 0;
+            if (vanilla) {
+                return null;
+            }
+        }
+        return org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+    }
+
+    public static void glPushMatrix() {
+        var backend = rawMatrix(MATRIX_PUSH);
+        if (backend != null) backend.pushMatrix();
+    }
+
+    public static void glPopMatrix() {
+        var backend = rawMatrix(MATRIX_POP);
+        if (backend != null) backend.popMatrix();
+    }
+
+    public static void glMatrixMode(int mode) {
+        var backend = rawMatrix(MATRIX_MODE);
+        if (backend != null) backend.matrixMode(mode);
+    }
+
+    public static void glLoadIdentity() {
+        var backend = rawMatrix(MATRIX_IDENTITY);
+        if (backend != null) backend.loadIdentity();
+    }
+
+    public static void glOrtho(double left, double right, double bottom, double top, double near, double far) {
+        var backend = rawMatrix(MATRIX_ORTHO);
+        if (backend != null) backend.ortho(left, right, bottom, top, near, far);
+    }
+
+    public static void glTranslated(double x, double y, double z) {
+        var backend = rawMatrix(MATRIX_TRANSLATE);
+        if (backend != null) backend.translate(x, y, z);
+    }
+
+    public static void glScaled(double x, double y, double z) {
+        var backend = rawMatrix(MATRIX_SCALE);
+        if (backend != null) backend.scale((float) x, (float) y, (float) z);
+    }
+
+    public static void glRotated(double angle, double x, double y, double z) {
+        var backend = rawMatrix(MATRIX_ROTATE);
+        if (backend != null) backend.rotate((float) angle, (float) x, (float) y, (float) z);
+    }
+
+    /** Maps the bound buffer's storage, as {@code glMapBuffer}/{@code glMapBufferRange} do; 0 is GL's NULL. */
+    public static long glMapBuffer(int target, boolean range, long offset, long length, int access) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapBuffer(target, range, offset, length, access);
+    }
+
+    /** Unmaps the bound buffer, as {@code glUnmapBuffer} does. */
+    public static boolean glUnmapBuffer(int target) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$unmapBuffer(target);
     }
 
     /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */

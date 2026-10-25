@@ -258,11 +258,13 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179094_E", at = @At("HEAD"), require = 0)
     private static void celtium$pushMatrix(CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_PUSH;
         celtium$mirror(TerrainGpuBackend::pushMatrix);
     }
 
     @Inject(method = "func_179121_F", at = @At("HEAD"), require = 0)
     private static void celtium$popMatrix(CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_POP;
         celtium$mirror(TerrainGpuBackend::popMatrix);
     }
 
@@ -285,22 +287,26 @@ public abstract class GlStateManagerMixin {
     // the wrong place (which is exactly what the first end-to-end attempt measured).
     @Inject(method = "func_179128_n", at = @At("HEAD"), require = 0)
     private static void celtium$matrixMode(int mode, CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_MODE;
         celtium$mirror(backend -> backend.matrixMode(mode));
     }
 
     @Inject(method = "func_179096_D", at = @At("HEAD"), require = 0)
     private static void celtium$loadIdentity(CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_IDENTITY;
         celtium$mirror(TerrainGpuBackend::loadIdentity);
     }
 
     @Inject(method = "func_179130_a", at = @At("HEAD"), require = 0)
     private static void celtium$ortho(double left, double right, double bottom, double top, double near, double far,
                                       CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_ORTHO;
         celtium$mirror(backend -> backend.ortho(left, right, bottom, top, near, far));
     }
 
     @Inject(method = "func_179137_b", at = @At("HEAD"), require = 0)
     private static void celtium$translate(double x, double y, double z, CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_TRANSLATE;
         celtium$translate((float) x, (float) y, (float) z);
     }
 
@@ -316,6 +322,7 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179109_b", at = @At("HEAD"), require = 0)
     private static void celtium$translateFloat(float x, float y, float z, CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_TRANSLATE;
         celtium$translate((float) x, (float) y, (float) z);
     }
 
@@ -325,6 +332,7 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179139_a", at = @At("HEAD"), require = 0)
     private static void celtium$scaleDouble(double x, double y, double z, CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_SCALE;
         celtium$scale((float) x, (float) y, (float) z);
     }
 
@@ -353,6 +361,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179114_b", at = @At("HEAD"), require = 0)
     private static void celtium$rotate(float angle, float x, float y, float z, CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_ROTATE;
         celtium$rotate(angle, x, y, z);
     }
 
@@ -424,6 +433,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179152_a", at = @At("HEAD"), require = 0)
     private static void celtium$scale(float x, float y, float z, CallbackInfo info) {
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_SCALE;
         celtium$scale(x, y, z);
     }
 
