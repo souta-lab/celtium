@@ -108,6 +108,31 @@ public abstract class ParticleMixin {
         int j = i >> 16 & 65535;
         int k = i & 65535;
         float[] b = celtium$basis;
+        if (((org.taumc.celeritas.mixin.core.BufferBuilderAccessor) buffer).celtium$vertexFormat()
+                == net.minecraft.client.renderer.vertex.DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP) {
+            // The four vertices as one bulk write in the particle layout (position 3F, uv 2F, colour 4UB, light 2S -
+            // seven ints a vertex), the same bytes the twenty per-element calls below write one switch at a time.
+            org.taumc.celeritas.mixin.core.BufferBuilderAccessor access =
+                    (org.taumc.celeritas.mixin.core.BufferBuilderAccessor) buffer;
+            double ox = access.celtium$xOffset(), oy = access.celtium$yOffset(), oz = access.celtium$zOffset();
+            int colour = ((int) (this.particleRed * 255.0F) & 0xFF) | (((int) (this.particleGreen * 255.0F) & 0xFF) << 8)
+                    | (((int) (this.particleBlue * 255.0F) & 0xFF) << 16)
+                    | (((int) (this.particleAlpha * 255.0F) & 0xFF) << 24);
+            int light = (k & 0xFFFF) | (j << 16);
+            int[] v = celtium$quad;
+            // Rounded as BufferBuilder.pos rounds: the float sum first, then (float) (sum + offset) in double.
+            celtium$vertex(v, 0, (float) (f5 + b[0] * f4 + ox), (float) (f6 + b[1] * f4 + oy),
+                    (float) (f7 + b[2] * f4 + oz), f1, f3, colour, light);
+            celtium$vertex(v, 7, (float) (f5 + b[3] * f4 + ox), (float) (f6 + b[4] * f4 + oy),
+                    (float) (f7 + b[5] * f4 + oz), f1, f2, colour, light);
+            celtium$vertex(v, 14, (float) (f5 + b[6] * f4 + ox), (float) (f6 + b[7] * f4 + oy),
+                    (float) (f7 + b[8] * f4 + oz), f, f2, colour, light);
+            celtium$vertex(v, 21, (float) (f5 + b[9] * f4 + ox), (float) (f6 + b[10] * f4 + oy),
+                    (float) (f7 + b[11] * f4 + oz), f, f3, colour, light);
+            buffer.addVertexData(v);
+            info.cancel();
+            return;
+        }
         buffer.pos(f5 + b[0] * f4, f6 + b[1] * f4, f7 + b[2] * f4).tex(f1, f3)
                 .color(this.particleRed, this.particleGreen, this.particleBlue, this.particleAlpha)
                 .lightmap(j, k).endVertex();
@@ -121,6 +146,22 @@ public abstract class ParticleMixin {
                 .color(this.particleRed, this.particleGreen, this.particleBlue, this.particleAlpha)
                 .lightmap(j, k).endVertex();
         info.cancel();
+    }
+
+    /** One quad in the particle layout, reused: addVertexData copies it into the buffer. */
+    @org.spongepowered.asm.mixin.Unique
+    private static final int[] celtium$quad = new int[28];
+
+    @org.spongepowered.asm.mixin.Unique
+    private static void celtium$vertex(int[] v, int at, float x, float y, float z, float u, float w, int colour,
+            int light) {
+        v[at] = Float.floatToRawIntBits(x);
+        v[at + 1] = Float.floatToRawIntBits(y);
+        v[at + 2] = Float.floatToRawIntBits(z);
+        v[at + 3] = Float.floatToRawIntBits(u);
+        v[at + 4] = Float.floatToRawIntBits(w);
+        v[at + 5] = colour;
+        v[at + 6] = light;
     }
 
     /** The same call the original makes - routed through the mixin so the light cache applies to our fast path too. */
