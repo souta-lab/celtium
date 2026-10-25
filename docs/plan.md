@@ -48,7 +48,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | 報告 | 状況 |
    |---|---|
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
-   | スパイク（入室直後・まれ） | model pool/snapshot全コピー修正済み。10/25の日本語・1920×1080・Wayland・視点回転profileではwarm [400,980) の50ms超0枚・最大17.015ms。入室停止の全帰属は未完、実デスクトップのまれなspikeは未再現（[証拠](evidence/spikes-2026-10-25.json)） |
+   | スパイク（入室直後・まれ） | model pool全コピー修正済み。視点回転profileでwarmの50ms超0枚・最大17ms。入室停止は未帰属（[証拠](evidence/spikes-2026-10-25.json)） |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
    | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 解放したarena区間を、それを読みうる提出の完了まで再利用しない（`de280e72a`。batched提出ではupload batchがフレーム本体より先にqueueへ入る） |
    | F3+T が重い | reload自体が 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
@@ -65,7 +65,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
      `d4ea7dfd4` で AMD 1.35x（対前 0.939x）。残差は Xaero 配下25%（JFR）: tile ごとの小 draw の per-batch 費用（texture毎に新group）と
      raw FBO bind ごとの window flush。group 開始の内訳（census、`daf13af1f`）: 直前groupが他要因で閉じた 34%・texture 31%・format 26%・state 9%。
      **最大の閉じ手は model display list の replay**（761k回 ≒ 描いた immediate group 718k）。texture配列化だけでは31%止まり。
-     棄却: 不透明なreplayを先行runへ寄せる並べ替え（switch試作）は対象45件のみ＝間に挟まるのは影・文字・blend等の非不透明draw。
+     棄却: 不透明replayの並べ替え（対象45件のみ、`e1c747092`）。
      **次の単位**: model replay と immediate を一つの順序付きstreamに載せる（`new_architecture.md` Stage 1 の packet化）。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
