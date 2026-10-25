@@ -153,11 +153,19 @@ public final class EndPortalProducer {
             Tessellator tessellator = Tessellator.getInstance();
             BufferBuilder buffer = tessellator.getBuffer();
             buffer.begin(7, DefaultVertexFormats.POSITION_COLOR);
-            for (int i = 0; i < batch.count; i++) {
-                if (batch.passes[i] > j) {
-                    emit(buffer, batch.x[i], batch.y[i], batch.z[i], batch.faces[i], batch.offset[i], r, g, b);
-                }
+            if (j == 0) {
+                // The positions are the same in every layer - only the colour and the set of blocks still in it
+                // change - so they are built once per draw instead of once per layer through BufferBuilder's
+                // per-element calls (the emit loop was most of this producer's cost in the warm profile).
+                prepareVertices(batch, layers, buffer);
             }
+            int colour = (int) (r * 255.0F) | ((int) (g * 255.0F) << 8) | ((int) (b * 255.0F) << 16) | (255 << 24);
+            int vertices = layerVertices[j];
+            int[] data = VERTICES;
+            for (int v = 0; v < vertices; v++) {
+                data[v * 4 + 3] = colour;
+            }
+            buffer.addVertexData(vertices * 4 == data.length ? data : java.util.Arrays.copyOf(data, vertices * 4));
             tessellator.draw();
             GlStateManager.popMatrix();
             GlStateManager.matrixMode(5888);
@@ -173,44 +181,104 @@ public final class EndPortalProducer {
         }
     }
 
-    private static void emit(BufferBuilder buffer, double x, double y, double z, int faces, float f, float r, float g,
-            float b) {
+    /** POSITION_COLOR vertices of every face of every block, four ints each (x, y, z, colour), blocks by passes. */
+    private static int[] VERTICES = new int[0];
+    /** Vertices that are still in layer j: the blocks are ordered by their layer count, so each layer is a prefix. */
+    private static int[] layerVertices = new int[16];
+    private static int[] order = new int[64];
+
+    /**
+     * Fills {@link #VERTICES} with the batch's faces in vanilla's vertex order, the blocks sorted by their layer
+     * count (most first) so a layer's blocks are a prefix, and {@link #layerVertices} with each layer's prefix length.
+     * Positions carry the buffer's translation exactly as {@code BufferBuilder.pos} would add it.
+     */
+    private static void prepareVertices(Batch batch, int layers, BufferBuilder buffer) {
+        int n = batch.count;
+        if (order.length < n) {
+            order = new int[Math.max(n, order.length * 2)];
+        }
+        for (int i = 0; i < n; i++) {
+            int k = i;
+            // Insertion by descending pass count; batches are a few dozen blocks.
+            while (k > 0 && batch.passes[order[k - 1]] < batch.passes[i]) {
+                order[k] = order[k - 1];
+                k--;
+            }
+            order[k] = i;
+        }
+        int total = 0;
+        for (int i = 0; i < n; i++) {
+            total += Integer.bitCount(batch.faces[i]) * 4;
+        }
+        if (VERTICES.length != total * 4) {
+            VERTICES = new int[total * 4];
+        }
+        if (layerVertices.length < layers) {
+            layerVertices = new int[layers];
+        }
+        java.util.Arrays.fill(layerVertices, 0, layers, 0);
+        org.taumc.celeritas.mixin.core.BufferBuilderAccessor access =
+                (org.taumc.celeritas.mixin.core.BufferBuilderAccessor) buffer;
+        double ox = access.celtium$xOffset(), oy = access.celtium$yOffset(), oz = access.celtium$zOffset();
+        int at = 0;
+        for (int o = 0; o < n; o++) {
+            int i = order[o];
+            int start = at;
+            at = faceVertices(VERTICES, at, batch.x[i] + ox, batch.y[i] + oy, batch.z[i] + oz, batch.faces[i],
+                    batch.offset[i]);
+            int added = (at - start) / 4;
+            for (int j = 0; j < Math.min(batch.passes[i], layers); j++) {
+                layerVertices[j] += added;
+            }
+        }
+    }
+
+    private static int vertex(int[] data, int at, double x, double y, double z) {
+        data[at] = Float.floatToRawIntBits((float) x);
+        data[at + 1] = Float.floatToRawIntBits((float) y);
+        data[at + 2] = Float.floatToRawIntBits((float) z);
+        return at + 4;
+    }
+
+    /** The faces in vanilla's TileEntityEndPortalRenderer vertex order, as raw ints; the colour slot is filled per layer. */
+    private static int faceVertices(int[] d, int at, double x, double y, double z, int faces, float f) {
         if ((faces & SOUTH) != 0) {
-            buffer.pos(x, y, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y + 1.0D, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x, y + 1.0D, z + 1.0D).color(r, g, b, 1.0F).endVertex();
+            at = vertex(d, at, x, y, z + 1.0D);
+            at = vertex(d, at, x + 1.0D, y, z + 1.0D);
+            at = vertex(d, at, x + 1.0D, y + 1.0D, z + 1.0D);
+            at = vertex(d, at, x, y + 1.0D, z + 1.0D);
         }
         if ((faces & NORTH) != 0) {
-            buffer.pos(x, y + 1.0D, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y + 1.0D, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x, y, z).color(r, g, b, 1.0F).endVertex();
+            at = vertex(d, at, x, y + 1.0D, z);
+            at = vertex(d, at, x + 1.0D, y + 1.0D, z);
+            at = vertex(d, at, x + 1.0D, y, z);
+            at = vertex(d, at, x, y, z);
         }
         if ((faces & EAST) != 0) {
-            buffer.pos(x + 1.0D, y + 1.0D, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y + 1.0D, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y, z).color(r, g, b, 1.0F).endVertex();
+            at = vertex(d, at, x + 1.0D, y + 1.0D, z);
+            at = vertex(d, at, x + 1.0D, y + 1.0D, z + 1.0D);
+            at = vertex(d, at, x + 1.0D, y, z + 1.0D);
+            at = vertex(d, at, x + 1.0D, y, z);
         }
         if ((faces & WEST) != 0) {
-            buffer.pos(x, y, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x, y, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x, y + 1.0D, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x, y + 1.0D, z).color(r, g, b, 1.0F).endVertex();
+            at = vertex(d, at, x, y, z);
+            at = vertex(d, at, x, y, z + 1.0D);
+            at = vertex(d, at, x, y + 1.0D, z + 1.0D);
+            at = vertex(d, at, x, y + 1.0D, z);
         }
         if ((faces & DOWN) != 0) {
-            buffer.pos(x, y, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x, y, z + 1.0D).color(r, g, b, 1.0F).endVertex();
+            at = vertex(d, at, x, y, z);
+            at = vertex(d, at, x + 1.0D, y, z);
+            at = vertex(d, at, x + 1.0D, y, z + 1.0D);
+            at = vertex(d, at, x, y, z + 1.0D);
         }
         if ((faces & UP) != 0) {
-            buffer.pos(x, y + (double) f, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y + (double) f, z + 1.0D).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x + 1.0D, y + (double) f, z).color(r, g, b, 1.0F).endVertex();
-            buffer.pos(x, y + (double) f, z).color(r, g, b, 1.0F).endVertex();
+            at = vertex(d, at, x, y + (double) f, z + 1.0D);
+            at = vertex(d, at, x + 1.0D, y + (double) f, z + 1.0D);
+            at = vertex(d, at, x + 1.0D, y + (double) f, z);
+            at = vertex(d, at, x, y + (double) f, z);
         }
+        return at;
     }
 
     private static FloatBuffer plane(float a, float b, float c, float d) {

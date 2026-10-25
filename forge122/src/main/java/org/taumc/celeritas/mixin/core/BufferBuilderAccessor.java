@@ -26,4 +26,13 @@ public interface BufferBuilderAccessor {
 
     @Accessor("vertexFormat")
     VertexFormat celtium$vertexFormat();
+
+    @Accessor("xOffset")
+    double celtium$xOffset();
+
+    @Accessor("yOffset")
+    double celtium$yOffset();
+
+    @Accessor("zOffset")
+    double celtium$zOffset();
 }
