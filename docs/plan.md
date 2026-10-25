@@ -61,7 +61,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 2. **性能**（KPI flags・1280×720・vsync off/260。いずれも load 上昇で形式 verdict なし）:
    - Xaero 導入前（`ef807429c`）: AMD 0.990x（3対とも<1・p95も低い）。Intel は未batch提出が原因で1.68x → 全deviceでbatch提出に
      （`811c29c46`、Intel 単体 3.6–4.0 → 2.2 ms）。live allocation の寄与は約0.15 ms（`b57e1e7ba`）で主因ではない。
-   - Xaero 入り利用者 instance: `0d937df8b` AMD 1.44x・Intel 1.45x → `c8ab8b838` **AMD 1.07–1.09x**（p50 1.29 ms）・**Intel 1.25x**（2.45 ms）。
+   - Xaero 入り利用者 instance: `0d937df8b` AMD 1.44x・Intel 1.45x → async present（提出とpresentを専用threadへ、既定ON）で **AMD 1.01x**（p50 1.22 ms）・**Intel 1.17x**（2.31 ms）、p95はまだCeleritas超。
      AMD は CPU律速、残差は per-draw 費用の分散。Intel は解像度依存の超過が 0.06 ms まで縮小（outline合成省略・depth OPTIMAL・solid discard特殊化）、
      残差は固定費。上限測定で棄却: 反復acquire barrier全省略 2–3%、texture跨ぎmerge（bindless上限）Intel 2.5%/AMD 4%、
      frame+present 1 submit（fence acquire、実merge確認済）中立、acquire狭小化は遅化、glthread仮説（無効でも3%）。

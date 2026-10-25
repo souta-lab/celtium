@@ -242,6 +242,8 @@ public final class VulkanSwapchain {
     private boolean lastPresentSubmitDone;
     /** Whether the last present actually reached the presentation engine; GL's composite may only be cancelled then. */
     private boolean lastPresentSucceeded;
+    private long asyncPresents;
+    private long asyncPresentFailures;
     private float lastPresentedMean = -1.0f;
     /** {@code -Dceltium.vulkan.presentReadback=true} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
@@ -1111,7 +1113,10 @@ public final class VulkanSwapchain {
                 + " presentWorstMillis=" + (this.presentWorstNanos / 1000000L)
                 + " presentPerCallMicros=" + (this.presentCalls == 0 ? 0 : this.presentNanos / this.presentCalls / 1000L)
                 + " preRecordedBlitPresents=" + this.preRecordedBlitPresents
-                + " preRecordedBlitRecords=" + this.preRecordedBlitRecords;
+                + " preRecordedBlitRecords=" + this.preRecordedBlitRecords
+                + " asyncPresents=" + this.asyncPresents + " asyncPresentFailures=" + this.asyncPresentFailures
+                + " presenterJoins=" + VulkanContext.presenterJoins
+                + " presenterJoinMicros=" + (VulkanContext.presenterJoinNanos / 1000L);
     }
 
     private void celtium$notePresentTime(long nanos) {
@@ -1138,6 +1143,18 @@ public final class VulkanSwapchain {
         // Reset rather than accumulated (audit S18): this describes the present that is about to happen. Left set, a single
         // out-of-date acquire would keep the caller rebuilding the swapchain for the rest of the session.
         this.outOfDate = false;
+        if (VulkanContext.ASYNC_PRESENT) {
+            // The acquire below needs the swapchain the worker may still be presenting to; the previous worker
+            // present's verdict is applied here, one frame late, which is the only state that path defers.
+            this.context.celtium$awaitPresenter();
+            int previous = this.context.celtium$presenterResult();
+            if (previous == VK_SUBOPTIMAL_KHR || previous == VK_ERROR_OUT_OF_DATE_KHR) {
+                this.outOfDate = true;
+            } else if (previous != VK_SUCCESS) {
+                this.asyncPresentFailures++;
+                this.outOfDate = true;
+            }
+        }
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
             return "present image: no swapchain or no source image";
         }
@@ -1271,6 +1288,19 @@ public final class VulkanSwapchain {
             // acquire and the bridge, signals renderFinished and the bridge's done semaphore per image.
             long bridgeDone = this.bridgeTarget != null
                     ? this.bridgeTarget.presentDoneSemaphore(index.get(0)) : bridgeDoneSemaphore;
+            if (VulkanContext.ASYNC_PRESENT && this.bridgeTarget == null && bridgeWaitSemaphore == VK_NULL_HANDLE
+                    && bridgeDone == VK_NULL_HANDLE && !FLICKER_SAMPLE && !PRESENT_READBACK
+                    && this.pendingDumpPaths.isEmpty() && this.presentTraces >= 4) {
+                long asyncStartedNanos = System.nanoTime();
+                this.context.celtium$presentAsync(recorded, acquire, renderFinished, this.swapchain, index.get(0));
+                presentSubmitNanos += System.nanoTime() - asyncStartedNanos;
+                presentStageCalls++;
+                this.asyncPresents++;
+                this.lastPresentSubmitDone = true;
+                this.lastPresentSucceeded = true;
+                return "present image: blitted " + width + "x" + height + " onto image " + index.get(0)
+                        + " (queued to the presenter)";
+            }
             long submitStartedNanos = System.nanoTime();
             String submitError = submitPreRecorded(stack, recorded,
                     new long[] {acquire, bridgeWaitSemaphore},

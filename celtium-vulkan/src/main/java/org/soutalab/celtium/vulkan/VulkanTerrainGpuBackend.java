@@ -8790,7 +8790,11 @@ this.frameBufferOpen = false;
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
             // flushes). A no-op when nothing batched - i.e. every run with batchFrameSubmits off.
-            this.context.celtium$flushBatchedSubmits();
+            // With the async presenter the batch stays pending for the present, which hands it to the worker together
+            // with the blit; presentFrame flushes it on the game thread if no present took it.
+            if (!VulkanContext.ASYNC_PRESENT) {
+                this.context.celtium$flushBatchedSubmits();
+            }
             // Deferred pipeline/pool teardowns run here rather than in a mid-frame wait: this is the point where the
             // frame's recording has been ended and submitted, so nothing can still name the old pipeline, its pools
             // or its layouts. Running them from waitForIdle measured worse (leg uniE8: 117 VUIDs of VkPipeline
@@ -14619,6 +14623,13 @@ this.frameBufferOpen = false;
         try {
             return celtium$presentFrameBody();
         } finally {
+            if (VulkanContext.ASYNC_PRESENT) {
+                try {
+                    this.context.celtium$flushBatchedSubmits();
+                } catch (RuntimeException | LinkageError error) {
+                    record("post-present flush failed: " + error);
+                }
+            }
             long presentNanos = System.nanoTime() - presentStart;
             if (presentNanos > 50_000_000L) {
                 System.out.println("[Celtium] CELTIUM_PRESENT_SLOW millis=" + (presentNanos / 1_000_000L)
@@ -17580,6 +17591,7 @@ this.frameBufferOpen = false;
             record("not releasing resources after a stall: " + reason);
             return false;
         }
+        this.context.celtium$awaitPresenter();
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
         synchronized (this.deviceWaitLock) {
@@ -17661,6 +17673,7 @@ this.frameBufferOpen = false;
             // The slot's submission is still queued in the batched list: its fence arms only when that list submits,
             // so the flush has to happen before the wait or the wait blocks on a fence nothing armed yet.
             this.context.celtium$flushBatchedSubmits();
+            this.context.celtium$fenceOnPresenter(deferredFence, true);
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
@@ -17751,6 +17764,9 @@ this.frameBufferOpen = false;
             if (deferredFence != 0) {
                 // Batched slot: its confirm lives in the reclaim callback, so the poll only triggers the poll -
                 // an armed-and-signalled batch fence reclaims the entry, which runs the slot confirmation exactly once.
+                if (this.context.celtium$fenceOnPresenter(deferredFence, false)) {
+                    continue;
+                }
                 int deferredStatus = vkGetFenceStatus(this.context.device(), deferredFence);
                 if (deferredStatus == org.lwjgl.vulkan.VK10.VK_SUCCESS
                         || deferredStatus == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
