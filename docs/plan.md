@@ -58,14 +58,12 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
-2. **性能**（jar `6aafefa6`・1280×720・vsync off/260、両run とも load上昇で形式上 NO_SPEED_VERDICT）:
-   AMD は Celeritas比 中央0.990x（3対とも<1、p95も3対とも低い）。**Intel UHD 630 は中央1.68x遅い**（p50 約3.0 vs 1.8 ms、3対一貫）。
-   Intel分離: `vkQueueSubmit` がclient threadの最大native（JFR）。live allocation数の寄与は実測で約0.4µs/個/frame
-   ＝現状約360個で約0.15ms（`b57e1e7ba`）＝主因ではない。次の判別: 解像度依存（GPU fill）か frameごとのCPU/driver費用か。
-   **10/25 Xaero導入後のinstanceでIntel 3.6x遅**＝原因はchain pair framebufferの毎pass再作成（窓サイズと比較していたため
-   512px等のmod FBOで常に不一致→`vkDeviceWaitIdle`）。修正後（jar `56292aa6`・Intel・Xaero入り・load 2.5→4.3でguard bypass）
-   p50 2.97–3.36ms（修正前jar 7.24–7.78、Celeritas 2.05–2.19）＝**残りの差は約1.45x**。形式verdict無し（同族armのframe数差>1.5xで全rep除外）。
-   その後 `goal.md` の基盤固有最適化・描画mod手法の吸収を paired KPI とスパイク計測で1つずつ。
+2. **性能**（KPI flags・1280×720・vsync off/260。いずれも load 上昇で形式 verdict なし）:
+   - Xaero 導入前（`ef807429c`）: AMD 0.990x（3対とも<1・p95も低い）。Intel は未batch提出が原因で1.68x → 全deviceでbatch提出に
+     （`811c29c46`、Intel 単体 3.6–4.0 → 2.2 ms）。live allocation の寄与は約0.15 ms（`b57e1e7ba`）で主因ではない。
+   - Xaero 入りの利用者 instance: mod FBO の毎pass再作成を除去（Devin `206746e83`）。`0d937df8b` で AMD 1.44x・Intel 1.45x、
+     `d4ea7dfd4` で AMD 1.35x（対前 0.939x）。残差は Xaero 配下25%（JFR）: tile ごとの小 draw の per-batch 費用（texture毎に新group）と
+     raw FBO bind ごとの window flush。**次の単位**: shader を texture 配列 index で引き（draw-manager ④）texture 跨ぎで group を結合。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
