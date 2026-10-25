@@ -23,6 +23,12 @@ final class PublishedFrameTextures {
     /** Framebuffer identity to {colour texture name, width, height}, as reported where the framebuffer was bound. */
     private final Map<Long, long[]> colorTextures = new ConcurrentHashMap<>();
 
+    /**
+     * The reverse of {@link #colorTextures}: colour texture name to the identity that last reported it. The draw path
+     * asks this per group, so it is a lookup rather than a scan of every framebuffer (JFR, leg xprof-amd).
+     */
+    private final Map<Integer, Long> identitiesByTexture = new ConcurrentHashMap<>();
+
     /** GL texture name to the texture published for it, which is what the sampling side resolves. */
     private final Map<Integer, VulkanGlTexture> published = new ConcurrentHashMap<>();
 
@@ -41,11 +47,19 @@ final class PublishedFrameTextures {
 
     /** Records a framebuffer's colour attachment. A zero name or an empty extent clears the entry. */
     void bindColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
+        Long key = Long.valueOf(framebufferIdentity);
         if (colorTexture == 0 || width <= 0 || height <= 0) {
-            this.colorTextures.remove(Long.valueOf(framebufferIdentity));
+            long[] removed = this.colorTextures.remove(key);
+            if (removed != null) {
+                this.identitiesByTexture.remove(Integer.valueOf((int) removed[0]), key);
+            }
             return;
         }
-        this.colorTextures.put(Long.valueOf(framebufferIdentity), new long[] { colorTexture, width, height });
+        long[] previous = this.colorTextures.put(key, new long[] { colorTexture, width, height });
+        if (previous != null && previous[0] != colorTexture) {
+            this.identitiesByTexture.remove(Integer.valueOf((int) previous[0]), key);
+        }
+        this.identitiesByTexture.put(Integer.valueOf(colorTexture), key);
         this.colorTextureReports++;
     }
 
@@ -59,13 +73,8 @@ final class PublishedFrameTextures {
         if (glTextureName == 0) {
             return Long.MIN_VALUE;
         }
-        for (Map.Entry<Long, long[]> entry : this.colorTextures.entrySet()) {
-            long[] reported = entry.getValue();
-            if (reported != null && reported[0] == glTextureName) {
-                return entry.getKey().longValue();
-            }
-        }
-        return Long.MIN_VALUE;
+        Long identity = this.identitiesByTexture.get(Integer.valueOf(glTextureName));
+        return identity == null ? Long.MIN_VALUE : identity.longValue();
     }
 
     /** {@return the colour texture name recorded for an identity, or 0 when there is none}. */

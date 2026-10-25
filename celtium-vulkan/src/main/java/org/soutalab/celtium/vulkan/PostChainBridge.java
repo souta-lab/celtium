@@ -603,6 +603,12 @@ b.frameBufferOpen = false;
      * the published wrapper's recorded layout, which is what a descriptor written from it carries.
      */
     void celtium$reportPairLayout(String site) {
+        // The budget first: the summary walks every pair and builds a string, and this runs at every pass that samples
+        // a published name - with Xaero's Minimap that was 26% of pass recording (JFR, leg xprof-amd) long after the
+        // bounded lines were spent.
+        if (b.pairLayoutLogs >= b.PAIR_LAYOUT_LINES) {
+            return;
+        }
         GllessFrameTarget pairTarget = b.offTargetTarget();
         if (pairTarget == null) {
             return;
