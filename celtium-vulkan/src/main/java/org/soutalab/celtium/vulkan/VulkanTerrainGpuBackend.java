@@ -7498,6 +7498,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // matrices were taken, and a later group's rotations must not be attributed to this one.
                     this.currentGroupRotations = String.join(" ", this.rotationLog);
                 }
+                if (MERGE_CENSUS && this.openModelRunGroup != null && !this.immediateGroups.isEmpty()
+                        && this.immediateGroups.get(this.immediateGroups.size() - 1) == this.openModelRunGroup) {
+                    // An immediate group opened while a model instance run is open ends that run: which draws these are
+                    // (format, blend, and the game class that issued them) decides what could be moved out of the way.
+                    this.mergeRefusal("run-break-f" + formatId + "-b" + state[0] + "-" + celtium$censusCaller());
+                }
                 if (MERGE_CENSUS) {
                     // Why this group was opened, counted where it is opened. The refusal census and the close census
                     // together explained 102 of 182 starts, so the rest must be openings this path reaches without either
@@ -13380,6 +13386,18 @@ this.frameBufferOpen = false;
     private static final boolean CENSUS_BY_PIPELINE = Boolean.getBoolean("celtium.vulkan.mergeCensusPipelines");
     /** Refusals by the term that actually fired, filled only when {@link #MERGE_CENSUS} is on. */
     private final java.util.Map<String, Integer> mergeRefusals = new java.util.TreeMap<>();
+
+    /** The first Minecraft/mod class on the stack, for the census only (a stack walk per call). */
+    private static String celtium$censusCaller() {
+        return StackWalker.getInstance().walk(frames -> frames
+                .map(StackWalker.StackFrame::getClassName)
+                .filter(name -> !name.startsWith("org.soutalab") && !name.startsWith("org.taumc")
+                        && !name.startsWith("org.embeddedt") && !name.startsWith("java.")
+                        && !name.startsWith("org.lwjgl") && !name.contains("Tessellator")
+                        && !name.contains("WorldVertexBufferUploader") && !name.contains("BufferBuilder")
+                        && !name.contains("GlStateManager"))
+                .findFirst().map(name -> name.substring(name.lastIndexOf('.') + 1)).orElse("?"));
+    }
 
     private void mergeRefusal(String term) {
         this.mergeRefusals.merge(term, 1, Integer::sum);
