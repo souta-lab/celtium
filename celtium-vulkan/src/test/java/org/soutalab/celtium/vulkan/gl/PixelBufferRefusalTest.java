@@ -32,6 +32,13 @@ class PixelBufferRefusalTest {
     }
 
     @Test
+    void offsetZeroIntoAnUnpackBufferIsData() {
+        assertTrue(CeltiumGlStub.carriesPixels(0L, 5));
+        assertTrue(CeltiumGlStub.carriesPixels(0x7f000000L, 0));
+        org.junit.jupiter.api.Assertions.assertFalse(CeltiumGlStub.carriesPixels(0L, 0));
+    }
+
+    @Test
     void theOffsetIsReportedVerbatim() {
         // The diagnostic has to carry the offset: a clamped or formatted one makes the refused call unidentifiable.
         assertTrue(CeltiumGlStub.pixelBufferRefusal(1, 4096L, "op").contains("offset=4096"));

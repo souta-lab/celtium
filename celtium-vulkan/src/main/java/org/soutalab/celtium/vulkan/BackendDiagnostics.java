@@ -617,7 +617,12 @@ final class BackendDiagnostics {
                 boolean wrote = b.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
                         dumpImage.height(), path);
                 System.out.println("[Celtium] CELTIUM_TEXTURE_IMAGE id=" + dumpGroup.texture + " path=" + path
-                        + " " + dumpImage.width() + "x" + dumpImage.height() + " wrote=" + wrote);
+                        + " " + dumpImage.width() + "x" + dumpImage.height() + " wrote=" + wrote
+                        + " groupTarget=0x" + Long.toHexString(dumpGroup.target) + " format=" + dumpGroup.formatId
+                        + " blend=" + dumpGroup.blendSrc + "/" + dumpGroup.blendDst
+                        + " color=" + java.util.Arrays.toString(dumpGroup.color)
+                        + " verts=" + (dumpGroup.mesh == null ? -1 : dumpGroup.mesh.vertexCount())
+                        + " viewport=" + java.util.Arrays.toString(dumpGroup.viewportValues));
                 break;
             }
         }

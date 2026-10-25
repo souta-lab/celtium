@@ -1440,6 +1440,8 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Refusals caused by a bound pixel buffer, counted once so the diagnostic is bounded. */
     private int pixelBufferRefusals;
+    /** Bounded count of the CELTIUM_PBO_UPLOAD lines: texture uploads read from a bound pixel unpack buffer. */
+    private int pboUploadLogs;
 
     /** {@code GL_PIXEL_PACK_BUFFER}: with one bound, a readback's {@code pixels} argument is a buffer offset, not a pointer. */
     static final int GL_PIXEL_PACK_BUFFER = 0x88EB;
@@ -4688,6 +4690,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_RGBA = 0x1908;
     private static final int GL_BGRA = 0x80E1;
     private static final int GL_UNSIGNED_INT_8_8_8_8_REV = 0x8367;
+    private static final int GL_UNSIGNED_INT_8_8_8_8 = 0x8035;
 
     /**
      * The largest level worth mirroring: 4096x4096 RGBA8, the biggest atlas the game builds. A larger upload is
@@ -4799,7 +4802,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (isProxyTarget(target) || targetName == 0) {
             return;
         }
-        if (pixels == 0L) {
+        if (!carriesPixels(pixels, this.pixelUnpackBuffer)) {
             undefinedLevel(targetName, level, width, extentHeight, depth);
             return;
         }
@@ -4818,6 +4821,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.texCaptures.put(texLevelKey(targetName, level),
                 new TexCapture(width, extentHeight, rgba, true, this.texUploadSerial.incrementAndGet()));
         this.fullCaptures.incrementAndGet();
+    }
+
+    /**
+     * {@return whether a texture upload's {@code pixels} argument names data}. With a pixel unpack buffer bound it is an
+     * offset into that buffer, and offset 0 is its first byte - not "no data". Xaero's Minimap uploads every map tile
+     * that way ({@code glTexSubImage2D(..., 0L)} from a PBO), and reading 0 as NULL dropped all of them: the minimap
+     * showed the world through itself, every tile batch refused for want of a complete image.
+     */
+    static boolean carriesPixels(long pixels, int unpackBuffer) {
+        return pixels != 0L || unpackBuffer > 0;
     }
 
     /**
@@ -4869,7 +4882,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         int x = xOffset;
         int y = yOffset;
         int name = uploadTargetName(target);
-        if (name == 0 || pixels == 0L || width <= 0 || height <= 0) {
+        if (this.pixelUnpackBuffer > 0 && this.pboUploadLogs < 8) {
+            this.pboUploadLogs++;
+            ByteBuffer storage = this.bufferStore.get(this.pixelUnpackBuffer);
+            System.out.println("[Celtium] CELTIUM_PBO_UPLOAD texture=" + name + " level=" + level + " at=" + x + ","
+                    + y + " size=" + width + "x" + height + " format=0x" + Integer.toHexString(format) + " type=0x"
+                    + Integer.toHexString(type) + " buffer=" + this.pixelUnpackBuffer + " offset=" + pixels
+                    + " storage=" + (storage == null ? "none" : storage.capacity() + "B"));
+        }
+        if (name == 0 || !carriesPixels(pixels, this.pixelUnpackBuffer) || width <= 0 || height <= 0) {
             return;
         }
         ByteBuffer patch = uploadToRgba8(width, height, format, type, pixels);
@@ -4997,7 +5018,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * A {@code null} is never turned into a guess: the caller counts it and keeps the level's previous content, because
      * an upload read with the wrong layout would be a silently wrong atlas rather than a missing one. Understood are
      * {@code GL_RGBA} and {@code GL_BGRA} with {@code GL_UNSIGNED_BYTE}, either of those with
-     * {@code GL_UNSIGNED_INT_8_8_8_8_REV} - the packed {@code 0xAARRGGBB} form the atlas uploads use - and
+     * {@code GL_UNSIGNED_INT_8_8_8_8_REV} - the packed {@code 0xAARRGGBB} form the atlas uploads use - or with
+     * {@code GL_UNSIGNED_INT_8_8_8_8}, and
      * {@code GL_RGB} with {@code GL_UNSIGNED_BYTE}. Rows are read where GL would read them, padded to the recorded
      * unpack alignment; a row length or a pixel/row skip that is not the default is refused rather than misread.
      */
@@ -5078,9 +5100,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             out.clear();
             return out;
         }
-        if (type == GL_UNSIGNED_INT_8_8_8_8_REV && (format == GL_RGBA || bgra)) {
-            // The packed form puts the first component in the least significant bits of the 32-bit word, so the word
-            // is read in host order and unpacked: for GL_BGRA that is the game's own 0xAARRGGBB int.
+        boolean reversed = type == GL_UNSIGNED_INT_8_8_8_8_REV;
+        if ((reversed || type == GL_UNSIGNED_INT_8_8_8_8) && (format == GL_RGBA || bgra)) {
+            // The packed forms read the 32-bit word in host order. _REV puts the first component in the least
+            // significant bits - for GL_BGRA that is the game's own 0xAARRGGBB int - and the plain form puts it in the
+            // most significant bits (Xaero's Minimap uploads its tiles as GL_BGRA/GL_UNSIGNED_INT_8_8_8_8).
             int stride = aligned(width * 4, this.unpackAlignment);
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (height - 1) * stride + width * 4)
                     .order(java.nio.ByteOrder.nativeOrder());
@@ -5089,6 +5113,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 int base = row * stride;
                 for (int x = 0; x < width; x++) {
                     int packed = source.getInt(base + x * 4);
+                    if (!reversed) {
+                        packed = Integer.reverseBytes(packed);
+                    }
                     int first = packed & 0xFF;
                     int third = (packed >>> 16) & 0xFF;
                     out.put((byte) (bgra ? third : first)).put((byte) ((packed >>> 8) & 0xFF))
