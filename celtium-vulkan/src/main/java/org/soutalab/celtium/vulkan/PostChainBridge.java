@@ -891,4 +891,22 @@ b.frameBufferOpen = false;
             }
         }
     }
+
+    /** Writes every chain pair at its own extent; see {@code VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT}. */
+    void dumpChainPairs(String stage) {
+        GllessFrameTarget glless = b.offTargetTarget();
+        if (glless == null) {
+            return;
+        }
+        for (Long chainId : new java.util.ArrayList<Long>(glless.chainPairIdentities())) {
+            long image = glless.chainPairColorImage(chainId.longValue());
+            long[] extent = glless.chainPairExtent(chainId.longValue());
+            if (image == 0L || extent == null) {
+                continue;
+            }
+            b.celtium$dumpOwnedImage("pair-0x" + Long.toHexString(chainId.longValue()), image,
+                    "celtium-" + stage + ".png", "identity=0x" + Long.toHexString(chainId.longValue())
+                            + " extent=" + extent[0] + "x" + extent[1], (int) extent[0], (int) extent[1]);
+        }
+    }
 }

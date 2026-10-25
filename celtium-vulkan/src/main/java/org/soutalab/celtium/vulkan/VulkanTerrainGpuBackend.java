@@ -3164,6 +3164,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int SHADOW_DUMP_COUNT =
             Integer.getInteger("celtium.vulkan.shadowDumpCount", 4).intValue();
     static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
+    /**
+     * {@code -Dceltium.debug.dumpPairsAtPresent=N}: at present N, write every chain pair (each mod or vanilla
+     * framebuffer's own image) at its own extent into the game directory, to see where a framebuffer chain loses
+     * its picture. Off (0) by default.
+     */
+    static final int DUMP_PAIRS_AT_PRESENT = Integer.getInteger("celtium.debug.dumpPairsAtPresent", 0).intValue();
     static final int CHAIN_FRAME_DUMPS = Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue();
 
     /** {@return a few numbers that tell a perspective projection from an orthographic one}. */
@@ -7634,6 +7640,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // The registry records this group was built against: the fast path asks "is the offer's image
                 // still this object" instead of repeating the descriptor lookup the record decides. A re-created
                 // texture is a different object, which is the slow path's `descriptor != prepared.descriptor` term.
+                // A framebuffer's colour attachment is published over the framebuffer's image before the capture:
+                // get() would otherwise create (or keep) an empty mirror for the name, and the group would draw from
+                // it even after the prepare published the real image (Xaero's Minimap's see-through rotation pass).
+                if (boundTexture != 0 && !this.publishedFrameImages.containsKey(Integer.valueOf(boundTexture))
+                        && celtium$framebufferIdentityForColorTexture(boundTexture) != Long.MIN_VALUE) {
+                    celtium$publishFramebufferColorTexture(boundTexture);
+                }
                 this.currentGroupTextureImage = celtium$registry().get(boundTexture);
                 // Fill the shared array as batches are accepted: the index this returns is what a converted pipeline will
                 // put in its push block, and registering here means a texture is written once per wrapper, not per group.
@@ -9625,7 +9638,14 @@ this.frameBufferOpen = false;
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
         long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
-        if (textureId != 0 && (texture == null || !texture.hasFullContent())) {
+        // A framebuffer's colour attachment stands for the image that framebuffer draws into even when the stub keeps
+        // a mirror under the name: a mod that allocates its attachment with glTexImage2D(null) gets an (empty) mirror,
+        // and that mirror used to win. Xaero's Minimap's rotation pass then sampled black from texture 124 while its
+        // scaling framebuffer held the map (pair dump, leg pairdump2-amd) - the minimap was see-through.
+        boolean unpublishedAttachment = textureId != 0 && texture != null
+                && !this.publishedFrameImages.containsKey(Integer.valueOf(textureId))
+                && celtium$framebufferIdentityForColorTexture(textureId) != Long.MIN_VALUE;
+        if (textureId != 0 && (texture == null || !texture.hasFullContent() || unpublishedAttachment)) {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
             // into is what it stands for (see celtium$publishFramebufferColorTexture). Resolved here, where a bound
             // name becomes a descriptor, so every sampling path gets the same rule.
@@ -9969,7 +9989,8 @@ this.frameBufferOpen = false;
             return false;
         }
         GllessFrameTarget offTarget = offTargetTarget();
-        if (offTarget == null || offTarget.chainPairColorImage(group.target) == 0L) {
+        long targetPair = offTarget == null ? 0L : offTarget.chainPairColorImage(group.target);
+        if (targetPair == 0L) {
             return false;
         }
         // The offer-time fact is the bind census, not the publication: a name is published over the pair image when the
@@ -9985,7 +10006,12 @@ this.frameBufferOpen = false;
                 || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(owner)))) {
             return false;
         }
-        return "chain-pair".equals(GllessFrameTarget.routeLabelForBinding(owner, false));
+        // Self means the same image: the sampled name's framebuffer must route to the pair this group's pass writes.
+        // Any chain pair was enough before, so a mod framebuffer drawn into another mod framebuffer was dropped as a
+        // self composite - Xaero's Minimap's rotation pass sampling its scaling framebuffer wrote nothing, and the
+        // minimap was see-through (pair dump, leg xmap2-pairs-amd: scaling pair held the map, rotation pair empty).
+        return "chain-pair".equals(GllessFrameTarget.routeLabelForBinding(owner, false))
+                && offTarget.chainPairColorImage(owner) == targetPair;
     }
 
     /**
@@ -14615,6 +14641,9 @@ this.frameBufferOpen = false;
      * screen, the world, or a frame that never got drawn.
      */
     private void dumpFrameIfRequested(int presented) {
+        if (DUMP_PAIRS_AT_PRESENT > 0 && presented == DUMP_PAIRS_AT_PRESENT) {
+            this.postChainBridge.dumpChainPairs("present" + presented);
+        }
         // Keep the fixture's own dump fresh as well. It asks for it once, and the write happens at the next present;
         // when the run ends before that present - which is what a capture followed by a shutdown does - the file on
         // disk is still the early one, and the picture assertions measure a frame from before the world existed.

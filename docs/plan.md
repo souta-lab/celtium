@@ -50,15 +50,14 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
    | スパイク（入室直後・まれ） | model pool/snapshot全コピー修正済み。10/25の日本語・1920×1080・Wayland・視点回転profileではwarm [400,980) の50ms超0枚・最大17.015ms。入室停止の全帰属は未完、実デスクトップのまれなspikeは未再現（[証拠](evidence/spikes-2026-10-25.json)） |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
-   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: upload copyの前に書込み前の実行依存（WAR）を追加。解放直後のindex領域を飛行中フレームが読んでいた |
-   | ワールド退出後ボタン無し | **未再現**（fixture: 既定・日本語/Unicode/1920×1080 とも表示）。手順差（ポーズ→終了・非16:9）の手掛かり待ち |
+   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 解放したarena区間を、それを読みうる提出の完了まで再利用しない（`de280e72a`。batched提出ではupload batchがフレーム本体より先にqueueへ入る） |
+   | F3+T が重い | reload自体が 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
+   | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrixの経路、tile upload（Devin）、mod FBO同士のsample（空mirrorより公開を優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
+   | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080で表示）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
-   | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`、`-Dceltium.debug.periodicLogs=true`で全出力） |
+   | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
-   native texture environment 所有へ移行し、モデルごとのGL問合せを撤去。REPLACE/CONSTANT の発光用materialを修正し、glowのmain合成はnative compositorで表示。
-   空framebufferのnative初期化・公開cache失効・main imageのGENERAL契約・world終了時material cache寿命を修正。
-   **同一最終JARでAMD/Intelのworld往復 PASSED・画像gate PASSED・validation ON 0件**。
-   4画面＋qmagnetを保存（HEI2画面は未較正、合格には数えない）。[実装・失敗・検証](evidence/native-texture-owner-2026-10-25.md)。
+   texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（jar `6aafefa6`・1280×720・vsync off/260、両run とも load上昇で形式上 NO_SPEED_VERDICT）:
    AMD は Celeritas比 中央0.990x（3対とも<1、p95も3対とも低い）。**Intel UHD 630 は中央1.68x遅い**（p50 約3.0 vs 1.8 ms、3対一貫）。
    Intel分離: `vkQueueSubmit` がclient threadの最大native（JFR）。live allocation数の寄与は実測で約0.4µs/個/frame
