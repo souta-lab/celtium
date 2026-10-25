@@ -248,8 +248,15 @@ public final class VulkanSwapchain {
     private int flickerSamples;
     /** {@code -Dceltium.debug.flickerDump=true}: write the two frames the flicker count compares. */
     private static final boolean FLICKER_DUMP = Boolean.getBoolean("celtium.debug.flickerDump");
+    /** The present after which flicker pairs are sampled ({@code -Dceltium.debug.flickerFrom}, default 150). */
+    private static final int FLICKER_FROM = Integer.getInteger("celtium.debug.flickerFrom", 150).intValue();
+    /** How many consecutive-frame pairs are compared ({@code -Dceltium.debug.flickerPairs}, default 1). */
+    private static final int FLICKER_PAIRS = Integer.getInteger("celtium.debug.flickerPairs", 1).intValue();
+    /** Presents between sampled pairs ({@code -Dceltium.debug.flickerEvery}, default 30). */
+    private static final int FLICKER_EVERY = Integer.getInteger("celtium.debug.flickerEvery", 30).intValue();
+    private long flickerWorstChanged = -1L;
 
-    /** Writes an ARGB block to {@code /tmp/<name>}; diagnostic only. */
+    /** Writes an ARGB block to {@code <name>} in the game directory; diagnostic only. */
     private static void writeIndexedPng(int[] pixels, int width, int height, String name) {
         if (pixels == null || width <= 0 || height <= 0 || pixels.length < width * height) {
             return;
@@ -258,7 +265,7 @@ public final class VulkanSwapchain {
             java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
                     java.awt.image.BufferedImage.TYPE_INT_RGB);
             image.setRGB(0, 0, width, height, pixels, 0, width);
-            javax.imageio.ImageIO.write(image, "png", new java.io.File("/tmp", name));
+            javax.imageio.ImageIO.write(image, "png", new java.io.File(name));
         } catch (java.io.IOException | RuntimeException ignored) {
             // A diagnostic that cannot write says nothing; the count line above still reports.
         }
@@ -1298,7 +1305,9 @@ public final class VulkanSwapchain {
             // sample). Two full readbacks, so it is a diagnostic switch, not a default.
             // The first frames are the loading screen, where a difference says nothing about the world: sample after
             // the world has been up for a while (present count, not a timer, so two legs sample the same frames).
-            if (FLICKER_SAMPLE && this.flickerSamples < 2 && ++this.flickerSeen > 150) {
+            boolean flickerDue = FLICKER_SAMPLE && this.flickerSamples < 2 * FLICKER_PAIRS && ++this.flickerSeen > FLICKER_FROM
+                    && (this.flickerPrevious != null || (this.flickerSeen - FLICKER_FROM) % Math.max(1, FLICKER_EVERY) == 1);
+            if (flickerDue) {
                 int[] pixels = readBackBlock(this.context, image, this.format, this.width, this.height, 0, 0,
                         this.width, this.height);
                 if (pixels != null) {
@@ -1323,13 +1332,14 @@ public final class VulkanSwapchain {
                                 maxDelta = delta;
                             }
                         }
-                        if (FLICKER_DUMP) {
+                        if (FLICKER_DUMP && changed > this.flickerWorstChanged) {
+                            this.flickerWorstChanged = changed;
                             // The pair the count above is about, as images: where the differing pixels are says whether
                             // the flicker sits on one object's edges (ordering) or across its whole surface (shading).
                             writeIndexedPng(this.flickerPrevious, this.width, this.height, "celtium-flicker-prev.png");
                             writeIndexedPng(pixels, this.width, this.height, "celtium-flicker-cur.png");
                         }
-                        System.out.println("[Celtium] CELTIUM_FLICKER samples=2 changed=" + changed + "/" + count
+                        System.out.println("[Celtium] CELTIUM_FLICKER present=" + this.flickerSeen + " changed=" + changed + "/" + count
                                 + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
                                         (double) changed / (double) count)
                                 + " maxDelta=" + maxDelta);

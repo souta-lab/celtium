@@ -557,6 +557,26 @@ public final class VulkanArena {
         if (segment.arena != this) {
             throw new IllegalArgumentException("The segment belongs to a different arena.");
         }
+        if (this.deleted || segment.free || segment.retiring) {
+            return;
+        }
+        // Not reusable yet: the frame being recorded may already have drawn from this range, and with batched frame
+        // submits the upload batch that would refill it reaches the queue before that frame's own command buffer -
+        // so the draw would read the new owner's bytes for one frame. That is the stained-glass flicker: a
+        // translucent re-sort frees and reallocates index ranges every time the camera moves. The range goes back to
+        // the free list once the submission that could name it has completed (the retired-cleanup contract).
+        segment.retiring = true;
+        this.retiringSegments++;
+        this.context.celtium$retireCleanup("arena.free", () -> release(segment));
+    }
+
+    /** Segments freed but not yet reusable; see {@link #free}. */
+    private long retiringSegments;
+
+    /** The free-list half of {@link #free}, run once nothing in flight can read the range. */
+    private void release(Segment segment) {
+        segment.retiring = false;
+        this.retiringSegments--;
         if (this.deleted || segment.free) {
             return;
         }
@@ -737,6 +757,8 @@ public final class VulkanArena {
         private int offset;
         private int length;
         private boolean free;
+        /** Freed by its owner, waiting for the submission that could still read it; see {@link VulkanArena#free}. */
+        private boolean retiring;
         private Segment prev;
         private Segment next;
 
