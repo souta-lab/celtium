@@ -90,12 +90,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         @Override public void recordFrameEndTimestamp() {
             VulkanTerrainGpuBackend.this.recordFrameEndTimestamp();
         }
-        @Override public boolean isIntelDevice() {
-            // Decided once, from the device that was actually chosen: the submission strategy is per GPU, not global.
-            String name = VulkanTerrainGpuBackend.this.context == null ? null
-                    : VulkanTerrainGpuBackend.this.context.deviceName();
-            return name != null && name.startsWith("Intel");
-        }
         @Override public VulkanCommandBufferState commandState() { return VulkanTerrainGpuBackend.this.commandState; }
         @Override public VulkanContext context() { return VulkanTerrainGpuBackend.this.context; }
         @Override public long fence() { return VulkanTerrainGpuBackend.this.fence; }

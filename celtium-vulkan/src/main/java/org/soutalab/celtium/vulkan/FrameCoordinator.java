@@ -59,14 +59,16 @@ public final class FrameCoordinator {
     /**
      * {@return whether this device's frames are submitted in one batch}.
      * <p>
-     * The property, when set, decides. Otherwise the device does: batching is kept on the discrete parts where it was
-     * measured cheaper, and turned off on Intel's integrated parts where it was measured 2.7x slower.
+     * The property, when set, decides. Otherwise every device batches. The Intel exception above was measured before the
+     * frame-slot and upload-ordering fixes; re-measured 2026-10-25 on UHD 630 (jar 276f85c17c60d579, KPI flags,
+     * alternated): batched 2.23 / 2.23 ms p50, unbatched 3.56 / 4.04 ms, with 10k against 53-64k queue submits. Intel's
+     * driver pays per vkQueueSubmit, and unbatched frames were what made Intel 1.68x slower than Celeritas.
      */
     private boolean batchFrameSubmits() {
         if (BATCH_FRAME_SUBMITS_OVERRIDE != null) {
             return BATCH_FRAME_SUBMITS_OVERRIDE.booleanValue();
         }
-        return !this.host.isIntelDevice();
+        return true;
     }
 
     /** What the coordinator needs from the renderer that owns the frame. */
@@ -82,8 +84,6 @@ public final class FrameCoordinator {
          */
         void recordFrameEndTimestamp();
 
-        /** {@return whether the device is an Intel one}, where batched frame submits were measured 2.7x slower. */
-        boolean isIntelDevice();
         /** Stamps the direct submit path for the submit-to-fence distribution the summary reports. */
         void celtium$noteDirectSubmit();
         VulkanCommandBufferState commandState();
