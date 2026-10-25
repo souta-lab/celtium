@@ -9603,9 +9603,11 @@ this.frameBufferOpen = false;
      */
     PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
         Object pass = this.lastUiPass;
+        this.prepareCacheCalls++;
         if (pass != this.prepareCachePass) {
             java.util.Arrays.fill(this.prepareCacheValue, null);
             this.prepareCachePass = pass;
+            this.prepareCachePassResets++;
         }
         // The texture's write serial is part of the identity: the resolution below also supplies a texture whose
         // content arrived after the first ask, so a cached answer must not outlive a new upload of the same name.
@@ -9640,6 +9642,13 @@ this.frameBufferOpen = false;
     private final PreparedImmediate[] prepareCacheValue = new PreparedImmediate[PREPARE_CACHE_SIZE];
     private Object prepareCachePass;
     private long prepareCacheHits;
+    private long prepareCacheCalls;
+    private long prepareCachePassResets;
+
+    /** {@return the prepare cache census, as {@code hits/calls/passResets}}. */
+    String prepareCacheSummary() {
+        return this.prepareCacheHits + "/" + this.prepareCacheCalls + "/" + this.prepareCachePassResets;
+    }
 
     private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
