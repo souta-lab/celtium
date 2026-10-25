@@ -932,8 +932,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // cube visible only where it was drawn directly, against the accepted (98,102,96)).
                 value.float32(3, 1.0f);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, this.colorImage, COLOR_RENDER_LAYOUT,
-                        value, range);
+                if (COLOR_CLEAR_TRANSFER) {
+                    recordColorToTransfer(command, this.colorImage);
+                }
+                org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, this.colorImage,
+                        COLOR_CLEAR_TRANSFER ? DEPTH_TRANSFER_LAYOUT : COLOR_RENDER_LAYOUT, value, range);
             }
             if (depth) {
                 double depthValue = latched || initializeOnly ? latchedDepth
@@ -970,6 +973,31 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
     }
 
+    /**
+     * Colour clears run in TRANSFER_DST_OPTIMAL instead of GENERAL, which lets Intel's driver use a CCS fast clear where
+     * it otherwise writes the whole surface: under INTEL_MEASURE on the UHD 630 the three "slow color clear"s a frame
+     * (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the compressed
+     * surface cost less as well. {@code -Dceltium.vulkan.colorClearTransfer=false} clears in GENERAL again.
+     */
+    static final boolean COLOR_CLEAR_TRANSFER = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.colorClearTransfer"));
+
+    /** Moves a GENERAL colour image to the transfer layout a clear uses, after whatever touched it before. */
+    private void recordColorToTransfer(VkCommandBuffer command, long image) {
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default().image(image)
+                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(DEPTH_TRANSFER_LAYOUT)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, barrier);
+        }
+    }
+
     /** {@return the layout the main depth image rests in}, for a readback that must name it. */
     public int depthLayout() {
         return this.depthImageLayout == VK_IMAGE_LAYOUT_UNDEFINED ? DEPTH_RENDER_LAYOUT : this.depthImageLayout;
@@ -987,7 +1015,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (color) {
                 VkImageMemoryBarrier barrier = barriers.get(index++);
                 barrier.sType$Default().image(this.colorImage)
-                        .oldLayout(COLOR_RENDER_LAYOUT).newLayout(COLOR_RENDER_LAYOUT)
+                        .oldLayout(COLOR_CLEAR_TRANSFER ? DEPTH_TRANSFER_LAYOUT : COLOR_RENDER_LAYOUT)
+                        .newLayout(COLOR_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
                         // The readback (glReadPixels' copy) and the composite's sampling are the consumers a
@@ -1631,7 +1660,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 color.float32(2, clearColor[2]);
                 color.float32(3, clearColor[3]);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
+                colorToTransfer(command);
+                vkCmdClearColorImage(command, this.colorImage, colorClearLayout(), color, range);
 
                 VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
                 depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
@@ -1672,7 +1702,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     color.float32(2, rgba[2]);
                     color.float32(3, rgba[3]);
                     range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                    vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
+                    colorToTransfer(command);
+                vkCmdClearColorImage(command, this.colorImage, colorClearLayout(), color, range);
                 }
                 if ((mask & 0x0100) != 0) {
                     VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
@@ -1722,7 +1753,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     color.float32(2, clearColor[2]);
                     color.float32(3, clearColor[3]);
                     range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                    vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
+                    colorToTransfer(command);
+                vkCmdClearColorImage(command, this.colorImage, colorClearLayout(), color, range);
                 } else {
                     recordColourHandBack(command);
                 }
@@ -1806,6 +1838,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
         /** Where the pair's depth image is: UNDEFINED, the clear's transfer layout, or the attachment layout. */
         private int depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+        /** Whether the pair's colour sits in the clear's transfer layout (only with COLOR_CLEAR_TRANSFER). */
+        private boolean colorInTransfer;
+
+        private void colorToTransfer(VkCommandBuffer command) {
+            if (COLOR_CLEAR_TRANSFER && !this.colorInTransfer) {
+                recordColorToTransfer(command, this.colorImage);
+                this.colorInTransfer = true;
+            }
+        }
+
+        private int colorClearLayout() {
+            return this.colorInTransfer ? DEPTH_TRANSFER_LAYOUT : VK_IMAGE_LAYOUT_GENERAL;
+        }
+
         /** Moves the pair's depth to the transfer layout a clear needs, unless it is already there. */
         private void depthToTransfer(VkCommandBuffer command) {
             if (this.depthLayout == DEPTH_TRANSFER_LAYOUT) {
@@ -1860,9 +1906,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 VkImageMemoryBarrier colorBarrier = barriers.get(0);
                 colorBarrier.sType$Default()
                         .image(this.colorImage)
-                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .oldLayout(this.colorInTransfer ? DEPTH_TRANSFER_LAYOUT : VK_IMAGE_LAYOUT_GENERAL)
+                        .newLayout(VK_IMAGE_LAYOUT_GENERAL)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(colorAccess);
+                this.colorInTransfer = false;
                 colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
                 VkImageMemoryBarrier depthBarrier = barriers.get(1);
