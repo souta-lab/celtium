@@ -14031,7 +14031,15 @@ this.frameBufferOpen = false;
                     || name.startsWith("java.lang.Thread")) {
                 continue;
             }
-            site = name.replaceAll(".*\\.", "") + "." + frames[i].getMethodName() + ":" + frames[i].getLineNumber();
+            // Three frames: the first outside the backend is usually a mixin handler, and the caller behind it is
+            // what says which game or mod draw forced the window.
+            StringBuilder chain = new StringBuilder();
+            for (int j = i; j < frames.length && j < i + 3; j++) {
+                if (chain.length() > 0) chain.append('<');
+                chain.append(frames[j].getClassName().replaceAll(".*\\.", "")).append('.')
+                        .append(frames[j].getMethodName()).append(':').append(frames[j].getLineNumber());
+            }
+            site = chain.toString();
             break;
         }
         this.lastWindowOpenSite = site;

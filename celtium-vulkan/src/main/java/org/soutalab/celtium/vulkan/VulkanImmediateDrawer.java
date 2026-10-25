@@ -34,6 +34,7 @@ public final class VulkanImmediateDrawer {
     // allocated a key per immediate batch (63 MB a warm minute in the Xaero scene's JFR). A collision overwrites the
     // slot - the entry is rebuilt on its next miss, which is the same bound the LRU's eviction gave.
     private static final int INDEX_CACHE_SLOTS = Integer.highestOneBit(Math.max(16, INDEX_CACHE_LIMIT) * 2 - 1);
+    private static final int INDEX_CACHE_SHIFT = 64 - Integer.numberOfTrailingZeros(INDEX_CACHE_SLOTS);
     private static final long[] INDEX_CACHE_KEYS = new long[INDEX_CACHE_SLOTS];
     private static final int[][] INDEX_CACHE_VALUES = new int[INDEX_CACHE_SLOTS][];
     private static int indexCacheEntries;
@@ -66,7 +67,9 @@ public final class VulkanImmediateDrawer {
             return null;
         }
         long key = ((long) glMode << 32) | (vertexCount & 0xffffffffL);
-        int slot = (int) (key ^ (key >>> 29) ^ (vertexCount * 0x9E3779B1)) & (INDEX_CACHE_SLOTS - 1);
+        // Fibonacci hashing: the top bits of key * 2^64/phi. An xor of the count with an odd multiple of itself (the
+        // first version) always cleared the low bit and thrashed - 125k misses against 20 live shapes in a warm minute.
+        int slot = (int) ((key * 0x9E3779B97F4A7C15L) >>> INDEX_CACHE_SHIFT);
         int[] cached = INDEX_CACHE_VALUES[slot];
         if (cached != null && INDEX_CACHE_KEYS[slot] == key) {
             indexCacheHits++;
