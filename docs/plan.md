@@ -61,11 +61,10 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 2. **性能**（KPI flags・1280×720・vsync off/260。いずれも load 上昇で形式 verdict なし）:
    - Xaero 導入前（`ef807429c`）: AMD 0.990x（3対とも<1・p95も低い）。Intel は未batch提出が原因で1.68x → 全deviceでbatch提出に
      （`811c29c46`、Intel 単体 3.6–4.0 → 2.2 ms）。live allocation の寄与は約0.15 ms（`b57e1e7ba`）で主因ではない。
-   - Xaero 入り利用者 instance: `0d937df8b` AMD 1.44x・Intel 1.45x → `7ec72515e` **AMD 1.15x**（p50 1.39–1.42 ms）・**Intel 1.36x**。
-     AMD は CPU律速: 残差は per-draw 費用の分散（offer 26%・1–2 µs/件、全hot methodはC2済）。sign/font/prepare cache等で縮小。
-     Intel は GPU 計時で frame の GPU 2.0–2.4 ms・解像度依存 0.28 ms 超過。棄却（Intel A/B）: acquire barrier の狭小化（遅化 3.2 vs 2.8 ms、
-     ANVではflush要求が高い）、HUD depth clear 省略（効果なし）、present submit統合（中立）、glthread仮説（無効でも3%）。
-     group 開始内訳（`daf13af1f`）: 他要因 34%・texture 31%・format 26%・state 9%。棄却: 不透明replay並べ替え（`e1c747092`）。
+   - Xaero 入り利用者 instance: `0d937df8b` AMD 1.44x・Intel 1.45x → `c8ab8b838` **AMD 1.07–1.09x**（p50 1.29 ms）・**Intel 1.25x**（2.45 ms）。
+     AMD は CPU律速、残差は per-draw 費用の分散。Intel は解像度依存の超過が 0.06 ms まで縮小（outline合成省略・depth OPTIMAL・solid discard特殊化）、
+     残差は固定費。上限測定で棄却: 反復acquire barrier全省略 2–3%、texture跨ぎmerge（bindless上限）Intel 2.5%/AMD 4%、
+     frame+present 1 submit（fence acquire、実merge確認済）中立、acquire狭小化は遅化、glthread仮説（無効でも3%）。
      **次の単位**: model replay と immediate を一つの順序付きstreamに載せる（`new_architecture.md` Stage 1 の packet化）。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
