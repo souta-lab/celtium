@@ -1,6 +1,6 @@
 # Celtium 現状表（唯一の現在状態表）
 
-開発ベース **0.0.13-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開最新版は **v0.0.16-alpha**（2026-10-24、[release notes](<releases/0.0.16-alpha.md>)）。
+開発ベース **0.0.18-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開最新版は **v0.0.18-alpha**（2026-10-25、[release notes](<releases/0.0.18-alpha.md>)）。
 2026-10-21 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)、目標設計は [new_architecture.md](<new_architecture.md>)、旧設計と実測は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
