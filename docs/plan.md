@@ -54,15 +54,16 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | ワールド退出後ボタン無し | **未再現**（fixture: 既定・日本語/Unicode/1920×1080 とも表示）。手順差（ポーズ→終了・非16:9）の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`、`-Dceltium.debug.periodicLogs=true`で全出力） |
-   | vanilla post shader（観戦時のcreeper/spider等・発光outline） | **creeper/spiderはnativeで描画**（leg `postshader4-creeper/spider-amd-1` PASSED・validation 0）。以前はGL-lessで読込自体が失敗し無効だった（compile状態の問合せ署名違い・uniform位置-1・行列の転置・descriptor layout）。**発光outlineもnative合成で表示**（`framebufferRenderExt`を`NativeFramebufferCompositor`へ置換、jar `6aafefa6` で leg `comp-glow-amd` に白outline・validation 0、`comp-world-amd`/`comp-world-intel` PASSED・validation 0）。glow sceneは未較正のため画像gateは判定外 |
+   | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    native texture environment 所有へ移行し、モデルごとのGL問合せを撤去。REPLACE/CONSTANT の発光用materialを修正し、glowのmain合成はnative compositorで表示。
    空framebufferのnative初期化・公開cache失効・main imageのGENERAL契約・world終了時material cache寿命を修正。
    **同一最終JARでAMD/Intelのworld往復 PASSED・画像gate PASSED・validation ON 0件**。
    4画面＋qmagnetを保存（HEI2画面は未較正、合格には数えない）。[実装・失敗・検証](evidence/native-texture-owner-2026-10-25.md)。
-2. **性能**: 10/25の3-arm×3回ではCeleritas比1.0342x・変更前比1.0313x。load 0.46→2.67 > 上限2のため **NO_SPEED_VERDICT**。高速化未確認。
-   `ef807429c`（jar `6aafefa6`）×Celeritas 3対（AMD・1280×720・vsync off/260）: 比 0.986/0.990/0.998（中央0.990x）、warm p95 は3対ともCeleritasより低い（1.69/1.80/1.88 vs 2.02/2.66/2.31 ms）。ただし load 1.74→5.52 で **NO_SPEED_VERDICT**。**Intel UHD 630 は同jarで 1.70/1.58/1.68x（中央1.68x）遅い**（warm p50 3.09/2.82/3.04 vs 1.82/1.78/1.81 ms、load 1.47→4.40 で形式上 NO_SPEED_VERDICT だが差は3対一貫）。Intelの原因分離が最優先。
-   次は `goal.md` の基盤固有最適化と描画mod手法の吸収（EntityCulling型の遮蔽間引き、静的TESRのchunk mesh化、
-   `VkPipelineCache` 永続化、GUI/文字のbatch）を、paired KPIとスパイク計測で1つずつ。Intelは未測定。
+2. **性能**（jar `6aafefa6`・1280×720・vsync off/260、両run とも load上昇で形式上 NO_SPEED_VERDICT）:
+   AMD は Celeritas比 中央0.990x（3対とも<1、p95も3対とも低い）。**Intel UHD 630 は中央1.68x遅い**（p50 約3.0 vs 1.8 ms、3対一貫）。
+   Intel分離: `vkQueueSubmit` がclient threadの最大native（JFR）。live allocation数の寄与は実測で約0.4µs/個/frame
+   ＝現状約360個で約0.15ms（`b57e1e7ba`）＝主因ではない。次の判別: 解像度依存（GPU fill）か frameごとのCPU/driver費用か。
+   その後 `goal.md` の基盤固有最適化・描画mod手法の吸収を paired KPI とスパイク計測で1つずつ。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
