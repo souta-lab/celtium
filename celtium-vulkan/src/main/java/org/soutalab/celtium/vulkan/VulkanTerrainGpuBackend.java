@@ -262,6 +262,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
     int defaultPairClears;
     int chainPairClears;
+    /** Per identity, the chain-pair generation its cached framebuffers were built over. */
+    private final java.util.Map<Long, Long> chainPairFramebufferGenerations = new java.util.HashMap<Long, Long>();
     /**
      * glClear attribution, counted where the request is read: {@code gameClearsLatchedForFrame} were issued while the
      * game's own main framebuffer was bound (they clear the delivered image), {@code gameClearsRoutedToPairs} while
@@ -12100,8 +12102,13 @@ this.frameBufferOpen = false;
             return 0L;
         }
         long identity = this.targetRegistry.currentIdentity();
-        if (!glless.chainPairMatches(identity, this.targetWidth, this.targetHeight)) {
-            // Same rule as the default pair: a size change means the views every cached handle named are dead.
+        long generation = glless.chainPairGeneration(identity);
+        Long builtOver = this.chainPairFramebufferGenerations.get(Long.valueOf(identity));
+        if (builtOver == null || builtOver.longValue() != generation) {
+            // Same rule as the default pair: replaced images mean the views every cached handle named are dead. Asked
+            // of the pair's own images, not of the window's size - a pair at its framebuffer's size (Xaero's minimap)
+            // never matched the window, and every pass into it settled the GPU to rebuild an identical framebuffer
+            // (2,940 creations in a 65 s Intel run, vkDeviceWaitIdle 80% of the client thread's native samples).
             destroyChainPairFramebuffer(identity);
         }
         long cached = this.targetRegistry.chainPairFramebuffer(identity, renderPass);
@@ -12118,6 +12125,7 @@ this.frameBufferOpen = false;
                 glless.chainPairDepthView(identity), pairWidth, pairHeight,
                 "chain-pair:" + Long.toHexString(identity));
         this.targetRegistry.noteChainPairFramebuffer(identity, handle, renderPass);
+        this.chainPairFramebufferGenerations.put(Long.valueOf(identity), Long.valueOf(generation));
         // counted by noteChainPairFramebuffer
         return handle;
     }
@@ -12517,6 +12525,7 @@ this.frameBufferOpen = false;
             vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
         }
         this.targetRegistry.clearChainPairFramebuffer(identity);
+        this.chainPairFramebufferGenerations.remove(Long.valueOf(identity));
     }
 
     /** Destroys every chain-pair framebuffer, across identities; the teardown path's variant. */
@@ -12533,6 +12542,7 @@ this.frameBufferOpen = false;
             vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
         }
         this.targetRegistry.clearAllChainPairFramebuffers();
+        this.chainPairFramebufferGenerations.clear();
     }
 
     /** Pair replacement also bypasses destroyFramebuffer(), so it must establish completion itself. */

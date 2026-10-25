@@ -160,6 +160,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private static final int MAX_CHAIN_PAIRS = 8;
     /** Pairs evicted because the bound was reached; a menu that cycles more framebuffers than the bound thrashes. */
     private long chainPairEvictions;
+    /** Chain-pair image sets created so far; the source of {@link #chainPairGeneration}. */
+    private long chainPairGenerations;
 
     private boolean frameOpen;
     private boolean deleted;
@@ -1268,6 +1270,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return true;
     }
 
+    /**
+     * {@return which images the identity's chain pair holds now}, 0 before it exists. Changes whenever the pair is
+     * created or replaced, at any size: a framebuffer over the previous images names dead views.
+     */
+    public long chainPairGeneration(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair == null || !pair.exists() ? 0L : pair.generation;
+    }
+
     /** {@return the identity's chain-pair extent as {w, h}}, or null before the pair exists. */
     public long[] chainPairExtent(long identity) {
         Pair pair = existingChainPair(identity);
@@ -1456,6 +1467,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
          */
         private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         private int creations;
+        /** Unique across pairs and evictions: which images a framebuffer built over this pair's views names. */
+        private long generation;
         private int clears;
         private int selfTests;
 
@@ -1521,6 +1534,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // A pair that was just created holds images nothing has transitioned yet.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 this.creations++;
+                this.generation = ++GllessFrameTarget.this.chainPairGenerations;
             } catch (RuntimeException | LinkageError error) {
                 // No half pair is left behind: a retry starts from nothing and delete() still frees whatever exists.
                 release();
