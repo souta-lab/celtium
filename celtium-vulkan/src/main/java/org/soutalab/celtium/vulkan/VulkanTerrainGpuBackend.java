@@ -13197,6 +13197,14 @@ this.frameBufferOpen = false;
             this.textureIndexMisses++;
             return -1;
         }
+        if (this.textureArray != null) {
+            // Already registered: answered without a MemoryStack push (a thread-local lookup per model replay).
+            int known = this.textureArray.knownIndex(texture);
+            if (known >= 0) {
+                this.textureIndexHits++;
+                return known;
+            }
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (this.textureArray == null) {
                 VulkanTextureArray array = new VulkanTextureArray(this.context);

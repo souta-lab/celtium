@@ -124,6 +124,14 @@ final class VulkanTextureArray {
         }
     }
 
+    /** {@return the index this wrapper already occupies}, or -1 - a lookup only, with no stack and no write. */
+    int knownIndex(VulkanGlTexture texture) {
+        if (this.set == VK_NULL_HANDLE || texture == null || !texture.hasFullContent()) {
+            return -1;
+        }
+        return this.indexByKey.get(texture.key());
+    }
+
     /** {@return the index this wrapper occupies, registering it on first use; -1 when the array is full or absent}. */
     int indexFor(MemoryStack stack, VulkanGlTexture texture, int expectedKeySlots) {
         if (this.set == VK_NULL_HANDLE || texture == null || !texture.hasFullContent()) {

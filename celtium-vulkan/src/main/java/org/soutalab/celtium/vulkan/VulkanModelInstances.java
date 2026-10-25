@@ -84,6 +84,11 @@ final class VulkanModelInstances {
         }
 
         void noteTexture(int glTextureId) {
+            // Consecutive instances of a run almost always share the texture they were just noted with: one compare
+            // before the scan, which ran per appended instance over every texture the run had seen.
+            if (this.textureCount > 0 && this.textures[this.textureCount - 1] == glTextureId) {
+                return;
+            }
             if (usesTexture(glTextureId)) {
                 return;
             }
