@@ -2516,7 +2516,7 @@ public final class VulkanGlTexture {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:483")) {
                 throw new IllegalStateException("injected allocation failure: VulkanGlTexture:483");
             }
-            check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(mirrored texture)");
+            check(VulkanContext.allocateMemory(device, allocate, handle), "vkAllocateMemory(mirrored texture)");
             memory = handle.get(0);
             check(vkBindImageMemory(device, image, memory, 0L), "vkBindImageMemory(mirrored texture)");
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:afterBind")) {
@@ -2698,7 +2698,7 @@ public final class VulkanGlTexture {
         }
         if (memory != 0L) {
             final long retiredMemory = memory;
-            VulkanRetireQueue.retire(() -> vkFreeMemory(device, retiredMemory, null));
+            VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, retiredMemory));
             memory = 0L;
         }
     }
@@ -3588,7 +3588,7 @@ public final class VulkanGlTexture {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:979")) {
                 throw new IllegalStateException("injected allocation failure: VulkanGlTexture:979");
             }
-            check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(staging)");
+            check(VulkanContext.allocateMemory(device, allocate, handle), "vkAllocateMemory(staging)");
             stagingMemory = handle.get(0);
             check(vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0L), "vkBindBufferMemory(staging)");
 
@@ -3687,7 +3687,7 @@ public final class VulkanGlTexture {
             stagingBuffer = 0L;
         }
         if (stagingMemory != 0L) {
-            vkFreeMemory(device, stagingMemory, null);
+            VulkanContext.freeMemory(device, stagingMemory);
             stagingMemory = 0L;
         }
         stagingCapacity = 0L;

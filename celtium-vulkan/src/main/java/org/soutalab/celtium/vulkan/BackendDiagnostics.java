@@ -412,6 +412,7 @@ final class BackendDiagnostics {
                 + " lastPairClearRefusal=[" + b.targetStatistics.lastPairClearRefusal() + "]"
                 + " " + (b.postChain != null ? b.postChain.status() : "postChains=0 postPasses=0")
                 + " " + VulkanContext.pipelineCreationSummary()
+                + " " + VulkanContext.memoryAllocationSummary()
                 + " " + b.framebufferCompositor.describe()
                 + " directMirrorFromAnnouncement=" + b.textureStats.directMirrorFromAnnouncement()
                 + " dynamicTextureFills=" + b.textureStats.dynamicTextureFills()

@@ -65,7 +65,7 @@ public final class ShadowMapTarget {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(findMemoryType(requirements.memoryTypeBits()));
-            check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(shadow map)");
+            check(VulkanContext.allocateMemory(device, allocate, handle), "vkAllocateMemory(shadow map)");
             this.memory = handle.get(0);
             check(vkBindImageMemory(device, this.image, this.memory, 0L), "vkBindImageMemory(shadow map)");
 
@@ -159,7 +159,7 @@ public final class ShadowMapTarget {
         vkDestroySampler(device, this.sampler, null);
         vkDestroyImageView(device, this.view, null);
         vkDestroyImage(device, this.image, null);
-        vkFreeMemory(device, this.memory, null);
+        VulkanContext.freeMemory(device, this.memory);
     }
 
     private int findMemoryType(int typeBits) {

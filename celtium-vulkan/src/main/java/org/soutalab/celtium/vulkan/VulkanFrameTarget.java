@@ -1045,7 +1045,7 @@ public final class VulkanFrameTarget implements FrameImageTarget {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanFrameTarget:927")) {
                 throw new IllegalStateException("injected allocation failure: VulkanFrameTarget:927");
             }
-            check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(" + what + ")");
+            check(VulkanContext.allocateMemory(device, allocate, handle), "vkAllocateMemory(" + what + ")");
             image.memory = handle.get(0);
             check(vkBindImageMemory(device, image.image, image.memory, 0), "vkBindImageMemory(" + what + ")");
 
@@ -1533,7 +1533,7 @@ public final class VulkanFrameTarget implements FrameImageTarget {
             image.image = 0;
         }
         if (image.memory != 0) {
-            vkFreeMemory(device, image.memory, null);
+            VulkanContext.freeMemory(device, image.memory);
             image.memory = 0;
         }
     }

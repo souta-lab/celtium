@@ -1792,7 +1792,7 @@ public final class VulkanPostChain {
                         .allocationSize(requirements.size())
                         .memoryTypeIndex(context.memoryTypeIndex(requirements.memoryTypeBits(),
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "post chain target"));
-                check(vkAllocateMemory(device, alloc, null, handle), "vkAllocateMemory(post chain)");
+                check(VulkanContext.allocateMemory(device, alloc, handle), "vkAllocateMemory(post chain)");
                 memory = handle.get(0);
                 check(vkBindImageMemory(device, image, memory, 0), "vkBindImageMemory(post chain)");
                 VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default()
@@ -1815,7 +1815,7 @@ public final class VulkanPostChain {
                     if (view != 0L) vkDestroyImageView(device, view, null);
                     // A bound image is destroyed before the memory backing it is freed.
                     if (image != 0L) vkDestroyImage(device, image, null);
-                    if (memory != 0L) vkFreeMemory(device, memory, null);
+                    if (memory != 0L) VulkanContext.freeMemory(device, memory);
                 }
             }
         }
@@ -1848,7 +1848,7 @@ public final class VulkanPostChain {
             }
             vkDestroyImageView(device, view, null);
             vkDestroyImage(device, image, null);
-            vkFreeMemory(device, memory, null);
+            VulkanContext.freeMemory(device, memory);
         }
     }
 

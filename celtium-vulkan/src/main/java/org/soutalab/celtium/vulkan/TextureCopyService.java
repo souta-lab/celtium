@@ -1367,7 +1367,7 @@ public final class TextureCopyService {
                 org.lwjgl.vulkan.VK10.vkDestroyBuffer(this.host.context().device(), buffer, null);
             }
             if (memory != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkFreeMemory(this.host.context().device(), memory, null);
+                VulkanContext.freeMemory(this.host.context().device(), memory);
             }
             return;
         }
@@ -1414,7 +1414,7 @@ public final class TextureCopyService {
                             org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
                                     | org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                             "the depth-stage readback buffer"));
-            if (org.lwjgl.vulkan.VK10.vkAllocateMemory(this.host.context().device(), allocate, null, handle)
+            if (VulkanContext.allocateMemory(this.host.context().device(), allocate, handle)
                     != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 return null;
             }
@@ -1536,7 +1536,7 @@ public final class TextureCopyService {
                             org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
                                     | org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                             "the texture-copy readback buffer"));
-            if (org.lwjgl.vulkan.VK10.vkAllocateMemory(this.host.context().device(), allocate, null, handle)
+            if (VulkanContext.allocateMemory(this.host.context().device(), allocate, handle)
                     != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 return null;
             }

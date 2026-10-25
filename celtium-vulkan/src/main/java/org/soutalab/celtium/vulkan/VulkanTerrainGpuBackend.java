@@ -11536,7 +11536,7 @@ this.frameBufferOpen = false;
             this.readbackBuffer = 0;
         }
         if (this.readbackMemory != 0) {
-            vkFreeMemory(this.context.device(), this.readbackMemory, null);
+            VulkanContext.freeMemory(this.context.device(), this.readbackMemory);
             this.readbackMemory = 0;
         }
         destroyFramebuffer();
@@ -17783,7 +17783,7 @@ this.frameBufferOpen = false;
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanTerrainGpuBackend:5047")) {
                 throw new IllegalStateException("injected allocation failure: VulkanTerrainGpuBackend:5047");
             }
-            check(vkAllocateMemory(this.context.device(), allocate, null, handle), "vkAllocateMemory(readback)");
+            check(VulkanContext.allocateMemory(this.context.device(), allocate, handle), "vkAllocateMemory(readback)");
             this.readbackMemory = handle.get(0);
             check(vkBindBufferMemory(this.context.device(), this.readbackBuffer, this.readbackMemory, 0),
                     "vkBindBufferMemory(readback)");

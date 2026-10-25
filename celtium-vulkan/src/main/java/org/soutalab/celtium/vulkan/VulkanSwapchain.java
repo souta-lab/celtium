@@ -503,7 +503,7 @@ public final class VulkanSwapchain {
                     .memoryTypeIndex(context.memoryTypeIndex(requirements.memoryTypeBits(),
                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                             "the present readback buffer"));
-            if (vkAllocateMemory(context.device(), allocate, null, handle) != VK_SUCCESS) {
+            if (VulkanContext.allocateMemory(context.device(), allocate, handle) != VK_SUCCESS) {
                 return null;
             }
             memory = handle.get(0);
@@ -602,7 +602,7 @@ public final class VulkanSwapchain {
                 vkDestroyBuffer(context.device(), buffer, null);
             }
             if (memory != VK_NULL_HANDLE) {
-                vkFreeMemory(context.device(), memory, null);
+                VulkanContext.freeMemory(context.device(), memory);
             }
         }
     }

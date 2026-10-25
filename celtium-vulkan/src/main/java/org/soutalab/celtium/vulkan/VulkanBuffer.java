@@ -201,7 +201,7 @@ public final class VulkanBuffer {
             // drained before it is destroyed; validation reports the alternative as a buffer destroyed while in use.
             check(vkQueueWaitIdle(this.context.queue()), "vkQueueWaitIdle(buffer growth)");
             vkDestroyBuffer(this.context.device(), this.handle, null);
-            vkFreeMemory(this.context.device(), this.memory, null);
+            VulkanContext.freeMemory(this.context.device(), this.memory);
             this.handle = oldHandle;
             this.memory = oldMemory;
             this.size = oldSize;
@@ -243,7 +243,7 @@ public final class VulkanBuffer {
             this.handle = VK_NULL_HANDLE;
         }
         if (this.memory != VK_NULL_HANDLE) {
-            vkFreeMemory(device, this.memory, null);
+            VulkanContext.freeMemory(device, this.memory);
             this.memory = VK_NULL_HANDLE;
         }
     }
@@ -272,7 +272,7 @@ public final class VulkanBuffer {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanBuffer:189")) {
                 throw new IllegalStateException("injected allocation failure: VulkanBuffer:189");
             }
-            check(vkAllocateMemory(device, allocate, null, memoryHandle), "vkAllocateMemory(" + requirements.size()
+            check(VulkanContext.allocateMemory(device, allocate, memoryHandle), "vkAllocateMemory(" + requirements.size()
                     + " bytes, memory type " + memoryType + ")");
             createdMemory = memoryHandle.get(0);
             check(vkBindBufferMemory(device, createdBuffer, createdMemory, 0), "vkBindBufferMemory");
@@ -281,7 +281,7 @@ public final class VulkanBuffer {
                 vkDestroyBuffer(device, createdBuffer, null);
             }
             if (createdMemory != VK_NULL_HANDLE) {
-                vkFreeMemory(device, createdMemory, null);
+                VulkanContext.freeMemory(device, createdMemory);
             }
             throw error;
         }

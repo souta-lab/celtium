@@ -340,7 +340,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                     .sType$Default().allocationSize(requirements.size())
                     .memoryTypeIndex(context.memoryTypeIndex(requirements.memoryTypeBits(),
                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "pack probe offscreen image"));
-            if (vkAllocateMemory(context.device(), allocate, null, memory) != VK_SUCCESS) {
+            if (VulkanContext.allocateMemory(context.device(), allocate, memory) != VK_SUCCESS) {
                 vkDestroyImage(context.device(), image.get(0), null);
                 return "memory=failed";
             }
@@ -350,7 +350,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                     .format(VK_FORMAT_R8G8B8A8_UNORM);
             viewInfo.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
             if (vkCreateImageView(context.device(), viewInfo, null, view) != VK_SUCCESS) {
-                vkFreeMemory(context.device(), memory.get(0), null);
+                VulkanContext.freeMemory(context.device(), memory.get(0));
                 vkDestroyImage(context.device(), image.get(0), null);
                 return "view=failed";
             }
@@ -616,7 +616,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
                             .allocationSize(requirements.size())
                             .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
                                     org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "pack probe shadow"));
-            if (vkAllocateMemory(this.context.device(), allocate, null, memory) != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+            if (VulkanContext.allocateMemory(this.context.device(), allocate, memory) != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 return "shadow memory=failed";
             }
             vkBindImageMemory(this.context.device(), image.get(0), memory.get(0), 0L);
@@ -742,7 +742,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             vkDestroyCommandPool(this.context.device(), pool.get(0), null);
             vkDestroyImageView(this.context.device(), view.get(0), null);
             vkDestroyImage(this.context.device(), image.get(0), null);
-            vkFreeMemory(this.context.device(), memory.get(0), null);
+            VulkanContext.freeMemory(this.context.device(), memory.get(0));
             return String.format(java.util.Locale.ROOT, "shadow %dx%d depth=[%.5f,%.5f] covered=%d/%d casters=%d",
                     size, size, minimum, maximum, covered, pixels, this.vertexCount);
         } catch (RuntimeException | LinkageError error) {
@@ -1539,7 +1539,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             vkDestroyImage(context.device(), this.offscreenImage, null);
         }
         if (this.offscreenMemory != 0L) {
-            vkFreeMemory(context.device(), this.offscreenMemory, null);
+            VulkanContext.freeMemory(context.device(), this.offscreenMemory);
         }
         for (VulkanHostBuffer buffer : buffers) {
             buffer.delete();

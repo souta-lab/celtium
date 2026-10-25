@@ -293,7 +293,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(findMemoryType(requirements.memoryTypeBits()));
-            if (vkAllocateMemory(device, allocate, null, handle) != VK_SUCCESS) {
+            if (VulkanContext.allocateMemory(device, allocate, handle) != VK_SUCCESS) {
                 throw new IllegalStateException("vkAllocateMemory(glless " + (color ? "colour" : "depth") + ") failed");
             }
             memory = handle.get(0);
@@ -310,7 +310,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return new long[] {image, memory, handle.get(0)};
         } catch (RuntimeException | LinkageError error) {
             if (memory != VK_NULL_HANDLE) {
-                vkFreeMemory(device, memory, null);
+                VulkanContext.freeMemory(device, memory);
             }
             if (image != VK_NULL_HANDLE) {
                 vkDestroyImage(device, image, null);
@@ -1820,7 +1820,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.colorImage = VK_NULL_HANDLE;
             }
             if (this.colorMemory != VK_NULL_HANDLE) {
-                vkFreeMemory(device, this.colorMemory, null);
+                VulkanContext.freeMemory(device, this.colorMemory);
                 this.colorMemory = VK_NULL_HANDLE;
             }
             if (this.depthView != VK_NULL_HANDLE) {
@@ -1832,7 +1832,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.depthImage = VK_NULL_HANDLE;
             }
             if (this.depthMemory != VK_NULL_HANDLE) {
-                vkFreeMemory(device, this.depthMemory, null);
+                VulkanContext.freeMemory(device, this.depthMemory);
                 this.depthMemory = VK_NULL_HANDLE;
             }
             this.width = 0;
@@ -1916,7 +1916,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.colorImage = VK_NULL_HANDLE;
         }
         if (this.colorMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(device, this.colorMemory, null);
+            VulkanContext.freeMemory(device, this.colorMemory);
             this.colorMemory = VK_NULL_HANDLE;
         }
         if (this.depthView != VK_NULL_HANDLE) {
@@ -1928,7 +1928,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.depthImage = VK_NULL_HANDLE;
         }
         if (this.depthMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(device, this.depthMemory, null);
+            VulkanContext.freeMemory(device, this.depthMemory);
             this.depthMemory = VK_NULL_HANDLE;
         }
     }

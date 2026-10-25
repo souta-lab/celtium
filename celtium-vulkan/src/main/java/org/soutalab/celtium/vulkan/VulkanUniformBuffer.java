@@ -159,7 +159,7 @@ final class VulkanUniformBuffer {
                 throw destroyReplacement(allocation, "injected allocation failure: " + what);
             }
             try {
-                check(vkAllocateMemory(this.context.device(), allocate, null, handle), "vkAllocateMemory(uniform)");
+                check(VulkanContext.allocateMemory(this.context.device(), allocate, handle), "vkAllocateMemory(uniform)");
             } catch (RuntimeException error) {
                 throw destroyReplacement(allocation, error.getMessage());
             }
@@ -191,7 +191,7 @@ final class VulkanUniformBuffer {
             allocation.buffer = 0;
         }
         if (allocation.memory != 0) {
-            vkFreeMemory(this.context.device(), allocation.memory, null);
+            VulkanContext.freeMemory(this.context.device(), allocation.memory);
             allocation.memory = 0;
         }
         return new IllegalStateException(message == null ? "uniform buffer replacement failed" : message);
@@ -215,7 +215,7 @@ final class VulkanUniformBuffer {
             this.buffer = 0;
         }
         if (this.memory != 0) {
-            vkFreeMemory(this.context.device(), this.memory, null);
+            VulkanContext.freeMemory(this.context.device(), this.memory);
             this.memory = 0;
         }
         this.size = 0;

@@ -236,7 +236,7 @@ public final class VulkanContext {
             vkDestroyBuffer(this.device, buffer, null);
         }
         if (memory != 0L) {
-            vkFreeMemory(this.device, memory, null);
+            VulkanContext.freeMemory(this.device, memory);
         }
     }
 
@@ -252,7 +252,7 @@ public final class VulkanContext {
                 vkDestroyBuffer(this.device, entry[0], null);
             }
             if (entry[1] != 0L) {
-                vkFreeMemory(this.device, entry[1], null);
+                VulkanContext.freeMemory(this.device, entry[1]);
             }
         }
         this.quarantinedReadbackBuffers.clear();
@@ -1759,6 +1759,10 @@ public final class VulkanContext {
             destroyStaging();
             destroyUploadRing();
             savePipelineCache();
+            for (Long ballast : EXPERIMENT_BALLAST) {
+                freeMemory(this.device, ballast.longValue());
+            }
+            EXPERIMENT_BALLAST.clear();
             if (this.commandPool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
                 this.commandPool = VK_NULL_HANDLE;
@@ -1831,6 +1835,79 @@ public final class VulkanContext {
         return "pipelineCreations=" + pipelineCreations + " pipelineCreationMs=" + pipelineCreationNanos / 1_000_000L
                 + " pipelineCreationWorstMs=" + pipelineCreationWorstNanos / 1_000_000L;
     }
+
+    /**
+     * Allocates device memory and counts it. Intel's driver hands every live allocation to the kernel on each
+     * {@code vkQueueSubmit}, so the number of live allocations is a per-frame cost there (leg intel-prof-1: queue submit
+     * was the client thread's largest native cost on UHD 630, where Celtium measured 1.68x Celeritas). The live count,
+     * its peak and the live bytes are reported by {@link #memoryAllocationSummary()}.
+     */
+    public static int allocateMemory(org.lwjgl.vulkan.VkDevice device, org.lwjgl.vulkan.VkMemoryAllocateInfo info,
+            java.nio.LongBuffer memory) {
+        int result = vkAllocateMemory(device, info, null, memory);
+        if (result == VK_SUCCESS) {
+            long size = info.allocationSize();
+            LIVE_ALLOCATIONS.put(Long.valueOf(memory.get(memory.position())), Long.valueOf(size));
+            long live = LIVE_ALLOCATIONS.size();
+            if (live > peakAllocations) {
+                peakAllocations = live;
+            }
+            allocationsMade++;
+            if (EXPERIMENT_ALLOCATIONS > 0 && !experimentBallastDone) {
+                allocateExperimentBallast(device, info.memoryTypeIndex());
+            }
+        }
+        return result;
+    }
+
+    /** Frees device memory allocated through {@link #allocateMemory}; a null handle is ignored as Vulkan ignores it. */
+    public static void freeMemory(org.lwjgl.vulkan.VkDevice device, long memory) {
+        if (memory != VK_NULL_HANDLE) {
+            LIVE_ALLOCATIONS.remove(Long.valueOf(memory));
+        }
+        vkFreeMemory(device, memory, null);
+    }
+
+    /** {@return the device memory allocations}: live now, peak, made in total, and live bytes in MiB. */
+    public static String memoryAllocationSummary() {
+        long bytes = 0L;
+        for (Long size : LIVE_ALLOCATIONS.values()) {
+            bytes += size.longValue();
+        }
+        return "memoryAllocationsLive=" + LIVE_ALLOCATIONS.size() + " memoryAllocationsPeak=" + peakAllocations
+                + " memoryAllocationsMade=" + allocationsMade + " memoryLiveMiB=" + (bytes >> 20);
+    }
+
+    /**
+     * Experiment only: {@code -Dceltium.debug.extraAllocations=N} holds N extra 64 KiB allocations of the first
+     * allocation's memory type for the device's life, to measure whether the live allocation count alone changes frame
+     * time on a driver (Intel's hands every live allocation to each submit). Off (0) by default.
+     */
+    private static final int EXPERIMENT_ALLOCATIONS = Integer.getInteger("celtium.debug.extraAllocations", 0).intValue();
+    private static final java.util.List<Long> EXPERIMENT_BALLAST = new java.util.ArrayList<Long>();
+    private static boolean experimentBallastDone;
+
+    private static void allocateExperimentBallast(org.lwjgl.vulkan.VkDevice device, int memoryType) {
+        experimentBallastDone = true;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkMemoryAllocateInfo info = VkMemoryAllocateInfo.calloc(stack).sType$Default()
+                    .allocationSize(64L * 1024L).memoryTypeIndex(memoryType);
+            java.nio.LongBuffer handle = stack.mallocLong(1);
+            for (int i = 0; i < EXPERIMENT_ALLOCATIONS; i++) {
+                if (allocateMemory(device, info, handle) != VK_SUCCESS) {
+                    break;
+                }
+                EXPERIMENT_BALLAST.add(Long.valueOf(handle.get(0)));
+            }
+        }
+        System.out.println("[Celtium] CELTIUM_ALLOCATION_EXPERIMENT extra=" + EXPERIMENT_BALLAST.size()
+                + " memoryType=" + memoryType);
+    }
+
+    private static final java.util.Map<Long, Long> LIVE_ALLOCATIONS =
+            new java.util.concurrent.ConcurrentHashMap<Long, Long>();
+    private static volatile long peakAllocations;
+    private static volatile long allocationsMade;
 
     private static long pipelineCreations;
     private static long pipelineCreationNanos;
@@ -2771,7 +2848,7 @@ public final class VulkanContext {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanContext:883")) {
                 throw new IllegalStateException("injected allocation failure: VulkanContext:883");
             }
-            check(vkAllocateMemory(this.device, allocate, null, memoryHandle),
+            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle),
                     "vkAllocateMemory(staging, " + requirements.size() + " bytes)");
             memory = memoryHandle.get(0);
             check(vkBindBufferMemory(this.device, buffer, memory, 0), "vkBindBufferMemory(staging)");
@@ -2788,7 +2865,7 @@ public final class VulkanContext {
                 vkDestroyBuffer(this.device, buffer, null);
             }
             if (memory != VK_NULL_HANDLE) {
-                vkFreeMemory(this.device, memory, null);
+                VulkanContext.freeMemory(this.device, memory);
             }
             throw error;
         }
@@ -2818,7 +2895,7 @@ public final class VulkanContext {
             this.uploadRingBuffer = VK_NULL_HANDLE;
         }
         if (this.uploadRingMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(this.device, this.uploadRingMemory, null);
+            VulkanContext.freeMemory(this.device, this.uploadRingMemory);
             this.uploadRingMemory = VK_NULL_HANDLE;
         }
         this.uploadRingCapacity = 0L;
@@ -2839,7 +2916,7 @@ public final class VulkanContext {
             this.stagingBuffer = VK_NULL_HANDLE;
         }
         if (this.stagingMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(this.device, this.stagingMemory, null);
+            VulkanContext.freeMemory(this.device, this.stagingMemory);
             this.stagingMemory = VK_NULL_HANDLE;
         }
         this.stagingCapacityBytes = 0L;
@@ -2958,18 +3035,18 @@ public final class VulkanContext {
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
             LongBuffer memoryHandle = stack.mallocLong(1);
-            check(vkAllocateMemory(this.device, allocate, null, memoryHandle),
+            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle),
                     "vkAllocateMemory(upload ring, " + requirements.size() + " bytes)");
             memory = memoryHandle.get(0);
             if (vkBindBufferMemory(this.device, buffer, memory, 0L) != VK_SUCCESS) {
                 vkDestroyBuffer(this.device, buffer, null);
-                vkFreeMemory(this.device, memory, null);
+                VulkanContext.freeMemory(this.device, memory);
                 throw new IllegalStateException("vkBindBufferMemory(upload ring) failed");
             }
             org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
             if (vkMapMemory(this.device, memory, 0L, bytes, 0, pointer) != VK_SUCCESS) {
                 vkDestroyBuffer(this.device, buffer, null);
-                vkFreeMemory(this.device, memory, null);
+                VulkanContext.freeMemory(this.device, memory);
                 throw new IllegalStateException("vkMapMemory(upload ring) failed");
             }
             mapped = pointer.get(0);
@@ -3351,7 +3428,7 @@ public final class VulkanContext {
             if (device != null) {
                 vkDestroyBuffer(device, entry[0], null);
                 if (entry[1] != VK_NULL_HANDLE) {
-                    vkFreeMemory(device, entry[1], null);
+                    VulkanContext.freeMemory(device, entry[1]);
                 }
             }
             freed++;
