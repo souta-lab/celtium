@@ -825,18 +825,16 @@ public final class CeltiumFontGlyphCapture {
                 if (taken) {
                     takenThisFlush = bufferedQuadCount;
                 } else {
-                    // The run refused (matrices dirty, a stall, off-main target): submit each stored quad through
-                    // the ordinary path, in order. Quads sit at every sixth vertex past the separators between
-                    // them - [Q][sep][Q][sep][Q] - so the walk is a fixed stride. B16: each quad's own result is
-                    // counted - a refusal under the OR would previously promote the whole flush to accepted.
-                    takenThisFlush = 0;
-                    for (int k = 0; k < bufferedQuadCount; k++) {
-                        if (backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
-                                FORMAT_ID, bufferedQuadsBase + (long) k * 6 * STRIDE, MAX_VERTICES,
-                                GL_TRIANGLE_STRIP)) {
-                            takenThisFlush++;
-                        }
-                    }
+                    // The run refused (matrices dirty, a stall, off-main target): the segment goes through the
+                    // ordinary path as the one strip it already is - [Q][sep][Q][sep][Q], six vertices a glyph
+                    // after the first, so the winding parity holds and the separators draw nothing - and that
+                    // offer captures the matrices the run could not. It used to be submitted quad by quad: every
+                    // glyph of a string drawn under a fresh transform (each sign line) became its own offer, which
+                    // was most of the sign cost in the warm profile. B16 still holds: the count is what the one
+                    // submission accepted, never promoted by an OR.
+                    takenThisFlush = backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
+                            FORMAT_ID, bufferedQuadsBase, bufferedVertexCount, GL_TRIANGLE_STRIP)
+                            ? bufferedQuadCount : 0;
                     if (takenThisFlush != bufferedQuadCount) {
                         refusedQuads += bufferedQuadCount - takenThisFlush;
                         refuse("flush-quad-refused", "quadCount=" + bufferedQuadCount

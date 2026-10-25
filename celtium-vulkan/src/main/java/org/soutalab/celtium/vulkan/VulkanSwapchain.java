@@ -197,6 +197,9 @@ public final class VulkanSwapchain {
     /** How many presents between surface-size queries; the query costs about 0.13 ms. */
     private static final int CAPS_CHECK_INTERVAL = 8;
     private int capsCheckCountdown;
+    /** At least this long between surface-size queries, whatever the present rate. */
+    private static final long CAPS_CHECK_MIN_NANOS = 100_000_000L;
+    private long capsCheckedNanos = Long.MIN_VALUE / 2;
     private boolean outOfDate;
     private int acquireOutOfDate;
     /** Presents a solid marker colour instead of the frame, so the screen can be attributed to this path. */
@@ -1179,9 +1182,13 @@ public final class VulkanSwapchain {
             // The query is not free (0.13 ms a present when measured), and a resize is a user gesture that the next
             // few presents catch just as well, so it is asked once every CAPS_CHECK_INTERVAL presents: a stale frame
             // that lasts a handful of presents is the worst case, against a fifth of a millisecond paid every frame.
-            boolean checkCaps = this.capsCheckCountdown <= 0;
+            // Time-bounded as well: at several hundred presents a second, every eighth present was still ~16 us a
+            // frame, while a resize the framebuffer size does not announce only needs catching within a blink.
+            long capsNow = System.nanoTime();
+            boolean checkCaps = this.capsCheckCountdown <= 0 && capsNow - this.capsCheckedNanos >= CAPS_CHECK_MIN_NANOS;
             if (checkCaps) {
                 this.capsCheckCountdown = CAPS_CHECK_INTERVAL;
+                this.capsCheckedNanos = capsNow;
             }
             this.capsCheckCountdown--;
             if (checkCaps) try (org.lwjgl.system.MemoryStack capStack = org.lwjgl.system.MemoryStack.stackPush()) {
