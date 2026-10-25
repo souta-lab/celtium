@@ -1136,6 +1136,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
 
+    /** Vanilla's framebuffer composites (framebufferRenderExt), drawn as native operations. */
+    final NativeFramebufferCompositor framebufferCompositor = new NativeFramebufferCompositor(this);
+
+    public void compositeFramebuffer(long identity, boolean main, int texture, int sourceWidth, int sourceHeight,
+            int textureWidth, int textureHeight, int width, int height, boolean opaque) {
+        this.framebufferCompositor.submit(identity, main, texture, sourceWidth, sourceHeight,
+                textureWidth, textureHeight, width, height, opaque);
+    }
+
     /** Native replay of compiled model display lists: the per-group mesh path and the instanced runs. */
     final ModelReplay modelReplay = new ModelReplay(this);
 
@@ -8544,6 +8553,7 @@ this.frameBufferOpen = false;
      * The UI pipeline is not part of this: it is built against the standalone UI render pass, which the window keeps.
      */
     private int celtium$releaseImmediatePipelines() {
+        this.framebufferCompositor.release();
         // Prepared materials retain these pipeline objects too. Terrain pass enums survive a world switch, so
         // comparing lastUiPass alone cannot invalidate materials whose Vulkan pipelines were just destroyed.
         java.util.Arrays.fill(this.prepareCacheValue, null);

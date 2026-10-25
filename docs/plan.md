@@ -54,8 +54,8 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | ワールド退出後ボタン無し | **未再現**（fixture: 既定・日本語/Unicode/1920×1080 とも表示）。手順差（ポーズ→終了・非16:9）の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`、`-Dceltium.debug.periodicLogs=true`で全出力） |
-   | vanilla post shader（観戦時のcreeper/spider等・発光outline） | **creeper/spiderはnativeで描画**（leg `postshader4-creeper/spider-amd-1` PASSED・validation 0）。以前はGL-lessで読込自体が失敗し無効だった（compile状態の問合せ署名違い・uniform位置-1・行列の転置・descriptor layout）。**発光outlineは未完**: chainは毎frame走りoutline画像も正しいが、mainへの合成が画面に出ない（`postshader6-glow-amd-1`）。次の判別: 合成groupが受理・記録されるか、どの画像をsampleするか |
-   native texture environment 所有へ移行し、モデルごとのGL問合せを撤去。REPLACE/CONSTANT の発光用materialを修正したが、glowのmain合成は未完。
+   | vanilla post shader（観戦時のcreeper/spider等・発光outline） | **creeper/spiderはnativeで描画**（leg `postshader4-creeper/spider-amd-1` PASSED・validation 0）。以前はGL-lessで読込自体が失敗し無効だった（compile状態の問合せ署名違い・uniform位置-1・行列の転置・descriptor layout）。**発光outlineもnative合成で表示**（`framebufferRenderExt`を`NativeFramebufferCompositor`へ置換、jar `6aafefa6` で leg `comp-glow-amd` に白outline・validation 0、`comp-world-amd`/`comp-world-intel` PASSED・validation 0）。glow sceneは未較正のため画像gateは判定外 |
+   native texture environment 所有へ移行し、モデルごとのGL問合せを撤去。REPLACE/CONSTANT の発光用materialを修正し、glowのmain合成はnative compositorで表示。
    空framebufferのnative初期化・公開cache失効・main imageのGENERAL契約・world終了時material cache寿命を修正。
    **同一最終JARでAMD/Intelのworld往復 PASSED・画像gate PASSED・validation ON 0件**。
    4画面＋qmagnetを保存（HEI2画面は未較正、合格には数えない）。[実装・失敗・検証](evidence/native-texture-owner-2026-10-25.md)。

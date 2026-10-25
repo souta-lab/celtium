@@ -33,6 +33,20 @@ public abstract class FramebufferMixin {
     private static final java.util.concurrent.atomic.AtomicLong FBO_BIND_LINES =
             new java.util.concurrent.atomic.AtomicLong();
 
+    /** Native phase boundary: metadata only; the renderer owns the fullscreen geometry/material and execution. */
+    @Inject(method = "func_178038_a", at = @At("HEAD"), cancellable = true, require = 0)
+    private void celtium$nativeComposite(int width, int height, boolean opaque, CallbackInfo info) {
+        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
+        TerrainGpuBackend current = TerrainGpuBackends.current();
+        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) return;
+        Framebuffer self = (Framebuffer) (Object) this;
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        backend.compositeFramebuffer(System.identityHashCode(self), mc.getFramebuffer() == self,
+                self.framebufferTexture, self.framebufferWidth, self.framebufferHeight,
+                self.framebufferTextureWidth, self.framebufferTextureHeight, width, height, opaque);
+        info.cancel();
+    }
+
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
         // Announce a framebuffer replacement before the bind below, so the flush that a target change would otherwise do

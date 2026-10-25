@@ -1,0 +1,217 @@
+{
+  "before": {
+    "result": {
+      "accepted": false,
+      "exitCode": 2,
+      "verdict": "INCONCLUSIVE",
+      "harnessExitCode": 2,
+      "problems": [],
+      "copiedArtifacts": [
+        {
+          "role": "renderer",
+          "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+        },
+        {
+          "role": "fixture",
+          "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+        }
+      ],
+      "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+      "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+      "rendererKind": "native-vulkan",
+      "picture": {
+        "path": "screenshots/celtium-presented-world-run-2f3e603b228b-7a81197d-kept.png",
+        "size": [
+          1280,
+          720
+        ]
+      },
+      "elapsedSeconds": 28.76864233300148,
+      "leg": "texture-glow-bounds"
+    },
+    "manifest": {
+      "schemaVersion": 1,
+      "scope": "renderer input provenance; not an acceptance verdict",
+      "rendererKind": "native-vulkan",
+      "leg": "texture-glow-bounds",
+      "mode": "world",
+      "gpu": "amd",
+      "windowSystemRequested": "x11",
+      "durationSeconds": 150,
+      "slotWaitSeconds": 120,
+      "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+      "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-texture-glow-bounds",
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "dependencies": [
+        {
+          "path": "mods/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+          "sha256": "50af1c4641373eb76e47ae4e57036b9bb45ee1334249a691c8ab08e3a113c9e8"
+        },
+        {
+          "path": "mods/celtium-validation-client-0.0.13-alpha.jar",
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+          "sha256": "373354a6d4044466c6d587b0af82490ae234fb56aa63166116192520f0ef99a7"
+        },
+        {
+          "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+        }
+      ],
+      "git": {
+        "head": "26a78d1bb8c882623130bb8d6a2df2af293ef81f",
+        "dirty": true,
+        "dirtyFiles": [
+          "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureArray.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java",
+          " M docs/instruments.md",
+          " M docs/plan.md",
+          " M forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java",
+          "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureEnvironment.java",
+          "?? celtium-vulkan/src/test/java/org/soutalab/celtium/vulkan/NativeTextureEnvironmentTest.java",
+          "?? docs/evidence/native-texture-amd-2026-10-25.png",
+          "?? docs/evidence/native-texture-glow-2026-10-25.png",
+          "?? docs/evidence/native-texture-hurt-2026-10-25.png",
+          "?? docs/evidence/native-texture-intel-2026-10-25.png",
+          "?? docs/evidence/native-texture-inventory-2026-10-25.png",
+          "?? docs/evidence/native-texture-kpi-2026-10-25.json",
+          "?? docs/evidence/native-texture-menu-2026-10-25.png",
+          "?? docs/evidence/native-texture-owner-2026-10-25.json",
+          "?? docs/evidence/native-texture-owner-2026-10-25.md",
+          "?? docs/evidence/native-texture-recipe-2026-10-25.png",
+          "?? docs/evidence/native-texture-video-2026-10-25.png",
+          "?? docs/evidence/spikes-2026-10-25.json",
+          "?? docs/evidence/spikes-2026-10-25.png"
+        ]
+      },
+      "instanceModExclusions": [
+        "celtium-*pre-stub-changes.jar"
+      ],
+      "jvmArgs": [
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=world",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-glow-bounds/framedump",
+        "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+        "-Dceltium.validation.fixedWorldTime=true",
+        "-Dceltium.validation.worldTime=1500",
+        "-Dceltium.validation.keepEntities=true",
+        "-Dceltium.validation.glowEntities=true",
+        "-Dceltium.validation.keepGui=false",
+        "-Dceltium.vulkan.groupBounds=true",
+        "-Dceltium.vulkan.groupBoundsFormat=2",
+        "-Dceltium.vulkan.groupBoundsMinFrame=400",
+        "-Dceltium.vulkan.groupBoundsCount=200",
+        "-Dceltium.debug.periodicLogs=true"
+      ],
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "-E",
+        "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+        "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "--output",
+        "/home/s0u7a/projects/celtium/.gv-verify/texture-glow-bounds-lock.json",
+        "--game-dir",
+        "/home/s0u7a/projects/celtium/.gv-verify/run-texture-glow-bounds",
+        "--library",
+        "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+        "--slot-wait",
+        "120",
+        "--exclude-instance-mod",
+        "celtium-*pre-stub-changes.jar",
+        "--mod",
+        "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.13-alpha.jar",
+        "--mod",
+        "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.13-alpha.jar",
+        "--jvm-arg=-Dceltium.vulkan.glless=true",
+        "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+        "--jvm-arg=-Dfml.readTimeout=120",
+        "--jvm-arg=-Dceltium.vulkan.validation=true",
+        "--jvm-arg=-Dceltium.validation=true",
+        "--jvm-arg=-Dceltium.validation.scene=world",
+        "--jvm-arg=-Dceltium.validation.keepGui=true",
+        "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+        "--jvm-arg=-Dceltium.validation.pinSections=64",
+        "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+        "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+        "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-texture-glow-bounds/framedump",
+        "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+        "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+        "--jvm-arg=-Dceltium.validation.worldTime=1500",
+        "--jvm-arg=-Dceltium.validation.keepEntities=true",
+        "--jvm-arg=-Dceltium.validation.glowEntities=true",
+        "--jvm-arg=-Dceltium.validation.keepGui=false",
+        "--jvm-arg=-Dceltium.vulkan.groupBounds=true",
+        "--jvm-arg=-Dceltium.vulkan.groupBoundsFormat=2",
+        "--jvm-arg=-Dceltium.vulkan.groupBoundsMinFrame=400",
+        "--jvm-arg=-Dceltium.vulkan.groupBoundsCount=200",
+        "--jvm-arg=-Dceltium.debug.periodicLogs=true",
+        "--force-x11",
+        "--run",
+        "--validate",
+        "--duration",
+        "150",
+        "--headless",
+        "--render-node",
+        "/dev/dri/by-path/pci-0000:03:00.0-render",
+        "--require-gpu",
+        "RX 6400"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": null,
+        "MESA_VK_DEVICE_SELECT": null,
+        "SDL_VIDEODRIVER": "x11"
+      }
+    },
+    "camera": {
+      "x": 217.5,
+      "y": 48.0,
+      "z": 217.5,
+      "yaw": 180.0,
+      "pitch": 10.0
+    },
+    "validationMessageCount": 0,
+    "compositeGroups": [
+      "[02:39:13] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.BackendDiagnostics:reportGroupBounds:1173]: [Celtium] CELTIUM_GROUP_BOUNDS frame=400 group=37158 fmt=2 worldPass=false target=437194578 texture=44 batches=1 vertices=4 indices=6 colour0=0x0 vertexColour0=0xffffffff proj=[m00=0.002 m11=-0.003 m22=0.0 m32=-0.5] state=[blend=1 src=6 dst=7 srcA=0 dstA=1 mask=0x7 eq=0/0 alphaFunc=0 depthTest=0 depthWrite=0 cull=1 alphaRef=0.0 depthFunc=515 glBlend=off glDepthTest=off (gl* read at close, the state fields at the offer)] texMat=none ndc x[-1.00..1.00] y[-1.00..1.00] z[0.50..0.50] behind=0",
+      "[02:39:13] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.BackendDiagnostics:reportGroupBounds:1173]: [Celtium] CELTIUM_GROUP_BOUNDS frame=401 group=37351 fmt=2 worldPass=false target=437194578 texture=44 batches=1 vertices=4 indices=6 colour0=0x0 vertexColour0=0xffffffff proj=[m00=0.002 m11=-0.003 m22=0.0 m32=-0.5] state=[blend=1 src=6 dst=7 srcA=0 dstA=1 mask=0x7 eq=0/0 alphaFunc=0 depthTest=0 depthWrite=0 cull=1 alphaRef=0.0 depthFunc=515 glBlend=off glDepthTest=off (gl* read at close, the state fields at the offer)] texMat=none ndc x[-1.00..1.00] y[-1.00..1.00] z[0.50..0.50] behind=0",
+      "[02:39:13] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.BackendDiagnostics:reportGroupBounds:1173]: [Celtium] CELTIUM_GROUP_BOUNDS frame=402 group=37544 fmt=2 worldPass=false target=437194578 texture=44 batches=1 vertices=4 indices=6 colour0=0x0 vertexColour0=0xffffffff proj=[m00=0.002 m11=-0.003 m22=0.0 m32=-0.5] state=[blend=1 src=6 dst=7 srcA=0 dstA=1 mask=0x7 eq=0/0 alphaFunc=0 depthTest=0 depthWrite=0 cull=1 alphaRef=0.0 depthFunc=515 glBlend=off glDepthTest=off (gl* read at close, the state fields at the offer)] texMat=none ndc x[-1.00..1.00] y[-1.00..1.00] z[0.50..0.50] behind=0",
+      "[02:39:13] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.BackendDiagnostics:reportGroupBounds:1173]: [Celtium] CELTIUM_GROUP_BOUNDS frame=403 group=37737 fmt=2 worldPass=false target=437194578 texture=44 batches=1 vertices=4 indices=6 colour0=0x0 vertexColour0=0xffffffff proj=[m00=0.002 m11=-0.003 m22=0.0 m32=-0.5] state=[blend=1 src=6 dst=7 srcA=0 dstA=1 mask=0x7 eq=0/0 alphaFunc=0 depthTest=0 depthWrite=0 cull=1 alphaRef=0.0 depthFunc=515 glBlend=off glDepthTest=off (gl* read at close, the state fields at the offer)] texMat=none ndc x[-1.00..1.00] y[-1.00..1.00] z[0.50..0.50] behind=0",
+      "[02:39:13] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.BackendDiagnostics:reportGroupBounds:1173]: [Celtium] CELTIUM_GROUP_BOUNDS frame=404 group=37930 fmt=2 worldPass=false target=437194578 texture=44 batches=1 vertices=4 indices=6 colour0=0x0 vertexColour0=0xffffffff proj=[m00=0.002 m11=-0.003 m22=0.0 m32=-0.5] state=[blend=1 src=6 dst=7 srcA=0 dstA=1 mask=0x7 eq=0/0 alphaFunc=0 depthTest=0 depthWrite=0 cull=1 alphaRef=0.0 depthFunc=515 glBlend=off glDepthTest=off (gl* read at close, the state fields at the offer)] texMat=none ndc x[-1.00..1.00] y[-1.00..1.00] z[0.50..0.50] behind=0",
+      "[02:39:13] [Client thread/INFO] [STDOUT]: [org.soutalab.celtium.vulkan.BackendDiagnostics:reportGroupBounds:1173]: [Celtium] CELTIUM_GROUP_BOUNDS frame=405 group=38123 fmt=2 worldPass=false target=437194578 texture=44 batches=1 vertices=4 indices=6 colour0=0x0 vertexColour0=0xffffffff proj=[m00=0.002 m11=-0.003 m22=0.0 m32=-0.5] state=[blend=1 src=6 dst=7 srcA=0 dstA=1 mask=0x7 eq=0/0 alphaFunc=0 depthTest=0 depthWrite=0 cull=1 alphaRef=0.0 depthFunc=515 glBlend=off glDepthTest=off (gl* read at close, the state fields at the offer)] texMat=none ndc x[-1.00..1.00] y[-1.00..1.00] z[0.50..0.50] behind=0"
+    ]
+  },
+  "scope": "Before native composition: legacy composite accepted with NDC [-1,1], depth off, cull on, source alias 44. Final native operation still requires GPU/image verification."
+}
