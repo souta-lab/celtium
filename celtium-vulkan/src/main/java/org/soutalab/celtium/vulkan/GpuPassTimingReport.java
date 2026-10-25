@@ -38,7 +38,8 @@ public final class GpuPassTimingReport {
      * @param timings  nanoseconds per pass, as the timestamp pool recorded them
      */
     public static void printIfDue(long frameId, Map<TerrainRenderPass, Long> timings, long immediatePassNanos,
-            long frameNanos, long headNanos, long tailNanos) {
+            long frameNanos, long headNanos, long tailNanos, int windows, long windowMainNanos, long windowOffNanos,
+            long windowMaxNanos, String markTimeline) {
         if (!ENABLED || frameId % EVERY_FRAME != 0 || timings.isEmpty()) {
             return;
         }
@@ -52,7 +53,11 @@ public final class GpuPassTimingReport {
         // The immediate window is not a TerrainRenderPass, so it is printed separately: it is the pass the terrain numbers
         // left unexplained, and it is the one this report exists to localise on the integrated GPU.
         if (immediatePassNanos > 0L) {
-            line.append(' ').append("immediateWindow=").append(immediatePassNanos / 1000L).append("us");
+            line.append(' ').append("immediateWindows=").append(immediatePassNanos / 1000L).append("us")
+                    .append(" windows=").append(windows)
+                    .append(" windowMain=").append(windowMainNanos / 1000L).append("us")
+                    .append(" windowOff=").append(windowOffNanos / 1000L).append("us")
+                    .append(" windowMax=").append(windowMaxNanos / 1000L).append("us");
         }
         if (frameNanos > 0L) {
             line.append(' ').append("wholeFrameGpu=").append(frameNanos / 1000L).append("us")
@@ -60,5 +65,9 @@ public final class GpuPassTimingReport {
                     .append(" tailGpu=").append(tailNanos / 1000L).append("us");
         }
         System.out.println("[Celtium] CELTIUM_PASS_GPU frame=" + frameId + " " + line);
+        if (markTimeline != null && !markTimeline.isEmpty()) {
+            // Microseconds of GPU time since the previous mark, in recording order, for the frame's last command buffer.
+            System.out.println("[Celtium] CELTIUM_PASS_GPU_MARKS frame=" + frameId + markTimeline);
+        }
     }
 }

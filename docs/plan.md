@@ -61,11 +61,11 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 2. **性能**（KPI flags・1280×720・vsync off/260。いずれも load 上昇で形式 verdict なし）:
    - Xaero 導入前（`ef807429c`）: AMD 0.990x（3対とも<1・p95も低い）。Intel は未batch提出が原因で1.68x → 全deviceでbatch提出に
      （`811c29c46`、Intel 単体 3.6–4.0 → 2.2 ms）。live allocation の寄与は約0.15 ms（`b57e1e7ba`）で主因ではない。
-   - Xaero 入りの利用者 instance: mod FBO の毎pass再作成を除去（Devin `206746e83`）。`0d937df8b` で AMD 1.44x・Intel 1.45x、
-     `d4ea7dfd4` で AMD 1.35x（対前 0.939x）。残差は Xaero 配下25%（JFR）: tile ごとの小 draw の per-batch 費用（texture毎に新group）と
-     raw FBO bind ごとの window flush。group 開始の内訳（census、`daf13af1f`）: 直前groupが他要因で閉じた 34%・texture 31%・format 26%・state 9%。
-     **最大の閉じ手は model display list の replay**（761k回≒描いたgroup 718k）。texture配列化だけでは31%止まり。
-     棄却: 不透明replayの並べ替え（45件、`e1c747092`）、per-draw割当・boxed map削減（対control 0.986x、`0809c4e03`ほか）。
+   - Xaero 入り利用者 instance: `0d937df8b` AMD 1.44x・Intel 1.45x → `7ec72515e` **AMD 1.15x**（p50 1.39–1.42 ms）・**Intel 1.36x**。
+     AMD は CPU律速: 残差は per-draw 費用の分散（offer 26%・1–2 µs/件、全hot methodはC2済）。sign/font/prepare cache等で縮小。
+     Intel は GPU 計時で frame の GPU 2.0–2.4 ms・解像度依存 0.28 ms 超過。棄却（Intel A/B）: acquire barrier の狭小化（遅化 3.2 vs 2.8 ms、
+     ANVではflush要求が高い）、HUD depth clear 省略（効果なし）、present submit統合（中立）、glthread仮説（無効でも3%）。
+     group 開始内訳（`daf13af1f`）: 他要因 34%・texture 31%・format 26%・state 9%。棄却: 不透明replay並べ替え（`e1c747092`）。
      **次の単位**: model replay と immediate を一つの順序付きstreamに載せる（`new_architecture.md` Stage 1 の packet化）。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。

@@ -437,15 +437,48 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Passes a single frame can have; used to reserve uniform blocks before recording. */
     private static final int MAX_UNIFORM_PASSES = 6;
 
-    private static final int TIMESTAMP_SLOTS = 16;
+    private static final int TIMESTAMP_SLOTS = 320;
     /**
-     * The slot the immediate window pass measures itself with, kept out of the terrain passes' range.
-     * <p>
-     * The terrain passes are timed one by one and account for about 1.8 ms of the frame on the integrated GPU, while
-     * the frame itself is nine: the rest is this renderer's own immediate window, and without a number for it the
-     * six missing milliseconds can only be guessed at. One reserved pair is enough - the pass is one per frame.
+     * Labelled single timestamps along the last command buffer (queries {@code MARK_BASE..}), written only while the
+     * GPU pass report collects: the delta between two marks is the GPU time of the commands recorded between them -
+     * barriers and clears included, which no pass bracket owns.
      */
-    private static final int IMMEDIATE_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 1;
+    private static final int MARK_BASE = 64;
+    private static final int MARKS = 240;
+    private static final String[] GROUP_MARK_LABELS = new String[VulkanImmediateFormats.COUNT];
+    static {
+        for (int f = 0; f < GROUP_MARK_LABELS.length; f++) {
+            GROUP_MARK_LABELS[f] = "g" + f;
+        }
+    }
+    private int gpuMarkCount;
+    private final String[] gpuMarkLabels = new String[MARKS];
+    private String gpuMarkTimeline = "";
+
+    /** Writes a labelled GPU mark when the GPU pass report is collecting; otherwise nothing. */
+    private void gpuMark(String label) {
+        if (this.timestampPool == 0L || !this.timestampsUsable || this.gpuMarkCount >= MARKS
+                || !org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() || this.commandBuffer == null) {
+            return;
+        }
+        this.gpuMarkLabels[this.gpuMarkCount] = label;
+        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
+                MARK_BASE + this.gpuMarkCount);
+        this.gpuMarkCount++;
+    }
+    /**
+     * The window slots: one pair per immediate window of the frame, up to {@link #WINDOW_SLOTS}. The single reserved
+     * pair before this measured only whichever window ran last (about one in ten), so the integrated GPU's frame
+     * outside the terrain passes - 1.6 of 2.3 ms on the UHD 630 - could not be attributed.
+     */
+    private static final int WINDOW_SLOT_BASE = 16;
+    private static final int WINDOW_SLOTS = 12;
+    private int windowTimestampCount;
+    private final long[] windowTimestampTargets = new long[WINDOW_SLOTS];
+    private long windowGpuMainNanos;
+    private long windowGpuOffNanos;
+    private long windowGpuMaxNanos;
+    private int windowGpuCount;
     /**
      * The slot that measures the whole frame's GPU time, from the start of the command buffer to its end.
      * <p>
@@ -1078,7 +1111,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                 this.recordedImmediateGroups.clear();
                 beginCommands();
+                gpuMark("pre-acq1");
                 this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                gpuMark("acq1");
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                 progress = this.frameCoordinator.submitCommands();
             } catch (RuntimeException | LinkageError error) {
@@ -7447,7 +7482,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     || lightParamsMoved) {
                 // Which term refused the open group, counted. Asked only where a group is actually created (a few
                 // hundred times a frame, not per offer), and asked with the same live state the predicate just read.
-                this.groupSplitCensus.note(ImmediateGroupSplitCensus.classify(retained != null,
+                // Behind the merge census flag: the classification repeats the predicate's matrix, colour, affine and
+                // fog comparisons for every new group, which is diagnostic work on the shipping path.
+                if (MERGE_CENSUS) this.groupSplitCensus.note(ImmediateGroupSplitCensus.classify(retained != null,
                         this.currentImmediateMesh == null,
                         this.currentImmediateMesh != null && this.currentGroupFormatId != formatId,
                         this.currentImmediateMesh != null && this.currentGroupTexture != boundTexture,
@@ -7678,7 +7715,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.currentGroupTexMatrix = affineRelevant ? celtium$textureAffine() : null;
                 this.currentGroupTexGen = formatId == VulkanImmediateFormats.POSITION_COLOR_TEXGEN
                         ? celtium$texGenEyeRows(new float[12]) : null;
-                if (affineRelevant) {
+                if (MERGE_CENSUS && affineRelevant) {
                     this.groupSplitCensus.noteTextureAffine(this.currentGroupTexMatrix);
                 }
                 // The registry records this group was built against: the fast path asks "is the offer's image
@@ -8682,7 +8719,8 @@ this.frameBufferOpen = false;
             return;
         }
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
-                this.frameHeadNanos, this.frameTailNanos);
+                this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
+                this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
         DrawCounters.reportIfDue(this.frameId);
         // Once, when a pack is actually loaded. The guard used to be shaderPackDraws < 3, and that counter only moves when a pack draw happens - so
         // without a pack every frame printed this line: 8,215 of them and about 3.5 MB of log in one leg, which then read as "the pack draws every
@@ -9205,7 +9243,9 @@ this.frameBufferOpen = false;
                         try {
                             org.soutalab.celtium.vulkan.FramePassTimings.end("wfpMiddle");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
+                            gpuMark("pre-acq2");
                             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                            gpuMark("acq2");
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
                             long windowRecordStarted = System.nanoTime();
@@ -9292,7 +9332,9 @@ this.frameBufferOpen = false;
                     this.recordedImmediateGroups.clear();
                     if (opened) {
                         beginCommands();
+                        gpuMark("pre-acq3");
                         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                        gpuMark("acq3");
                         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                         this.frameCoordinator.submitCommands();
                         // The recovery submission is waited on its own slot - bounded, and the only completion the
@@ -10437,10 +10479,15 @@ this.frameBufferOpen = false;
         }
         boolean timeImmediatePass = this.timestampsUsable && this.timestampPool != 0L
                 && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled();
-        if (timeImmediatePass) {
+        int windowSlot = timeImmediatePass && this.windowTimestampCount < WINDOW_SLOTS
+                ? WINDOW_SLOT_BASE + this.windowTimestampCount : -1;
+        if (windowSlot >= 0) {
+            this.windowTimestampTargets[this.windowTimestampCount] = this.targetRegistry.currentIdentity();
+            this.windowTimestampCount++;
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                    IMMEDIATE_TIMESTAMP_SLOT * 2);
+                    windowSlot * 2);
         }
+        gpuMark(this.targetRegistry.currentIsMain() ? "win-begin" : "offwin-begin");
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
         this.commandState.beginPass(this.activeImmediateTarget);
@@ -10492,9 +10539,10 @@ this.frameBufferOpen = false;
             }
         }
         vkCmdEndRenderPass(this.commandBuffer);
-        if (timeImmediatePass) {
+        gpuMark("win-end");
+        if (windowSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                    (IMMEDIATE_TIMESTAMP_SLOT * 2) + 1);
+                    (windowSlot * 2) + 1);
             this.immediatePassTimed = true;
         }
         this.commandState.endPass();
@@ -10988,6 +11036,7 @@ this.frameBufferOpen = false;
             return;
         }
         this.frameEndTimestampWritten = true;
+        gpuMark("end");
         vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
                 (FRAME_TIMESTAMP_SLOT * 2) + 1);
         this.frameGpuTimed = true;
@@ -11052,16 +11101,71 @@ this.frameBufferOpen = false;
                 }
             }
             if (this.immediatePassTimed) {
-                long startAvailable = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2 + 1);
-                long endAvailable = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2 + 3);
-                if (startAvailable != 0 && endAvailable != 0) {
-                    long start = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2);
-                    long end = data.get(IMMEDIATE_TIMESTAMP_SLOT * 2 * 2 + 2);
-                    if (end >= start) {
-                        this.immediatePassGpuNanos = (long) ((end - start) * this.timestampPeriod);
+                // Every window of the frame, summed and split by target: main-target windows against the off-target
+                // (mod and post-chain framebuffer) ones, plus the largest single window.
+                long main = 0L;
+                long off = 0L;
+                long max = 0L;
+                int counted = 0;
+                long mainIdentity = this.targetRegistry.mainIdentity();
+                for (int w = 0; w < this.windowTimestampCount; w++) {
+                    int slot = WINDOW_SLOT_BASE + w;
+                    if (data.get(slot * 2 * 2 + 1) == 0 || data.get(slot * 2 * 2 + 3) == 0) {
+                        continue;
                     }
+                    long start = data.get(slot * 2 * 2);
+                    long end = data.get(slot * 2 * 2 + 2);
+                    if (end < start) {
+                        continue;
+                    }
+                    long nanos = (long) ((end - start) * this.timestampPeriod);
+                    long target = this.windowTimestampTargets[w];
+                    if (target == mainIdentity || target == 0L) {
+                        main += nanos;
+                    } else {
+                        off += nanos;
+                    }
+                    max = Math.max(max, nanos);
+                    counted++;
                 }
+                this.immediatePassGpuNanos = main + off;
+                this.windowGpuMainNanos = main;
+                this.windowGpuOffNanos = off;
+                this.windowGpuMaxNanos = max;
+                this.windowGpuCount = counted;
                 this.immediatePassTimed = false;
+            }
+        }
+        if (this.gpuMarkCount > 1) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                LongBuffer marks = stack.mallocLong(this.gpuMarkCount * 2);
+                int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, MARK_BASE,
+                        this.gpuMarkCount, marks, Long.BYTES * 2,
+                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+                if (result == VK_SUCCESS || result == VK_NOT_READY) {
+                    // Summed per label: the delta before each mark is charged to that mark's label (the commands
+                    // recorded since the previous mark), so "g2=310us/48" reads as 48 format-2 groups costing 310 us.
+                    java.util.Map<String, long[]> byLabel = new java.util.LinkedHashMap<String, long[]>();
+                    long previous = -1L;
+                    for (int m = 0; m < this.gpuMarkCount; m++) {
+                        if (marks.get(m * 2 + 1) == 0) {
+                            continue;
+                        }
+                        long at = marks.get(m * 2);
+                        if (previous >= 0L && at >= previous) {
+                            long[] sum = byLabel.computeIfAbsent(this.gpuMarkLabels[m], k -> new long[2]);
+                            sum[0] += (long) ((at - previous) * this.timestampPeriod);
+                            sum[1]++;
+                        }
+                        previous = at;
+                    }
+                    StringBuilder timeline = new StringBuilder();
+                    for (java.util.Map.Entry<String, long[]> entry : byLabel.entrySet()) {
+                        timeline.append(' ').append(entry.getKey()).append('=')
+                                .append(entry.getValue()[0] / 1000L).append("us/").append(entry.getValue()[1]);
+                    }
+                    this.gpuMarkTimeline = timeline.toString();
+                }
             }
         }
         this.timestampPasses.clear();
@@ -11794,7 +11898,9 @@ this.frameBufferOpen = false;
         VkRenderPassBeginInfo begin = null;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBarriers");
         try {
+        gpuMark("pre-acq4");
         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+        gpuMark("acq4");
 
         long renderPass = pipeline.renderPass();
         begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
@@ -11802,8 +11908,9 @@ this.frameBufferOpen = false;
                 .framebuffer(ensureFramebuffer(renderPass));
         begin.renderArea().offset().set(0, 0);
         begin.renderArea().extent().set(this.targetWidth, this.targetHeight);
-        timestampSlot = this.timestampsUsable && this.timestampSlots < FRAME_TIMESTAMP_SLOT
+        timestampSlot = this.timestampsUsable && this.timestampSlots < WINDOW_SLOT_BASE
                 ? this.timestampSlots : -1;
+        gpuMark("terrain-begin");
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
                     timestampSlot * 2);
@@ -12079,6 +12186,7 @@ this.frameBufferOpen = false;
         }
 
         vkCmdEndRenderPass(this.commandBuffer);
+        gpuMark("terrain-end");
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
         if (timestampSlot >= 0) {
@@ -16218,6 +16326,8 @@ this.frameBufferOpen = false;
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
                 vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0, TIMESTAMP_SLOTS);
+                this.windowTimestampCount = 0;
+                this.gpuMarkCount = 0;
                 if (this.timestampsUsable && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
                     // Written only while the report is collecting: they are the report's own numbers, and a validation leg
                     // that is not asking for them should not carry extra query writes (measured: ten
@@ -16486,6 +16596,7 @@ this.frameBufferOpen = false;
                 }
                 if (group.modelRun != null) {
                     this.modelReplay.celtium$drawModelRun(group);
+                    gpuMark("run");
                     continue;
                 }
                 VulkanDynamicMesh mesh = group.mesh;
@@ -17000,9 +17111,18 @@ this.frameBufferOpen = false;
                 }
                 this.pendingImmediateIndices -= mesh.indexCount();
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
+                if (org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
+                    // Format, texture, index count and blend: enough to name which draw a large delta belongs to.
+                    gpuMark("g" + group.formatId + "/t" + group.texture + "/i" + mesh.indexCount()
+                            + "/b" + (group.state != null && group.state.length > 0 ? group.state[0] : -1)
+                            + (group.target == this.targetRegistry.mainIdentity() ? "" : "/off"));
+                }
                 // The game's own glClears that arrived after this group was queued: recorded inside this same pass,
                 // after the draws they erase and before the groups that follow them.
-                celtium$recordQueuedClearsInPass(group.postClears, group.target);
+                if (group.postClears != null) {
+                    celtium$recordQueuedClearsInPass(group.postClears, group.target);
+                    gpuMark("pass-clear");
+                }
                 group.postClears = null;
             }
             // The last run of the window has no following group to close it.
