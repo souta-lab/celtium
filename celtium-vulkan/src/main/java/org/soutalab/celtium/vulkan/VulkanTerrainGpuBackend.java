@@ -8599,7 +8599,7 @@ this.frameBufferOpen = false;
         // Prepared materials retain these pipeline objects too. Terrain pass enums survive a world switch, so
         // comparing lastUiPass alone cannot invalidate materials whose Vulkan pipelines were just destroyed.
         java.util.Arrays.fill(this.prepareCacheValue, null);
-        this.prepareCachePass = null;
+        java.util.Arrays.fill(this.prepareCachePass, null);
         int released = 0;
         for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
             released += releaseDirect(block == null ? null : () -> block.delete());
@@ -9604,31 +9604,42 @@ this.frameBufferOpen = false;
     PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
         Object pass = this.lastUiPass;
         this.prepareCacheCalls++;
-        if (pass != this.prepareCachePass) {
-            java.util.Arrays.fill(this.prepareCacheValue, null);
-            this.prepareCachePass = pass;
-            this.prepareCachePassResets++;
+        // Keyed by the pass and by the texture's live wrapper key (view + generation), each held per slot. The first
+        // version cleared the whole cache on every pass change and hashed the texture's upload serial - which an
+        // animated atlas moves every tick - so half the asks missed (633,773 hits of 1,305,294 calls, 24,415 resets
+        // in 12,213 frames). A prepared material only depends on the pass's render pass and on the image's view: new
+        // pixels in the same image keep the descriptor valid, and a replaced image changes the wrapper key. A texture
+        // whose mirror is not complete yet is never cached, so the supply inside the uncached path still runs for it.
+        org.soutalab.celtium.vulkan.VulkanGlTexture live = textureId > 0 && this.textureRegistry != null
+                ? celtium$registry().get(textureId) : null;
+        if (textureId > 0 && (live == null || !live.hasFullContent())) {
+            return prepareImmediateUncached(format, textureId, key, state);
         }
-        // The texture's write serial is part of the identity: the resolution below also supplies a texture whose
-        // content arrived after the first ask, so a cached answer must not outlive a new upload of the same name.
-        long writeSerial = textureId >= 0 ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                .textureUploadSerial(textureId, 0) : 0L;
+        long textureKey = live == null ? 0L : live.key();
+        // The lit families' descriptors also name the light map, which a resource reload replaces.
+        long lightKey = this.lightmapTexture == null ? 0L : this.lightmapTexture.key();
         long mix = (((long) format) * 0x9E3779B97F4A7C15L)
                 ^ (((long) textureId) * 0xC2B2AE3D27D4EB4FL)
                 ^ (key * 0x165667B19E3779F9L)
-                ^ (writeSerial * 0x27D4EB2F165667C5L);
+                ^ (textureKey * 0x27D4EB2F165667C5L)
+                ^ ((long) System.identityHashCode(pass) * 0x94D049BB133111EBL)
+                ^ (lightKey * 0xBF58476D1CE4E5B9L);
         int slot = (int) (mix >>> 56) & (PREPARE_CACHE_SIZE - 1);
         PreparedImmediate cached = this.prepareCacheValue[slot];
-        if (cached != null && this.prepareCacheFormat[slot] == format
-                && this.prepareCacheTexture[slot] == textureId && this.prepareCacheKey[slot] == key) {
+        if (cached != null && this.prepareCachePass[slot] == pass && this.prepareCacheFormat[slot] == format
+                && this.prepareCacheTexture[slot] == textureId && this.prepareCacheKey[slot] == key
+                && this.prepareCacheTextureKey[slot] == textureKey && this.prepareCacheLightKey[slot] == lightKey) {
             this.prepareCacheHits++;
             return cached;
         }
         PreparedImmediate prepared = prepareImmediateUncached(format, textureId, key, state);
         if (prepared != null) {
+            this.prepareCachePass[slot] = pass;
             this.prepareCacheFormat[slot] = format;
             this.prepareCacheTexture[slot] = textureId;
             this.prepareCacheKey[slot] = key;
+            this.prepareCacheTextureKey[slot] = textureKey;
+            this.prepareCacheLightKey[slot] = lightKey;
             this.prepareCacheValue[slot] = prepared;
         }
         return prepared;
@@ -9640,14 +9651,15 @@ this.frameBufferOpen = false;
     private final int[] prepareCacheTexture = new int[PREPARE_CACHE_SIZE];
     private final long[] prepareCacheKey = new long[PREPARE_CACHE_SIZE];
     private final PreparedImmediate[] prepareCacheValue = new PreparedImmediate[PREPARE_CACHE_SIZE];
-    private Object prepareCachePass;
+    private final Object[] prepareCachePass = new Object[PREPARE_CACHE_SIZE];
+    private final long[] prepareCacheTextureKey = new long[PREPARE_CACHE_SIZE];
+    private final long[] prepareCacheLightKey = new long[PREPARE_CACHE_SIZE];
     private long prepareCacheHits;
     private long prepareCacheCalls;
-    private long prepareCachePassResets;
 
-    /** {@return the prepare cache census, as {@code hits/calls/passResets}}. */
+    /** {@return the prepare cache census, as {@code hits/calls}}. */
     String prepareCacheSummary() {
-        return this.prepareCacheHits + "/" + this.prepareCacheCalls + "/" + this.prepareCachePassResets;
+        return this.prepareCacheHits + "/" + this.prepareCacheCalls;
     }
 
     private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state) {
