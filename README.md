@@ -9,7 +9,7 @@ An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, 
 >
 > **native Vulkanで描画・提示する実装がありますが、描画・互換性・性能の受入は未完です。** 最新の判定と未解決項目は [現在表](<docs/plan.md>)だけで管理します。
 
-Status reviewed: **2026-10-23** (v0.0.15-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs).
+Status reviewed: **2026-10-25** (development version 0.0.18-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs).
 
 ## Current status
 
@@ -81,26 +81,25 @@ For reproducible validation and development, use [the current development proced
 
 ## Performance
 
-**General gameplay performance relative to Celeritas is not yet accepted.** Earlier README figures mixed different fixture windows and were not a statement of ordinary-instance FPS. The process audit also found a misspelled dump-control property in runs described as “tax-free”; their raw observations remain records, but that explanation was unsupported.
+Measured with paired, interleaved runs against Celeritas (`scripts/gv-kpi.sh`: same instance, same scene, warm
+world-tick window [400, 600), 1280x720, vsync off, frame limit 260, periodic dumps off). None of these runs produced a
+formal verdict - the load guard withheld it because machine load rose during each run - so they are measurements, not
+an accepted speed claim.
 
-### What the current build measures (2026-10-23, v0.0.15-alpha)
+| Instance | GPU | Celtium / Celeritas, median of 3 pairs (p50) | p95 |
+| --- | --- | --- | --- |
+| Vanilla-like (2026-10-25, `ef807429c`) | AMD RX 6400 | **0.990x** (0.986 / 0.990 / 0.998) | **lower in all 3 pairs** (1.69-1.88 vs 2.02-2.66 ms) |
+| With Xaero's Minimap (2026-10-25, `d4ea7dfd4`) | AMD RX 6400 | 1.35x (1.585 vs 1.17-1.23 ms) | higher |
+| With Xaero's Minimap (2026-10-25, `0d937df8b`) | Intel UHD 630 | 1.45x (2.87 vs 1.98 ms) | higher |
 
-Pinned world scene (QMAGNET's distributed map), 1920x1080, validation on, `frameStats` steady windows:
+On the AMD card Celtium matched Celeritas's median frame time and beat its 95th percentile in the vanilla-like
+instance. With a minimap mod that draws hundreds of small textured quads per frame it is slower on both GPUs: each
+small draw still pays a per-draw CPU path (state capture, material preparation, grouping) that GL's driver does more
+cheaply. The planned fix is the ordered packet stream of [the target architecture](<docs/new_architecture.md>);
+the current numbers and the next unit are kept in [the current table](<docs/plan.md>).
 
-| GPU | steady frame p50 | verdict |
-| --- | --- | --- |
-| AMD RX 6400 (RADV) | **7.99 ms** (≈125 fps) | PASSED, 0 validation messages, picture gate matched |
-| Intel UHD Graphics 630 | **11.89 ms** (≈84 fps) | PASSED, 0 validation messages |
-
-These are whole-frame intervals on one fixture and one camera pose, not a Celeritas comparison and not a general gameplay claim. About two thirds of that frame is not the
-renderer: with every draw command removed the frame still measured 5.3 ms, and a client-thread profile attributes the bulk to the game's tick and its own entity, tile-entity and
-world-reference work. Reaching 300 fps (3.3 ms) therefore needs work outside the renderer's drawing, and the renderer's own accept path and draw loop have no single hotspot left
-(see [development notes](<docs/development.md>)).
-
-An optional indirect-draw path (`-Dceltium.vulkan.indirectImmediate=true -Dceltium.vulkan.sortOpaque=true`) exists and is **off by default**: in this scene almost every
-immediate group is blended, so runs are one group long and the machinery does not pay.
-
-The [current table](<docs/plan.md>) preserves scoped observations and limitations. [Measurement instructions](<docs/development.md>) distinguish capture/validation overhead, whole-frame intervals, render brackets and CPU/GPU timing. Acceptance requires matched Celeritas/Celtium scenes, p50/p95/p99 and correct images on both GPUs; isolated fast fixtures or lower draw counts are insufficient. See [the performance plan](<docs/performance_plan.md>) for design work.
+Intel was 1.68x slower before 2026-10-25 because its frames were submitted unbatched; batching every frame's
+submissions made the same scene 1.6-1.8x faster on UHD 630.
 
 ## License and attribution
 
