@@ -155,7 +155,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * a mod cycling framebuffers evicts the oldest member rather than growing images forever; the evicted pair is
      * retired, not deleted in place, because an in-flight command buffer can still name it.
      */
-    private final java.util.Map<Long, Pair> chainPairs = new java.util.LinkedHashMap<Long, Pair>();
+    // Insertion-ordered (eviction takes the oldest) and primitive-keyed: existingChainPair runs per drawn group.
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<Pair> chainPairs =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<Pair>();
     /** The eviction bound for {@link #chainPairs}; a session that binds more targets reuses the oldest. */
     private static final int MAX_CHAIN_PAIRS = 8;
     /** Pairs evicted because the bound was reached; a menu that cycles more framebuffers than the bound thrashes. */
@@ -703,8 +705,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private float latchedAlpha;
         private double latchedDepth;
         private boolean defaultAcquired;
-        private final java.util.Map<Long, Boolean> chainAcquired = new java.util.HashMap<Long, Boolean>();
-        private final java.util.Map<Long, Integer> chainColorLayouts = new java.util.HashMap<Long, Integer>();
+        // Parallel arrays, not two boxed maps: a snapshot is taken for every window flush (~10 a frame) and covers
+        // every chain pair, while a rollback that reads it back is rare.
+        private int chainCount;
+        private long[] chainKeys;
+        private boolean[] chainAcquired;
+        private int[] chainColorLayouts;
     }
 
     /** {@return the owner state as it is now}, to be handed to {@link #rollbackRecording} if the record is discarded. */
@@ -722,10 +728,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
         snapshot.latchedAlpha = this.gameClearLatchedAlpha;
         snapshot.latchedDepth = this.gameClearLatchedDepth;
         snapshot.defaultAcquired = this.defaultPair.acquired;
+        int size = this.chainPairs.size();
+        snapshot.chainKeys = new long[size];
+        snapshot.chainAcquired = new boolean[size];
+        snapshot.chainColorLayouts = new int[size];
+        int n = 0;
         for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
-            snapshot.chainAcquired.put(entry.getKey(), Boolean.valueOf(entry.getValue().acquired));
-            snapshot.chainColorLayouts.put(entry.getKey(), Integer.valueOf(entry.getValue().colorImageLayout));
+            snapshot.chainKeys[n] = entry.getKey().longValue();
+            snapshot.chainAcquired[n] = entry.getValue().acquired;
+            snapshot.chainColorLayouts[n] = entry.getValue().colorImageLayout;
+            n++;
         }
+        snapshot.chainCount = n;
         return snapshot;
     }
 
@@ -749,14 +763,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.gameClearLatchedAlpha = snapshot.latchedAlpha;
         this.gameClearLatchedDepth = snapshot.latchedDepth;
         this.defaultPair.acquired = snapshot.defaultAcquired;
-        for (java.util.Map.Entry<Long, Boolean> entry : snapshot.chainAcquired.entrySet()) {
-            Pair pair = this.chainPairs.get(entry.getKey());
+        for (int i = 0; i < snapshot.chainCount; i++) {
+            Pair pair = this.chainPairs.get(snapshot.chainKeys[i]);
             if (pair != null) {
-                pair.acquired = entry.getValue().booleanValue();
-                Integer layout = snapshot.chainColorLayouts.get(entry.getKey());
-                if (layout != null) {
-                    pair.colorImageLayout = layout.intValue();
-                }
+                pair.acquired = snapshot.chainAcquired[i];
+                pair.colorImageLayout = snapshot.chainColorLayouts[i];
             }
         }
         this.recordingRollbacks++;
@@ -1106,7 +1117,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * census, the summary, a report - use {@link #existingChainPair} so the pool does not grow on a read.
      */
     private Pair chainPairFor(long identity) {
-        Pair pair = this.chainPairs.get(Long.valueOf(identity));
+        Pair pair = this.chainPairs.get(identity);
         if (pair != null) {
             return pair;
         }
@@ -1130,13 +1141,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
         }
         Pair created = new Pair("chain-" + Long.toHexString(identity));
-        this.chainPairs.put(Long.valueOf(identity), created);
+        this.chainPairs.put(identity, created);
         return created;
     }
 
     /** {@return the identity's chain pair without creating it}, null when none exists yet. */
     private Pair existingChainPair(long identity) {
-        return this.chainPairs.get(Long.valueOf(identity));
+        return this.chainPairs.get(identity);
     }
 
     /** {@return whether the identity's chain pair exists}, i.e. whether that framebuffer has drawn into it. */

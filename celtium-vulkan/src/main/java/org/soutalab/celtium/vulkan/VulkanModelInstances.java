@@ -123,7 +123,9 @@ final class VulkanModelInstances {
     private VulkanHostBuffer poolIndices;
     private Object poolSource;
     /** listId -> {firstIndex, vertexOffset, indexCount}. */
-    private final Map<Integer, int[]> poolEntries = new HashMap<Integer, int[]>();
+    // Primitive-keyed: append and hasList look a list up per model replay.
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> poolEntries =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]>();
     /** The mesh object each pooled list was copied from, so an unchanged list is not copied again. */
     private final Map<Integer, VulkanDynamicMesh> poolMeshes = new HashMap<Integer, VulkanDynamicMesh>();
     private long poolVertexUsed;
@@ -272,7 +274,7 @@ final class VulkanModelInstances {
 
     /** {@return whether the pool holds this list}. */
     boolean hasList(int listId) {
-        return this.poolEntries.containsKey(Integer.valueOf(listId));
+        return this.poolEntries.containsKey(listId);
     }
 
     /** {@return the pipeline for this pass and state}, creating it on first use. */
@@ -318,7 +320,7 @@ final class VulkanModelInstances {
      */
     void append(Run run, int listId, float[] mvp, float[] colour, float[] combine, float[] affine, float alphaRef,
             float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
-        int[] entry = this.poolEntries.get(Integer.valueOf(listId));
+        int[] entry = this.poolEntries.get(listId);
         int index = this.segment * SEGMENT_RECORDS + this.used;
         long r = this.records.mappedAddress() + (long) index * RECORD_BYTES;
         for (int i = 0; i < 16; i++) {

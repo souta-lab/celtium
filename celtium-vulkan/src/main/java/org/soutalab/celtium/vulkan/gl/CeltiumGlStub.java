@@ -4710,8 +4710,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * announced fills in one E2E run), so without the backlog the mirror covered only the announced fraction.
      * Bounded because the texture may never be mirrored; the atlas's whole stitch burst measured ~143 MB.
      */
-    private final java.util.Map<Long, java.util.List<TexCapture>> texPatchBacklog =
-            new java.util.HashMap<Long, java.util.List<TexCapture>>();
+    // Primitive-keyed: textureUploadSerial reads it on every offered batch, and a boxed Long key was an allocation and
+    // a Long.equals per offer.
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<java.util.List<TexCapture>> texPatchBacklog =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<java.util.List<TexCapture>>();
     private long texPatchBytes;
     private static final long MAX_PATCH_BACKLOG_BYTES = 192L * 1024L * 1024L;
 

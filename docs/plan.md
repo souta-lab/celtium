@@ -64,8 +64,8 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    - Xaero 入りの利用者 instance: mod FBO の毎pass再作成を除去（Devin `206746e83`）。`0d937df8b` で AMD 1.44x・Intel 1.45x、
      `d4ea7dfd4` で AMD 1.35x（対前 0.939x）。残差は Xaero 配下25%（JFR）: tile ごとの小 draw の per-batch 費用（texture毎に新group）と
      raw FBO bind ごとの window flush。group 開始の内訳（census、`daf13af1f`）: 直前groupが他要因で閉じた 34%・texture 31%・format 26%・state 9%。
-     **最大の閉じ手は model display list の replay**（761k回 ≒ 描いた immediate group 718k）。texture配列化だけでは31%止まり。
-     棄却: 不透明replayの並べ替え（対象45件のみ、`e1c747092`）。
+     **最大の閉じ手は model display list の replay**（761k回≒描いたgroup 718k）。texture配列化だけでは31%止まり。
+     棄却: 不透明replayの並べ替え（45件、`e1c747092`）、per-draw割当・boxed map削減（対control 0.986x、`0809c4e03`ほか）。
      **次の単位**: model replay と immediate を一つの順序付きstreamに載せる（`new_architecture.md` Stage 1 の packet化）。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
