@@ -4350,13 +4350,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
                 (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend;
+        // Peeked, not copied: the caller writes the sixteen values out at once, and vanilla asks per entity.
         switch (pname) {
             case 0x0BA6:
-                return vulkan.celtium$mirroredModelView();
+                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.VulkanGlState.MATRIX_MODE_MODELVIEW);
             case 0x0BA7:
-                return vulkan.celtium$mirroredProjection();
+                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.VulkanGlState.MATRIX_MODE_PROJECTION);
             case 0x0BA8:
-                return vulkan.celtium$mirroredTexture();
+                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.VulkanGlState.MATRIX_MODE_TEXTURE);
             default:
                 return null;
         }

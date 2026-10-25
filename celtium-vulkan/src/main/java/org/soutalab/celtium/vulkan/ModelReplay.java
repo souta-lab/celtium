@@ -169,7 +169,8 @@ final class ModelReplay {
             // list stores its vertices already transformed, so the parts carry their own placement and the matrix must not
             // put them somewhere else. What the remaining difference is belongs to the capture's side of the pairing, not to
             // the live state.
-            float[] projectionNow = b.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION).clone();
+            // Read in place: only the remap below and the log read it.
+            float[] projectionNow = b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
             // A list's stored vertices are model space, so the replay transform is the camera's change since the list
             // was captured: V_now * C_compile^-1 (ModelViewRelativizer, which short-circuits the identity the capture
             // currently reports for every list).
@@ -181,7 +182,9 @@ final class ModelReplay {
             // 18.49. No translation helping and a rotation helping says the vertices are already in the view space of the
             // moment they were captured in - so what has to be applied is the change of camera since then, which is exactly
             // V_now * C_compile^-1. Both halves are in hand: the mirror is V_now, the capture kept C_compile.
-            float[] modelViewNow = b.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
+            // Scratch, as is the remapped projection: a queued group clones what it keeps (enqueue below).
+            float[] modelViewNow = b.modelReplayView;
+            System.arraycopy(b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, modelViewNow, 0, 16);
             // V_now * C_compile^-1, with the matrices and the inverse reused and the identity short-circuited: the
             // three Matrix4f temporaries and an inversion per replay were ~128 allocations a frame, and the capture
             // answers the identity for every list, so nearly all of that work composed the live view with itself.
@@ -194,7 +197,7 @@ final class ModelReplay {
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
             // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
             // switch was removed rather than kept.
-            float[] projectionRemapped = new float[16];
+            float[] projectionRemapped = b.modelReplayProjection;
             b.remapClipDepth(projectionNow, projectionRemapped);
             // Gated and bounded: this line is per model list per frame, and on the operator's own session it was the
             // flood that pushed the game's log past 100,000 lines with nothing but -Dceltium.vulkan.glless set.
@@ -300,6 +303,9 @@ final class ModelReplay {
             System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
                     + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
         }
+        // Cloned: the replay hands in its scratch matrices, and a queued group keeps what it is given.
+        projection = projection.clone();
+        modelView = modelView.clone();
         ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView,
                 VulkanImmediateFormats.ITEM, texture, key, state, target);
         group.prepared = prepared;
@@ -463,7 +469,7 @@ final class ModelReplay {
             }
             // Whatever the immediate path holds open is older than this replay and must be queued before it.
             b.closeCurrentImmediateGroup();
-            ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView, VulkanImmediateFormats.ITEM,
+            ImmediateGroup group = ImmediateGroup.obtain(mesh, projection.clone(), modelView.clone(), VulkanImmediateFormats.ITEM,
                     texture, key, state, target);
             group.modelRun = instances.openRun(pipeline);
             group.viewportValues = viewport;
@@ -483,13 +489,17 @@ final class ModelReplay {
                 mvp[column * 4 + row] = sum;
             }
         }
-        float[] colour = b.colorMirrorHasValue
-                ? new float[] {b.immediateState.colorRed(), b.immediateState.colorGreen(),
-                        b.immediateState.colorBlue(), b.immediateState.colorAlpha()}
-                : null;
+        float[] colour = null;
+        if (b.colorMirrorHasValue) {
+            colour = b.modelInstanceColour;
+            colour[0] = b.immediateState.colorRed();
+            colour[1] = b.immediateState.colorGreen();
+            colour[2] = b.immediateState.colorBlue();
+            colour[3] = b.immediateState.colorAlpha();
+        }
         float[] affine = b.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
         instances.append(open.modelRun, listId, mvp, colour, combineColor, affine, Float.intBitsToFloat(state[6]),
-                b.celtium$lightParams(state, modelView), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
+                b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
         open.batches += quads;
         return true;
     }

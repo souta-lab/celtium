@@ -30,19 +30,19 @@ public final class VulkanImmediateDrawer {
      */
     private static final int INDEX_CACHE_LIMIT =
             Integer.getInteger("celtium.vulkan.indexCacheLimit", 512).intValue();
-    private static final java.util.LinkedHashMap<Long, int[]> INDEX_CACHE =
-            new java.util.LinkedHashMap<Long, int[]>(512, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(java.util.Map.Entry<Long, int[]> eldest) {
-                    return size() > INDEX_CACHE_LIMIT;
-                }
-            };
+    // Direct-mapped by (mode, count), so a lookup is no boxed Long: the LinkedHashMap<Long, int[]> this replaced
+    // allocated a key per immediate batch (63 MB a warm minute in the Xaero scene's JFR). A collision overwrites the
+    // slot - the entry is rebuilt on its next miss, which is the same bound the LRU's eviction gave.
+    private static final int INDEX_CACHE_SLOTS = Integer.highestOneBit(Math.max(16, INDEX_CACHE_LIMIT) * 2 - 1);
+    private static final long[] INDEX_CACHE_KEYS = new long[INDEX_CACHE_SLOTS];
+    private static final int[][] INDEX_CACHE_VALUES = new int[INDEX_CACHE_SLOTS][];
+    private static int indexCacheEntries;
     private static long indexCacheHits;
     private static long indexCacheMisses;
 
     /** {@return the index-list cache census}, as {@code hits/misses/entries}. */
     public static String indexCacheStats() {
-        return "indexCache=" + indexCacheHits + "/" + indexCacheMisses + "/" + INDEX_CACHE.size();
+        return "indexCache=" + indexCacheHits + "/" + indexCacheMisses + "/" + indexCacheEntries;
     }
 
     /**
@@ -66,15 +66,20 @@ public final class VulkanImmediateDrawer {
             return null;
         }
         long key = ((long) glMode << 32) | (vertexCount & 0xffffffffL);
-        int[] cached = INDEX_CACHE.get(key);
-        if (cached != null) {
+        int slot = (int) (key ^ (key >>> 29) ^ (vertexCount * 0x9E3779B1)) & (INDEX_CACHE_SLOTS - 1);
+        int[] cached = INDEX_CACHE_VALUES[slot];
+        if (cached != null && INDEX_CACHE_KEYS[slot] == key) {
             indexCacheHits++;
             return cached;
         }
         indexCacheMisses++;
         int[] indices = buildIndices(glMode, vertexCount);
         if (indices != null && indices.length > 0) {
-            INDEX_CACHE.put(key, indices);
+            if (INDEX_CACHE_VALUES[slot] == null) {
+                indexCacheEntries++;
+            }
+            INDEX_CACHE_KEYS[slot] = key;
+            INDEX_CACHE_VALUES[slot] = indices;
         }
         return indices;
     }

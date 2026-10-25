@@ -2985,6 +2985,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     ImmediateGroup openModelRunGroup;
     final float[] modelInstanceMvp = new float[16];
     final float[] modelInstanceAffine = new float[6];
+    // Per-replay scratch: the instance path copies these into the mapped record buffer at once, and the group path
+    // clones what it keeps. Each was a fresh array per model replay (~350 MB a warm minute in the Xaero scene's JFR).
+    final float[] modelInstanceColour = new float[4];
+    final float[] modelInstanceLight = new float[20];
+    final float[] modelReplayView = new float[16];
+    final float[] modelReplayProjection = new float[16];
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texGenPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
@@ -4728,6 +4734,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * A disabled light's diffuse is zeroed rather than the direction skipped - the shader's dot stays a constant.
      */
     float[] celtium$lightParams(int[] state, float[] modelView) {
+        return celtium$lightParams(state, modelView, null);
+    }
+
+    /** As {@link #celtium$lightParams(int[], float[])}, written into {@code into} when the caller copies it out at once. */
+    float[] celtium$lightParams(int[] state, float[] modelView, float[] into) {
         if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
             return null;
         }
@@ -4749,7 +4760,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             inv[3] = (c * h - b * i22) * invDet; inv[4] = (a * i22 - c * g) * invDet; inv[5] = (b * g - a * h) * invDet;
             inv[6] = (b * f - c * e) * invDet; inv[7] = (c * d - a * f) * invDet; inv[8] = (a * e - b * d) * invDet;
         }
-        float[] params = new float[20];
+        float[] params = into == null ? new float[20] : into;
+        if (into != null) {
+            java.util.Arrays.fill(params, 0f);
+        }
         float[] dirs = this.immediateState.lightDirections();
         float[] diffuse = this.immediateState.lightDiffuse();
         float[] ambient = this.immediateState.lightAmbient();
@@ -6396,6 +6410,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+    }
+
+    /**
+     * The mirrored matrix of a GL matrix mode without copying, for a reader that copies it out at once (glGetFloatv).
+     * The array is the mirror stack's own - do not write into it.
+     */
+    public float[] celtium$peekMirroredMatrix(int mode) {
+        return this.immediateState.peekMatrix(mode);
     }
 
     /** The mirrored projection; see {@link #celtium$mirroredModelView()}. */
@@ -17224,17 +17246,15 @@ this.frameBufferOpen = false;
         }
     }
 
+    /** z' = (z + w) / 2: GL's [-1, 1] clip depth onto Vulkan's [0, 1]. Read-only; was a new array per call. */
+    private static final float[] CLIP_DEPTH_REMAP = {1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0.5f, 0f, 0f, 0f, 0.5f, 1f};
+
     /**
      * Writes {@code result = clipDepthRemap * projection}, the same z remap the terrain projection goes through, so a
      * matrix mirrored from OpenGL can be used unchanged for depth in Vulkan.
      */
     static void remapClipDepth(float[] projection, float[] result) {
-        float[] remap = new float[16];
-        remap[0] = 1.0f;
-        remap[5] = 1.0f;
-        remap[10] = 0.5f;
-        remap[14] = 0.5f;
-        remap[15] = 1.0f;
+        float[] remap = CLIP_DEPTH_REMAP;
         for (int column = 0; column < 4; column++) {
             for (int row = 0; row < 4; row++) {
                 float sum = 0.0f;
@@ -17256,10 +17276,8 @@ this.frameBufferOpen = false;
             // No GL read on this path. The matrices are the mirror's: the camera base seeded at the boundary plus whatever
             // local transforms the pass applied through the hooked calls since. The GL readback that used to run here was
             // the per-batch cost the plan calls dominant, and it is replaced rather than disabled.
-            float[] mirroredProjection = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
-            float[] mirroredModelView = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
-            System.arraycopy(mirroredProjection, 0, this.glProjection, 0, 16);
-            System.arraycopy(mirroredModelView, 0, this.glModelView, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
             this.immediateStatistics.noteSnapshotServedCaptures();
             return;
         }
