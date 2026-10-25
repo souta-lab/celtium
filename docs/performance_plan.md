@@ -560,7 +560,7 @@ Angelica の `TesrMeshProvider` / `TesrMeshCache` / `ModelPartBatch` は、entit
 
 | 案 | 理由 / 扱い |
 | --- | --- |
-| mesh shader / Nvidium 型の特別経路を先行 | user scope 外。baseline の draw / transfer / allocator が先 |
+| mesh shader 経路を baseline より先行 | baseline の draw / transfer / allocator が先。mesh shader の参照は Nvidium（NVIDIA専用・GL）ではなく **Meshelium**（Vulkan・cross-vendor `VK_EXT_mesh_shader`・Sodiumが組んだchunkを描く・GPU可視性/遮蔽culling・driver能力検出と明示的な無効化、LGPL-3.0）を採る（2026-10-25 利用者指示）。UHD 630 は mesh shader を持たないため、採るなら RX 6400 等での任意経路で、indirect baseline を残す |
 | 現行 Sodium source を rename / 翻訳して取り込む | license 境界を消せない。固定 Celeritas と独立実装を基準にする |
 | 汎用 GL→VK、Zink 組込み、Angelica の FFP / GLSM を丸ごと移植 | Celtium の native semantic pass の目標と異なる |
 | 共存のため旧 renderer / bridge を製品経路に残す | 他レンダリング最適化 mod の共存を捨てる今回の方針に反する |

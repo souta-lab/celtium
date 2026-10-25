@@ -103,6 +103,13 @@ jobs:
         run: >-
           ./gradlew -p build-1122 :forge122:packageJar --console=plain --stacktrace
           "-Pglslang_validator=$(command -v glslangValidator)"
+      # The renderer's own JUnit suite (issue #382): the Vulkan-free contracts - submission scheduling, swapchain
+      # cleanup decisions, texture environment, map ranges, the HugeMethodLimit guard - run here with the same shader
+      # compiler the build used.
+      - name: Test celtium-vulkan
+        run: >-
+          ./gradlew -p build-1122 :celtium-vulkan:test --console=plain --stacktrace
+          "-Pglslang_validator=$(command -v glslangValidator)"
       # These contracts require full Git history and compiled celtium-vulkan classes.
       # Keep them after the real Forge build, not in the isolated probe job.
       - name: Test compiled swapchain arguments and initializer preservation
