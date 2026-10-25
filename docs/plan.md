@@ -63,7 +63,9 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
      （`811c29c46`、Intel 単体 3.6–4.0 → 2.2 ms）。live allocation の寄与は約0.15 ms（`b57e1e7ba`）で主因ではない。
    - Xaero 入りの利用者 instance: mod FBO の毎pass再作成を除去（Devin `206746e83`）。`0d937df8b` で AMD 1.44x・Intel 1.45x、
      `d4ea7dfd4` で AMD 1.35x（対前 0.939x）。残差は Xaero 配下25%（JFR）: tile ごとの小 draw の per-batch 費用（texture毎に新group）と
-     raw FBO bind ごとの window flush。**次の単位**: shader を texture 配列 index で引き（draw-manager ④）texture 跨ぎで group を結合。
+     raw FBO bind ごとの window flush。group 開始の内訳（census、`daf13af1f`）: 直前groupが他要因で閉じた 34%・texture 31%・format 26%・state 9%。
+     **最大の閉じ手は model display list の replay**（761k回 ≒ 描いた immediate group 718k）。texture配列化だけでは31%止まり。
+     **次の単位**: model replay と immediate を一つの順序付きstreamに載せる（`new_architecture.md` Stage 1 の packet化）。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
