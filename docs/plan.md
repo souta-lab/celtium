@@ -65,7 +65,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
      AMD は CPU律速、残差は per-draw 費用の分散。Intel は解像度依存の超過が 0.06 ms まで縮小（outline合成省略・depth OPTIMAL・solid discard特殊化）、
      残差は固定費。上限測定で棄却: 反復acquire barrier全省略 2–3%、texture跨ぎmerge（bindless上限）Intel 2.5%/AMD 4%、
      frame+present 1 submit（fence acquire、実merge確認済）中立、acquire狭小化は遅化、glthread仮説（無効でも3%）。
-     **次の単位**: model replay と immediate を一つの順序付きstreamに載せる（`new_architecture.md` Stage 1 の packet化）。
+     **次の単位**: model replay と immediate を一つの順序付きstreamに（Stage 1 packet化）。Intel残差の内訳は[証拠](evidence/intel-gap-2026-10-26.md)。
 3. **分割**: `VulkanTerrainGpuBackend` を所有権ごとに段階抽出（振る舞い不変・受入legで確認）。済: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`（20,905→17,932行）。
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
