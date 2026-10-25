@@ -445,8 +445,12 @@ public final class VulkanTerrainPipeline {
         this.blockFaceCulling = blockFaceCulling;
         this.frontFace = frontFace;
         this.hasNoLightmap = pass.hasNoLightmap();
+        this.fragmentDiscard = pass.supportsFragmentDiscard();
         this.minUniformBufferOffsetAlignment = queryLimits(context);
     }
+
+    /** Whether this pass may alpha-discard: the fragment shader's specialisation constant, the uniform's own rule. */
+    private final boolean fragmentDiscard;
 
     /**
      * Creates the pipeline for one terrain render pass with the front face orientation the backend's negative
@@ -1219,8 +1223,14 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
             stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                     .pName(stack.UTF8("main"));
+            org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer specEntries =
+                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(1, stack);
+            specEntries.get(0).constantID(0).offset(0).size(4);
+            org.lwjgl.vulkan.VkSpecializationInfo specialization = org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack)
+                    .pMapEntries(specEntries)
+                    .pData(stack.malloc(4).putInt(0, this.fragmentDiscard ? 1 : 0));
             stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
-                    .pName(stack.UTF8("main"));
+                    .pName(stack.UTF8("main")).pSpecializationInfo(specialization);
 
             VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
             binding.get(0).binding(0).stride(this.vertexLayout.stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);

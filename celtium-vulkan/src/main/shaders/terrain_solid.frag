@@ -127,6 +127,11 @@ vec4 _expFog(vec4 fragColor, float fragDistance, vec4 fogColor, float fogDensity
     return vec4(blended, fragColor.a); // alpha value of fragment cannot be modified
 }
 
+// Specialised per pipeline: false for a pass that never discards (the solid pass). A discard the compiler cannot
+// rule out makes the pixel shader "may kill", which on Intel costs early depth writes for every fragment of the pass
+// even when the runtime switch below is off; a constant false removes the branch from the compiled shader.
+layout(constant_id = 0) const bool CELTIUM_FRAGMENT_DISCARD = true;
+
 void main() {
     // Isolation switch for one A/B. A constant colour that reaches the frame image says the geometry is
     // rasterised and the loss is in the fragment maths (the texture, the vertex colour, the light map); a frame
@@ -140,7 +145,7 @@ void main() {
 
 
     // #ifdef USE_FRAGMENT_DISCARD
-    if (celtium.u_FragmentDiscardEnabled != 0 && diffuseColor.a < v_MaterialAlphaCutoff) {
+    if (CELTIUM_FRAGMENT_DISCARD && celtium.u_FragmentDiscardEnabled != 0 && diffuseColor.a < v_MaterialAlphaCutoff) {
         discard;
     }
 
