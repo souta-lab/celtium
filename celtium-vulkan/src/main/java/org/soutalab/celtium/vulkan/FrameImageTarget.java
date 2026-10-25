@@ -92,6 +92,11 @@ public interface FrameImageTarget {
     /** The depth image view. */
     long depthView();
 
+    /** {@return the layout the depth image rests in between passes}, for a readback that must name it. */
+    default int depthLayout() {
+        return org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+    }
+
     /** The layout the colour image is currently in, as far as this class's bookkeeping knows. */
     int colorImageLayout();
 

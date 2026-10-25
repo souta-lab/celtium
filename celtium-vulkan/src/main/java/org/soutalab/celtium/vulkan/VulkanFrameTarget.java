@@ -142,7 +142,12 @@ public final class VulkanFrameTarget implements FrameImageTarget {
      * {@code finalLayout} the caller's depth/stencil attachment must declare. See {@link #COLOR_RENDER_LAYOUT} for why
      * this is {@code VK_IMAGE_LAYOUT_GENERAL}.
      */
-    public static final int DEPTH_RENDER_LAYOUT = VK_IMAGE_LAYOUT_GENERAL;
+    /**
+     * The depth attachment layout every frame-compatible render pass declares. Attachment-optimal rather than GENERAL:
+     * a writable GENERAL depth image has no HiZ on Intel gfx9. This shared target still hands depth back to OpenGL in
+     * GENERAL at release; the GL-less target keeps it here.
+     */
+    public static final int DEPTH_RENDER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
     /** GL names the layout the other API left the textures in; the Vulkan side always hands them over in GENERAL. */
     private static final int GL_SHARED_LAYOUT = EXTSemaphore.GL_LAYOUT_GENERAL_EXT;

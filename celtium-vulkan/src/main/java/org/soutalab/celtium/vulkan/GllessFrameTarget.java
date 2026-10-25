@@ -88,7 +88,13 @@ import org.lwjgl.vulkan.VkSubmitInfo;
 public final class GllessFrameTarget implements FrameImageTarget {
 
     private static final int COLOR_RENDER_LAYOUT = VK_IMAGE_LAYOUT_GENERAL;
-    private static final int DEPTH_RENDER_LAYOUT = VK_IMAGE_LAYOUT_GENERAL;
+    /**
+     * Depth rests in the attachment layout, not GENERAL: on Intel gfx9 a writable GENERAL depth image has no HiZ
+     * (no hierarchical depth culling, no fast depth clears), and nothing outside this renderer reads it - the GL-less
+     * target is never handed to OpenGL. Clears and readbacks move it to their transfer layouts and back.
+     */
+    private static final int DEPTH_RENDER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    private static final int DEPTH_TRANSFER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
     /** What the game clears its own framebuffers to before drawing into them: transparent black, depth 1. */
     private static final float OFF_TARGET_CLEAR_RED = 0.0f;
@@ -936,11 +942,37 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         org.lwjgl.vulkan.VkClearDepthStencilValue.calloc(stack);
                 value.depth((float) depthValue).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
-                org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_RENDER_LAYOUT,
+                recordDepthToTransfer(command, this.depthImage, DEPTH_RENDER_LAYOUT);
+                org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT,
                         value, range);
             }
             recordClearToAttachment(command, color, depth);
         }
+    }
+
+    /**
+     * Moves a depth image from its attachment layout to the transfer layout a clear needs. Everything that can have
+     * touched it before - earlier windows' depth tests and writes, an earlier clear - is covered by ALL_COMMANDS.
+     */
+    private void recordDepthToTransfer(VkCommandBuffer command, long image, int from) {
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default().image(image)
+                    .oldLayout(from).newLayout(DEPTH_TRANSFER_LAYOUT)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(from == VK_IMAGE_LAYOUT_UNDEFINED ? 0
+                            : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, barrier);
+        }
+    }
+
+    /** {@return the layout the main depth image rests in}, for a readback that must name it. */
+    public int depthLayout() {
+        return this.depthImageLayout == VK_IMAGE_LAYOUT_UNDEFINED ? DEPTH_RENDER_LAYOUT : this.depthImageLayout;
     }
 
     /** Transfer clears run after acquire; their writes must be visible to the following attachment loads. */
@@ -967,7 +999,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (depth) {
                 VkImageMemoryBarrier barrier = barriers.get(index);
                 barrier.sType$Default().image(this.depthImage)
-                        .oldLayout(DEPTH_RENDER_LAYOUT).newLayout(DEPTH_RENDER_LAYOUT)
+                        .oldLayout(DEPTH_TRANSFER_LAYOUT).newLayout(DEPTH_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
                         .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
@@ -983,7 +1015,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
     public void recordReleaseBarriers(VkCommandBuffer commandBuffer) {
         recordLayoutBarriers(commandBuffer, true);
         this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        this.depthImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        // Depth stays in its attachment layout across windows: moving it to GENERAL and back at every window would
+        // resolve HiZ each time on the hardware this layout exists for.
+        this.depthImageLayout = DEPTH_RENDER_LAYOUT;
     }
 
     /**
@@ -1015,7 +1049,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             depthBarrier.sType$Default()
                     .image(this.depthImage)
                     .oldLayout(release ? DEPTH_RENDER_LAYOUT : this.depthImageLayout)
-                    .newLayout(release ? VK_IMAGE_LAYOUT_GENERAL : DEPTH_RENDER_LAYOUT)
+                    .newLayout(DEPTH_RENDER_LAYOUT)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                     .srcAccessMask(release && !(this.firstAcquire && !release) ? depthAccess : 0)
                     .dstAccessMask(release ? 0 : (depthAccess | VK_ACCESS_TRANSFER_WRITE_BIT));
@@ -1602,7 +1636,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
                 depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
-                vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
+                depthToTransfer(command);
+                vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
 
                 recordClearToAttachment(command);
                 this.clears++;
@@ -1643,7 +1678,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
                     depth.depth((float) depthValue).stencil(0);
                     range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
-                    vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
+                    depthToTransfer(command);
+                    vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
                 }
                 recordClearToAttachment(command);
                 this.clears++;
@@ -1696,7 +1732,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
                 depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
-                vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
+                depthToTransfer(command);
+                vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
 
                 recordClearToAttachment(command);
                 this.clears++;
@@ -1766,6 +1803,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * by a stage in the destination mask is exactly the kind of mismatch the validation layer rejects. The
          * attachment visibility is the following barrier's job.
          */
+        /** Where the pair's depth image is: UNDEFINED, the clear's transfer layout, or the attachment layout. */
+        private int depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        /** Moves the pair's depth to the transfer layout a clear needs, unless it is already there. */
+        private void depthToTransfer(VkCommandBuffer command) {
+            if (this.depthLayout == DEPTH_TRANSFER_LAYOUT) {
+                return;
+            }
+            recordDepthToTransfer(command, this.depthImage, this.depthLayout);
+            this.depthLayout = DEPTH_TRANSFER_LAYOUT;
+        }
+
         private void recordAcquire(VkCommandBuffer command) {
             int queueFamily = context.queueFamilyIndex();
             try (MemoryStack stack = stackPush()) {
@@ -1781,7 +1830,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 VkImageMemoryBarrier depthBarrier = barriers.get(1);
                 depthBarrier.sType$Default()
                         .image(this.depthImage)
-                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(DEPTH_TRANSFER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                 depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
@@ -1790,6 +1839,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         0, null, null, barriers);
                 // The barrier above is the move, so this is where the pair's own record of it belongs.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                this.depthLayout = DEPTH_TRANSFER_LAYOUT;
             }
         }
 
@@ -1818,13 +1868,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 VkImageMemoryBarrier depthBarrier = barriers.get(1);
                 depthBarrier.sType$Default()
                         .image(this.depthImage)
-                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        // From wherever the depth is - the transfer layout after a depth clear, the attachment layout
+                        // when this clear named colour only - to the attachment layout the pass declares.
+                        .oldLayout(this.depthLayout).newLayout(DEPTH_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(depthAccess);
                 depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         0, null, null, barriers);
+                this.depthLayout = DEPTH_RENDER_LAYOUT;
             }
         }
 
@@ -1836,6 +1889,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private void release() {
             VkDevice device = context.device();
             this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            this.depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             if (this.colorView != VK_NULL_HANDLE) {
                 vkDestroyImageView(device, this.colorView, null);
                 this.colorView = VK_NULL_HANDLE;

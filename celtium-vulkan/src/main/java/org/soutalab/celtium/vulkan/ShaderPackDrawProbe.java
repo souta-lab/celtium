@@ -1494,7 +1494,7 @@ final class ShaderPackDrawProbe implements AutoCloseable {
             colour.get(0).clearValue(clearValue(stack, 1.0f, 0.0f, 1.0f));
             VkRenderingAttachmentInfoKHR.Buffer depth = VkRenderingAttachmentInfoKHR.calloc(1, stack);
             depth.get(0).sType$Default().imageView(target.depthView())
-                    .imageLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .imageLayout(target.depthLayout())
                     .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD).storeOp(VK_ATTACHMENT_STORE_OP_STORE);
             org.lwjgl.vulkan.VkRect2D area = org.lwjgl.vulkan.VkRect2D.calloc(stack)
                     .offset(it -> it.set(0, 0)).extent(it -> it.set(64, 64));

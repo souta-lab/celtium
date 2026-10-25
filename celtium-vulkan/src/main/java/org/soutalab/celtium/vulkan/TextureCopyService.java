@@ -600,7 +600,9 @@ public final class TextureCopyService {
                 && this.host.presentSerial() >= 100 && this.host.presentSerial() <= 102
                 && (this.copyCallsThisPresent == 1 || this.copyCallsThisPresent == 7)) {
             int depthFormat = VulkanDepthFormat.chosen();
-            float[] box = readDepthRectangle(this.host.frameTarget().depthImage(), 0, 0, 256, 256, depthFormat);
+            int depthLayout = this.host.frameTarget().depthLayout();
+            float[] box = readDepthRectangle(this.host.frameTarget().depthImage(), 0, 0, 256, 256, depthFormat,
+                    depthLayout, depthLayout);
             if (box != null) {
                 float min = Float.MAX_VALUE;
                 int atOne = 0;
@@ -809,7 +811,9 @@ public final class TextureCopyService {
         if (VulkanGlTexture.mirrorDumpConfigured() && this.textureCopyReadbacks == 3 && this.host.frameTarget() != null
                 && this.host.frameTarget().depthImage() != 0L) {
             int depthFormat = VulkanDepthFormat.chosen();
-            float[] box = readDepthRectangle(this.host.frameTarget().depthImage(), 0, 0, 256, 256, depthFormat);
+            int depthLayout = this.host.frameTarget().depthLayout();
+            float[] box = readDepthRectangle(this.host.frameTarget().depthImage(), 0, 0, 256, 256, depthFormat,
+                    depthLayout, depthLayout);
             if (box != null) {
                 float min = Float.MAX_VALUE;
                 float max = -Float.MAX_VALUE;
