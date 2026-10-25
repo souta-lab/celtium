@@ -143,6 +143,21 @@ public final class CeltiumFontAtlas {
             buildFailed = true;
             return;
         }
+        BufferedImage image = rasterise(mc);
+        TextureManager tm = mc.getTextureManager();
+        if (tm == null) {
+            buildFailed = true;
+            return;
+        }
+        atlasTexture = new AtlasTexture(image);
+        tm.loadTexture(ATLAS_LOCATION, atlasTexture);
+        atlasName = atlasTexture.getGlTextureId();
+        System.out.println("[Celtium] font atlas built: " + atlasW + "x" + atlasH
+                + " unicodeDim=" + unicodeDim + " asciiDim=" + asciiDim + " texture=" + atlasName);
+    }
+
+    /** The unicode pages and the ASCII sheet, as the current resource packs serve them, in one image. */
+    private static BufferedImage rasterise(Minecraft mc) {
         int measuredPage = 256;
         for (int p = 0; p < 256; p++) {
             ResourceLocation pageLoc = new ResourceLocation(
@@ -193,16 +208,24 @@ public final class CeltiumFontAtlas {
             } catch (java.io.IOException ignored) {
             }
         }
-        TextureManager tm = mc.getTextureManager();
-        if (tm == null) {
-            buildFailed = true;
-            return;
+        builtPackSignature = packSignature(mc);
+        return image;
+    }
+
+    /** The resource packs the atlas was rasterised from; a reload with the same packs keeps the uploaded atlas. */
+    private static String builtPackSignature;
+
+    private static String packSignature(Minecraft mc) {
+        StringBuilder signature = new StringBuilder();
+        try {
+            for (Object entry : mc.getResourcePackRepository().getRepositoryEntries()) {
+                signature.append(((net.minecraft.client.resources.ResourcePackRepository.Entry) entry)
+                        .getResourcePackName()).append('|');
+            }
+        } catch (RuntimeException ignored) {
+            signature.append("unknown");
         }
-        atlasTexture = new AtlasTexture(image);
-        tm.loadTexture(ATLAS_LOCATION, atlasTexture);
-        atlasName = atlasTexture.getGlTextureId();
-        System.out.println("[Celtium] font atlas built: " + atlasW + "x" + atlasH
-                + " unicodeDim=" + unicodeDim + " asciiDim=" + asciiDim + " texture=" + atlasName);
+        return signature.toString();
     }
 
     /** {@return the GL name the atlas texture received}, or 0 while unbuilt. */
@@ -216,17 +239,34 @@ public final class CeltiumFontAtlas {
      * same entry the announce hook mirrors - with the atlas's own image.
      */
     private static final class AtlasTexture extends AbstractTexture {
-        private final BufferedImage content;
+        private BufferedImage content;
+        private boolean uploaded;
 
         private AtlasTexture(BufferedImage content) {
             this.content = content;
         }
 
+        /**
+         * Called at creation and again by every resource reload (F3+T, resource pack changes). A reload used to delete
+         * and re-upload the same 4096x4224 image (~200 ms of the reload, measured against Celeritas: 2240 vs 2054 ms)
+         * while never picking up a new pack's fonts. Now the uploaded atlas stays when the packs are the same, and is
+         * rasterised again from the current resources when they changed.
+         */
         @Override
         public void loadTexture(net.minecraft.client.resources.IResourceManager resourceManager) {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (this.uploaded && mc != null) {
+                if (packSignature(mc).equals(builtPackSignature)) {
+                    return;
+                }
+                this.content = rasterise(mc);
+                atlasImage = this.content;
+            }
             deleteGlTexture();
             this.getGlTextureId();
             TextureUtil.uploadTextureImageAllocate(this.getGlTextureId(), this.content, false, false);
+            this.uploaded = true;
+            atlasName = this.getGlTextureId();
         }
     }
 }
