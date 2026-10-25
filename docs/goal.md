@@ -1,8 +1,9 @@
 # Celtium — 製品目標と完成条件
 
 2026-10-21 再定義、2026-10-24 改訂（利用者指示: 新アーキテクチャへの全面移行と互換方針の変更）、
-2026-10-25 改訂（利用者指示: 基盤固有の最適化の積極採用、描画modの最適化手法の一貫した吸収、巨大クラスの分割）。
-以前の性能値・原因断定・完了宣言は前提にしない。
+2026-10-25 改訂（利用者指示: 基盤固有の最適化の積極採用、描画modの最適化手法の一貫した吸収、巨大クラスの分割）、
+2026-10-25 再改訂（利用者指示: KPIはAMD/Intelでp50/p95/p99すべて、RLCraft/E2Eの完全動作、GL stubの適用範囲）。
+以前の性能値・原因断定・完了宣言は前提にしない。**本書も絶対ではない**: 実測がより良い方針を示したら本書を直し、最適解へ収束させる。
 現在の実装と受入は [plan.md](<plan.md>)、目標設計は [new_architecture.md](<../new_architecture.md>)
 （採否と順序の評価は plan.md）、旧設計と実測の記録は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)、
 実行手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
@@ -15,16 +16,17 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
   全描画物（地形・entity・TESR・item・particle・text・GUI・空・手・post）は1つのscene database・可視性・
   frame compilerに載る（[new_architecture.md](<../new_architecture.md>)）。バニラのGL呼出しをスタブへ転送して
   「native化」と呼ばない。HUD/GUI/loadingも例外ではない。
-- **Forge API以外のraw GLはstub**（2026-10-24 利用者指示）。どのstub呼出しが実画面に必要だったかを診断で示し、
-  stubが何も描かないことを互換と呼ばない。
+- **GL stubは「GLを直接呼ぶmod」のためだけ**（2026-10-25 利用者指示）。vanilla/Forgeの経路はGL呼出しを1:1で
+  Vulkanへ翻訳せず、mixinで意味（描くもの・状態・資源）を受け取ってnativeに描く。GLを直接呼ぶmod（例: Xaero's Minimap の
+  PBO・raw FBO・raw matrix）はstubが受け、その結果をnativeの対象（target・texture・matrix）へ届ける。
+  どのstub呼出しが実画面に必要だったかを診断で示し、stubが何も描かないことを互換と呼ばない。
 - GLコンテキスト・GLによる描画fallbackに頼らない。拒否された描画は欠落であり、成功ではない。
 
 ### 基盤固有の最適化と描画modの吸収（2026-10-25 利用者指示）
 
 - **SDL3 / Java 21 / LWJGL 3 / Cleanroom / Vulkan 1.2 でしかできない最適化を積極的に採る。**
-  GL互換や旧環境のための遠回りは残さない。例: Vulkan 1.2 の descriptor indexing・draw indirect count・
-  timeline semaphore・buffer device address、`VkPipelineCache` の永続化、LWJGL 3 の off-heap 構造体と `MemoryUtil`、
-  Java 21 のrecord/sealed/パターンマッチと世代別ZGC（起動引数の推奨として）、SDL3 の高精度タイマ・Wayland直結。
+  GL互換や旧環境のための遠回りは残さない（例: descriptor indexing・draw indirect count・timeline semaphore・
+  `VkPipelineCache` 永続化・LWJGL 3 の off-heap 構造体・Java 21 の言語機能と世代別ZGC・SDL3 の Wayland直結）。
   採否は実測（paired KPI・p95/p99・スパイク）で決め、効果の無いものは入れない。
 - **描画系modはすべて競合として排除し、その最適化手法はすべて本体に取り込む。一貫して。**
   Celeritas/Sodium（地形）、EntityCulling（遮蔽によるentity/TESRの間引き）、ImmediatelyFast（GUI・文字・HUDのbatch）、
@@ -33,16 +35,15 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
 - **巨大クラスを分割する。** `VulkanTerrainGpuBackend`（約2万行）を所有権ごとの部品（状態owner・受理・記録・提出・
   present・診断）へ分け、振る舞いを変えない段階的な抽出で進める。
 
-それ以外の実装方式は固定しない。既存CPUエンジン、公開内部API、shader、資源配置、描画順の表現、
-パッケージ構成、キャッシュ、スレッド分担、設定・互換方式は、性能と正しさに必要なら置き換える。
-過去文書の「計器追加禁止」「per-call最適化禁止」「backend変更禁止」「S0以外禁止」「必ずmulti-draw」は撤回する。
-ただしMinecraft/Forgeの観測可能な描画・イベント契約を壊す変更は、互換性向上と取り違えない。
+それ以外の実装方式（CPUエンジン・内部API・shader・資源配置・描画順・パッケージ構成・キャッシュ・スレッド分担）は
+固定しない。ただしMinecraft/Forgeの観測可能な描画・イベント契約を壊す変更は、互換性向上と取り違えない。
 
 ## 完成条件（すべて必要）
 
-1. **性能**：同一条件・hash固定のCeleritas対照に、AMD RX 6400とIntel UHD 630の双方で優位。
-   完全なpost-startup区間のp50だけでなくp95/p99、起動・移動・チャンク更新、CPU/GPU時間、メモリと長時間安定性を確認する。
-   最低限のKPIは3組以上のpaired ratio中央値 ≤ 1.0。明確な優位の宣言には再現性・分布・tailも必要。
+1. **性能**：同一条件・hash固定のCeleritas対照に、**AMD RX 6400とIntel UHD 630の双方で、p50・p95・p99のすべてが
+   明確に下回る**（2026-10-25 利用者指示）。3組以上のpaired runで、各指標のratio中央値が1.0未満かつ全対で同じ向き、
+   負荷ゲートを通った形式verdictがあること。起動・移動・チャンク更新・スパイク（16.7/33/50ms超の枚数と最大値）、
+   CPU/GPU時間、メモリと長時間安定性も確認する。
    描画機能や距離を削って得た比率を同条件の勝利にしない。
 2. **native境界**：sky / terrain / entities / block entities / particles / hand / GUI / font / loading / settingsを含む
    Minecraft/Forge経路が、GL互換層を逆呼出しせずnativeに描画される。状態query・texture・framebufferも含めて監査する。
@@ -52,7 +53,8 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
    欠落・ちらつき・順序・状態漏れなく描かれる。resize、resource reload、world切替、GUI/FBOの寿命も検証する。
    **描画に手を加えるMod（renderer置換・culling/batching/FPS系・独自shader・描画順/GUI描画の差替え等）は競合として非サポート**で、
    判明している競合はmod ID・transformer/mixin target・renderer置換の署名で起動時にfail-fastする（曖昧な推測で正常Modを排除しない）。
-   E2E 1.93a / RLCraft 2.9.3 は「競合Modを除いた、標準描画経路のコンテンツ」で受入を再定義し、完全packの動作保証とは呼ばない。
+   **E2E 1.93a / RLCraft 2.9.3 は完全に動作すること**（2026-10-25 利用者指示）。除いた描画modの機能
+   （culling・batching・FPS系など）は本体が提供し、残りの全Mod・全コンテンツが欠落・クラッシュ・ちらつきなく動く。
    依存Modを削除した別packの起動を、完全packの受入にしない。
 5. **影とshaderpack**：**Celtium本体ではなく、Demonica forkの別成果物（AGPL-3.0のaddon jar）**で実現する（2026-10-24 利用者指示）。
    本体の責務は、そのaddonが接続できる境界（terrain描画・pass・資源の受け渡し）を壊さないこと。受入はaddon側で、
