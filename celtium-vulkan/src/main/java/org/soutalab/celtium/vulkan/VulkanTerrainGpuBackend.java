@@ -7729,9 +7729,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     celtium$publishFramebufferColorTexture(boundTexture);
                 }
                 this.currentGroupTextureImage = celtium$registry().get(boundTexture);
-                // Fill the shared array as batches are accepted: the index this returns is what a converted pipeline will
-                // put in its push block, and registering here means a texture is written once per wrapper, not per group.
-                this.currentGroupTextureIndex = celtium$registerTexture(currentGroupTextureImage);
+                // Not registered in the shared texture array: no immediate pipeline reads an array index (the model
+                // instance runs register their own textures), so registering every group's texture was a lookup per
+                // group for nothing - and it filled the array's fixed capacity with GUI, font and mod tile textures
+                // the model runs then could not get slots beside.
+                this.currentGroupTextureIndex = -1;
                 this.currentGroupLightmapImage = this.lightmapTexture;
             }
             // Stage 12 marks the end of the block that prepares the batch and opens its group.
@@ -16325,7 +16327,11 @@ this.frameBufferOpen = false;
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
-                vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0, TIMESTAMP_SLOTS);
+                // Only the terrain pairs unless the GPU report collects: the pool grew to TIMESTAMP_SLOTS for the report's
+                // window and mark slots, and resetting all of them at every command buffer was a per-frame cost the
+                // shipping path paid for a report it does not run (measured: 1.032x slower against the build before).
+                vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0,
+                        org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() ? TIMESTAMP_SLOTS : WINDOW_SLOT_BASE * 2);
                 this.windowTimestampCount = 0;
                 this.gpuMarkCount = 0;
                 if (this.timestampsUsable && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
