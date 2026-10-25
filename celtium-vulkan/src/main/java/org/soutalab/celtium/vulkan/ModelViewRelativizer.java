@@ -49,6 +49,23 @@ final class ModelViewRelativizer {
             this.identityReplays++;
             return;
         }
+        composeRelative(liveModelView, compileMatrix, listId, generation);
+    }
+
+    /**
+     * As {@link #makeRelative(float[], int, int)}, asking the list's generation only when there is a compile matrix to
+     * compose: the capture answers the identity for nearly every list, and the generation is a synchronized lookup.
+     */
+    void makeRelative(float[] liveModelView, int listId) {
+        float[] compileMatrix = VulkanModelQuadCapture.matrixForList(listId);
+        if (compileMatrix == null || isIdentity(compileMatrix)) {
+            this.identityReplays++;
+            return;
+        }
+        composeRelative(liveModelView, compileMatrix, listId, VulkanModelQuadCapture.generationOf(listId));
+    }
+
+    private void composeRelative(float[] liveModelView, float[] compileMatrix, int listId, int generation) {
         if (!this.cachedUsable || this.cachedList != listId || this.cachedGeneration != generation) {
             this.compileView.set(compileMatrix);
             this.compileView.invert(this.compileInverse);

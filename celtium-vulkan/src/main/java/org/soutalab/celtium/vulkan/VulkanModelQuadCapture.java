@@ -43,8 +43,10 @@ public final class VulkanModelQuadCapture {
     private static boolean sourceReported;
 
     /** Per-display-list geometry, keyed by the list GL is compiling into. */
-    private static final java.util.LinkedHashMap<Integer, ListGeometry> LISTS =
-            new java.util.LinkedHashMap<Integer, ListGeometry>();
+    // Primitive-keyed and insertion-ordered: model replay asks it per list several times a frame (matrixForList,
+    // generationOf, textureForList), and a boxed Integer key was a hash of a box per ask.
+    private static final it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<ListGeometry> LISTS =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<ListGeometry>();
 
     /**
      * Quads submitted per list, captured and refused, keyed the way {@link #LISTS} is.
@@ -222,7 +224,7 @@ public final class VulkanModelQuadCapture {
             // from what the game actually did.
             listId = 0;
         }
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         if (geometry == null) {
             geometry = new ListGeometry();
             geometry.listId = listId;
@@ -232,7 +234,7 @@ public final class VulkanModelQuadCapture {
             // identity" (audit N02).
             geometry.generation = ++generations;
             geometry.fresh = true;
-            LISTS.put(Integer.valueOf(listId), geometry);
+            LISTS.put(listId, geometry);
         }
         if (geometry.fresh) {
             geometry.fresh = false;
@@ -414,7 +416,7 @@ public final class VulkanModelQuadCapture {
 
     /** {@return how many quads this list captured, which is what a mesh can be built from}. */
     public static synchronized int quadsForList(int listId) {
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         return geometry == null ? 0 : geometry.quads;
     }
 
@@ -582,7 +584,7 @@ public final class VulkanModelQuadCapture {
             return;
         }
         compileStarts++;
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         if (geometry == null) {
             return;
         }
@@ -653,7 +655,7 @@ public final class VulkanModelQuadCapture {
     }
 
     public static synchronized int generationOf(int listId) {
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         return geometry == null ? 0 : geometry.generation;
     }
 
@@ -699,7 +701,7 @@ public final class VulkanModelQuadCapture {
 
     /** {@return whether this list's geometry has been captured}. */
     public static synchronized boolean hasList(int listId) {
-        return LISTS.containsKey(Integer.valueOf(listId));
+        return LISTS.containsKey(listId);
     }
 
     /**
@@ -710,7 +712,7 @@ public final class VulkanModelQuadCapture {
      * at compile and replay time while still drawing correctly, so a display list is replayed under the current matrix.
      */
     public static synchronized Snapshot snapshot(int listId) {
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         if (geometry == null || geometry.quads == 0) {
             return null;
         }
@@ -744,7 +746,7 @@ public final class VulkanModelQuadCapture {
 
     /** {@return whether the list was captured with geometry}, filling {@code out} in place. */
     public static synchronized boolean snapshotInto(int listId, Scratch out) {
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         if (geometry == null || geometry.quads == 0) {
             return false;
         }
@@ -816,7 +818,7 @@ public final class VulkanModelQuadCapture {
     public static synchronized float[] matrixForList(int listId) {
         // The shared constant, not a copy: this is the identity for every list that exists, callers only read it or
         // hand it to a matrix parser, and cloning it per model replay allocated a float[16] ~128 times a frame.
-        return LISTS.containsKey(Integer.valueOf(listId)) ? IDENTITY : null;
+        return LISTS.containsKey(listId) ? IDENTITY : null;
     }
 
     /**
@@ -828,7 +830,7 @@ public final class VulkanModelQuadCapture {
      * translation, and a zero there is the missing {@code translate(float,float,float)} hook.
      */
     public static synchronized float[] compileMatrixForList(int listId) {
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         if (geometry == null) {
             return null;
         }
@@ -1108,13 +1110,13 @@ public final class VulkanModelQuadCapture {
      * can be cross-checked against rather than the one it draws with.
      */
     public static synchronized int textureForList(int listId) {
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         return geometry == null || geometry.texture == UNKNOWN || geometry.texture <= 0 ? 0 : geometry.texture;
     }
 
     /** {@return the renderer that compiled this list, named from the first quad's stack, or "unknown"}. */
     public static synchronized String ownerForList(int listId) {
-        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        ListGeometry geometry = LISTS.get(listId);
         return geometry == null ? "not-captured" : celtium$owner(geometry.source);
     }
 

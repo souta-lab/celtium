@@ -134,10 +134,11 @@ final class ModelReplay {
             // measured ratio did not come to 1.0 after the lighting fix (0.99 r but 0.64-0.66 g/b). The body and the
             // layer draw the same geometry, so the difference between them can only be the state printed here: the
             // blend factors, the alpha test, the lighting flag and the resulting pipeline key.
-            if (boundTextureId != 0
+            // The limit is asked first: once the lines are spent, this was still a synchronized map lookup, a string
+            // and a set insertion on every layer replay.
+            if (b.modelLayerLogs < b.MODEL_LAYER_LOG_LIMIT && boundTextureId != 0
                     && boundTextureId != org.soutalab.celtium.vulkan.VulkanModelQuadCapture.textureForList(listId)
-                    && b.modelLayerLogged.add(listId + "|" + boundTextureId)
-                    && b.modelLayerLogs < b.MODEL_LAYER_LOG_LIMIT) {
+                    && b.modelLayerLogged.add(listId + "|" + boundTextureId)) {
                 b.modelLayerLogs++;
                 System.out.println("[Celtium] CELTIUM_MODEL_LAYER list=" + listId
                         + " compileTexture=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.textureForList(listId)
@@ -189,8 +190,7 @@ final class ModelReplay {
             // three Matrix4f temporaries and an inversion per replay were ~128 allocations a frame, and the capture
             // answers the identity for every list, so nearly all of that work composed the live view with itself.
             try {
-                b.modelViewRelativizer.makeRelative(modelViewNow, listId,
-                        org.soutalab.celtium.vulkan.VulkanModelQuadCapture.generationOf(listId));
+                b.modelViewRelativizer.makeRelative(modelViewNow, listId);
             } catch (RuntimeException | LinkageError error) {
                 b.modelLastRefusal = "relative view failed: " + error;
             }

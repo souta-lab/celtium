@@ -1,7 +1,5 @@
 package org.soutalab.celtium.vulkan;
 
-import java.util.HashMap;
-import java.util.Map;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkDescriptorImageInfo;
@@ -44,7 +42,14 @@ final class VulkanTextureArray {
     private long layout = VK_NULL_HANDLE;
     private long pool = VK_NULL_HANDLE;
     private long set = VK_NULL_HANDLE;
-    private final Map<Long, Integer> indexByKey = new HashMap<Long, Integer>();
+    // Primitive-keyed: indexFor runs per textured offer and per model replay.
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap indexByKey = celtium$newIndexByKey();
+
+    private static it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap celtium$newIndexByKey() {
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap map = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        map.defaultReturnValue(-1);
+        return map;
+    }
     private int nextIndex;
     private long descriptorsWritten;
     private long writesCoalesced;
@@ -124,9 +129,9 @@ final class VulkanTextureArray {
         if (this.set == VK_NULL_HANDLE || texture == null || !texture.hasFullContent()) {
             return -1;
         }
-        Integer known = this.indexByKey.get(Long.valueOf(texture.key()));
-        if (known != null) {
-            return known.intValue();
+        int known = this.indexByKey.get(texture.key());
+        if (known >= 0) {
+            return known;
         }
         if (this.nextIndex >= CAPACITY) {
             if (!this.fullReported) {
@@ -137,7 +142,7 @@ final class VulkanTextureArray {
             return -1;
         }
         int index = this.nextIndex++;
-        this.indexByKey.put(Long.valueOf(texture.key()), Integer.valueOf(index));
+        this.indexByKey.put(texture.key(), index);
         write(stack, index, texture);
         return index;
     }

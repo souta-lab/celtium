@@ -9,6 +9,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -242,5 +243,11 @@ public abstract class FontRendererMixin {
             require = 0)
     private int celtium$tableCharIndexGetCharWidth(String table, int ch) {
         return CeltiumFontGlyphCapture.tableCharIndex(table, ch);
+    }
+
+    /** A font reload can change character widths, so the sign renderer's cached line splits are dropped. */
+    @Inject(method = "func_110549_a", at = @At("RETURN"), require = 0)
+    private void celtium$dropSignTextCache(net.minecraft.client.resources.IResourceManager manager, CallbackInfo info) {
+        org.taumc.celeritas.impl.render.producer.SignTextCache.invalidate();
     }
 }
