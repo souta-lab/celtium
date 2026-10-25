@@ -3976,7 +3976,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fogEnabled = enabled;
         this.fogMirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        celtium$logFogState("enable=" + enabled);
+        if (celtium$fogLogOpen()) celtium$logFogState("enable=" + enabled);
     }
 
     @Override
@@ -3984,7 +3984,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fogGlMode = glMode;
         this.fogMirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        celtium$logFogState("mode=" + glMode);
+        if (celtium$fogLogOpen()) celtium$logFogState("mode=" + glMode);
     }
 
     @Override
@@ -3999,7 +3999,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fogStart = start;
         this.fogMirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        celtium$logFogState("start=" + start);
+        if (celtium$fogLogOpen()) celtium$logFogState("start=" + start);
     }
 
     @Override
@@ -4007,7 +4007,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fogEnd = end;
         this.fogMirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        celtium$logFogState("end=" + end);
+        if (celtium$fogLogOpen()) celtium$logFogState("end=" + end);
     }
 
     @Override
@@ -4017,7 +4017,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fogBlue = blue;
         this.fogMirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        celtium$logFogState("colour=" + red + "," + green + "," + blue);
+        if (celtium$fogLogOpen()) celtium$logFogState("colour=" + red + "," + green + "," + blue);
     }
 
     @Override
@@ -4025,7 +4025,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fogRadialRequested = radial;
         this.fogMirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        celtium$logFogState("radial=" + radial);
+        if (celtium$fogLogOpen()) celtium$logFogState("radial=" + radial);
     }
 
     /**
@@ -4201,6 +4201,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         push.putFloat(204, mv[14]);
         this.fogGroups++;
     }
+
+    /**
+     * Whether a fog line may still be written. Asked by the setters before they build their argument: the record only
+     * advances when the line changes, so in a scene whose fog never changes it never reached its limit and every fog
+     * call (several a frame) built two strings for nothing. The checks themselves are bounded too.
+     */
+    private boolean celtium$fogLogOpen() {
+        return IMMEDIATE_FOG && this.fogLogs < IMMEDIATE_FOG_LOG_LIMIT && this.fogLogChecks++ < 4096;
+    }
+
+    private int fogLogChecks;
 
     /** A bounded record of what the game set, so a run with no fog in it can be told from a run with black fog. */
     private void celtium$logFogState(String what) {
@@ -8065,7 +8076,7 @@ this.frameBufferOpen = false;
         // world pass brackets and so the pass gate never fired for them: every jar measured with that gate (final2,
         // final3, final4, final5) stayed at 2.02-2.20 ms p50 against 1.558 ms for the same code without the affine bath,
         // i.e. the slow path was still being taken. worldPassActive is also not the property that separates them.
-        if (Boolean.getBoolean("celtium.debug.noAffineBake")) {
+        if (NO_AFFINE_BAKE) {
             return false;
         }
         boolean narrowerViewport = this.liveViewportWidth < this.targetWidth
@@ -8129,6 +8140,9 @@ this.frameBufferOpen = false;
      * the only retained copy is the group's own {@code state.clone()} at group-open - so one scratch buffer serves
      * every capture. Anything that needs the values past the next offer must clone it, exactly like the group does.
      */
+    /** {@code -Dceltium.debug.noAffineBake}, read once: the pre-transform check asks it per offer. */
+    private static final boolean NO_AFFINE_BAKE = Boolean.getBoolean("celtium.debug.noAffineBake");
+
     private final int[] celtium$stateScratch = new int[15];
 
     int[] celtium$captureState() {
@@ -11903,7 +11917,9 @@ this.frameBufferOpen = false;
             // say nothing about the frames that matter. Leg gv-cohort-mat20 read mvT=0.0,0.0,0.0 there while the
             // per-frame probe showed the model view tracking the camera; the report below therefore waits until the
             // world has been drawn for a while and then reports the rows the terrain actually draws with.
-            if (this.groupDepthRowsSeen < 6 && this.presentHookCalls > 100) {
+            // Bounded by checks as well as by rows: a scene whose rows repeat never reaches six distinct ones, and the
+            // row string was then built on every pass for the rest of the run.
+            if (this.groupDepthRowsSeen < 6 && this.presentHookCalls > 100 && this.groupDepthRowChecks++ < 2048) {
                 // The depth row of the projection each group draws with, plus the model-view translation, so a model group and
                 // an immediate group can be told apart and compared: the order instrument said the terrain ran first, so the
                 // depth values are what is left.
@@ -15789,8 +15805,13 @@ this.frameBufferOpen = false;
         }
     }
 
+    private int groupDepthRowChecks;
+    /** Read once: refreshTextures runs per pass, and a property read is a synchronized table lookup. */
+    private static final boolean REFRESH_NATIVE_FRONTEND =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
+
     private void refreshTextures() {
-        boolean nativeFrontend = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
+        boolean nativeFrontend = REFRESH_NATIVE_FRONTEND;
         // A terrain material names the atlas and lightmap resources. Whichever GUI/entity texture happened to be
         // bound last is not the terrain material, and querying that binding must not mutate the active unit.
         int atlasId = nativeFrontend ? LightmapIdSource.atlasTextureId() : boundTextureId(0);

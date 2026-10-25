@@ -644,6 +644,10 @@ public abstract class RenderSectionManager {
             java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
     private void celtium$queueMeshUpdates() {
+        // Nothing pending means nothing to queue: asked before the membership sets below are built over every queue.
+        if (this.celtiumPendingMeshUpdates.isEmpty()) {
+            return;
+        }
         var rebuildLists = this.getCurrentRenderListManager().getRebuildLists().byUpdateType();
         if (rebuildLists.isEmpty()) {
             return;
@@ -665,9 +669,6 @@ public abstract class RenderSectionManager {
             }
         }
 
-        if (this.celtiumPendingMeshUpdates.isEmpty()) {
-            return;
-        }
 
         java.util.Iterator<RenderSection> candidates = this.celtiumPendingMeshUpdates.iterator();
         while (candidates.hasNext()) {

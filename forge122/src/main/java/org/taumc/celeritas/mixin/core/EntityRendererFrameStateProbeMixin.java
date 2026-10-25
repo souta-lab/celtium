@@ -63,6 +63,10 @@ public abstract class EntityRendererFrameStateProbeMixin {
         if (mc == null) {
             return;
         }
+        // The line budget first: once it is spent, the state string below was still built twice a frame.
+        if (celtium$probeLines >= CELTIUM_PROBE_MAX_LINES) {
+            return;
+        }
         boolean early = celtium$probeFrames <= CELTIUM_PROBE_ALWAYS_FRAMES;
         String screen = mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName();
         String state = "player=" + (mc.player != null)

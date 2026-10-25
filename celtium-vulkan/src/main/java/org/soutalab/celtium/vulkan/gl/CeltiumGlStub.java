@@ -1126,8 +1126,11 @@ public final class CeltiumGlStub implements FunctionProvider {
      * functions, which is how the shader's comparison switch is verified rather than assumed.
      */
     public static int alphaFuncOverride() {
-        return Integer.getInteger("celtium.glstub.alphaFuncOverride", 0).intValue();
+        return ALPHA_FUNC_OVERRIDE;
     }
+
+    /** Read once: the override is a launch flag, and the state capture asks for it per offer. */
+    private static final int ALPHA_FUNC_OVERRIDE = Integer.getInteger("celtium.glstub.alphaFuncOverride", 0).intValue();
 
     /**
      * Reserves {@code range} names from the one window every generated GL name comes from.
