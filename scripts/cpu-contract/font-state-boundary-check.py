@@ -38,6 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java'
 STUB = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java'
+RASTER = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java'
 
 # (setter name, mutation call that must come after the boundary) in VulkanTerrainGpuBackend.
 MIRROR_SETTERS = [
@@ -101,7 +102,10 @@ def check_backend(text, failures):
             failures.append('backend: %s boundary present but the %s write is missing or precedes it'
                             % (name, mutation))
 
-    if 'celtium$setDrawStateBoundaryHook' not in text:
+    # The raster records moved into NativeRasterState (one owner for the stub and the mirror); the backend registers
+    # the font boundary as that owner's before-change callback.
+    if 'celtium$setDrawStateBoundaryHook' not in text and not re.search(
+            r'rasterState\.beforeChange\([^;]*celtium\$fontDrawStateBoundary', text):
         failures.append('backend: the stub boundary hook is never registered')
 
 
@@ -125,6 +129,15 @@ def check_stub(text, failures):
                 failures.append('stub: %s writes through setCapability, which fires no boundary' % case)
             elif producer.index('noteDrawStateBoundary()') > producer.index('enables[capability] = next'):
                 failures.append('stub: %s boundary fires AFTER the write in setCapability' % case)
+            continue
+        # Since the raster records moved into NativeRasterState, a case writes through `this.raster.<setter>(`, and
+        # it is the setter that fires the boundary (on a real change) before it stores the value.
+        setter = re.search(r'this\.raster\.(\w+)\(', body)
+        if setter is not None:
+            raster_body = method_body(RASTER.read_text(encoding='utf-8'), setter.group(1))
+            if raster_body is None or 'changing()' not in raster_body:
+                failures.append('stub: %s writes through NativeRasterState.%s, which fires no boundary'
+                                % (case, setter.group(1)))
             continue
         if 'noteDrawStateBoundary()' not in body:
             failures.append('stub: %s record changes without the boundary' % case)

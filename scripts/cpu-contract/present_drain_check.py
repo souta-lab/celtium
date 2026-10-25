@@ -49,7 +49,11 @@ def main():
     swapchain = SWAPCHAIN.read_text()
     fixture = FIXTURE.read_text()
 
-    present = method(backend, "public boolean celtium$presentFrame()")
+    # The present was split into presentFrame -> presentFrameImpl -> presentFrameBody so each stays under HotSpot's
+    # HugeMethodLimit; the contract is about the order across that chain, so the three bodies are read in order.
+    present = (method(backend, "public boolean celtium$presentFrame()")
+               + method(backend, "private boolean celtium$presentFrameImpl()")
+               + method(backend, "private boolean celtium$presentFrameBody()"))
     check("ensureSwapchain()" in present, "presentFrame no longer ensures a swapchain")
     check("flushPendingBeforeGlDraw()" in present,
           "presentFrame does not drain pending immediate work before presenting")

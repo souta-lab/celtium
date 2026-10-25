@@ -151,7 +151,13 @@ def main():
     asm_tree = first(str(GRADLE_CACHE / 'asm-tree/9.*/*/asm-tree-9.*.jar'))
     asm_analysis = first(str(GRADLE_CACHE / 'asm-analysis/9.*/*/asm-analysis-9.*.jar'))
     asm_util = first(str(GRADLE_CACHE / 'asm-util/9.*/*/asm-util-9.*.jar'))
-    javac = shutil.which('javac')
+    # The game's jars are built for the JVM that runs the game (class file 69 = Java 25 on this machine), so the
+    # verifier has to run on at least that JVM: JAVA_HOME when set, the PATH otherwise.
+    home = os.environ.get('JAVA_HOME')
+    javac = os.path.join(home, 'bin', 'javac') if home and os.path.exists(os.path.join(home, 'bin', 'javac')) \
+        else shutil.which('javac')
+    java = os.path.join(home, 'bin', 'java') if home and os.path.exists(os.path.join(home, 'bin', 'java')) \
+        else shutil.which('java')
     if not all((lwjglxx, asm, asm_tree, asm_analysis, asm_util, javac)):
         print('skip: the game jars or ASM are not on this machine (source-shape checks above still ran)')
         return 0 if all(checks) else 1
@@ -174,7 +180,7 @@ def main():
             target = work / 'Display.class'
             target.write_bytes(jar.read(member))
         result = subprocess.run(
-            [shutil.which('java'), '-cp', cp + os.pathsep + str(work),
+            [java, '-cp', cp + os.pathsep + str(work),
              '-Dlwjgl.core=' + (core or ''), '-Dlwjgl.glfw=' + (glfw or ''),
              '-Dlwjgl.opengl=' + (opengl or ''), '-Dlwjglxx=' + lwjglxx,
              'HintCheck', str(target)],
