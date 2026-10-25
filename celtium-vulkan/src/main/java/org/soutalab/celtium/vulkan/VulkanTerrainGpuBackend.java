@@ -7367,7 +7367,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         && this.colorMirrorHasValue && this.celtium$colourDiffers()) {
                     this.mergeRefusal("colour");
                 } else if (affineRelevant && this.celtium$textureAffineMoved()) {
-                    this.mergeRefusal("affine");
+                    // Split by format and by whether the open group bakes its matrix into the vertices: an affine change
+                    // in a pre-transformed group could be baked into its UVs instead of splitting it.
+                    this.mergeRefusal("affine-f" + formatId + (this.currentGroupPreTransformed ? "-pre" : ""));
                 } else {
                     this.mergeRefusal("fog-or-light");
                 }
@@ -7496,8 +7498,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // matrices were taken, and a later group's rotations must not be attributed to this one.
                     this.currentGroupRotations = String.join(" ", this.rotationLog);
                 }
-                this.currentGroupFormatId = formatId;
-                this.currentGroupTexture = boundTexture;
                 if (MERGE_CENSUS) {
                     // Why this group was opened, counted where it is opened. The refusal census and the close census
                     // together explained 102 of 182 starts, so the rest must be openings this path reaches without either
@@ -7517,6 +7517,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         this.mergeRefusal("open-other");
                     }
                 }
+                // Assigned after the census: it compares the closing group's format and texture with this batch's, and
+                // assigning first made those two terms never differ - every opening fell into open-state-key or
+                // open-other (leg census-amd: 360k open-other, 0 open-format, 0 open-texture).
+                this.currentGroupFormatId = formatId;
+                this.currentGroupTexture = boundTexture;
                 this.currentGroupStateKey = stateKey;
                 // The group's own copy of the captured state. Without this the field stayed at its initialised
                 // new int[7], closeCurrentImmediateGroup stored that zero array, and every group was drawn with blend,
