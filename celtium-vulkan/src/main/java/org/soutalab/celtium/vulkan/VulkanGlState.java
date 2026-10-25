@@ -5,7 +5,7 @@ import java.util.ArrayDeque;
 /**
  * The renderer state that Minecraft's and Forge's {@code GlStateManager} calls are translated into.
  * <p>
- * This is the state half of the Forge API swap ({@code docs/forge-api-vulkan-inventory.md}). A mod calls
+ * This is the state half of the Forge API swap ({@code docs/history/forge-api-vulkan-inventory.md}). A mod calls
  * {@code GlStateManager.func_179147_l()} (blend on) or pushes a matrix; those calls must not reach OpenGL. They land
  * here instead, and the draw entry turns the accumulated state plus the batch's vertex format into a pipeline key,
  * so a pipeline is only created when a draw actually needs it - the deferred selection the policy asks for.

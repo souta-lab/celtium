@@ -205,7 +205,7 @@ This section records the older terrain-only cohort. The 2026-10-13 **current HEI
 GUI evidence is above**; "no content mods" below applies only to that older cohort, not the new AMD/Intel
 HEI acceptance legs.
 
-Measured on the runs cited in `docs/plan.md` and `docs/scope-and-limits.md`; the mod set is what the harness puts in the
+Measured on the runs cited in `docs/plan.md` and `docs/history/scope-and-limits.md`; the mod set is what the harness puts in the
 run's own game directory, read from that directory and from the run log, not from the Prism instance:
 
 | Component | Version | Role | Verified |
@@ -256,7 +256,7 @@ Mods that draw through Minecraft's own entry points - `Tessellator`, `BufferBuil
 
 | Mod / caller | What it does | Status | Evidence |
 |---|---|---|---|
-| Vanilla renderers (entities, particles, sky, GUI, text) | The same entry points | Captured where a pipeline exists; refused with a reason and drawn by GL where not | per-format histogram and `CELTIUM_GROUP_BOUNDS` in the 2026-10-11 GL-less runs; GUI/HUD regions compared against the stored GL reference (`docs/scope-and-limits.md` §1) |
+| Vanilla renderers (entities, particles, sky, GUI, text) | The same entry points | Captured where a pipeline exists; refused with a reason and drawn by GL where not | per-format histogram and `CELTIUM_GROUP_BOUNDS` in the 2026-10-11 GL-less runs; GUI/HUD regions compared against the stored GL reference (`docs/history/scope-and-limits.md` §1) |
 | Validation fixture (`org.soutalab.celtium.validation`) | Forge render event drawing `POSITION_COLOR` quads with `Tessellator`/`BufferBuilder`/`GlStateManager` | **Corrected:** it is the primary instrument now, not "not yet usable". Its batches are accepted and counted per format, and its presented-frame dumps are the picture evidence for every GL-less acceptance | `docs/plan.md` §0.114-§0.147; `celtium offer decisions: offers=5000 accepted=4892 glBodyCompleted=154` in a 2026-10-11 GL-less run |
 | ITEM-format callers (`RenderItem` path) | 28-byte `POSITION_TEX_COLOR` batches | **Corrected:** the layout is mapped to id 4 and accepted (`id4=3752/3752` in a 2026-10-11 GL-less run); a sprite-scale difference against the reference is open and is **not** the GUI model-view - all 1344 measured groups carry model-view scale `(16,-16,16)` | run `gs-item2`, jar `c42e3eebe6d0858f`; reported to the pipelines/texture owners |
 
@@ -288,7 +288,7 @@ Two separate things, never merged into one claim: **(a) binary/API compatibility
 observed through the offer/accept counters and the absence of Mixin transformation failures - and **(b) actual Vulkan
 drawing** - images compared against GL with a per-configuration noise floor, with validation messages counted as failures.
 A mod that loads and whose calls are accepted is not reported as a mod whose drawing is correct, and the current state of
-both columns is in [the second audit](audit-2026-10-09-second.md).
+both columns is in [the second audit](history/audit-2026-10-09-second.md).
 
 ## Cohort attempt: Storage Drawers 1.12.2-5.5.2 (2026-10-12) — **does not load on this runtime**
 

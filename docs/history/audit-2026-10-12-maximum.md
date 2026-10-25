@@ -484,7 +484,7 @@ U1とU2は担当ファイルが分かれる。U2/U3/U4/U5を同じ巨大backend�
 
 ## 15. witnessと参照
 
-[CPU witness results](audits/2026-10-12/cpu-witnesses.json) / [reproduction script](audits/2026-10-12/source-witnesses.py)。
+[CPU witness results](../audits/2026-10-12/cpu-witnesses.json) / [reproduction script](../audits/2026-10-12/source-witnesses.py)。
 
 scriptは固定snapshotとbuildが生成した原典を使う。生成したdependency stubはMinecraft全体を代用するものではない。バグが修正された後は「witness changed」で失敗し得るので、恒久CIの合格試験にはしていない。GPU run、validation-clean、画像一致をこの7probeから主張しない。
 

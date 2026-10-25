@@ -4,7 +4,7 @@
 2026-10-25 改訂（利用者指示: 基盤固有の最適化の積極採用、描画modの最適化手法の一貫した吸収、巨大クラスの分割）、
 2026-10-25 再改訂（利用者指示: KPIはAMD/Intelでp50/p95/p99すべて、RLCraft/E2Eの完全動作、GL stubの適用範囲）。
 以前の性能値・原因断定・完了宣言は前提にしない。**本書も絶対ではない**: 実測がより良い方針を示したら本書を直し、最適解へ収束させる。
-現在の実装と受入は [plan.md](<plan.md>)、目標設計は [new_architecture.md](<../new_architecture.md>)
+現在の実装と受入は [plan.md](<plan.md>)、目標設計は [new_architecture.md](<new_architecture.md>)
 （採否と順序の評価は plan.md）、旧設計と実測の記録は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)、
 実行手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
 
@@ -14,7 +14,7 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
 
 - **native Vulkan-only。Minecraft/Forgeの描画・資源・状態・可視性・提出をnative rendererが所有する。**
   全描画物（地形・entity・TESR・item・particle・text・GUI・空・手・post）は1つのscene database・可視性・
-  frame compilerに載る（[new_architecture.md](<../new_architecture.md>)）。バニラのGL呼出しをスタブへ転送して
+  frame compilerに載る（[new_architecture.md](<new_architecture.md>)）。バニラのGL呼出しをスタブへ転送して
   「native化」と呼ばない。HUD/GUI/loadingも例外ではない。
 - **GL stubは「GLを直接呼ぶmod」のためだけ**（2026-10-25 利用者指示）。vanilla/Forgeの経路はGL呼出しを1:1で
   Vulkanへ翻訳せず、mixinで意味（描くもの・状態・資源）を受け取ってnativeに描く。GLを直接呼ぶmod（例: Xaero's Minimap の

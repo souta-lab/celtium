@@ -39,7 +39,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * quads carry lighting data outside the ITEM format - Forge's light-gatherer path handles those and
  * keeps handling them here.
  * <p>
- * Audit fixes (docs/audit-2026-10-12-maximum.md B01/B02/B14):
+ * Audit fixes (docs/history/audit-2026-10-12-maximum.md B01/B02/B14):
  * <ul>
  * <li>B01: the scratch {@code BufferBuilder} is closed with {@code finishDrawing()} before upload,
  * exactly as {@code Tessellator.draw()} does it, and the stored bytes are read from the resulting

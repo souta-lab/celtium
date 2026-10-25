@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan;
 /**
  * ImmediateStatistics - the immediate domain's counters and its fragments of the verification line.
  *
- * <p>R2 (docs/refactoring-plan.md 6.1). The line's field names and order are a contract with the fixture and
+ * <p>R2 (docs/history/refactoring-plan.md 6.1). The line's field names and order are a contract with the fixture and
  * every leg record (scripts/cpu-contract/verify_line_baseline.txt), so this class does not choose an order: it
  * exposes one appendRunN per contiguous run of its fields and the backend calls them in the existing order. The
  * domains are interleaved in the line, so a single fragment() per class would reorder it.

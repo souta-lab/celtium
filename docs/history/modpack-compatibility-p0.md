@@ -156,7 +156,7 @@ two of them cannot own the same classes. That distinction belongs in the table r
 
 That first row is the same component this project measured as the cause of the pack's GL-less failure: RandomPatches'
 tweak initialisation defines `org.lwjgl.opengl.Display` at 8.975 s, before the celtium mixin list exists at 9.837 s,
-so the GL-less stub was never installed and the window got a real GL 4.6 context (`docs/notes-glless-stub-in-pack-2026-10-15.md`).
+so the GL-less stub was never installed and the window got a real GL 4.6 context (`docs/history/notes-glless-stub-in-pack-2026-10-15.md`).
 The E2Eu entry of the migration notes removes it as well (BetterFPS, Clumps, Hesperus, NotEnoughIDs, Old Java
 Warning, **RandomPatches**, Shadowfacts' Forgelin) and updates CensoredASM.
 

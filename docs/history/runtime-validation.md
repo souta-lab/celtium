@@ -1,7 +1,7 @@
 # Reproduce the Linux Cleanroom validation
 
 > **Stage record, superseded.** This document is historical evidence, not a current executable recipe.
-> Use [the current procedure](<development.md>) and [current status](<plan.md>).
+> Use [the current procedure](<../development.md>) and [current status](<../plan.md>).
 > Old artifact names and screenshot descriptions below are retained as stage history; do not run them as current instructions.
 
 Use the supplied, locally patched Prism profile with its existing library and asset caches. The validation launcher currently supports Linux x86_64. It reads that source instance, verifies cached library hashes and creates a fresh game directory for each experiment. Existing test directories are rejected. Authentication data and existing worlds are not copied.

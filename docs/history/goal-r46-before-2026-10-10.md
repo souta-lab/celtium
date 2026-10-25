@@ -1,6 +1,6 @@
 # Celtium goal — 2026-10-09 第3回監査反映
 
-CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダラとして完成させる。現在の根拠は docs/audit-2026-10-09-third.md（第3回監査）、docs/goal.md、更新したdocs/plan.mdに集約する。過去の履歴は証拠・経緯であり、現在の完了判定ではない。監査開始後の修正は新たなartifactと受入で確認する。
+CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダラとして完成させる。現在の根拠は docs/history/audit-2026-10-09-third.md（第3回監査）、docs/goal.md、更新したdocs/plan.mdに集約する。過去の履歴は証拠・経緯であり、現在の完了判定ではない。監査開始後の修正は新たなartifactと受入で確認する。
 
 【維持する仕様】
 - Cleanroom専用。通常Forge（旧Java/LWJGL2）や他Forge+lwjgl3ify/RFB構成の起動互換は提供対象外。ただしCleanroomで動く既存Forge modのMinecraft/Forge公開クラス・メソッド署名・イベント順序・modelデータの互換入口は可能な限り維持する。

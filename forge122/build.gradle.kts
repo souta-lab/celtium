@@ -233,7 +233,7 @@ tasks.named<Jar>("jar") {
         attributes["FMLCorePluginContainsFMLMod"] = "true"
         attributes["ForceLoadAsMod"] = "true"
         // Replaces the stale `Celtium-Stage: backend-boundary` (a 2026-10-09 label). These two are true today
-        // and each is enforced by code named in docs/scope-and-limits.md section 0.
+        // and each is enforced by code named in docs/history/scope-and-limits.md section 0.
         attributes["Celtium-License"] = "LGPL-3.0"
         attributes["Celtium-Vulkan-Minimum"] = "1.2"
         attributes["Celtium-Upstream-Commit"] = "989ebf2e52ceed052ec112a569e0c1d172095756"

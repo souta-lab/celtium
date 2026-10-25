@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Owns the publication bookkeeping the backend used to keep in its own fields: which GL texture name a framebuffer's
  * colour attachment is, which image the sampler may read for it, and the counters that say what happened.
  * <p>
- * This is the state half of refactoring plan R1b (docs/refactoring-plan.md section 6). The <em>decision</em> of which
+ * This is the state half of refactoring plan R1b (docs/history/refactoring-plan.md section 6). The <em>decision</em> of which
  * image a name stands for stays in the backend until R5 moves the target registry, because it reads the frame target
  * and the off-target pairs; what moves here is the ownership of the census itself - one map from framebuffer identity
  * to its colour texture, one map from GL name to the published texture, and the counters - so that the two are no

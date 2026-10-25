@@ -31,7 +31,7 @@ samples the **chain pair's** view.
 No. The draw lands in a pass whose attachment is the **default pair**; the sampled image is the **chain pair**. So the
 group is not sampling the image its own pass attaches, and the `VUID-vkCmdDraw-None-09600` pair is not explained by a
 same-pass feedback in these legs. The surviving explanation is the one from
-`docs/notes-chain-pair-layout.md`: the descriptor written for the published wrapper records a layout
+`docs/history/notes-chain-pair-layout.md`: the descriptor written for the published wrapper records a layout
 (`SHADER_READ_ONLY_OPTIMAL` after `VulkanGlTexture:1552`/`:2531`, or `GENERAL` if written earlier) while the image's
 real layout at submit is the other one - a **stale recorded layout**, not a feedback loop. The same-pass hypothesis
 would need a group whose route is chain-pair while its descriptor samples the pair's view; the log shows the opposite

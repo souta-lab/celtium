@@ -1,6 +1,6 @@
 # Celtium 引き継ぎ書（2026-10-10 / 次モデル向け）
 
-> この文書は**引き継ぎ時点のスナップショット**である。現在状態の単一の表は [`docs/plan.md`](plan.md)。
+> この文書は**引き継ぎ時点のスナップショット**である。現在状態の単一の表は [`docs/plan.md`](../plan.md)。
 > 両者が食い違う場合は **plan.md と最新 HEAD が勝つ**。過去の経緯は `docs/history/`。
 >
 > 作業ディレクトリ：`/home/s0u7a/projects/celtium`（`main`、`origin` = https://github.com/souta-lab/celtium）
@@ -283,7 +283,7 @@ spectator creeper/spider/enderman 等。**存在する pass を一括で未実�
 ### 文書とエビデンス
 - `docs/plan.md` が**現在状態・優先順・受入の単一の表**。古い冒頭表を**最新実測で書き換える**。
 - ラウンド履歴は `docs/history/`。**末尾への訂正追記だけで整合させない。**
-- `docs/goal.md` を objective と同期させる。監査は `docs/audit-2026-10-09-third.md` が起点。
+- `docs/goal.md` を objective と同期させる。監査は `docs/history/audit-2026-10-09-third.md` が起点。
 - 証拠は hash つきで保存：baseline/candidate・HEAD/dirty・fixture・jar/SPIR-V・effective flags・GPU/driver・
   camera/scene/animation/capture tick・exit/verdict・画像差。
 - **`--duration` が違う run を直接比較しない**（提示数は毎秒に正規化する）。
@@ -363,8 +363,8 @@ run ディレクトリの中の `mods/`（jar の複製）・`test-libraries/`�
 |---|---|
 | 現在状態の単一の表 | `docs/plan.md`（§0 冒頭表、§0.1〜§0.102） |
 | goal 本文 | `docs/goal.md` |
-| 監査起点 | `docs/audit-2026-10-09-third.md` |
-| 構造修復の方針 | `docs/handoff-structure-recovery-2026-10-10.md` |
+| 監査起点 | `docs/history/audit-2026-10-09-third.md` |
+| 構造修復の方針 | `docs/history/handoff-structure-recovery-2026-10-10.md` |
 | 過去の経緯 | `docs/history/` |
 | Vulkan backend 本体 | `celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java` |
 | フレームターゲット / swapchain | `celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanFrameTarget.java` |

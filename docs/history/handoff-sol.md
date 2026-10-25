@@ -443,6 +443,6 @@ fixtureモジュールは `-source 8` のため現代構文は使えない点に
 
 1. `VulkanCommandBufferState`＋テスト＋backend のライフサイクル／window／preflight／所有権
 2. fixture（`ValidationClient`）＋runner script
-3. 文書（`docs/plan.md`、`docs/scope-and-limits.md`、本ファイル）
+3. 文書（`docs/plan.md`、`docs/history/scope-and-limits.md`、本ファイル）
 
 ビルドは `:celtium-vulkan:test` を含めて成功済み。**ゲーム内受入は AMD の3 run のみ**である。

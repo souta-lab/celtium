@@ -215,5 +215,5 @@ timeout 900 python3 scripts/prism_validation.py \
   `validation/client/.../ValidationClient.java`（提示画像の主張）。
 - run: `.celtium-work/runtime/p546-glless`〜`p560-glless`・`isoB`・`isoC`・`reg-bridge3`・`p530-tp`。
   本 commit のあとに走った `p561-glless` は verdict が無い（未完了）ので引用しない。
-- 実行手順の一般形: `docs/handoff-2026-10-10-next-model.md` §2.2（この節の `dumpPresentedTick` の既定値 198 は
+- 実行手順の一般形: `docs/history/handoff-2026-10-10-next-model.md` §2.2（この節の `dumpPresentedTick` の既定値 198 は
   `4bcff8de7` で 20 に変わっている）。

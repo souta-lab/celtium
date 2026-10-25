@@ -18,7 +18,7 @@ import java.util.List;
  * neither can be the ticket. Retiring to a deferred fence and retiring to the slot epoch were both tried on the GPU
  * and both legs still reported {@code VUID-vkDestroyBuffer-buffer-00922}; retiring into the slot and releasing at its
  * reset reported {@code validationMessageCount=0} on the leg that reproduces the defect
- * ({@code docs/audit-b05-reproduction-2026-10-12.md}).
+ * ({@code docs/history/audit-b05-reproduction-2026-10-12.md}).
  * <p>
  * The second condition R6 states is a prohibition: <b>nothing here may add a device-wide wait to the normal frame
  * path</b>. Every method is therefore either a counter, a comparison, or a decision the caller acts on with its own

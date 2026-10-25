@@ -64,7 +64,7 @@ output が構成される前の一時点のものと見られる。
 `WLR_RENDERER=gles2`, `WLR_RENDER_DRM_DEVICE=<render node>`, output `HEADLESS-1` 1280×720, Xwayland 併設）。
 
 **しかし実行痕跡は無かった**: ツリー全体に `compositor-*.png` も `captures.json` も無く、
-docstring が引用する `docs/compositor-output-capture-2026-10-11.md`（本文書）も存在しなかった。
+docstring が引用する `docs/history/compositor-output-capture-2026-10-11.md`（本文書）も存在しなかった。
 本計測でこのスクリプトを初めて実走させ、その出力を以下に使う。計測用に
 `scripts/compositor_capture_report.py` を追加した（capture の一様性・色数・magenta 率と、
 番号付き frame dump との画素比較を出す）。

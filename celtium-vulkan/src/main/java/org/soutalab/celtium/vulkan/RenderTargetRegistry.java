@@ -10,7 +10,7 @@ import java.util.Set;
 /**
  * Which real image each framebuffer identity is drawn into, at which generation, in which layout - and who clears it.
  * <p>
- * R5 of {@code docs/refactoring-plan.md}: "main／default／chain／post の実 image が明示され、alias/layout/clear の所有が
+ * R5 of {@code docs/history/refactoring-plan.md}: "main／default／chain／post の実 image が明示され、alias/layout/clear の所有が
  * 一意". This class is the one place that answers the three questions the backend has been answering from scattered
  * fields:
  * <ol>

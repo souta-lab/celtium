@@ -16,7 +16,7 @@
 | build・検証・証拠・停止/後始末 | [development.md](<docs/development.md>) |
 | 計器の名前→実装（必要なキーだけ検索） | [instruments.md](<docs/instruments.md>) |
 | 検証の罠（必要な節だけ） | [verification-traps.md](<docs/verification-traps.md>) |
-| 過去資料（現在判定・新しい指示ではない） | [history](<docs/history/>), [監査](<docs/audit-2026-10-17-sol-review.md>) |
+| 過去資料（現在判定・新しい指示ではない） | [history](<docs/history>), [監査](<docs/history/audit-2026-10-17-sol-review.md>) |
 
 ## 推測を事実に昇格させない
 

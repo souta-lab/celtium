@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Re-measure, live, why a key-free CurseForge pin resolution is shaped the way it is.
 
-Every claim in ``docs/modpack-compatibility-p0.md`` about *why* the resolver works the way it does
+Every claim in ``docs/history/modpack-compatibility-p0.md`` about *why* the resolver works the way it does
 should be reproducible by running this one command. It only issues read-only GET/HEAD requests and
 prints the status codes it observed; it downloads no mod bytes and writes nothing.
 

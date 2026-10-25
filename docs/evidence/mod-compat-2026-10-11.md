@@ -210,7 +210,7 @@ flags, the only differences being JEI's presence and its screens being open:
 | `mod4-jei-screen-a` | present + recipe screen | 165 | 16000 / 15698 | 9483 / 9483 | 4191 / 4190 | 157 / 157 |
 
 Per presented frame the same pair reads: accepted 74.5 -> 95.1, ITEM 43.8 -> 57.5, POSITION_TEX 17.0 -> 25.4,
-POSITION_COLOR 8.6 -> 1.0. The ITEM layout is the one item stacks are drawn with (`docs/scope-and-limits.md` section 1),
+POSITION_COLOR 8.6 -> 1.0. The ITEM layout is the one item stacks are drawn with (`docs/history/scope-and-limits.md` section 1),
 and in every GL-less JEI run its acceptance was essentially total: `9483/9483` (`mod4-jei-screen-a`), `9239/9239`
 (`mod2-glless-pic1`), `4060/4060` (`mod2-glless-pic2`), `4779/4778` (`mod3-glless-jei`), and `8064/8064` in the no-JEI
 half of the pair. No JEI run has a refusal whose reason names anything but the particle family (5.4).

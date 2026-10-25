@@ -4071,7 +4071,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 break;
             case 0x1F02: // GL_VERSION
                 // BH-35: what is advertised is the version whose gates are all backed, enumerated rather than guessed
-                // (docs/scope-and-limits.md, the compatibility-boundary table). The floor is 3.0, and it is a floor
+                // (docs/history/scope-and-limits.md, the compatibility-boundary table). The floor is 3.0, and it is a floor
                 // because vanilla reads it through LWJGL's capability flags:
                 //   OpenGlHelper.initializeShaders needs framebufferSupported =
                 //     openGL14 && (ARB_framebuffer_object || EXT_framebuffer_object || OpenGL30); this stub advertises

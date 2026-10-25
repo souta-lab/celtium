@@ -17,7 +17,7 @@
 | 3 | **計器が多すぎて索引が無い** | `-Dceltium.*` / `-Dceleritas.*` スイッチ **337 個**、`CELTIUM_*` マーカー 34 個。一覧は存在しない | 「どの計器がどこにあり何を出すか」を毎回ソース全体の grep で探索 |
 | 4 | **受入ハーネスが git 管理外** | leg ランナーは `.gv-verify/gv-leg.sh`（未追跡・絶対パス固定）。さらに `scripts/prism_validation.py`（追跡・682 行）と `.gv-verify/prism_validation.py`（未追跡・**631 行**）が**別物**で、leg は**古い方**を走らせていた | worktree を失えば受入手順ごと消える。受入が「どのハーネスで取ったか」を再現できない |
 | 5 | **run 成果物が 13 GB・未追跡** | `.gv-verify/` 13 GB（run 90 本）。1 本の大半は `mods/`（411 MB のパックコピー）・`saves/`・`config/` 等で**証拠ではない** | `git status` のノイズ、ディスク枯渇（実際に 100% で leg が落ちた） |
-| 6 | 壊れた参照 | 9 つの docs が「plan §0.xxx」を参照。`§` の**定義側**は `docs/handoff-2026-10-10-next-model.md` と `docs/history/` にあり、**plan.md には無い**（今回の変更以前から） | 参照を辿ったエージェントが空振りし、推測で埋める |
+| 6 | 壊れた参照 | 9 つの docs が「plan §0.xxx」を参照。`§` の**定義側**は `docs/history/handoff-2026-10-10-next-model.md` と `docs/history/` にあり、**plan.md には無い**（今回の変更以前から） | 参照を辿ったエージェントが空振りし、推測で埋める |
 | 7 | 検証の罠が散在 | 0 行を結論にする・別 run 比較・poison の色指定・混色を見逃す検出器・fixture 税 などが、AGENTS.md と各 round の記述に分散 | **同じ穴に繰り返し落ちる**（今回のセッションで実際に 5 回以上） |
 
 ## 実施した修正
@@ -44,8 +44,8 @@
 
 ## 残る推奨（今回は未実施・理由つき）
 
-1. **他の巨大 docs の分割**: `docs/diagnosis-r213-user-visual-breakage.md` 198 KB、
-   `docs/vanilla-acceptance.md` 143 KB、`docs/performance_plan.md` 109 KB、`docs/history/plan-diary.md` 749 KB。
+1. **他の巨大 docs の分割**: `docs/history/diagnosis-r213-user-visual-breakage.md` 198 KB、
+   `docs/history/vanilla-acceptance.md` 143 KB、`docs/performance_plan.md` 109 KB、`docs/history/plan-diary.md` 749 KB。
    今回は「毎回読まれる」plan.md を優先した。performance_plan / vanilla-acceptance も
    「現状＋履歴」に分ける価値がある（内容の意味を変えない分割なので、次回まとめて）。
 2. **`docs/goal.md`（26 KB）**: 歴史節が大半。objective と完成条件を前半に固定し、履歴を分離する候補。

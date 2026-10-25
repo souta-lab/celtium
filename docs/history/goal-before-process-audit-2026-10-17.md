@@ -17,21 +17,21 @@ Vanillaの正確な描画、安定性、FPS・frame time、既存Forge Mod互換
 
 ## 1. 継続開発
 
-- 毎round、最新HEAD・dirty差分・既存担当・artifact・[plan.md](plan.md)を確認し、同じ実装単位・ブランチ・根因・TODOを必要な複数roundにわたり継続する。roundはcommitやPRの単位ではない。
+- 毎round、最新HEAD・dirty差分・既存担当・artifact・[plan.md](../plan.md)を確認し、同じ実装単位・ブランチ・根因・TODOを必要な複数roundにわたり継続する。roundはcommitやPRの単位ではない。
 - 担当起動後も主担当は実装・最適化・レビュー・統合を進める。Teammateは必要に応じ最大10名程度。長いbuild・ゲーム検証はbackground jobとして管理し、GPUは直列で共有する。
 - 根因に必要な複数箇所を修正し、コンパイル・限定CPU契約・AMD/Intel実機受入を接続する。動作するソース変更とテスト・証拠が揃った単位をcommitし、CI・権限・保護条件に従って統合する。
 - PR直前に `git diff origin/main --name-only` と内容を確認する。round経過だけのdocs-onlyブランチ・PR・即マージは禁止。例外は明示的な文書依頼、ライセンス・安全性・配布等の独立した目的だけ。
-- [plan.md](plan.md)冒頭の現状表は実装・根因・受入が意味的に変わった節目で直接更新する。途中経過はローカルメモか既存Issue/PRへ。主成果はレンダラであり、PR件数・round数・文書量ではない。
+- [plan.md](../plan.md)冒頭の現状表は実装・根因・受入が意味的に変わった節目で直接更新する。途中経過はローカルメモか既存Issue/PRへ。主成果はレンダラであり、PR件数・round数・文書量ではない。
 - 継続時はHEAD・TODO・artifactから復元し、DSHのactive/armed/runningを確認する。実際の制限や中断は原因を確認して継続可能な作業から再開する。
 
 ## 2. 現状管理と証拠
 
-**現在状態の唯一の表は[plan.md](plan.md)冒頭。** 実装済み・局所検証・AMD成功・Intel成功・両GPU成功・未較正・FAILED・未完を区別する。この文書は目標と完成条件を保持し、下の履歴を現行受入と解釈しない。
+**現在状態の唯一の表は[plan.md](../plan.md)冒頭。** 実装済み・局所検証・AMD成功・Intel成功・両GPU成功・未較正・FAILED・未完を区別する。この文書は目標と完成条件を保持し、下の履歴を現行受入と解釈しない。
 
-- 変更前にproducer・consumer・呼び出し順・所有権・状態契約を確認する。Minecraft/Forge原典と実行時Kirinoパッチを優先し、[mc-sources.sh](../scripts/mc-sources.sh)の `--grep`・`--srg`・`--notch`・`--cleanroom` を使用する。
+- 変更前にproducer・consumer・呼び出し順・所有権・状態契約を確認する。Minecraft/Forge原典と実行時Kirinoパッチを優先し、[mc-sources.sh](../../scripts/mc-sources.sh)の `--grep`・`--srg`・`--notch`・`--cleanroom` を使用する。
 - 既存counter・dump・fixture・reportを読み、不足する情報だけ計器を拡張する。baseline/candidate、commit、JAR/SPIR-V hash、GPU、設定、scene、camera、測定区間、exit、validation、画像比較、frame timeを記録する。
 - 競合仮説は条件を揃えた最小A/Bで判別する。失敗gateを正常扱いしない。CPU契約の成功はゲーム画質の受入ではない。
-- 調査資料は[audit-2026-10-09-third.md](audit-2026-10-09-third.md)、[full-audit-0903.md](history/2026-10-11-full-audit-0903.md)、[full-audit-1058.md](history/2026-10-11-full-audit-1058.md)、[構造引継ぎ](handoff-structure-recovery-2026-10-10.md)、[Nether資料](hints-2026-10-10-nether.md)。歴史は現在のソースと実機結果を上書きしない。
+- 調査資料は[audit-2026-10-09-third.md](audit-2026-10-09-third.md)、[full-audit-0903.md](2026-10-11-full-audit-0903.md)、[full-audit-1058.md](2026-10-11-full-audit-1058.md)、[構造引継ぎ](handoff-structure-recovery-2026-10-10.md)、[Nether資料](hints-2026-10-10-nether.md)。歴史は現在のソースと実機結果を上書きしない。
 
 ## 3. 技術的な完成仕様
 
@@ -47,7 +47,7 @@ Vanillaの正確な描画、安定性、FPS・frame time、既存Forge Mod互換
 
 **A. 正しさ・安定性**: P0/P1、crash、破損・欠落・freeze・validation違反を解消する。draw snapshot、matrix、texture unit、blend/alpha、viewport/scissor、target identity、clear順序、record/submit、resource lifetimeを共通契約として完成し、Vanillaの全描画・UI・loading・ShaderGroup・outline・presentを正しくする。
 
-**B. FPS/frame time**: [performance_plan.md](performance_plan.md)に沿い描画修正と並行する。CPU/GPU同期・idle、upload ring/suballocation/frame slots、buffer/descriptor/pipeline再利用、batch/indirect、mesh/texture cache、GC/native allocation、copy/readback/submit削減、fence/retirementを改善する。Angelicaや1.12.2最適化Mod・近年の設計をライセンスに適合させて参照する。通常Celeritasとの同一GPU・world・camera・設定・解像度でp50/p95/p99、CPU/GPU時間、stall、allocation、draw/upload数を比較する。
+**B. FPS/frame time**: [performance_plan.md](../performance_plan.md)に沿い描画修正と並行する。CPU/GPU同期・idle、upload ring/suballocation/frame slots、buffer/descriptor/pipeline再利用、batch/indirect、mesh/texture cache、GC/native allocation、copy/readback/submit削減、fence/retirementを改善する。Angelicaや1.12.2最適化Mod・近年の設計をライセンスに適合させて参照する。通常Celeritasとの同一GPU・world・camera・設定・解像度でp50/p95/p99、CPU/GPU時間、stall、allocation、draw/upload数を比較する。
 
 **C. 主要Mod**: JEI・GUI・custom item/model・entity layer・TESR・particle・fluids・animation・FBO・reload・world-switchを実際のModで完成する。**E2E1.93aとRLCraft2.9.3は最優先の完全Modpack互換性ターゲット。** E2EではCeltiumがNothiriumを置換しNaughthiriumも除外する。他のゲーム内容Modは保持しStellarCore等は機能単位で互換化する。RLCraftは大型entity・animation・equipment・particle・foliage・weather・water・HUDを重点対象とする。両packで実world・GUI・Modded描画・保存再読込・安定性・性能まで受け入れる。
 
@@ -146,7 +146,7 @@ Vanillaの正確な描画、安定性、FPS・frame time、既存Forge Mod互換
 監査 2026-10-11 17.2 で文書との不一致を指摘されたため、plan と本ファイルの両方を live 値へ同期した。
 
 このファイルは goal の objective と同期する。status・優先順・受入の現状表は `docs/plan.md`（単一の管理場所）、
-証拠と経緯は `docs/history/`、監査起点は `docs/audit-2026-10-09-third.md` と `docs/history/2026-10-11-full-audit-0903.md`。
+証拠と経緯は `docs/history/`、監査起点は `docs/history/audit-2026-10-09-third.md` と `docs/history/2026-10-11-full-audit-0903.md`。
 
 **現状（2026-10-17 時点の現在状態は `docs/plan.md`。当時の § 番号の記録は `docs/history/` にある）**: GL context なしで通常起動のメインメニューが
 **compositor 出力から撮れる**ところまで到達（`.celtium-work/ww-menu-caps/compositor-0018.png`）。
@@ -181,7 +181,7 @@ mod cohort、Intel の残り場面。
 - このプロジェクト自身の計器（counter・dump・report）にも同じ規則: 既にあるものを読む。新しく足したら報告に名前を書く。
   担当を起動する時は原典のパスと `scripts/mc-sources.sh` を必ず渡す。
 - 規則は `AGENTS.md`（新規参加者と担当が最初に読むファイル）に置く。
-- 原典で確定した事実は `docs/handoff-2026-10-10-next-model.md` の § 群と `docs/history/`（バニラの (mode, format) 全表・`POSITION_NORMAL` が未対応・font glyph の契約）。
+- 原典で確定した事実は `docs/history/handoff-2026-10-10-next-model.md` の § 群と `docs/history/`（バニラの (mode, format) 全表・`POSITION_NORMAL` が未対応・font glyph の契約）。
 
 ## 失敗しているゲートは証拠（必須・2026-10-11 追加）
 - 画像ゲートは 09:33 以降の全 GL-less run で `sceneGateFloorsEnforced=true`・`sceneCalibrationKeyMatches=true`・
@@ -204,7 +204,7 @@ mod cohort、Intel の残り場面。
 mean がビット一致＝カメラは同一 → **renderer の退行**。フックは culling が読む射影スタックに掛かり、world を cull で消していた。
 **代償**: mirror が `gluPerspective` を見ないギャップは戻る（空 fan・太陽/月・雲）。次は **`lastDraw/lastSections` を測りながら**設計する。
 
-## 現在の到達点（2026-10-11 実測・当時の § は `docs/handoff-2026-10-10-next-model.md` と `docs/history/`）
+## 現在の到達点（2026-10-11 実測・当時の § は `docs/history/handoff-2026-10-10-next-model.md` と `docs/history/`）
 - **GL context なしの window が実 scene を描いて提示する**。AMD/Intel とも bridge/GL-less 両 leg が PASSED・clean・VUID 0。
   標準 GL-less allBlocks は offers 5000 / accepted 4705（94.1%）、粒子修正後の run は**拒否 census が空**。
 - **条件 (c) 充足**: `grim` で compositor 出力を連番 capture し、presented frame と **0/921600 画素差**で束縛。

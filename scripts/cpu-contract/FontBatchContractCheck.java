@@ -1,5 +1,5 @@
 /*
- * The CPU-level contract of FontBatch (docs/refactoring-plan.md R3b, first half).
+ * The CPU-level contract of FontBatch (docs/history/refactoring-plan.md R3b, first half).
  *
  * Two of the things the extraction changes are read here rather than inferred from a leg:
  *

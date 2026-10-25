@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan;
 /**
  * Owns the output side of the verification diagnostics: when the summary is allowed to print, and in what shape.
  * <p>
- * This is refactoring plan R1c (docs/refactoring-plan.md section 6). The plan's task-65 warning is why this is the
+ * This is refactoring plan R1c (docs/history/refactoring-plan.md section 6). The plan's task-65 warning is why this is the
  * first step rather than a snapshot class: reading the backend's fields into a report object would need hundreds of
  * accessors and would replace one god class with two, so the counters stay in the backend until R2 moves them
  * per domain, and what moves now is the printing contract - the once-per-snapshot guard and the exact line.

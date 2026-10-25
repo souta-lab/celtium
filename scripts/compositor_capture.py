@@ -12,7 +12,7 @@ is to run the game, and this one's is to photograph the screen it was run on.
 
 Every capture writes a numbered PNG plus a JSON record: the wall and monotonic clock at the shutter, the game's PID,
 the compositor's window tree (so the captured rectangle can be tied to a mapped window), and the PNG's own hash.
-The numbering is what binds a picture to a moment; `docs/compositor-output-capture-2026-10-11.md` does the binding
+The numbering is what binds a picture to a moment; `docs/history/compositor-output-capture-2026-10-11.md` does the binding
 to a presented frame.
 """
 

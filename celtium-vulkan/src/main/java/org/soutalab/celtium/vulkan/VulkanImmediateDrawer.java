@@ -5,7 +5,7 @@ import org.lwjgl.opengl.GL11;
 /**
  * Translates Minecraft's immediate-mode geometry into a Vulkan submission.
  * <p>
- * This is the draw half of the Forge API swap described in {@code docs/forge-api-vulkan-inventory.md}: the mod-side
+ * This is the draw half of the Forge API swap described in {@code docs/history/forge-api-vulkan-inventory.md}: the mod-side
  * Mixin on {@code WorldVertexBufferUploader.func_181679_a(BufferBuilder)} hands over the finished buffer, and this
  * class turns it into one batch of {@link VulkanDynamicMesh} plus the pipeline selected from {@link VulkanGlState}.
  * <p>

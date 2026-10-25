@@ -25,9 +25,9 @@ Terrain, entities, items, particles, sky/clouds and GUI have native rendering pa
 
 Vulkan-only startup and presentation have been exercised on **AMD Radeon RX 6400 (RADV NAVI24) and Intel UHD Graphics 630 (CFL GT2) under Linux/Mesa**. Physical display scanout has not been measured.
 
-See [the single current status table](<docs/plan.md>) for per-GPU verdicts, artifact scope and outstanding defects, and [the process re-audit](<docs/audit-2026-10-17-sol-review.md>) for corrected claims. In particular, the earlier blanket “resize/reload/minimize passed on both GPUs” claim was incorrect: a recorded Intel resize run failed Vulkan validation, and the named minimize run was AMD-only. Cloud input observations also did not establish complete image parity.
+See [the single current status table](<docs/plan.md>) for per-GPU verdicts, artifact scope and outstanding defects, and [the process re-audit](<docs/history/audit-2026-10-17-sol-review.md>) for corrected claims. In particular, the earlier blanket “resize/reload/minimize passed on both GPUs” claim was incorrect: a recorded Intel resize run failed Vulkan validation, and the named minimize run was AMD-only. Cloud input observations also did not establish complete image parity.
 
-[User reports](<docs/reports/0.0.5-user-reported-defects.md>), [the performance design](<docs/performance_plan.md>) and [mod compatibility](<docs/mod-compatibility.md>) provide supporting detail, not independent current-state registers. [Historical records](<docs/history/>) describe their particular builds, not latest-HEAD acceptance.
+[User reports](<docs/reports/0.0.5-user-reported-defects.md>), [the performance design](<docs/performance_plan.md>) and [mod compatibility](<docs/mod-compatibility.md>) provide supporting detail, not independent current-state registers. [Historical records](<docs/history>) describe their particular builds, not latest-HEAD acceptance.
 
 ## Scope and compatibility
 

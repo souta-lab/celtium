@@ -45,7 +45,7 @@
 
 作成日: 2026-10-12 JST。これは既存コードを読んだ設計・移行計画であり、分割実装や新しいGPU受入の完了報告ではない。
 
-現在の機能受入と優先順は [docs/plan.md](docs/plan.md)、objectiveは [docs/goal.md](docs/goal.md)、性能改善は [docs/performance_plan.md](docs/performance_plan.md) が管理する。本書はその構造面の実行方法を定める。受入済み／未検証の一覧をもう一つ作らず、実装が着地した時点で `docs/plan.md` の該当行を更新する。
+現在の機能受入と優先順は [docs/plan.md](../plan.md)、objectiveは [docs/goal.md](../goal.md)、性能改善は [docs/performance_plan.md](../performance_plan.md) が管理する。本書はその構造面の実行方法を定める。受入済み／未検証の一覧をもう一つ作らず、実装が着地した時点で `docs/plan.md` の該当行を更新する。
 
 ## 1. 読取点と進行中の変更
 
@@ -87,7 +87,7 @@
 | task-64: `PublishedFrameTextures` | task-63待ち、調査段階 | 画像の公開名・世代・aliasの管理を抽出する最初の単位 |
 | task-65: `BackendReport` | 準備文書と `verify_line_check.py` がcommit済み、task-64待ち | 書式互換を保つ抽出。これだけで診断の所有分離が完成したとはしない |
 
-関連準備: [task-65の調査](docs/history/2026-10-12-task65-prep.md)。表は14:56の調査状況であり、保存前mainの着地判定ではない。本書の作成で担当、task依存、稼働中のgoalを変更しない。
+関連準備: [task-65の調査](2026-10-12-task65-prep.md)。表は14:56の調査状況であり、保存前mainの着地判定ではない。本書の作成で担当、task依存、稼働中のgoalを変更しない。
 
 ## 2. 現在の集中はどこにあるか
 
@@ -125,7 +125,7 @@
 
 `VulkanFrameArena`、`VulkanContext`のdeferred upload、frame slotのpoll、`retireSequence`、GUIの軸並行matrixを適用してmergeする経路も既存実装である。抽出のために毎windowの全量wait、毎drawの独立buffer、glyph単位の提出へ戻さない。
 
-保存前mainには `FrameImageTarget.needsFrameSemaphores()` によるGLLessの自己同期pair削減と、stubの `textureUploadSerial` による未変更pixelの読取・hash省略も入った。これらを新classで失わない。計測側にはworld内のterrain／flush／chunkUpload分解、warm到達、section churn、`presentedDumpEvery` が追加されている。対象fixtureのp99 spikeが定期PNG書込みに帰属したという新しい証拠は [docs/perf-status.md](docs/perf-status.md) にあり、古いfixture p99を通常プレイのrenderer費用として固定しない。
+保存前mainには `FrameImageTarget.needsFrameSemaphores()` によるGLLessの自己同期pair削減と、stubの `textureUploadSerial` による未変更pixelの読取・hash省略も入った。これらを新classで失わない。計測側にはworld内のterrain／flush／chunkUpload分解、warm到達、section churn、`presentedDumpEvery` が追加されている。対象fixtureのp99 spikeが定期PNG書込みに帰属したという新しい証拠は [docs/history/perf-status.md](perf-status.md) にあり、古いfixture p99を通常プレイのrenderer費用として固定しない。
 
 ## 3. 固定する仕様と移行の原則
 
@@ -475,4 +475,4 @@ native実装の移動範囲は次の名前から読む。lineは初回snapshot�
 | `FORGE/mixin/core/`、`FORGE/impl/font/CeltiumFontGlyphCapture.java` | uploader、state、framebuffer、ShaderGroup、font、swap入口 |
 | `COMMON/TerrainGpuBackend.java`、`TerrainGpuBackends.java`、`TerrainBackendLoader.java` | 広い境界とholder、起動前通知、生成順 |
 
-既存方針との接続: [構造修復の原方針](docs/handoff-structure-recovery-2026-10-10.md)、[GPU待ち排除の契約と証拠](docs/perf-render-thread-drains-handoff.md)、[runtime検証手順](docs/runtime-validation.md)、[vanilla受入](docs/vanilla-acceptance.md)、[mod互換](docs/mod-compatibility.md)。古いdesign/P2文書は経緯として読み、現在のGL-less製品仕様を縮める根拠にしない。
+既存方針との接続: [構造修復の原方針](handoff-structure-recovery-2026-10-10.md)、[GPU待ち排除の契約と証拠](perf-render-thread-drains-handoff.md)、[runtime検証手順](runtime-validation.md)、[vanilla受入](vanilla-acceptance.md)、[mod互換](../mod-compatibility.md)。古いdesign/P2文書は経緯として読み、現在のGL-less製品仕様を縮める根拠にしない。

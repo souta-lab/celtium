@@ -29,7 +29,7 @@ Minecraft 1.12.2 / CleanroomMC向けに、CeleritasをforkしたCeltiumを開発
 - `origin`：`https://github.com/souta-lab/celtium.git`
 - `upstream`：`https://github.com/GTNewHorizons/Celeritas.git`。本来の上流は`https://git.taumc.org/embeddedt/celeritas`。
 - 固定したfork元：`989ebf2e52ceed052ec112a569e0c1d172095756`（GTNH mirrorの`nh-main`）。ユーザーの導入済みjarと一致すると確認したわけではない。
-- 最初に`README.md`、`docs/design.md`、`docs/roadmap.md`、`docs/validation-2026-10-08.md`を読む。
+- 最初に`README.md`、`docs/history/design.md`、`docs/roadmap.md`、`docs/history/validation-2026-10-08.md`を読む。
 - `.celtium-work/`はgit除外の作業用ディレクトリ。既存ログ・実機JSON・JDK・転送用ファイルがある。ソースの原本は通常のrepo内ファイルであり、転送用JSONを再適用しない。
 
 ## 実装済み
@@ -46,8 +46,8 @@ Minecraft 1.12.2 / CleanroomMC向けに、CeleritasをforkしたCeltiumを開発
 10. 本人が用意したCleanroomインスタンスを固定し、`scripts/prism_validation.py`で共有cacheを読み取り、独立したtest copyを起動する。認証情報は読まない。別jarの`validation/client/`が固定flat world・描画・コマンド・FBO観測を実行する。fixtureはmod jarへ同梱しない。
 11. 固定上流とCeltiumのworld起動・描画・終了を確認。`/celtium`と`/celtium probe`は実クライアントで成功。現profileにVulkan bindingsがないことを診断JSONへ記録し、OpenGL描画が継続することを確認した。probe 15 testsを再実行済み。Java 8でLWJGLなしのoptional entry smokeも通過。
 12. 独立`celtium-interop/`でRX 6400とUHD 630のRGBA8/D32外部画像import、GPUによるD24↔D32変換、両方向の遮蔽、15段階の深度精度、4往復/frame、binary semaphoreと外部ownershipを実証した。64×64/1280×720/1920×1080を12回再生成し、未完了GL/Vulkan workをfenceでretireしてから破棄する。両GPUのvalidation error/warningは0、FD数は一定（26/34）。
-13. 別のvalidation modへinteropの自前class/shaderを追加したtest copyで、実Cleanroomの既存FBOでも両GPUの往復を確認した。元FBO/texture/renderbufferを維持する。手順は`docs/interop-validation.md`。Vulkan binding 3.4.1だけをtest classpathへ追加し、source profileのcore/OpenGL/nativeは変更しない。実験jarをapplication classpathへ置くと別のGL classloaderを使ってabortしたため、validation modへ埋め込み、Java capability/loaderをnative呼び出し前に確認する。
-14. P2として地形のGPU境界を`impl/render/chunk/backend/TerrainGpuBackend`へ分離し、既存GL実装を`GlTerrainGpuBackend`として接続した。backend選択は`TerrainBackendSelection`の1点でfail-closedに行い、`/celtium`・F3・起動logが実際のbackendと理由を表示する。fixtureでHUD非表示・entity/particle除去・vanillaのlightmap flickerとworld timeの固定を行い、stock CeleritasとCeltiumのflat world描画がRX 6400とUHD 630で**ピクセル完全一致**（0/921600、最大channel差0）、framebuffer契約・camera・`solid: 62`・使用メモリ・buffer数も一致した。詳細は`docs/p2-backend-boundary.md`。
+13. 別のvalidation modへinteropの自前class/shaderを追加したtest copyで、実Cleanroomの既存FBOでも両GPUの往復を確認した。元FBO/texture/renderbufferを維持する。手順は`docs/history/interop-validation.md`。Vulkan binding 3.4.1だけをtest classpathへ追加し、source profileのcore/OpenGL/nativeは変更しない。実験jarをapplication classpathへ置くと別のGL classloaderを使ってabortしたため、validation modへ埋め込み、Java capability/loaderをnative呼び出し前に確認する。
+14. P2として地形のGPU境界を`impl/render/chunk/backend/TerrainGpuBackend`へ分離し、既存GL実装を`GlTerrainGpuBackend`として接続した。backend選択は`TerrainBackendSelection`の1点でfail-closedに行い、`/celtium`・F3・起動logが実際のbackendと理由を表示する。fixtureでHUD非表示・entity/particle除去・vanillaのlightmap flickerとworld timeの固定を行い、stock CeleritasとCeltiumのflat world描画がRX 6400とUHD 630で**ピクセル完全一致**（0/921600、最大channel差0）、framebuffer契約・camera・`solid: 62`・使用メモリ・buffer数も一致した。詳細は`docs/history/p2-backend-boundary.md`。
 
 現状の地形はOpenGL。別実験でlogical device、画像import、セマフォ同期、深度の往復と限定したcopy/sync費用を実証し、P2でGPU境界とGL等価性まで確認したが、Vulkan地形描画と性能改善は未実装。検証済み契約はRGBA8/D24 renderbuffer、stencilなし、single sampleだけ。固定flat worldやsynthetic occlusionを広いMod互換性・game FPS改善の証拠に広げない。
 
@@ -85,7 +85,7 @@ python3 scripts/verify_forge_jar.py build-1122/build/libs/*/*.jar --output .celt
 - 上流Mixinの既にSRG名になった`RenderItem.func_175032_a` aliasでremap warningがある。固定上流buildでも同じwarningがあり、両方のworld描画は通った。
 - JDK 25をGradle、JDK 21をmod compiler、JDK 8をMinecraft preparationに使う。CIも3つのJDKを供給する設定へ修正済み。push `0e6fcc69b`のGitHub Actionsはアカウントの支払／spending limit理由でjob開始前に停止し、stepやbuild logがない。ローカル成功とCI成功を混同しない。
 - README等の同梱文書を変更するとjar hashも変わる。配布前にpackageJarと内容検査を実行して最新の検証JSONを残す。
-- fixtureは`:forge122:validationRemapJar`で別jarとして作る。実行例・結果の読み方は`docs/runtime-validation.md`。時間切れやfixture report欠落は成功扱いにしない。
+- fixtureは`:forge122:validationRemapJar`で別jarとして作る。実行例・結果の読み方は`docs/history/runtime-validation.md`。時間切れやfixture report欠落は成功扱いにしない。
 
 ## 重要なGPU診断結果
 
@@ -102,7 +102,7 @@ query条件はopaque-FD、optimal 2D、single sample、attachmentとtransfer src
 
 `.celtium-work/gpu-tools/`へDebian sid公式packageからglslang-tools 16.6.0-1とvulkan-validationlayers 1.4.363.0-1をdownload・extract済み。system packageは変更していない。`extracted/usr/bin/glslangValidator`が動く。Validation Layersを使う場合は抽出したJSONのlibrary_pathとlocal library検索パスを確認する。
 
-実機ログとJSONの位置は`docs/validation-2026-10-08.md`に記載。古い`rx6400-capabilities.json`は実際にはIntelを選んでいるので、GPU名の根拠にしない。
+実機ログとJSONの位置は`docs/history/validation-2026-10-08.md`に記載。古い`rx6400-capabilities.json`は実際にはIntelを選んでいるので、GPU名の根拠にしない。
 
 ## 次の作業順
 
@@ -113,11 +113,11 @@ query条件はopaque-FD、optimal 2D、single sample、attachmentとtransfer src
 1. 現在のgit状態と上記docs/ログを読み、最新のbuild・fixture結果を確認する。依存解決とjar生成は解決済み。
 2. ソースや同梱文書を変更した後はprobeの15 tests・Forge packaging・jar内容検査を実行する。renderer owner・camera記録を含むfixtureは両rendererで正常終了を確認済み。
 3. 固定したCleanroom構成で、必要な代表場面と正式な性能基準測定を追加する。未確定の版を勝手に一斉更新しない。現段階のstartup frame intervalを速度改善の根拠にしない。
-4. P1のinterop実験は両GPUで通過。最新fixtureは往復後の通常world描画を40 ticks継続し、元IDとGL errorを検査し、復帰スクショも保存する。再実行するときは`docs/interop-validation.md`を使い、Gradleの2 buildを同時実行しない。実験はprobeと別でmod jarへ混ぜない。
-5. P2は完了：地形GPU境界を`TerrainGpuBackend`へ分離し、backend選択をfail-closedで報告し、stock Celeritasとの描画一致を両GPUでピクセル完全一致まで確認した（`docs/p2-backend-boundary.md`）。次はP3：backend-neutralなupload/placement記録を定義し、Vulkan mesh upload、arena、atlas/lightmap、SOLID描画を実装する。CPUメッシュ生成、graph、sortアルゴリズムを変えない。GLの`CommandList`へVkBufferを詰め込まない。P4各レイヤー/更新/lifetime、P5最適化とQAの順に進む。`docs/design.md`のP0〜P6を参照する。
+4. P1のinterop実験は両GPUで通過。最新fixtureは往復後の通常world描画を40 ticks継続し、元IDとGL errorを検査し、復帰スクショも保存する。再実行するときは`docs/history/interop-validation.md`を使い、Gradleの2 buildを同時実行しない。実験はprobeと別でmod jarへ混ぜない。
+5. P2は完了：地形GPU境界を`TerrainGpuBackend`へ分離し、backend選択をfail-closedで報告し、stock Celeritasとの描画一致を両GPUでピクセル完全一致まで確認した（`docs/history/p2-backend-boundary.md`）。次はP3：backend-neutralなupload/placement記録を定義し、Vulkan mesh upload、arena、atlas/lightmap、SOLID描画を実装する。CPUメッシュ生成、graph、sortアルゴリズムを変えない。GLの`CommandList`へVkBufferを詰め込まない。P4各レイヤー/更新/lifetime、P5最適化とQAの順に進む。`docs/history/design.md`のP0〜P6を参照する。
 
 全体alphaは初期概算で約530〜1,100時間（約13〜28人週）。これは納期の約束でも実装済み工数でもない。現在はbuild、限定したP1契約の実証、P2の境界分離とGL等価性までを済ませ、P3へ進む段階。問い合わせや小さいharnessの成功だけで「Vulkan地形化済み」「広い互換性確認済み」「高速化済み」と報告しない。
 
 ### Headless実行の希望
 
-本人から、開発とスクショ取得に支障がなければheadlessで実行したいとの希望あり。以後のMinecraft検証は`prism_validation.py --headless --render-node /dev/dri/by-path/pci-0000:03:00.0-render --require-gpu 'RX 6400'`を使う。独立Sway/Xwayland、1280×720、GPUレンダリング、無音で動かし、desktopへwindowを出さない。Celtiumのworld・2コマンド・正常終了・PNG保存・実GPU名を確認済み（`.celtium-work/runtime/celtium-headless-2/`）。実装と注意点は`docs/runtime-validation.md`。独立interop CLIも従来通りsurfaceless EGLを使う。
+本人から、開発とスクショ取得に支障がなければheadlessで実行したいとの希望あり。以後のMinecraft検証は`prism_validation.py --headless --render-node /dev/dri/by-path/pci-0000:03:00.0-render --require-gpu 'RX 6400'`を使う。独立Sway/Xwayland、1280×720、GPUレンダリング、無音で動かし、desktopへwindowを出さない。Celtiumのworld・2コマンド・正常終了・PNG保存・実GPU名を確認済み（`.celtium-work/runtime/celtium-headless-2/`）。実装と注意点は`docs/history/runtime-validation.md`。独立interop CLIも従来通りsurfaceless EGLを使う。

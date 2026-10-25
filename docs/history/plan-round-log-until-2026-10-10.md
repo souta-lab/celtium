@@ -5,8 +5,8 @@
 > 旧 plan の表題は「Celtium 現状表 — 2026-10-09 第3回監査反映」で、以下はその全文。
 
 # Celtium 現状表 — 2026-10-09 第3回監査反映
-> **構造修復フェーズ（2026-10-10〜）**: 方針は `docs/hints-2026-10-10-nether.md` と
-> **`docs/handoff-structure-recovery-2026-10-10.md`（構造修復プロンプト）** に従う。要旨は
+> **構造修復フェーズ（2026-10-10〜）**: 方針は `docs/history/hints-2026-10-10-nether.md` と
+> **`docs/history/handoff-structure-recovery-2026-10-10.md`（構造修復プロンプト）** に従う。要旨は
 > (1) texture の実体・更新・寿命を**一つの契約**にまとめる、(2) frame/draw の
 > accept→submit→complete→retire と取消根拠を整合させる、(3) fixture の段階・thread 所有を一つの状態機械にする、
 > (4) plan を現状表へ戻し経緯を history へ移す。**全面書換え・汎用GLエミュレーション・flag/定数/budget での症状隠しは禁止**。
@@ -54,7 +54,7 @@
 
 
 本書は **現在の到達点・優先順・受入の唯一の現状表** である。経緯と過去の測定は `docs/history/` にあり、そこにある数値や「closed」は
-現在の判定ではない。根拠は `docs/audit-2026-10-09-third.md`（第3回監査、監査開始HEAD `c89bda361`）と、監査後に取得した実測である。
+現在の判定ではない。根拠は `docs/history/audit-2026-10-09-third.md`（第3回監査、監査開始HEAD `c89bda361`）と、監査後に取得した実測である。
 **用語**: 実装済 = コードがあり動く / 局所検証済 = 特定fixtureで確認 / 未検証 = 動く証拠がない / 未実装 = コードがない。
 カウンターの増加は描画の証拠ではない。format認識・受理・記録・submit・完了・dropを混同しない。
 
@@ -66,7 +66,7 @@
 | (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成（ただし欠落はブリッジに限定された）** | **前進**: 毎フレームの GL 読み戻しは **0 回/フレーム**（`regStaleCalls=0`、`inPlaceRefreshes=0`、announce 経由 16.2/フレーム）。**残る依存はブリッジ本体**（`VulkanFrameTarget`: FBO付け替え・色/深度blit・semaphore待ち・状態クエリ48箇所）で、CPUコストは **0.58 ms/フレーム（AMD）/ 0.83（Intel）**。GL context は依然として生成する。 |
 | (c) native swapchain frameが実window/compositor出力へ到達 | **前半は確認済み・後半は環境制約** | **確認済み**: `presentMarker` のマゼンタ (1,0,1,1) を提示画像から読み戻すと **mean 191.25** で、期待値 `(255+0+255+255)/4=191.25` と**完全一致**（＝提示された swapchain 画像にこの renderer の合成フレームが入っている）。**未確認**: 実画面への到達。この環境には capture 可能な表示出力が無い（X は screen 0×0、Wayland は `no wl_output`、`grim` は導入済みだが出力が無い）。不足条件は §7.6 に明記。 |
 | (d) AMD/Intelで必要場面と失敗復旧、監査P0/P1を明示受入で閉じる | **部分（受入は緑、監査項目の一部が未了）** | 既定（`presentFromComposite` ON / `mirrorRefreshFrames=0`）で **AMD exit 0・PASSED p50 16.02 ms / Intel exit 0・PASSED 28.54 ms**、postprocess / weather / spectator spider / command-buffer target 受入も PASSED、submit失敗・idle失敗は **exit 1・report あり・有界**（期待どおり）。監査項目の残りは §2 を参照。 |
-| (e) mod対応範囲・Java条件・最低VK能力・未検証GPU/OS・ライセンス/性能をdocsと配布物で一致 | **部分** | 性能は**同一fixtureで実測**（AMD 16.02 ms 対 参照 16.18 ms、Intel 28.54 ms、参照は Intel でも 16.17 ms で GPU 非依存）。画像は 参照比 **meanAbsDiff 7.78/255・HF 0.81**（統制: 参照同士 0.064 / HF 1.002）。mod 対応範囲・最低VK能力・未検証GPU/OS の記述は `docs/scope-and-limits.md` と要突き合わせ。 |
+| (e) mod対応範囲・Java条件・最低VK能力・未検証GPU/OS・ライセンス/性能をdocsと配布物で一致 | **部分** | 性能は**同一fixtureで実測**（AMD 16.02 ms 対 参照 16.18 ms、Intel 28.54 ms、参照は Intel でも 16.17 ms で GPU 非依存）。画像は 参照比 **meanAbsDiff 7.78/255・HF 0.81**（統制: 参照同士 0.064 / HF 1.002）。mod 対応範囲・最低VK能力・未検証GPU/OS の記述は `docs/history/scope-and-limits.md` と要突き合わせ。 |
 
 ## 2. 第3回監査 項目別の現在状態
 
@@ -2778,7 +2778,7 @@ this.commandState.endPass();
 - **次の測定はバックエンドの外側**: チャンク再構築（生成・照明）の回数、GL 側の時間、ドライバ/GPU の時間。
   **推測で埋めない**（溶岩は発光・半透明・アニメーションを持つので候補は複数ある）。
 
-**ヒント（docs/hints-2026-10-10-nether.md）に沿った修正 — MISSING_REPORT の原因は捕捉tickの等号だった（このターン）**:
+**ヒント（docs/history/hints-2026-10-10-nether.md）に沿った修正 — MISSING_REPORT の原因は捕捉tickの等号だった（このターン）**:
 
 - **ヒントの指摘は3点ともソースで確認できた**:
   1. `ValidationClient.frame()` の捕捉全体が **`if (worldTicks != 200) return;`（等号）**で囲まれている（1679行）。
@@ -3208,7 +3208,7 @@ present 経路を両GPUで受入し、`acquireOutOfDate>0` を確認してから
 
 ## 8. 第3回監査の最終追補
 
-32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
+32項目と修正後の境界は `docs/history/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
 元Celeritasとの修正前固定比較はvalidationが両方cleanでも大きな画像差あり。GUI差が混ざるため最新版一致率として採用しない。
 修正後の独立runはcapture前に終了し、一致率未取得。成功fixtureと独立再現失敗の両方を残す。
 DSHのgoalは同じIDでobjectiveを更新、末尾指示を完全一致で維持。23:18前後にClinePassのprovider検証（許可deepseek、応答fireworks、strict）で自動継続がdisarmedになり、resume後も停止した。goal完了による停止ではない。

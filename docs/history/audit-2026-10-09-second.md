@@ -3,7 +3,7 @@
 Basis HEAD `16af6653a`; re-checked at `dee914e05`. 58 files compared against cached Minecraft sources, the real
 Cleanroom profile's Mixin bytecode, the shipped jar's annotations, and the existing AMD/Intel logs and PNGs. No edits,
 builds or GPU runs were made from the auditor's side. See [the first audit](audit-2026-10-09.md) for its items and
-[the plan](plan.md) for the stages these belong to.
+[the plan](../plan.md) for the stages these belong to.
 
 ## What the first audit's "fixed" claims are worth now
 

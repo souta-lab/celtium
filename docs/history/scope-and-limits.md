@@ -24,9 +24,9 @@ than degrading silently. A row whose measurement column says "not measured" is e
 |---|---|---|---|
 | Vulkan **1.2 or newer** loader | `celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java:91-92` (`REQUIRED_API_MAJOR`/`MINOR` = 1/2), `:361-363` (`isAvailable()` requires `VK.getInstanceVersionSupported() >= VK_API_VERSION_1_2`) | `isAvailable()` returns `false` and never throws; a missing binding class, a missing native loader and a too-old loader all report `false` | Vulkan loader 1.4.363, `vulkanDeviceCount 3`, in every run's `logs/celtium-capabilities.json`; device selected as AMD RX 6400 (`nativeDeviceName`, `nativeDeviceUuid 00000000030000000000000000000000`) |
 | Physical device `apiVersion >= 1.2` | `VulkanContext.java:1513-1515` | the device is **skipped**; if no device is left, `IllegalStateException` at `:1550-1556` | both verified GPUs enumerate 1.4.x (AMD RADV NAVI24 1.4.354; Intel UHD 630 accepted in the same fixture) |
-| The device is not a CPU device | `VulkanContext.java:756-758` (`VK_PHYSICAL_DEVICE_TYPE_CPU` skipped) | skipped, so llvmpipe cannot be selected | the capability census lists AMD (type 2), Intel UHD 630 (type 1) and llvmpipe (type 4); the llvmpipe entry is never chosen - `docs/performance-2026-10-11.md:229` |
-| Same-GPU identity with the GL device (bridge path) | `VulkanContext.java:753-755` | the device is skipped and a **software Vulkan device is not used instead** (`:775-780`) | `CELTIUM_NATIVE_DEVICE ... matchedOpenGl=true` in bridge runs, `matchedOpenGl=false` under GL-less (no GL identity exists) - `docs/performance-2026-10-11.md:217-218` |
-| `VK_KHR_external_memory_fd` **and** `VK_KHR_external_semaphore_fd` | required at `VulkanContext.java:795-803`, enabled at `:838-839` | `IllegalStateException` naming the missing extensions | the interop experiment verified FD export/import on both GPUs - `docs/interop-validation.md` |
+| The device is not a CPU device | `VulkanContext.java:756-758` (`VK_PHYSICAL_DEVICE_TYPE_CPU` skipped) | skipped, so llvmpipe cannot be selected | the capability census lists AMD (type 2), Intel UHD 630 (type 1) and llvmpipe (type 4); the llvmpipe entry is never chosen - `docs/history/performance-2026-10-11.md:229` |
+| Same-GPU identity with the GL device (bridge path) | `VulkanContext.java:753-755` | the device is skipped and a **software Vulkan device is not used instead** (`:775-780`) | `CELTIUM_NATIVE_DEVICE ... matchedOpenGl=true` in bridge runs, `matchedOpenGl=false` under GL-less (no GL identity exists) - `docs/history/performance-2026-10-11.md:217-218` |
+| `VK_KHR_external_memory_fd` **and** `VK_KHR_external_semaphore_fd` | required at `VulkanContext.java:795-803`, enabled at `:838-839` | `IllegalStateException` naming the missing extensions | the interop experiment verified FD export/import on both GPUs - `docs/history/interop-validation.md` |
 | One queue family with **GRAPHICS and TRANSFER** | `VulkanContext.java:806-831` | `IllegalStateException` ("no queue family that supports both graphics and transfer") | every accepted run records `passes`/`skipped`; a device without such a family has never been available to test, so this row is enforced but **not measured against a failing device** |
 | `VK_KHR_swapchain`, enabled only when advertised | `VulkanContext.java:845-856` | not enabled; the present path needs it and reports the refusal | present traces: `presentedFromVulkan=287` = `glSwapsSkipped=287` (`docs/plan.md` §0.114) |
 | A depth format the device accepts, from a candidate list | `celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDepthFormat.java:30-37` (`D32_SFLOAT` → `D24_UNORM_S8` → `D32_SFLOAT_S8` → `X8_D24_UNORM_PACK32` → `D16_UNORM_S8` → `D16_UNORM`), `:61` (`chosen(device)`) and `:82` (`chosen()`) | per-candidate refusal with the reason; the terrain pipeline refuses rather than guessing | AMD has no sampled 24-bit depth, so the chooser picks from the list; the bridge regression of 09:47 was this contract having no caller (`docs/plan.md` N10, fixed at `0fddd6ccf`) |
@@ -59,9 +59,9 @@ than degrading silently. A row whose measurement column says "not measured" is e
 | Runtime | Cleanroom 0.6.13-alpha, LWJGL 3.4.1, Java 25 | every other Cleanroom, LWJGL or Java version |
 | Vulkan | loader 1.4.363, devices exposing 1.4.x, `VK_KHR_external_memory_fd`/`external_semaphore_fd`, a graphics+transfer queue family | a device that fails any row in §0.1 has **never been available to test**, so the refusal paths are enforced but unmeasured |
 | Mods | see `docs/mod-compatibility.md` | all mods other than the ones named there |
-| Performance | AMD RX 6400, one flat scene, render distance 12, 900 frames per configuration: GL-less 3.94 ms p50 / 253.8 fps, bridge 4.89 ms p50, reference 16.10 ms p50 (a 60 Hz floor, not a render cost); CPU per frame 3.33 / 3.94 / 3.09 ms (`docs/performance-2026-10-11.md` §4.1, §4.4) | **Intel GL-less performance, GPU time on either side, every other scene, and the validation fixture's own p50 numbers** (AMD 16.02 ms bridge vs reference 16.18 ms, Intel 28.54 ms bridge vs reference 16.17 ms) which come from a different harness and are **not merged** with the benchmark dataset |
+| Performance | AMD RX 6400, one flat scene, render distance 12, 900 frames per configuration: GL-less 3.94 ms p50 / 253.8 fps, bridge 4.89 ms p50, reference 16.10 ms p50 (a 60 Hz floor, not a render cost); CPU per frame 3.33 / 3.94 / 3.09 ms (`docs/history/performance-2026-10-11.md` §4.1, §4.4) | **Intel GL-less performance, GPU time on either side, every other scene, and the validation fixture's own p50 numbers** (AMD 16.02 ms bridge vs reference 16.18 ms, Intel 28.54 ms bridge vs reference 16.17 ms) which come from a different harness and are **not merged** with the benchmark dataset |
 | Video settings, functional | the chain runs **on the screen that is captured** (`GuiVideoSettings`): option `RENDER_CLOUDS`, "Clouds: Fancy" -> "Clouds: OFF" pressed through the screen's own `mouseClicked` + `mouseReleased`, Done (id 200) through the same dispatch (`gameSettings.saveOptions()`), `options.txt` line `renderClouds` changed `true` -> `false`, the reopened screen shows "Clouds: OFF", then the value is restored (run `vs-apply4`, audit B08). **Checked against the Cleanroom patch set, not stock Forge:** `scripts/mc-sources.sh --cleanroom` shows the only Cleanroom patch to `GuiVideoSettings` adds `onGuiClosed()` -> `gameSettings.onGuiClosed()`, which schedules a model refresh and does not save, so the save this row measures is still the Done button's `saveOptions()`. The options-list background behind that screen is a *Forge-patched* draw site (`GuiSlot` replaces the inline quad with `drawContainerBackground(tessellator)`, a `POSITION_TEX_COLOR` batch in the GUI stage) | the **picture** of that screen has no same-variant reference: the stored reference key is `screen=none`, so a video-settings leg is correctly `UNCALIBRATED_PRESENTED_IMAGE` rather than matched. Recorded as unexercised, not as a match |
-| Scanout | the compositor output was captured and bound pixel-exactly to the presented frame (`docs/compositor-output-capture-2026-10-11.md`) | **scanout itself** (needs DRM master) |
+| Scanout | the compositor output was captured and bound pixel-exactly to the presented frame (`docs/history/compositor-output-capture-2026-10-11.md`) | **scanout itself** (needs DRM master) |
 
 ## 1. What is drawn by native Vulkan, measured
 
@@ -95,7 +95,7 @@ pixel-identity.
 ### 1.1 The validation fixture's own numbers (a different harness - do not merge with §0.4's)
 
 These are the numbers completion condition (e) has been quoted with. They come from the **validation fixture's** runs, not
-from the benchmark harness in `docs/performance-2026-10-11.md`, and they are a **past stage record**
+from the benchmark harness in `docs/history/performance-2026-10-11.md`, and they are a **past stage record**
 (`docs/history/plan-round-log-until-2026-10-10.md`), so they are restated with their provenance rather than merged into the
 benchmark table:
 
@@ -192,7 +192,7 @@ it true, or to a named refusal; the criterion for answering a call with a no-op 
   the same way. The earlier claim that "the X display reports a `0x0` screen and no capture tooling is installed" was
   wrong: sway 935 runs on `wayland-1` with a real `HDMI-A-4` output and Xwayland `:0`, and `grim` captures it.
   **What is still unmeasured is scanout itself** - `kmsgrab` needs DRM master and non-root cannot have it. Evidence:
-  `docs/compositor-output-capture-2026-10-11.md`, `docs/plan.md` §0.123.
+  `docs/history/compositor-output-capture-2026-10-11.md`, `docs/plan.md` §0.123.
 - **Intel plus JEI is borderline against the harness's duration cap.** The same jar completed at 720 seconds and timed out at
   720 seconds on consecutive attempts. Partial runs still yield evidence because the arrival and acceptance counters print
   incrementally.
@@ -312,9 +312,9 @@ it true, or to a named refusal; the criterion for answering a call with a no-op 
 > **これは 2026-10-09/10 時点の段階記録であり、現在の判定ではない。** 冒頭の §0 と §0.4 が現在の受入状況である。
 > 以下の表のうち「完了条件(b) GL contextなしの起動・描画: **未達成**」「完了条件(c): **未確認**」「FBOのVulkan完了: 未達」
 > は**その後閉じた**（GL-less の起動・提示・実 scene・Nether 到達は `docs/plan.md` §0.114〜§0.127、
-> compositor 出力の画素一致は `docs/compositor-output-capture-2026-10-11.md`）。この節は来歴として残し、削除しない。
+> compositor 出力の画素一致は `docs/history/compositor-output-capture-2026-10-11.md`）。この節は来歴として残し、削除しない。
 
-本書の対応範囲は**ソースと実測**に限定する。数値は第3回監査（`docs/audit-2026-10-09-third.md`）と監査後の実測に対応する。
+本書の対応範囲は**ソースと実測**に限定する。数値は第3回監査（`docs/history/audit-2026-10-09-third.md`）と監査後の実測に対応する。
 現在の完了判定は `docs/plan.md` の現状表を唯一の根拠とする。以下は**上書き**であり、古い記述より優先する。
 
 | 項目 | 実測された現在 |

@@ -514,7 +514,7 @@ defects remain and are the next work items:
    - **P1-3 measurement denominator and interpretation (fixed).** Confirmed: `tTimedFrames` counts `beginFrame()`
      calls but the summary divided by `tTimedFrames / 2`, doubling every average, and the numbers were presented as
      GPU cost when they are CPU API time. Fix: the real denominator, an `avg/handoff` label, and the correction in
-     `docs/optimizations.md` section 7 quoted above. Evidence: `handoff detail (CPU API time, avg/handoff): wait
+     `docs/history/optimizations.md` section 7 quoted above. Evidence: `handoff detail (CPU API time, avg/handoff): wait
      126 us ...` in the run's debug line.
    - **P1-4 success verdict (fixed for the terrain backend, partly for the harness).** Confirmed: the fixture only
      checked that the backend *description* starts with `vulkan`, and `nativeTerrainVerified` was hard-coded

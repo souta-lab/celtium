@@ -8,7 +8,7 @@ import java.util.Deque;
  * The coalesced font run: the pending glyph vertices, the buffer that holds them, the run key that closes a run, and
  * the submission of a completed run through the owner's sink.
  * <p>
- * Ownership (docs/refactoring-plan.md R3b, first half): this class owns the font domain's pending state - the bytes a
+ * Ownership (docs/history/refactoring-plan.md R3b, first half): this class owns the font domain's pending state - the bytes a
  * glyph append adds, the matrix/colour/alpha/texture witnesses that decide whether a glyph may join the open run, the
  * counters that say how the runs went out, and the retention of a run the sink refused or abandoned so its glyphs are
  * not lost. It owns no GL or Vulkan state, holds no backend reference, and never reads a field of the backend: the two
