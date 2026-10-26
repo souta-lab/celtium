@@ -329,7 +329,7 @@ final class ModelReplay {
         // it, so nothing lights the player model by the world either. A chest in the hotbar of a dark place was drawn
         // with the cave's light because this line took the captured coordinate unconditionally.
         group.lightmapCoords = b.celtium$lightmapForGroup();
-        group.fog = b.celtium$fogSnapshot();
+        group.fog = b.fog.snapshot();
         group.batches = quads;
         group.viewportValues = b.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path

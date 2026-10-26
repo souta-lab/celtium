@@ -3484,7 +3484,6 @@ public final class ValidationClient {
             }
     }
 
-    @SubscribeEvent
     /**
      * Client-world light at the top floor block straight ahead of the camera at 4, 24, 48 and 80 blocks: whether a
      * picture's dark distant floor is the client's light data or the renderer's shading of it (printed under both
@@ -3508,6 +3507,7 @@ public final class ValidationClient {
         return line.append(']').toString();
     }
 
+    @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
         if (!enabled || finished) return;
         if (event.phase == TickEvent.Phase.START) {

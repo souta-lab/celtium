@@ -3944,7 +3944,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     // The immediate path had no fog of any kind, so every batch vanilla blends into the horizon - the
     // sky dome, the horizon plane, the water surface, the clouds - arrived as its own flat colour: the
     // sky dome is two flat grids and the fog ramp across them is the whole of its gradient. The state
-    // is captured per batch (celtium$fogSnapshot, taken where the other per-group state is taken)
+    // is captured per batch (ImmediateFogState.snapshot, taken where the other per-group state is taken)
     // rather than read at flush time, because RenderGlobal.renderSky turns fog on for the dome and off
     // again for the sun and the moon inside the same pass.
     //
@@ -3957,110 +3957,64 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     // already did.
     // ----------------------------------------------------------------------------------------------
 
-    /**
-     * The kill switch, so the fog can be measured as one flag apart on one jar: with this false the family is mirrored
-     * and the push block is still written, but its selector says "no fog" - exactly the picture the path produced
-     * before the family existed.
-     */
-    private static final boolean IMMEDIATE_FOG =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.immediateFog", "true"));
-    /**
-     * Which distance the fog coordinate uses: {@code radial} (the distance from the eye), {@code planar} (the
-     * eye-space depth) or {@code auto} (whichever the game asked for with {@code GL_NV_fog_distance}).
-     * <p>
-     * The default is radial rather than auto because the GL-less leg cannot answer the extension query - the stub
-     * returns an empty extension string, so {@code setupFog} never sets {@code GL_EYE_RADIAL_NV} there while the same
-     * game code does on a driver that has the extension. Radial is also what the terrain path already uses for its own
-     * fog (sodium's {@code getFragDistance} is the camera distance) and that path is accepted against the GL bridge.
-     * The run's {@code CELTIUM_IMMEDIATE_FOG} line records which mode was used and what the game asked for.
-     */
-    private static final String IMMEDIATE_FOG_DISTANCE =
-            System.getProperty("celtium.vulkan.immediateFogDistance", "radial").trim().toLowerCase();
-    /** {@link #IMMEDIATE_FOG_DISTANCE} resolved once: the selector ran two String equals per fog-enabled group. */
-    private static final boolean IMMEDIATE_FOG_DISTANCE_PLANAR = "planar".equals(IMMEDIATE_FOG_DISTANCE);
-    private static final boolean IMMEDIATE_FOG_DISTANCE_AUTO = "auto".equals(IMMEDIATE_FOG_DISTANCE);
-    /** Bounded, like the other per-run diagnostics: the fog state changes a handful of times per frame. */
-    private static final int IMMEDIATE_FOG_LOG_LIMIT =
-            Integer.getInteger("celtium.vulkan.immediateFogLog", 8).intValue();
-
-    private boolean fogEnabled;
-    /** The GL fog mode: 9729 LINEAR, 2048 EXP, 2049 EXP2 - the values {@code GlStateManager.FogState} carries. */
-    private int fogGlMode = 2048;
-    private float fogDensity = 1.0f;
-    private float fogStart;
-    private float fogEnd = 1.0f;
-    private float fogRed;
-    private float fogGreen;
-    private float fogBlue;
-    /** Set when the game asks for {@code GL_EYE_RADIAL_NV}; the GL-less stub's empty extension list keeps it false. */
-    private boolean fogRadialRequested;
-    /**
-     * Set the first time any fog state arrives from {@code GlStateManager}. This is what {@link #immediateFogAvailable()}
-     * answers with: a mixin that did not apply leaves it false, and a caller that would refuse a fogged draw on the
-     * grounds that the path has no fog must keep refusing in that case rather than draw the raw colour.
-     */
-    private boolean fogMirrored;
-    /** Groups drawn with fog on: the number the fog line reports beside the state. */
-    private int fogGroups;
-    private int fogLogs;
-    /** The last line this diagnostic printed, so a change is logged rather than every frame's repeat. */
-    private String fogLastLogged = "";
+    /** The immediate path's fixed-function fog, mirrored from GlStateManager (see ImmediateFogState). */
+    final ImmediateFogState fog = new ImmediateFogState();
 
     @Override
     public void setFogEnabled(boolean enabled) {
-        this.fogEnabled = enabled;
-        this.fogMirrored = true;
+        this.fog.enabled = enabled;
+        this.fog.mirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        if (celtium$fogLogOpen()) celtium$logFogState("enable=" + enabled);
+        if (this.fog.logOpen()) this.fog.log("enable=" + enabled, this.frameId);
     }
 
     @Override
     public void setFogMode(int glMode) {
-        this.fogGlMode = glMode;
-        this.fogMirrored = true;
+        this.fog.glMode = glMode;
+        this.fog.mirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        if (celtium$fogLogOpen()) celtium$logFogState("mode=" + glMode);
+        if (this.fog.logOpen()) this.fog.log("mode=" + glMode, this.frameId);
     }
 
     @Override
     public void setFogDensity(float density) {
-        this.fogDensity = density;
-        this.fogMirrored = true;
+        this.fog.density = density;
+        this.fog.mirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
     @Override
     public void setFogStart(float start) {
-        this.fogStart = start;
-        this.fogMirrored = true;
+        this.fog.start = start;
+        this.fog.mirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        if (celtium$fogLogOpen()) celtium$logFogState("start=" + start);
+        if (this.fog.logOpen()) this.fog.log("start=" + start, this.frameId);
     }
 
     @Override
     public void setFogEnd(float end) {
-        this.fogEnd = end;
-        this.fogMirrored = true;
+        this.fog.end = end;
+        this.fog.mirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        if (celtium$fogLogOpen()) celtium$logFogState("end=" + end);
+        if (this.fog.logOpen()) this.fog.log("end=" + end, this.frameId);
     }
 
     @Override
     public void setFogColor(float red, float green, float blue) {
-        this.fogRed = red;
-        this.fogGreen = green;
-        this.fogBlue = blue;
-        this.fogMirrored = true;
+        this.fog.red = red;
+        this.fog.green = green;
+        this.fog.blue = blue;
+        this.fog.mirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        if (celtium$fogLogOpen()) celtium$logFogState("colour=" + red + "," + green + "," + blue);
+        if (this.fog.logOpen()) this.fog.log("colour=" + red + "," + green + "," + blue, this.frameId);
     }
 
     @Override
     public void setFogRadial(boolean radial) {
-        this.fogRadialRequested = radial;
-        this.fogMirrored = true;
+        this.fog.radialRequested = radial;
+        this.fog.mirrored = true;
         this.immediateStatistics.noteImmediateStateCalls();
-        if (celtium$fogLogOpen()) celtium$logFogState("radial=" + radial);
+        if (this.fog.logOpen()) this.fog.log("radial=" + radial, this.frameId);
     }
 
     /**
@@ -4074,59 +4028,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     @Override
     public boolean immediateFogAvailable() {
-        return IMMEDIATE_FOG && this.fogMirrored;
-    }
-
-    /**
-     * The shader's fog selector: {@code mode + 8 * shape}, both small integers so the float is exact.
-     * <p>
-     * The mode numbering is the terrain block's ({@code 0 none, 1 exp2, 2 exp, 3 linear}) so the two fog paths in this
-     * renderer can be read side by side, and the shape numbering is {@code FogService}'s ({@code 0 spherical}, the
-     * radial distance, and {@code 2 planar}). {@code 1} (cylindrical) is never produced here: the fixed pipeline has no
-     * such mode, it is sodium's.
-     */
-    private int celtium$fogSelector() {
-        if (!IMMEDIATE_FOG || !this.fogEnabled) {
-            return 0;
-        }
-        int mode;
-        if (this.fogGlMode == 9729) {
-            mode = 3; // GL_LINEAR
-        } else if (this.fogGlMode == 2049) {
-            mode = 1; // GL_EXP2
-        } else {
-            mode = 2; // GL_EXP, which is also GlStateManager.FogState's default
-        }
-        boolean planar;
-        if (IMMEDIATE_FOG_DISTANCE_PLANAR) {
-            planar = true;
-        } else if (IMMEDIATE_FOG_DISTANCE_AUTO) {
-            planar = !this.fogRadialRequested;
-        } else {
-            planar = false; // radial
-        }
-        return mode + (planar ? 16 : 0); // shape 2 = planar, and 2 << 3 = 16
-    }
-
-    /**
-     * The per-batch fog payload: eight floats {@code {selector, density, start, end, r, g, b, weight}}, or {@code null}
-     * when fog is off for this batch.
-     * <p>
-     * Taken where the other per-group state is taken, so the group is drawn with the fog the game had set when the batch
-     * was offered - which is the whole point, since {@code renderSky} brackets the dome with enable/disable.
-     */
-    float[] celtium$fogSnapshot() {
-        int selector = celtium$fogSelector();
-        if (selector == 0) {
-            return null;
-        }
-        return new float[] {
-                selector, this.fogDensity, this.fogStart, this.fogEnd,
-                this.fogRed, this.fogGreen, this.fogBlue,
-                // The GL fog blend uses the fog colour's RGB only. The weight is 1.0 in vanilla and is kept as its own
-                // field so a mod's non-opaque fog colour cannot silently change the blend here.
-                1.0f,
-        };
+        return this.fog.available();
     }
 
     /**
@@ -4146,7 +4048,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         int captured = group.fog == null ? 0 : (int) group.fog[0];
-        int live = celtium$fogSelector();
+        int live = this.fog.selector();
         boolean shadowed = group.fog != null && group.lightParams != null;
         if (captured == live && !shadowed) {
             return;
@@ -4155,7 +4057,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         System.out.println("[Celtium] CELTIUM_FOG_CAPTURE frame=" + this.frameId + " fmt=" + group.formatId
                 + " batches=" + group.batches + " capturedSelector=" + captured + " liveSelector=" + live
                 + " lightParams=" + (group.lightParams != null)
-                + " fogEnabledNow=" + this.fogEnabled + " fogMirrored=" + this.fogMirrored
+                + " fogEnabledNow=" + this.fog.enabled + " fogMirrored=" + this.fog.mirrored
                 + " reason=[" + (shadowed
                         ? "the group carries the lit payload at 128..207 as well as a fog snapshot, and the lit payload"
                         + " is written last, so this group's fog block is shadowed"
@@ -4234,36 +4136,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         push.putFloat(196, mv[6]);
         push.putFloat(200, mv[10]);
         push.putFloat(204, mv[14]);
-        this.fogGroups++;
-    }
-
-    /**
-     * Whether a fog line may still be written. Asked by the setters before they build their argument: the record only
-     * advances when the line changes, so in a scene whose fog never changes it never reached its limit and every fog
-     * call (several a frame) built two strings for nothing. The checks themselves are bounded too.
-     */
-    private boolean celtium$fogLogOpen() {
-        return IMMEDIATE_FOG && this.fogLogs < IMMEDIATE_FOG_LOG_LIMIT && this.fogLogChecks++ < 4096;
-    }
-
-    private int fogLogChecks;
-
-    /** A bounded record of what the game set, so a run with no fog in it can be told from a run with black fog. */
-    private void celtium$logFogState(String what) {
-        if (!IMMEDIATE_FOG || this.fogLogs >= IMMEDIATE_FOG_LOG_LIMIT) {
-            return;
-        }
-        String line = what + " enabled=" + this.fogEnabled + " glMode=" + this.fogGlMode
-                + " density=" + this.fogDensity + " start=" + this.fogStart + " end=" + this.fogEnd
-                + " colour=" + this.fogRed + "," + this.fogGreen + "," + this.fogBlue
-                + " radialRequested=" + this.fogRadialRequested + " distance=" + IMMEDIATE_FOG_DISTANCE
-                + " selector=" + celtium$fogSelector();
-        if (line.equals(this.fogLastLogged)) {
-            return;
-        }
-        this.fogLastLogged = line;
-        this.fogLogs++;
-        System.out.println("[Celtium] CELTIUM_IMMEDIATE_FOG frame=" + this.frameId + " " + line);
+        this.fog.groups++;
     }
 
     /**
@@ -4689,28 +4562,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 && captured[3] == this.rasterState.scissorHeight();
     }
 
-    /** Scratch for the per-offer fog comparison: eight floats reused instead of allocated ~280 times a frame. */
-    private final float[] fogCompareScratch = new float[8];
-
     private boolean celtium$fogMoved() {
-        // The snapshot's values are only compared here, never kept, so they go into a member array. The group's own copy is
-        // taken at open time by celtium$fogSnapshot(), which is once per group rather than once per offer - the difference
-        // between this and the allocation the profile showed at 300 MB a run.
-        int selector = celtium$fogSelector();
-        float[] captured = this.currentGroupFog;
-        if (selector == 0 || captured == null) {
-            return (selector == 0) != (captured == null);
-        }
-        float[] now = this.fogCompareScratch;
-        now[0] = selector;
-        now[1] = this.fogDensity;
-        now[2] = this.fogStart;
-        now[3] = this.fogEnd;
-        now[4] = this.fogRed;
-        now[5] = this.fogGreen;
-        now[6] = this.fogBlue;
-        now[7] = 1.0f;
-        return !java.util.Arrays.equals(now, captured);
+        // The group's own copy is taken once per group by the snapshot; the comparison per offer allocates nothing.
+        return this.fog.movedFrom(this.currentGroupFog);
     }
 
     private static final boolean FORCE_IDENTITY_TEXMAT = Boolean.getBoolean("celtium.forceIdentityTexmat");
@@ -7617,7 +7471,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // The fog this batch was offered under, taken here for the same reason the state above is: at this
                 // moment the live fog state is the batch's own, and by the time the group closes the game may have
                 // bracketed the batch with enable/disable (the sky dome is exactly that case).
-                this.currentGroupFog = celtium$fogSnapshot();
+                this.currentGroupFog = this.fog.snapshot();
                 // BH-09/OPT-10: the clip rectangle the batch was offered under, captured here rather than read at
                 // flush time. Reading it live applied the last rectangle of a scissor change to every batch in the
                 // group, which is the same "state must reach the group" rule the fog and the state follow.
@@ -8109,7 +7963,7 @@ this.frameBufferOpen = false;
         if (state.length > 8 && state[8] != 0) {
             return false;
         }
-        if (this.fogEnabled) {
+        if (this.fog.enabled) {
             return false;
         }
         if (celtium$axisAlignedModelView()) {
@@ -8760,22 +8614,8 @@ this.frameBufferOpen = false;
         }
     }
 
-    /** Fog state lines already printed by the periodic trace below; bounded to twelve a run. */
-    private int fogPeriodicLines;
-    private long fogPeriodicNanos;
-
     private void celtium$flushPendingAtFrameBoundaryBody(long flushStartedNanos) {
-        long fogNow = System.nanoTime();
-        if (this.frameId > 0 && fogNow - this.fogPeriodicNanos > 5_000_000_000L && this.fogPeriodicLines < 24) {
-            this.fogPeriodicNanos = fogNow;
-            // The bounded fog record above only sees the first frames (loading screens); a world whose distant terrain
-            // fades to black instead of to the sky needs the state the world frames actually draw with.
-            this.fogPeriodicLines++;
-            System.out.println("[Celtium] CELTIUM_FOG_STATE frame=" + this.frameId + " enabled=" + this.fogEnabled
-                    + " glMode=" + this.fogGlMode + " start=" + this.fogStart + " end=" + this.fogEnd
-                    + " density=" + this.fogDensity + " colour=" + this.fogRed + "," + this.fogGreen + ","
-                    + this.fogBlue);
-        }
+        this.fog.tracePeriodically(this.frameId);
         try {
             flushPendingBeforeGlDraw();
             // Before the frame's own recording is ended: the pack's triangle has to be the last thing written into the

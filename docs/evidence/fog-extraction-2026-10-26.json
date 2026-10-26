@@ -1,0 +1,1714 @@
+{
+  "scope": "Native immediate fog state extraction, behavior intended unchanged. Fixture event subscription repaired. No performance verdict.",
+  "previousFailure": {
+    "fog-amd-result.json": {
+      "accepted": false,
+      "exitCode": 1,
+      "verdict": "FAILED",
+      "harnessExitCode": 124,
+      "problems": [
+        "[Errno 2] No such file or directory: '/home/s0u7a/projects/celtium/.gv-verify/run-fog-amd/logs/celtium-validation.json'"
+      ],
+      "copiedArtifacts": [
+        {
+          "role": "renderer",
+          "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+        },
+        {
+          "role": "fixture",
+          "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+          "sha256": "1dba6843024ffc33c1745d4983e4766e4bf2b53a5ae1eb3338c2faa3eddaba70"
+        }
+      ],
+      "elapsedSeconds": 401.750159807998,
+      "leg": "fog-amd"
+    },
+    "fog-amd-manifest.json": {
+      "schemaVersion": 1,
+      "scope": "renderer input provenance; not an acceptance verdict",
+      "rendererKind": "native-vulkan",
+      "leg": "fog-amd",
+      "mode": "world",
+      "gpu": "amd",
+      "windowSystemRequested": "x11",
+      "durationSeconds": 400,
+      "slotWaitSeconds": 120,
+      "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+      "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-amd",
+      "artifacts": {
+        "renderer": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+        },
+        "fixture": {
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "sha256": "1dba6843024ffc33c1745d4983e4766e4bf2b53a5ae1eb3338c2faa3eddaba70"
+        },
+        "harness": {
+          "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+        },
+        "headless": {
+          "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+          "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+        }
+      },
+      "dependencies": [
+        {
+          "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+        },
+        {
+          "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "sha256": "1dba6843024ffc33c1745d4983e4766e4bf2b53a5ae1eb3338c2faa3eddaba70"
+        },
+        {
+          "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+          "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+        }
+      ],
+      "git": {
+        "head": "a4f698159a2ee8cffd44e1549c57234d7aed05c5",
+        "dirty": true,
+        "dirtyFiles": [
+          "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java",
+          " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+          "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java"
+        ]
+      },
+      "instanceModExclusions": [
+        "celtium-*pre-stub-changes.jar"
+      ],
+      "jvmArgs": [
+        "-Dceltium.vulkan.glless=true",
+        "-Dceltium.vulkan.presentReadback=true",
+        "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.validation=true",
+        "-Dceltium.validation=true",
+        "-Dceltium.validation.scene=world",
+        "-Dceltium.validation.keepGui=true",
+        "-Dceltium.validation.minWorldFrames=5",
+        "-Dceltium.validation.pinSections=64",
+        "-Dceltium.validation.screenshotAtTick=200",
+        "-Dceltium.validation.dumpPresentedImage=true",
+        "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-amd/framedump",
+        "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+        "-Dceltium.vulkan.presentReadback=false",
+        "-Dceltium.validation.cameraPitch=-20"
+      ],
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "-E",
+        "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+        "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "--output",
+        "/home/s0u7a/projects/celtium/.gv-verify/fog-amd-lock.json",
+        "--game-dir",
+        "/home/s0u7a/projects/celtium/.gv-verify/run-fog-amd",
+        "--library",
+        "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+        "--slot-wait",
+        "120",
+        "--exclude-instance-mod",
+        "celtium-*pre-stub-changes.jar",
+        "--mod",
+        "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+        "--mod",
+        "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+        "--jvm-arg=-Dceltium.vulkan.glless=true",
+        "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+        "--jvm-arg=-Dfml.readTimeout=120",
+        "--jvm-arg=-Dceltium.vulkan.validation=true",
+        "--jvm-arg=-Dceltium.validation=true",
+        "--jvm-arg=-Dceltium.validation.scene=world",
+        "--jvm-arg=-Dceltium.validation.keepGui=true",
+        "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+        "--jvm-arg=-Dceltium.validation.pinSections=64",
+        "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+        "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+        "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-amd/framedump",
+        "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+        "--jvm-arg=-Dceltium.vulkan.presentReadback=false",
+        "--jvm-arg=-Dceltium.validation.cameraPitch=-20",
+        "--force-x11",
+        "--run",
+        "--validate",
+        "--duration",
+        "400",
+        "--headless",
+        "--render-node",
+        "/dev/dri/by-path/pci-0000:03:00.0-render",
+        "--require-gpu",
+        "RX 6400"
+      ],
+      "deviceEnvironment": {
+        "DRI_PRIME": null,
+        "MESA_VK_DEVICE_SELECT": null,
+        "SDL_VIDEODRIVER": "x11"
+      }
+    },
+    "run-fog-amd/validation-process.json": {
+      "exitCode": 143,
+      "endedBy": "time-limit",
+      "elapsedSeconds": 400.556688673998,
+      "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-amd/headless/session.json",
+      "fixtureStatus": "MISSING_REPORT",
+      "screenshotSaved": false,
+      "pictureEvidenceSource": null,
+      "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+      "nativeDeviceUuid": "00000000030000000000000000000000",
+      "nativeDeviceMatchedOpenGl": false,
+      "glRendererPreflight": null,
+      "gpuRequirementSource": "nativeDeviceName",
+      "gpuRequirementMet": true,
+      "fixtureUncalibrated": false,
+      "validationAllowedCount": 0,
+      "validationMessageCount": 0,
+      "validationClean": true,
+      "validationExitCode": 124
+    }
+  },
+  "legs": [
+    {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-72e1de81ddb3-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 34.92088131899072,
+        "leg": "fog-owner-amd"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 33.686278260996914,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-amd/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-72e1de81ddb3-7a81197d-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.3+4",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "fog-owner-amd",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-amd",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "a4f698159a2ee8cffd44e1549c57234d7aed05c5",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java",
+            "?? docs/evidence/fog-extraction-2026-10-26.json"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-amd/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/fog-owner-amd-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-amd",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-amd/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "world",
+        "sceneGuiStage": false,
+        "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": true,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+        "captureStartTick": 207,
+        "captureWorldFrames": 432,
+        "screenshotAtTick": 200,
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500
+      },
+      "pictures": [
+        {
+          "file": "docs/evidence/fog-owner-amd-2026-10-26.png",
+          "sha256": "8df383cd33cf8aefbbb85db575463b21b70776d0e03795376614d33cc9748969",
+          "identity": {
+            "runId": "run-72e1de81ddb3-7a81197d",
+            "scene": "world",
+            "stage": "world",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-run-72e1de81ddb3-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-run-72e1de81ddb3-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-run-72e1de81ddb3-7a81197d.png",
+            "worldTick": 207,
+            "worldFrames": 432,
+            "presentedFrame": 432,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 168647540,
+            "requestedAtTick": 207,
+            "requestedWorldFrames": 432,
+            "requestedPresentedFrame": 431,
+            "completedAtTick": 213,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1793020593248
+          }
+        }
+      ]
+    },
+    {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-72ecedd83cd4-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 33.89491802199336,
+        "leg": "fog-owner-intel"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 33.11918591699214,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-intel/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-72ecedd83cd4-7a81197d-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "Intel(R) UHD Graphics 630 (CFL GT2)",
+        "nativeDeviceUuid": "8680923e000000000002000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.3+4",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 1,
+          "name": "Intel(R) UHD Graphics 630 (CFL GT2)",
+          "apiVersion": "1.4.354",
+          "deviceType": 1
+        }
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "fog-owner-intel",
+        "mode": "world",
+        "gpu": "intel",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-intel",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "a4f698159a2ee8cffd44e1549c57234d7aed05c5",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M docs/instruments.md",
+            " M validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java",
+            "?? docs/evidence/fog-extraction-2026-10-26.json"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-intel/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/fog-owner-intel-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-intel",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-intel/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:00:02.0-render",
+          "--require-gpu",
+          "UHD Graphics 630"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": "pci-0000_00_02_0!",
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "world",
+        "sceneGuiStage": false,
+        "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": true,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+        "captureStartTick": 211,
+        "captureWorldFrames": 369,
+        "screenshotAtTick": 200,
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500
+      },
+      "pictures": [
+        {
+          "file": "docs/evidence/fog-owner-intel-2026-10-26.png",
+          "sha256": "932bae7ea23c81526ec2c5edca6d1e2606f5d70e4410d0e80ad8afa056b62e85",
+          "identity": {
+            "runId": "run-72ecedd83cd4-7a81197d",
+            "scene": "world",
+            "stage": "world",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-run-72ecedd83cd4-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-run-72ecedd83cd4-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-run-72ecedd83cd4-7a81197d.png",
+            "worldTick": 211,
+            "worldFrames": 369,
+            "presentedFrame": 369,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -813406750,
+            "requestedAtTick": 211,
+            "requestedWorldFrames": 369,
+            "requestedPresentedFrame": 368,
+            "completedAtTick": 216,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1793020640775
+          }
+        }
+      ]
+    },
+    {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-gui-run-72fb110bf32c-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 44.988634555003955,
+        "leg": "fog-owner-video"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 44.22889438799757,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-video/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "gui",
+        "pictureFile": "screenshots/celtium-presented-gui-run-72fb110bf32c-7a81197d-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.3+4",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "fog-owner-video",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-video",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "a4f698159a2ee8cffd44e1549c57234d7aed05c5",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M docs/instruments.md",
+            " M validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java",
+            "?? docs/evidence/fog-extraction-2026-10-26.json"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-video/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dceltium.validation.scene=videoSettings",
+          "-Dceltium.validation.guiScale=3"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/fog-owner-video-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-video",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-video/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dceltium.validation.scene=videoSettings",
+          "--jvm-arg=-Dceltium.validation.guiScale=3",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "videoSettings",
+        "sceneGuiStage": true,
+        "sceneCalibrationKey": "scene=videoSettings pose=x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": true,
+        "camera": {
+          "x": 0.5,
+          "y": 12.0,
+          "z": 0.5,
+          "yaw": 180.0,
+          "pitch": 20.0
+        },
+        "cameraRequested": "x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000",
+        "captureStartTick": 400,
+        "captureWorldFrames": 551,
+        "screenshotAtTick": 200,
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500
+      },
+      "pictures": [
+        {
+          "file": "docs/evidence/fog-owner-video-2026-10-26.png",
+          "sha256": "98076f4d6c0c80db5fd9a0f0db70f1faa599e046625b88e1bea560db74e90a97",
+          "identity": {
+            "runId": "run-72fb110bf32c-7a81197d",
+            "scene": "videoSettings",
+            "stage": "gui",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-gui-run-72fb110bf32c-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-gui-run-72fb110bf32c-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-gui-run-72fb110bf32c-7a81197d.png",
+            "worldTick": 425,
+            "worldFrames": 573,
+            "presentedFrame": 573,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -604159970,
+            "requestedAtTick": 425,
+            "requestedWorldFrames": 573,
+            "requestedPresentedFrame": 572,
+            "completedAtTick": 428,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1793020713080
+          }
+        }
+      ]
+    },
+    {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-73058f1e5ebd-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 42.57477731999825,
+        "leg": "fog-owner-inventory"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 41.847674549993826,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-inventory/headless/session.json",
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-73058f1e5ebd-7a81197d-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": true,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 2,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.3+4",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "fog-owner-inventory",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-inventory",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "a4f698159a2ee8cffd44e1549c57234d7aed05c5",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M docs/instruments.md",
+            " M validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java",
+            "?? docs/evidence/fog-extraction-2026-10-26.json"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-inventory/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dceltium.validation.jeiScreen=true",
+          "-Dceltium.validation.keepInventoryScreen=true",
+          "-Dceltium.validation.screenshotAtTick=60"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/fog-owner-inventory-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-inventory",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-inventory/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dceltium.validation.jeiScreen=true",
+          "--jvm-arg=-Dceltium.validation.keepInventoryScreen=true",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=60",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "UNCALIBRATED_PRESENTED_IMAGE",
+        "scene": "world",
+        "sceneGuiStage": false,
+        "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=jei+keep guiScale=3",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": false,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+        "captureStartTick": 400,
+        "captureWorldFrames": 1375,
+        "screenshotAtTick": 60,
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500
+      },
+      "pictures": [
+        {
+          "file": "docs/evidence/fog-owner-inventory-2026-10-26.png",
+          "sha256": "529dba95ab8347e9ce19d2f7e9b36377be5ee7aeca773cb161e51cfdc9131c73",
+          "identity": {
+            "runId": "run-73058f1e5ebd-7a81197d",
+            "scene": "world",
+            "stage": "world",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-run-73058f1e5ebd-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-run-73058f1e5ebd-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-run-73058f1e5ebd-7a81197d.png",
+            "worldTick": 400,
+            "worldFrames": 1375,
+            "presentedFrame": 1375,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 933411137,
+            "requestedAtTick": 400,
+            "requestedWorldFrames": 1375,
+            "requestedPresentedFrame": 1374,
+            "completedAtTick": 406,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1793020755907
+          }
+        }
+      ]
+    },
+    {
+      "result": {
+        "accepted": false,
+        "exitCode": 2,
+        "verdict": "INCONCLUSIVE",
+        "harnessExitCode": 2,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          }
+        ],
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-730fa08a7952-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 42.52413046300353,
+        "leg": "fog-owner-recipe"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 41.69554660699214,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-recipe/headless/session.json",
+        "fixtureStatus": "UNCALIBRATED_PRESENTED_IMAGE",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-730fa08a7952-7a81197d-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": true,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 2,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.3+4",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "fog-owner-recipe",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-recipe",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "a4f698159a2ee8cffd44e1549c57234d7aed05c5",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M docs/instruments.md",
+            " M validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java",
+            "?? docs/evidence/fog-extraction-2026-10-26.json"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-recipe/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dceltium.validation.jeiScreen=true",
+          "-Dceltium.validation.jeiRecipe=true",
+          "-Dceltium.validation.keepInventoryScreen=true",
+          "-Dceltium.validation.screenshotAtTick=60"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/fog-owner-recipe-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-recipe",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-recipe/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dceltium.validation.jeiScreen=true",
+          "--jvm-arg=-Dceltium.validation.jeiRecipe=true",
+          "--jvm-arg=-Dceltium.validation.keepInventoryScreen=true",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=60",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "UNCALIBRATED_PRESENTED_IMAGE",
+        "scene": "world",
+        "sceneGuiStage": false,
+        "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=jei+recipe+keep guiScale=3",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": false,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+        "captureStartTick": 400,
+        "captureWorldFrames": 1482,
+        "screenshotAtTick": 60,
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500
+      },
+      "pictures": [
+        {
+          "file": "docs/evidence/fog-owner-recipe-2026-10-26.png",
+          "sha256": "b2f98ee846274b29a830e0db9a62304786a2321e7973b75d90f2097262c1f4ff",
+          "identity": {
+            "runId": "run-730fa08a7952-7a81197d",
+            "scene": "world",
+            "stage": "world",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-run-730fa08a7952-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-run-730fa08a7952-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-run-730fa08a7952-7a81197d.png",
+            "worldTick": 400,
+            "worldFrames": 1482,
+            "presentedFrame": 1482,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -2038124430,
+            "requestedAtTick": 400,
+            "requestedWorldFrames": 1482,
+            "requestedPresentedFrame": 1481,
+            "completedAtTick": 405,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1793020798566
+          }
+        }
+      ]
+    },
+    {
+      "result": {
+        "accepted": true,
+        "exitCode": 0,
+        "verdict": "PASSED",
+        "harnessExitCode": 0,
+        "problems": [],
+        "copiedArtifacts": [
+          {
+            "role": "renderer",
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "role": "fixture",
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          }
+        ],
+        "fixtureStatus": "PASSED",
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "rendererKind": "native-vulkan",
+        "picture": {
+          "path": "screenshots/celtium-presented-world-run-73279f7e44fa-7a81197d-kept.png",
+          "size": [
+            1280,
+            720
+          ]
+        },
+        "elapsedSeconds": 36.270392224992975,
+        "leg": "fog-owner-menu"
+      },
+      "process": {
+        "exitCode": 0,
+        "endedBy": "process-exit",
+        "elapsedSeconds": 35.48190340898873,
+        "headlessSession": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-menu/headless/session.json",
+        "fixtureStatus": "PASSED",
+        "screenshotSaved": true,
+        "pictureEvidenceSource": "presented-dump",
+        "pictureStage": "world",
+        "pictureFile": "screenshots/celtium-presented-world-run-73279f7e44fa-7a81197d-kept.png",
+        "picturePresent": true,
+        "screenshotIsEvidence": false,
+        "nativeDeviceName": "AMD Radeon RX 6400 (RADV NAVI24)",
+        "nativeDeviceUuid": "00000000030000000000000000000000",
+        "nativeDeviceMatchedOpenGl": false,
+        "glRendererPreflight": "Celtium (GL-less Vulkan)",
+        "gpuRequirementSource": "nativeDeviceName",
+        "gpuRequirementMet": true,
+        "fixtureUncalibrated": false,
+        "validationAllowedCount": 0,
+        "validationMessageCount": 0,
+        "validationClean": true,
+        "validationExitCode": 0,
+        "driverSelection": "selected",
+        "driver": {
+          "source": "logs/celtium-capabilities.json",
+          "lwjglVersion": "3.4.3+4",
+          "vulkanLoaderVersion": "1.4.363",
+          "vulkanDeviceCount": 3,
+          "name": "AMD Radeon RX 6400 (RADV NAVI24)",
+          "apiVersion": "1.4.354",
+          "deviceType": 2
+        }
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "scope": "renderer input provenance; not an acceptance verdict",
+        "rendererKind": "native-vulkan",
+        "leg": "fog-owner-menu",
+        "mode": "world",
+        "gpu": "amd",
+        "windowSystemRequested": "x11",
+        "durationSeconds": 180,
+        "slotWaitSeconds": 120,
+        "sourceInstance": "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+        "isolatedGameDirectory": "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-menu",
+        "artifacts": {
+          "renderer": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          "fixture": {
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          "harness": {
+            "source": "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+            "sha256": "cf6b0532e3a953451d855bf702639362e23cb497d8891a8aad22aec8441f2c9d"
+          },
+          "headless": {
+            "source": "/home/s0u7a/projects/celtium/scripts/headless_wayland.py",
+            "sha256": "d69ee4a57e75355385ca27a929b1ce674d223ac01687ec3e5cc052ee17f09ae1"
+          }
+        },
+        "dependencies": [
+          {
+            "path": "mods/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+            "sha256": "51d02a2a40a9d44c42abd4dbc802838924ee09225e7f9a4229b7ee2bec86ce01"
+          },
+          {
+            "path": "mods/celtium-validation-client-0.0.18-alpha.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+            "sha256": "ea2d042b3cbf96926386629da4d38ca93fe9675a8bd31296221b66d517268fa2"
+          },
+          {
+            "path": "test-libraries/lwjgl-vulkan-3.4.3.jar",
+            "source": "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+            "sha256": "acdb40767775ed1223dc3b2a8c9d3ce740c9e3c4af074444ce2dfe2ea9ba62e0"
+          }
+        ],
+        "git": {
+          "head": "a4f698159a2ee8cffd44e1549c57234d7aed05c5",
+          "dirty": true,
+          "dirtyFiles": [
+            "M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java",
+            " M celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java",
+            " M docs/instruments.md",
+            " M validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java",
+            "?? celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java",
+            "?? docs/evidence/fog-extraction-2026-10-26.json"
+          ]
+        },
+        "instanceModExclusions": [
+          "celtium-*pre-stub-changes.jar"
+        ],
+        "jvmArgs": [
+          "-Dceltium.vulkan.glless=true",
+          "-Dceltium.vulkan.presentReadback=true",
+          "-Dfml.readTimeout=120",
+          "-Dceltium.vulkan.validation=true",
+          "-Dceltium.validation=true",
+          "-Dceltium.validation.scene=world",
+          "-Dceltium.validation.keepGui=true",
+          "-Dceltium.validation.minWorldFrames=5",
+          "-Dceltium.validation.pinSections=64",
+          "-Dceltium.validation.screenshotAtTick=200",
+          "-Dceltium.validation.dumpPresentedImage=true",
+          "-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-menu/framedump",
+          "-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "-Dceltium.validation.fixedWorldTime=true",
+          "-Dceltium.validation.worldTime=1500",
+          "-Dceltium.validation.worldSwitch=true",
+          "-Dceltium.validation.worldSwitchMenuHoldTicks=20"
+        ],
+        "command": [
+          "/usr/bin/python3",
+          "-B",
+          "-E",
+          "/home/s0u7a/projects/celtium/scripts/prism_validation.py",
+          "/home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha",
+          "--output",
+          "/home/s0u7a/projects/celtium/.gv-verify/fog-owner-menu-lock.json",
+          "--game-dir",
+          "/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-menu",
+          "--library",
+          "/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar",
+          "--slot-wait",
+          "120",
+          "--exclude-instance-mod",
+          "celtium-*pre-stub-changes.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-forge-mc1.12.2-0.0.18-alpha.jar",
+          "--mod",
+          "/home/s0u7a/projects/celtium/.gv-verify/jars/latest/candidate/celtium-validation-client-0.0.18-alpha.jar",
+          "--jvm-arg=-Dceltium.vulkan.glless=true",
+          "--jvm-arg=-Dceltium.vulkan.presentReadback=true",
+          "--jvm-arg=-Dfml.readTimeout=120",
+          "--jvm-arg=-Dceltium.vulkan.validation=true",
+          "--jvm-arg=-Dceltium.validation=true",
+          "--jvm-arg=-Dceltium.validation.scene=world",
+          "--jvm-arg=-Dceltium.validation.keepGui=true",
+          "--jvm-arg=-Dceltium.validation.minWorldFrames=5",
+          "--jvm-arg=-Dceltium.validation.pinSections=64",
+          "--jvm-arg=-Dceltium.validation.screenshotAtTick=200",
+          "--jvm-arg=-Dceltium.validation.dumpPresentedImage=true",
+          "--jvm-arg=-Dceltium.vulkan.frameDumpDir=/home/s0u7a/projects/celtium/.gv-verify/run-fog-owner-menu/framedump",
+          "--jvm-arg=-Dorg.lwjgl.librarypath=/home/s0u7a/projects/celtium/.gv-verify/lib/lwjgl-natives-3.4.3",
+          "--jvm-arg=-Dceltium.validation.fixedWorldTime=true",
+          "--jvm-arg=-Dceltium.validation.worldTime=1500",
+          "--jvm-arg=-Dceltium.validation.worldSwitch=true",
+          "--jvm-arg=-Dceltium.validation.worldSwitchMenuHoldTicks=20",
+          "--force-x11",
+          "--run",
+          "--validate",
+          "--duration",
+          "180",
+          "--headless",
+          "--render-node",
+          "/dev/dri/by-path/pci-0000:03:00.0-render",
+          "--require-gpu",
+          "RX 6400"
+        ],
+        "deviceEnvironment": {
+          "DRI_PRIME": null,
+          "MESA_VK_DEVICE_SELECT": null,
+          "SDL_VIDEODRIVER": "x11"
+        }
+      },
+      "fixture": {
+        "status": "PASSED",
+        "scene": "world",
+        "sceneGuiStage": false,
+        "sceneCalibrationKey": "scene=world pose=x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000 stack=default blockSweep=0 allBlocks=false entities=none screen=none guiScale=3",
+        "sceneGateCalibrated": true,
+        "sceneCalibrationKeyMatches": true,
+        "camera": {
+          "x": 217.5,
+          "y": 48.0,
+          "z": 217.5,
+          "yaw": 180.0,
+          "pitch": 10.0
+        },
+        "cameraRequested": "x=217.5000 y=48.0000 z=217.5000 yaw=180.000 pitch=10.000",
+        "captureStartTick": 207,
+        "captureWorldFrames": 428,
+        "screenshotAtTick": 200,
+        "pinnedWorldTime": 1500,
+        "worldTimeAtCapture": 1500
+      },
+      "pictures": [
+        {
+          "file": "docs/evidence/fog-owner-menu-2026-10-26.png",
+          "sha256": "07176f68c55d9dae0a3fe2121bfcd680c4ea1de03790e15fafa588e54ce33907",
+          "identity": {
+            "runId": "run-73279f7e44fa-7a81197d",
+            "scene": "world",
+            "stage": "world",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-run-73279f7e44fa-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-run-73279f7e44fa-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-run-73279f7e44fa-7a81197d.png",
+            "worldTick": 207,
+            "worldFrames": 428,
+            "presentedFrame": 317,
+            "width": 1280,
+            "height": 720,
+            "imageHash": 733867332,
+            "requestedAtTick": 207,
+            "requestedWorldFrames": 428,
+            "requestedPresentedFrame": 316,
+            "completedAtTick": 212,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1793020895047
+          }
+        },
+        {
+          "file": "docs/evidence/fog-owner-menu-menu-2026-10-26.png",
+          "sha256": "3645aa54b45e1ef1cdb73d19a3d3da4dda3bb2155afa555fe46b343de533563a",
+          "identity": {
+            "runId": "run-73279f7e44fa-7a81197d",
+            "scene": "world",
+            "stage": "world-switch-menu",
+            "source": "presented-dump",
+            "image": "screenshots/celtium-presented-world-switch-menu-run-73279f7e44fa-7a81197d-kept.png",
+            "requestedImage": "screenshots/celtium-presented-world-switch-menu-run-73279f7e44fa-7a81197d.png",
+            "keptFrom": "screenshots/celtium-presented-world-switch-menu-run-73279f7e44fa-7a81197d.png",
+            "worldTick": 100,
+            "worldFrames": 111,
+            "presentedFrame": 115,
+            "width": 1280,
+            "height": 720,
+            "imageHash": -1921296590,
+            "requestedAtTick": 100,
+            "requestedWorldFrames": 111,
+            "requestedPresentedFrame": 114,
+            "completedAtTick": 100,
+            "frameBinding": "observed present: the renderer's presented-frame counter advanced by exactly one from the request",
+            "identitySource": "fixture-observed-completion",
+            "completionError": "none",
+            "writtenAtMillis": 1793020888633
+          }
+        }
+      ]
+    }
+  ]
+}
