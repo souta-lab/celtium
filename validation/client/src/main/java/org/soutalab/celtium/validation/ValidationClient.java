@@ -4032,7 +4032,19 @@ public final class ValidationClient {
                         + " before=" + (before == null ? "?" : before[0] + "x" + before[1])
                         + " after=" + (after == null ? "?" : after[0] + "x" + after[1]));
             }
-            worldTicks++;            // The churn toggle is timed to the held window, not the capture: it only runs once the capture has
+            worldTicks++;
+            if (worldTicks == 50 || worldTicks == 150 || worldTicks == 300) {
+                // Renderer-independent: what the client world holds, so a picture missing distant terrain can be told
+                // apart from a client that never received those chunks (the same line prints under the GL reference).
+                Minecraft chunkMc = Minecraft.getMinecraft();
+                if (chunkMc.world != null) {
+                    System.out.println("[Celtium] CELTIUM_CLIENT_CHUNKS tick=" + worldTicks + " "
+                            + chunkMc.world.getChunkProvider().makeString() + " renderDistance="
+                            + chunkMc.gameSettings.renderDistanceChunks + " renders=["
+                            + chunkMc.renderGlobal.getDebugInfoRenders() + "]");
+                }
+            }
+            // The churn toggle is timed to the held window, not the capture: it only runs once the capture has
             // happened, so the frames the verdict judges stay the unchanged world, and the slow-frame dump and the
             // pass split then see rebuild frames rather than steady ones.
             if (this.celtium$churnInterval > 0 && celtium$captureStartTick > 0

@@ -661,12 +661,15 @@ public abstract class RenderSectionManager {
         java.util.Map<ChunkUpdateType, java.util.Set<RenderSection>> queued = new java.util.EnumMap<>(
                 ChunkUpdateType.class);
         for (var entry : rebuildLists.entrySet()) {
-            if (!entry.getValue().isEmpty()) {
-                java.util.Set<RenderSection> membership =
-                        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>(entry.getValue().size()));
-                membership.addAll(entry.getValue());
-                queued.put(entry.getKey(), membership);
-            }
+            // Every queue gets a set, empty ones included: a section is only queued when its type's set exists, so
+            // skipping the empty queues meant an empty INITIAL_BUILD queue never received a newly loaded section, and
+            // terrain filled in only as other queue activity happened to open it (measured on Enigmatica 2 Expert: the
+            // flat floor still missing beyond a few chunks at tick 200 while Celeritas showed it to the horizon).
+            java.util.Set<RenderSection> membership =
+                    java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>(
+                            Math.max(4, entry.getValue().size())));
+            membership.addAll(entry.getValue());
+            queued.put(entry.getKey(), membership);
         }
 
 

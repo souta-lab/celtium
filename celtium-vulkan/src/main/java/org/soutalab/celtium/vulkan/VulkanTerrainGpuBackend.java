@@ -8760,7 +8760,22 @@ this.frameBufferOpen = false;
         }
     }
 
+    /** Fog state lines already printed by the periodic trace below; bounded to twelve a run. */
+    private int fogPeriodicLines;
+    private long fogPeriodicNanos;
+
     private void celtium$flushPendingAtFrameBoundaryBody(long flushStartedNanos) {
+        long fogNow = System.nanoTime();
+        if (this.frameId > 0 && fogNow - this.fogPeriodicNanos > 5_000_000_000L && this.fogPeriodicLines < 24) {
+            this.fogPeriodicNanos = fogNow;
+            // The bounded fog record above only sees the first frames (loading screens); a world whose distant terrain
+            // fades to black instead of to the sky needs the state the world frames actually draw with.
+            this.fogPeriodicLines++;
+            System.out.println("[Celtium] CELTIUM_FOG_STATE frame=" + this.frameId + " enabled=" + this.fogEnabled
+                    + " glMode=" + this.fogGlMode + " start=" + this.fogStart + " end=" + this.fogEnd
+                    + " density=" + this.fogDensity + " colour=" + this.fogRed + "," + this.fogGreen + ","
+                    + this.fogBlue);
+        }
         try {
             flushPendingBeforeGlDraw();
             // Before the frame's own recording is ended: the pack's triangle has to be the last thing written into the

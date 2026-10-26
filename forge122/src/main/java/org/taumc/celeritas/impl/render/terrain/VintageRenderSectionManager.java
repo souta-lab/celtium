@@ -74,8 +74,14 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         return CeleritasVintage.options().performance.useFogOcclusion;
     }
 
+    /** {@code -Dceltium.debug.noOcclusion=true}: frustum-only traversal, to tell a culling defect from a build one. */
+    private static final boolean CELTIUM_NO_OCCLUSION = Boolean.getBoolean("celtium.debug.noOcclusion");
+
     @Override
     protected boolean shouldUseOcclusionCulling(Viewport positionedViewport, boolean spectator) {
+        if (CELTIUM_NO_OCCLUSION) {
+            return false;
+        }
         final boolean useOcclusionCulling;
         var camBlockPos = positionedViewport.getBlockCoord();
         BlockPos origin = new BlockPos(camBlockPos.x(), camBlockPos.y(), camBlockPos.z());
