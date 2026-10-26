@@ -699,6 +699,18 @@ public abstract class RenderSectionManager {
         }
     }
 
+    /** The rebuild queues' lengths by update type, for the bounded list-size line. */
+    private String celtium$rebuildQueueSizes() {
+        StringBuilder sizes = new StringBuilder("[");
+        for (var entry : this.getCurrentRenderListManager().getRebuildLists().byUpdateType().entrySet()) {
+            if (sizes.length() > 1) {
+                sizes.append(',');
+            }
+            sizes.append(entry.getKey().name()).append('=').append(entry.getValue().size());
+        }
+        return sizes.append(']').toString();
+    }
+
     private boolean rebuildListHasUpdates() {
         for (var queue : this.getCurrentRenderListManager().getRebuildLists().byUpdateType().values()) {
             if (!queue.isEmpty()) {
@@ -760,7 +772,12 @@ public abstract class RenderSectionManager {
                                 .append("=").append(entry.getIntValue()));
                 System.out.println("[Celtium] CELTIUM_LIST_SIZE call=" + listSizeFrames
                         + " graphSections=" + this.getTotalSections()
-                        + " passCounts=[" + counts + "]");
+                        + " passCounts=[" + counts + "]"
+                        + " pendingMesh=" + this.celtiumPendingMeshUpdates.size()
+                        + " rebuildQueues=" + celtium$rebuildQueueSizes()
+                        + " builderQueued=" + this.builder.getScheduledJobCount()
+                        + " builderBusy=" + this.builder.getBusyThreadCount()
+                        + " buildResults=" + this.buildResults.size());
             }
         }
 
