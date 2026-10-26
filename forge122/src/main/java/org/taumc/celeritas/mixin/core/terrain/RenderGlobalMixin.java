@@ -22,6 +22,7 @@ import org.embeddedt.embeddium.impl.render.viewport.ViewportProvider;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -239,7 +240,60 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     private void markBlocksForUpdate(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, boolean important) {
+        if (celtium$MARK_TRACE) {
+            celtium$noteMark(minX, minY, minZ, maxX, maxY, maxZ, important);
+        }
         this.renderer.scheduleRebuildForBlockArea(minX, minY, minZ, maxX, maxY, maxZ, important);
+    }
+
+    /**
+     * {@code -Dceltium.debug.markTrace=true}: how often sections are marked for rebuild, per five seconds. Enigmatica 2
+     * Expert keeps ~240 sections pending for a whole run while builds flow; this says whether something re-marks them.
+     */
+    @Unique
+    private static final boolean celtium$MARK_TRACE = Boolean.getBoolean("celtium.debug.markTrace");
+    @Unique
+    private static long celtium$markWindowStart;
+    @Unique
+    private static int celtium$markCalls, celtium$markImportant, celtium$markLines;
+    @Unique
+    private static final it.unimi.dsi.fastutil.longs.LongOpenHashSet celtium$markSections =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
+    @Unique
+    private static void celtium$noteMark(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, boolean important) {
+        celtium$markCalls++;
+        if (celtium$markCalls == 50_000 && celtium$markLines < 6) {
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            StringBuilder callers = new StringBuilder();
+            for (int i = 2; i < Math.min(stack.length, 14); i++) {
+                callers.append(" < ").append(stack[i].getClassName()).append('.').append(stack[i].getMethodName());
+            }
+            System.out.println("[Celtium] CELTIUM_MARK_CALLER box=" + minX + "," + minY + "," + minZ + ".." + maxX + ","
+                    + maxY + "," + maxZ + callers);
+        }
+        if (important) {
+            celtium$markImportant++;
+        }
+        for (int x = minX >> 4; x <= maxX >> 4; x++) {
+            for (int y = Math.max(0, minY >> 4); y <= Math.min(15, maxY >> 4); y++) {
+                for (int z = minZ >> 4; z <= maxZ >> 4; z++) {
+                    celtium$markSections.add(((long) (x & 0x3FFFFF) << 26) | ((long) (z & 0x3FFFFF) << 4) | (y & 0xF));
+                }
+            }
+        }
+        long now = System.nanoTime();
+        if (celtium$markWindowStart == 0L) {
+            celtium$markWindowStart = now;
+        } else if (now - celtium$markWindowStart > 5_000_000_000L && celtium$markLines < 30) {
+            celtium$markLines++;
+            System.out.println("[Celtium] CELTIUM_MARK_TRACE calls=" + celtium$markCalls + " important="
+                    + celtium$markImportant + " distinctSections=" + celtium$markSections.size() + " in 5s");
+            celtium$markWindowStart = now;
+            celtium$markCalls = 0;
+            celtium$markImportant = 0;
+            celtium$markSections.clear();
+        }
     }
 
     // The following two redirects force light updates to trigger chunk updates and not check vanilla's chunk renderer

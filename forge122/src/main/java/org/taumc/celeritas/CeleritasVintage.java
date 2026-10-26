@@ -47,7 +47,14 @@ public class CeleritasVintage {
         if ((Boolean) Launch.blackboard.get("fml.deobfuscatedEnvironment")) {
             ClientCommandHandler.instance.registerCommand(new TogglePassCommand());
         }
-
+        if (Loader.isModLoaded("alfheim")) {
+            // Unsupported with Celtium (2026-10-26): Alfheim's client light pass re-marks the same sections for rebuild
+            // every tick (Enigmatica 2 Expert: ~80,000 marks a second over ~440 sections, with LittleTiles' light
+            // listener feeding it back), so distant terrain never settles. Pulsar Lighting Engine is the supported
+            // Cleanroom lighting engine.
+            LOGGER.warn("Alfheim is installed. Celtium does not support Alfheim; replace it with Pulsar Lighting Engine"
+                    + " (https://modrinth.com/mod/pulsar-lighting-engine). Distant terrain may stay unbuilt or dark.");
+        }
     }
 
     /** Calls, total and worst build time, and the shape of what was added; printed once per 120 F3 frames. */

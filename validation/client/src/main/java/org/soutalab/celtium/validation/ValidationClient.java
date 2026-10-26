@@ -3485,6 +3485,29 @@ public final class ValidationClient {
     }
 
     @SubscribeEvent
+    /**
+     * Client-world light at the top floor block straight ahead of the camera at 4, 24, 48 and 80 blocks: whether a
+     * picture's dark distant floor is the client's light data or the renderer's shading of it (printed under both
+     * renderers by CELTIUM_CLIENT_CHUNKS).
+     */
+    private static String celtium$floorLight(Minecraft mc) {
+        if (mc.world == null || mc.getRenderViewEntity() == null) {
+            return "";
+        }
+        net.minecraft.entity.Entity eye = mc.getRenderViewEntity();
+        double yaw = Math.toRadians(eye.rotationYaw);
+        StringBuilder line = new StringBuilder(" floorLight=[");
+        for (int distance : new int[] {4, 24, 48, 80}) {
+            int x = (int) Math.floor(eye.posX - Math.sin(yaw) * distance);
+            int z = (int) Math.floor(eye.posZ + Math.cos(yaw) * distance);
+            net.minecraft.util.math.BlockPos top = mc.world.getHeight(new net.minecraft.util.math.BlockPos(x, 0, z));
+            line.append(distance).append(':').append(top.getY()).append('/')
+                    .append(mc.world.getLightFor(net.minecraft.world.EnumSkyBlock.SKY, top)).append('/')
+                    .append(mc.world.getLightFor(net.minecraft.world.EnumSkyBlock.BLOCK, top)).append(' ');
+        }
+        return line.append(']').toString();
+    }
+
     public void tick(TickEvent.ClientTickEvent event) {
         if (!enabled || finished) return;
         if (event.phase == TickEvent.Phase.START) {
@@ -4041,7 +4064,7 @@ public final class ValidationClient {
                     System.out.println("[Celtium] CELTIUM_CLIENT_CHUNKS tick=" + worldTicks + " "
                             + chunkMc.world.getChunkProvider().makeString() + " renderDistance="
                             + chunkMc.gameSettings.renderDistanceChunks + " renders=["
-                            + chunkMc.renderGlobal.getDebugInfoRenders() + "]");
+                            + chunkMc.renderGlobal.getDebugInfoRenders() + "]" + celtium$floorLight(chunkMc));
                 }
             }
             // The churn toggle is timed to the held window, not the capture: it only runs once the capture has
