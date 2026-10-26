@@ -19,7 +19,11 @@ struct Instance {
     vec4 diffuse1;      // 192
     vec4 lightCoord;    // 208: xy the light-map coordinate
     ivec4 indices;      // 224: x texture, y light map (indices into the shared array)
-    vec4 pad;           // 240
+    vec4 fogParams;     // 240: density, start, end, selector (mode + 8 * shape)
+    vec4 fogColor;      // 256: rgb, blend weight
+    vec4 fogRow0;       // 272: model-view rows, independent of the clip transform
+    vec4 fogRow1;       // 288
+    vec4 fogRow2;       // 304
 };
 
 layout(std430, set = 1, binding = 0) readonly buffer Instances {
@@ -38,6 +42,9 @@ layout(location = 1) out vec4 v_Color;
 layout(location = 2) flat out int v_Texture;
 layout(location = 3) flat out vec4 v_Combine;
 layout(location = 4) flat out float v_AlphaRef;
+layout(location = 5) out float v_FogDistance;
+layout(location = 6) flat out vec4 v_FogParams;
+layout(location = 7) flat out vec4 v_FogColor;
 
 void main() {
     Instance r = instances[gl_InstanceIndex];
@@ -56,5 +63,14 @@ void main() {
     v_Texture = r.indices.x;
     v_Combine = r.combine;
     v_AlphaRef = r.texB.w;
+    v_FogParams = r.fogParams;
+    v_FogColor = r.fogColor;
+    int selector = int(r.fogParams.w + 0.5);
+    v_FogDistance = 0.0;
+    if ((selector & 7) != 0) {
+        vec4 position = vec4(a_Position, 1.0);
+        vec3 eye = vec3(dot(r.fogRow0, position), dot(r.fogRow1, position), dot(r.fogRow2, position));
+        v_FogDistance = (selector >> 3) == 2 ? abs(eye.z) : length(eye);
+    }
     gl_Position = r.mvp * vec4(a_Position, 1.0);
 }

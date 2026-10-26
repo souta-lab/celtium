@@ -33,7 +33,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * <p>
  * Measured need (leg {@code prof-celtium-4}, AMD, world): about 800 display-list replays a frame, each one an
  * {@link ImmediateGroup} of its own with its own push block, binds and draw - most of the record loop and much of the
- * accept path. Here a replay is one 256-byte record (matrix, colour, combine, texture affine, lighting, texture and
+ * accept path. Here a replay is one 320-byte record (matrix, colour, combine, texture affine, lighting, texture and
  * light-map indices) and one indirect command into a shared mesh pool, and a run of consecutive replays with the same
  * pipeline state is one {@code vkCmdDrawIndexedIndirect}. Textures come from {@link VulkanTextureArray} by index, so
  * a texture change no longer breaks a run.
@@ -48,7 +48,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * Threading: render thread only.
  */
 final class VulkanModelInstances {
-    static final int RECORD_BYTES = 256;
+    static final int RECORD_BYTES = 320;
     static final int COMMAND_BYTES = 20;
     static final int SEGMENTS = FrameSubmissionScheduler.FRAME_SLOTS + 2;
     static final int SEGMENT_RECORDS = 4096;
@@ -324,7 +324,8 @@ final class VulkanModelInstances {
      * @param light  the lit payload: two model-space directions, ambient and two diffuses (20 floats)
      */
     void append(Run run, int listId, float[] mvp, float[] colour, float[] combine, float[] affine, float alphaRef,
-            float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
+            float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture,
+            ImmediateFogState fog, float[] modelView) {
         int[] entry = this.poolEntries.get(listId);
         int index = this.segment * SEGMENT_RECORDS + this.used;
         long r = this.records.mappedAddress() + (long) index * RECORD_BYTES;
@@ -357,6 +358,7 @@ final class VulkanModelInstances {
         MemoryUtil.memPutFloat(r + 212, lightCoord == null ? 0.0f : lightCoord[1]);
         MemoryUtil.memPutInt(r + 224, textureIndex);
         MemoryUtil.memPutInt(r + 228, lightmapIndex);
+        writeFogRecord(r, fog, modelView);
         long c = this.commands.mappedAddress() + (long) index * COMMAND_BYTES;
         MemoryUtil.memPutInt(c, entry[2]);
         MemoryUtil.memPutInt(c + 4, 1);
@@ -367,6 +369,29 @@ final class VulkanModelInstances {
         run.count++;
         run.noteTexture(glTexture);
         this.appended++;
+    }
+
+    /** std430 tail: parameters at 240, RGB/weight at 256 and three eye-transform rows at 272. */
+    static void writeFogRecord(long record, ImmediateFogState fog, float[] modelView) {
+        int selector = fog.selector();
+        if (selector == 0) {
+            // The segment is reused: do not retain another instance's fog payload when fog is disabled.
+            MemoryUtil.memSet(record + 240, 0, 80);
+            return;
+        }
+        MemoryUtil.memPutFloat(record + 240, fog.density);
+        MemoryUtil.memPutFloat(record + 244, fog.start);
+        MemoryUtil.memPutFloat(record + 248, fog.end);
+        MemoryUtil.memPutFloat(record + 252, selector);
+        MemoryUtil.memPutFloat(record + 256, fog.red);
+        MemoryUtil.memPutFloat(record + 260, fog.green);
+        MemoryUtil.memPutFloat(record + 264, fog.blue);
+        MemoryUtil.memPutFloat(record + 268, 1.0f);
+        for (int row = 0; row < 3; row++) {
+            for (int column = 0; column < 4; column++) {
+                MemoryUtil.memPutFloat(record + 272 + row * 16L + column * 4L, modelView[column * 4 + row]);
+            }
+        }
     }
 
     void noteMissing() {

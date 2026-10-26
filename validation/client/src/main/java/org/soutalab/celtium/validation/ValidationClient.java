@@ -1633,6 +1633,7 @@ public final class ValidationClient {
         key.append(" entities=").append(celtium$entityVariant());
         key.append(" screen=").append(celtium$screenVariant());
         key.append(" guiScale=").append(guiScale > 0 ? Integer.toString(guiScale) : "unreadable");
+        if (MODEL_FOG_END > 0.0f) key.append(" testFogEnd=").append(MODEL_FOG_END);
         return key.toString();
     }
 
@@ -5609,6 +5610,23 @@ public final class ValidationClient {
             // the capture is what makes that pair possible, and it is a property rather than the new default because the
             // other scenes are calibrated without the screen.
             mc.displayGuiScreen(null);
+        }
+    }
+
+    /** Controlled fog for comparing lit model shading with the GL reference; never part of a calibrated scene. */
+    private static final float MODEL_FOG_END = Float.parseFloat(System.getProperty("celtium.validation.testFogEnd", "-1"));
+    private boolean modelFogReported;
+
+    @SubscribeEvent(priority = net.minecraftforge.fml.common.eventhandler.EventPriority.LOWEST)
+    public void controlledModelFog(net.minecraftforge.client.event.EntityViewRenderEvent.RenderFogEvent event) {
+        if (!enabled || !(MODEL_FOG_END > 0.0f)) return;
+        GlStateManager.setFog(GlStateManager.FogMode.LINEAR);
+        GlStateManager.setFogStart(0.0f);
+        GlStateManager.setFogEnd(MODEL_FOG_END);
+        if (!modelFogReported) {
+            modelFogReported = true;
+            report.addProperty("controlledModelFogEnd", MODEL_FOG_END);
+            System.out.println("[Celtium] CELTIUM_MODEL_FOG_TEST start=0 end=" + MODEL_FOG_END);
         }
     }
 
@@ -9767,6 +9785,7 @@ public final class ValidationClient {
         if (!"none".equals(celtium$entityVariant())) {
             variant.append(", entity flags ").append(celtium$entityVariant());
         }
+        if (MODEL_FOG_END > 0.0f) variant.append(", testFogEnd=").append(MODEL_FOG_END);
         int scale = celtium$guiScale();
         if (scale > 0) {
             variant.append(", guiScale=").append(scale).append(scale == celtium$REFERENCE_GUI_SCALE

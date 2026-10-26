@@ -67,7 +67,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
      残差は固定費。上限測定で棄却: 反復acquire barrier全省略 2–3%、texture跨ぎmerge（bindless上限）Intel 2.5%/AMD 4%、
      frame+present 1 submit（fence acquire、実merge確認済）中立、acquire狭小化は遅化、glthread仮説（無効でも3%）。
      **次の単位**: model replay と immediate を一つの順序付きstreamに（Stage 1 packet化）。Intel残差の内訳は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・分割**: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`・`ImmediateFogState` を抽出。fog は vanilla setter・地形・可視距離・即時描画で native owner を共有し、Mod の直接 GL だけ互換層から更新。AMD/Intel world・video・退出後 menu は gate 通過、inventory/recipe は未較正、全6 leg validation 0（[証拠](evidence/native-fog-2026-10-26.json)）。151 JUnit・71 Python 通過。KPI は負荷 2.15 > 2 で開始拒否、速度未判定。**lit model shader の fog は未実装**。fixture tick の注釈移動は修正済み。
+3. **native 状態・分割**: `BackendDiagnostics`・`ShaderPackProbe`・`ModelReplay`・`PostChainBridge`・`ImmediateFogState` を抽出。fog は vanilla setter・地形・可視距離・即時描画で native owner を共有し、Mod の直接 GL だけ互換層から更新。AMD/Intel world・video・退出後 menu は gate 通過、inventory/recipe は未較正、全6 leg validation 0（[証拠](evidence/native-fog-2026-10-26.json)）。151 JUnit・71 Python 通過。KPI は負荷 2.15 > 2 で開始拒否、速度未判定。**instance model の fog を実装**（[比較・実画像](evidence/model-fog-2026-10-26.json)）。非instanceのlit描画は未対応。Intel対control raw p50 0.980x、p95は全3組増加。負荷1.69→5.38・参照armなしで速度判定なし。fixture tick の注釈移動は修正済み。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。

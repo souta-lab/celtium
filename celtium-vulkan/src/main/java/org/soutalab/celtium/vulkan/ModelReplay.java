@@ -499,7 +499,7 @@ final class ModelReplay {
         }
         float[] affine = b.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
         instances.append(open.modelRun, listId, mvp, colour, combineColor, affine, Float.intBitsToFloat(state[6]),
-                b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
+                b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture, b.fog, modelView);
         open.batches += quads;
         return true;
     }
