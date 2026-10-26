@@ -1308,17 +1308,15 @@ public final class VulkanContext {
         }
     }
 
-    /**
-     * Submits a detached batch in one {@code vkQueueSubmit}, on whichever thread holds the queue.
-     *
-     * @return the failure, or null; the caller's thread frees the entries through {@link #failBatch} on failure
-     */
-    private Throwable submitBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
+    /** About 14 KiB of MemoryStack per chunk, leaving room for frames the callers already hold. */
+    private static final int SUBMIT_CHUNK = 128;
+
+    private Throwable submitChunk(java.util.ArrayList<DeferredSubmit> entries, int from, int to, long fence) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkSubmitInfo.Buffer submits = VkSubmitInfo.calloc(entries.size(), stack);
-            for (int i = 0; i < entries.size(); i++) {
+            VkSubmitInfo.Buffer submits = VkSubmitInfo.calloc(to - from, stack);
+            for (int i = from; i < to; i++) {
                 DeferredSubmit entry = entries.get(i);
-                VkSubmitInfo submit = submits.get(i).sType$Default();
+                VkSubmitInfo submit = submits.get(i - from).sType$Default();
                 submit.pCommandBuffers(stack.pointers(entry.commandBuffer));
                 if (entry.waitSemaphores != null) {
                     submit.waitSemaphoreCount(entry.waitSemaphores.length);
@@ -1332,11 +1330,33 @@ public final class VulkanContext {
             try {
                 VulkanContext.queueSubmitCalls++;
                 long batchedSubmitStarted = System.nanoTime();
-                check(vkQueueSubmit(this.queue, submits, batch.fence), "vkQueueSubmit (batched deferred)");
+                check(vkQueueSubmit(this.queue, submits, fence), "vkQueueSubmit (batched deferred)");
                 batchedSubmitNanos += System.nanoTime() - batchedSubmitStarted;
                 batchedSubmitCalls++;
             } catch (RuntimeException | LinkageError submitError) {
                 return submitError;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Submits a detached batch in one {@code vkQueueSubmit}, on whichever thread holds the queue.
+     *
+     * @return the failure, or null; the caller's thread frees the entries through {@link #failBatch} on failure
+     */
+    private Throwable submitBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
+        // In chunks: a loading screen can queue hundreds of uploads in one batch (measured on Enigmatica 2 Expert's
+        // texture stitch: "OutOfMemoryError: Out of stack space" building one VkSubmitInfo array for all of them on the
+        // 64 KiB MemoryStack). Chunks go to the queue in order and only the last arms the shared fence, which the
+        // queue signals after every earlier submission - the same completion the single call gave.
+        for (int from = 0; from < entries.size(); from += SUBMIT_CHUNK) {
+            int to = Math.min(entries.size(), from + SUBMIT_CHUNK);
+            Throwable failure = submitChunk(entries, from, to, to == entries.size() ? batch.fence : VK_NULL_HANDLE);
+            if (failure != null) {
+                // A failure after an earlier chunk reached the queue is a device-level error (the same call with the
+                // same kind of entries just succeeded); the caller's free-everything path is then the lost-device one.
+                return failure;
             }
         }
         batchedFlushCalls++;
