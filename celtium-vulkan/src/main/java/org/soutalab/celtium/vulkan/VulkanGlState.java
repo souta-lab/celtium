@@ -217,6 +217,27 @@ public final class VulkanGlState {
     }
 
     public void rotate(double angleDegrees, double x, double y, double z) {
+        // A rotation about a positive unit axis - nearly every vanilla model part's call - changes only the two columns
+        // that axis does not own, and needs no normalisation: the general path below gives the same matrix with c, s
+        // folded into the identity's zeros, at three times the work.
+        int axis = x == 1.0 && y == 0.0 && z == 0.0 ? 0 : x == 0.0 && y == 1.0 && z == 0.0 ? 1
+                : x == 0.0 && y == 0.0 && z == 1.0 ? 2 : -1;
+        if (axis >= 0) {
+            double axisRadians = Math.toRadians(angleDegrees);
+            float c = (float) Math.cos(axisRadians);
+            float s = (float) Math.sin(axisRadians);
+            // Columns a and b of the product are m*(c*ea + s*eb) and m*(-s*ea + c*eb) for the axis's right-handed pair.
+            int a = axis == 0 ? 4 : axis == 1 ? 8 : 0;
+            int b = axis == 0 ? 8 : axis == 1 ? 0 : 4;
+            float[] m = top(this.matrixMode);
+            for (int row = 0; row < 4; row++) {
+                float ma = m[a + row];
+                float mb = m[b + row];
+                m[a + row] = (ma * c) + (mb * s);
+                m[b + row] = (mb * c) - (ma * s);
+            }
+            return;
+        }
         double radians = Math.toRadians(angleDegrees);
         double length = Math.sqrt((x * x) + (y * y) + (z * z));
         if (length == 0.0) {

@@ -7976,6 +7976,12 @@ this.frameBufferOpen = false;
         // and re-reading the same index is correct and O(1) a removal.
         java.util.List<ImmediateGroup> retired = this.retiredImmediateGroups;
         long completed = this.scheduler.completedSubmitSequence();
+        // Called once per confirmed submission, and the list holds every group still in flight: a scan that found
+        // nothing releasable finds nothing again until the watermark moves or a group is added (a group's sequence is
+        // set before it enters the list and never changes while it is there).
+        if (completed == this.retiredScanCompleted && retired.size() == this.retiredScanSize) {
+            return;
+        }
         for (int i = 0; i < retired.size(); ) {
             ImmediateGroup group = retired.get(i);
             if (group.retireSequence > completed) {
@@ -7996,7 +8002,13 @@ this.frameBufferOpen = false;
             // Recycle only after the group has left the retired list, preserving swap-remove O(1) compaction.
             ImmediateGroup.recycle(group);
         }
+        this.retiredScanCompleted = completed;
+        this.retiredScanSize = retired.size();
     }
+
+    private int lastAlphaReferenceBits = Integer.MIN_VALUE;
+    private long retiredScanCompleted = Long.MIN_VALUE;
+    private int retiredScanSize = -1;
 
     /**
      * The captured drawing state of a group as one bracketed field, for {@code CELTIUM_GROUP_BOUNDS}.
@@ -16881,8 +16893,12 @@ this.frameBufferOpen = false;
                 this.alphaSelectorCounts.addTo(alphaSelector, 1L);
                 this.lastAlphaSelector = alphaSelector;
                 this.immediateStatistics.setLastAlphaPushReference(state.length > 6 ? Float.intBitsToFloat(state[6]) : Float.NaN);
-                if (this.alphaReferenceValues.size() < 12) {
-                    this.alphaReferenceValues.add(Integer.valueOf(state.length > 6 ? state[6] : 0));
+                int alphaReferenceBits = state.length > 6 ? state[6] : 0;
+                // A boxed set add per draw for a 12-value report: consecutive draws repeat the value, so only a change
+                // reaches the set.
+                if (alphaReferenceBits != this.lastAlphaReferenceBits && this.alphaReferenceValues.size() < 12) {
+                    this.alphaReferenceValues.add(Integer.valueOf(alphaReferenceBits));
+                    this.lastAlphaReferenceBits = alphaReferenceBits;
                 }
                 // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every
                 // group that carries them rather than guarded per pipeline - only the lit layout reads past 128, and

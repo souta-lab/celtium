@@ -96,6 +96,70 @@ public final class GameLoopTiming {
     private GameLoopTiming() {
     }
 
+    /**
+     * {@code -Dceltium.debug.frameTail=true}: which part of the loop the slowest tenth of loops spend their extra time
+     * in. The fixture's p95 is a loop-interval percentile, and the tick share alone did not separate it (JFR: the tick
+     * is 3.6% of the client thread on both renderers), so each batch of loops is split at its own p90 and the mean of
+     * every loop component is printed for both halves.
+     */
+    private static final boolean TAIL = Boolean.getBoolean("celtium.debug.frameTail");
+    private static final int TAIL_BATCH = 2000;
+    private static final String[] TAIL_PARTS = {"loop", "tick", "render", "display", "blit", "sync", "scheduled",
+            "wrapper", "toast", "fmlTick"};
+    private static final long[][] tailRows = new long[TAIL_BATCH][TAIL_PARTS.length];
+    private static int tailCount;
+
+    private static void noteTail(long loop) {
+        long[] row = tailRows[tailCount++];
+        row[0] = loop;
+        row[1] = tickInsideLoop;
+        row[2] = renderInsideLoop;
+        row[3] = displayInsideLoop;
+        row[4] = blitInsideLoop;
+        row[5] = syncInsideLoop;
+        row[6] = scheduledInsideLoop;
+        row[7] = renderWrapperInsideLoop;
+        row[8] = toastInsideLoop;
+        row[9] = fmlTickInsideLoop;
+        if (tailCount < TAIL_BATCH) {
+            return;
+        }
+        tailCount = 0;
+        long[] loops = new long[TAIL_BATCH];
+        for (int i = 0; i < TAIL_BATCH; i++) {
+            loops[i] = tailRows[i][0];
+        }
+        java.util.Arrays.sort(loops);
+        long p90 = loops[TAIL_BATCH * 9 / 10];
+        double[] slow = new double[TAIL_PARTS.length];
+        double[] rest = new double[TAIL_PARTS.length];
+        int slowCount = 0;
+        int ticksSlow = 0;
+        int ticksRest = 0;
+        for (long[] r : tailRows) {
+            boolean isSlow = r[0] >= p90;
+            double[] into = isSlow ? slow : rest;
+            for (int k = 0; k < TAIL_PARTS.length; k++) {
+                into[k] += r[k];
+            }
+            if (isSlow) {
+                slowCount++;
+                ticksSlow += r[1] > 0 ? 1 : 0;
+            } else {
+                ticksRest += r[1] > 0 ? 1 : 0;
+            }
+        }
+        StringBuilder line = new StringBuilder("[Celtium] CELTIUM_FRAME_TAIL p90us=").append(p90 / 1000L)
+                .append(" slow=").append(slowCount).append(" tickLoopsSlow=").append(ticksSlow)
+                .append(" tickLoopsRest=").append(ticksRest);
+        for (int k = 0; k < TAIL_PARTS.length; k++) {
+            line.append(' ').append(TAIL_PARTS[k]).append("us=")
+                    .append(Math.round(slow[k] / Math.max(1, slowCount) / 1000.0)).append('/')
+                    .append(Math.round(rest[k] / Math.max(1, TAIL_BATCH - slowCount) / 1000.0));
+        }
+        System.out.println(line);
+    }
+
     /** Called at the head of the client tick. */
     public static void tickStarted() {
         openNanos = System.nanoTime();
@@ -157,6 +221,9 @@ public final class GameLoopTiming {
         lastLoopDisplayNanos = displayInsideLoop;
         lastLoopBlitNanos = blitInsideLoop;
         lastLoopSyncNanos = syncInsideLoop;
+        if (TAIL) {
+            noteTail(elapsed);
+        }
         displayUpdateNanos.addAndGet(displayInsideLoop);
         blitNanos.addAndGet(blitInsideLoop);
         syncNanos.addAndGet(syncInsideLoop);

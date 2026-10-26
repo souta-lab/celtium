@@ -165,4 +165,30 @@ class VulkanGlStateTransformTest {
         state.popMatrix();
         assertEquals(5.0f, topModelView(state)[12], 1.0e-6f, "the popped entry kept its own values");
     }
+    @Test
+    void unitAxisRotationMatchesTheGeneralAxisPath() {
+        // The unit-axis fast path against the general one: a (2,0,0)-style axis normalises to the same rotation but
+        // takes the general branch, so both must leave the same matrix after the same preceding transforms.
+        double[][] axes = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        double[] angles = {0, 17.5, 90, -133, 180, 361};
+        for (double[] axis : axes) {
+            for (double angle : angles) {
+                VulkanGlState fast = state();
+                VulkanGlState general = state();
+                for (VulkanGlState s : new VulkanGlState[] {fast, general}) {
+                    s.translate(0.5, -2, 3);
+                    s.scale(1.5, 0.75, 2);
+                    s.rotate(31, 0.3, 0.4, 0.5);
+                }
+                fast.rotate(angle, axis[0], axis[1], axis[2]);
+                general.rotate(angle, axis[0] * 2, axis[1] * 2, axis[2] * 2);
+                float[] a = topModelView(fast);
+                float[] b = topModelView(general);
+                for (int k = 0; k < 16; k++) {
+                    assertEquals(b[k], a[k], 1.0e-5f, "element " + k + " axis " + java.util.Arrays.toString(axis)
+                            + " angle " + angle);
+                }
+            }
+        }
+    }
 }
