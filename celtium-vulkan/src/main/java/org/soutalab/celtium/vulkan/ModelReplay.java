@@ -394,7 +394,7 @@ final class ModelReplay {
     /**
      * Appends a lit model replay to the open instance run, or opens a run in a new queued group; {@return false} to
      * leave the replay to the per-group path. Only lit replays on the main target take this path: the unlit ITEM
-     * family evaluates fog and the full alpha function, which the instance shaders do not carry, and an off-target
+     * family evaluates the full alpha function, which the instance shaders do not carry, and an off-target
      * replay is drawn in its own pass by the per-group code.
      */
     boolean celtium$appendModelInstance(VulkanDynamicMesh mesh, int texture, int[] state, long key,
@@ -453,6 +453,7 @@ final class ModelReplay {
                 && b.immediateGroups.get(b.immediateGroups.size() - 1) == open
                 && b.currentImmediateMesh == null
                 && open.stateKey == key && open.target == target
+                && java.util.Arrays.equals(open.projection, projection) && !b.fog.movedFrom(open.fog)
                 && open.modelRun.pipeline.renderPass == pass
                 && java.util.Arrays.equals(open.viewportValues, viewport)
                 && open.stamp != null && open.stamp.frameId == b.frameId
@@ -472,22 +473,13 @@ final class ModelReplay {
             ImmediateGroup group = ImmediateGroup.obtain(mesh, projection.clone(), modelView.clone(), VulkanImmediateFormats.ITEM,
                     texture, key, state, target);
             group.modelRun = instances.openRun(pipeline);
+            group.fog = b.fog.snapshot();
             group.viewportValues = viewport;
             group.stamp = GroupStamp.obtain(b.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
             b.immediateGroups.add(group);
             b.immediateStatistics.noteImmediateGroupsClosed();
             b.openModelRunGroup = group;
             open = group;
-        }
-        float[] mvp = b.modelInstanceMvp;
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                float sum = 0.0f;
-                for (int k = 0; k < 4; k++) {
-                    sum += projection[k * 4 + row] * modelView[column * 4 + k];
-                }
-                mvp[column * 4 + row] = sum;
-            }
         }
         float[] colour = null;
         if (b.colorMirrorHasValue) {
@@ -498,8 +490,8 @@ final class ModelReplay {
             colour[3] = b.immediateState.colorAlpha();
         }
         float[] affine = b.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
-        instances.append(open.modelRun, listId, mvp, colour, combineColor, affine, Float.intBitsToFloat(state[6]),
-                b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture, b.fog, modelView);
+        instances.append(open.modelRun, listId, modelView, colour, combineColor, affine, Float.intBitsToFloat(state[6]),
+                b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
         open.batches += quads;
         return true;
     }
@@ -524,7 +516,7 @@ final class ModelReplay {
         }
         if (b.modelInstances != null && b.textureArray != null) {
             b.modelInstances.draw(b.commandBuffer, group.modelRun, b.textureArray.set(),
-                    b.context.multiDrawIndirectEnabled());
+                    b.context.multiDrawIndirectEnabled(), group.projection, group.fog);
         }
         java.util.Arrays.fill(b.immediateBindCache, -1L);
         VulkanPushCache.SHARED.invalidate();

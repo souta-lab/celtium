@@ -1,13 +1,16 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
 
-// Celtium - lit model display lists drawn as instances (VulkanModelInstances): one record per replayed list, read by
-// gl_InstanceIndex (the indirect command's firstInstance), the mesh from the shared model pool and the texture by index
-// from the shared array. The shading is immediate_tex_color_lit.vert's, term for term; only where the per-draw values
-// come from changes (a record instead of a push block).
+// Native model poses are per-instance. Projection and fog are immutable for a run and come from
+// its push block, so projection * model-view is evaluated here rather than rebuilt on the CPU.
+layout(push_constant) uniform RunConstants {
+    mat4 projection;
+    vec4 fogColor;
+    vec4 fogParams;
+} runState;
 
 struct Instance {
-    mat4 mvp;           // 0: remapped projection * model view, combined on the CPU as the per-group path does
+    mat4 modelView;     // 0: captured pose, in eye space
     vec4 colour;        // 64: the current glColor (1 when none), which the lit vertex colour is scaled by
     vec4 combine;       // 80: rgb the texture-env interpolate constant, w its amount (0 when no combine)
     vec4 texA;          // 96: texture affine a, b, c, d
@@ -19,11 +22,7 @@ struct Instance {
     vec4 diffuse1;      // 192
     vec4 lightCoord;    // 208: xy the light-map coordinate
     ivec4 indices;      // 224: x texture, y light map (indices into the shared array)
-    vec4 fogParams;     // 240: density, start, end, selector (mode + 8 * shape)
-    vec4 fogColor;      // 256: rgb, blend weight
-    vec4 fogRow0;       // 272: model-view rows, independent of the clip transform
-    vec4 fogRow1;       // 288
-    vec4 fogRow2;       // 304
+    vec4 pad;           // 240
 };
 
 layout(std430, set = 1, binding = 0) readonly buffer Instances {
@@ -43,8 +42,6 @@ layout(location = 2) flat out int v_Texture;
 layout(location = 3) flat out vec4 v_Combine;
 layout(location = 4) flat out float v_AlphaRef;
 layout(location = 5) out float v_FogDistance;
-layout(location = 6) flat out vec4 v_FogParams;
-layout(location = 7) flat out vec4 v_FogColor;
 
 void main() {
     Instance r = instances[gl_InstanceIndex];
@@ -63,14 +60,8 @@ void main() {
     v_Texture = r.indices.x;
     v_Combine = r.combine;
     v_AlphaRef = r.texB.w;
-    v_FogParams = r.fogParams;
-    v_FogColor = r.fogColor;
-    int selector = int(r.fogParams.w + 0.5);
-    v_FogDistance = 0.0;
-    if ((selector & 7) != 0) {
-        vec4 position = vec4(a_Position, 1.0);
-        vec3 eye = vec3(dot(r.fogRow0, position), dot(r.fogRow1, position), dot(r.fogRow2, position));
-        v_FogDistance = (selector >> 3) == 2 ? abs(eye.z) : length(eye);
-    }
-    gl_Position = r.mvp * vec4(a_Position, 1.0);
+    vec4 eye = r.modelView * vec4(a_Position, 1.0);
+    int selector = int(runState.fogParams.w + 0.5);
+    v_FogDistance = (selector & 7) == 0 ? 0.0 : (selector >> 3) == 2 ? abs(eye.z) : length(eye.xyz);
+    gl_Position = runState.projection * eye;
 }

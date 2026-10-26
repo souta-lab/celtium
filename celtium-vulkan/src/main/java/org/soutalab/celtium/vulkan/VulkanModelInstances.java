@@ -33,7 +33,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * <p>
  * Measured need (leg {@code prof-celtium-4}, AMD, world): about 800 display-list replays a frame, each one an
  * {@link ImmediateGroup} of its own with its own push block, binds and draw - most of the record loop and much of the
- * accept path. Here a replay is one 320-byte record (matrix, colour, combine, texture affine, lighting, texture and
+ * accept path. Here a replay is one 256-byte record (matrix, colour, combine, texture affine, lighting, texture and
  * light-map indices) and one indirect command into a shared mesh pool, and a run of consecutive replays with the same
  * pipeline state is one {@code vkCmdDrawIndexedIndirect}. Textures come from {@link VulkanTextureArray} by index, so
  * a texture change no longer breaks a run.
@@ -48,7 +48,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * Threading: render thread only.
  */
 final class VulkanModelInstances {
-    static final int RECORD_BYTES = 320;
+    static final int RECORD_BYTES = 256;
     static final int COMMAND_BYTES = 20;
     static final int SEGMENTS = FrameSubmissionScheduler.FRAME_SLOTS + 2;
     static final int SEGMENT_RECORDS = 4096;
@@ -187,9 +187,12 @@ final class VulkanModelInstances {
                     .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1).pBufferInfo(info);
             vkUpdateDescriptorSets(this.context.device(), write, null);
 
-            // No push range: everything per draw is in the record, including the combined matrix.
+            // Projection and fog change per run; individual poses live in the storage records.
+            org.lwjgl.vulkan.VkPushConstantRange.Buffer ranges = org.lwjgl.vulkan.VkPushConstantRange.calloc(1, stack);
+            ranges.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                    .offset(0).size(ModelRunConstants.BYTES);
             if (vkCreatePipelineLayout(this.context.device(), VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
-                    .pSetLayouts(stack.longs(this.textureSetLayout, this.recordsLayout)), null, handle) != VK_SUCCESS) {
+                    .pSetLayouts(stack.longs(this.textureSetLayout, this.recordsLayout)).pPushConstantRanges(ranges), null, handle) != VK_SUCCESS) {
                 return false;
             }
             this.pipelineLayout = handle.get(0);
@@ -323,14 +326,13 @@ final class VulkanModelInstances {
      * @param affine the texture affine (a, b, c, d, tx, ty), or null for the identity
      * @param light  the lit payload: two model-space directions, ambient and two diffuses (20 floats)
      */
-    void append(Run run, int listId, float[] mvp, float[] colour, float[] combine, float[] affine, float alphaRef,
-            float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture,
-            ImmediateFogState fog, float[] modelView) {
+    void append(Run run, int listId, float[] modelView, float[] colour, float[] combine, float[] affine, float alphaRef,
+            float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
         int[] entry = this.poolEntries.get(listId);
         int index = this.segment * SEGMENT_RECORDS + this.used;
         long r = this.records.mappedAddress() + (long) index * RECORD_BYTES;
         for (int i = 0; i < 16; i++) {
-            MemoryUtil.memPutFloat(r + i * 4L, mvp[i]);
+            MemoryUtil.memPutFloat(r + i * 4L, modelView[i]);
         }
         boolean combined = combine != null;
         MemoryUtil.memPutFloat(r + 64, combined || colour == null ? 1.0f : colour[0]);
@@ -358,7 +360,6 @@ final class VulkanModelInstances {
         MemoryUtil.memPutFloat(r + 212, lightCoord == null ? 0.0f : lightCoord[1]);
         MemoryUtil.memPutInt(r + 224, textureIndex);
         MemoryUtil.memPutInt(r + 228, lightmapIndex);
-        writeFogRecord(r, fog, modelView);
         long c = this.commands.mappedAddress() + (long) index * COMMAND_BYTES;
         MemoryUtil.memPutInt(c, entry[2]);
         MemoryUtil.memPutInt(c + 4, 1);
@@ -371,29 +372,6 @@ final class VulkanModelInstances {
         this.appended++;
     }
 
-    /** std430 tail: parameters at 240, RGB/weight at 256 and three eye-transform rows at 272. */
-    static void writeFogRecord(long record, ImmediateFogState fog, float[] modelView) {
-        int selector = fog.selector();
-        if (selector == 0) {
-            // The segment is reused: do not retain another instance's fog payload when fog is disabled.
-            MemoryUtil.memSet(record + 240, 0, 80);
-            return;
-        }
-        MemoryUtil.memPutFloat(record + 240, fog.density);
-        MemoryUtil.memPutFloat(record + 244, fog.start);
-        MemoryUtil.memPutFloat(record + 248, fog.end);
-        MemoryUtil.memPutFloat(record + 252, selector);
-        MemoryUtil.memPutFloat(record + 256, fog.red);
-        MemoryUtil.memPutFloat(record + 260, fog.green);
-        MemoryUtil.memPutFloat(record + 264, fog.blue);
-        MemoryUtil.memPutFloat(record + 268, 1.0f);
-        for (int row = 0; row < 3; row++) {
-            for (int column = 0; column < 4; column++) {
-                MemoryUtil.memPutFloat(record + 272 + row * 16L + column * 4L, modelView[column * 4 + row]);
-            }
-        }
-    }
-
     void noteMissing() {
         this.declinedMissing++;
     }
@@ -402,12 +380,17 @@ final class VulkanModelInstances {
      * Records a run: pipeline, the texture array and records sets, the pool buffers, then the indirect draw. The caller has already set the group's viewport and bias and
      * must treat the immediate bind cache as stale afterwards.
      */
-    void draw(VkCommandBuffer commandBuffer, Run run, long textureSet, boolean multiDraw) {
+    void draw(VkCommandBuffer commandBuffer, Run run, long textureSet, boolean multiDraw,
+            float[] projection, float[] fog) {
         if (run.count <= 0) {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, run.pipeline.handle);
+            ByteBuffer constants = stack.calloc(ModelRunConstants.BYTES);
+            ModelRunConstants.write(constants, projection, fog);
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     stack.longs(textureSet, this.recordsSet), null);
             vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));

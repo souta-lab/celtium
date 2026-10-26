@@ -2,8 +2,14 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 // Celtium - the model instance fragment stage: immediate_tex_color_lit.frag with the texture taken from the shared
-// array and the combine / alpha reference from the instance instead of the push block. The record
-// also carries independent fog, applied after texturing/lighting/combine and before blending.
+// array and the combine / alpha reference from the instance instead of the push block. The
+// run push block carries independent fog, applied after texturing/lighting/combine and before blending.
+
+layout(push_constant) uniform RunConstants {
+    mat4 projection;
+    vec4 fogColor;
+    vec4 fogParams;
+} runState;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 
@@ -13,8 +19,6 @@ layout(location = 2) flat in int v_Texture;
 layout(location = 3) flat in vec4 v_Combine;
 layout(location = 4) flat in float v_AlphaRef;
 layout(location = 5) in float v_FogDistance;
-layout(location = 6) flat in vec4 v_FogParams;
-layout(location = 7) flat in vec4 v_FogColor;
 layout(location = 0) out vec4 fragColor;
 
 void main() {
@@ -25,19 +29,19 @@ void main() {
     if (v_Combine.w > 0.0) {
         colour.rgb = mix(colour.rgb, v_Combine.rgb, v_Combine.w);
     }
-    int mode = int(v_FogParams.w + 0.5) & 7;
+    int mode = int(runState.fogParams.w + 0.5) & 7;
     if (mode != 0) {
         float visibility;
         if (mode == 1) {
-            float scaled = v_FogDistance * v_FogParams.x;
+            float scaled = v_FogDistance * runState.fogParams.x;
             visibility = clamp(exp(-(scaled * scaled)), 0.0, 1.0);
         } else if (mode == 2) {
-            visibility = clamp(exp(-v_FogDistance * v_FogParams.x), 0.0, 1.0);
+            visibility = clamp(exp(-v_FogDistance * runState.fogParams.x), 0.0, 1.0);
         } else {
-            float span = max(v_FogParams.z - v_FogParams.y, 0.000001);
-            visibility = clamp((v_FogParams.z - v_FogDistance) / span, 0.0, 1.0);
+            float span = max(runState.fogParams.z - runState.fogParams.y, 0.000001);
+            visibility = clamp((runState.fogParams.z - v_FogDistance) / span, 0.0, 1.0);
         }
-        colour.rgb = mix(colour.rgb, v_FogColor.rgb, (1.0 - visibility) * v_FogColor.a);
+        colour.rgb = mix(colour.rgb, runState.fogColor.rgb, (1.0 - visibility) * runState.fogColor.a);
     }
     fragColor = colour;
 }

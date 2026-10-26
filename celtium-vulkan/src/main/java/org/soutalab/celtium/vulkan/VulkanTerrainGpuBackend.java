@@ -3018,7 +3018,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     boolean modelInstancesFailed;
     /** The queued group that holds the open instance run, so a following replay can join it. */
     ImmediateGroup openModelRunGroup;
-    final float[] modelInstanceMvp = new float[16];
     final float[] modelInstanceAffine = new float[6];
     // Per-replay scratch: the instance path copies these into the mapped record buffer at once, and the group path
     // clones what it keeps. Each was a fresh array per model replay (~350 MB a warm minute in the Xaero scene's JFR).
