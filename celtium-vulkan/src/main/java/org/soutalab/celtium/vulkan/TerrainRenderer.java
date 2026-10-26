@@ -700,6 +700,11 @@ public final class TerrainRenderer {
             Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
     static int fogMode() {
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            ImmediateFogState fog = ImmediateFogState.current();
+            if (!fog.enabled()) return 0;
+            return fog.glMode() == 2049 ? 1 : fog.glMode() == 2048 ? 2 : 3;
+        }
         if (VulkanFogMirror.hasValue()) {
             // No GL query on this path: the game pushed GlStateManager.fogState (the same source the GL fog service
             // reads). The query below stays as the fallback for a caller that has not pushed yet.

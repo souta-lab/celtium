@@ -180,11 +180,12 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
         float pitch = viewEntity.rotationPitch;
         float yaw = viewEntity.rotationYaw;
-        // Push the game's own fog state once per frame, so the Vulkan terrain backend never has to ask OpenGL for it
-        // (completion condition (b)). GlStateManager.fogState is public and is exactly what the GL fog service reads.
-        org.soutalab.celtium.vulkan.VulkanFogMirror.set(
-                net.minecraft.client.renderer.GlStateManager.fogState.fog.currentState,
-                net.minecraft.client.renderer.GlStateManager.fogState.mode);
+        // The native path reads its own fog owner; only the legacy bridge uses the vanilla state cache.
+        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) {
+            org.soutalab.celtium.vulkan.VulkanFogMirror.set(
+                    net.minecraft.client.renderer.GlStateManager.fogState.fog.currentState,
+                    net.minecraft.client.renderer.GlStateManager.fogState.mode);
+        }
         float fogDistance = GLStateManagerFogService.INSTANCE.getFogCutoff();
 
         return new CameraState(x, y, z, pitch, yaw, fogDistance);

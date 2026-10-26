@@ -1,7 +1,8 @@
 package org.soutalab.celtium.vulkan;
 
 /**
- * Fixed-function fog for the immediate path, mirrored from {@code GlStateManager} by {@code GlStateManagerFogMixin}.
+ * Native fog owner shared by terrain, visibility and immediate drawing. Vanilla setters terminate here;
+ * the direct-GL compatibility adapter reads and writes this same owner.
  * <p>
  * The immediate path had no fog of any kind, so every batch vanilla blends into the horizon - the sky dome, the
  * horizon plane, the water surface, the clouds - arrived as its own flat colour. The state is captured per batch
@@ -9,7 +10,56 @@ package org.soutalab.celtium.vulkan;
  * {@code RenderGlobal.renderSky} turns fog on for the dome and off again for the sun and the moon inside the same pass.
  * The backend writes the captured values into the push block at 128..207; this class owns the state and its selector.
  */
-final class ImmediateFogState {
+public final class ImmediateFogState implements org.embeddedt.embeddium.impl.render.chunk.fog.FogService {
+    private static final ImmediateFogState CURRENT = new ImmediateFogState();
+    public static ImmediateFogState current() { return CURRENT; }
+
+    private final NativeRasterState boundaries;
+    ImmediateFogState() { this(NativeRasterState.current()); }
+    ImmediateFogState(NativeRasterState boundaries) { this.boundaries = boundaries; }
+    public void enabled(boolean value) {
+        if (this.enabled != value) this.boundaries.flushBeforeChange();
+        this.enabled = value; this.mirrored = true;
+    }
+    public void parameter(int pname, float value) {
+        float old;
+        switch (pname) {
+            case 0x0B65: old = this.glMode; value = (int) value; break;
+            case 0x0B62: old = this.density; break;
+            case 0x0B63: old = this.start; break;
+            case 0x0B64: old = this.end; break;
+            case 0x855A: old = this.radialRequested ? 1 : 0; value = (int) value == 0x855B ? 1 : 0; break;
+            default: return;
+        }
+        if (old != value) this.boundaries.flushBeforeChange();
+        switch (pname) {
+            case 0x0B65: this.glMode = (int) value; break;
+            case 0x0B62: this.density = value; break;
+            case 0x0B63: this.start = value; break;
+            case 0x0B64: this.end = value; break;
+            case 0x855A: this.radialRequested = value != 0; break;
+        }
+        this.mirrored = true;
+    }
+    private float alpha;
+    public void color(float r, float g, float b) { color(r, g, b, 1.0f); }
+    public void color(float r, float g, float b, float a) {
+        if (this.red != r || this.green != g || this.blue != b) this.boundaries.flushBeforeChange();
+        this.red = r; this.green = g; this.blue = b; this.alpha = a; this.mirrored = true;
+    }
+    public float colorAlpha() { return this.alpha; }
+    public boolean enabled() { return this.enabled; }
+    public int glMode() { return this.glMode; }
+    @Override public float getFogStart() { return this.start; }
+    @Override public float getFogEnd() { return this.end; }
+    @Override public float getFogDensity() { return this.density; }
+    @Override public float getFogCutoff() { return this.end; }
+    @Override public int getFogShapeIndex() { return 0; }
+    @Override public float[] getFogColor() { return new float[] {this.red, this.green, this.blue, 1.0f}; }
+    @Override public org.embeddedt.embeddium.impl.render.chunk.shader.ChunkFogMode getFogMode() {
+        return org.embeddedt.embeddium.impl.render.chunk.shader.ChunkFogMode.fromGLMode(this.enabled ? this.glMode : 0);
+    }
+
     /**
      * The kill switch, so the fog can be measured as one flag apart on one jar: with this false the family is mirrored
      * and the push block is still written, but its selector says "no fog" - exactly the picture the path produced

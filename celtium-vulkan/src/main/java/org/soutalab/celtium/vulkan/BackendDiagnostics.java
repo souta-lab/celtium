@@ -344,7 +344,7 @@ final class BackendDiagnostics {
                 + " swapPointDumpMillis=" + (b.swapPointDumpNanos / 1000000L)
                 + " swapPointPollMillis=" + (b.swapPointPollNanos / 1000000L)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
-                + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
+                + " fogModeSource=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() ? "native-owner" : VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
                 + " boundTextureSamples=" + b.textureStats.boundTextureComparisons()
                 + " boundTextureMismatches=" + b.textureStats.boundTextureMismatches()
                 + " announcedDynamicTextures=" + b.textureStats.announcedDynamicTextures()

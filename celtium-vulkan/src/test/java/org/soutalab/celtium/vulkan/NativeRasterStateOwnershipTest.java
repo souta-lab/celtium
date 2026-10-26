@@ -174,4 +174,33 @@ class NativeRasterStateOwnershipTest {
         assertEquals(VulkanGlState.BLEND_SRC_ALPHA, this.nativeState.blendSrcRgb());
         assertEquals(VulkanGlState.BLEND_ONE_MINUS_SRC_ALPHA, this.nativeState.blendDstRgb());
     }
+    @Test
+    void rawModFogAndNativeTerrainShareStateWhileQueuedDrawsKeepTheirSnapshot() throws Exception {
+        ImmediateFogState fog = ImmediateFogState.current();
+        var out = MemoryUtil.memAlloc(16);
+        try {
+            call("glEnable", 0x0B60);
+            call("glFogi", 0x0B65, 9729);
+            call("glFogf", 0x0B64, Float.floatToRawIntBits(128.0f));
+            out.putFloat(0, 0.2f).putFloat(4, 0.4f).putFloat(8, 0.6f).putFloat(12, 0.7f);
+            call("glFogfv", 0x0B66, MemoryUtil.memAddress(out));
+            float[] queued = fog.snapshot();
+            assertEquals(128, fog.getFogCutoff());
+            assertEquals(0.2f, queued[4]);
+            assertEquals(0.7f, fog.colorAlpha());
+            fog.color(0.9f, 0.8f, 0.7f, 0.6f);
+            call("glGetFloatv", 0x0B66, MemoryUtil.memAddress(out));
+            assertEquals(0.9f, out.getFloat(0));
+            assertEquals(0.6f, out.getFloat(12));
+            assertEquals(0.2f, queued[4]);
+            fog.enabled(false);
+            assertEquals(0, call("glIsEnabled", 0x0B60));
+            call("glGetIntegerv", 0x0B65, MemoryUtil.memAddress(out));
+            assertEquals(9729, out.getInt(0));
+        } finally {
+            fog.enabled(false); fog.parameter(0x0B65, 2048); fog.parameter(0x0B64, 1);
+            fog.color(0, 0, 0, 0); MemoryUtil.memFree(out);
+        }
+    }
+
 }

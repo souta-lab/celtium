@@ -100,6 +100,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
     private static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
     private static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
+    private static final int SEM_FOG_I = 71;
+    private static final int SEM_FOG_F = 72;
+    private static final int SEM_FOG_FV = 73;
+    private static final int SEM_FOG_IV = 74;
     private static final int SEM_TEX_ENV_I = 47;      // (target,pname,param) -> texture-env int, per active unit
     private static final int SEM_TEX_ENV_F = 48;      // (target,pname,param) -> texture-env float
     private static final int SEM_TEX_ENV_FV = 49;     // (target,pname,values) -> texture-env float array
@@ -329,6 +333,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         // combine mode and the environment colour, both on the lightmap unit - returned zero and the hurt flash was
         // invisible to the instrument as well as to the frame (measured by entity-models: the reference shifts the
         // zombie head from (78.9,123.7,87.7) to (117.3,105.0,79.4) and ours moves by at most 1.8).
+        fn("glFogi", R_VOID, SEM_FOG_I, A_INT, A_INT);
+        fn("glFogf", R_VOID, SEM_FOG_F, A_INT, A_FLOAT);
+        fn("glFogfv", R_VOID, SEM_FOG_FV, A_INT, A_PTR);
+        fn("glFogiv", R_VOID, SEM_FOG_IV, A_INT, A_PTR);
         fn("glTexEnvi", R_VOID, SEM_TEX_ENV_I, A_INT, A_INT, A_INT);
         fn("glTexEnviv", R_VOID, SEM_TEX_ENV_I, A_INT, A_INT, A_PTR);
         fn("glTexEnvf", R_VOID, SEM_TEX_ENV_F, A_INT, A_INT, A_FLOAT);
@@ -3159,6 +3167,26 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.viewportW = (int) c[2];
                 this.viewportH = (int) c[3];
                 return 0L;
+            case SEM_FOG_I:
+                org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], (int) c[1]);
+                return 0L;
+            case SEM_FOG_F:
+                org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], Float.intBitsToFloat((int) c[1]));
+                return 0L;
+            case SEM_FOG_FV:
+            case SEM_FOG_IV:
+                if (c[1] != 0L) {
+                    org.soutalab.celtium.vulkan.ImmediateFogState fog = org.soutalab.celtium.vulkan.ImmediateFogState.current();
+                    boolean ints = fn.semantics == SEM_FOG_IV;
+                    if ((int) c[0] == 0x0B66) {
+                        // Integer fog colours are normalized signed integers, unlike the enum/scalar parameters.
+                        fog.color(ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1]) / 2147483647.0) : MemoryUtil.memGetFloat(c[1]),
+                                ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1] + 4) / 2147483647.0) : MemoryUtil.memGetFloat(c[1] + 4),
+                                ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1] + 8) / 2147483647.0) : MemoryUtil.memGetFloat(c[1] + 8),
+                                ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1] + 12) / 2147483647.0) : MemoryUtil.memGetFloat(c[1] + 12));
+                    } else fog.parameter((int) c[0], ints ? MemoryUtil.memGetInt(c[1]) : MemoryUtil.memGetFloat(c[1]));
+                }
+                return 0L;
             case SEM_TEX_ENV_I:
                 celtium$setTexEnvInt((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
@@ -4174,7 +4202,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0D05: // GL_PACK_ALIGNMENT
                 return 4;
             case 0x0B65: // GL_FOG_MODE
-                return 0x2601; // GL_LINEAR
+                return org.soutalab.celtium.vulkan.ImmediateFogState.current().glMode();
             case 0x85B5: // GL_VERTEX_ARRAY_BINDING
                 return this.boundVertexArray;
             case 0x0D33: // GL_MAX_TEXTURE_SIZE
@@ -4295,6 +4323,19 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void getFloats(int pname, long out, boolean asDouble) {
+        org.soutalab.celtium.vulkan.ImmediateFogState fog = org.soutalab.celtium.vulkan.ImmediateFogState.current();
+        if (out != 0L && pname >= 0x0B62 && pname <= 0x0B66) {
+            if (pname == 0x0B66) {
+                float[] color = fog.getFogColor();
+                for (int i = 0; i < 4; i++) putFloatOrDouble(out, i, i == 3 ? fog.colorAlpha() : color[i], asDouble);
+            } else {
+                float value = pname == 0x0B62 ? fog.getFogDensity() : pname == 0x0B63 ? fog.getFogStart()
+                        : pname == 0x0B64 ? fog.getFogEnd() : fog.glMode();
+                putFloatOrDouble(out, 0, value, asDouble);
+            }
+            return;
+        }
+
         if (out == 0L) {
             return;
         }
@@ -4435,6 +4476,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return whether a capability this stub records is enabled}. */
     private boolean enabledCap(int cap) {
         switch (cap) {
+            case GL_FOG: return org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled();
             case GL_BLEND: return this.raster.blendEnabled();
             case GL_CULL_FACE: return this.raster.cullEnabled();
             case GL_SCISSOR_TEST: return this.raster.scissorTest();
@@ -4566,6 +4608,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         byte next = (byte) (enabled ? 1 : 0);
         switch (capability) {
+            case GL_FOG: org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled(enabled); break;
             case GL_BLEND: this.raster.blendEnabled(enabled); break;
             case GL_CULL_FACE: this.raster.cullEnabled(enabled); break;
             case GL_SCISSOR_TEST: this.raster.scissorTest(enabled); break;
@@ -6803,7 +6846,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * a fogged sky are two different findings, and the frame alone cannot tell them apart.
      */
     private void celtium$noteFogDegradation(TerrainGpuBackend backend, int buffer, int count) {
-        if (this.enables[GL_FOG] == 0
+        if (!org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled()
                 || backend.immediateFogAvailable() || SKY_DEGRADED_LINES.getAndDecrement() <= 0) {
             return;
         }

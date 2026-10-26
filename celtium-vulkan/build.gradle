@@ -26,7 +26,7 @@ if (coreProject != null) {
     dependencies {
         compileOnly(project(path: ':common', configuration: 'downgraded')) { transitive = false }
         // Real adapter-dispatch tests load its core API signatures, without initializing Minecraft or a GL context.
-        testRuntimeOnly(project(path: ':common', configuration: 'downgraded')) { transitive = false }
+        testImplementation(project(path: ':common', configuration: 'downgraded')) { transitive = false }
     }
 }
 

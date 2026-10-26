@@ -3958,61 +3958,52 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     // ----------------------------------------------------------------------------------------------
 
     /** The immediate path's fixed-function fog, mirrored from GlStateManager (see ImmediateFogState). */
-    final ImmediateFogState fog = new ImmediateFogState();
+    final ImmediateFogState fog = ImmediateFogState.current();
 
     @Override
     public void setFogEnabled(boolean enabled) {
-        this.fog.enabled = enabled;
-        this.fog.mirrored = true;
+        this.fog.enabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("enable=" + enabled, this.frameId);
     }
 
     @Override
     public void setFogMode(int glMode) {
-        this.fog.glMode = glMode;
-        this.fog.mirrored = true;
+        this.fog.parameter(0x0B65, glMode);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("mode=" + glMode, this.frameId);
     }
 
     @Override
     public void setFogDensity(float density) {
-        this.fog.density = density;
-        this.fog.mirrored = true;
+        this.fog.parameter(0x0B62, density);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
     @Override
     public void setFogStart(float start) {
-        this.fog.start = start;
-        this.fog.mirrored = true;
+        this.fog.parameter(0x0B63, start);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("start=" + start, this.frameId);
     }
 
     @Override
     public void setFogEnd(float end) {
-        this.fog.end = end;
-        this.fog.mirrored = true;
+        this.fog.parameter(0x0B64, end);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("end=" + end, this.frameId);
     }
 
     @Override
     public void setFogColor(float red, float green, float blue) {
-        this.fog.red = red;
-        this.fog.green = green;
-        this.fog.blue = blue;
-        this.fog.mirrored = true;
+        this.fog.color(red, green, blue);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("colour=" + red + "," + green + "," + blue, this.frameId);
     }
 
     @Override
     public void setFogRadial(boolean radial) {
-        this.fog.radialRequested = radial;
-        this.fog.mirrored = true;
+        this.fog.parameter(0x855A, radial ? 0x855B : 0x855C);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("radial=" + radial, this.frameId);
     }
