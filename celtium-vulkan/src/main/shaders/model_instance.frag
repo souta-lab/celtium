@@ -19,11 +19,24 @@ layout(location = 2) flat in int v_Texture;
 layout(location = 3) flat in vec4 v_Combine;
 layout(location = 4) flat in float v_AlphaRef;
 layout(location = 5) in float v_FogDistance;
+layout(location = 6) flat in int v_AlphaFunction;
 layout(location = 0) out vec4 fragColor;
+
+// Same comparison contract as the native immediate program, including an enabled reference of zero.
+bool alphaPass(int function, float alpha, float reference) {
+    if (function == 0x0200) return false;
+    if (function == 0x0201) return alpha < reference;
+    if (function == 0x0202) return alpha == reference;
+    if (function == 0x0203) return alpha <= reference;
+    if (function == 0x0204) return alpha > reference;
+    if (function == 0x0205) return alpha != reference;
+    if (function == 0x0206) return alpha >= reference;
+    return true; // disabled (0) or ALWAYS
+}
 
 void main() {
     vec4 colour = texture(textures[nonuniformEXT(v_Texture)], v_TexCoord) * v_Color;
-    if (v_AlphaRef > 0.0 && colour.a < v_AlphaRef) {
+    if (!alphaPass(v_AlphaFunction, colour.a, v_AlphaRef)) {
         discard;
     }
     if (v_Combine.w > 0.0) {

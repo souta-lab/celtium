@@ -1709,7 +1709,8 @@ public final class ValidationClient {
         StringBuilder variant = new StringBuilder();
         String[] flags = {"celtium.validation.keepEntities", "celtium.validation.captureEntities",
                 "celtium.validation.glowEntities", "celtium.validation.spawnEntities",
-                "celtium.validation.rendererlessEntities", "celtium.validation.spawnEntitiesAfterTransfer"};
+                "celtium.validation.rendererlessEntities", "celtium.validation.spawnEntitiesAfterTransfer",
+                "celtium.validation.modelGlint"};
         for (String flag : flags) {
             if (Boolean.getBoolean(flag)) {
                 if (variant.length() > 0) {
@@ -3273,7 +3274,15 @@ public final class ValidationClient {
                 // Eight to twelve blocks ahead, where pitch-20-down keeps a ground-standing model inside the frame:
                 // anything closer lands below the view cone's lower edge and the comparison only measures particles.
                 celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -10.0D);
+                net.minecraft.entity.monster.EntityZombie zombie = new net.minecraft.entity.monster.EntityZombie(mc.world);
+                // A positive control for vanilla LayerArmorBase's unlit model glint, without renderer hooks.
+                if (Boolean.getBoolean("celtium.validation.modelGlint")) {
+                    net.minecraft.item.ItemStack armor = new net.minecraft.item.ItemStack(net.minecraft.init.Items.DIAMOND_CHESTPLATE);
+                    armor.addEnchantment(net.minecraft.init.Enchantments.UNBREAKING, 1);
+                    zombie.setItemStackToSlot(net.minecraft.inventory.EntityEquipmentSlot.CHEST, armor);
+                    report.addProperty("controlledModelGlint", true);
+                }
+                celtium$spawnEntity(mc, zombie, 0.0D, -10.0D);
                 celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -8.0D);
                 celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -12.0D);
                 // TESR and item coverage in the same view cone: a chest and a sign draw through their special

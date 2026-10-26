@@ -392,18 +392,16 @@ final class ModelReplay {
     }
 
     /**
-     * Appends a lit model replay to the open instance run, or opens a run in a new queued group; {@return false} to
-     * leave the replay to the per-group path. Only lit replays on the main target take this path: the unlit ITEM
-     * family evaluates the full alpha function, which the instance shaders do not carry, and an off-target
-     * replay is drawn in its own pass by the per-group code.
+     * Appends a model replay to the native instance run, preserving its lighting and alpha-test semantics.
+     * Off-target replays remain in their own pass on the per-group path.
      */
     boolean celtium$appendModelInstance(VulkanDynamicMesh mesh, int texture, int[] state, long key,
             float[] projection, float[] modelView, int quads, float[] combineColor) {
-        if (b.modelInstancesFailed || state.length <= 8 || state[8] == 0 || !b.context.textureArraySupported()) {
+        if (b.modelInstancesFailed || state.length <= 14 || !b.context.textureArraySupported()) {
             return false;
         }
         long target = b.targetRegistry.currentIdentity();
-        if (target != b.targetRegistry.mainIdentity() || b.lightmapTexture == null) {
+        if (target != b.targetRegistry.mainIdentity() || (state[8] != 0 && b.lightmapTexture == null)) {
             return false;
         }
         if (b.textureRegistry == null) {
@@ -411,7 +409,7 @@ final class ModelReplay {
         }
         VulkanGlTexture image = b.textureRegistry.get(texture);
         int textureIndex = image == null ? -1 : b.celtium$registerTexture(image);
-        int lightmapIndex = b.celtium$registerTexture(b.lightmapTexture);
+        int lightmapIndex = state[8] == 0 ? textureIndex : b.celtium$registerTexture(b.lightmapTexture);
         if (textureIndex < 0 || lightmapIndex < 0 || b.textureArray == null) {
             return false;
         }
@@ -490,7 +488,7 @@ final class ModelReplay {
             colour[3] = b.immediateState.colorAlpha();
         }
         float[] affine = b.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
-        instances.append(open.modelRun, listId, modelView, colour, combineColor, affine, Float.intBitsToFloat(state[6]),
+        instances.append(open.modelRun, listId, modelView, colour, combineColor, affine, Float.intBitsToFloat(state[6]), state[14],
                 b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
         open.batches += quads;
         return true;

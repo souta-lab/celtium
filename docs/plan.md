@@ -67,7 +67,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
      残差は固定費。上限測定で棄却: 反復acquire barrier全省略 2–3%、texture跨ぎmerge（bindless上限）Intel 2.5%/AMD 4%、
      frame+present 1 submit（fence acquire、実merge確認済）中立、acquire狭小化は遅化、glthread仮説（無効でも3%）。
      **次の単位**: model replay と immediate を一つの順序付きstreamに（Stage 1 packet化）。Intel残差の内訳は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・分割**: fog は vanilla・地形・可視距離・即時描画で native owner を共有（[証拠](evidence/native-fog-2026-10-26.json)）。instance fog を実装（[参照比較](evidence/model-fog-2026-10-26.json)）。projection/fog を run の96B定数へ分離、行列積をGPUへ移しJavaのMVP合成を削除。instance は320→256B（[画像・測定](evidence/model-run-2026-10-27.json)）。AMD/Intel world・video・退出後menuはgate通過、全10 leg validation 0。inventory/recipe・fog/被弾/輪郭は未較正。154 JUnit通過。raw p50対control／Celeritas: AMD 0.983x／0.986x、Intel 0.970x／1.166x。両GPUとも負荷ゲート外で速度判定なし。非instance lit fog は未対応。fixture tick 注釈は修正済み。
+3. **native 状態・実行**: fog は vanilla・地形・可視距離・即時描画で [native owner](evidence/native-fog-2026-10-26.json) を共有。[instance fog](evidence/model-fog-2026-10-26.json) を実装し、projection/fog の96B run定数化と行列積GPU移動で instance は320→256B、JavaのMVP合成を削除（[証拠](evidence/model-run-2026-10-27.json)）。同版のKPIは両GPU負荷ゲート外、速度未判定。**照明OFFモデルも同じinstance programへ統合、alpha全比較を実装**（[証拠](evidence/unlit-model-2026-10-27.json)）。glint陽性対照で受理を確認、glint単独画素は未分離。155 JUnit・71 Python通過。candidate 10 leg validation 0、world AMD/Intel・video・退出後menuはgate通過。inventory/recipe・actor/glintは未較正。最新JARの速度とGREATER/disabled以外のalpha比較はGPU未測定。非instance lit fogは未対応。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
@@ -91,7 +91,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 | **RLCraft 2.9.3 互換** | **Celtium側では無い。0.7.11 + Fugue 0.25.5 でも外部要因で停止（対照実験済み）** | 実測 2026-10-23（probe: 0.7.11 clone + RLCraft mods 166 + scalar-3.9.0） | 外部待ち | Fugue 0.24.4 → `NoClassDefFoundError com.cleanroommc.hackery.ReflectionHackery`（SetBonus）。Fugue 0.25.5 → 44秒まで進行（Sound engine started）後 `VerifyError: EntityRenderer.func_78472_g`。**celtium jar を外した対照でも同じ VerifyError** のため Celtium の不具合ではない。次の候補は Cleanroom 0.7.12-alpha 以降での再試行 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
-| **次の標的** | **native実装へ** | — | 未着手 | ①**受理経路をnativeへ**（Java補足ではなく所有権移動。`architecture` §12が規模の算術）②影の尾の削減（二重バッファ化 or cadenceと品質のトレード）③`shader-plan.md` の既存modベースでBSL接続 ④state/texture/render target所有のnative化（未完） |
+| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②非instance lit fog ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
 
 ## 撤回した前提
 

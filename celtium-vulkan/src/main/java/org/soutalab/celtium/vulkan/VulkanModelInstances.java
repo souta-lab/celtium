@@ -140,6 +140,7 @@ final class VulkanModelInstances {
     private final List<Object[]> retiredPools = new ArrayList<Object[]>();
 
     private long appended;
+    private long unlitAppended;
     private long declinedFull;
     private long declinedMissing;
     private long runs;
@@ -326,7 +327,7 @@ final class VulkanModelInstances {
      * @param affine the texture affine (a, b, c, d, tx, ty), or null for the identity
      * @param light  the lit payload: two model-space directions, ambient and two diffuses (20 floats)
      */
-    void append(Run run, int listId, float[] modelView, float[] colour, float[] combine, float[] affine, float alphaRef,
+    void append(Run run, int listId, float[] modelView, float[] colour, float[] combine, float[] affine, float alphaRef, int alphaFunction,
             float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
         int[] entry = this.poolEntries.get(listId);
         int index = this.segment * SEGMENT_RECORDS + this.used;
@@ -353,13 +354,8 @@ final class VulkanModelInstances {
         }
         // The alpha test holds under the combine as well (GL's COMBINE_ALPHA keeps the texture alpha the test reads).
         MemoryUtil.memPutFloat(r + 124, alphaRef);
-        for (int i = 0; i < 20; i++) {
-            MemoryUtil.memPutFloat(r + 128 + i * 4L, light[i]);
-        }
-        MemoryUtil.memPutFloat(r + 208, lightCoord == null ? 0.0f : lightCoord[0]);
-        MemoryUtil.memPutFloat(r + 212, lightCoord == null ? 0.0f : lightCoord[1]);
-        MemoryUtil.memPutInt(r + 224, textureIndex);
-        MemoryUtil.memPutInt(r + 228, lightmapIndex);
+        writeShadingRecord(r, light, lightCoord, textureIndex, lightmapIndex, alphaFunction);
+        if (light == null) this.unlitAppended++;
         long c = this.commands.mappedAddress() + (long) index * COMMAND_BYTES;
         MemoryUtil.memPutInt(c, entry[2]);
         MemoryUtil.memPutInt(c + 4, 1);
@@ -370,6 +366,19 @@ final class VulkanModelInstances {
         run.count++;
         run.noteTexture(glTexture);
         this.appended++;
+    }
+
+    /** Defined for every reused slot, including lit -> unlit and disabled -> zero-reference alpha changes. */
+    static void writeShadingRecord(long record, float[] light, float[] lightCoord,
+            int textureIndex, int lightmapIndex, int alphaFunction) {
+        if (light == null) MemoryUtil.memSet(record + 128, 0, 80);
+        else for (int i = 0; i < 20; i++) MemoryUtil.memPutFloat(record + 128 + i * 4L, light[i]);
+        MemoryUtil.memPutFloat(record + 208, lightCoord == null ? 0.0f : lightCoord[0]);
+        MemoryUtil.memPutFloat(record + 212, lightCoord == null ? 0.0f : lightCoord[1]);
+        MemoryUtil.memPutInt(record + 224, textureIndex);
+        MemoryUtil.memPutInt(record + 228, lightmapIndex);
+        MemoryUtil.memPutInt(record + 232, alphaFunction);
+        MemoryUtil.memPutInt(record + 236, light == null ? 0 : 1);
     }
 
     void noteMissing() {
@@ -408,7 +417,7 @@ final class VulkanModelInstances {
     }
 
     String describe() {
-        return "modelInstances[appended=" + this.appended + " runs=" + this.runs + " declinedFull=" + this.declinedFull
+        return "modelInstances[appended=" + this.appended + " unlitAppended=" + this.unlitAppended + " runs=" + this.runs + " declinedFull=" + this.declinedFull
                 + " declinedMissing=" + this.declinedMissing + " poolBuilds=" + this.poolBuilds
                 + " poolAppends=" + this.poolAppends + " poolGrowths=" + this.poolGrowths
                 + " poolLists=" + this.poolEntries.size() + " pipelines=" + this.pipelines.size() + "]";
