@@ -624,13 +624,19 @@ public final class VulkanContext {
         // only the waits that remain (shutdown and rebuild paths).
         VkCommandBuffer commandBuffer;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkCommandBufferAllocateInfo allocate = VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
-                    .commandPool(this.commandPool)
-                    .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-                    .commandBufferCount(1);
-            PointerBuffer handle = stack.mallocPointer(1);
-            check(vkAllocateCommandBuffers(this.device, allocate, handle), "vkAllocateCommandBuffers");
-            commandBuffer = new VkCommandBuffer(handle.get(0), this.device);
+            commandBuffer = this.idleCommandBuffers.pollLast();
+            if (commandBuffer == null) {
+                VkCommandBufferAllocateInfo allocate = VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
+                        .commandPool(this.commandPool)
+                        .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                        .commandBufferCount(1);
+                PointerBuffer handle = stack.mallocPointer(1);
+                check(vkAllocateCommandBuffers(this.device, allocate, handle), "vkAllocateCommandBuffers");
+                commandBuffer = new VkCommandBuffer(handle.get(0), this.device);
+                commandBufferAllocations++;
+            } else {
+                commandBufferReuses++;
+            }
             VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()
                     .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
             int result = vkBeginCommandBuffer(commandBuffer, begin);
@@ -641,6 +647,29 @@ public final class VulkanContext {
             }
         }
         return commandBuffer;
+    }
+
+    /**
+     * Command buffers whose submission has completed, kept for the next {@link #beginCommands()} instead of freed.
+     * <p>
+     * Every one-shot recording used to allocate a buffer and free it after its fence. Measured on Enigmatica 2 Expert's
+     * loading screen (AMD RX 6400, RADV): {@code vkAllocateCommandBuffers} was the largest single item on the client
+     * thread, because thousands of texture uploads each paid a fresh driver-side command buffer. The pool carries
+     * {@code RESET_COMMAND_BUFFER_BIT}, so {@code vkBeginCommandBuffer} resets a recycled buffer implicitly; a buffer only
+     * enters this list once nothing can still execute it.
+     */
+    private final java.util.ArrayDeque<VkCommandBuffer> idleCommandBuffers = new java.util.ArrayDeque<VkCommandBuffer>();
+    private static final int IDLE_COMMAND_BUFFER_CAP = 256;
+    static long commandBufferAllocations;
+    static long commandBufferReuses;
+
+    /** Returns a completed one-shot buffer to {@link #idleCommandBuffers}, or frees it past the cap. */
+    private void celtium$recycleCommandBuffer(VkCommandBuffer commandBuffer) {
+        if (this.usable && this.idleCommandBuffers.size() < IDLE_COMMAND_BUFFER_CAP) {
+            this.idleCommandBuffers.addLast(commandBuffer);
+        } else {
+            vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+        }
     }
 
     /**
@@ -950,7 +979,7 @@ public final class VulkanContext {
             }
         } finally {
             if (releasedToQueue) {
-                vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+                celtium$recycleCommandBuffer(commandBuffer);
             }
         }
     }
@@ -1207,7 +1236,7 @@ public final class VulkanContext {
                 entry.slotReclaim.accept(Boolean.valueOf(lostDevice));
             }
         } else {
-            vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
+            celtium$recycleCommandBuffer(entry.commandBuffer);
         }
         entry.commandBuffer = null;
         entry.slotReclaim = null;
@@ -3652,7 +3681,8 @@ public final class VulkanContext {
 
     /** {@return the batched upload path's census, for the run report}. */
     public String uploadBatchSummary() {
-        return "uploadCopiesBatched=" + this.uploadCopiesBatched + " uploadCopiesFlushed=" + this.uploadCopiesFlushed
+        return "commandBufferAllocations=" + commandBufferAllocations + " commandBufferReuses=" + commandBufferReuses
+                + " uploadCopiesBatched=" + this.uploadCopiesBatched + " uploadCopiesFlushed=" + this.uploadCopiesFlushed
                 + " uploadFlushes=" + this.uploadFlushes + " uploadFlushMillis=" + this.uploadFlushMillis
                 + " uploadFlushWorstMillis=" + this.uploadFlushWorstMillis
                 + " uploadBytesByKind=[arena=" + this.uploadBytesByKind[0] + " copies=" + this.uploadCopiesByKind[0]

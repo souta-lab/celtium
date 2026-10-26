@@ -1343,13 +1343,16 @@ public final class VulkanGlTexture {
                     if (extentW != this.width || extentH != this.height) {
                         recreateImageResources(extentW, extentH);
                     }
+                    long applied = this.lastAppliedPatchSerial;
+                    // One command buffer and one submission for the whole drain (see patchBatch).
+                    this.patchBatching = PATCH_BATCH;
+                    try {
                     if (level != null) {
                         int[] offset = new int[2];
                         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
                         uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
                                 new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
                     }
-                    long applied = this.lastAppliedPatchSerial;
                     java.util.List<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch> pending =
                             pendingPatches.isEmpty()
                                     ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePendingPatches(
@@ -1362,6 +1365,10 @@ public final class VulkanGlTexture {
                         uploadPatchedLevels(patch.width, patch.height, patch.x, patch.y,
                                 new java.nio.ByteBuffer[] { patch.pixels }, 1, glTextureId);
                         applied = Math.max(applied, patch.serial);
+                    }
+                    } finally {
+                        this.patchBatching = false;
+                        submitPatchBatch();
                     }
                     if (applied != this.lastAppliedPatchSerial) {
                         this.lastAppliedPatchSerial = applied;
@@ -1637,7 +1644,15 @@ public final class VulkanGlTexture {
             flushStaging();
         }
 
-        VkCommandBuffer commandBuffer = context.beginCommands();
+        VkCommandBuffer commandBuffer;
+        if (this.patchBatching) {
+            if (this.patchBatch == null) {
+                this.patchBatch = context.beginCommands();
+            }
+            commandBuffer = this.patchBatch;
+        } else {
+            commandBuffer = context.beginCommands();
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
@@ -1682,7 +1697,9 @@ public final class VulkanGlTexture {
             // Deferred: submitted and tracked, not waited on the spot. The image holds the levels once the queue
             // reaches this submission - ordered before every later submission the same queue takes - and the fence
             // is what the next staging write awaits before reusing the buffer the copy reads from.
-            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
+            if (!this.patchBatching) {
+                this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
+            }
         }
         this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         for (int level = 0; level < depth; level++) {
@@ -3011,6 +3028,7 @@ public final class VulkanGlTexture {
         if (!mirrorDumpWanted(glTextureId)) {
             return;
         }
+        submitPatchBatch();
         if (this.mirrorDumps >= MIRROR_DUMPS_PER_OBJECT) {
             return;
         }
@@ -3644,6 +3662,9 @@ public final class VulkanGlTexture {
             stagingCursor = aligned + required;
             return aligned;
         }
+        // The ring is about to wait, wrap or be replaced: an open patch batch still reads the slices handed out so far,
+        // so it goes to the queue first and its fence is the one the wait covers.
+        submitPatchBatch();
         long capacity = Math.max(required, stagingCapacity);
         if (stagingBuffer != 0L && capacity < STAGING_RING_MIN_BYTES) {
             capacity = Math.max(required, Math.min(STAGING_RING_MIN_BYTES, stagingCapacity * 2L));
@@ -3655,6 +3676,31 @@ public final class VulkanGlTexture {
 
     /** The size a frequently patched texture's staging ring grows to; see {@link #reserveStagingSlice(long)}. */
     private static final long STAGING_RING_MIN_BYTES = 1L << 20;
+
+    /**
+     * Patch uploads recorded into one command buffer while a backlog drains.
+     * <p>
+     * Each {@link #uploadPatchedLevels} call used to allocate a command buffer and submit it on its own. Enigmatica 2
+     * Expert patches its atlases constantly (hundreds of animated sprites re-uploaded every tick, and lazily stitched
+     * sprites), so an item-covered scene paid ~1700 command buffers and submissions a frame (measured: 70,875
+     * allocations over 42 world frames; uploadPatchedLevels was the loading-screen JFR's largest client-thread item).
+     * The drain now opens the batch, every patch records into it in order, and it is submitted once - before the
+     * staging ring may wait or wrap, before a mirror dump reads the image, and when the drain ends.
+     * {@code -Dceltium.vulkan.batchTexturePatches=false} keeps one submission per patch.
+     */
+    private static final boolean PATCH_BATCH = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.batchTexturePatches"));
+    private boolean patchBatching;
+    private VkCommandBuffer patchBatch;
+
+    /** Submits the open patch batch, if any; its fence becomes this texture's outstanding upload. */
+    private void submitPatchBatch() {
+        VkCommandBuffer batch = this.patchBatch;
+        if (batch != null) {
+            this.patchBatch = null;
+            this.outstandingUploadFence = context.celtium$submitDeferred(batch, 0L);
+        }
+    }
 
     /** Awaits this texture's own last deferred upload, when there is one still unconfirmed. */
     private void awaitOutstandingUpload() {
