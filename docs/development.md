@@ -3372,3 +3372,20 @@ terrain passの直前の即時work（sky・void plane・sun）を、独自window
 terrain passのVkRenderPassとは互換でない。統合の前提は **immediate pipeline cacheを (state, render pass) でキーし、
 record pipelineもpassごとに作る**こと。変更はrevertした（`git checkout`、commit前）。
 参考: この壊れたビルドでのA/Bは 0.946 / 0.994 だったが、VUIDが出ているビルドの数値なので**証拠に使わない**。
+
+**cross-pass統合の2回目（pass-keyed pipeline＋再prepare）も VUID 08600 で失敗（2026-10-27 実測）**
+
+前提として即時pipeline cacheを **(state, render pass)** でキーし（`pipelineKey = key*φ ^ pass`、particleKey・
+texture variant cacheも同様）、遅延描画するgroupを描画時に `prepareImmediate(...)` で**そのpass向けに再prepare**した。
+結果は前回と同じ **VUID-vkCmdDrawIndexedIndirect-None-08600 が10件**（AMD, world, 120s, validation ON）。絵はgateを通るが
+validationがdirtyなので受入にならない。よってこれもrevertした（tree は `4b40b384…` に一致＝出荷コードと同一）。
+
+**分かったこと**: 即時「group」のpipelineをpass向けに作り直しても足りない。indirect runを描く
+`vkCmdDrawIndexedIndirect` の pipeline（record pipeline）が別のpass向けのまま使われている。
+次の判別は**推測せず、VUIDメッセージが出すpipeline handleと、`createRecords`/`VulkanModelInstances.createPipeline`/
+即時cacheのどこで作られたかを突き合わせる**こと（handleを生成時にログへ出す計器を1つ足す）。
+そのうえで「runを開いたpassと描くpassが違う」経路を名指しできれば、統合の設計（runのpass跨ぎを作らない／
+passごとにrunを分ける）が決まる。
+
+なお、この2回の実験で**出荷コードは一切変わっていない**（両方 revert 済み、jar `4b40b384c22da692…` は
+`0f7a71862` の記録と一致）。
