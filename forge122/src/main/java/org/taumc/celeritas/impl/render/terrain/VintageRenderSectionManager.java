@@ -51,7 +51,18 @@ public class VintageRenderSectionManager extends RenderSectionManager {
 
     @Override
     protected AsyncOcclusionMode getAsyncOcclusionMode() {
-        return CeleritasVintage.options().performance.asyncOcclusionMode;
+        // -Dceltium.terrain.asyncOcclusion=NONE|ONLY_SHADOW|EVERYTHING overrides the options file, so a leg can A/B the
+        // search thread against the same copied instance.
+        String forced = System.getProperty("celtium.terrain.asyncOcclusion");
+        if (forced != null) {
+            return AsyncOcclusionMode.valueOf(forced.trim().toUpperCase(java.util.Locale.ROOT));
+        }
+        // The terrain search runs on the search thread unless the option says NONE. Core has no shadow pass, so the
+        // option's default ONLY_SHADOW meant "nothing async" here; the inline search was 28% of the client thread
+        // while moving (AMD flight leg), and taking it off moved flight p50 1.03-1.34 -> 0.74-0.89 ms, static Intel
+        // KPI neutral (0.983x vs control), validation 0 and the same frames.
+        AsyncOcclusionMode chosen = CeleritasVintage.options().performance.asyncOcclusionMode;
+        return chosen == AsyncOcclusionMode.NONE ? AsyncOcclusionMode.NONE : AsyncOcclusionMode.EVERYTHING;
     }
 
     @Override

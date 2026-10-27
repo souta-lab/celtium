@@ -169,6 +169,17 @@ public final class ValidationClient {
     private int celtium$cameraSweepFrames;
     private float celtium$cameraSweepLastYaw;
     /**
+     * Opt-in straight flight along +X after the fixed capture, so the replay loads, builds and uploads new chunks the
+     * way walking into unseen terrain does - the case a fixed or turning camera never exercises.
+     */
+    private final double celtium$flightSpeed = Double.parseDouble(
+            System.getProperty("celtium.validation.flightBlocksPerSecond", "0"));
+    private final int celtium$flightFromTick =
+            Integer.getInteger("celtium.validation.flightFromTick", 400).intValue();
+    private int celtium$flightFrames;
+    private double celtium$flightLastX;
+    private int celtium$flightServerTick = -1;
+    /**
      * The {@link #SLOW_FRAME_MAX} slowest frames of the whole run, with the renderer's own report of what the frame
      * did: {@code worldTick=<n> <ms>ms <phase evidence> upload[thisFrameMs=... submitWaitMillis=... submitWaits=...
      * queueWaitMillis=...]}.
@@ -4724,6 +4735,24 @@ public final class ValidationClient {
     }
 
     /**
+     * The warm window's frames over 16.7 ms, in order, with the renderer's pass split, the upload path's share and the
+     * loop timings. {@link #celtium$slowFrames} keeps the run's slowest frames, which are always world-entry frames, so
+     * it never names a spike that happens while moving; this list does. Bounded, built only past the threshold.
+     */
+    private final List<String> celtium$warmSpikes = new ArrayList<String>();
+
+    private void celtium$recordWarmSpike(double intervalMs, long uploadThisFrameMillis) {
+        if (intervalMs < 16.7D || celtium$warmSpikes.size() >= 16
+                || worldTicks < Integer.getInteger("celtium.validation.warmFromTick", 400).intValue()
+                || worldTicks >= Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
+            return;
+        }
+        celtium$warmSpikes.add("worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms passes["
+                + celtium$rendererPassSummary() + "] uploadThisFrameMs=" + uploadThisFrameMillis
+                + celtium$loopTimingSnapshot());
+    }
+
+    /**
      * Retains one slow frame as the report's phase evidence, keeping the {@link #SLOW_FRAME_MAX} slowest of the run.
      * <p>
      * The counters are absolute (what the process has charged so far) and {@code thisFrameMs} is this frame's own
@@ -5719,6 +5748,7 @@ public final class ValidationClient {
             if (intervalMs >= Integer.getInteger("celtium.validation.slowFrameMs", 50).intValue()) {
                 celtium$recordSlowFrame(intervalMs, uploadThisFrameMillis);
             }
+            celtium$recordWarmSpike(intervalMs, uploadThisFrameMillis);
         }
         previousFrame = now;
         // The scripted per-leg actions live in their own method: inline, this handler was 8678 bytes of bytecode, over
@@ -6458,6 +6488,10 @@ public final class ValidationClient {
         report.addProperty("cameraSweepFromTick", celtium$cameraSweepFromTick);
         report.addProperty("cameraSweepFrames", celtium$cameraSweepFrames);
         report.addProperty("cameraSweepLastYaw", celtium$cameraSweepLastYaw);
+        report.addProperty("flightBlocksPerSecond", celtium$flightSpeed);
+        report.addProperty("flightFromTick", celtium$flightFromTick);
+        report.addProperty("flightFrames", celtium$flightFrames);
+        report.addProperty("flightLastX", celtium$flightLastX);
         if (report.has("frameIntervalSampleCount")) {
             return;
         }
@@ -6492,6 +6526,7 @@ public final class ValidationClient {
         // defect as one that is never built, and the p95/p99 pair is what the user's complaint is measured against.
         report.addProperty("slowFrameThresholdMs", Integer.getInteger("celtium.validation.slowFrameMs", 50));
         report.addProperty("slowFrameCount", celtium$slowFrames.size());
+        report.addProperty("warmSpikes", celtium$warmSpikes.isEmpty() ? "[none]" : String.join(" | ", celtium$warmSpikes));
         report.addProperty("slowFrameRetention",
                 "the " + SLOW_FRAME_MAX + " slowest frames of the run, not the first " + SLOW_FRAME_MAX
                         + " over the threshold; entries carry the renderer's phase evidence and the upload path's own"
@@ -10908,6 +10943,35 @@ public final class ValidationClient {
             }
             celtium$cameraSweepFrames++;
             celtium$cameraSweepLastYaw = yaw;
+        }
+        if (celtium$flightSpeed != 0.0D && mc.player != null && mc.world != null
+                && worldTicks >= celtium$flightFromTick) {
+            // Positions are absolute in time like the sweep's yaw, so a slow frame does not shorten the path; the
+            // previous-tick fields are set with it so the frame is drawn exactly here instead of interpolated back.
+            double x = celtium$pose.x + celtium$flightSpeed
+                    * (worldTicks - celtium$flightFromTick + mc.getRenderPartialTicks()) / 20.0D;
+            mc.player.capabilities.isFlying = true;
+            mc.player.motionX = mc.player.motionY = mc.player.motionZ = 0.0D;
+            mc.player.setPosition(x, celtium$pose.y, celtium$pose.z);
+            mc.player.prevPosX = mc.player.lastTickPosX = x;
+            mc.player.prevPosY = mc.player.lastTickPosY = celtium$pose.y;
+            mc.player.prevPosZ = mc.player.lastTickPosZ = celtium$pose.z;
+            celtium$flightFrames++;
+            celtium$flightLastX = x;
+            if (worldTicks != celtium$flightServerTick && mc.getIntegratedServer() != null) {
+                // Moving the client player alone did not load anything: the minimap stayed black and no section past
+                // the start arrived, so the "flight" only slid the camera over an unloaded world. The server player is
+                // what chunk loading follows, so it is moved too, once a tick, on the server's own thread.
+                celtium$flightServerTick = worldTicks;
+                final double serverX = x;
+                final net.minecraft.server.MinecraftServer server = mc.getIntegratedServer();
+                server.addScheduledTask(() -> {
+                    for (net.minecraft.entity.player.EntityPlayerMP player : server.getPlayerList().getPlayers()) {
+                        player.connection.setPlayerLocation(serverX, celtium$pose.y, celtium$pose.z,
+                                celtium$pose.yaw, celtium$pose.pitch);
+                    }
+                });
+            }
         }
         if (Boolean.getBoolean("celtium.validation.allBlocks") && mc.player != null) {
             // The block wall is tall enough that the default downward pitch cuts its top rows off; level view plus a
