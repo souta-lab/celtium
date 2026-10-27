@@ -3347,3 +3347,28 @@ HashMap tree bin 3.4%、method-handle invoke 約5%。**celtium自身の描画経
 
 **測定環境の注意（2026-10-27）**: 外部プロセス `VBCSCompiler`（dotnet, 53% CPU）が常駐し load 3–5。
 KPIの負荷ゲート（上限2）は通らず、形式verdictは取れない。比は記録できるが「勝った」とは書かない。
+
+**window を開ける呼び出し元の census（2026-10-27・AMD・KPI flags・world）**
+
+`-Dceltium.vulkan.drawSiteCensus=true` の集計（`windowOpenSites=[…]`、12,513 world frames あたり）:
+
+| 呼び出し元 | 回数 | /frame |
+|---|---|---|
+| `CeltiumGllessHint.glBindFramebuffer`（modの生GL bind） | 24,785 | 2.0 |
+| `Framebuffer.beforeUnbind`（ゲームのunbind） | 12,514 | 1.0 |
+| `worldPassEnd`（world pass終端） | 12,513 | 1.0 |
+| `GlStateManager.clear`（ゲームのclear） | 12,513 | 1.0 |
+| `reportRawFramebuffer:579`（生bindを0へ戻す） | 12,512 | 1.0 |
+| `RenderSectionManager.renderLayer`（terrain layer） | 12,511 | 1.0 |
+
+⇒ 9.4 window/frame のほぼ全部が**フレームバッファ切替に強制されたもの**で、我々の都合で減らせるのは
+modの生bind（Xaero）由来の3/frame程度。window数を減らすには「同一targetの連続windowを1つのpassにまとめる」しかない。
+
+**その統合は現状できない（VUID-vkCmdDrawIndexedIndirect-None-08600・2026-10-27 実測）**
+
+terrain passの直前の即時work（sky・void plane・sun）を、独自windowを開かずterrain passの先頭で描く変更を実装した。
+`terrain` passはattachmentをLOADするので絵の順序は保てるが、validationが**10件のVUID-08600**を出して落ちた:
+即時描画のpipeline（とindirect runのrecord pipeline）は**最初に使われた時点の`lastUiPass`のrender pass**で作られており、
+terrain passのVkRenderPassとは互換でない。統合の前提は **immediate pipeline cacheを (state, render pass) でキーし、
+record pipelineもpassごとに作る**こと。変更はrevertした（`git checkout`、commit前）。
+参考: この壊れたビルドでのA/Bは 0.946 / 0.994 だったが、VUIDが出ているビルドの数値なので**証拠に使わない**。
