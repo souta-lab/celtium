@@ -48,9 +48,10 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | 報告 | 状況 |
    |---|---|
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
+   | 入world直後 約3秒の強いラグ | **未帰属**（0.1.0、vanillaで再現、利用者 2026-10-27）。計器: validation report の `slowFrames`（runで最も遅い12枚＝入world直後をpass内訳つき） |
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚、Celtium同期は2–3枚。入室停止は未帰属。計器: `flightBlocksPerSecond`・`warmSpikes` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
-   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 解放したarena区間を、それを読みうる提出の完了まで再利用しない（`de280e72a`。batched提出ではupload batchがフレーム本体より先にqueueへ入る） |
+   | 色付きガラスのチカチカ | **未解決（0.1.0の実機で再現、利用者 2026-10-27）**。`de280e72a`（解放したarena区間を読みうる提出の完了まで再利用しない）では直らなかった。計器: `-Dceltium.debug.flickerSample=true`（連続2枚の差）、既定flat worldに `stained_glass` 層あり |
    | F3+T が重い | reload自体が 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
    | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrixの経路、tile upload（Devin）、mod FBO同士のsample（空mirrorより公開を優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080で表示）。手順差の手掛かり待ち |

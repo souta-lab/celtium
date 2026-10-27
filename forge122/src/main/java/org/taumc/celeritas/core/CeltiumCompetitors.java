@@ -18,6 +18,11 @@ final class CeltiumCompetitors {
             // SmoothFont: VerifyError in FontRenderer.func_78263_a against Celtium's text path (leg e2ee-amd3).
             {"bre/smoothfont/FontRendererHook.class", "SmoothFont (smoothfont)",
                     "the font renderer's glyph drawing, which Celtium batches natively"},
+            // Gnetum: the HUD is drawn into its own framebuffer and composited later (CELTIUM_HUD_GROUP route=chain-pair,
+            // CELTIUM_FBO_BIND firstBoundBy=FramebufferManager#reset <- gnetum$loadWorld, legs e2ee-amd14/15); the
+            // presented frame lost the hotbar, the hand and the minimap and was darkened or washed out around them.
+            {"me/decce/gnetum/FramebufferManager.class", "Gnetum (gnetum)",
+                    "the HUD's drawing, which Celtium draws natively every frame"},
             {"meldexun/nothirium/mc/Nothirium.class", "Nothirium", "the terrain renderer"},
             {"zone/rong/naughthirium/Naughthirium.class", "Naughthirium", "the terrain renderer"},
     };

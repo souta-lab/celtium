@@ -28,10 +28,16 @@ public abstract class FramebufferMixin {
     /** One-shot: whether the bind RETURN hook runs and what it sees, which decides if the adoption can happen there. */
     private static int celtium$adoptProbeLastSize = -1;
 
-    /** {@code -Dceltium.debug.fboBind=true}: name each framebuffer bind the mixin sees, bounded. */
+    /**
+     * {@code -Dceltium.debug.fboBind=true}: name each framebuffer the first time it is bound, with who bound it.
+     * <p>
+     * Once per identity, not once per bind: binds repeat every frame, so a per-bind bound was spent in the loading
+     * phase and never reached the world, where the question arises - E2E-E's HUD landed in a non-main framebuffer
+     * ({@code CELTIUM_HUD_GROUP ... route=chain-pair}) and only its identity said which one.
+     */
     private static final boolean FBO_BIND_LOG = Boolean.getBoolean("celtium.debug.fboBind");
-    private static final java.util.concurrent.atomic.AtomicLong FBO_BIND_LINES =
-            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.Set<Long> FBO_BIND_SEEN =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** Native phase boundary: metadata only; the renderer owns the fullscreen geometry/material and execution. */
     @Inject(method = "func_178038_a", at = @At("HEAD"), cancellable = true, require = 0)
@@ -108,10 +114,20 @@ public abstract class FramebufferMixin {
             // framebufferTexture in place through func_147613_a).
             long identity = System.identityHashCode(self);
             boolean isMainFramebuffer = mc != null && mc.getFramebuffer() == self;
-            if (FBO_BIND_LOG && FBO_BIND_LINES.getAndIncrement() < 60) {
+            if (FBO_BIND_LOG && FBO_BIND_SEEN.size() < 64 && FBO_BIND_SEEN.add(identity)) {
+                String callers = StackWalker.getInstance().walk(frames -> frames
+                        .map(StackWalker.StackFrame::toStackTraceElement)
+                        .filter(frame -> !frame.getClassName().startsWith("org.taumc")
+                                && !frame.getClassName().startsWith("org.soutalab")
+                                && !frame.getClassName().endsWith("Framebuffer"))
+                        .limit(4)
+                        .map(frame -> frame.getClassName().substring(frame.getClassName().lastIndexOf('.') + 1)
+                                + "#" + frame.getMethodName())
+                        .collect(java.util.stream.Collectors.joining(" <- ")));
                 System.out.println("[Celtium] CELTIUM_FBO_BIND identity=0x" + Long.toHexString(identity)
                         + " isMain=" + isMainFramebuffer + " size=" + self.framebufferTextureWidth + "x"
-                        + self.framebufferTextureHeight);
+                        + self.framebufferTextureHeight + " class=" + self.getClass().getName()
+                        + " firstBoundBy=[" + callers + "]");
             }
             backend.bindFramebuffer(identity, isMainFramebuffer);
             // CELTIUM-OUTLINE-WIRING (call site 1 of 2; blocked on the backend - nothing is invented here): the colour
