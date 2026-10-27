@@ -216,6 +216,7 @@ public final class GameLoopTiming {
         tickNanos.addAndGet(elapsed);
         tickCount.incrementAndGet();
         worstTickNanos.accumulateAndGet(elapsed, Math::max);
+        org.soutalab.celtium.vulkan.FramePassTimings.noteTick();
         if (openLoopNanos != 0L) {
             tickInsideLoop += elapsed;
         }

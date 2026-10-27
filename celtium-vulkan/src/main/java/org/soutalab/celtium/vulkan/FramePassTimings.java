@@ -140,6 +140,49 @@ public final class FramePassTimings {
         return CPU_CLOCK && THREAD_CPU_SUPPORTED ? THREAD_BEAN.getCurrentThreadCpuTime() : System.nanoTime();
     }
 
+    /**
+     * The brackets summed separately for frames drawn right after a client tick and for the rest, printed every
+     * {@link #TICK_SPLIT_FRAMES} frames as {@code CELTIUM_FRAME_TICK_PASSES}: Intel's warm p99 is the tick frames, and
+     * the frame drawn after a tick costs ~0.3 ms more than a plain one - these say which bracket holds it.
+     */
+    private static final int TICK_SPLIT_FRAMES = 4000;
+    private static boolean tickSinceLastFrame;
+    private static final long[] tickFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
+    private static final long[] plainFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
+    private static int tickFrames;
+    private static int plainFrames;
+
+    /** A client tick ended; the next frame to end is a tick frame. */
+    public static void noteTick() {
+        tickSinceLastFrame = true;
+    }
+
+    private static void fileTickSplit() {
+        long[] into = tickSinceLastFrame ? tickFrameSums : plainFrameSums;
+        if (tickSinceLastFrame) tickFrames++; else plainFrames++;
+        tickSinceLastFrame = false;
+        into[0] += currentFrameTotal;
+        for (int i = 0; i < TOP_LEVEL.length; i++) into[1 + i] += currentTopLevel[i];
+        for (int i = 0; i < INSIDE.length; i++) into[1 + TOP_LEVEL.length + i] += currentInside[i];
+        if (tickFrames + plainFrames < TICK_SPLIT_FRAMES || tickFrames == 0) return;
+        StringBuilder line = new StringBuilder("[Celtium] CELTIUM_FRAME_TICK_PASSES tickFrames=").append(tickFrames)
+                .append(" plainFrames=").append(plainFrames).append(" (mean us, tick/plain, brackets differing by"
+                        + " >=10 us)");
+        for (int k = 0; k < tickFrameSums.length; k++) {
+            long tick = tickFrameSums[k] / tickFrames / 1000L;
+            long plain = plainFrameSums[k] / Math.max(1, plainFrames) / 1000L;
+            if (k == 0 || Math.abs(tick - plain) >= 10L) {
+                String name = k == 0 ? "frame" : k <= TOP_LEVEL.length ? TOP_LEVEL[k - 1] : INSIDE[k - 1 - TOP_LEVEL.length];
+                line.append(' ').append(name).append('=').append(tick).append('/').append(plain);
+            }
+        }
+        System.out.println(line);
+        Arrays.fill(tickFrameSums, 0L);
+        Arrays.fill(plainFrameSums, 0L);
+        tickFrames = 0;
+        plainFrames = 0;
+    }
+
     /** Brackets the frame itself. */
     public static void beginFrame() {
         if (!enabled()) return;
@@ -164,6 +207,7 @@ public final class FramePassTimings {
         residuals[slot] = residual;
         for (int i = 0; i < TOP_LEVEL.length; i++) topLevel[i][slot] = currentTopLevel[i];
         for (int i = 0; i < INSIDE.length; i++) inside[i][slot] = currentInside[i];
+        fileTickSplit();
         written++;
         Arrays.fill(currentTopLevel, 0L);
         Arrays.fill(currentInside, 0L);

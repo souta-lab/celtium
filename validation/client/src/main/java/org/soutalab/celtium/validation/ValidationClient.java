@@ -3708,7 +3708,9 @@ public final class ValidationClient {
                 mc.gameSettings.renderDistanceChunks = renderDistance;
                 report.addProperty("renderDistanceUsed", Integer.valueOf(renderDistance));
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
-                mc.gameSettings.limitFramerate = 260;
+                // -Dceltium.validation.framerate: a capped run separates "the tick is slower" from "the tick is slowed
+                // by the frames around it" - at a cap both renderers draw the same number of frames per tick.
+                mc.gameSettings.limitFramerate = Integer.getInteger("celtium.validation.framerate", 260).intValue();
                 mc.gameSettings.enableVsync = false;
                 // The field write is not the option-page setter: nothing pushes the request to the Vulkan swapchain,
                 // which stays FIFO and keeps the legs vsync-bound at ~16.3ms whatever this line says. The request
