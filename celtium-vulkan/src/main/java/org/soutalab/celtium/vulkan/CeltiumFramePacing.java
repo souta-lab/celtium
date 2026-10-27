@@ -13,6 +13,11 @@ import org.lwjgl.sdl.SDLVideo;
  * The call site matters. It used to run at the top of the present, i.e. before the frame was handed to the compositor,
  * which pushed every frame back by the sleep. The game's fps-limit hook runs right after {@code Display.update} - which
  * is after the swap - so the cap sleeps after the frame is out rather than in front of it.
+ * <p>
+ * In a world the cap is the player's own frame limit: pacing every capped run to the display's refresh instead
+ * ignored the setting - a 120 fps limit ran at 60 on a 60 Hz display (Intel world leg, framerate 120: 16.56 ms
+ * intervals against Celeritas' 8.33 ms), and a limit below the refresh rate was exceeded. Out of a world the game asks
+ * for 30 fps, and there the refresh rate stays the target so the menus do not run at half the display's rate.
  * {@code -Dceltium.vulkan.paceToRefresh=false} turns it off.
  */
 public final class CeltiumFramePacing {
@@ -33,6 +38,14 @@ public final class CeltiumFramePacing {
 
     /** Sleeps to the display's refresh interval when nothing else paces the loop. */
     public static void pace() {
+        pace(0);
+    }
+
+    /**
+     * Sleeps to {@code targetFps} when it is positive, to the display's refresh interval otherwise, when nothing else
+     * paces the loop.
+     */
+    public static void pace(int targetFps) {
         if (!ENABLED || fifoPacing) {
             return;
         }
@@ -47,15 +60,16 @@ public final class CeltiumFramePacing {
                 // No SDL display query here: the 60 Hz default applies.
             }
         }
+        long interval = targetFps > 0 ? 1_000_000_000L / targetFps : intervalNanos;
         long now = System.nanoTime();
-        if (nextFrameNanos == 0L || now - nextFrameNanos > intervalNanos * 4L) {
-            nextFrameNanos = now + intervalNanos;
+        if (nextFrameNanos == 0L || now - nextFrameNanos > interval * 4L) {
+            nextFrameNanos = now + interval;
             return;
         }
         long wait = nextFrameNanos - now;
         if (wait > 0L) {
             java.util.concurrent.locks.LockSupport.parkNanos(wait);
         }
-        nextFrameNanos += intervalNanos;
+        nextFrameNanos += interval;
     }
 }

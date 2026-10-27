@@ -204,7 +204,8 @@ public class MinecraftMixin {
             if (GL_LESS_SYNC_SKIPPED) {
                 // Stands in for the game's limiter, at the same point in the loop: after the frame has been presented,
                 // so the sleep is behind the frame rather than in front of it.
-                org.soutalab.celtium.vulkan.CeltiumFramePacing.pace();
+                org.soutalab.celtium.vulkan.CeltiumFramePacing.pace(
+                        ((Minecraft) (Object) this).world != null ? fps : 0);
                 return;
             }
             org.lwjgl.opengl.Display.sync(fps);
