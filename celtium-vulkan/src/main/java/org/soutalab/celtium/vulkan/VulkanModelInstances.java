@@ -141,6 +141,7 @@ final class VulkanModelInstances {
 
     private long appended;
     private long unlitAppended;
+    private long geometryDraws;
     private long declinedFull;
     private long declinedMissing;
     private long runs;
@@ -289,10 +290,16 @@ final class VulkanModelInstances {
     /** {@return the pipeline for this pass and state}, creating it on first use. */
     Pipeline pipelineFor(long renderPass, long stateKey, VulkanColorBlendState blend, boolean depthTest,
             boolean depthWrite, boolean cull, int depthCompareOp) {
-        long key = stateKey * 31L + renderPass;
+        return pipelineFor(renderPass, stateKey, blend, depthTest, depthWrite, cull, depthCompareOp,
+                VulkanImmediateFormats.ITEM);
+    }
+
+    Pipeline pipelineFor(long renderPass, long stateKey, VulkanColorBlendState blend, boolean depthTest,
+            boolean depthWrite, boolean cull, int depthCompareOp, int format) {
+        long key = (stateKey * 31L + renderPass) * 31L + format;
         Pipeline pipeline = this.pipelines.get(Long.valueOf(key));
         if (pipeline == null) {
-            pipeline = new Pipeline(createPipeline(renderPass, blend, depthTest, depthWrite, cull, depthCompareOp),
+            pipeline = new Pipeline(createPipeline(renderPass, blend, depthTest, depthWrite, cull, depthCompareOp, format),
                     renderPass);
             this.pipelines.put(Long.valueOf(key), pipeline);
         }
@@ -331,6 +338,23 @@ final class VulkanModelInstances {
             float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
         int[] entry = this.poolEntries.get(listId);
         int index = this.segment * SEGMENT_RECORDS + this.used;
+        writeInstance(index, modelView, colour, combine, affine, alphaRef, alphaFunction,
+                light, lightCoord, textureIndex, lightmapIndex);
+        if (light == null) this.unlitAppended++;
+        long c = this.commands.mappedAddress() + (long) index * COMMAND_BYTES;
+        MemoryUtil.memPutInt(c, entry[2]);
+        MemoryUtil.memPutInt(c + 4, 1);
+        MemoryUtil.memPutInt(c + 8, entry[0]);
+        MemoryUtil.memPutInt(c + 12, entry[1]);
+        MemoryUtil.memPutInt(c + 16, index);
+        this.used++;
+        run.count++;
+        run.noteTexture(glTexture);
+        this.appended++;
+    }
+
+    private void writeInstance(int index, float[] modelView, float[] colour, float[] combine, float[] affine,
+            float alphaRef, int alphaFunction, float[] light, float[] lightCoord, int textureIndex, int lightmapIndex) {
         long r = this.records.mappedAddress() + (long) index * RECORD_BYTES;
         for (int i = 0; i < 16; i++) {
             MemoryUtil.memPutFloat(r + i * 4L, modelView[i]);
@@ -355,17 +379,26 @@ final class VulkanModelInstances {
         // The alpha test holds under the combine as well (GL's COMBINE_ALPHA keeps the texture alpha the test reads).
         MemoryUtil.memPutFloat(r + 124, alphaRef);
         writeShadingRecord(r, light, lightCoord, textureIndex, lightmapIndex, alphaFunction);
-        if (light == null) this.unlitAppended++;
-        long c = this.commands.mappedAddress() + (long) index * COMMAND_BYTES;
-        MemoryUtil.memPutInt(c, entry[2]);
-        MemoryUtil.memPutInt(c + 4, 1);
-        MemoryUtil.memPutInt(c + 8, entry[0]);
-        MemoryUtil.memPutInt(c + 12, entry[1]);
-        MemoryUtil.memPutInt(c + 16, index);
-        this.used++;
-        run.count++;
-        run.noteTexture(glTexture);
-        this.appended++;
+    }
+
+    /** Executes an owned/leased immediate mesh through the same pose/lighting/fog program as retained models. */
+    void drawGeometry(VkCommandBuffer commandBuffer, Pipeline pipeline, long textureSet, ImmediateGroup group,
+            int textureIndex, int lightmapIndex) {
+        int index = this.segment * SEGMENT_RECORDS + this.used++;
+        writeInstance(index, group.modelView, group.color, group.combineColor, group.texMatrix,
+                Float.intBitsToFloat(group.state[6]), group.state[14], group.lightParams,
+                group.lightmapCoords, textureIndex, lightmapIndex);
+        if (group.formatId == VulkanImmediateFormats.POSITION_TEX_NORMAL) {
+            MemoryUtil.memPutInt(this.records.mappedAddress() + (long) index * RECORD_BYTES + 236, 3);
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            bindProgram(commandBuffer, pipeline, textureSet, group.projection, group.fog, stack);
+            vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(group.mesh.vertexBuffer()),
+                    stack.longs(group.mesh.vertexBindOffset()));
+            vkCmdBindIndexBuffer(commandBuffer, group.mesh.indexBuffer(), group.mesh.indexBindOffset(), VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(commandBuffer, group.mesh.indexCount(), 1, 0, 0, index);
+        }
+        this.geometryDraws++;
     }
 
     /** Defined for every reused slot, including lit -> unlit and disabled -> zero-reference alpha changes. */
@@ -395,13 +428,7 @@ final class VulkanModelInstances {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, run.pipeline.handle);
-            ByteBuffer constants = stack.calloc(ModelRunConstants.BYTES);
-            ModelRunConstants.write(constants, projection, fog);
-            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                    stack.longs(textureSet, this.recordsSet), null);
+            bindProgram(commandBuffer, run.pipeline, textureSet, projection, fog, stack);
             vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
             vkCmdBindIndexBuffer(commandBuffer, run.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
             long offset = (long) run.firstCommand * COMMAND_BYTES;
@@ -416,8 +443,19 @@ final class VulkanModelInstances {
         }
     }
 
+    private void bindProgram(VkCommandBuffer commandBuffer, Pipeline pipeline, long textureSet,
+            float[] projection, float[] fog, MemoryStack stack) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle);
+        ByteBuffer constants = stack.calloc(ModelRunConstants.BYTES);
+        ModelRunConstants.write(constants, projection, fog);
+        vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                stack.longs(textureSet, this.recordsSet), null);
+    }
+
     String describe() {
-        return "modelInstances[appended=" + this.appended + " unlitAppended=" + this.unlitAppended + " runs=" + this.runs + " declinedFull=" + this.declinedFull
+        return "modelInstances[appended=" + this.appended + " geometryDraws=" + this.geometryDraws + " unlitAppended=" + this.unlitAppended + " runs=" + this.runs + " declinedFull=" + this.declinedFull
                 + " declinedMissing=" + this.declinedMissing + " poolBuilds=" + this.poolBuilds
                 + " poolAppends=" + this.poolAppends + " poolGrowths=" + this.poolGrowths
                 + " poolLists=" + this.poolEntries.size() + " pipelines=" + this.pipelines.size() + "]";
@@ -468,7 +506,7 @@ final class VulkanModelInstances {
     }
 
     private long createPipeline(long renderPass, VulkanColorBlendState colorBlend, boolean depthTest,
-            boolean depthWrite, boolean cull, int depthCompareOp) {
+            boolean depthWrite, boolean cull, int depthCompareOp, int format) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ByteBuffer vertexCode = SpirvShaders.load(SpirvShaders.MODEL_INSTANCE_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(SpirvShaders.MODEL_INSTANCE_FRAGMENT);
@@ -490,12 +528,12 @@ final class VulkanModelInstances {
                         .pName(stack.UTF8("main"));
                 // The ITEM layout the model cache builds: position, colour, texture, normal (VulkanImmediateItemPipeline).
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(VERTEX_BYTES).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(format == VulkanImmediateFormats.POSITION_TEX_NORMAL ? 24 : VERTEX_BYTES).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
                 VkVertexInputAttributeDescription.Buffer attributes = VkVertexInputAttributeDescription.calloc(4, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(16);
-                attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(12);
-                attributes.get(3).location(3).binding(0).format(VK_FORMAT_R8G8B8_SNORM).offset(24);
+                attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(format == VulkanImmediateFormats.ITEM ? 16 : 12);
+                attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(format == VulkanImmediateFormats.ITEM ? 12 : format == VulkanImmediateFormats.POSITION_TEX_NORMAL ? 0 : 20);
+                attributes.get(3).location(3).binding(0).format(VK_FORMAT_R8G8B8_SNORM).offset(format == VulkanImmediateFormats.POSITION_TEX_NORMAL ? 20 : 24);
                 VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
                         .sType$Default().pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attributes);
                 VkPipelineInputAssemblyStateCreateInfo assembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)

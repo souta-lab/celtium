@@ -413,23 +413,7 @@ final class ModelReplay {
         if (textureIndex < 0 || lightmapIndex < 0 || b.textureArray == null) {
             return false;
         }
-        if (b.modelInstances == null) {
-            VulkanModelInstances created = new VulkanModelInstances(b.context, b.textureArray.layout());
-            try {
-                if (!created.create()) {
-                    created.delete();
-                    b.modelInstancesFailed = true;
-                    return false;
-                }
-            } catch (RuntimeException | LinkageError error) {
-                System.out.println("[Celtium] CELTIUM_MODEL_INSTANCES create failed: " + error);
-                created.delete();
-                b.modelInstancesFailed = true;
-                return false;
-            }
-            b.modelInstances = created;
-            created.beginFrame(b.frameId);
-        }
+        if (!ensureInstances()) return false;
         VulkanModelInstances instances = b.modelInstances;
         instances.syncPool(b.modelGeometry.modelMeshes());
         int listId = mesh.ownerList();
@@ -491,6 +475,29 @@ final class ModelReplay {
         instances.append(open.modelRun, listId, modelView, colour, combineColor, affine, Float.intBitsToFloat(state[6]), state[14],
                 b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
         open.batches += quads;
+        return true;
+    }
+
+    /** Ensures the shared native program and its frame-slot storage exist. */
+    boolean ensureInstances() {
+        if (b.modelInstancesFailed) return false;
+        if (b.modelInstances == null) {
+            VulkanModelInstances created = new VulkanModelInstances(b.context, b.textureArray.layout());
+            try {
+                if (!created.create()) {
+                    created.delete();
+                    b.modelInstancesFailed = true;
+                    return false;
+                }
+            } catch (RuntimeException | LinkageError error) {
+                System.out.println("[Celtium] CELTIUM_MODEL_INSTANCES create failed: " + error);
+                created.delete();
+                b.modelInstancesFailed = true;
+                return false;
+            }
+            b.modelInstances = created;
+            created.beginFrame(b.frameId);
+        }
         return true;
     }
 

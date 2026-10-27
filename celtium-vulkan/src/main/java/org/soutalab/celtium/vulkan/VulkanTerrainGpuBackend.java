@@ -1178,6 +1178,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Native replay of compiled model display lists: the per-group mesh path and the instanced runs. */
     final ModelReplay modelReplay = new ModelReplay(this);
+    private final LitGeometryExecutor litGeometry = new LitGeometryExecutor(this);
 
     public boolean celtium$drawModelList(int listId, int boundTextureId) {
         return this.modelReplay.celtium$drawModelList(listId, boundTextureId);
@@ -16667,6 +16668,8 @@ this.frameBufferOpen = false;
                 if (PUSH_COMPONENT_CENSUS) {
                     celtium$notePushComponents(group);
                 }
+                boolean nativeLit = this.litGeometry.prepare(group, prepared);
+                if (!nativeLit) {
                 long pushBlockKey = PUSH_BLOCK_CACHE ? celtium$pushBlockKey(group) : 0L;
                 boolean pushBlockCached = PUSH_BLOCK_CACHE && celtium$copyPushBlock(pushBlockKey, push);
                 if (!pushBlockCached) {
@@ -16776,6 +16779,7 @@ this.frameBufferOpen = false;
                 if (PUSH_BLOCK_CACHE && !pushBlockCached) {
                     celtium$storePushBlock(pushBlockKey, push);
                 }
+                }
                 // The batch's own viewport, applied as the drawable sub-rect GL would have used. Without this the
                 // pipeline's baked-in viewport (set once per pass by setViewportAndScissor) would draw a 256x256 GUI
                 // batch across the whole target - wrong pixels, which is why the batch used to be refused instead.
@@ -16841,7 +16845,12 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
                     org.soutalab.celtium.vulkan.FramePassTimings.end("rcViewport");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
-                    boolean indirectConsumed = celtium$tryEnqueueIndirect(group, mesh, prepared, push);
+                    boolean indirectConsumed;
+                    if (nativeLit) {
+                        this.litGeometry.draw(group);
+                        indirectConsumed = true;
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                    } else indirectConsumed = celtium$tryEnqueueIndirect(group, mesh, prepared, push);
                     if (!indirectConsumed) {
                     long bindDescriptor = prepared.descriptor;
                     if (REPLACE_TEXTURE_IDS != null && prepared.pipeline instanceof VulkanImmediateTexturePipeline
