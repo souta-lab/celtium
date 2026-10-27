@@ -55,8 +55,8 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | E2E 1.93a（Cleanroom 0.7） | 起動・入world・exit 0（AMD）。遠景の黒帯が未解決（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
-2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s。AMDはjar `dbffd929`、Intel最新は `8be75d012`相当）:
-   - **AMD: goal条件1を満たす**（`kpi2-amd`、verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.747/0.765/0.910、外部CPU 0.09）。
+2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも jar `b92962a2`＝`8be75d012`）:
+   - **AMD: goal条件1を満たす**（最新 `kpi5-amd`、jar `b92962a2`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.622/0.619/0.811。前回 `kpi2` 0.747/0.765/0.910）。
    - **Intel: 未達**（最新 `kpi5-intel`: p50 0.903・p95 0.893、**p99 1.051**＝3.50–3.53 vs 3.29–3.42 ms。`kpi3` 1.110→`kpi4` 1.093→1.051）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
