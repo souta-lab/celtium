@@ -84,11 +84,11 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **未修正・トリアージ済み** | 利用者の実機報告＋画面 | 修正中 | ①メニューのパノラマ＝**修正済み**（[画像](evidence/2026-10-24-menu-panorama-fixed.png)） ②エンドポータル内の描画がおかしい＝**修正済み**（glTexGenがstubでno-op→`NativeTexGen`＋texgen pipeline、portal面の参照差 平均13.5/21.9/18.1→5.5/9.5/10.2、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)、Intel未実行） ③F2スクショ真っ黒＝**修正済み**（`nglGetTexImage`ルート、leg shot-test6 PASSED・非黒98.3%）④色付きガラスがチカチカ ⑤視点移動時に看板文字などが残像。**⑤は静止条件で棄却済み**（`framesNoClear=0`・F2画像と提示画像が0差分）＝動き依存（提示レイテンシ等）として次段で測定。判明: ③は既定framebuffer(0)からのreadPixels経路（TextureCopyService 890-901のgate）がメニュー/スクショ文脈で拒否されるため。④⑤はフレーム画像の再利用・掃除とブレンド順の疑い。①はメニュー経路（パノラマはworld描画＋GUI）で同じ土台の疑い。次は③から直し、④⑤→①→②の順 |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤未解決** | 利用者の実機報告＋画面 | ②未実行 | ①メニューのパノラマ（[画像](evidence/2026-10-24-menu-panorama-fixed.png)） ②エンドポータル（texgen、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)） ③F2スクショ真っ黒（`nglGetTexImage`） ④色付きガラスのちらつき（`de280e72a`） ⑤視点移動時の看板文字の残像＝静止条件では0差分、動き依存として未測定 |
 
 
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | world scene は `cleanroom-0.7.11-alpha` の `minecraft/saves/qmagnet`（配布マップ）を使用。v0.0.14-alpha のforge jar `90a7c505…` は world で **AMD/Intel とも PASSED・validation 0・画像gate一致**。**0.6.13-alpha（GLFW/LWJGL 3.4.1）は起動不可**＝SDL3バインディング不在を検出して`CeltiumGllessHint` がバージョンを名指しして拒否（クラッシュレポートに理由が残る）。0.6.13 で受入を主張するには0.6用の別ビルドが必要 |
-| **巨大pack互換** | **RLCraft 2.9.3 は対象外**（Celtiumを外した対照でも `VerifyError` で起動しない） | 利用者指示 2026-10-27 | 未着手 | 代替は Cleanroom対応の **E2E-E**。受入は world を開いた提示画像に異常が無いこと |
+| **巨大pack互換（E2E-E 1.87.3）** | **入world・exit 0、device lost 解消。提示画像は未受入** | AMD（leg e2ee-amd13・Celeritas対照 e2ee-ref2） | 未実行 | RLCraft 2.9.3 は対象外（Celtium無しでも `VerifyError`）。Cleanroom 0.7 の環境差は local置換（`.celtium-work/modpack-e2ee/SUBSTITUTIONS.md`）と上流PR（Fugue #136・Cleanroom #720）。Celtium側で直した: 競合modのfail-fast（CLS・SmoothFont）、chain pairの退去/resizeが記録中のimage・framebuffer・samplerを即時破棄していた use-after-free（`8f121acfb`）。**残り**: ①Xaero World Map のミニマップは4ユニットの固定機能COMBINE（`POSITION_TEX_TEX_TEX`）で描くため拒否され欠落 → 汎用combiner実装が必要 ②ホットバー・手が出ず周辺が暗い（Lumenizedを外すとHUDは出るが画面が白飛び）＝未帰属 ③atlas の `VUID-vkCmdDraw-None-09600` 10件（`-Dceltium.vulkan.descWriteCensus=true` で書き手特定） ④FTB Quests同期時の EnderIO `block_buffer` 欠落NPE（1/3回、時機依存） ⑤fixtureのvalidation数0でもコンソールにエラーがある計数の穴 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②非instance lit fog ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
