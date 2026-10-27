@@ -63,7 +63,8 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
 
     @Override
     public void injectData(Map<String, Object> map) {
-
+        Object loader = map.get("classLoader");
+        CeltiumCompetitors.check(loader instanceof ClassLoader cl ? cl : CeleritasLoadingPlugin.class.getClassLoader());
     }
 
     @Override

@@ -208,7 +208,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         if os.environ.get("CLASH_DIR"):
             mods.extend(jars_in(Path(os.environ["CLASH_DIR"])))
     if mode == "e2e":
-        staged = jars_in(root / ".celtium-work/modpack-p0/e2e-staged/mods")
+        # E2E_STAGED_MODS selects another pack's jars (E2E-E) for the same mode and checks.
+        staged = jars_in(Path(os.environ.get("E2E_STAGED_MODS", root / ".celtium-work/modpack-p0/e2e-staged/mods")))
         exclusions = ["[Nn]othirium-*", "[Nn]aughthirium-*", *shlex.split(os.environ.get("E2E_EXCLUDE", ""))]
         # Filtering supplied mods alone is insufficient: the harness also copies
         # source-instance mods. Exclude the replaced renderers from BOTH inputs.

@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **431 個**／文字列内マーカー **388 個**。
+システムプロパティの読み取りキー **432 個**／文字列内マーカー **388 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -18,6 +18,7 @@
 |---|---|
 | [celeritas.enableGLDebug](#group-celeritas-enableGLDebug) | 1 |
 | [celeritas.useVintageFastBlockRenderer](#group-celeritas-useVintageFastBlockRenderer) | 1 |
+| [celtium.allowCompetitors](#group-celtium-allowCompetitors) | 1 |
 | [celtium.clearlatch](#group-celtium-clearlatch) | 1 |
 | [celtium.debug](#group-celtium-debug) | 36 |
 | [celtium.droppedItemRange](#group-celtium-droppedItemRange) | 1 |
@@ -60,6 +61,13 @@
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
 | `celeritas.useVintageFastBlockRenderer` | `System.getProperty` | [ChunkBuilderMeshingTask.java:53](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/task/ChunkBuilderMeshingTask.java#L53>) |
+
+<a id="group-celtium-allowCompetitors"></a>
+## `celtium.allowCompetitors.*`
+
+| キー | 読み取りAPI | 位置 |
+|---|---|---|
+| `celtium.allowCompetitors` | `Boolean.getBoolean` | [CeltiumCompetitors.java:29](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java#L29>) |
 
 <a id="group-celtium-clearlatch"></a>
 ## `celtium.clearlatch.*`
