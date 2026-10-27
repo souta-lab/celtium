@@ -9,7 +9,13 @@ An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, 
 >
 > **native Vulkanで描画・提示する実装がありますが、描画・互換性・性能の受入は未完です。** 最新の判定と未解決項目は [現在表](<docs/plan.md>)だけで管理します。
 
-Status reviewed: **2026-10-27** (release 0.1.0-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks).
+Status reviewed: **2026-10-28** (release 0.1.0-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks).
+
+**On `main`, not yet released:** stained glass, ice and slime no longer draw their back faces (the reported glass
+flicker), lit models clamp their lighting like fixed-function GL, blocks mesh through Forge's block-model pipeline as in
+upstream Celeritas, a world frame limit is honoured instead of the display refresh rate, and ~600 MB of unused vanilla
+chunk buffers are no longer allocated when joining a world. Against Celeritas on the current main build (no Xaero):
+AMD p50/p95/p99 0.62/0.62/0.81x; Intel 0.90/0.89/1.05x ([current table](<docs/plan.md>)).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/benchmark-dark.svg">
@@ -20,11 +26,8 @@ Status reviewed: **2026-10-27** (release 0.1.0-alpha; AMD RX 6400 and Intel UHD 
 
 ## Current status
 
-The mode documented here is the **Vulkan-only / GL-less mode**, enabled with:
-
-```text
--Dceltium.vulkan.glless=true
-```
+The mode documented here is the **Vulkan-only / GL-less mode**. It is on by default; no JVM argument is needed.
+(`-Dceltium.vulkan.glless=false` turns it off for diagnosis only — the OpenGL path is not a supported renderer.)
 
 It creates a window without an OpenGL context (`GLFW_NO_API`), renders into Vulkan-owned images, and presents the finished frame through a Vulkan swapchain. It does not depend on OpenGL drawing, GL readback, a GL/Vulkan bridge, GL swap or GL fallback.
 
@@ -40,7 +43,7 @@ See [the single current status table](<docs/plan.md>) for per-GPU verdicts, arti
 
 - **Minecraft 1.12.2 / CleanroomMC only.** Stock Forge with Java 8/LWJGL2 and other Forge + LWJGL3 replacement stacks are not supported.
 - Ordinary gameplay/content mods are a compatibility goal. Minecraft/Forge public entry points, model data and event semantics are preserved where possible; compatibility is **not yet complete**.
-- **Competing renderer replacements are not supported alongside Celtium.** Celtium replaces the renderer, so another renderer overhaul in the same instance is not a configuration this project tests. Ordinary optimization mods are different: the test instance runs the standard 1.12.2 performance stack as **coexistence targets** (see below), and the 268-mod E2E pack passes with StellarCore installed.
+- **Competing renderer replacements are not supported alongside Celtium.** Celtium replaces the renderer, so another renderer overhaul in the same instance is not a configuration this project tests. These mods are detected at startup and the game stops with a message naming them: **Custom Loading Screen, SmoothFont, Gnetum, Nothirium, Naughthirium** (each replaces a part Celtium draws natively: the loading screen, glyph drawing, the HUD, the terrain renderer). `-Dceltium.allowCompetitors=true` skips the check for diagnosis only. Ordinary optimization mods are different: the test instance runs the standard 1.12.2 performance stack as **coexistence targets** (see below), and the 268-mod E2E pack passes with StellarCore installed.
 - **Lighting engine: use [Pulsar Lighting Engine](https://modrinth.com/mod/pulsar-lighting-engine), not Alfheim.** Alfheim is unsupported with Celtium: its client light pass re-marks the same chunk sections for rebuild every tick (measured in Enigmatica 2 Expert at ~80,000 marks a second over ~440 sections, fed back by LittleTiles), so distant terrain never settles. Celtium logs a warning at startup when Alfheim is installed.
 - Celtium replaces Celeritas. **Install one, not both.** The internal mod ID and resource namespace remain `celeritas` for existing references.
 - Shadows and shader packs are not part of Celtium itself: they are planned as a separate addon jar (a Demonica fork, AGPL-3.0), after the shaderless renderer and major gameplay mods work. Vanilla ShaderGroup, spectator effects and entity outlines remain part of the base renderer's scope.
@@ -83,7 +86,7 @@ The packaged jar is written under a directory named after the version, which the
 build-1122/build/libs/0.1.0-alpha/celtium-forge-mc1.12.2-0.1.0-alpha.jar
 ```
 
-Use a separate Cleanroom test instance, install the packaged Celtium jar instead of Celeritas, and add `-Dceltium.vulkan.glless=true` to the instance's JVM arguments. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
+Use a separate Cleanroom test instance and install the packaged Celtium jar (the plain `celtium-forge-mc1.12.2-<version>.jar`, not the `-dev` or `-reobf` one) instead of Celeritas; no JVM argument is required. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
 
 For reproducible validation and development, use [the current development procedure](<docs/development.md>) and the tracked [leg runner](<scripts/gv-leg.sh>). [AGENTS.md](<AGENTS.md>) contains working rules, [the objective](<docs/goal.md>) defines completion. The [verification skill](<.agents/skills/celtium-verify/SKILL.md>) is versioned with this checkout; it is not permission to start GPU work.
 

@@ -47,7 +47,7 @@ public class MinecraftMixin {
                     target = "Lnet/minecraft/client/Minecraft;loadingScreen:Lnet/minecraft/client/LoadingScreenRenderer;"))
     private void celtium$replaceLoadingScreen(Minecraft mc, LoadingScreenRenderer replacement) {
         // Scope the handover to resize, not arbitrary progress-renderer construction by other mods.
-        if (Boolean.getBoolean("celtium.vulkan.glless") && mc.loadingScreen instanceof LoadingProgressState
+        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless")) && mc.loadingScreen instanceof LoadingProgressState
                 && replacement instanceof LoadingProgressState) {
             ((LoadingProgressState) replacement).celtium$copyLoadingTask((LoadingProgressState) mc.loadingScreen);
         }
