@@ -69,6 +69,21 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         return 0;
     }
 
+    /**
+     * Vanilla's chunk dispatcher with one render builder instead of ten per core.
+     * <p>
+     * This renderer builds chunks with its own builder, but {@code RenderGlobal} still constructs and polls the vanilla
+     * dispatcher, and its default sizing allocates a {@code RegionRenderCacheBuilder} - about 10 MB of direct buffers -
+     * per builder: 61 of them on a six-core machine with a 2 GB heap, ~610 MB allocated and zeroed on the client
+     * thread while the world is being joined (JFR, world leg: 137 ms in {@code Unsafe.setMemory} under
+     * {@code ChunkRenderDispatcher.<init>}). Nothing ever takes a builder from it here, so one is enough.
+     */
+    @Redirect(method = "loadRenderers", at = @At(value = "NEW",
+            target = "()Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher;"), require = 1)
+    private ChunkRenderDispatcher celtium$smallDispatcher() {
+        return new ChunkRenderDispatcher(1);
+    }
+
     /** Clouds, timed for the frame's pass split (plan §0.227). */
     @Inject(method = "func_180447_b", at = @At("HEAD"), require = 0)
     private void celtium$cloudsTimedBegin(float partialTicks, int pass, double x, double y, double z,
