@@ -61,10 +61,13 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
      **p99はtickを含むフレーム（warm 200/5,700、3.5%）**: 通常フレームp99は同等（2.36–2.63 vs 2.46–2.52 ms）、tickフレームp95 3.88–4.08 vs 3.42–3.52 ms、
      tick本体（ClientTickEvent）p50 1.27–1.32 vs 1.15–1.19・p95 1.55–1.80 vs 1.39–1.42 ms（`kpi4-intel`、計器 `frameIntervalWarmTickFrame*`/`warmTick*`、
      `-Dceltium.debug.frameTail` の `CELTIUM_FRAME_TICK_SPLIT`）。tick差はvanillaコード全体に薄く分布（1 ms JFR: ChunkProviderClient走査+17/42サンプル等）。
-     棄却: animated sprite毎submitのtick単位batch化・stub sub-image変換のscratch化（control比1.002）、CPU/GPUクロック差（両arm 3800/1050 MHz）、JIT deopt反復（9件）。
-     次の判別: tickフレーム内の描画側（tick後のフレーム+0.3 ms）とtick本体を`brackets`で同一run内分離。
+     棄却: animated sprite毎submitのtick単位batch化・stub sub-image変換のscratch化（control比1.002）、CPU/GPUクロック差（両arm 3800/1050 MHz）、JIT deopt反復（9件）、
+     フレーム数による干渉（120 fps上限で同フレーム数でもtick 1.22 vs 1.06 ms）。差はvanillaのメモリ参照（chunk map get・HashMap走査・getBlockState）に広く分布。
+     仮説: Vulkan記録がmain threadのキャッシュを奪う（Celeritasはmesa `gdrv0` 別コア）。判別にはperf（未導入）か記録の別thread化の上限測定。
+     tick後フレームの+0.3 msは `CELTIUM_FRAME_TICK_PASSES`: clouds区間（その時点の即時window flushのnative submit）+53 µs・setupTerrain +33 µs・flush +24–73 µs。
+   - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）と描画側残差は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: fog は vanilla・地形・可視距離・即時描画で [native owner](evidence/native-fog-2026-10-26.json) を共有。[instance fog](evidence/model-fog-2026-10-26.json) を実装し、projection/fog の96B run定数化と行列積GPU移動で instance は320→256B、JavaのMVP合成を削除（[証拠](evidence/model-run-2026-10-27.json)）。同版のKPIは両GPU負荷ゲート外、速度未判定。**照明OFFモデルも同じinstance programへ統合、alpha全比較を実装**（[証拠](evidence/unlit-model-2026-10-27.json)）。glint陽性対照で受理を確認、glint単独画素は未分離。155 JUnit・71 Python通過。candidate 10 leg validation 0、world AMD/Intel・video・退出後menuはgate通過。inventory/recipe・actor/glintは未較正。最新JARの速度とGREATER/disabled以外のalpha比較はGPU未測定。非instance lit fogは未対応。
+3. **native 状態・実行**: fog は vanilla・地形・可視距離・即時描画で [native owner](evidence/native-fog-2026-10-26.json) を共有。[instance fog](evidence/model-fog-2026-10-26.json) を実装し、projection/fog の96B run定数化と行列積GPU移動で instance は320→256B、JavaのMVP合成を削除（[証拠](evidence/model-run-2026-10-27.json)）。**照明OFFモデルも同じinstance programへ統合、alpha全比較を実装**（[証拠](evidence/unlit-model-2026-10-27.json)）。glint単独画素は未分離、inventory/recipe・actor/glintは未較正、GREATER/disabled以外のalpha比較と非instance lit fogは未対応。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
@@ -84,8 +87,8 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 | **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤未解決** | 利用者の実機報告＋画面 | ②未実行 | ①メニューのパノラマ（[画像](evidence/2026-10-24-menu-panorama-fixed.png)） ②エンドポータル（texgen、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)） ③F2スクショ真っ黒（`nglGetTexImage`） ④色付きガラスのちらつき（`de280e72a`） ⑤視点移動時の看板文字の残像＝静止条件では0差分、動き依存として未測定 |
 
 
-| **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | world scene は `cleanroom-0.7.11-alpha` の `minecraft/saves/qmagnet`（配布マップ）を使用。v0.0.14-alpha のforge jar `90a7c505…` は world で **AMD/Intel とも PASSED・validation 0・画像gate一致**。**0.6.13-alpha（GLFW/LWJGL 3.4.1）は起動不可**＝SDL3バインディング不在を検出して`CeltiumGllessHint` がバージョンを名指しして拒否（クラッシュレポートに理由が残る）。0.6.13 で受入を主張するには0.6用の別ビルドが必要 |
-| **巨大pack互換（E2E-E 1.87.3）** | **入world・exit 0、device lost 解消。提示画像は未受入** | AMD（leg e2ee-amd13・Celeritas対照 e2ee-ref2） | 未実行 | RLCraft 2.9.3 は対象外（Celtium無しでも `VerifyError`）。Cleanroom 0.7 の環境差は local置換（`.celtium-work/modpack-e2ee/SUBSTITUTIONS.md`）と上流PR（Fugue #136・Cleanroom #720）。Celtium側で直した: 競合modのfail-fast（CLS・SmoothFont）、chain pairの退去/resizeが記録中のimage・framebuffer・samplerを即時破棄していた use-after-free（`8f121acfb`）。**残り**: ①Xaero World Map のミニマップは4ユニットの固定機能COMBINE（`POSITION_TEX_TEX_TEX`）で描くため拒否され欠落 → 汎用combiner実装が必要 ②ホットバー・手が出ず周辺が暗い（Lumenizedを外すとHUDは出るが画面が白飛び）＝未帰属 ③atlas の `VUID-vkCmdDraw-None-09600` 10件（`-Dceltium.vulkan.descWriteCensus=true` で書き手特定） ④FTB Quests同期時の EnderIO `block_buffer` 欠落NPE（1/3回、時機依存） ⑤fixtureのvalidation数0でもコンソールにエラーがある計数の穴 |
+| **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
+| **巨大pack互換（E2E-E 1.87.3）** | **入world・exit 0、device lost 解消。提示画像は未受入** | AMD（leg e2ee-amd13・Celeritas対照 e2ee-ref2） | 未実行 | RLCraft 2.9.3 は対象外（Celtium無しでも `VerifyError`）。Cleanroom 0.7 の環境差は local置換（`.celtium-work/modpack-e2ee/SUBSTITUTIONS.md`）と上流PR（Fugue #136・Cleanroom #720）。Celtium側で直した: 競合modのfail-fast（CLS・SmoothFont）、chain pairの退去/resizeが記録中のimage・framebuffer・samplerを即時破棄していた use-after-free（`8f121acfb`）。**残り**: ①Xaero World Map のミニマップは4ユニットの固定機能COMBINE（`POSITION_TEX_TEX_TEX`）で描くため拒否され欠落 → 汎用combiner実装が必要 ②HUD欠落はGnetumのFBO管理が原因→競合modとして拒否（`889cc89e3`） ③atlas の `VUID-vkCmdDraw-None-09600` 10件（`-Dceltium.vulkan.descWriteCensus=true` で書き手特定） ④FTB Quests同期時の EnderIO `block_buffer` 欠落NPE（1/3回、時機依存） ⑤fixtureのvalidation数0でもコンソールにエラーがある計数の穴 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②非instance lit fog ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
