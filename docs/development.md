@@ -3312,17 +3312,3 @@ Stage 4のframe compiler）で、個別の数%のmicro-optでは比のノイズ�
 
 なお、`gv-leg.sh` を素で走らせた測定（validation ON ほか）では同じJARが **warm p50 5.25ms** になる。
 KPI値と混ぜない（[検証の罠](<verification-traps.md>)）。
-
-**lit即時geometryを model instance programで実行（2026-10-27・実測）**
-
-`LitGeometryExecutor` が ITEM / POSITION_TEX_COLOR_NORMAL / POSITION_TEX_NORMAL のlit groupを、model replayと
-同じ共有mesh pool・256B record・instance programで描く（recordフラグ bit1=colourless, bit2=unlit）。
-pipelineは format ごとに vertex layoutを変えて `VulkanModelInstances` に持たせる。
-
-- 陽性対照: `modelInstances[… geometryDraws=335 …]`（AMD）/ 223（Intel）
-- 受入: `litgeo-world-amd` / `litgeo-world-intel` とも PASSED、validation 0、画像gate PASSED
-- **同一JAR A/B**（`-Dceltium.native.litGeometry=false` が旧push-block経路）: tick200提示画像の差は
-  全体1.73%だが、**F3テキスト行より上のscene領域では0.106%**。同じ設定で2回走らせた対照は同領域1.237%なので、
-  差は**run間のアニメ揺らぎより1桁小さい**（＝絵は同じ）。全体の差はF3カウンタ行（geometryDrawsの有無）と
-  ポータル/パーティクルの位相。
-- 速度の主張はしない（draw数は同じ1 group 1 draw）。次の段でlit groupをinstance runへ合流させる。

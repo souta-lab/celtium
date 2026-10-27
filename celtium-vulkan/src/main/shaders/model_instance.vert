@@ -21,7 +21,7 @@ struct Instance {
     vec4 diffuse0;      // 176
     vec4 diffuse1;      // 192
     vec4 lightCoord;    // 208: xy the light-map coordinate
-    ivec4 indices;      // 224: texture, light map, alpha comparison, lighting/colorless bits
+    ivec4 indices;      // 224: texture, light map, alpha comparison, lighting enabled
     vec4 pad;           // 240
 };
 
@@ -53,7 +53,7 @@ void main() {
         v_TexCoord = a_TexCoord;
     }
     vec3 illumination = vec3(1.0);
-    if ((r.indices.w & 1) != 0) {
+    if (r.indices.w != 0) {
         vec3 n = normalize(a_Normal);
         vec3 lit = r.ambient.rgb
                 + r.diffuse0.rgb * max(dot(n, r.light0Dir.xyz), 0.0)
@@ -61,8 +61,7 @@ void main() {
         vec3 lightmap = textureLod(textures[nonuniformEXT(r.indices.y)], (r.lightCoord.xy + 8.0) / 256.0, 0.0).rgb;
         illumination = lit * lightmap;
     }
-    vec4 baseColor = (r.indices.w & 2) != 0 ? vec4(1.0) : a_Color;
-    v_Color = vec4(baseColor.rgb * illumination * r.colour.rgb, baseColor.a * r.colour.a);
+    v_Color = vec4(a_Color.rgb * illumination * r.colour.rgb, a_Color.a * r.colour.a);
     v_AlphaFunction = r.indices.z;
     v_Texture = r.indices.x;
     v_Combine = r.combine;
