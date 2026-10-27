@@ -2,7 +2,7 @@
 
 開発ベース **0.0.18-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開最新版は **v0.0.18-alpha**（2026-10-25、[release notes](<releases/0.0.18-alpha.md>)）。
 2026-10-21 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
-製品の出口は [goal.md](<goal.md>)、目標設計は [new_architecture.md](<new_architecture.md>)、旧設計と実測は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)。
+製品の出口は [goal.md](<goal.md>)、目標設計は [new_architecture.md](<new_architecture.md>)。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
 ## 2026-10-24: 新アーキテクチャへ全面移行（利用者指示）
@@ -21,7 +21,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 | tick以外のvanilla（tick/世界処理） | 約6% | 対象外（共有コスト） |
 
 - **Stage 2（CPU Everything Culling）は後ろへ**: TESR/entityはvanillaが既にfrustum判定しており、KPI sceneの削減は小さい見込み。
-- **Stage 5（GPU Hi-Z）は最後**: AMDのフレームは解像度非依存＝CPU律速（architecture §11）。GPU cullingはCPU時間を減らさない。
+- **Stage 5（GPU Hi-Z）は最後**: AMDのフレームは解像度非依存＝CPU律速。GPU cullingはCPU時間を減らさない。
 - **設計への追加（より速い可能性がある案）**: frame packetを不変にできれば、**記録・提出を専用executor threadへ移す**
   （main threadがframe N+1のpacketを作る間にNを記録）。記録30%がmain threadから外れる。遅延は最大1frame、キュー長1。
   採否はpaired KPIで決める。
@@ -73,7 +73,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
    Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では
    「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Celtium の Vulkan 経路との接続面に置き換える**作業になる。
-   **別成果物（addon jar）**として実装し、Celtium core には取り込まない（`docs/shader-plan.md` の方針）。
+   **別成果物（addon jar）**として実装し、Celtium core には取り込まない。
 5. **本体の影scaffoldとshaderpack frontendは削除済み**（2026-10-27、旧アーキテクチャ削除）。影とpackはDemonica addonで実装する。
 6. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来部分は LGPL-3.0、Actinium 由来は GPL-3.0、
    glsl-transformer は AGPL-3.0。**fork するなら fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
@@ -106,7 +106,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
 ## 更新と参照
 
 - この表は実装・根因・受入の意味が変わった時だけ更新する。round日記・毎回のPR作成は不要。
-- [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [設計](<architecture-2026-10-21.md>) /
+- [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [設計](<new_architecture.md>) /
   [手順](<development.md>) / [計器索引](<instruments.md>) / [検証の罠](<verification-traps.md>)。
 - 計測の生ログと棄却済みの詳細（`duplicate()`除去の反証、packet内訳の旧版、1.70x/1.49xの履歴）は
   [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)（packet loopの撤回・validation層による膨張の記録もここ）。

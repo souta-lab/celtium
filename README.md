@@ -11,6 +11,13 @@ An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, 
 
 Status reviewed: **2026-10-27** (release 0.1.0-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/benchmark-dark.svg">
+  <img alt="Frame time of Celtium 0.1.0-alpha and Celeritas 2.5.0-dev at p50, p95 and p99 on AMD RX 6400 and Intel UHD 630" src="docs/img/benchmark-light.svg">
+</picture>
+
+*Frame time against Celeritas 2.5.0-dev, lower is better. Conditions, ratios and verdicts: [Performance](#performance).*
+
 ## Current status
 
 The mode documented here is the **Vulkan-only / GL-less mode**, enabled with:
@@ -36,7 +43,7 @@ See [the single current status table](<docs/plan.md>) for per-GPU verdicts, arti
 - **Competing renderer replacements are not supported alongside Celtium.** Celtium replaces the renderer, so another renderer overhaul in the same instance is not a configuration this project tests. Ordinary optimization mods are different: the test instance runs the standard 1.12.2 performance stack as **coexistence targets** (see below), and the 268-mod E2E pack passes with StellarCore installed.
 - **Lighting engine: use [Pulsar Lighting Engine](https://modrinth.com/mod/pulsar-lighting-engine), not Alfheim.** Alfheim is unsupported with Celtium: its client light pass re-marks the same chunk sections for rebuild every tick (measured in Enigmatica 2 Expert at ~80,000 marks a second over ~440 sections, fed back by LittleTiles), so distant terrain never settles. Celtium logs a warning at startup when Alfheim is installed.
 - Celtium replaces Celeritas. **Install one, not both.** The internal mod ID and resource namespace remain `celeritas` for existing references.
-- Shader-pack and shadow-mod compatibility is planned **after** the shaderless renderer and major gameplay mods work. Vanilla ShaderGroup, spectator effects and entity outlines remain part of the base renderer's scope.
+- Shadows and shader packs are not part of Celtium itself: they are planned as a separate addon jar (a Demonica fork, AGPL-3.0), after the shaderless renderer and major gameplay mods work. Vanilla ShaderGroup, spectator effects and entity outlines remain part of the base renderer's scope.
 - This is not a general OpenGL-to-Vulkan translator. Native passes follow Minecraft's terrain, model/item, entity/TESR, particle, UI, texture and framebuffer semantics.
 - Mesh shaders are **not required or planned**. Optimizations must preserve a usable baseline on weaker GPUs.
 - **GL-less is installed from the coremod transformer chain**, immediately before the window is created, so a mod that loads `org.lwjgl.opengl.Display` early cannot turn the run into a hybrid any more. This was a real failure until 2026-10-15: in the 268-mod pack RandomPatches defined `Display` at 8.975 s while the mixin list was still being built at 9.837 s, so the `GLFW_NO_API` hint was never applied and the window came up with a real OpenGL 4.6 context. The hint now comes from `CeltiumGllessWindowTransformer`. Read `CELTIUM_GLLESS` lines in the log to confirm which path a run took rather than assuming it.
@@ -78,18 +85,13 @@ build-1122/build/libs/0.1.0-alpha/celtium-forge-mc1.12.2-0.1.0-alpha.jar
 
 Use a separate Cleanroom test instance, install the packaged Celtium jar instead of Celeritas, and add `-Dceltium.vulkan.glless=true` to the instance's JVM arguments. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
 
-For reproducible validation and development, use [the current development procedure](<docs/development.md>) and the tracked [leg runner](<scripts/gv-leg.sh>). [AGENTS.md](<AGENTS.md>) contains working rules, [the objective](<docs/goal.md>) defines completion, and [the shader plan](<docs/shader-plan.md>) covers follow-up work. The [verification skill](<.agents/skills/celtium-verify/SKILL.md>) is versioned with this checkout; it is not permission to start GPU work.
+For reproducible validation and development, use [the current development procedure](<docs/development.md>) and the tracked [leg runner](<scripts/gv-leg.sh>). [AGENTS.md](<AGENTS.md>) contains working rules, [the objective](<docs/goal.md>) defines completion. The [verification skill](<.agents/skills/celtium-verify/SKILL.md>) is versioned with this checkout; it is not permission to start GPU work.
 
 ## Performance
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/benchmark-dark.svg">
-  <img alt="Frame time of Celtium 0.1.0-alpha and Celeritas 2.5.0-dev at p50, p95 and p99 on AMD RX 6400 and Intel UHD 630" src="docs/img/benchmark-light.svg">
-</picture>
-
 Paired, interleaved runs against Celeritas 2.5.0-dev with the 0.1.0-alpha jar (`scripts/gv-kpi.sh`: same instance with
 Xaero's Minimap, the qmagnet test map, warm world ticks [400, 600), 1280x720, vsync off, frame limit 260, periodic dumps
-off; median of 3 pairs). Lower is better. The chart is drawn from [the measured values](<docs/img/benchmark-0.1.0.json>)
+off; median of 3 pairs). Lower is better. The chart at the top is drawn from [the measured values](<docs/img/benchmark-0.1.0.json>)
 by `scripts/bench_chart.py`.
 
 | GPU | Celtium / Celeritas (p50, median of 3 pairs) | Verdict |

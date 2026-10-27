@@ -5,7 +5,7 @@
 **対象:** Minecraft 1.12.2 / CleanroomMC / Java 21 API（Java 27 runtime利用可能）/ LWJGL 3 / SDL3 / Vulkan 1.2+  
 **目標:** 全描画領域の統合・Native Everything Culling・最小CPU overhead・低転送量・低レイテンシ・AMD RX 6400/Intel UHD 630両対応。
 
-> **設計書であり実装・性能改善の完了宣言ではない。** 現状と実測の正典は [docs/plan.md](plan.md)、以前の設計は [docs/architecture-2026-10-21.md](architecture-2026-10-21.md)、性能検証は [docs/development.md](development.md)。
+> **設計書であり実装・性能改善の完了宣言ではない。** 現状と実測の正典は [docs/plan.md](plan.md)、性能検証は [docs/development.md](development.md)。
 > **最新の利用者指定:** Forge API以外のraw GLはstub。**描画実装・描画経路・描画処理に介入するModはすべて競合扱いで非サポート。** この互換ポリシーは [docs/goal.md](goal.md) の旧来の広いMod互換目標に優先する「新設計の指定」であり、実装移行時には製品契約も更新する。既存の停止状態・作業許可は変更しない。
 
 ## 0. Executive decision
@@ -325,7 +325,7 @@ GPUに十分な候補が残った時のみ実行。
 - [現在のnative state owner](../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java)、[texture bindings](../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeTextureBindings.java)
 - [ImmediateDrawRecords](../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateDrawRecords.java)、[VulkanFrameArena](../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanFrameArena.java)、[FrameCoordinator](../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java)
 - [SectionLattice](../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/occlusion/SectionLattice.java)、[OcclusionCuller](../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/occlusion/OcclusionCuller.java)、[EntityGatherer](../forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherer.java)
-- [現行設計と既存実測](architecture-2026-10-21.md)、[開発・計測の記録](development.md)、[リリースv0.0.16](releases/0.0.16-alpha.md)
+- [開発・計測の記録](development.md)、[リリースv0.0.16](releases/0.0.16-alpha.md)
 - [Khronos: GPU rendering and Multi-Draw Indirect](https://docs.vulkan.org/samples/latest/samples/performance/multi_draw_indirect/README.html)
 - [Khronos: Vulkan 1.2 and feature breakdown](https://docs.vulkan.org/guide/latest/versions.html)
 - [Khronos: timeline semaphores](https://docs.vulkan.org/tutorial/latest/Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.html)

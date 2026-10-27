@@ -4,7 +4,7 @@
 
 **目的は、同じ画・同じ描画距離・同じゲーム動作を、少ない CPU 時間、GPU 時間、転送量、メモリ、待ちで描くこと。mesh shader 非対応 GPU を含む baseline を最速化する。** 他のレンダリング最適化 mod と共存するための分岐・adapter・遅い共通経路は要件から外す。
 
-この文書は性能改善の実行計画である。項目を載せたこと、他 mod で効果が出たこと、コード上の待ちを見つけたことを Celtium の性能改善の受入としない。**今回、新しいベンチマークや GPU 受入は実行していない。全候補の改善量は未測定。** 現在の完成判定は [plan.md](plan.md)、objective は [goal.md](goal.md)、影 mod / shader pack は [shader-plan.md](shader-plan.md) が管理する。
+この文書は性能改善の実行計画である。項目を載せたこと、他 mod で効果が出たこと、コード上の待ちを見つけたことを Celtium の性能改善の受入としない。**今回、新しいベンチマークや GPU 受入は実行していない。全候補の改善量は未測定。** 現在の完成判定は [plan.md](plan.md)、objective は [goal.md](goal.md)。影 mod / shader pack は本体外の Demonica fork addon で扱う。
 
 ## 1. 固定する方針
 
@@ -706,7 +706,7 @@ FAILED / UNCALIBRATED / 欠測 / timeout / 未完了はこの表の受入状態�
 | S3: gameplay / UI renderer | shared geometry、instance / TESR 契約、particle、font / GUI / map | vanilla と代表 mod scene の同画・操作・animation・tail 受入 |
 | S4: memory / CPU / GPU workload | texture / model memory、task fairness、pass / barrier / shader | scene を減らさない positive な net gain と両 GPU の非回帰 |
 | S5: 配布 | 既定設定、実測 report、mod scope、必要能力、license / branding が一致 | 機能の完成条件と performance matrix の未検証が明示される |
-| S6: shader pack / 影 mod | 本体 + 主要 mod shaderless 成立後に `shader-plan.md` の計画へ | 本体の性能を shader pack の新しい品質設定と混同しない |
+| S6: shader pack / 影 mod | 本体 + 主要 mod shaderless 成立後に Demonica fork addon で（本体には入れない） | 本体の性能を shader pack の新しい品質設定と混同しない |
 
 各 stage で full rewrite はしない。暫定経路は runtime の所有と callsite を確認し、同じ契約の新旧を恒久併存させず整理する。関連変更を review 可能な単位で commit / `git push origin main` し、performance 状態と次の未完を `plan.md` へ同期する。goal の objective と最後の作業指示は維持する。
 
@@ -829,6 +829,6 @@ BadOptimizations / Particle Core / Celeritas Extra / Leaf Culling / meshoptimize
 3. まず OPT-03–07 の data / lifetime / arena / upload を整合した単位で実装する。変更中の code を各 edit ごとに GPU 受入へ持ち込まない。必要な CPU 契約検査で producer / consumer / ownership を揃える。
 4. 2 frames in flight と native multidraw、descriptor / pipeline cache へ進む。AMD の局所受入後に Intel の必要 scene を確認し、GPU 同期・memory / feature に関わる変更は早めに両方へ掛ける。
 5. entity / item / TESR / particle / GUI と主要 gameplay mod の性能を、geometry / material / instance の共通契約で改善する。特定 renderer ごとの場当たりの改変を積み増さない。
-6. 各段階で、同じ画の改善・非回帰・未検証を示して commit / push、`plan.md` の現状と `goal.md` を同期する。本体 shaderless と主要 mod の成立後は `shader-plan.md` に続く。
+6. 各段階で、同じ画の改善・非回帰・未検証を示して commit / push、`plan.md` の現状と `goal.md` を同期する。本体 shaderless と主要 mod の成立後、影・shader pack は Demonica fork addon で続ける。
 
 完了の根拠は、同じ場面で通常プレイの描画・操作・設定・mod が成立し、native Vulkan の最終 frame が window へ届き、両 GPU の実測で速くなったこと。文書の項目消化数や GPU feature の数を完成率にしない。

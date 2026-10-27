@@ -796,8 +796,7 @@ format=4 texture=103/112 batches=6 verts=24 ×2ずつ（worldPass=false = メニ
 
 **含意**: 1ドロー約3µsのドライバ床（実測）に対して、削減は「ドロー回数」だけが効く。
 回数を減らすには (a) 変換を頂点へ焼き込み（pushを全グループ同一化）、(b) テクスチャを配列/インデックス化して
-**パイプラインごとに1回の multi-draw(indirect)** に畳む、の2段が必要。これは `docs/architecture-2026-10-21.md`
-§11の「native側へ所有権を移す」設計そのもの。
+**パイプラインごとに1回の multi-draw(indirect)** に畳む、の2段が必要。これは [new_architecture.md](<new_architecture.md>) の「native側へ所有権を移す」設計そのもの。
 
 次の計測: **1フレームだけ**の全 item グループを列挙し（frame指定でダンプ）、窓ごと・テクスチャごとの内訳を出す。
 
