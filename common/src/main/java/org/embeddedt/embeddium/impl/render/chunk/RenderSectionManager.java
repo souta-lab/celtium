@@ -239,7 +239,17 @@ public abstract class RenderSectionManager {
      * Terrain-pass update: run the terrain search (unless the shadow pass already ran it this frame) and the
      * per-frame camera bookkeeping.
      */
+    /** {@code -Dceltium.debug.searchJoinCensus=true}: how often renderLayer joined the search, and why. */
+    private static final boolean JOIN_CENSUS = Boolean.getBoolean("celtium.debug.searchJoinCensus");
+    private long joinCensusLayers;
+
+    /** The viewport this frame's terrain search was submitted from; see {@link #renderLayer}. */
+    private Viewport lastTerrainViewport;
+
     public void update(Viewport positionedViewport, int frame, boolean spectator) {
+        if (!this.isInShadowPass()) {
+            this.lastTerrainViewport = positionedViewport;
+        }
         if (!this.shadowPassRanThisFrame) {
             this.updateCameraPosition(positionedViewport);
         }
@@ -612,6 +622,17 @@ public abstract class RenderSectionManager {
             System.out.println("[Celtium] CELTIUM_RENDER_LAYER pass=" + pass + " backend=" + this.terrainBackend.getClass().getSimpleName());
         }
 
+        // This frame's search must be published before terrain is drawn whenever the view moved: the previous
+        // camera's lists miss sections the new view reveals, so a turn showed the caves and sea floor behind them
+        // for a frame. Joining unconditionally made the search synchronous again (straight 20 b/s flight, AMD:
+        // p50 2.44-2.47 -> 2.90-3.01 ms); an unchanged view keeps the overlap.
+        if (this.isInShadowPass() || !this.renderListManager.publishedListsMatch(this.lastTerrainViewport)) {
+            this.finishAllGraphUpdates();
+        }
+        if (JOIN_CENSUS && ++this.joinCensusLayers % 4000 == 0) {
+            System.out.println("[Celtium] CELTIUM_SEARCH_JOIN layers=" + this.joinCensusLayers + " "
+                    + this.renderListManager.joinDecisionSummary());
+        }
         this.terrainBackend.render(matrices, this.getCurrentRenderListManager().getRenderLists(), pass,
                 occlusionCamera, camera, isDebugInfoShown());
     }

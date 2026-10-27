@@ -9,6 +9,7 @@ import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
 import org.embeddedt.embeddium.impl.render.chunk.sorting.SortState;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.viewport.Viewport;
+import org.joml.Matrix4fc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3fc;
@@ -57,6 +58,9 @@ public class RenderListManager {
     // in finishPreviousGraphUpdate() after join() establishes happens-before, then published to visibilitySnapshot.
     @Nullable
     private SectionLattice.VisibilitySnapshot pendingVisibilitySnapshot;
+    /** The viewport the in-flight search was submitted with, and the one the published lists were searched from. */
+    private Viewport pendingViewport;
+    private Viewport publishedViewport;
 
     @Nullable
     private final SectionTicker sectionTicker;
@@ -153,6 +157,7 @@ public class RenderListManager {
         };
 
         this.pendingLastUpdatedFrame = frame;
+        this.pendingViewport = viewport;
         this.currentOcclusionFuture = this.graph.submit(occlusionTask, this.async);
 
         if (!this.async) {
@@ -161,6 +166,52 @@ public class RenderListManager {
 
         this.needsUpdate = false;
     }
+
+    /**
+     * Whether the published lists may stand in for a search from {@code viewport}: searched from the same block and
+     * from a view whose camera-relative view-projection differs by no more than {@link #VIEW_TOLERANCE} in any
+     * element (about a tenth of a degree of rotation). A search the async path has not joined yet is then one frame
+     * of motion the lists cannot miss anything over; a turn or a step into another block is not, and drawing the
+     * older lists then exposes surfaces the new view hides behind sections the old frustum never visited.
+     */
+    public boolean publishedListsMatch(@Nullable Viewport viewport) {
+        Viewport published = this.publishedViewport;
+        if (viewport == null || published == null || viewport.getVpMatrix() == null || published.getVpMatrix() == null) {
+            return false;
+        }
+        if (!viewport.getBlockCoord().equals(published.getBlockCoord())) {
+            this.joinsForBlock++;
+            return false;
+        }
+        Matrix4fc a = viewport.getVpMatrix();
+        Matrix4fc b = published.getVpMatrix();
+        float worst = 0F;
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                worst = Math.max(worst, Math.abs(a.get(column, row) - b.get(column, row)));
+            }
+        }
+        if (worst > VIEW_TOLERANCE) {
+            this.joinsForView++;
+            this.worstViewDelta = Math.max(this.worstViewDelta, worst);
+            return false;
+        }
+        this.joinsSkipped++;
+        return true;
+    }
+
+    /** How the published-lists check decided, for -Dceltium.debug.periodicLogs runs: block, view, or skipped. */
+    private long joinsForBlock;
+    private long joinsForView;
+    private long joinsSkipped;
+    private float worstViewDelta;
+
+    public String joinDecisionSummary() {
+        return "joinsForBlock=" + this.joinsForBlock + " joinsForView=" + this.joinsForView + " skipped=" + this.joinsSkipped
+                + " worstViewDelta=" + this.worstViewDelta;
+    }
+
+    private static final float VIEW_TOLERANCE = 0.002F;
 
     public void finishPreviousGraphUpdate() {
         if (currentOcclusionFuture != null) {
@@ -176,6 +227,7 @@ public class RenderListManager {
 
             this.currentOcclusionFuture = null;
             this.lastUpdatedFrame = this.pendingLastUpdatedFrame;
+            this.publishedViewport = this.pendingViewport;
 
             this.debugStatistics = null;
 

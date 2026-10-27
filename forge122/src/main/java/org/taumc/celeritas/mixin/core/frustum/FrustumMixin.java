@@ -36,6 +36,9 @@ public class FrustumMixin implements ViewportProvider {
         return new Viewport((minX, minY, minZ, maxX, maxY, maxZ) -> frustum.testAab(
                 minX + offset.x, minY + offset.y, minZ + offset.z,
                 maxX + offset.x, maxY + offset.y, maxZ + offset.z),
-                new org.joml.Vector3d(this.x, this.y, this.z).add(offset));
+                new org.joml.Vector3d(this.x, this.y, this.z).add(offset),
+                // The view the planes came from, so the terrain search can tell whether the lists it published were
+                // searched from (nearly) this view; see RenderListManager.publishedListsMatch.
+                ((IClippingHelper)clippingHelper).celeritas$getViewProjection());
     }
 }

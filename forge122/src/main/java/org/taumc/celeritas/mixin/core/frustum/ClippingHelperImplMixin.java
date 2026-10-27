@@ -16,6 +16,8 @@ import org.taumc.celeritas.impl.render.frustum.IClippingHelper;
 public abstract class ClippingHelperImplMixin extends ClippingHelper implements IClippingHelper {
     @Unique
     private final FrustumIntersection celeritas$frustum = new FrustumIntersection();
+    @Unique
+    private Matrix4f celeritas$viewProjection;
 
     @Inject(method = "init", at = @At("RETURN"))
     private void updateJoml(CallbackInfo ci) {
@@ -25,6 +27,7 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
         Matrix4f projection = new Matrix4f().set(projectionMatrix);
         Matrix4f modelView = new Matrix4f().set(modelviewMatrix);
         Matrix4f vp = projection.mul(modelView);
+        this.celeritas$viewProjection = vp.isFinite() ? new Matrix4f(vp) : null;
         if (!vp.isFinite() || vp.determinant() == 0.0f) {
             // A zero, non-normalized plane accepts every box. Identity would instead cull outside [-1,1]^3.
             this.celeritas$frustum.set(new Matrix4f().zero(), false);
@@ -37,5 +40,10 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
     @Override
     public FrustumIntersection celeritas$getJomlFrustum() {
         return this.celeritas$frustum;
+    }
+
+    @Override
+    public org.joml.Matrix4fc celeritas$getViewProjection() {
+        return this.celeritas$viewProjection;
     }
 }
