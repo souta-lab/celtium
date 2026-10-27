@@ -2294,10 +2294,7 @@ public final class VulkanGlTexture {
         if (reachChanges) {
             this.samplerMaxLod = Math.max(0, Math.min(recordedMaxLevel, Math.max(1, this.mipLevels) - 1));
         }
-        if (this.sampler != 0L) {
-            org.lwjgl.vulkan.VK10.vkDestroySampler(this.context.device(), this.sampler, null);
-            this.sampler = 0L;
-        }
+        retireSampler();
         createSampler();
         this.generation++;
         System.out.println("[Celtium] CELTIUM_SAMPLER_FILTER glTexture=" + glTextureId + " repeatU=" + repeatU
@@ -2307,6 +2304,19 @@ public final class VulkanGlTexture {
                 + (reachChanges ? " (maxLod was " + reachWas + ", now from the record's GL_TEXTURE_MAX_LEVEL "
                         + recordedMaxLevel + ")" : "")
                 + " (" + source + "; the sampler was built before the game set it) " + was);
+    }
+
+    /**
+     * Retires the current sampler for a recreate: a descriptor recorded earlier this frame, in a command buffer that is
+     * still open, can name it (E2E-E leg e2ee-amd10: "VkSampler ... was destroyed which was used by VkDescriptorSet").
+     */
+    private void retireSampler() {
+        if (this.sampler != 0L) {
+            final long retiredSampler = this.sampler;
+            final VkDevice device = this.context.device();
+            VulkanRetireQueue.retire(() -> org.lwjgl.vulkan.VK10.vkDestroySampler(device, retiredSampler, null));
+            this.sampler = 0L;
+        }
     }
 
     /**
@@ -2332,10 +2342,7 @@ public final class VulkanGlTexture {
             return;
         }
         this.samplerMaxLod = wanted;
-        if (this.sampler != 0L) {
-            org.lwjgl.vulkan.VK10.vkDestroySampler(this.context.device(), this.sampler, null);
-            this.sampler = 0L;
-        }
+        retireSampler();
         createSampler();
         // The sampler is one of the descriptor's inputs, and the descriptor caches key on key() - the view and the
         // generation. Without this bump a set written before the reach changed would keep naming the sampler just

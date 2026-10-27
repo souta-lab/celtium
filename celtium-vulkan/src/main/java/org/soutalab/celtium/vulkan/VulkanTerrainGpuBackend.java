@@ -12381,21 +12381,20 @@ this.frameBufferOpen = false;
         destroyPairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
     }
 
-    /** Destroys one identity's chain-pair framebuffers; the no-arg teardown variant destroys them all. */
+    /**
+     * Retires one identity's chain-pair framebuffers; the teardown variant below destroys them all in place.
+     * <p>
+     * This runs while the frame is recording - a pass asked for the pair after its images were replaced - and the
+     * open command buffer can already name the old handles, which a settle cannot wait for: it has not been submitted.
+     * Destroying them in place invalidated that command buffer (E2E-E leg e2ee-amd10: "VkFramebuffer ... was
+     * destroyed" on every later command of the frame), so they go to the retire queue like the pair's images.
+     */
     private void destroyChainPairFramebuffer(long identity) {
         java.util.Collection<Long> handles = this.targetRegistry.chainPairFramebufferHandles(identity);
         if (handles.isEmpty()) {
             return;
         }
-        if (!settleGpu("chain-pair framebuffer release")) {
-            this.framebufferSettleFailures++;
-            // Leave both the handles and their render-pass keys intact. The ensure caller must
-            // stop here, rather than overwrite the cache with a replacement or use a different target.
-            throw new IllegalStateException("GPU did not settle for chain-pair framebuffer release");
-        }
-        for (Long handle : handles) {
-            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
-        }
+        retireFramebuffers(handles);
         this.targetRegistry.clearChainPairFramebuffer(identity);
         this.chainPairFramebufferGenerations.remove(Long.valueOf(identity));
     }
@@ -12417,22 +12416,26 @@ this.frameBufferOpen = false;
         this.chainPairFramebufferGenerations.clear();
     }
 
-    /** Pair replacement also bypasses destroyFramebuffer(), so it must establish completion itself. */
+    /**
+     * Pair replacement bypasses destroyFramebuffer() and runs while the frame records, so the handles are retired for
+     * the same reason as {@link #destroyChainPairFramebuffer}.
+     */
     private void destroyPairFramebuffer(RenderTargetRegistry.ImageSlot slot) {
         java.util.Collection<Long> handles = this.targetRegistry.pairFramebufferHandles(slot);
         if (handles.isEmpty()) {
             return;
         }
-        if (!settleGpu(slot.label() + " framebuffer release")) {
-            this.framebufferSettleFailures++;
-            // Leave both the handles and their render-pass keys intact. The ensure caller must
-            // stop here, rather than overwrite the cache with a replacement or use a different target.
-            throw new IllegalStateException("GPU did not settle for " + slot.label() + " framebuffer release");
-        }
-        for (Long handle : handles) {
-            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
-        }
+        retireFramebuffers(handles);
         this.targetRegistry.clearPairFramebuffer(slot);
+    }
+
+    /** Hands framebuffers to {@link VulkanRetireQueue}, which destroys them once nothing in flight can name them. */
+    private void retireFramebuffers(java.util.Collection<Long> handles) {
+        org.lwjgl.vulkan.VkDevice device = this.context.device();
+        for (Long handle : handles) {
+            final long framebuffer = handle.longValue();
+            VulkanRetireQueue.retire(() -> vkDestroyFramebuffer(device, framebuffer, null));
+        }
     }
 
     private long ensureFramebuffer(long renderPass, long colorView, long depthView) {

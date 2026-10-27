@@ -1194,7 +1194,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
             Pair evicted = this.chainPairs.remove(oldest);
             if (evicted != null) {
-                evicted.release();
+                evicted.retire();
                 this.chainPairEvictions++;
                 if (this.chainPairEvictions <= 12) {
                     System.out.println("[Celtium] CELTIUM_CHAIN_EVICT identity=" + Long.toHexString(oldest)
@@ -1592,7 +1592,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (matches(requestedWidth, requestedHeight)) {
                 return;
             }
-            release();
+            retire();
             try {
                 long[] color = allocateImage(true, requestedWidth, requestedHeight);
                 this.colorImage = color[0];
@@ -1930,9 +1930,53 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
 
         /**
+         * Like {@link #release()}, but hands the images, views and memory to {@link VulkanRetireQueue} instead of
+         * destroying them: eviction and a resize run mid-session, while a command buffer that recorded against this
+         * pair is still open or in flight. Destroying in place invalidated that command buffer and let the GPU read
+         * freed memory - E2E-E leg e2ee-amd9, a mod's downsample chain evicting pairs mid-frame: "VkImage ... was
+         * destroyed" on every later command, a GPUVM permission fault, then VK_ERROR_DEVICE_LOST.
+         */
+        private void retire() {
+            VkDevice device = context.device();
+            final long view = this.colorView;
+            final long image = this.colorImage;
+            final long memory = this.colorMemory;
+            final long depthView = this.depthView;
+            final long depthImage = this.depthImage;
+            final long depthMemory = this.depthMemory;
+            this.colorView = VK_NULL_HANDLE;
+            this.colorImage = VK_NULL_HANDLE;
+            this.colorMemory = VK_NULL_HANDLE;
+            this.depthView = VK_NULL_HANDLE;
+            this.depthImage = VK_NULL_HANDLE;
+            this.depthMemory = VK_NULL_HANDLE;
+            if (view != VK_NULL_HANDLE) {
+                VulkanRetireQueue.retire(() -> vkDestroyImageView(device, view, null));
+            }
+            if (image != VK_NULL_HANDLE) {
+                VulkanRetireQueue.retire(() -> vkDestroyImage(device, image, null));
+            }
+            if (memory != VK_NULL_HANDLE) {
+                VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, memory));
+            }
+            if (depthView != VK_NULL_HANDLE) {
+                VulkanRetireQueue.retire(() -> vkDestroyImageView(device, depthView, null));
+            }
+            if (depthImage != VK_NULL_HANDLE) {
+                VulkanRetireQueue.retire(() -> vkDestroyImage(device, depthImage, null));
+            }
+            if (depthMemory != VK_NULL_HANDLE) {
+                VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, depthMemory));
+            }
+            // The handles are gone from this pair; release() now only forgets the size and layouts.
+            release();
+        }
+
+        /**
          * Releases the pair and forgets its size, so the next {@link #ensure} builds it afresh. Safe to call with
-         * nothing created and safe to call twice; {@link #delete()} calls it, so every handle this class ever
-         * creates is freed exactly once even when a resize replaces a pair mid-session.
+         * nothing created and safe to call twice. Frees in place, so it is only for images no command buffer can
+         * still name: {@link #delete()} after the GPU settled, and a failed {@link #ensure} that never recorded.
+         * A pair the session may still be drawing with goes through {@link #retire()}.
          */
         private void release() {
             VkDevice device = context.device();
