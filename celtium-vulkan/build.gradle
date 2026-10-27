@@ -24,9 +24,9 @@ def lwjglVersion = providers.gradleProperty('celtium_mod_lwjgl_version').getOrEl
 def coreProject = findProject(':common')
 if (coreProject != null) {
     dependencies {
-        compileOnly(project(path: ':common', configuration: 'downgraded')) { transitive = false }
+        compileOnly(project(path: ':common', configuration: 'modJar')) { transitive = false }
         // Real adapter-dispatch tests load its core API signatures, without initializing Minecraft or a GL context.
-        testImplementation(project(path: ':common', configuration: 'downgraded')) { transitive = false }
+        testImplementation(project(path: ':common', configuration: 'modJar')) { transitive = false }
     }
 }
 

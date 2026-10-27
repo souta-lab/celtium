@@ -3,7 +3,6 @@ import org.embeddedt.embeddium.gradle.task.GenerateLWJGLAbstraction
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id 'xyz.wagyourtail.jvmdowngrader' version '2.0.1'
 }
 
 group = "org.embeddedt.celeritas"
@@ -14,8 +13,8 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
     withSourcesJar()
 }
 
@@ -177,10 +176,6 @@ publishing {
         mavenJava(MavenPublication) {
             artifactId = 'celeritas-common'
             from components.java
-
-            artifact(shadeDowngradedApi) {
-                classifier = 'downgraded-8'
-            }
         }
     }
     repositories {
@@ -222,12 +217,6 @@ jar {
 
 def extraSourceSets = [sourceSets.lwjglCommon, sourceSets.lwjgl2]
 
-// The jar contains both binding adapters. Include their compile-only binding
-// types in hierarchy analysis; this does not embed either LWJGL runtime.
-tasks.named('downgradeJar') {
-    classpath = classpath + sourceSets.lwjgl2.compileClasspath + sourceSets.lwjgl3.compileClasspath
-}
-
 configurations {
     apiElements
     runtimeElements
@@ -243,22 +232,24 @@ extraSourceSets.each { srcSet ->
     }
 }
 
+// The jar the mod embeds: every source set's classes at release 21. Celtium runs on Cleanroom only, whose JVM is 21+,
+// so the classes ship as compiled; they used to be downgraded to Java 8 and carry JVM Downgrader's runtime stubs.
 configurations {
-    downgraded {
+    modJar {
         canBeConsumed = true
         canBeResolved = false
     }
 }
 
 artifacts {
-    downgraded(tasks.named("shadeDowngradedApi"))
+    modJar(tasks.named("jar"))
 }
 
 // make RFG stop complaining
 def obfAttr = Attribute.of("com.gtnewhorizons.retrofuturagradle.obfuscation", String)
 def transformedAttr = Attribute.of("rfgDeobfuscatorTransformed", Boolean)
 
-["runtimeElements", "downgraded"].forEach { name ->
+["runtimeElements", "modJar"].forEach { name ->
     configurations.getByName(name).attributes {
         attribute(obfAttr, "mcp")
         attribute(transformedAttr, true)

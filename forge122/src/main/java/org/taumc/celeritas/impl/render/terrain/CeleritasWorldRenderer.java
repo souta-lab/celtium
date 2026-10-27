@@ -1,6 +1,5 @@
 package org.taumc.celeritas.impl.render.terrain;
 
-import com.github.bsideup.jabel.Desugar;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.client.renderer.DestroyBlockProgress;
@@ -38,7 +37,6 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     /** Bounded report countdown for the render lists. */
     private int celtium$listReportCountdown;
-    @Desugar
     public record TileEntityRenderContext(Map<Integer, DestroyBlockProgress> damagedBlocks, float partialTicks) {}
 
     /**

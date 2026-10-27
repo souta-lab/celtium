@@ -369,7 +369,8 @@ public abstract class WorldVertexBufferUploaderMixin {
                 celtium$unmappedRefusals++;
                 System.out.println("[Celtium] CELTIUM_UNMAPPED_REFUSED format="
                         + org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(0) + " reason=" + backend.lastRefusal()
-                        + " layout=[" + celtium$describeUnmapped(format) + "] vertices=" + vertices);
+                        + " layout=[" + celtium$describeUnmapped(format) + "] vertices=" + vertices
+                        + " callers=[" + celtium$drawCallers() + "]");
             }
             if (!accepted && formatId == 6 && celtium$positionTexRefusals < 3) {
                 // The sky, the clouds and the water surface are mapped now, so a refusal here is a guard downstream of the
@@ -477,6 +478,27 @@ public abstract class WorldVertexBufferUploaderMixin {
             celtium$formatIds.put(format, Integer.valueOf(id));
         }
         return id;
+    }
+
+    /**
+     * {@return the first game or mod frames above the tessellator}, as {@code Class#method} up the stack: an unmapped
+     * format has no name to look up, so the refusal line names who drew it (E2E-E: a 44-byte position-plus-four-UV
+     * quad refused hundreds of times a session with no other clue to its owner). Only the first few refusals pay it.
+     */
+    private static String celtium$drawCallers() {
+        return StackWalker.getInstance().walk(frames -> frames
+                .map(StackWalker.StackFrame::toStackTraceElement)
+                .filter(frame -> {
+                    String name = frame.getClassName();
+                    return !name.startsWith("org.soutalab") && !name.startsWith("org.taumc")
+                            && !name.startsWith("java.") && !name.startsWith("org.lwjgl")
+                            && !name.contains("Tessellator") && !name.contains("WorldVertexBufferUploader")
+                            && !name.contains("BufferBuilder");
+                })
+                .limit(4)
+                .map(frame -> frame.getClassName().substring(frame.getClassName().lastIndexOf('.') + 1)
+                        + "#" + frame.getMethodName())
+                .collect(java.util.stream.Collectors.joining(" <- ")));
     }
 
     /**

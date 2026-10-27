@@ -35,25 +35,6 @@ val modEmbedDependencies = configurations.create("modEmbedDependencies") {
     attributes { attribute(ModUtils.DEOBFUSCATOR_TRANSFORMED, true) }
 }
 
-/**
- * Resolves the JVM Downgrader artifact only so its licence text can be copied into the shipped jar next to the
- * `xyz.wagyourtail.jvmdg` runtime stubs that common's `shadeDowngradedApi` shades in. Nothing from this
- * configuration is compiled against or bundled except the two licence files named in the `jar` task.
- * <p>
- * (Do not write a glob such as `jvmdg` + a double star in a Kotlin block comment: Kotlin nests block comments,
- * and the star-star-slash inside it opens a nested comment that a later string literal can close.)
- */
-val jvmDowngraderLicense = configurations.create("jvmDowngraderLicense") {
-    isCanBeResolved = true
-    isCanBeConsumed = false
-    isTransitive = false
-}
-dependencies {
-    // Pinned to the plugin version at common/build.gradle:6; scripts/verify_forge_jar.py fails the jar if the
-    // licence entries stop matching that pin.
-    add(jvmDowngraderLicense.name, "xyz.wagyourtail.jvmdowngrader:jvmdowngrader:2.0.1")
-}
-
 val celeritasLwjglVersion = "3.3.3"
 
 minecraft {
@@ -61,8 +42,6 @@ minecraft {
 }
 
 repositories {
-    // For the JVM Downgrader licence artifact (jvmDowngraderLicense); the runtime stubs it covers are shaded
-    // in by common, which resolves it from this same repository.
     mavenCentral()
     exclusiveContent {
         forRepository { maven("https://maven.cleanroommc.com") }
@@ -131,15 +110,10 @@ dependencies {
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")
 
-    val jabelVersion = rootProject.findProperty("jabel_version").toString()
-
-    annotationProcessor("com.github.GTNewHorizons:jabel-javac-plugin:${jabelVersion}")
-    compileOnly("com.github.GTNewHorizons:jabel-javac-plugin:${jabelVersion}")
-
-    implementation(project(":common", configuration = "downgraded")) {
+    implementation(project(":common", configuration = "modJar")) {
         isTransitive = false
     }
-    modEmbedDependencies(project(":common", configuration = "downgraded")) {
+    modEmbedDependencies(project(":common", configuration = "modJar")) {
         isTransitive = false
     }
     modEmbedDependencies("org.joml:joml:1.10.5")
@@ -156,9 +130,10 @@ dependencies {
     modCompileOnly("maven.modrinth:fluidlogged-api:3.0.6")
 }
 
+// Release 21, not Java 8 with newer syntax: the mod runs on Cleanroom only, whose JVM is 21+, and the Vulkan module it
+// embeds was already release 21. The Java 8 API ceiling only cost the code the platform's own library.
 tasks.named<JavaCompile>("compileJava") {
-    sourceCompatibility = "21"
-    options.release = 8
+    options.release = 21
 
     javaCompiler = javaToolchains.compilerFor {
         languageVersion = JavaLanguageVersion.of(21)
@@ -202,26 +177,6 @@ tasks.named<Jar>("jar") {
     from(file("$repositoryRoot/common/src/main/java/grondag/bitraster/LICENSE")) {
         into("licenses")
         rename { "bitraster-LICENSE" }
-    }
-    // The JVM Downgrader runtime stubs (xyz/wagyourtail/jvmdg/**, shaded in by common's shadeDowngradedApi)
-    // are LGPL-2.1, read from the dependency's own metadata rather than from memory:
-    //   - jvmdowngrader-2.0.1.pom declares <licenses><license><name>LGPL-2.1</name>
-    //   - its LICENSE.md offers LGPL-2.1 or a commercial licence and states explicitly that shading its api
-    //     classes into a Combined Work is permitted provided the unshaded jar or the source is available,
-    //     which this repository is (LGPL-3.0, sources included).
-    // The version below is the plugin pin at common/build.gradle:6; scripts/verify_forge_jar.py fails the jar
-    // if the two drift apart, because a licence notice for the wrong version is worse than none.
-    from(configurations.named("jvmDowngraderLicense").map { zipTree(it.singleFile) }) {
-        include("LICENSE.md")
-        into("licenses")
-        rename { "jvmdowngrader-LICENSE.md" }
-    }
-    from(configurations.named("jvmDowngraderLicense").map { zipTree(it.singleFile) }) {
-        include("license/LGPLv2.1.md")
-        // eachFile, not rename: the include keeps the `license/` directory in the path and rename only changes
-        // the file name, which shipped the text as licenses/license/jvmdowngrader-LGPLv2.1.md.
-        eachFile { path = "licenses/jvmdowngrader-LGPLv2.1.md" }
-        includeEmptyDirs = false
     }
     manifest {
         attributes["FMLAT"] = "celeritas_at.cfg"
@@ -280,9 +235,7 @@ val validation = sourceSets.create("validation") {
         java.srcDir("../validation/client/src/jei/java")
         logger.lifecycle("validation client: JEI/HEI plugin enabled against ${validationJeiJar.name}")
     }
-    compileClasspath += sourceSets.main.get().compileClasspath.filter {
-        !it.name.startsWith("jabel-javac-plugin-")
-    }
+    compileClasspath += sourceSets.main.get().compileClasspath
 }
 dependencies {
     // Same exact opt-in jar as the plugin's source set, so the compiled API and the
@@ -297,7 +250,7 @@ dependencies {
     add(validation.compileOnlyConfigurationName, "com.google.code.gson:gson:2.10.1")
 }
 tasks.named<JavaCompile>(validation.compileJavaTaskName) {
-    options.release = 8
+    options.release = 21
     javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
 }
 val validationJar = tasks.register<Jar>("validationJar") {
