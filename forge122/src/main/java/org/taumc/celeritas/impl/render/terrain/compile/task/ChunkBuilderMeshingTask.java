@@ -42,15 +42,15 @@ import java.util.*;
 
 public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> {
     /**
-     * Whether section meshing uses this project's own block renderer instead of the game's
-     * {@code BlockRendererDispatcher}. It defaults to on: the renderer bakes the face brightness and ambient occlusion
-     * the same way {@code RenderBlocks} does, and a frame built through the dispatcher instead measures 0.66 of the
-     * reference's luminance (mid band 88.9 against the pinned Celeritas's 136.8 and vanilla's 146.6, with the vertex
-     * data, texture and light map all verified identical). The property stays so a run can put the old path back for
-     * comparison; before this it was the other way round and production builds silently took the slow path.
+     * Whether section meshing uses the Sodium-style {@code VintageBlockRenderer} instead of the game's
+     * {@code BlockRendererDispatcher} (Forge's block-model pipeline). Off by default, as in upstream Celeritas: on the
+     * QMAGNET capture the dispatcher path matches the reference's face shades (pixels over 16 levels 0.97 % against
+     * 2.00 % with the fast renderer, whose smooth lighting put a concrete side 11 % and a quartz side 22 % brighter).
+     * It was turned on in October when the dispatcher path measured 0.66 of the reference's luminance; that darkness
+     * was this renderer's handling of the path and is gone. {@code -Dceleritas.useVintageFastBlockRenderer=true} puts
+     * the fast renderer back.
      */
-    public static boolean USE_NEW_BLOCK_RENDERER =
-            !"false".equalsIgnoreCase(System.getProperty("celeritas.useVintageFastBlockRenderer", "true"));
+    public static boolean USE_NEW_BLOCK_RENDERER = Boolean.getBoolean("celeritas.useVintageFastBlockRenderer");
     private static final ProxyClassGenerator<WorldSlice, CeleritasBlockAccess> WORLD_SLICE_LOCAL_GENERATOR = new ProxyClassGenerator<>(WorldSlice.class, "WorldSliceLocal", CeleritasBlockAccess.class);
     private final RenderSection render;
     private final int buildTime;

@@ -17,8 +17,8 @@ than 16 levels apart.
 | home (menu) | AMD | 7.77 | 15.6 % | 1.3 % | random splash text and the panorama's rotation phase only |
 | home (menu) | Intel | 8.55 | 16.4 % | 1.8 % | same |
 | settings (video) | AMD | 0.00 | 0.00 % | 0.00 % | pixel-identical |
-| game (QMAGNET, tick 200) | AMD | 3.11 | 2.00 % | 0.16 % | see below (after both fixes; 4.47 % after the glass fix alone) |
-| game (QMAGNET, tick 200) | Intel | 3.11 | 2.05 % | 0.17 % | see below (4.49 % after the glass fix alone) |
+| game (QMAGNET, tick 200) | AMD | 2.41 | 0.97 % | 0.08 % | see below (7.85 → 4.47 → 2.00 → 0.97 % over the three fixes) |
+| game (QMAGNET, tick 200) | Intel | 2.39 | 1.05 % | 0.06 % | see below (4.49 → 2.05 → 1.05 %) |
 
 The game screen's remaining differences, read from full-size crops:
 
@@ -30,6 +30,8 @@ The game screen's remaining differences, read from full-size crops:
   `(236,212,184)`) the reference is ×0.99 and Celtium was ×1.15: GL clamps the lit colour to [0,1] before the texture
   stages and the lit shaders did not, so a face both lights reach exceeded 1. All three lit shaders now clamp.
   Legs `iq-amd-clamp`, `iq-intel-clamp` (PASSED, validation clean).
-- **Smooth lighting on some faces:** white concrete side +11 %, quartz pillar side +22 %, grass path top −11 %. The
-  reference meshes through Forge's block-model pipeline (JFR: `ForgeBlockModelRenderer`), Celtium through its own
-  `SmoothLightPipeline`; an algorithm difference, not yet judged against vanilla.
+- **Fixed here:** face shades (concrete side +11 %, quartz side +22 %, grass path −11 %) came from meshing with the
+  Sodium-style `VintageBlockRenderer`, which upstream Celeritas only enables in development; the reference meshes
+  through Forge's block-model pipeline. Celtium now does the same by default (legs `iq-amd-forgepipe`, `iq-intel-fp`,
+  PASSED, validation clean; Intel paired KPI `kpi5-intel` control ratio 0.997, i.e. frame time unchanged).
+- **Open:** one large far wall face is flat (164) where the reference shades it 156 → 148 across its width.

@@ -60,7 +60,7 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celeritas.useVintageFastBlockRenderer` | `System.getProperty` | [ChunkBuilderMeshingTask.java:53](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/task/ChunkBuilderMeshingTask.java#L53>) |
+| `celeritas.useVintageFastBlockRenderer` | `Boolean.getBoolean` | [ChunkBuilderMeshingTask.java:53](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/task/ChunkBuilderMeshingTask.java#L53>) |
 
 <a id="group-celtium-allowCompetitors"></a>
 ## `celtium.allowCompetitors.*`
