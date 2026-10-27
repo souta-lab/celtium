@@ -3312,3 +3312,38 @@ Stage 4のframe compiler）で、個別の数%のmicro-optでは比のノイズ�
 
 なお、`gv-leg.sh` を素で走らせた測定（validation ON ほか）では同じJARが **warm p50 5.25ms** になる。
 KPI値と混ぜない（[検証の罠](<verification-traps.md>)）。
+
+**lit即時geometryのinstance化は撤回（2026-10-27 実測）**
+
+`LitGeometryExecutor`（ITEM / POSITION_TEX_COLOR_NORMAL / POSITION_TEX_NORMALをmodel instance programで描く）を
+実装し、受入は通った（AMD/Intel world PASSED・validation 0・同一JAR A/Bでscene領域の差0.106%＝run間揺らぎ1.237%より小さい）。
+しかし**効果が無い**: これらのfamilyはworld sceneで **344 group/run（AMD）・241（Intel）≒ 0.6 group/frame** しか出ず、
+受理される即時batch全体（約136/frame）の**0.5%**にすぎない。同一JARの交互A/Bは rep1 0.870 / rep2 1.057 で判定不能。
+run統合（`vkCmdDrawIndexedIndirect` 1回/run）も試したが、lit groupは他のwindowと交互に来るため
+**geometryRuns == geometryDraws（統合0）** で、window 1つ分の固定費を増やすだけだった。`e9a1324f2` を revert 済み。
+
+**window構造の実測（2026-10-27）**
+
+`-Dceltium.debug.windowCensus=true`（AMD, KPI flags, world）: 1 windowあたり **1–2 group** が大半で、
+target identityが `0x23e41232`（mod FBO）・`0x1016ff7c`・`0x0`（window）の間で**毎frame交互**に切り替わる。
+XaeroのFBO bindがwindow境界を作っており、1 window = render pass begin/end + acquire barrier + submit bookkeeping を
+1–2 drawのために払っている。window数は 9.4/frame（145,546/15,451）。
+
+**Intelの現行プロファイル（2026-10-27・KPI flags・JFR 20s・1,282 samples）**
+
+| 分類（inclusive） | 占有率 |
+|---|---|
+| vanilla world（World./RenderGlobal/EntityRenderer） | 76.5% |
+| GUI/Xaero | 26.1% |
+| chunk/embeddium | 25.7% |
+| accept経路 `submitGeometryBatch` | 16.1% |
+| window flush `flushImmediateWindow` | 15.9% |
+| terrain pass | 8.2% |
+| model replay | 5.0% |
+
+self上位に `sun.nio.ch.Net.poll` **4.0%**（client thread上のsocket poll＝mod側の通信待ち）、
+HashMap tree bin 3.4%、method-handle invoke 約5%。**celtium自身の描画経路は約45%（重複含む）**で、
+残りはmod/vanilla/embeddium側。Intelが17%遅い理由をCPUプロファイルだけでは説明できない（GPU frameは約2.2ms）。
+
+**測定環境の注意（2026-10-27）**: 外部プロセス `VBCSCompiler`（dotnet, 53% CPU）が常駐し load 3–5。
+KPIの負荷ゲート（上限2）は通らず、形式verdictは取れない。比は記録できるが「勝った」とは書かない。
