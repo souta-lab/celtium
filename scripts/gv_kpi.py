@@ -192,6 +192,14 @@ def cpu_snapshot() -> dict:
             "children": times.children_user + times.children_system, "wall": time.monotonic()}
 
 
+def busy_cores(seconds: float) -> float:
+    """The cores busy machine-wide over a sample of the given length."""
+    start = cpu_snapshot()
+    time.sleep(seconds)
+    end = cpu_snapshot()
+    return max(0.0, end["busy"] - start["busy"]) / max(end["wall"] - start["wall"], 1e-9)
+
+
 def external_cores(start: dict, end: dict) -> float:
     """Average cores busy outside this run - the machine's busy time minus this process and the legs it waited for."""
     wall = end["wall"] - start["wall"]
@@ -234,12 +242,16 @@ def main(argv: list[str]) -> int:
     jars = Path(os.environ["CELTIUM_KPI_JARS"]).resolve()
     reference = Path(os.environ["CELTIUM_KPI_REFERENCE"]).resolve() if os.environ.get("CELTIUM_KPI_REFERENCE") else None
     pinned = inputs(jars, None if skip_reference else reference, control)
-    load = os.getloadavg()[0]
     load_limit = float(os.environ.get("CELTIUM_KPI_LOAD_LIMIT", "2"))
     external_limit = float(os.environ.get("CELTIUM_KPI_EXTERNAL_LIMIT", "0.5"))
+    # The starting guard measures the CPU actually busy over a short sample rather than the one-minute load average:
+    # that average still carries the previous run's game for minutes, so a KPI started right after another one was
+    # refused on a machine doing nothing (Intel after AMD: 2.08 > 2.0).
+    load = busy_cores(10.0)
+    start_load_average = os.getloadavg()[0]
     if os.environ.get("CELTIUM_KPI_FORCE") != "1" and load > load_limit:
-        raise KpiError(f"loaded machine ({load:.2f} > {load_limit}); wait, lower the limit only to record it, or "
-                       "explicitly choose CELTIUM_KPI_FORCE=1")
+        raise KpiError(f"loaded machine ({load:.2f} busy cores > {load_limit}); wait, lower the limit only to record "
+                       "it, or explicitly choose CELTIUM_KPI_FORCE=1")
     scene, gpu = os.environ.get("CELTIUM_KPI_SCENE", "world"), os.environ.get("CELTIUM_KPI_GPU", "amd")
     common = ["-Dceltium.vulkan.validation=false", "-Dceltium.vulkan.presentReadback=false",
               "-Dceltium.vulkan.presentedDumpEvery=0"]
@@ -267,7 +279,7 @@ def main(argv: list[str]) -> int:
     evidence = root / ".gv-verify" / f"{tag}-kpi-input.json"
     with evidence.open("x") as out:
         json.dump({"inputs": pinned, "gpu": gpu, "mode": scene, "reps": reps, "duration": duration,
-                   "sharedFlags": shared, "celtiumOnlyFlags": arm_only, "initialLoadAverage": load,
+                   "sharedFlags": shared, "celtiumOnlyFlags": arm_only, "initialBusyCores": round(load, 3), "initialLoadAverage": start_load_average,
                    "loadLimit": load_limit, "loadGuardBypassed": os.environ.get("CELTIUM_KPI_FORCE") == "1"},
                   out, indent=2)
     pairs = []
@@ -299,16 +311,17 @@ def main(argv: list[str]) -> int:
         pairs.append(pair)
     summary = summarize(pairs, arm_only)
     external = external_cores(cpu_start, cpu_snapshot())
-    summary["environment"] = {"initialLoadAverage": load, "finalLoadAverage": os.getloadavg()[0],
+    summary["environment"] = {"initialBusyCores": round(load, 3), "initialLoadAverage": start_load_average, "finalLoadAverage": os.getloadavg()[0],
                               "loadLimit": load_limit, "cpuCount": os.cpu_count(),
                               "externalCpuCores": round(external, 3), "externalLimit": external_limit,
                               "guardBypassed": os.environ.get("CELTIUM_KPI_FORCE") == "1"}
-    final_load = summary["environment"]["finalLoadAverage"]
-    if load > load_limit or final_load > load_limit:
+    if load > load_limit or external > external_limit:
         # Persistent external load (the browser showing this session) is not a renderer property: the paired,
-        # order-alternating design cancels it between arms, but the absolute milliseconds keep its floor.
-        summary["scope"] += ("; measured under external load " + f"{load:.2f} -> {final_load:.2f}"
-                             + f" (limit {load_limit:g}, override recorded): ratios only, not absolute frame times")
+        # order-alternating design cancels it between arms, but the absolute milliseconds keep its floor. The final
+        # load average is recorded but not judged: it is read right after the last game exits and is mostly that game.
+        summary["scope"] += (f"; measured under external load (busy {load:.2f} cores at start, {external:.2f} outside "
+                             f"the legs during the run; limits {load_limit:g}/{external_limit:g}, override recorded): "
+                             "ratios only, not absolute frame times")
     if external > external_limit:
         # A run overtaken by something else (this session's own browser is the usual cause - the fbo-cache-c run went
         # 2.69 -> 7.34) compares different machines in its pairs, and a median across them is not a measurement of the
