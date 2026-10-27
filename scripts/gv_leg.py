@@ -510,6 +510,16 @@ def group_exists(pgid: int) -> bool:
         return False
 
 
+def group_members(pgid: int) -> list[str]:
+    """The processes still in a group, as 'pid command' lines, so a leftover is named rather than only counted."""
+    try:
+        listing = subprocess.run(["ps", "-o", "pid=,args=", "-g", str(pgid)], capture_output=True, text=True,
+                                 timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [" ".join(line.split())[:160] for line in listing.splitlines() if line.strip()]
+
+
 def stop_owned_group(process: subprocess.Popen, grace: float = TERMINATE_GRACE) -> None:
     # SIGINT lets Python execute the harness's finally blocks (game slot, Java, compositor).
     # An uncooperative Java/test child is then terminated/killed in this *own* new session.
@@ -593,6 +603,7 @@ def execute(plan: Plan, *, timeout: float | None = None, terminate_grace: float 
                         if group_exists(process.pid):
                             result.update(accepted=False, verdict="FAILED", exitCode=1)
                             result["problems"].append("harness left owned child processes running")
+                            result["leftoverProcesses"] = group_members(process.pid)
                 finally:
                     if process is not None:
                         stop_owned_group(process, terminate_grace)
