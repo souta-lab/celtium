@@ -395,6 +395,10 @@ final class ModelReplay {
      * Appends a model replay to the native instance run, preserving its lighting and alpha-test semantics.
      * Off-target replays remain in their own pass on the per-group path.
      */
+    /** {@code -Dceltium.debug.modelLightFrame=N}: print the lighting inputs of the first 80 model instances from frame N on. */
+    private static final long MODEL_LIGHT_DEBUG_FRAME = Long.getLong("celtium.debug.modelLightFrame", 0L).longValue();
+    private static int modelLightLines;
+
     boolean celtium$appendModelInstance(VulkanDynamicMesh mesh, int texture, int[] state, long key,
             float[] projection, float[] modelView, int quads, float[] combineColor) {
         if (b.modelInstancesFailed || state.length <= 14 || !b.context.textureArraySupported()) {
@@ -488,8 +492,19 @@ final class ModelReplay {
             colour[3] = b.immediateState.colorAlpha();
         }
         float[] affine = b.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
+        float[] light = b.celtium$lightParams(state, modelView, b.modelInstanceLight);
+        if (MODEL_LIGHT_DEBUG_FRAME > 0 && b.frameId >= MODEL_LIGHT_DEBUG_FRAME && modelLightLines++ < 80) {
+            // One frame of the instances' lighting inputs, for a lit model whose shade differs from the reference:
+            // the flag, the object-space light terms and the lightmap coordinate the shader will see, by list.
+            float[] lm = b.celtium$lightmapForGroup();
+            System.out.println("[Celtium] CELTIUM_MODEL_LIGHT list=" + listId + " lit=" + state[8] + " t=["
+                    + modelView[12] + "," + modelView[13] + "," + modelView[14] + "] params="
+                    + (light == null ? "null" : java.util.Arrays.toString(light)) + " lightmap="
+                    + (lm == null ? "null" : java.util.Arrays.toString(lm)) + " colour="
+                    + (colour == null ? "none" : java.util.Arrays.toString(colour)));
+        }
         instances.append(open.modelRun, listId, modelView, colour, combineColor, affine, Float.intBitsToFloat(state[6]), state[14],
-                b.celtium$lightParams(state, modelView, b.modelInstanceLight), b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
+                light, b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
         open.batches += quads;
         return true;
     }

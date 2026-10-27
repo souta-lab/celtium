@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **436 個**／文字列内マーカー **393 個**。
+システムプロパティの読み取りキー **437 個**／文字列内マーカー **394 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -20,7 +20,7 @@
 | [celeritas.useVintageFastBlockRenderer](#group-celeritas-useVintageFastBlockRenderer) | 1 |
 | [celtium.allowCompetitors](#group-celtium-allowCompetitors) | 1 |
 | [celtium.clearlatch](#group-celtium-clearlatch) | 1 |
-| [celtium.debug](#group-celtium-debug) | 37 |
+| [celtium.debug](#group-celtium-debug) | 38 |
 | [celtium.droppedItemRange](#group-celtium-droppedItemRange) | 1 |
 | [celtium.droppedItemRangeBlocks](#group-celtium-droppedItemRangeBlocks) | 1 |
 | [celtium.droppedItemRangeSoftCap](#group-celtium-droppedItemRangeSoftCap) | 1 |
@@ -105,6 +105,7 @@
 | `celtium.debug.listSizeLog` | `Integer.getInteger` | [RenderSectionManager.java:464](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L464>) |
 | `celtium.debug.logLinesPerTag` | `Integer.getInteger` | [CeltiumLogLimiter.java:23](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L23>) |
 | `celtium.debug.markTrace` | `Boolean.getBoolean` | [RenderGlobalMixin.java:269](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L269>) |
+| `celtium.debug.modelLightFrame` | `Long.getLong` | [ModelReplay.java:399](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L399>) |
 | `celtium.debug.noAffineBake` | `Boolean.getBoolean` | [VulkanTerrainGpuBackend.java:8007](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8007>) |
 | `celtium.debug.noOcclusion` | `Boolean.getBoolean` | [VintageRenderSectionManager.java:89](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/VintageRenderSectionManager.java#L89>) |
 | `celtium.debug.periodicLogs` | `Boolean.getBoolean` | [PeriodicLog.java:12](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PeriodicLog.java#L12>) |
@@ -885,10 +886,11 @@
 | `CELTIUM_MODEL_ENTRY` | [ModelReplay.java:45](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L45>) |
 | `CELTIUM_MODEL_FOG_TEST` | [ValidationClient.java:5701](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L5701>) |
 | `CELTIUM_MODEL_GROUPS` | [CeltiumModelBatchGroups.java:94](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumModelBatchGroups.java#L94>) |
-| `CELTIUM_MODEL_INSTANCES` | [ModelReplay.java:425](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L425>), [ModelReplay.java:465](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L465>) |
+| `CELTIUM_MODEL_INSTANCES` | [ModelReplay.java:429](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L429>), [ModelReplay.java:469](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L469>) |
 | `CELTIUM_MODEL_LAYER` | [ModelReplay.java:143](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L143>) |
 | `CELTIUM_MODEL_LIFECYCLE` | [ModelListLifecycleProbe.java:294](<../validation/client/src/main/java/org/soutalab/celtium/validation/ModelListLifecycleProbe.java#L294>) |
 | `CELTIUM_MODEL_LIFECYCLE_SEQUENCE` | [ModelListLifecycleProbe.java:123](<../validation/client/src/main/java/org/soutalab/celtium/validation/ModelListLifecycleProbe.java#L123>) |
+| `CELTIUM_MODEL_LIGHT` | [ModelReplay.java:500](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L500>) |
 | `CELTIUM_MODEL_LIST_CLOSE` | [VulkanModelQuadCapture.java:381](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java#L381>) |
 | `CELTIUM_MODEL_LIST_OPEN` | [VulkanModelQuadCapture.java:359](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java#L359>) |
 | `CELTIUM_MODEL_MATRIX` | [ModelReplay.java:206](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L206>) |
