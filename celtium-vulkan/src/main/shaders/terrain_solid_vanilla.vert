@@ -92,9 +92,6 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
 
 layout(set = 0, binding = 1) uniform sampler2D u_LightTex;
 
-// The shadow map's light matrix, as in the compact-format variant: the fragment stage is shared, so this stage has to
-// declare and produce the same interface or the pipeline is rejected (VUID-RuntimeSpirv-OpEntryPoint-08743).
-
 // --------------------------------------------------------------------------------------------
 // Vertex attributes - the 24-byte COMPACT chunk vertex (CompactChunkVertex.VERTEX_FORMAT).
 // --------------------------------------------------------------------------------------------

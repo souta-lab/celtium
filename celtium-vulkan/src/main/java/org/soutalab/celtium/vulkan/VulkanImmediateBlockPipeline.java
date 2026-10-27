@@ -312,16 +312,6 @@ vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(1)
                     .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
-            // The native shadow map: its eye-space matrix for the vertex stage and the map for both stages (the vertex
-            // shader declares the sampler too, so the flags cover it).
-            binding.get(2).binding(2)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                    .descriptorCount(1)
-                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-            binding.get(3).binding(3)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                    .descriptorCount(1)
-                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
             org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo layoutInfo =
                     org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
                             .pBindings(binding);
@@ -393,17 +383,8 @@ vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
                 VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
                 stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                         .pName(stack.UTF8("main"));
-                org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer shadowEntry =
-                        org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
-                shadowEntry.get(0).constantID(0).offset(0).size(4);
-                shadowEntry.get(1).constantID(1).offset(4).size(4);
-                java.nio.ByteBuffer shadowValue = stack.calloc(8);
-                shadowValue.putInt(0, 0);
-                shadowValue.putInt(4, Boolean.getBoolean("celtium.shadow.debug") ? 1 : 0);
-                org.lwjgl.vulkan.VkSpecializationInfo shadowSpecialization =
-                        org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(shadowEntry, shadowValue);
                 stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
-                        .pSpecializationInfo(shadowSpecialization);
+                        .pName(stack.UTF8("main"));
 
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
                 binding.get(0).binding(0).stride(VERTEX_BYTES).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);

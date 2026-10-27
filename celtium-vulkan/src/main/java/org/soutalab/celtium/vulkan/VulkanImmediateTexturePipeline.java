@@ -139,16 +139,6 @@ public final class VulkanImmediateTexturePipeline {
     /** The records set layout, owned by {@link ImmediateDrawRecords}; this pipeline only references it. */
     private long recordsLayout = VK_NULL_HANDLE;
 
-    // ---- Native shadow map, shared by every instance of this family (same arrangement as the item family) --------
-    private static org.soutalab.celtium.vulkan.VulkanHostBuffer shadowMatrixBuffer;
-    private static long shadowMapView;
-    private static long shadowMapSampler;
-    private static long shadowPlaceholderView;
-    private static long shadowPlaceholderSampler;
-    private static long shadowPlaceholderImage;
-    private static long shadowPlaceholderMemory;
-    private static final java.util.List<VulkanImmediateTexturePipeline> SHADOW_INSTANCES =
-            new java.util.ArrayList<VulkanImmediateTexturePipeline>();
     /**
      * Every descriptor pool this pipeline has allocated sets from, oldest first, all destroyed in {@link #delete()}.
      * <p>
@@ -849,10 +839,6 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     public void delete() {
-        // A deleted pipeline must not stay reachable from the static list that fans shadow sources out to live
-        // instances: reload and variant churn left deleted pipelines registered, and a later source change wrote through
-        // their descriptor sets (#400).
-        SHADOW_INSTANCES.remove(this);
         // Capture the handles first. A deferred teardown that read the fields when it finally ran would destroy
         // whatever this object had been rebuilt into by then - measured as the replacement pipeline being destroyed
         // out from under fresh recordings (141 VUIDs, leg uniE7) - so the closure owns these handles and the object is
@@ -1007,17 +993,8 @@ public final class VulkanImmediateTexturePipeline {
                 VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
                 stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                         .pName(stack.UTF8("main"));
-                org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer shadowEntry =
-                        org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
-                shadowEntry.get(0).constantID(0).offset(0).size(4);
-                shadowEntry.get(1).constantID(1).offset(4).size(4);
-                java.nio.ByteBuffer shadowValue = stack.calloc(8);
-                shadowValue.putInt(0, 0);
-                shadowValue.putInt(4, Boolean.getBoolean("celtium.shadow.debug") ? 1 : 0);
-                org.lwjgl.vulkan.VkSpecializationInfo shadowSpecialization =
-                        org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack).set(shadowEntry, shadowValue);
                 stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
-                        .pName(stack.UTF8("main")).pSpecializationInfo(shadowSpecialization);
+                        .pName(stack.UTF8("main"));
 
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
                 binding.get(0).binding(0).stride(vertexStride()).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
@@ -1133,63 +1110,4 @@ public final class VulkanImmediateTexturePipeline {
         this.insertionOrder.clear();
     }
 
-    /**
-     * Moves the placeholder map to GENERAL once, so the descriptor's declared layout is the layout the image is in.
-     * The draw path cannot express a layout per frame, and an image left in UNDEFINED is what the layer reported as
-     * "expects ... to be in layout VK_IMAGE_LAYOUT_GENERAL ... current layout is VK_IMAGE_LAYOUT_UNDEFINED".
-     */
-    private void transitionPlaceholderToGeneral() {
-        if (shadowPlaceholderImage == 0L) {
-            return;
-        }
-        long pool = VK_NULL_HANDLE;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            java.nio.LongBuffer handle = stack.mallocLong(1);
-            if (org.lwjgl.vulkan.VK10.vkCreateCommandPool(this.context.device(),
-                    org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack).sType$Default()
-                            .queueFamilyIndex(this.context.queueFamilyIndex()), null, handle)
-                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                return;
-            }
-            pool = handle.get(0);
-            org.lwjgl.PointerBuffer buffers = stack.callocPointer(1);
-            if (org.lwjgl.vulkan.VK10.vkAllocateCommandBuffers(this.context.device(),
-                    org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
-                            .commandPool(pool).level(org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-                            .commandBufferCount(1), buffers) != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                return;
-            }
-            org.lwjgl.vulkan.VkCommandBuffer commandBuffer = new org.lwjgl.vulkan.VkCommandBuffer(
-                    buffers.get(0), this.context.device());
-            org.lwjgl.vulkan.VK10.vkBeginCommandBuffer(commandBuffer,
-                    org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack).sType$Default());
-            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier =
-                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default()
-                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED)
-                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .image(shadowPlaceholderImage).srcAccessMask(0)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
-            barrier.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
-                    .levelCount(1).layerCount(1);
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commandBuffer,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barrier);
-            org.lwjgl.vulkan.VK10.vkEndCommandBuffer(commandBuffer);
-            java.nio.LongBuffer fence = stack.mallocLong(1);
-            org.lwjgl.vulkan.VK10.vkCreateFence(this.context.device(),
-                    org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(), null, fence);
-            org.lwjgl.vulkan.VK10.vkQueueSubmit(this.context.queue(),
-                    org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
-                            .pCommandBuffers(stack.pointers(commandBuffer.address())), fence.get(0));
-            org.lwjgl.vulkan.VK10.vkWaitForFences(this.context.device(), fence.get(0), true, 2_000_000_000L);
-            org.lwjgl.vulkan.VK10.vkDestroyFence(this.context.device(), fence.get(0), null);
-        } finally {
-            if (pool != VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkDestroyCommandPool(this.context.device(), pool, null);
-            }
-        }
-    }
 }

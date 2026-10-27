@@ -406,8 +406,6 @@ public final class VulkanImmediateItemPipeline {
             celtium$noteDescWrite(write);
             VulkanDescriptorWrites.note(write, "VulkanImmediateItemPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            // Both variants' layouts declare the shadow bindings, and a set drawn with a binding it does not have is
-            // VUID-vkCmdDrawIndexed-None-08114 - so a set is filled from whichever texture path allocated it.
             this.setsByTextureView.put(texture.key(), set);
             this.lastDescriptorKey = texture.key();
             this.lastDescriptorSet = set;
@@ -488,9 +486,6 @@ public final class VulkanImmediateItemPipeline {
             celtium$noteDescWrite(write);
             VulkanDescriptorWrites.note(write, "VulkanImmediateItemPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            // The lit variant's layout also carries the shadow map (binding 2: its eye-space matrix, binding 3: the map),
-            // and every set that is drawn with has to have both written - the layer reports the ones that do not as
-            // vkCmdDrawIndexed ... descriptor not updated.
             this.setsByTextureView.put(descriptorKey, set);
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
@@ -510,15 +505,11 @@ public final class VulkanImmediateItemPipeline {
             return VK_NULL_HANDLE;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            // Three samplers per lit set now (texture, light map and the shadow map) and one uniform buffer for the
-            // matrix: a pool that lists only one sampler type makes the layer report every set as allocated with the
-            // wrong type (WARNING-CoreValidation-AllocateDescriptorSets-WrongType).
+            // Two samplers per lit set (texture and light map), one per unlit set.
             org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
-                    org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(2, stack);
+                    org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
             poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                    .descriptorCount(DESCRIPTOR_SETS_PER_POOL * 3);
-            poolSize.get(1).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                    .descriptorCount(DESCRIPTOR_SETS_PER_POOL);
+                    .descriptorCount(DESCRIPTOR_SETS_PER_POOL * 2);
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
                     org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                             .maxSets(DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
@@ -618,14 +609,8 @@ public final class VulkanImmediateItemPipeline {
             // fixed-function term it stands in for is a per-draw modulate, and the coordinate arrives as a push constant
             // (see LightmapCoordsMixin). A binding the layout does not declare is a shader-interface error, and one it
             // declares but the set does not fill is a descriptor error, so both variants get exactly theirs.
-            // The shadow bindings (2: the eye-space matrix, 3: the map) are declared by every immediate vertex shader
-            // this family compiles, the non-lit one included, so they cannot be omitted from the layout of any variant:
-            // measured on leg gv-merge-census1 at 3cde87ebb, omitting them for non-lit made
-            // VUID-VkGraphicsPipelineCreateInfo-layout-07988 name "celtiumShadow" at pipeline creation and
-            // VUID-vkCmdDrawIndexed-None-08114 name the missing "u_ShadowMap" on every such draw. Only binding 1 - the
-            // light map - is lit-only, because only that shader samples it.
             org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
-                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(this.lit ? 4 : 3, stack);
+                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(this.lit ? 2 : 1, stack);
             int slot = 0;
             binding.get(slot++).binding(0)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
@@ -638,15 +623,6 @@ public final class VulkanImmediateItemPipeline {
                         .descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
             }
-            // The native shadow map's matrix (vertex stage) and the map itself (fragment stage).
-            binding.get(slot++).binding(2)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                    .descriptorCount(1)
-                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-            binding.get(slot++).binding(3)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                    .descriptorCount(1)
-                    .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
             org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo layoutInfo =
                     org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
                             .pBindings(binding);
