@@ -158,6 +158,43 @@ public final class GameLoopTiming {
                     .append(Math.round(rest[k] / Math.max(1, TAIL_BATCH - slowCount) / 1000.0));
         }
         System.out.println(line);
+        // The same batch split by whether a tick ran inside the loop, and the tick loops' own slowest tenth: at several
+        // hundred loops per second only a few percent carry a tick and those are the p99 band, so this says whether a
+        // tick loop's tail is the tick, the frame drawn after it, or the present.
+        long[] tickLoops = new long[TAIL_BATCH];
+        int tickCountInBatch = 0;
+        for (long[] r : tailRows) {
+            if (r[1] > 0) tickLoops[tickCountInBatch++] = r[0];
+        }
+        if (tickCountInBatch > 0) {
+            java.util.Arrays.sort(tickLoops, 0, tickCountInBatch);
+            long tickP90 = tickLoops[tickCountInBatch * 9 / 10];
+            double[] withTick = new double[TAIL_PARTS.length];
+            double[] tickSlow = new double[TAIL_PARTS.length];
+            double[] noTick = new double[TAIL_PARTS.length];
+            int tickSlowCount = 0;
+            for (long[] r : tailRows) {
+                double[] into = r[1] > 0 ? withTick : noTick;
+                for (int k = 0; k < TAIL_PARTS.length; k++) {
+                    into[k] += r[k];
+                }
+                if (r[1] > 0 && r[0] >= tickP90) {
+                    tickSlowCount++;
+                    for (int k = 0; k < TAIL_PARTS.length; k++) {
+                        tickSlow[k] += r[k];
+                    }
+                }
+            }
+            StringBuilder split = new StringBuilder("[Celtium] CELTIUM_FRAME_TICK_SPLIT tickLoops=").append(tickCountInBatch)
+                    .append(" tickP90us=").append(tickP90 / 1000L).append(" tickSlow=").append(tickSlowCount);
+            for (int k = 0; k < TAIL_PARTS.length; k++) {
+                split.append(' ').append(TAIL_PARTS[k]).append("us=")
+                        .append(Math.round(tickSlow[k] / Math.max(1, tickSlowCount) / 1000.0)).append('/')
+                        .append(Math.round(withTick[k] / tickCountInBatch / 1000.0)).append('/')
+                        .append(Math.round(noTick[k] / Math.max(1, TAIL_BATCH - tickCountInBatch) / 1000.0));
+            }
+            System.out.println(split.append(" (slowest tenth of tick loops / all tick loops / loops without a tick)"));
+        }
     }
 
     /** Called at the head of the client tick. */

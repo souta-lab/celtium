@@ -55,14 +55,15 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | E2E 1.93a（Cleanroom 0.7） | 起動・入world・exit 0（AMD）。遠景の黒帯が未解決（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
-2. **性能**（KPI flags・1280×720・vsync off/260。いずれも load 上昇で形式 verdict なし）:
-   - Xaero 導入前（`ef807429c`）: AMD 0.990x（3対とも<1・p95も低い）。Intel は未batch提出が原因で1.68x → 全deviceでbatch提出に
-     （`811c29c46`、Intel 単体 3.6–4.0 → 2.2 ms）。live allocation の寄与は約0.15 ms（`b57e1e7ba`）で主因ではない。
-   - Xaero 入り利用者 instance: `0d937df8b` AMD 1.44x・Intel 1.45x → async present（提出とpresentを専用threadへ、既定ON）で **AMD 1.01x**（p50 1.22 ms）・**Intel 1.17x**（2.31 ms）、p95はまだCeleritas超。
-     AMD は CPU律速、残差は per-draw 費用の分散。Intel は解像度依存の超過が 0.06 ms まで縮小（outline合成省略・depth OPTIMAL・solid discard特殊化）、
-     残差は固定費。上限測定で棄却: 反復acquire barrier全省略 2–3%、texture跨ぎmerge（bindless上限）Intel 2.5%/AMD 4%、
-     frame+present 1 submit（fence acquire、実merge確認済）中立、acquire狭小化は遅化、glthread仮説（無効でも3%）。
-     **次の単位**: model replay と immediate を一つの順序付きstreamに（Stage 1 packet化）。Intel残差の内訳は[証拠](evidence/intel-gap-2026-10-26.md)。
+2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s・jar `dbffd929`）:
+   - **AMD: goal条件1を満たす**（`kpi2-amd`、verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.747/0.765/0.910、外部CPU 0.09）。
+   - **Intel: 未達**（`kpi3-intel`、p50 0.920・p95 0.917 は3対とも速いが **p99 1.110**＝Celtium 3.61–3.66 ms vs Celeritas 3.25–3.32 ms）。
+     **p99はtickを含むフレーム（warm 200/5,700、3.5%）**: 通常フレームp99は同等（2.36–2.63 vs 2.46–2.52 ms）、tickフレームp95 3.88–4.08 vs 3.42–3.52 ms、
+     tick本体（ClientTickEvent）p50 1.27–1.32 vs 1.15–1.19・p95 1.55–1.80 vs 1.39–1.42 ms（`kpi4-intel`、計器 `frameIntervalWarmTickFrame*`/`warmTick*`、
+     `-Dceltium.debug.frameTail` の `CELTIUM_FRAME_TICK_SPLIT`）。tick差はvanillaコード全体に薄く分布（1 ms JFR: ChunkProviderClient走査+17/42サンプル等）。
+     棄却: animated sprite毎submitのtick単位batch化・stub sub-image変換のscratch化（control比1.002）、CPU/GPUクロック差（両arm 3800/1050 MHz）、JIT deopt反復（9件）。
+     次の判別: tickフレーム内の描画側（tick後のフレーム+0.3 ms）とtick本体を`brackets`で同一run内分離。
+   - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）と描画側残差は[証拠](evidence/intel-gap-2026-10-26.md)。
 3. **native 状態・実行**: fog は vanilla・地形・可視距離・即時描画で [native owner](evidence/native-fog-2026-10-26.json) を共有。[instance fog](evidence/model-fog-2026-10-26.json) を実装し、projection/fog の96B run定数化と行列積GPU移動で instance は320→256B、JavaのMVP合成を削除（[証拠](evidence/model-run-2026-10-27.json)）。同版のKPIは両GPU負荷ゲート外、速度未判定。**照明OFFモデルも同じinstance programへ統合、alpha全比較を実装**（[証拠](evidence/unlit-model-2026-10-27.json)）。glint陽性対照で受理を確認、glint単独画素は未分離。155 JUnit・71 Python通過。candidate 10 leg validation 0、world AMD/Intel・video・退出後menuはgate通過。inventory/recipe・actor/glintは未較正。最新JARの速度とGREATER/disabled以外のalpha比較はGPU未測定。非instance lit fogは未対応。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。

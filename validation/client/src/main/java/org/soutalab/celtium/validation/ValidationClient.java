@@ -144,6 +144,13 @@ public final class ValidationClient {
      * and stops at {@code warmToTick} (default 600).
      */
     private final List<Double> warmFrameIntervals = new ArrayList<Double>();
+    // The warm window split by whether a client tick ran inside the interval: at several hundred frames per second
+    // only a few percent of frames carry a tick, which is exactly the p99 band, so a tail can be told apart as tick
+    // cost (the same vanilla work under both renderers unless one adds to it) or as frame cost.
+    private final List<Double> warmTickFrameIntervals = new ArrayList<Double>();
+    private final List<Double> warmPlainFrameIntervals = new ArrayList<Double>();
+    private final List<Double> warmTickMillis = new ArrayList<Double>();
+    private long celtium$tickCountAtPreviousFrame;
 
     /** Adds {@code <prefix>MaxMs} and the counts of frames over 16.7, 33.3 and 50 ms for one sorted window. */
     private static void celtium$reportSpikes(com.google.gson.JsonObject report, String prefix, List<Double> sorted) {
@@ -3562,6 +3569,10 @@ public final class ValidationClient {
             if (this.celtium$tickSampleCount < this.celtium$tickSamples.length) {
                 this.celtium$tickSamples[this.celtium$tickSampleCount++] = took;
             }
+            if (worldTicks >= Integer.getInteger("celtium.validation.warmFromTick", 400).intValue()
+                    && worldTicks < Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
+                warmTickMillis.add(took / 1_000_000.0);
+            }
         }
         Minecraft mc = Minecraft.getMinecraft();
         celtium$clientTicks++;
@@ -5754,7 +5765,10 @@ public final class ValidationClient {
         int warmTo = Integer.getInteger("celtium.validation.warmToTick", 600).intValue();
         if (worldTicks >= warmFrom && worldTicks < warmTo && previousFrame != 0) {
             warmFrameIntervals.add((now - previousFrame) / 1_000_000.0);
+            (this.celtium$tickCount != this.celtium$tickCountAtPreviousFrame ? warmTickFrameIntervals
+                    : warmPlainFrameIntervals).add((now - previousFrame) / 1_000_000.0);
         }
+        this.celtium$tickCountAtPreviousFrame = this.celtium$tickCount;
         // A slow frame's phase evidence, captured at the frame it happened in. The acceptance for the user's lag is the
         // p95/p99 pair rather than the median, and a distribution cannot say which phase produced a spike: this records
         // the renderer's own report beside the interval, so a slow frame comes back with named phases and with what the
@@ -6528,6 +6542,18 @@ public final class ValidationClient {
         // Spikes: a percentile hides a handful of long frames, which is what a player feels as a hitch. Counted over
         // both windows: the maximum and the frames longer than one 60 Hz, two and three 60 Hz refreshes.
         celtium$reportSpikes(report, "frameIntervalWarm", warmFrameIntervals);
+        Collections.sort(warmTickFrameIntervals);
+        Collections.sort(warmPlainFrameIntervals);
+        Collections.sort(warmTickMillis);
+        report.addProperty("frameIntervalWarmTickFrames", warmTickFrameIntervals.size());
+        report.addProperty("frameIntervalWarmTickFrameP50Ms", percentile(warmTickFrameIntervals, 0.50));
+        report.addProperty("frameIntervalWarmTickFrameP95Ms", percentile(warmTickFrameIntervals, 0.95));
+        report.addProperty("frameIntervalWarmPlainFrames", warmPlainFrameIntervals.size());
+        report.addProperty("frameIntervalWarmPlainFrameP95Ms", percentile(warmPlainFrameIntervals, 0.95));
+        report.addProperty("frameIntervalWarmPlainFrameP99Ms", percentile(warmPlainFrameIntervals, 0.99));
+        report.addProperty("warmTickCount", warmTickMillis.size());
+        report.addProperty("warmTickP50Ms", percentile(warmTickMillis, 0.50));
+        report.addProperty("warmTickP95Ms", percentile(warmTickMillis, 0.95));
         celtium$reportSpikes(report, "frameIntervalCold", frameIntervals);
         report.addProperty("frameIntervalWindows",
                 "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this"
