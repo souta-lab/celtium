@@ -150,6 +150,8 @@ public final class ValidationClient {
     private final List<Double> warmTickFrameIntervals = new ArrayList<Double>();
     private final List<Double> warmPlainFrameIntervals = new ArrayList<Double>();
     private final List<Double> warmTickMillis = new ArrayList<Double>();
+    /** The warm window's ticks in order as (worldTick, millis), so the slow ones show whether they recur on a period. */
+    private final List<double[]> warmTickSeries = new ArrayList<double[]>();
     private long celtium$tickCountAtPreviousFrame;
 
     /** Adds {@code <prefix>MaxMs} and the counts of frames over 16.7, 33.3 and 50 ms for one sorted window. */
@@ -3575,6 +3577,7 @@ public final class ValidationClient {
             if (worldTicks >= Integer.getInteger("celtium.validation.warmFromTick", 400).intValue()
                     && worldTicks < Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
                 warmTickMillis.add(took / 1_000_000.0);
+                warmTickSeries.add(new double[] {worldTicks, took / 1_000_000.0});
             }
         }
         Minecraft mc = Minecraft.getMinecraft();
@@ -6559,6 +6562,14 @@ public final class ValidationClient {
         report.addProperty("warmTickCount", warmTickMillis.size());
         report.addProperty("warmTickP50Ms", percentile(warmTickMillis, 0.50));
         report.addProperty("warmTickP95Ms", percentile(warmTickMillis, 0.95));
+        java.util.List<double[]> slowTicks = new java.util.ArrayList<double[]>(warmTickSeries);
+        slowTicks.sort((x, y) -> Double.compare(y[1], x[1]));
+        StringBuilder slowest = new StringBuilder();
+        for (int i = 0; i < Math.min(20, slowTicks.size()); i++) {
+            slowest.append(i == 0 ? "" : " ").append((int) slowTicks.get(i)[0]).append(':')
+                    .append(String.format(java.util.Locale.ROOT, "%.2f", slowTicks.get(i)[1]));
+        }
+        report.addProperty("warmTickSlowest", slowest.toString());
         celtium$reportSpikes(report, "frameIntervalCold", frameIntervals);
         report.addProperty("frameIntervalWindows",
                 "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this"
