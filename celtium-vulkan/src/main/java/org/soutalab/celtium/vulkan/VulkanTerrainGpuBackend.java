@@ -1183,8 +1183,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.modelReplay.celtium$drawModelList(listId, boundTextureId);
     }
 
-    /** The shaderpack frontend's probes: load the pack once, compile a stage in process, build and record one draw. */
-    final ShaderPackProbe shaderPackProbe = new ShaderPackProbe(this);
 
     public String verificationSummary() {
         return this.reports.verificationSummary();
@@ -3197,12 +3195,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.gameClearLatch", "true"));
     private static final int PRESENTED_DUMP_EVERY =
             Integer.getInteger("celtium.vulkan.presentedDumpEvery", 40).intValue();
-    /** The shadow map's own depth dump: a directory names the run, 0/off by default because it fences the GPU. */
-    private static final String SHADOW_DUMP_DIR = System.getProperty("celtium.vulkan.shadowDumpDir");
-    private static final int SHADOW_DUMP_EVERY =
-            Integer.getInteger("celtium.vulkan.shadowDumpEvery", 200).intValue();
-    private static final int SHADOW_DUMP_COUNT =
-            Integer.getInteger("celtium.vulkan.shadowDumpCount", 4).intValue();
     static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
     /**
      * {@code -Dceltium.debug.dumpPairsAtPresent=N}: at present N, write every chain pair (each mod or vanilla
@@ -3306,22 +3298,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Every window that carried a hundred groups or more, and the groups they carried. */
     long largeWindows;
     long largeWindowGroups;
-    /**
-     * {@code -Dceltium.vulkan.shadowMap=true}: create the shadow target and record its clear pass each frame.
-     * <p>
-     * Stage (b) of the plan's shadow work: the target and its pass are exercised on the real device before a light
-     * matrix or a depth pipeline exists, so the pass, its layout transition and its lifetime are validated by
-     * themselves rather than tangled into the first drawing code that uses them.
-     */
-    private static final boolean SHADOW_MAP = Boolean.getBoolean("celtium.vulkan.shadowMap");
-    private static final int SHADOW_MAP_SIZE = Integer.getInteger("celtium.vulkan.shadowMapSize", 2048).intValue();
-    private ShadowMapTarget shadowMap;
-    private ShadowDepthPipeline shadowDepthPipeline;
-    private final float[] shadowLightMatrix = new float[16];
-    private long shadowMapClearPasses;
-    private long shadowTerrainDrawFrame = Long.MIN_VALUE;
-    private long shadowTerrainDrawCommands;
-    private int shadowDumpsWritten;
 
     /** How many large windows have had their routing logged. */
     int windowRouteLogs;
@@ -6437,20 +6413,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateOfferedByFormat[formatId]++;
         }
         this.immediateOfferCount++;
-        if (SHADER_PACK_DRAW_PROBE && this.terrainCaptureVertices == null
-                && (formatId == 3 || formatId == 8) && vertexCount > 0 && vertexCount <= 4096) {
-            // The first terrain-shaped batch of the session, kept as bytes so the shaderpack probe can draw the game's
-            // own geometry instead of its triangle: the conversion to the pack's attributes happens once, after the pack's
-            // program is known.
-            long bytes = (long) vertexCount * vertexStride;
-            java.nio.ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
-            org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, org.lwjgl.system.MemoryUtil.memAddress(copy), bytes);
-            copy.rewind();
-            this.terrainCaptureVertices = copy;
-            this.terrainCaptureStride = vertexStride;
-            this.terrainCaptureCount = vertexCount;
-            this.terrainCaptureFormat = formatId;
-        }
         this.immediateOffersThisFrame++;
         long submitStart = System.nanoTime();
         this.submitFlushesAtEntry = this.immediateStatistics.immediateFlushes();
@@ -8580,14 +8542,6 @@ this.frameBufferOpen = false;
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
         DrawCounters.reportIfDue(this.frameId);
-        // Once, when a pack is actually loaded. The guard used to be shaderPackDraws < 3, and that counter only moves when a pack draw happens - so
-        // without a pack every frame printed this line: 8,215 of them and about 3.5 MB of log in one leg, which then read as "the pack draws every
-        // frame" during the shader-pack investigation.
-        if (!this.packSubmitLogged && !SHADER_PACK_PATH.isEmpty()) {
-            this.packSubmitLogged = true;
-            System.out.println("[Celtium] CELTIUM_PACK_DRAW_SUBMIT cb=" + Long.toHexString(this.commandBuffer.address())
-                    + " slot=" + this.frameSlot);
-        }
         this.frameCoordinator.celtium$finishFrameBuffer(true);
     }
 
@@ -8608,11 +8562,6 @@ this.frameBufferOpen = false;
         this.fog.tracePeriodically(this.frameId);
         try {
             flushPendingBeforeGlDraw();
-            // Before the frame's own recording is ended: the pack's triangle has to be the last thing written into the
-            // frame image, or the frame's remaining draws and its composite run over it. Recording it after the last
-            // window's pass is exactly that point - the pass has ended, the frame buffer is still open, and the present
-            // has not been queued.
-            this.shaderPackProbe.celtium$recordShaderPackDraw();
             // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
             // which is the only way to price the command itself without the rest of the frame in the way.
             celtium$runDrawBench();
@@ -10388,19 +10337,6 @@ this.frameBufferOpen = false;
             drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         }
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
-        // Inside the pass the game's own quads draw into, which is the delivery path that is known to paint the screen.
-        if (SHADER_PACK_DRAW_PROBE && !SHADER_PACK_DRAW_CLEAR && !SHADER_PACK_DRAW_BUILTIN
-                && !SHADER_PACK_DRAW_CONSTANT && !SHADER_PACK_DRAW_BLIT && this.shaderPackDrawProbe != null) {
-            this.shaderPackDrawProbe.setFrameSize(this.frameTargetWidth, this.frameTargetHeight);
-            try {
-                this.shaderPackDrawProbe.recordInPass(this.commandBuffer, renderPass);
-                if (this.shaderPackDraws++ <= 2) {
-                    System.out.println("[Celtium] CELTIUM_PACK_DRAW inPass=true draws=" + this.shaderPackDraws);
-                }
-            } catch (RuntimeException | LinkageError error) {
-                record("pack draw in pass failed: " + describe(error));
-            }
-        }
         vkCmdEndRenderPass(this.commandBuffer);
         gpuMark("win-end");
         if (windowSlot >= 0) {
@@ -11327,11 +11263,6 @@ this.frameBufferOpen = false;
             pipeline.delete();
         }
         this.terrain.releasePipelines();
-        if (this.shadowDepthPipeline != null) {
-            this.shadowDepthPipeline.delete();
-            this.shadowDepthPipeline = null;
-        }
-        this.shadowTerrainDrawFrame = Long.MIN_VALUE;
         // The immediate caches are built against the terrain pass that was just destroyed, so they belong to this world
         // as much as the pipelines do: a state-keyed entry kept across a world change would name a dead render pass. The
         // queued groups that held references to them were retired above, so nothing here is still pointing at them.
@@ -11359,116 +11290,6 @@ this.frameBufferOpen = false;
         record("world teardown: terrain resources released, the window device and swapchain are kept");
     }
 
-    /**
-     * Records the shadow target's clear-only pass into the frame's command buffer. The buffer was just reset and
-     * begun, so no render pass is open; the target's own pass moves the image from UNDEFINED to
-     * SHADER_READ_ONLY_OPTIMAL in one transition, which is the layout every later sampling stage needs.
-     */
-    private void celtium$recordShadowClear(MemoryStack stack) {
-        if (this.shadowMap == null) {
-            this.shadowMap = new ShadowMapTarget(this.context, SHADOW_MAP_SIZE);
-        }
-        VkClearValue.Buffer clear = VkClearValue.calloc(1, stack);
-        clear.get(0).depthStencil().depth(1.0f).stencil(0);
-        VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                .renderPass(this.shadowMap.renderPass())
-                .framebuffer(this.shadowMap.framebuffer())
-                .pClearValues(clear);
-        begin.renderArea().offset().set(0, 0);
-        begin.renderArea().extent().set(this.shadowMap.size(), this.shadowMap.size());
-        vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
-        // The window renderer can open this buffer before the world supplies a chunk vertex format. The pipeline
-        // therefore belongs at the first real terrain draw, not here in the pre-world clear pass.
-        vkCmdEndRenderPass(this.commandBuffer);
-        this.shadowMapClearPasses++;
-    }
-
-    /** Records the opaque chunk batches from the sun's view, before the camera pass acquires its target. */
-    private void celtium$recordShadowTerrain(MemoryStack stack, ChunkRenderListIterable renderLists,
-            TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera,
-            boolean useBlockFaceCulling, ChunkPrimitiveType primitiveType) {
-        int stride = pass.vertexType().getVertexFormat().getStride();
-        if (stride != this.commonVertexStride) {
-            throw new IllegalStateException("shadow vertex stride " + stride + " differs from arena stride "
-                    + this.commonVertexStride);
-        }
-        if (this.shadowDepthPipeline == null) {
-            this.shadowDepthPipeline = ShadowDepthPipeline.create(this.context, this.shadowMap.renderPass(), stride);
-        }
-        // writeUniforms() stores offsets relative to camera.int+camera.frac. Use that SAME relative space here;
-        // a matrix centred on world origin with camera-relative vertex coordinates would clip the moving world.
-        System.arraycopy(ShadowLightMatrix.viewProjection(0.0f, -16.0f, 0.0f,
-                0.3f, 0.9f, 0.2f, 64.0f, 256.0f), 0, this.shadowLightMatrix, 0, 16);
-        ByteBuffer matrix = stack.malloc(64);
-        matrix.asFloatBuffer().put(this.shadowLightMatrix);
-        ByteBuffer regionOffset = stack.malloc(16);
-        org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
-        viewport.get(0).set(0.0f, 0.0f, this.shadowMap.size(), this.shadowMap.size(), 0.0f, 1.0f);
-        org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-        scissor.get(0).offset().set(0, 0);
-        scissor.get(0).extent().set(this.shadowMap.size(), this.shadowMap.size());
-        VkClearValue.Buffer clear = VkClearValue.calloc(1, stack);
-        clear.get(0).depthStencil().depth(1.0f).stencil(0);
-        VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                .renderPass(this.shadowMap.renderPass()).framebuffer(this.shadowMap.framebuffer()).pClearValues(clear);
-        begin.renderArea().offset().set(0, 0);
-        begin.renderArea().extent().set(this.shadowMap.size(), this.shadowMap.size());
-        vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
-        long drawn = 0;
-        try {
-            vkCmdSetViewport(this.commandBuffer, 0, viewport);
-            vkCmdSetScissor(this.commandBuffer, 0, scissor);
-            this.shadowDepthPipeline.bind(this.commandBuffer, matrix);
-            SectionRenderDataStorage.BatchCacheParams cacheParams =
-                    new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling);
-            Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
-            while (iterator.hasNext()) {
-                ChunkRenderList renderList = iterator.next();
-                RenderRegion region = renderList.getRegion();
-                TerrainRenderer.RegionResources resources = this.terrain.resourcesIfPresent(region);
-                SectionRenderDataStorage storage = region.getStorage(pass);
-                if (resources == null || storage == null) {
-                    continue;
-                }
-                CachedBatch cached = storage.getCachedMultiDrawBatch(cacheParams);
-                if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
-                        renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
-                        occlusionCamera.intZ)) {
-                    cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
-                            useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
-                    storage.storeCachedMultiDrawBatch(cacheParams, cached);
-                }
-                if (!(cached.getBatch() instanceof VulkanMultiDrawBatch) || cached.getBatch().isEmpty()) {
-                    continue;
-                }
-                VulkanMultiDrawBatch batch = (VulkanMultiDrawBatch) cached.getBatch();
-                regionOffset.asFloatBuffer().put(0, (region.getOriginX() - camera.intX) - camera.fracX)
-                        .put(1, (region.getOriginY() - camera.intY) - camera.fracY)
-                        .put(2, (region.getOriginZ() - camera.intZ) - camera.fracZ).put(3, 0.0f);
-                this.shadowDepthPipeline.bindRegion(this.commandBuffer, regionOffset);
-                this.terrain.bindVertexBuffer(this.commandBuffer, stack, resources);
-                for (int i = 0; i < batch.size(); i++) {
-                    long byteOffset = batch.indexByteOffset(i);
-                    if (byteOffset != 0 && resources.indexArena == null) {
-                        continue;
-                    }
-                    this.terrain.bindIndexBuffer(this.commandBuffer, byteOffset == 0
-                            ? this.sharedIndexBuffers.get(primitiveType) : resources.indexArena.buffer());
-                    vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(i), 1, (int) (byteOffset / 4),
-                            batch.baseVertex(i), 0);
-                    drawn++;
-                }
-            }
-        } finally {
-            vkCmdEndRenderPass(this.commandBuffer);
-        }
-        this.shadowTerrainDrawCommands += drawn;
-        if (this.shadowTerrainDrawFrame == Long.MIN_VALUE || this.frameId == 120) {
-            System.out.println("[Celtium] CELTIUM_SHADOW_TERRAIN frame=" + this.frameId + " stride=" + stride
-                    + " draws=" + drawn + " total=" + this.shadowTerrainDrawCommands);
-        }
-    }
-
     public void delete() {
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
@@ -11484,14 +11305,6 @@ this.frameBufferOpen = false;
         if (!settleGpu("backend delete")) {
             // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
             return;
-        }
-        if (this.shadowDepthPipeline != null) {
-            this.shadowDepthPipeline.delete();
-            this.shadowDepthPipeline = null;
-        }
-        if (this.shadowMap != null) {
-            this.shadowMap.delete();
-            this.shadowMap = null;
         }
         for (VulkanImmediateTexturePipeline records : this.recordsPipelines.values()) {
             records.delete();
@@ -11748,14 +11561,6 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
         }
 
-        // Fill the optional light-depth target before opening the camera pass. No frame image is acquired or
-        // modified here; the shadow pass and the main pass share only immutable region geometry.
-        if (SHADOW_MAP && this.shadowMap != null && "solid".equals(pass.name())
-                && this.shadowTerrainDrawFrame != this.frameId) {
-            celtium$recordShadowTerrain(stack, renderLists, pass, occlusionCamera, camera,
-                    useBlockFaceCulling, primitiveType);
-            this.shadowTerrainDrawFrame = this.frameId;
-        }
 
         // The begin info lives past the barriers bracket: the render pass opens inside prepBegin.
         VkRenderPassBeginInfo begin = null;
@@ -14104,48 +13909,9 @@ this.frameBufferOpen = false;
         this.splashUploadsThisFrame = false;
     }
 
-    /**
-     * The shaderpack path this run was told to load, or empty for none: {@code -Dceltium.shaderpack.path=<zip|dir>}.
-     * <p>
-     * The renderer owns the loading site because the manifest and the backend share one class loader, and the point of
-     * this first step is to prove exactly that: a real pack (BSL 10.1.8 was the one used) is parsed where the renderer
-     * lives, with the result reported on one line and its program/dimension counts in the summary. Nothing is rendered
-     * from it yet - the shadow map and the program dispatch are the next units - so this is an integration probe, not
-     * a shaderpack feature.
-     */
-    static final String SHADER_PACK_PATH = System.getProperty("celtium.shaderpack.path", "");
-
-    /** Whether the pack probe has run; it is a one-shot at the first present. */
-    boolean shaderPackProbed;
-    boolean shaderCompileProbed;
-    /** The loaded pack, kept for the S2 probe's program paths. */
-    org.soutalab.celtium.shaderpack.PackManifest shaderPackManifest;
-    /** {@code -Dceltium.shaderpack.drawProbe=true}: draw a triangle with the pack's shaders and record it. */
-    /** {@code drawProbe=true} draws a triangle, {@code drawProbe=clear} clears the image instead; anything else is off. */
-    static final String SHADER_PACK_DRAW_PROBE_MODE =
-            System.getProperty("celtium.shaderpack.drawProbe", "false");
-    static final boolean SHADER_PACK_DRAW_PROBE = !"false".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
-            && !SHADER_PACK_DRAW_PROBE_MODE.isEmpty();
-    static final boolean SHADER_PACK_DRAW_CLEAR = "clear".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE)
-            || "small".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
-    /** {@code drawProbe=builtin}: the hard-coded triangle, for separating the draw state from the pack's own shaders. */
-    static final boolean SHADER_PACK_DRAW_BUILTIN = "builtin".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
-    /** {@code drawProbe=constant}: an attribute-free full-viewport triangle, for "does a draw rasterise at all". */
-    static final boolean SHADER_PACK_DRAW_CONSTANT = "constant".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
-    /** {@code drawProbe=blit}: transfer the pack-rendered image into the delivered frame. */
-    static final boolean SHADER_PACK_DRAW_BLIT = "blit".equalsIgnoreCase(SHADER_PACK_DRAW_PROBE_MODE);
-    ShaderPackDrawProbe shaderPackDrawProbe;
     /** The delivered image's size, from the frame target; the capture's size is not assumed to be it. */
-    int frameTargetWidth = 1280;
-    int frameTargetHeight = 720;
-    int shaderPackDraws;
-    private boolean packSubmitLogged;
     private int immediateOffersThisFrame;
 
-    /** The first terrain-shaped batch's vertices, kept for the shaderpack probe's real-geometry draw. */
-    static java.nio.ByteBuffer terrainCaptureVertices;
-    /** Set once the probe has adopted the captured terrain geometry, so the line prints once and late. */
-    boolean packGeometryLogged;
     /** Groups the pre-terrain flush handed over, and how many frames contributed. */
     private long preflushGroupsDrained;
     private long preflushFrames;
@@ -14236,12 +14002,6 @@ this.frameBufferOpen = false;
         return " terrainPerFrame[calls=" + (callDelta / frames) + " draws=" + (drawDelta / frames)
                 + " drawsPerCall=" + (callDelta == 0 ? 0 : drawDelta / callDelta) + "]";
     }
-    /** Set once the shadow-map plumbing has been tried, so its line prints once. */
-    boolean packShadowLogged;
-    /** Set once the finalized multi-batch capture has been installed in the probe. */
-    boolean packGeometryAdopted;
-    boolean packReRenderLogged;
-    boolean packGeometryReRenderLogged;
 
 
     long terrainBindNanos;
@@ -14263,142 +14023,7 @@ this.frameBufferOpen = false;
     private long boundarySubmitNanos;
     private long slotWaitNanos;
     private int boundaryFrames;
-    static int terrainCaptureStride;
-    static int terrainCaptureCount;
-    static int terrainCaptureFormat;
-    /** Set when no further batches are appended: the capture holds one format and is ready for the probe. */
-    static boolean terrainCaptureFinalized;
-    /** Batches offered since the capture opened, across all layouts; the fallback close condition. */
-    private static int terrainCaptureSeen;
-    /** When the capture opened, for the wall-time close condition. */
-    private static long terrainCaptureFirstNanos;
-    /** How many vertices the capture accumulates before it closes; about eight sections' worth. */
-    private static final int CELTIUM_PACK_CAPTURE_VERTICES =
-            Integer.getInteger("celtium.shaderpack.captureVertices", 65536);
-
-    /**
-     * Records the first terrain batch's vertices for the shader-pack probe, from the terrain renderer rather than from
-     * the immediate accept path: the world's geometry never passes through that path, which is why the probe kept drawing
-     * its own triangle in world legs even after the capture hook existed.
-     */
-    public static void noteTerrainBatchForProbe(int formatId, java.nio.ByteBuffer vertices, int stride, int count) {
-        if (!SHADER_PACK_DRAW_PROBE || terrainCaptureFinalized || vertices == null || count <= 0 || stride <= 0) {
-            return;
-        }
-        // Several sections, not one: a single 68-vertex batch draws one block face against the clear colour, which says
-        // the stages work but not that a view does. Batches of the same format and stride are byte-concatenated, which
-        // is exactly what the adapter expects (it reads vertices, not meshes), until enough geometry exists to fill some
-        // of the frame - or until the format changes, at which point the capture is closed so the fit is computed over
-        // one layout.
-        if (terrainCaptureVertices == null && formatId != 3) {
-            // The opaque terrain pass (format 3) is the bulk of the world: starting the capture on a translucent batch
-            // instead kept 68 vertices and a clear picture, because every later opaque batch was a layout mismatch.
-            return;
-        }
-        terrainCaptureSeen++;
-        // Close on wall time as well as on the vertex budget: a leg is short, and a capture that only closes when the
-        // scene is complete never closes inside one. Three seconds of the world's own uploads is enough to hold a view.
-        if (terrainCaptureFirstNanos == 0L) {
-            terrainCaptureFirstNanos = System.nanoTime();
-        } else if (!terrainCaptureFinalized && terrainCaptureCount >= 2048
-                && System.nanoTime() - terrainCaptureFirstNanos > 8_000_000_000L) {
-            terrainCaptureFinalized = true;
-            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
-                    + " vertices=" + terrainCaptureCount + " (three seconds of uploads)");
-        }
-        // A batch of another layout is skipped, not a reason to close: the terrain pass alternates between formats, so
-        // closing on the first mismatch kept exactly one batch. Closing happens on the vertex budget, or after enough
-        // batches have gone by that waiting longer cannot help.
-        if (terrainCaptureVertices != null
-                && (formatId != terrainCaptureFormat || stride != terrainCaptureStride)) {
-            if (terrainCaptureSeen > 1500 && terrainCaptureCount > 0) {
-                terrainCaptureFinalized = true;
-                System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
-                        + " vertices=" + terrainCaptureCount + " seen=" + terrainCaptureSeen
-                        + " (other layouts were skipped)");
-            }
-            return;
-        }
-        long bytes = (long) count * stride;
-        if (bytes > vertices.remaining()) {
-            return;
-        }
-        int needed = (int) bytes;
-        if (terrainCaptureVertices == null) {
-            terrainCaptureVertices = org.lwjgl.system.MemoryUtil.memAlloc(Math.max(needed, 4096));
-            terrainCaptureFormat = formatId;
-            terrainCaptureStride = stride;
-        }
-        int writeAt = terrainCaptureCount * stride;
-        long capacity = terrainCaptureVertices.capacity();
-        if (writeAt + needed > capacity) {
-            long grown = Math.min(1L << 21, Math.max(capacity * 2L, writeAt + needed));
-            java.nio.ByteBuffer replacement = org.lwjgl.system.MemoryUtil.memAlloc((int) grown);
-            for (int i = 0; i < writeAt; i++) {
-                replacement.put(i, terrainCaptureVertices.get(i));
-            }
-            terrainCaptureVertices = replacement;
-        }
-        for (int i = 0; i < needed; i++) {
-            terrainCaptureVertices.put(writeAt + i, vertices.get(vertices.position() + i));
-        }
-        terrainCaptureCount += count;
-        if (terrainCaptureCount >= CELTIUM_PACK_CAPTURE_VERTICES) {
-            terrainCaptureFinalized = true;
-            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE finalized format=" + terrainCaptureFormat
-                    + " vertices=" + terrainCaptureCount + " stride=" + terrainCaptureStride
-                    + " (multiple terrain batches)");
-        }
-    }
-    private int terrainCaptureAttempts;
-
-    /**
-     * Keeps the first terrain-shaped batch's vertices for the shaderpack probe.
-     * <p>
-     * Called from the GL trampoline's offer path, which is where the world's terrain and entity batches actually arrive
-     * under GL-less; the offer entry the probe originally hooked is rarely reached in that scene.
-     */
-    public void celtium$captureTerrainBatch(int formatId, int stride, long address, int count) {
-        if (this.terrainCaptureAttempts < 6) {
-            this.terrainCaptureAttempts++;
-            System.out.println("[Celtium] CELTIUM_PACK_CAPTURE attempt=" + this.terrainCaptureAttempts
-                    + " format=" + formatId + " stride=" + stride + " count=" + count
-                    + " probe=" + SHADER_PACK_DRAW_PROBE + " address=" + (address != 0L));
-        }
-        if (!SHADER_PACK_DRAW_PROBE || this.terrainCaptureVertices != null || address == 0L) {
-            return;
-        }
-        // The world's batches arrive as format 2 (POSITION_TEX_COLOR, stride 24) and format 7 (position only); the
-        // adapter converts 2, 3, 6 and 8, so 7 is skipped and 2 is what a world scene actually offers. The captured
-        // count is capped: a probe does not need a 10,656-vertex batch to show that the pack's program draws terrain.
-        if (formatId != 2 && formatId != 3 && formatId != 6 && formatId != 8) {
-            return;
-        }
-        if (count <= 0 || stride <= 0) {
-            return;
-        }
-        int captured = Math.min(count, 4096);
-        long bytes = (long) captured * stride;
-        java.nio.ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
-        org.lwjgl.system.MemoryUtil.memCopy(address, org.lwjgl.system.MemoryUtil.memAddress(copy), bytes);
-        copy.rewind();
-        this.terrainCaptureVertices = copy;
-        this.terrainCaptureStride = stride;
-        this.terrainCaptureCount = captured;
-        this.terrainCaptureFormat = formatId;
-    }
     private int immediateOffersLastFrame;
-    boolean shaderPackDrawProbeProgramChosen;
-
-    /** {@code -Dceltium.shaderpack.compileProbe=true}: compile one stage in process and report it. */
-    static final boolean SHADER_COMPILE_PROBE =
-            Boolean.getBoolean("celtium.shaderpack.compileProbe");
-    /** The loaded manifest's one-line census, or the failure that stopped it. */
-    String shaderPackSummary = "none";
-    /** The pack's program entries, across dimensions. */
-    int shaderPackPrograms;
-    /** The pack's diagnostics by severity, as {@code ERROR/WARNING/UNSUPPORTED}. */
-    final int[] shaderPackDiagnostics = new int[3];
 
 
 
@@ -14414,7 +14039,6 @@ this.frameBufferOpen = false;
 
 
     public boolean celtium$presentFrame() {
-        this.shaderPackProbe.celtium$probeShaderPack();
         long presentStartedNanos = System.nanoTime();
         try {
             return celtium$presentFrameImpl();
@@ -14728,11 +14352,6 @@ this.frameBufferOpen = false;
         if (this.presentedDumpPath != null && dumpEvery > 0 && presented % dumpEvery == 0) {
             this.swapchain.requestPresentedImageDump(this.presentedDumpPath);
         }
-        if (SHADOW_DUMP_DIR != null && SHADOW_MAP && this.shadowMap != null && SHADOW_DUMP_EVERY > 0
-                && presented % SHADOW_DUMP_EVERY == 0 && this.shadowDumpsWritten < SHADOW_DUMP_COUNT) {
-            this.shadowDumpsWritten++;
-            dumpShadowMap(presented);
-        }
         String directory = System.getProperty("celtium.vulkan.frameDumpDir");
         if (directory == null) {
             return;
@@ -14748,58 +14367,6 @@ this.frameBufferOpen = false;
         celtium$dumpPresentedImage(java.nio.file.Paths.get(directory, "frame-" + presented + ".png"));
     }
 
-    /**
-     * Writes the shadow map's depth out as a grayscale PNG, with the coverage statistics on the line that names it.
-     * <p>
-     * The map rests in SHADER_READ_ONLY_OPTIMAL between frames, so the read names that layout rather than the
-     * GENERAL the frame's own depth image uses. Bright means near the light; the clear value 1.0 is black, which is
-     * why an empty map is an all-black image with coverage=0 rather than a plausible picture. This is the stage (d)
-     * instrument of the shadow plan: {@code CELTIUM_SHADOW_TERRAIN} says how many draws were recorded, this PNG says
-     * where they landed.
-     */
-    private void dumpShadowMap(int presented) {
-        int size = this.shadowMap.size();
-        float[] depths = this.textureCopyService.readDepthRectangle(this.shadowMap.image(), 0, 0, size, size,
-                this.shadowMap.format(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        if (depths == null) {
-            System.out.println("[Celtium] CELTIUM_SHADOW_DUMP present=" + presented + " readback=failed");
-            return;
-        }
-        int covered = 0;
-        float min = 1.0f;
-        double coveredSum = 0.0;
-        for (float depth : depths) {
-            if (depth < 1.0f) {
-                covered++;
-                coveredSum += depth;
-                if (depth < min) {
-                    min = depth;
-                }
-            }
-        }
-        int[] pixels = new int[depths.length];
-        for (int pixel = 0; pixel < depths.length; pixel++) {
-            int bright = Math.max(0, Math.min(255, (int) ((1.0f - depths[pixel]) * 255.0f)));
-            pixels[pixel] = 0xFF000000 | bright << 16 | bright << 8 | bright;
-        }
-        java.nio.file.Path path = java.nio.file.Paths.get(SHADOW_DUMP_DIR, "shadow-" + presented + ".png");
-        boolean written = false;
-        try {
-            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(size, size,
-                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            out.setRGB(0, 0, size, size, pixels, 0, size);
-            java.nio.file.Files.createDirectories(path.getParent());
-            written = javax.imageio.ImageIO.write(out, "png", path.toFile());
-        } catch (java.io.IOException | RuntimeException | LinkageError error) {
-            record("shadow map dump write failed: " + describe(error));
-        }
-        System.out.println("[Celtium] CELTIUM_SHADOW_DUMP present=" + presented + " path=" + path
-                + " written=" + written + " size=" + size + " coverage=" + (covered / (float) depths.length)
-                + " minDepth=" + min + " meanCoveredDepth="
-                + (covered == 0 ? "n/a" : String.format(java.util.Locale.ROOT, "%.4f",
-                        Double.valueOf(coveredSum / covered))));
-    }
 
     /** Polls the window's events. The caller skips Display.update when a frame was presented, and that call polls them. */
     public void celtium$pollEvents() {
@@ -16197,9 +15764,6 @@ this.frameBufferOpen = false;
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
             VulkanGlTexture.beginLayoutRecording(this.commandBuffer);
-            if (SHADOW_MAP) {
-                celtium$recordShadowClear(stack);
-            }
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {

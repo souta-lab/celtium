@@ -31,18 +31,10 @@ if (coreProject != null) {
 }
 
 dependencies {
-    // The shaderpack frontend: the renderer loads a pack's manifest where it renders, so the CPU-side plan and the
-    // backend share one class loader. The module is pure Java 21 with no runtime dependencies, which is why it can be
-    // an ordinary project dependency here.
-    implementation project(':celtium-shaderpack')
     compileOnly platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
     compileOnly 'org.lwjgl:lwjgl'
     compileOnly 'org.lwjgl:lwjgl-opengl'
     compileOnly 'org.lwjgl:lwjgl-vulkan'
-    // The in-process GLSL compiler for shaderpacks (S2). compileOnly like every other LWJGL module: the validated
-    // installation provides the bindings, and ShadercGlslCompiler reports a diagnostic when they are absent instead of
-    // failing. It is the distributable alternative to the external glslangValidator the frontend's probe uses.
-    compileOnly 'org.lwjgl:lwjgl-shaderc'
     // The swapchain needs the window's native handles, which GLFW exposes; like the other LWJGL modules this is
     // never bundled and the module reports a diagnostic when it is missing.
     // Cleanroom 0.7 replaced the GLFW window with SDL 3 and provides GLFW through its LWJGLY shim at runtime,
@@ -63,13 +55,11 @@ dependencies {
     testImplementation 'org.lwjgl:lwjgl-opengl'
     // Version pinned: testRuntimeOnly does not extend testImplementation, so the BOM declared there does not constrain
     // this configuration and the unversioned form silently resolved to nothing.
-    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion
     // Four-part notation: the three-part form is group:name:version, so "natives-linux" there was read as a version and
     // the natives jar never resolved - the test then failed on the binding being present without its library.
     // The core natives are required as well: the shaderc binding's initialiser needs liblwjgl.so first, and its absence
     // was what the load failure actually said once the diagnosis printed the cause chain instead of the first message.
     testRuntimeOnly 'org.lwjgl:lwjgl:' + lwjglVersion + ':natives-linux'
-    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':natives-linux'
     testImplementation 'org.lwjgl:lwjgl-vulkan'
     testImplementation 'com.google.code.gson:gson:2.10.1'
     // The replay transform's composition is matrix arithmetic, and its unit tests have to be able to check it; the

@@ -1148,15 +1148,6 @@ public final class TerrainRenderer {
                             + " uv=" + u0 + "," + v0 + " vertices=" + count
                             + " distinctColours=" + histogram.size() + " top=" + top);
                 }
-                // Hand the first terrain batch to the shader-pack probe: the world never reaches the immediate accept
-                // path, so its capture hook could never see it.
-                {
-                    int probeStride = vertexStride();
-                    if (probeStride > 0) {
-                        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.noteTerrainBatchForProbe(3, vertices,
-                                probeStride, Math.max(1, vertexBytes / probeStride));
-                    }
-                }
                 long beforeAddress = MemoryUtil.memAddress(vertices);
                 VulkanArena.Segment vertexSegment = resources.vertexArena.allocate(vertexBytes);
                 resources.vertexArena.write(vertexSegment.byteOffset(), MemoryUtil.memAddress(vertices), vertexBytes);

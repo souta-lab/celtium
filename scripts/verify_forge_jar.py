@@ -183,13 +183,12 @@ def verify(path):
             sources = repository / module / "src/main/java" / prefix
             required.update(prefix + source.stem + ".class" for source in sources.glob("*.java"))
         # Recursive coverage of the packages whose absence still leaves a jar that starts and draws nothing (#392): the GL
-        # stub, the shadow map and the shaderpack frontend are subpackages, and the shaders are resources, so the flat
+        # stub is a subpackage, and the shaders are resources, so the flat
         # glob above never saw any of them - 104 entries could be deleted from a distribution jar and this said
         # verified=true with no errors.
         # The validation client is deliberately *not* in this list: it is a separate jar and must not ship, which is the
         # check right below.
-        for prefix, module in (("org/soutalab/celtium/vulkan/", "celtium-vulkan"),
-                               ("org/soutalab/celtium/shaderpack/", "celtium-shaderpack")):
+        for prefix, module in (("org/soutalab/celtium/vulkan/", "celtium-vulkan"),):
             sources = repository / module / "src/main/java" / prefix
             if not sources.is_dir():
                 errors.append(f"Missing source tree for the entry manifest: {sources}")

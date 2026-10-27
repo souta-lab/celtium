@@ -34,13 +34,6 @@ public final class SpirvShaders {
     private static final java.util.Set<String> LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Classpath name of the SOLID terrain pass vertex module. */
 
-    /** Vertex module for the shadow map's depth-only pass: a light view-projection and the COMPACT position only. */
-    public static final String SHADOW_DEPTH_VERTEX = "shadow_depth.vert";
-    /** Vertex module for the 32-byte vanilla-like chunk format. */
-    public static final String SHADOW_DEPTH_VANILLA_VERTEX = "shadow_depth_vanilla.vert";
-    /** Fragment module for the shadow map's depth-only pass; it writes nothing, depth is the output. */
-    public static final String SHADOW_DEPTH_FRAGMENT = "shadow_depth.frag";
-
     public static final String SOLID_VERTEX = "terrain_solid.vert";
     /** Vertex module for the uncompressed VanillaLikeChunkVertex layout (stride 32). */
     public static final String SOLID_VERTEX_VANILLA = "terrain_solid_vanilla.vert";

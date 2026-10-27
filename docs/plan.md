@@ -74,7 +74,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では
    「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Celtium の Vulkan 経路との接続面に置き換える**作業になる。
    **別成果物（addon jar）**として実装し、Celtium core には取り込まない（`docs/shader-plan.md` の方針）。
-5. **組込影は scaffold に降格（既定OFF）**: `ShadowMapPass` は native 深度ターゲットと投影の検証用。既定 `false`。
+5. **本体の影scaffoldとshaderpack frontendは削除済み**（2026-10-27、旧アーキテクチャ削除）。影とpackはDemonica addonで実装する。
 6. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来部分は LGPL-3.0、Actinium 由来は GPL-3.0、
    glsl-transformer は AGPL-3.0。**fork するなら fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
    LGPL 部分のチェリーピックはクレジット明記で可能（利用者指示③）。GLSM の丸ごと持ち込みはしない。
@@ -133,6 +133,5 @@ scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
 - `.gv-verify/jars/<stage>` には **forge jar と validation-client jar の2つ**を置き、`build-provenance.json` を作る（KPIは両方を要求）
 - **stage名・leg名の再利用は不可**（"artifact already exists" でFAIL）
 - 影は native 実装を削除済み（pack 側の影は Demonica fork で実装する）。比較画像は presented dump の最終枚を使う
-- パック: `-Dceltium.shaderpack.path=<zip>` ＋ `-Dceltium.shaderpack.compileProbe=true`、shaderc は `CELTIUM_LEG_EXTRA_LIBS=.gv-verify/lib/lwjgl-shaderc-3.4.3.jar`
 - ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
 

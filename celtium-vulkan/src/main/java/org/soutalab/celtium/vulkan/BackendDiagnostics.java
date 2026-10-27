@@ -65,7 +65,6 @@ final class BackendDiagnostics {
                 + " uniform" + (b.terrain.uniforms() == null ? "=none" : b.terrain.uniforms().growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + b.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
-                + " shaderPack=[" + b.shaderPackSummary + "]"
                 + " windowOpenSites=[" + b.windowOpenSiteSummary() + "]"
                 + " windowRecordMillis=" + (b.windowRecordNanos / 1000000L)
                 + " windowRecords=" + b.windowRecords

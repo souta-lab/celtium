@@ -105,6 +105,7 @@ CELTIUM_LEG_LWJGL_VULKAN=<lwjgl-vulkan jar> scripts/gv-kpi.sh <tag> 150 \
 ## 7. commit・文書・引渡し
 
 - commit message: 何を・なぜ・どの jar hash/leg/数値で確かめたか・未解決は何か。末尾に attribution 行。
+- `git rm` は即座にstageする。別の小さなcommit（版上げ等）を挟むなら `git diff --cached --stat` で中身を確かめてから。
 - plan.md は意味が変わった時だけ、16 KiB 予算内（`check_agent_docs.py` が検査）。履歴は commit に残す。
 - 利用者が自分で試す時: 起動中でないことを確認し、instance の旧jarを `minecraft/celtium-backup/celtium-forge-<sha8>.jar`
   へ退避してから入れ替える。入れたjarのhashを報告する。

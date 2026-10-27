@@ -3255,7 +3255,7 @@ native shadow mapは未実装（旧scaffold撤去済み）。実装は次の既�
 
 **影 段階(b): 影ターゲット＋クリアpassを実機で検証（2026-10-24 実測・VUID 0）**
 
-`-Dceltium.vulkan.shadowMap=true` で、フレームのコマンドバッファを開始した直後（render pass未open）に
+（削除済みの）`celtium.vulkan.shadowMap` で、フレームのコマンドバッファを開始した直後（render pass未open）に
 `ShadowMapTarget` を遅延生成し、クリアのみのdepth passを毎フレーム記録するようにした。
 
 ```
