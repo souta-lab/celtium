@@ -27,15 +27,9 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
   採否はpaired KPIで決める。
 - 移行は「一度に全部作り直さない」（設計§7）。各段で画像gate・validation 0・paired KPI（control arm）を取ってから次へ。
 
-### 2026-10-24 の実測ダイジェスト（詳細は [archive](<history/plan-archive-2026-10-24.md>)）
+### 2026-10-24 の実測ダイジェスト
 
-| 変更 | 判定（AMD RX 6400・world・paired vs Celeritas 2.5.0-dev） |
-|---|---|
-| model instance producer（`VulkanModelInstances`、約800 replay/frame） | p50 **0.881x → 再測 1.027x（SLOWER）＝「速い」は非再現**。**p95は3組ともCeleritasより低い**（[証拠](<evidence/modelinst-kpi-2026-10-24.md>)） |
-| `drawPendingImmediate` のJIT分割・frame arena slot・end portal producer | 1.70x → **1.113x**、p95は参照より低い（[証拠](<evidence/jit-arena-2026-10-24.md>)） |
-| アニメtexture staging ring | p95 5.5–6.9 → **3.4–3.7ms**、p50中立（[証拠](<evidence/staging-ring-2026-10-24.md>)） |
-| native raster/texture owner・end portal texgen | AMD/Intel world 受入 PASSED・validation 0、画像gate一致（[証拠](<evidence/native-owner-2026-10-24.json>)） |
-| 定常ログ既定OFF（`-Dceltium.debug.periodicLogs=true` で復帰） | 速度主張なし |
+model instance producer・JIT分割/arena・staging ring・native raster/texture owner の判定と証拠は [archive](<history/plan-archive-2026-10-24.md>)（当時の値。現在の判定には使わない）。
 
 - **影**: 利用者指示により本体内は停止。stage (a)–(d計器) は commit 済み・**既定OFF**（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
   PCF受け側は `git stash`「paused: in-core shadow PCF receiver」（leg `shadowpcf-amd-1` PASSED、視覚効果は未確認）。
@@ -50,6 +44,7 @@ Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理�
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
    | 入world直後 約3秒の強いラグ | **未帰属**（0.1.0、vanillaで再現、利用者 2026-10-27）。計器: validation report の `slowFrames`（runで最も遅い12枚＝入world直後をpass内訳つき） |
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚、Celtium同期は2–3枚。入室停止は未帰属。計器: `flightBlocksPerSecond`・`warmSpikes` |
+   | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`、直線飛行は非join時と同等・旋回中は毎フレームjoin）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`、A4がCeleritas参照と一致、world AMD/Intel・video PASSED）。A4のserver crashはMod側の不具合→`scripts/fix_gvcr2_a4.py` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
    | 色付きガラスのチカチカ | **未解決（0.1.0の実機で再現、利用者 2026-10-27）**。`de280e72a`（解放したarena区間を読みうる提出の完了まで再利用しない）では直らなかった。計器: `-Dceltium.debug.flickerSample=true`（連続2枚の差）、既定flat worldに `stained_glass` 層あり |
    | F3+T が重い | reload自体が 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
@@ -125,7 +120,7 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64 ./gradlew -p build-1122 \
 ```
 leg（world・影OFF）:
 ```
-CELTIUM_INSTANCE_WORLD=$HOME/.local/share/PrismLauncher/instances/cleanroom-0.7.11-alpha \
+CELTIUM_INSTANCE_WORLD=$PWD/.celtium-work/modpack-p0/prism-e2e-private/instances/world-0.7.11 \
 CELTIUM_LEG_LWJGL_VULKAN=$PWD/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar \
 scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
   -Dorg.lwjgl.librarypath=$PWD/.gv-verify/lib/lwjgl-natives-3.4.3 \
