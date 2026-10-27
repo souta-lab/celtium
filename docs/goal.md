@@ -1,12 +1,10 @@
 # Celtium — 製品目標と完成条件
 
-2026-10-21 再定義、2026-10-24 改訂（利用者指示: 新アーキテクチャへの全面移行と互換方針の変更）、
-2026-10-25 改訂（利用者指示: 基盤固有の最適化の積極採用、描画modの最適化手法の一貫した吸収、巨大クラスの分割）、
-2026-10-25 再改訂（利用者指示: KPIはAMD/Intelでp50/p95/p99すべて、RLCraft/E2Eの完全動作、GL stubの適用範囲）。
-以前の性能値・原因断定・完了宣言は前提にしない。**本書も絶対ではない**: 実測がより良い方針を示したら本書を直し、最適解へ収束させる。
-現在の実装と受入は [plan.md](<plan.md>)、目標設計は [new_architecture.md](<new_architecture.md>)
-（採否と順序の評価は plan.md）、旧設計と実測の記録は [architecture-2026-10-21.md](<architecture-2026-10-21.md>)、
-実行手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
+2026-10-21 再定義。利用者指示による改訂: 10-24（新アーキテクチャ・互換方針）、10-25（基盤固有最適化・描画modの吸収・
+巨大クラス分割・KPI p50/p95/p99・GL stubの範囲）、10-27（巨大packの置換・旧コード削除量）。
+以前の性能値・原因断定・完了宣言は前提にしない。**本書も絶対ではない**: 実測がより良い方針を示せば直す。
+現在の実装と受入は [plan.md](<plan.md>)、目標設計は [new_architecture.md](<new_architecture.md>)、
+手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
 
 ## 目的と唯一の描画制約
 
@@ -26,14 +24,16 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
 
 - **SDL3 / Java 21 / LWJGL 3 / Cleanroom / Vulkan 1.2 でしかできない最適化を積極的に採る。**
   GL互換や旧環境のための遠回りは残さない（例: descriptor indexing・draw indirect count・timeline semaphore・
-  `VkPipelineCache` 永続化・LWJGL 3 の off-heap 構造体・Java 21 の言語機能と世代別ZGC・SDL3 の Wayland直結）。
-  採否は実測（paired KPI・p95/p99・スパイク）で決め、効果の無いものは入れない。
+  `VkPipelineCache` 永続化・世代別ZGC・SDL3 の Wayland直結）。
+  採否は実測（paired KPI・p95/p99・スパイク）で決める。
 - **描画系modはすべて競合として排除し、その最適化手法はすべて本体に取り込む。一貫して。**
   Celeritas/Sodium（地形）、EntityCulling（遮蔽によるentity/TESRの間引き）、ImmediatelyFast（GUI・文字・HUDのbatch）、
   Enhanced Block Entities（静的TESRのchunk mesh化）、memory系（FoamFix/VintageFix の資源・テクスチャ遅延）などの
   発想を、別modとの相互運用ではなく本体の一つのscene/可視性/提出経路として実装する。
 - **巨大クラスを分割する。** `VulkanTerrainGpuBackend`（約2万行）を所有権ごとの部品（状態owner・受理・記録・提出・
   present・診断）へ分け、振る舞いを変えない段階的な抽出で進める。
+- **旧アーキテクチャのコードを削除する。** 置き換わった不要クラス・旧経路・使われない計器/実験switchの
+  **削除行数を成果として数える**（commit messageに記載）。効果の無い実験は残さず消し、CPUテストとlegで無変化を確かめる。
 
 それ以外の実装方式（CPUエンジン・内部API・shader・資源配置・描画順・パッケージ構成・キャッシュ・スレッド分担）は
 固定しない。ただしMinecraft/Forgeの観測可能な描画・イベント契約を壊す変更は、互換性向上と取り違えない。
@@ -53,7 +53,8 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
    欠落・ちらつき・順序・状態漏れなく描かれる。resize、resource reload、world切替、GUI/FBOの寿命も検証する。
    **描画に手を加えるMod（renderer置換・culling/batching/FPS系・独自shader・描画順/GUI描画の差替え等）は競合として非サポート**で、
    判明している競合はmod ID・transformer/mixin target・renderer置換の署名で起動時にfail-fastする（曖昧な推測で正常Modを排除しない）。
-   **E2E 1.93a / RLCraft 2.9.3 は完全に動作すること**（2026-10-25 利用者指示）。除いた描画modの機能
+   **E2E 1.93a と Cleanroom対応の別の巨大pack（E2E-E）が完全に動作すること**（RLCraft 2.9.3 はCeltium無しでも
+   起動しないため除外）。受入はworldを開いた提示画像に異常が無いこと。除いた描画modの機能
    （culling・batching・FPS系など）は本体が提供し、残りの全Mod・全コンテンツが欠落・クラッシュ・ちらつきなく動く。
    依存Modを削除した別packの起動を、完全packの受入にしない。
 5. **影とshaderpack**：**Celtium本体ではなく、Demonica forkの別成果物（AGPL-3.0のaddon jar）**で実現する（2026-10-24 利用者指示）。

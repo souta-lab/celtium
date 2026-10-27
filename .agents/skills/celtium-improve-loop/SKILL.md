@@ -35,6 +35,11 @@ description: Celtiumの改善ループ全体（状態復元→1単位選択→�
   ログは `CeltiumLogLimiter` でタグごと16行に制限される。足りなければ `-Dceltium.debug.logLinesPerTag=N`。
 - Minecraft/Forge/他modの挙動は推測しない: `scripts/mc-sources.sh --grep/--srg`、他modは jar を展開して
   `javap -c -p -cp <dir> <class>` で実際のGL呼び出し列を読む（Xaero の PBO/raw FBO/raw matrix はこれで特定した）。
+- **VUIDの原因を名付ける前に文面を読む**: `/usr/share/vulkan/registry/validusage.json` で該当VUIDの text を引く。
+  08600 は descriptor set と pipeline layout の不整合で render pass ではない（名前から推測して2回空振りした）。
+  「N件」が10で止まるのは validation層の重複上限で、頻度ではない。実メッセージ（handle・layout・push range）を先に取る。
+- terrain pass は pipeline を pass 開始時に1回だけ bind し、region loop は set/push/buffer しか再bindしない。
+  pass 内に別の描画を差し込むなら `bindPipeline` の前に置くか、後で bind し直す。
 - 参照絵が要る時は **同じsceneをCeleritas(GL)で撮る**: `CELTIUM_LEG_REFERENCE_RENDERER=<Celeritas jar> scripts/gv-leg.sh ...`。
 - 性能は JFR: `-XX:FlightRecorderOptions=stackdepth=256 -XX:StartFlightRecording=filename=<scratch>/x.jfr,settings=profile`、
   `jfr print --json --stack-depth 64 --events jdk.ExecutionSample,jdk.NativeMethodSample`（既定は5frameで切れる）。
@@ -71,6 +76,9 @@ python3 scripts/check_agent_docs.py && python3 -m unittest discover -s scripts/t
   `<leg>-*.json/.out` を消す。`rm` は**リテラル絶対パス**か `"${S:?}"/...` で書く（空変数の rm は安全装置に止められる）。
 - stage: `.gv-verify/jars/latest/candidate/` に今回の renderer と fixture を各1個、`git diff > source.patch` を添える。
   検証後にソースを変えたら、そのlegはその差分を覆わない。
+- 削除は repo root から**リテラル絶対パス**で。cwd が消す対象（またはその親）だと安全装置が拒否する。
+  control stage は `cp` で上書きし、消すのは古い provenance だけ。control の fixture は candidate と同じものを使う
+  （同じsourceでも fixture jar の hash はビルドごとに変わる）。
 - leg 出力の自分用ログは scratchpad へ。**`.gv-verify/<leg>.out` へリダイレクトしない**
   （harness が同名を作るため FATAL: artifact already exists で起動しない）。
 - 標準セット: `world amd` と `world intel`（validation 既定ON）。描画経路を触ったら該当sceneも:

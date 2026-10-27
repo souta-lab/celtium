@@ -3364,28 +3364,20 @@ KPIの負荷ゲート（上限2）は通らず、形式verdictは取れない。
 ⇒ 9.4 window/frame のほぼ全部が**フレームバッファ切替に強制されたもの**で、我々の都合で減らせるのは
 modの生bind（Xaero）由来の3/frame程度。window数を減らすには「同一targetの連続windowを1つのpassにまとめる」しかない。
 
-**その統合は現状できない（VUID-vkCmdDrawIndexedIndirect-None-08600・2026-10-27 実測）**
+**terrain pass先頭への統合と VUID-08600 の原因（2026-10-27 実測）**
 
-terrain passの直前の即時work（sky・void plane・sun）を、独自windowを開かずterrain passの先頭で描く変更を実装した。
-`terrain` passはattachmentをLOADするので絵の順序は保てるが、validationが**10件のVUID-08600**を出して落ちた:
-即時描画のpipeline（とindirect runのrecord pipeline）は**最初に使われた時点の`lastUiPass`のrender pass**で作られており、
-terrain passのVkRenderPassとは互換でない。統合の前提は **immediate pipeline cacheを (state, render pass) でキーし、
-record pipelineもpassごとに作る**こと。変更はrevertした（`git checkout`、commit前）。
-参考: この壊れたビルドでのA/Bは 0.946 / 0.994 だったが、VUIDが出ているビルドの数値なので**証拠に使わない**。
-
-**cross-pass統合の2回目（pass-keyed pipeline＋再prepare）も VUID 08600 で失敗（2026-10-27 実測）**
-
-前提として即時pipeline cacheを **(state, render pass)** でキーし（`pipelineKey = key*φ ^ pass`、particleKey・
-texture variant cacheも同様）、遅延描画するgroupを描画時に `prepareImmediate(...)` で**そのpass向けに再prepare**した。
-結果は前回と同じ **VUID-vkCmdDrawIndexedIndirect-None-08600 が10件**（AMD, world, 120s, validation ON）。絵はgateを通るが
-validationがdirtyなので受入にならない。よってこれもrevertした（tree は `4b40b384…` に一致＝出荷コードと同一）。
-
-**分かったこと**: 即時「group」のpipelineをpass向けに作り直しても足りない。indirect runを描く
-`vkCmdDrawIndexedIndirect` の pipeline（record pipeline）が別のpass向けのまま使われている。
-次の判別は**推測せず、VUIDメッセージが出すpipeline handleと、`createRecords`/`VulkanModelInstances.createPipeline`/
-即時cacheのどこで作られたかを突き合わせる**こと（handleを生成時にログへ出す計器を1つ足す）。
-そのうえで「runを開いたpassと描くpassが違う」経路を名指しできれば、統合の設計（runのpass跨ぎを作らない／
-passごとにrunを分ける）が決まる。
-
-なお、この2回の実験で**出荷コードは一切変わっていない**（両方 revert 済み、jar `4b40b384c22da692…` は
-`0f7a71862` の記録と一致）。
+terrain passの直前の即時work（sky・void plane・sun）を、独自windowを開かずterrain passの先頭で描く
+（全groupがmain targetの時だけ）。過去2回の失敗（10件の
+`VUID-vkCmdDrawIndexedIndirect-None-08600`）は **render pass不一致ではない**: 08600の文面（`validusage.json`）は
+「bound pipelineが使うset nが、互換でないpipeline layoutでbindされている」。実メッセージは
+「pipeline 0x38c（layout 0x389, push VERTEX|FRAGMENT）のset 0が、layout 0x41d（push VERTEXのみ＝terrain）でbindされたset」で、
+即時/model pipelineは全て同じrender pass（0x52）向けに作られていた。原因は**順序**: terrain passは
+`bindPipeline` をpass開始時に1回だけ行い、region loopはset・push・bufferしか再bindしない。先頭の即時workを
+`bindPipeline` の**後**に描いたため、terrainの全drawが即時record pipelineのまま走った。即時workを
+`setViewportAndScissor`/`bindPipeline` の**前**に移すと validation 0（AMD/Intel world、jar `e79a298e…`）。
+「10件」はvalidation層の重複メッセージ上限で、毎frame起きていた。census上 `RenderSectionManager.renderLayer` の
+windowが消え、`terrain-pass-head` が使われる。
+**速度は改善しない**: Intel paired（candidate `e79a298e…` vs HEAD control `4b40b384…`、同一fixture、3 reps、load上限3で
+形式verdictなし）で **control比 1.032x**、p50は3対とも候補が遅い（3.36/3.07/3.08 vs 3.05/2.97/3.02 ms）。
+よって実装は入れていない。window 1つ（pass begin/end 1組）の削減はIntelの差を動かさない。再挑戦は、統合でpass数が
+複数減る設計（同一targetの連続windowを一つのpassにまとめる）になった時だけ。
