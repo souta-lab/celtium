@@ -12,7 +12,6 @@ import org.lwjgl.vulkan.VkCommandBufferAllocateInfo;
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
 import org.lwjgl.vulkan.VkCommandPoolCreateInfo;
 import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackDataEXT;
-import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackEXT;
 import org.lwjgl.vulkan.VkDebugUtilsMessengerCreateInfoEXT;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkDeviceCreateInfo;
@@ -99,7 +98,7 @@ public final class VulkanContext {
      */
     private static final boolean ALLOW_CPU_DEVICE = Boolean.getBoolean("celtium.vulkan.allowCpuDevice");
 
-    private static final String VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
+    static final String VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
 
     /** Vulkan requires buffer copy offsets and sizes to be a multiple of 4. */
     private static final int COPY_ALIGNMENT = 4;
@@ -275,7 +274,6 @@ public final class VulkanContext {
     public static int queueSubmitCalls;
     private VkPhysicalDeviceMemoryProperties memoryProperties;
     private long debugMessenger = VK_NULL_HANDLE;
-    private VkDebugUtilsMessengerCallbackEXT validationCallback;
 
     // Cached host-visible staging buffer. VulkanBuffer and VulkanArena stream through it instead of allocating a
     // transfer buffer per call. The mapping is kept for the lifetime of the buffer, which is legal because the
@@ -2008,15 +2006,11 @@ public final class VulkanContext {
         }
         if (this.instance != null) {
             if (this.debugMessenger != VK_NULL_HANDLE) {
-                EXTDebugUtils.vkDestroyDebugUtilsMessengerEXT(this.instance, this.debugMessenger, null);
+                ValidationBridge.destroy(this, this.instance, this.debugMessenger);
                 this.debugMessenger = VK_NULL_HANDLE;
             }
             vkDestroyInstance(this.instance, null);
             this.instance = null;
-        }
-        if (this.validationCallback != null) {
-            this.validationCallback.free();
-            this.validationCallback = null;
         }
         this.queueFamilyIndex = -1;
         this.deviceName = null;
@@ -2263,9 +2257,17 @@ public final class VulkanContext {
                     }
                 }
             }
-            VkDebugUtilsMessengerCreateInfoEXT messengerInfo = null;
+            Object messengerInfo = null;
             if (validation) {
-                messengerInfo = enableValidation(stack, createInfo);
+                if (!ValidationBridge.available()) {
+                    // The debug-utils callback API changed in LWJGL 3.4: 3.4.1 has VkDebugUtilsMessengerCallbackEXT, 3.4.3
+                    // the ...EXTI interface. The renderer itself works on either, so only a run that *asks* for
+                    // validation needs 3.4.3 - and it must say so instead of reporting a clean run it never measured.
+                    throw new IllegalStateException("Validation was requested with -D" + VALIDATION_PROPERTY
+                            + "=true, but this LWJGL Vulkan binding is older than 3.4.3 (no"
+                            + " VkDebugUtilsMessengerCallbackEXTI). Install lwjgl-vulkan 3.4.3 or run without validation.");
+                }
+                messengerInfo = ValidationBridge.enable(this, stack, createInfo);
             }
             if (!enabledInstanceExtensions.isEmpty()) {
                 enabledInstanceExtensions.add(0, EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -2283,64 +2285,9 @@ public final class VulkanContext {
             check(vkCreateInstance(createInfo, null, handle), "vkCreateInstance");
             this.instance = new VkInstance(handle.get(0), createInfo);
             if (validation) {
-                LongBuffer messenger = stack.mallocLong(1);
-                check(EXTDebugUtils.vkCreateDebugUtilsMessengerEXT(this.instance, messengerInfo, null, messenger),
-                        "vkCreateDebugUtilsMessengerEXT");
-                this.debugMessenger = messenger.get(0);
+                this.debugMessenger = ValidationBridge.createMessenger(this, messengerInfo);
             }
         }
-    }
-
-    /**
-     * Adds the validation layer and the debug-utils messenger to the instance create info. Only reached when
-     * {@link #VALIDATION_PROPERTY} is set, so a normal run enables no layer and no instance extension at all.
-     */
-    private VkDebugUtilsMessengerCreateInfoEXT enableValidation(MemoryStack stack, VkInstanceCreateInfo createInfo) {
-        if (!instanceExtensionNames(stack).contains(EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
-            throw new IllegalStateException("Validation was requested with -D" + VALIDATION_PROPERTY + "=true, but the"
-                    + " loader does not offer " + EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME + ".");
-        }
-        if (!instanceLayerNames(stack).contains(VALIDATION_LAYER_NAME)) {
-            throw new IllegalStateException("Validation was requested with -D" + VALIDATION_PROPERTY + "=true, but the"
-                    + " layer " + VALIDATION_LAYER_NAME + " is not installed.");
-        }
-        createInfo.ppEnabledLayerNames(stack.pointers(stack.UTF8(VALIDATION_LAYER_NAME)));
-        createInfo.ppEnabledExtensionNames(stack.pointers(stack.UTF8(EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME)));
-        this.validationCallback = VkDebugUtilsMessengerCallbackEXT.create((severity, types, data, user) -> {
-            VkDebugUtilsMessengerCallbackDataEXT callbackData = VkDebugUtilsMessengerCallbackDataEXT.create(data);
-            String idName = callbackData.pMessageIdNameString();
-            long idNumber = callbackData.messageIdNumber();
-            String message = callbackData.pMessageString();
-            // Structured, one line per message, because the harness has to decide from this text whether a run is clean and
-            // a free-form message is exactly what defeated the old check: it skipped anything not starting with "vk", so a
-            // line reading "Validation Error: [ VUID-... ]" counted as nothing. Severity and message id are what the gate
-            // keys on now, and newlines are folded so one message cannot look like two lines or like none.
-            String severityName;
-            if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0) {
-                severityName = "ERROR";
-            } else if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) != 0) {
-                severityName = "WARNING";
-            } else if ((severity & org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) != 0) {
-                severityName = "INFO";
-            } else {
-                severityName = "VERBOSE";
-            }
-            String identifier = idName != null && !idName.isEmpty() ? idName : Long.toString(idNumber);
-            String single = message == null ? "" : message.replace('\n', ' ').replace('\r', ' ').trim();
-            System.err.println("Celtium Vulkan validation: severity=" + severityName + " id=" + identifier + " " + single);
-            return VK_FALSE;
-        });
-        VkDebugUtilsMessengerCreateInfoEXT messengerInfo = VkDebugUtilsMessengerCreateInfoEXT.calloc(stack).sType$Default()
-                .messageSeverity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
-                        | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
-                .messageType(VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-                        | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-                        | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
-                .pfnUserCallback(this.validationCallback);
-        // Chained into the instance create info as well, so the messenger also reports whatever the driver says
-        // while the instance itself is created and destroyed.
-        createInfo.pNext(messengerInfo.address());
-        return messengerInfo;
     }
 
     /**
@@ -3000,7 +2947,7 @@ public final class VulkanContext {
         return names;
     }
 
-    private static Set<String> instanceExtensionNames(MemoryStack stack) {
+    static Set<String> instanceExtensionNames(MemoryStack stack) {
         IntBuffer count = stack.ints(0);
         check(vkEnumerateInstanceExtensionProperties((String) null, count, null),
                 "vkEnumerateInstanceExtensionProperties(count)");
@@ -3018,7 +2965,7 @@ public final class VulkanContext {
         return names;
     }
 
-    private static Set<String> instanceLayerNames(MemoryStack stack) {
+    static Set<String> instanceLayerNames(MemoryStack stack) {
         IntBuffer count = stack.ints(0);
         check(vkEnumerateInstanceLayerProperties(count, null), "vkEnumerateInstanceLayerProperties(count)");
         Set<String> names = new HashSet<String>();

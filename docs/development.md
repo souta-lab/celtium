@@ -3380,3 +3380,25 @@ windowが消え、`terrain-pass-head` が使われる。
 形式verdictなし）で **control比 1.032x**、p50は3対とも候補が遅い（3.36/3.07/3.08 vs 3.05/2.97/3.02 ms）。
 よって実装は入れていない。window 1つ（pass begin/end 1組）の削減はIntelの差を動かさない。再挑戦は、統合でpass数が
 複数減る設計（同一targetの連続windowを一つのpassにまとめる）になった時だけ。
+
+**lwjgl-vulkan 3.4.1 のinstanceで窓が出ない（2026-10-27 実測・修正）**
+
+利用者のCleanroom 0.7.12 modpackのログ（`CELTIUM_WINDOW_RENDERER failed ... NoClassDefFoundError:
+VkDebugUtilsMessengerCallbackEXTI`）から: そのinstanceは`org.lwjgl.vulkan`だけ**3.4.1**で、他は3.4.3。
+3.4.3向けにbuildした`VulkanContext`は`...CallbackEXTI`（3.4.3のcallback interface）を要求するため、
+**validationを要求していなくても**classのlinkで失敗し、window rendererが6回作られず＝窓が出ない。
+
+修正: validation一式（layer・messenger・callback）を`ValidationSupport`へ移し、`ValidationBridge`（debug-utils型を
+一切持たない）経由でのみ到達する。`available()`は`Class.forName("...CallbackEXTI")`で判定するので、
+validation無しの実行は3.4.3専用classをlinkしない。validationを要求して3.4.1だった場合は、何も測らずcleanと
+報告する代わりに理由を名指しして落ちる。
+
+検証（AMD RX 6400・world/qmagnet・image gate較正）:
+- `fix341-world-amd`: classpathに**lwjgl-vulkan 3.4.1**、renderer `485dddb9…`、`CELTIUM_WINDOW_RENDERER created=true`
+  （修正前は同じ構成で作成失敗）→ **PASSED**
+- `base-world-amd`: 未修正HEAD＋3.4.3（対照）→ PASSED
+- `val-proof-amd`: 3.4.3＋validation ON、`CELTIUM_VALIDATION messenger=0x10000000001 layer=VK_LAYER_KHRONOS_validation`
+  （messengerが実際に作られたことの陽性対照）→ **PASSED・VUID 0**
+
+なお利用者のログにある`VerifyError: EntityRenderer.func_78472_g`は別件で、**Celtiumを外しても再現**する
+Fugue 0.25.5 × Cleanroom 0.7系の問題（E2EではFugueのReflection Patch Target Listを空にして回避）。
