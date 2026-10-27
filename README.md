@@ -5,11 +5,11 @@
 An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, built from Celeritas.
 
 > **Experimental Vulkan-only renderer, not a finished performance mod.**
-> Scoped terrain fixtures for E2E and RLCraft have passed on both test GPUs. That is not complete modpack compatibility, all-scene correctness, or proof of a gameplay performance improvement.
+> Scoped terrain fixtures for E2E have passed on both test GPUs. That is not complete modpack compatibility or all-scene correctness. RLCraft 2.9.3 is out of scope: it does not start on Cleanroom even without Celtium.
 >
 > **native Vulkanで描画・提示する実装がありますが、描画・互換性・性能の受入は未完です。** 最新の判定と未解決項目は [現在表](<docs/plan.md>)だけで管理します。
 
-Status reviewed: **2026-10-25** (development version 0.0.18-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs).
+Status reviewed: **2026-10-27** (release 0.1.0-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks).
 
 ## Current status
 
@@ -60,7 +60,7 @@ The exact minimum feature/format contract is still being audited and reduced. **
 
 ## Downloads
 
-[**Celtium 0.0.15-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.0.15-alpha) (2026-10-23) is the newest published binary. **0.0.14-alpha must not be used**: its indirect draw path discarded the item and colour families instead of drawing them; 0.0.15 fixes that. [0.0.3-alpha](https://github.com/souta-lab/celtium/releases/tag/v0.0.3-alpha) is the latest non-prerelease tag; 0.0.1-alpha and 0.0.2-alpha are older pre-releases. All of them carry the same limitations described above — the fixes since 0.0.5-alpha (display lists, the Sodium-style backdrop, texture-less layouts) are in `main` and in development builds only.
+[**Celtium 0.1.0-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.1.0-alpha) (2026-10-27) is the newest published binary; see [its release notes](<docs/releases/0.1.0-alpha.md>). **0.0.14-alpha must not be used** (its indirect draw path discarded the item and colour families). Every release carries the limitations described above.
 
 ## Building and trying a development build
 
@@ -73,7 +73,7 @@ Run Gradle with JDK 25. The build also uses the JDK 21 compilation toolchain and
 The packaged jar is written under a directory named after the version, which the build takes from `build-1122/build.gradle.kts` unless `-Pceltium_release_version` overrides it:
 
 ```text
-build-1122/build/libs/0.0.6-alpha/celtium-forge-mc1.12.2-0.0.6-alpha.jar
+build-1122/build/libs/0.1.0-alpha/celtium-forge-mc1.12.2-0.1.0-alpha.jar
 ```
 
 Use a separate Cleanroom test instance, install the packaged Celtium jar instead of Celeritas, and add `-Dceltium.vulkan.glless=true` to the instance's JVM arguments. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
@@ -82,25 +82,24 @@ For reproducible validation and development, use [the current development proced
 
 ## Performance
 
-Measured with paired, interleaved runs against Celeritas (`scripts/gv-kpi.sh`: same instance, same scene, warm
-world-tick window [400, 600), 1280x720, vsync off, frame limit 260, periodic dumps off). None of these runs produced a
-formal verdict - the load guard withheld it because machine load rose during each run - so they are measurements, not
-an accepted speed claim.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/benchmark-dark.svg">
+  <img alt="Frame time of Celtium 0.1.0-alpha and Celeritas 2.5.0-dev at p50, p95 and p99 on AMD RX 6400 and Intel UHD 630" src="docs/img/benchmark-light.svg">
+</picture>
 
-| Instance | GPU | Celtium / Celeritas, median of 3 pairs (p50) | p95 |
-| --- | --- | --- | --- |
-| Vanilla-like (2026-10-25, `ef807429c`) | AMD RX 6400 | **0.990x** (0.986 / 0.990 / 0.998) | **lower in all 3 pairs** (1.69-1.88 vs 2.02-2.66 ms) |
-| With Xaero's Minimap (2026-10-25, `d4ea7dfd4`) | AMD RX 6400 | 1.35x (1.585 vs 1.17-1.23 ms) | higher |
-| With Xaero's Minimap (2026-10-25, `0d937df8b`) | Intel UHD 630 | 1.45x (2.87 vs 1.98 ms) | higher |
+Paired, interleaved runs against Celeritas 2.5.0-dev with the 0.1.0-alpha jar (`scripts/gv-kpi.sh`: same instance with
+Xaero's Minimap, the qmagnet test map, warm world ticks [400, 600), 1280x720, vsync off, frame limit 260, periodic dumps
+off; median of 3 pairs). Lower is better. The chart is drawn from [the measured values](<docs/img/benchmark-0.1.0.json>)
+by `scripts/bench_chart.py`.
 
-On the AMD card Celtium matched Celeritas's median frame time and beat its 95th percentile in the vanilla-like
-instance. With a minimap mod that draws hundreds of small textured quads per frame it is slower on both GPUs: each
-small draw still pays a per-draw CPU path (state capture, material preparation, grouping) that GL's driver does more
-cheaply. The planned fix is the ordered packet stream of [the target architecture](<docs/new_architecture.md>);
-the current numbers and the next unit are kept in [the current table](<docs/plan.md>).
+| GPU | Celtium / Celeritas (p50, median of 3 pairs) | Verdict |
+| --- | --- | --- |
+| AMD RX 6400 | **0.992x** - parity; p95 equal, p99 3.08 vs 2.93 ms | no formal verdict (pairs not all one direction) |
+| Intel UHD 630 | 1.205x - slower in all 3 pairs | no formal verdict in this run; the same build measured **SLOWER** (1.200x) with the load gate passed |
 
-Intel was 1.68x slower before 2026-10-25 because its frames were submitted unbatched; batching every frame's
-submissions made the same scene 1.6-1.8x faster on UHD 630.
+Moving through the world is where 0.1.0 changed most: the terrain occlusion search now runs on its own thread, which
+took a flight replay's median frame from 1.03-1.34 ms to 0.74-0.89 ms on the AMD card. Intel is GPU-bound in this scene
+and still behind; closing that gap is the current work in [the current table](<docs/plan.md>).
 
 ## License and attribution
 
