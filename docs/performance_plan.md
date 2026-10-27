@@ -88,7 +88,7 @@
 | chunk build worker と適応 budget | `C/render/chunk/compile/executor/ChunkBuilder.java` は固定 Celeritas と byte 一致。frame / mesh cost の EMA と weighted queue が既存 | 新規 worker overhaul として数えない。upload bytes・優先度・待ち時間で不足分だけ拡張 |
 | 非同期 visibility list | `RenderListManager.java` は byte 一致、`SectionGraph.java` の差は thread 名。既に async 経路あり | 既定 `asyncOcclusionMode=ONLY_SHADOW` なので shaderless の通常描画で有効とは限らない。effective option と run を確認 |
 | visibility / occlusion | `SectionLattice`、section graph、frustum、任意の CPU bit raster が存在 | `useRasterOcclusionCulling=false` が既定。追加 GPU culling の前に既存機能の費用と効果を測る |
-| chunk face culling、batch assembly、sort | `BatchAssembler`、`DirectMultiDrawBatch`、`IndirectMultiDrawBatch` は byte 一致 | CPU 側の最適化は維持。ただし GL の multidraw 実装があることは native 側の multidraw 成立を意味しない |
+| chunk face culling、batch assembly、sort | `BatchAssembler`、`DirectMultiDrawBatch` は byte 一致 | CPU 側の最適化は維持。ただし GL の multidraw 実装があることは native 側の multidraw 成立を意味しない |
 | compact terrain vertices | native に 24 B compact と 32 B vanilla-like の双方の pipeline がある | `useCompactVertexFormat=false` が既定。追加実装ではなく画質受入と既定化の候補 |
 | empty section skip | `RenderSectionManager` は build task が null なら `EMPTY_DATA` を返す | 「空 chunk を skip」を改めて実装しない |
 | visible sprite animation | `TextureAtlasMixin` / `TextureAtlasSpriteMixin`、section sprite ticker、item 側の active marking が存在。既定 true | 再作成しない。native cache が既存の active marking を迂回していないか確認し、必要なら時間契約を修復 |
