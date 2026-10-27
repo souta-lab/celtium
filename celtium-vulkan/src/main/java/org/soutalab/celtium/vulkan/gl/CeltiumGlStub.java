@@ -5134,6 +5134,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             int stride = aligned(rowBytes, this.unpackAlignment);
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
+            long outAddress = memAddress(out);
             for (int row = 0; row < height; row++) {
                 int base = row * stride;
                 if (!bgra) {
@@ -5141,10 +5142,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // buffer position has to be legal at any intermediate point.
                     out.put(row * rowBytes, source, base, rowBytes);
                 } else {
+                    // One word per texel: four checked get/put pairs per pixel were the top of the client thread while
+                    // a world was entered (JFR leg entry-jfr2: Buffer.nextPutIndex under uploadToRgba8).
+                    long from = pixels + base;
+                    long to = outAddress + (long) row * rowBytes;
                     for (int i = 0; i < rowBytes; i += 4) {
-                        int pixel = base + i;
-                        out.put(source.get(pixel + 2)).put(source.get(pixel + 1))
-                                .put(source.get(pixel)).put(source.get(pixel + 3));
+                        int bgraWord = MemoryUtil.memGetInt(from + i);
+                        MemoryUtil.memPutInt(to + i, swapRedBlue(bgraWord));
                     }
                 }
             }
@@ -5177,23 +5181,31 @@ public final class CeltiumGlStub implements FunctionProvider {
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (height - 1) * stride + width * 4)
                     .order(java.nio.ByteOrder.nativeOrder());
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
+            long outAddress = memAddress(out);
+            boolean nativeLittle = java.nio.ByteOrder.nativeOrder() == java.nio.ByteOrder.LITTLE_ENDIAN;
             for (int row = 0; row < height; row++) {
-                int base = row * stride;
+                long from = pixels + (long) row * stride;
+                long to = outAddress + (long) row * width * 4L;
                 for (int x = 0; x < width; x++) {
-                    int packed = source.getInt(base + x * 4);
+                    int packed = MemoryUtil.memGetInt(from + x * 4L);
                     if (!reversed) {
                         packed = Integer.reverseBytes(packed);
                     }
-                    int first = packed & 0xFF;
-                    int third = (packed >>> 16) & 0xFF;
-                    out.put((byte) (bgra ? third : first)).put((byte) ((packed >>> 8) & 0xFF))
-                            .put((byte) (bgra ? first : third)).put((byte) ((packed >>> 24) & 0xFF));
+                    // packed holds the first component in its low byte; the record is R,G,B,A in memory order, which
+                    // on a little-endian host is the word with R in the low byte.
+                    int rgba = bgra ? swapRedBlue(packed) : packed;
+                    MemoryUtil.memPutInt(to + x * 4L, nativeLittle ? rgba : Integer.reverseBytes(rgba));
                 }
             }
             out.clear();
             return out;
         }
         return null;
+    }
+
+    /** Swaps the low and third bytes of a texel word: B,G,R,A to R,G,B,A in memory order on a little-endian host. */
+    private static int swapRedBlue(int word) {
+        return ((word >>> 16) & 0xFF) | (word & 0xFF00FF00) | ((word & 0xFF) << 16);
     }
 
     /** {@code bytes} rounded up to a GL unpack alignment, which is always a power of two: 1, 2, 4 or 8. */

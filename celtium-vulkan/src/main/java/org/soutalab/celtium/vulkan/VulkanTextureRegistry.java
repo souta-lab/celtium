@@ -193,7 +193,7 @@ public final class VulkanTextureRegistry {
     private final java.util.Map<Integer, Integer> announcementsById = new java.util.HashMap<Integer, Integer>();
     private final java.util.Map<Integer, Integer> droppedAnnouncementsById = new java.util.HashMap<Integer, Integer>();
     /** Lines printed, bounded like every other per-texture census in this class. */
-    private static final int MIRROR_SOURCE_LOG_LIMIT = 32;
+    private static final int MIRROR_SOURCE_LOG_LIMIT = 16;
     private int mirrorSourceLogs;
     /** Announcements an image-less delete kept alive, because no mirror had consumed them yet. */
     private int retainedAnnouncements;
@@ -674,6 +674,27 @@ public final class VulkanTextureRegistry {
         int[] pixels;
         java.awt.image.Raster raster = image.getRaster();
         java.awt.image.DataBuffer dataBuffer = raster == null ? null : raster.getDataBuffer();
+        if (dataBuffer instanceof java.awt.image.DataBufferByte byteBuffer
+                && (image.getType() == java.awt.image.BufferedImage.TYPE_4BYTE_ABGR
+                        || image.getType() == java.awt.image.BufferedImage.TYPE_3BYTE_BGR)
+                && raster.getMinX() == 0 && raster.getMinY() == 0 && raster.getWidth() == w && raster.getHeight() == h) {
+            // The PNGs the font's glyph pages and many Mod textures decode to are byte-interleaved (A,B,G,R or B,G,R),
+            // which getRGB converts one pixel at a time through the colour model: BufferedImage.getRGB was ~18% of the
+            // client thread while a world was entered (JFR leg entry-jfr2). The bytes are read directly instead.
+            byte[] data = byteBuffer.getData();
+            boolean alpha = image.getType() == java.awt.image.BufferedImage.TYPE_4BYTE_ABGR;
+            int step = alpha ? 4 : 3;
+            long address = org.lwjgl.system.MemoryUtil.memAddress(out);
+            for (int pixel = 0, at = 0; pixel < w * h; pixel++, at += step) {
+                int a = alpha ? data[at] & 0xFF : 0xFF;
+                int b = data[at + (alpha ? 1 : 0)] & 0xFF;
+                int g = data[at + (alpha ? 2 : 1)] & 0xFF;
+                int r = data[at + (alpha ? 3 : 2)] & 0xFF;
+                org.lwjgl.system.MemoryUtil.memPutInt(address + pixel * 4L, r | (g << 8) | (b << 16) | (a << 24));
+            }
+            out.position(0).limit(w * h * 4);
+            return out;
+        }
         if (dataBuffer instanceof java.awt.image.DataBufferInt intBuffer) {
             // The game's textures are TYPE_INT_ARGB, so their pixels are already an int[] of ARGB words and the AWT
             // colour-model conversion is pure overhead: the JFR of the world window put BufferedImage.getRGB and
@@ -1469,17 +1490,19 @@ public final class VulkanTextureRegistry {
         long opaque = 0;
         int first = 0;
         boolean seen = false;
+        // Word reads straight from the buffer's memory: per-byte checked gets made this one-line diagnostic visible in
+        // the client thread's profile while a world was entered (JFR leg entry-jfr2).
+        long address = org.lwjgl.system.MemoryUtil.memAddress(rgba) - rgba.position() + base;
         for (long texel = 0; texel < texels; texel++) {
-            int at = base + (int) texel * 4;
-            int alpha = rgba.get(at + 3) & 0xFF;
+            int word = org.lwjgl.system.MemoryUtil.memGetInt(address + texel * 4L);
+            int alpha = word >>> 24;
             if (alpha == 0) {
                 continue;
             }
             opaque++;
             if (!seen) {
                 seen = true;
-                first = (alpha << 24) | ((rgba.get(at) & 0xFF) << 16) | ((rgba.get(at + 1) & 0xFF) << 8)
-                        | (rgba.get(at + 2) & 0xFF);
+                first = (alpha << 24) | ((word & 0xFF) << 16) | (word & 0xFF00) | ((word >>> 16) & 0xFF);
             }
         }
         return "opaque=" + opaque + "/" + declared + (seen ? " firstOpaque=0x" + Integer.toHexString(first) : "");

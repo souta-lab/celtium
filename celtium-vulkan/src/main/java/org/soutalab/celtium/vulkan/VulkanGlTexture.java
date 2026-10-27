@@ -2009,7 +2009,17 @@ public final class VulkanGlTexture {
         }
         final int base = pixels.position();
         long hash = 1469598103934665603L;
-        for (int i = 0; i < bytes; i++) {
+        int i = 0;
+        if (pixels.isDirect()) {
+            // Eight bytes per step from the buffer's memory: the byte-at-a-time checked get was ~5% of the client
+            // thread while a world was entered (JFR leg entry-jfr2). The value only has to be stable within the
+            // process - it is compared against the hash of the previous upload, never stored.
+            long address = org.lwjgl.system.MemoryUtil.memAddress(pixels); // already at position, i.e. base
+            for (; i + 8 <= bytes; i += 8) {
+                hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetLong(address + i)) * 1099511628211L;
+            }
+        }
+        for (; i < bytes; i++) {
             hash = (hash ^ (pixels.get(base + i) & 0xFF)) * 1099511628211L;
         }
         return hash;
