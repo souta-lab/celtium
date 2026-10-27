@@ -46,7 +46,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚、Celtium同期は2–3枚。入室停止は未帰属。計器: `flightBlocksPerSecond`・`warmSpikes` |
    | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`、A4がCeleritas参照と一致）。A4のserver crashはMod側の不具合→`scripts/fix_gvcr2_a4.py` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
-   | 色付きガラスのチカチカ | **未解決（0.1.0の実機で再現、利用者 2026-10-27）**。`de280e72a`（解放したarena区間を読みうる提出の完了まで再利用しない）では直らなかった。計器: `-Dceltium.debug.flickerSample=true`（連続2枚の差）、既定flat worldに `stained_glass` 層あり |
+   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた（ガラスの裏面が2層目として合成、視点で順序が変わる）→vanilla同様に背面cull（`5f75fc009`、参照比で~20–25暗かった差が解消、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |
    | F3+T が重い | reload自体が 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
    | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrixの経路、tile upload（Devin）、mod FBO同士のsample（空mirrorより公開を優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080で表示）。手順差の手掛かり待ち |
@@ -55,16 +55,10 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | E2E 1.93a（Cleanroom 0.7） | 起動・入world・exit 0（AMD）。遠景の黒帯が未解決（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
-2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s・jar `dbffd929`）:
+2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s。AMDはjar `dbffd929`、Intel最新は `8be75d012`相当）:
    - **AMD: goal条件1を満たす**（`kpi2-amd`、verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.747/0.765/0.910、外部CPU 0.09）。
-   - **Intel: 未達**（`kpi3-intel`、p50 0.920・p95 0.917 は3対とも速いが **p99 1.110**＝Celtium 3.61–3.66 ms vs Celeritas 3.25–3.32 ms）。
-     **p99はtickを含むフレーム（warm 200/5,700、3.5%）**: 通常フレームp99は同等（2.36–2.63 vs 2.46–2.52 ms）、tickフレームp95 3.88–4.08 vs 3.42–3.52 ms、
-     tick本体（ClientTickEvent）p50 1.27–1.32 vs 1.15–1.19・p95 1.55–1.80 vs 1.39–1.42 ms（`kpi4-intel`、計器 `frameIntervalWarmTickFrame*`/`warmTick*`、
-     `-Dceltium.debug.frameTail` の `CELTIUM_FRAME_TICK_SPLIT`）。tick差はvanillaコード全体に薄く分布（1 ms JFR: ChunkProviderClient走査+17/42サンプル等）。
-     棄却: animated sprite毎submitのtick単位batch化・stub sub-image変換のscratch化（control比1.002）、CPU/GPUクロック差（両arm 3800/1050 MHz）、JIT deopt反復（9件）、
-     フレーム数による干渉（120 fps上限で同フレーム数でもtick 1.22 vs 1.06 ms）。差はvanillaのメモリ参照（chunk map get・HashMap走査・getBlockState）に広く分布。
-     仮説: Vulkan記録がmain threadのキャッシュを奪う（Celeritasはmesa `gdrv0` 別コア）。判別にはperf（未導入）か記録の別thread化の上限測定。
-     tick後フレームの+0.3 msは `CELTIUM_FRAME_TICK_PASSES`: clouds区間（その時点の即時window flushのnative submit）+53 µs・setupTerrain +33 µs・flush +24–73 µs。
+   - **Intel: 未達**（最新 `kpi5-intel`: p50 0.903・p95 0.893、**p99 1.051**＝3.50–3.53 vs 3.29–3.42 ms。`kpi3` 1.110→`kpi4` 1.093→1.051）。
+     p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）と描画側残差は[証拠](evidence/intel-gap-2026-10-26.md)。
 3. **native 状態・実行**: fog は vanilla・地形・可視距離・即時描画で [native owner](evidence/native-fog-2026-10-26.json) を共有。[instance fog](evidence/model-fog-2026-10-26.json) を実装し、projection/fog の96B run定数化と行列積GPU移動で instance は320→256B、JavaのMVP合成を削除（[証拠](evidence/model-run-2026-10-27.json)）。**照明OFFモデルも同じinstance programへ統合、alpha全比較を実装**（[証拠](evidence/unlit-model-2026-10-27.json)）。glint単独画素は未分離、inventory/recipe・actor/glintは未較正、GREATER/disabled以外のalpha比較と非instance lit fogは未対応。
@@ -84,9 +78,10 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤未解決** | 利用者の実機報告＋画面 | ②未実行 | ①メニューのパノラマ（[画像](evidence/2026-10-24-menu-panorama-fixed.png)） ②エンドポータル（texgen、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)） ③F2スクショ真っ黒（`nglGetTexImage`） ④色付きガラスのちらつき（`de280e72a`） ⑤視点移動時の看板文字の残像＝静止条件では0差分、動き依存として未測定 |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤未解決** | 利用者の実機報告＋画面 | ②未実行 | ①メニューのパノラマ（[画像](evidence/2026-10-24-menu-panorama-fixed.png)） ②エンドポータル（texgen、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)） ③F2スクショ真っ黒（`nglGetTexImage`） ④色付きガラスのちらつき（背面cull `5f75fc009`） ⑤視点移動時の看板文字の残像＝静止条件では0差分、動き依存として未測定 |
 
 
+| **画質（4画面＋QMAGNET、2026-10-28）** | **settings画素一致・menuはsplash/パノラマ位相のみ・worldは16階調超 0.97 %（AMD）/1.05 %（Intel）** | AMD/Intel PASSED・validation clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)。修正: 半透明の背面cull・lit色のclamp・Forgeブロックモデル経路を既定。残り: 遠い壁1面の陰影勾配、loadingは参照の撮影手段なし |
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **入world・exit 0、device lost 解消。提示画像は未受入** | AMD（leg e2ee-amd13・Celeritas対照 e2ee-ref2） | 未実行 | Cleanroom 0.7 の環境差は local置換（`.celtium-work/modpack-e2ee/SUBSTITUTIONS.md`）と上流PR（Fugue #136・Cleanroom #720）。Celtium側で直した: 競合modのfail-fast（CLS・SmoothFont）、chain pairの退去/resizeが記録中のimage・framebuffer・samplerを即時破棄していた use-after-free（`8f121acfb`）。**残り**: ①Xaero World Map のミニマップは4ユニットの固定機能COMBINE（`POSITION_TEX_TEX_TEX`）で描くため拒否され欠落 → 汎用combiner実装が必要 ②HUD欠落はGnetumのFBO管理が原因→競合modとして拒否（`889cc89e3`） ③atlas の `VUID-vkCmdDraw-None-09600` 10件（`-Dceltium.vulkan.descWriteCensus=true` で書き手特定） ④FTB Quests同期時の EnderIO `block_buffer` 欠落NPE（1/3回、時機依存） ⑤fixtureのvalidation数0でもコンソールにエラーがある計数の穴 |
 
