@@ -71,6 +71,9 @@ void main() {
     // the fragment stage mixes in itself, and multiplying it in here would tint twice.
     vec4 groupColour = record.u_AlphaColour.x < 0.0 ? vec4(1.0)
             : vec4(record.u_AlphaColour.y, record.u_AlphaColour.z, record.u_AlphaColour.w, record.u_TexPad.x);
-    v_Color = vec4(a_Color.rgb * lit * lightmap * groupColour.rgb, a_Color.a * groupColour.a);
+    // GL clamps the lit primary colour to [0,1] before the texture stages: material * (ambient + both diffuse terms)
+    // exceeds 1 on a face both lights reach (0.4 + 0.6 + 0.6 at most), and unclamped it drew the first-person arm
+    // x1.16 brighter than Celeritas. The light map modulates after the clamp, as unit 1 does.
+    v_Color = vec4(clamp(a_Color.rgb * groupColour.rgb * lit, 0.0, 1.0) * lightmap, a_Color.a * groupColour.a);
     gl_Position = record.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

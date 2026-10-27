@@ -52,16 +52,19 @@ void main() {
     } else {
         v_TexCoord = a_TexCoord;
     }
-    vec3 illumination = vec3(1.0);
+    vec3 rgb = a_Color.rgb * r.colour.rgb;
     if (r.indices.w != 0) {
         vec3 n = normalize(a_Normal);
         vec3 lit = r.ambient.rgb
                 + r.diffuse0.rgb * max(dot(n, r.light0Dir.xyz), 0.0)
                 + r.diffuse1.rgb * max(dot(n, r.light1Dir.xyz), 0.0);
         vec3 lightmap = textureLod(textures[nonuniformEXT(r.indices.y)], (r.lightCoord.xy + 8.0) / 256.0, 0.0).rgb;
-        illumination = lit * lightmap;
+        // GL clamps the lit primary colour to [0,1] before the texture stages: material * (ambient + both diffuse terms)
+        // exceeds 1 on a face both lights reach (0.4 + 0.6 + 0.6 at most), and unclamped it drew the first-person arm
+        // x1.16 brighter than Celeritas. The light map modulates after the clamp, as unit 1 does.
+        rgb = clamp(rgb * lit, 0.0, 1.0) * lightmap;
     }
-    v_Color = vec4(a_Color.rgb * illumination * r.colour.rgb, a_Color.a * r.colour.a);
+    v_Color = vec4(rgb, a_Color.a * r.colour.a);
     v_AlphaFunction = r.indices.z;
     v_Texture = r.indices.x;
     v_Combine = r.combine;

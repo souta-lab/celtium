@@ -17,8 +17,8 @@ than 16 levels apart.
 | home (menu) | AMD | 7.77 | 15.6 % | 1.3 % | random splash text and the panorama's rotation phase only |
 | home (menu) | Intel | 8.55 | 16.4 % | 1.8 % | same |
 | settings (video) | AMD | 0.00 | 0.00 % | 0.00 % | pixel-identical |
-| game (QMAGNET, tick 200) | AMD | 3.88 | 4.47 % | 0.22 % | see below |
-| game (QMAGNET, tick 200) | Intel | 3.85 | 4.49 % | 0.23 % | see below |
+| game (QMAGNET, tick 200) | AMD | 3.11 | 2.00 % | 0.16 % | see below (after both fixes; 4.47 % after the glass fix alone) |
+| game (QMAGNET, tick 200) | Intel | 3.11 | 2.05 % | 0.17 % | see below (4.49 % after the glass fix alone) |
 
 The game screen's remaining differences, read from full-size crops:
 
@@ -26,9 +26,10 @@ The game screen's remaining differences, read from full-size crops:
   culling off), ~20–25 levels darker per channel and order-dependent ([before/after](2026-10-28-stained-glass-backfaces.png)).
   Over-16 share 7.85 % → 4.47 %.
 - **Animated textures:** nether portal, water and fire differ by animation phase.
-- **First-person arm:** a uniform ×1.16 brighter on every channel. The instance's light terms are the vanilla ones
-  (ambient 0.4, two diffuse 0.6, both lights enabled; `-Dceltium.debug.modelLightFrame`), and other lit models in the
-  scene (armour stand, biped, minecart) match the reference, so the cause is specific to the arm draw. Open.
+- **Fixed here:** the first-person arm was a uniform ×1.16 brighter. Against the skin texture (Alex, arm
+  `(236,212,184)`) the reference is ×0.99 and Celtium was ×1.15: GL clamps the lit colour to [0,1] before the texture
+  stages and the lit shaders did not, so a face both lights reach exceeded 1. All three lit shaders now clamp.
+  Legs `iq-amd-clamp`, `iq-intel-clamp` (PASSED, validation clean).
 - **Smooth lighting on some faces:** white concrete side +11 %, quartz pillar side +22 %, grass path top −11 %. The
   reference meshes through Forge's block-model pipeline (JFR: `ForgeBlockModelRenderer`), Celtium through its own
   `SmoothLightPipeline`; an algorithm difference, not yet judged against vanilla.
