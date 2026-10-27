@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import time
 from pathlib import Path
 import re
 import statistics
@@ -106,7 +107,10 @@ def warm_metric(report: dict, process: dict, result: dict, manifest: dict, pinne
     p95 = finite_time(report, "frameIntervalWarmP95Ms")
     if p95 < p50:
         raise KpiError("warm p95 is below p50")
-    return {"p50Ms": p50, "p95Ms": p95, "samples": count, "worldTicksAtEnd": report["worldTicksAtEnd"],
+    p99 = finite_time(report, "frameIntervalWarmP99Ms")
+    if p99 < p95:
+        raise KpiError("warm p99 is below p95")
+    return {"p50Ms": p50, "p95Ms": p95, "p99Ms": p99, "samples": count, "worldTicksAtEnd": report["worldTicksAtEnd"],
             "rendererSha256": manifest["artifacts"]["renderer"]["sha256"],
             "fixtureSha256": manifest["artifacts"]["fixture"]["sha256"],
             "device": process.get("glRendererPreflight") if reference else process.get("nativeDeviceName"),
@@ -149,6 +153,19 @@ def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
             "pairRatios": ratios, "medianPairRatio": ratio, "verdict": verdict,
             "scope": "fixture frame intervals; startup/build reported separately; includes simulation, GUI and limiter; "
                      "no automatic noise margin or significance claim"}
+    # goal.md's performance condition, stated as data: every percentile below Celeritas in every clean pair, with the
+    # medians below 1. It is reported beside the p50 verdict rather than folded into it, so the older verdict keeps
+    # its meaning; a run that has no verdict cannot meet it.
+    metric_ratios = {}
+    for key in ("p50Ms", "p95Ms", "p99Ms"):
+        values = [p["celtium"][key] / p["celeritas"][key] for p in reference_pairs
+                  if key in p["celtium"] and key in p["celeritas"]]
+        metric_ratios[key] = {"pairs": values, "median": statistics.median(values) if values else None}
+    every_pair_faster = all(m["pairs"] and len(m["pairs"]) == len(reference_pairs) and max(m["pairs"]) < 1
+                            for m in metric_ratios.values())
+    summary["metricRatios"] = metric_ratios
+    summary["goalCondition"] = ("MET" if verdict != "NO_SPEED_VERDICT" and len(reference_pairs) >= 3
+                                and every_pair_faster else "NOT_MET")
     summary["disturbedRepetitions"] = disturbed
     if disturbed:
         summary["scope"] += ("; repetitions " + str(disturbed) + " produced fewer than two thirds of their peers' "
@@ -162,6 +179,26 @@ def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
         summary["controlScope"] = ("candidate against the control build, interleaved in the same repetitions; "
                                   "cancels between-leg machine drift, does not compare against the reference")
     return summary
+
+
+def cpu_snapshot() -> dict:
+    """Machine-wide busy CPU seconds and this process's own and waited children's CPU seconds, at one instant."""
+    with open("/proc/stat", encoding="ascii") as stat:
+        fields = [int(value) for value in stat.readline().split()[1:]]
+    # user nice system idle iowait irq softirq steal: everything but idle and iowait is busy.
+    busy = sum(fields[:3]) + sum(fields[5:8])
+    times = os.times()
+    return {"busy": busy / os.sysconf("SC_CLK_TCK"), "own": times.user + times.system,
+            "children": times.children_user + times.children_system, "wall": time.monotonic()}
+
+
+def external_cores(start: dict, end: dict) -> float:
+    """Average cores busy outside this run - the machine's busy time minus this process and the legs it waited for."""
+    wall = end["wall"] - start["wall"]
+    if wall <= 0:
+        return 0.0
+    ours = (end["own"] - start["own"]) + (end["children"] - start["children"])
+    return max(0.0, (end["busy"] - start["busy"]) - ours) / wall
 
 
 def main(argv: list[str]) -> int:
@@ -199,6 +236,7 @@ def main(argv: list[str]) -> int:
     pinned = inputs(jars, None if skip_reference else reference, control)
     load = os.getloadavg()[0]
     load_limit = float(os.environ.get("CELTIUM_KPI_LOAD_LIMIT", "2"))
+    external_limit = float(os.environ.get("CELTIUM_KPI_EXTERNAL_LIMIT", "0.5"))
     if os.environ.get("CELTIUM_KPI_FORCE") != "1" and load > load_limit:
         raise KpiError(f"loaded machine ({load:.2f} > {load_limit}); wait, lower the limit only to record it, or "
                        "explicitly choose CELTIUM_KPI_FORCE=1")
@@ -233,6 +271,7 @@ def main(argv: list[str]) -> int:
                    "loadLimit": load_limit, "loadGuardBypassed": os.environ.get("CELTIUM_KPI_FORCE") == "1"},
                   out, indent=2)
     pairs = []
+    cpu_start = cpu_snapshot()
     for rep, plans_for_pair in enumerate(plans, 1):
         pair = {"repetition": rep}
         # Alternate order to expose order/thermal/JIT drift rather than always giving one renderer the second run.
@@ -253,14 +292,16 @@ def main(argv: list[str]) -> int:
                                  "control" if name == "control" else None)
             metric["leg"] = plan.leg
             pair[name] = metric
-            print(f"{plan.leg}: warm p50={metric['p50Ms']:.3f}ms p95={metric['p95Ms']:.3f}ms "
+            print(f"{plan.leg}: warm p50={metric['p50Ms']:.3f}ms p95={metric['p95Ms']:.3f}ms p99={metric['p99Ms']:.3f}ms "
                   f"samples={metric['samples']} renderer={metric['rendererSha256']}", flush=True)
         if not arm_only and "celeritas" in pair:
             same_conditions(pair)
         pairs.append(pair)
     summary = summarize(pairs, arm_only)
+    external = external_cores(cpu_start, cpu_snapshot())
     summary["environment"] = {"initialLoadAverage": load, "finalLoadAverage": os.getloadavg()[0],
                               "loadLimit": load_limit, "cpuCount": os.cpu_count(),
+                              "externalCpuCores": round(external, 3), "externalLimit": external_limit,
                               "guardBypassed": os.environ.get("CELTIUM_KPI_FORCE") == "1"}
     final_load = summary["environment"]["finalLoadAverage"]
     if load > load_limit or final_load > load_limit:
@@ -268,17 +309,22 @@ def main(argv: list[str]) -> int:
         # order-alternating design cancels it between arms, but the absolute milliseconds keep its floor.
         summary["scope"] += ("; measured under external load " + f"{load:.2f} -> {final_load:.2f}"
                              + f" (limit {load_limit:g}, override recorded): ratios only, not absolute frame times")
-    if final_load > max(load_limit, load * 1.5):
-        # A run whose load more than doubles, or ends above the guard, was overtaken by something else (this session's
-        # own browser is the usual cause). Its pairs then compare different machines, and a median taken across them is
-        # not a measurement of the build - which is what happened on the fbo-cache-c run, 2.69 -> 7.34.
+    if external > external_limit:
+        # A run overtaken by something else (this session's own browser is the usual cause - the fbo-cache-c run went
+        # 2.69 -> 7.34) compares different machines in its pairs, and a median across them is not a measurement of the
+        # build. It is judged by the CPU the legs did not use, not by the load average at the end: that average is read
+        # right after the last game exits and is mostly the game's own threads, so every run on a quiet machine
+        # tripped it (AMD 1.23 -> 2.49, Intel 0.19 -> 2.33 with nothing else running).
         summary["verdict"] = "NO_SPEED_VERDICT"
-        summary["scope"] += ("; load rose during the run (" + f"{load:.2f} -> {final_load:.2f}"
-                             + "): the pairs compare different machine states, so no verdict is safe")
+        summary["scope"] += (f"; {external:.2f} cores of CPU outside the legs during the run (limit {external_limit:g}): "
+                             "the pairs compare different machine states, so no verdict is safe")
     with (root / ".gv-verify" / f"{tag}-kpi-result.json").open("x") as out:
         json.dump({"inputs": pinned, **summary}, out, indent=2)
     if summary.get("medianPairRatio") is not None:
         print(f"median paired ratio={summary['medianPairRatio']:.3f}x verdict={summary['verdict']}")
+        print("p50/p95/p99 median ratios=" + "/".join(f"{m['median']:.3f}" if m["median"] is not None else "-"
+                                                      for m in summary["metricRatios"].values())
+              + f" goalCondition={summary['goalCondition']}")
     else:
         print(f"no reference arm (ranking mode); verdict={summary['verdict']}")
     if "medianControlRatio" in summary:

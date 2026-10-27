@@ -17,7 +17,7 @@ spec.loader.exec_module(kpi)
 class KpiTests(unittest.TestCase):
     def records(self):
         report = {"status": "PASSED", "frameIntervalWarmSampleCount": 1200,
-                  "frameIntervalWarmP50Ms": 3.0, "frameIntervalWarmP95Ms": 5.0,
+                  "frameIntervalWarmP50Ms": 3.0, "frameIntervalWarmP95Ms": 5.0, "frameIntervalWarmP99Ms": 6.0,
                   "frameIntervalWarmFromTick": 400, "frameIntervalWarmToTick": 600, "worldTicksAtEnd": 619,
                   "frameIntervalP50Ms": 0.001, "frameIntervalSampleCount": 4000,
                   "sceneCalibrationKey": "world/camera/default", "saveSlot": "qmagnet", "renderDistanceUsed": 18,
@@ -127,15 +127,25 @@ class KpiTests(unittest.TestCase):
         skewed["control"]["samples"] = 2600
         self.assertEqual(kpi.summarize([skewed] * 3, [])["verdict"], "NO_SPEED_VERDICT")
 
-    def test_a_run_overtaken_by_load_reports_no_verdict(self):
-        # This is not hypothetical: one ranking run started at load 2.69 and ended at 7.34, and its pairs compared
-        # different machine states. A median across those is not a measurement, whatever it reads.
-        summary = kpi.summarize([{"celtium": self.metric(), "celeritas": self.metric()}] * 3, [])
-        summary["environment"] = {"initialLoadAverage": 2.69, "finalLoadAverage": 7.34, "loadLimit": 3.5}
-        load, final_load, limit = 2.69, 7.34, 3.5
-        self.assertTrue(final_load > max(limit, load * 1.5))
-        # The same shape at a steady load stays a verdict.
-        self.assertFalse(4.0 > max(limit, 4.0 * 1.5))
+    def test_goal_condition_needs_every_percentile_faster_in_every_pair(self):
+        def pair(scale99):
+            celtium, celeritas = self.metric(), self.metric()
+            for key in ("p50Ms", "p95Ms", "p99Ms"):
+                celeritas[key] = celtium[key] * 1.2
+            celeritas["p99Ms"] = celtium["p99Ms"] * scale99
+            return {"celtium": celtium, "celeritas": celeritas}
+        self.assertEqual(kpi.summarize([pair(1.2)] * 3, [])["goalCondition"], "MET")
+        # One pair whose p99 is slower fails the condition even though every median is below 1.
+        self.assertEqual(kpi.summarize([pair(1.2), pair(1.2), pair(0.9)], [])["goalCondition"], "NOT_MET")
+
+    def test_external_cpu_is_the_machine_minus_this_run_and_its_legs(self):
+        # The legs' own CPU must not count against the run: a quiet machine whose busy time is all the game's reads ~0.
+        start = {"busy": 100.0, "own": 1.0, "children": 10.0, "wall": 0.0}
+        quiet = {"busy": 500.0, "own": 2.0, "children": 409.0, "wall": 200.0}
+        self.assertAlmostEqual(kpi.external_cores(start, quiet), 0.0)
+        # Something else taking two cores for the whole run is seen, whatever the legs did.
+        loaded = {"busy": 900.0, "own": 2.0, "children": 409.0, "wall": 200.0}
+        self.assertAlmostEqual(kpi.external_cores(start, loaded), 2.0)
 
     def test_single_pairs_asymmetric_flags_or_frame_caps_never_pass_the_kpi(self):
         pair = {"celtium": self.metric(), "celeritas": self.metric()}
