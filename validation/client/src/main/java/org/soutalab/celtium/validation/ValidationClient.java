@@ -1645,6 +1645,9 @@ public final class ValidationClient {
         key.append(" screen=").append(celtium$screenVariant());
         key.append(" guiScale=").append(guiScale > 0 ? Integer.toString(guiScale) : "unreadable");
         if (MODEL_FOG_END > 0.0f) key.append(" testFogEnd=").append(MODEL_FOG_END);
+        if (Boolean.getBoolean("celtium.validation.gvcA4Probe")) key.append(" gvcA4Probe=true");
+        if (!System.getProperty("celtium.validation.entityType", "").isEmpty())
+            key.append(" entityType=").append(System.getProperty("celtium.validation.entityType"));
         return key.toString();
     }
 
@@ -3099,6 +3102,8 @@ public final class ValidationClient {
             }
         }
         if (enabled) MinecraftForge.EVENT_BUS.register(this);
+        if (enabled && Boolean.getBoolean("celtium.validation.gvcA4Probe"))
+            MinecraftForge.EVENT_BUS.register(new GvcA4Probe());
     }
 
     /**
@@ -3277,6 +3282,19 @@ public final class ValidationClient {
             }
             if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
                 celtium$entitiesSpawned = true;
+                String extraEntity = System.getProperty("celtium.validation.entityType", "");
+                if (!extraEntity.isEmpty()) {
+                    net.minecraft.entity.Entity entity = net.minecraft.entity.EntityList.createEntityByIDFromName(
+                            new net.minecraft.util.ResourceLocation(extraEntity), mc.world);
+                    report.addProperty("requestedEntityType", extraEntity);
+                    report.addProperty("requestedEntityCreated", entity != null);
+                    if (entity != null) {
+                        if (entity instanceof net.minecraft.entity.EntityLiving)
+                            ((net.minecraft.entity.EntityLiving) entity).setNoAI(true);
+                        celtium$spawnEntity(mc, entity, 0.0D, -6.0D);
+                        report.addProperty("requestedEntityClass", entity.getClass().getName());
+                    }
+                }
                 // An entity scene, for the coverage that the terrain-only comparison deliberately leaves out. The mobs are
                 // named explicitly rather than left to natural spawning so the scene is the same set every run: one of each
                 // family that draws through its own path (monster model, spider legs, enderman's TESR-ish layering).

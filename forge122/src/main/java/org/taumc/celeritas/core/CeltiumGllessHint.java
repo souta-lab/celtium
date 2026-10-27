@@ -248,6 +248,12 @@ public final class CeltiumGllessHint {
      * would file quads where no {@code glCallList} can reach them.
      */
     public static void glNewList(int list, int mode) {
+        nativeNewList(list, mode);
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compatibilityNewList(list, mode);
+    }
+
+    /** Native vanilla compilation tracks its own geometry; it does not use the Mod GL compiler. */
+    public static void nativeNewList(int list, int mode) {
         noteDisplayListCall();
         NEW_LIST_CALLS.incrementAndGet();
         listIndex = list;
@@ -260,6 +266,11 @@ public final class CeltiumGllessHint {
 
     /** Closes the open display list, as {@code glEndList()} does. */
     public static void glEndList() {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compatibilityEndList();
+        nativeEndList();
+    }
+
+    public static void nativeEndList() {
         noteDisplayListCall();
         END_LIST_CALLS.incrementAndGet();
         listIndex = 0;
@@ -313,6 +324,7 @@ public final class CeltiumGllessHint {
         noteDisplayListCall();
         CALL_LIST_CALLS.incrementAndGet();
         lastCalledList = list;
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compatibilityCallList(list);
     }
 
     /**
@@ -681,6 +693,33 @@ public final class CeltiumGllessHint {
     public static void glRotated(double angle, double x, double y, double z) {
         var backend = rawMatrix(MATRIX_ROTATE);
         if (backend != null) backend.rotate((float) angle, (float) x, (float) y, (float) z);
+    }
+
+    /**
+     * A raw {@code GL11.glColor*} call: the same two destinations {@code GlStateManager.color}'s hook feeds, the font's
+     * current colour and the backend's colour mirror.
+     * <p>
+     * The natives were no-ops, so a Mod that set its colour through GL11 itself drew with whatever colour vanilla last
+     * set: GVCLib's exhaust sets {@code glColor4f(1, 1, 1, throttle * 0.03)} and drew opaque - a black and green sheet
+     * across the screen where OpenGL draws a faint plume (E2E leg a4-bounds-b, group fmt=9 texture=233). A vanilla
+     * {@code GlStateManager.color} that reaches here after its hook only sets the same value again, which is harmless:
+     * unlike a matrix operation, a colour does not accumulate.
+     */
+    public static void glColor4f(float red, float green, float blue, float alpha) {
+        org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) backend.setColor(red, green, blue, alpha);
+    }
+
+    /** {@code glColor4ub}: the bytes are unsigned and map to [0, 1], as GL does. */
+    public static void glColor4ub(byte red, byte green, byte blue, byte alpha) {
+        glColor4f((red & 0xFF) / 255.0F, (green & 0xFF) / 255.0F, (blue & 0xFF) / 255.0F, (alpha & 0xFF) / 255.0F);
+    }
+
+    /** A raw {@code GL11.glDepthMask}, for the same reason as {@link #glColor4f}: canopies and overlays set it raw. */
+    public static void glDepthMask(boolean mask) {
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) backend.setDepthMask(mask);
     }
 
     /** Maps the bound buffer's storage, as {@code glMapBuffer}/{@code glMapBufferRange} do; 0 is GL's NULL. */

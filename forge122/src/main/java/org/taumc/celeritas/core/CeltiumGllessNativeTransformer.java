@@ -149,6 +149,58 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         return true;
     }
 
+    /**
+     * The raw GL11 colour and depth-mask natives, forwarded to CeltiumGllessHint, which feeds the same mirror
+     * GlStateManager's hooks do. Every form is widened to one entry point: floats as given, a missing alpha as 1,
+     * doubles narrowed, unsigned bytes through glColor4ub.
+     */
+    private static boolean emitRawColourRoute(MethodVisitor method, String name, String descriptor) {
+        String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
+        switch (name + descriptor) {
+            case "glColor4f(FFFF)V":
+                for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
+                break;
+            case "glColor3f(FFF)V":
+                for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
+                method.visitInsn(Opcodes.FCONST_1);
+                break;
+            case "glColor4d(DDDD)V":
+                for (int slot = 0; slot < 8; slot += 2) {
+                    method.visitVarInsn(Opcodes.DLOAD, slot);
+                    method.visitInsn(Opcodes.D2F);
+                }
+                break;
+            case "glColor3d(DDD)V":
+                for (int slot = 0; slot < 6; slot += 2) {
+                    method.visitVarInsn(Opcodes.DLOAD, slot);
+                    method.visitInsn(Opcodes.D2F);
+                }
+                method.visitInsn(Opcodes.FCONST_1);
+                break;
+            case "glColor4ub(BBBB)V":
+                for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4ub", "(BBBB)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "glColor3ub(BBB)V":
+                for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitInsn(Opcodes.ICONST_M1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4ub", "(BBBB)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "glDepthMask(Z)V":
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glDepthMask", "(Z)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            default:
+                return false;
+        }
+        method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4f", "(FFFF)V", false);
+        method.visitInsn(Opcodes.RETURN);
+        return true;
+    }
+
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
 
@@ -182,6 +234,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
 
     private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
         if (emitNativeRasterAdapter(method, name, descriptor)) return;
+        if (emitRawColourRoute(method, name, descriptor)) return;
         String returnType = descriptor.substring(descriptor.indexOf(')') + 1);
         // Both the public wrapper's native and the "ngl" form take the name differently ((int) versus a pointer to
         // the encoded name), and LWJGL3 generates the pointer form - so match on the name and the return type rather

@@ -134,6 +134,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
     private static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
     private static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
+    private static final int SEM_COMPILED_ARRAYS = -2;
+    private static final Fn COMPILED_ARRAYS = new Fn("compiledClientArrays", R_VOID, new byte[0], SEM_COMPILED_ARRAYS);
     // Step 1 of the loading-screen unit: glBegin/glEnd leave the generic no-op table so the *site* that opens a
     // legacy immediate-mode run can be proven rather than counted. Forge's SplashProgress draws the loading screen
     // with glBegin(GL_QUADS) (SplashProgress.java:294/:353/:416) straight through GL11, which under the GL-less
@@ -677,6 +679,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     static boolean notCompiledIntoDisplayList(int semantics) {
         switch (semantics) {
+            case SEM_VERTEX_POINTER:
             case SEM_GEN:
             case SEM_DELETE:
             case SEM_GET_ERROR:
@@ -856,7 +859,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Releases a list's owned payloads; called when the list is replaced or deleted (#394). */
+    private final Map<Integer, List<NativeGeometryBuffer>> displayListGeometry = new HashMap<>();
+    private List<NativeGeometryBuffer> openListGeometry;
+
     private void releaseListPayloads(Integer list) {
+        List<NativeGeometryBuffer> geometry = this.displayListGeometry.remove(list);
+        if (geometry != null) {
+            for (NativeGeometryBuffer buffer : geometry) buffer.close();
+            this.listPayloadsReleased += geometry.size();
+        }
         List<java.nio.ByteBuffer> payloads = this.displayListPayloads.remove(list);
         if (payloads == null) {
             return;
@@ -1218,6 +1229,29 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.compilingListMode = mode;
     }
 
+    /** Direct Mod GL entry points share the compatibility compiler, including transformed LWJGL calls. */
+    public static void compatibilityNewList(int list, int mode) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) return;
+        long[] c = stub.dispatchArgsScratch(); c[0] = list; c[1] = mode;
+        stub.dispatchArgs(IDS.get("glNewList"), c);
+    }
+
+    public static void compatibilityEndList() {
+        CeltiumGlStub stub = installed;
+        if (stub != null) stub.dispatchArgs(IDS.get("glEndList"), stub.dispatchArgsScratch());
+    }
+
+    public static void compatibilityCallList(int list) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) return;
+        if (stub.openList == null) stub.replayDisplayList(list);
+        else {
+            long[] c = stub.dispatchArgsScratch(); c[0] = list;
+            stub.dispatchArgs(IDS.get("glCallList"), c);
+        }
+    }
+
     /** Closes the list {@link #celtium$noteListOpened} opened, as {@code glEndList} does. */
     public static void celtium$noteListClosed() {
         CeltiumGlStub stub = installed;
@@ -1423,7 +1457,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$drawArrays(int mode, int first, int count) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.drawArrays(mode, first, count);
+            long[] c = stub.dispatchArgsScratch(); c[0] = mode; c[1] = first; c[2] = count;
+            stub.dispatchArgs(IDS.get("glDrawArrays"), c);
         }
     }
 
@@ -3002,7 +3037,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         // correct when a child is replaced.
         List<Object[]> open = this.openList;
         if (open != null && fn.semantics != SEM_NEW_LIST && fn.semantics != SEM_END_LIST) {
-            if (!notCompiledIntoDisplayList(fn.semantics)) {
+            if (fn.semantics == SEM_DRAW_ARRAYS) {
+                drawArrays((int) c[0], (int) c[1], (int) c[2], true);
+                if (this.compilingListMode != GL_COMPILE_AND_EXECUTE) return 0L;
+            } else if (!notCompiledIntoDisplayList(fn.semantics)
+                    && !fn.name.equals("glEnableClientState") && !fn.name.equals("glDisableClientState")) {
                 long[] recorded = c.clone();
                 java.nio.ByteBuffer owned = captureListPayload(fn, recorded);
                 if (owned != null) {
@@ -3267,6 +3306,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_NEW_LIST:
                 // A name of zero is not a list (the spec makes glNewList(0) GL_INVALID_VALUE), and recording under it
                 // would file calls where no glCallList can reach them - which is the state this stub started in.
+                this.openListGeometry = null;
                 this.compilingList = (int) c[0];
                 this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
                 this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
@@ -3280,6 +3320,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // are unreachable from here on and are released now rather than held for the life of the process.
                     releaseListPayloads(Integer.valueOf(this.compilingList));
                     this.displayLists.put(Integer.valueOf(this.compilingList), compiled);
+                    if (this.openListGeometry != null) this.displayListGeometry.put(this.compilingList, this.openListGeometry);
                     if (this.openListPayloads != null) {
                         this.displayListPayloads.put(Integer.valueOf(this.compilingList), this.openListPayloads);
                     }
@@ -3289,40 +3330,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                         org.lwjgl.system.MemoryUtil.memFree(this.openListPayloads.get(i));
                     }
                 }
+                if (compiled == null && this.openListGeometry != null)
+                    for (NativeGeometryBuffer buffer : this.openListGeometry) buffer.close();
+                this.openListGeometry = null;
                 this.openListPayloads = null;
                 this.openList = null;
                 this.compilingList = 0;
                 return 0L;
             case SEM_CALL_LIST:
-                // The replay, and the reason this field exists at all. Minecraft compiles a model once
-                // (ModelRenderer.compileDisplayList, under GL_COMPILE) and draws it with glCallList(displayList);
-                // VulkanModelQuadCapture's hook sits inside that compilation, so it saw the recording and refused the
-                // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
-                // player, held items, the sky, the stars and the horizon plane all arrive here.
-                this.lastCalledList = (int) c[0];
-                List<Object[]> list = this.displayLists.get(Integer.valueOf(this.lastCalledList));
-                if (list == null) {
-                    // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible.
-                    this.displayListsUnresolved++;
-                } else if (this.replayDepth < MAX_LIST_NESTING) {
-                    this.replayDepth++;
-                    this.executingList = this.lastCalledList;
-                    try {
-                        for (int i = 0; i < list.size(); i++) {
-                            Object[] call = list.get(i);
-                            dispatchArgs((Fn) call[0], (long[]) call[1]);
-                        }
-                    } finally {
-                        this.replayDepth--;
-                        // Cleared on the way out so a quad drawn after the replay is not filed under the last list.
-                        this.executingList = this.replayDepth == 0 ? 0 : this.executingList;
-                    }
-                    this.displayListsReplayed++;
-                    if (this.lastCalledList >= 0 && this.lastCalledList < this.listReplayCounts.length) {
-                        this.listReplayCounts[this.lastCalledList]++;
-                        this.listReplayTotals[this.lastCalledList] += list.size();
-                    }
-                }
+                replayDisplayList((int) c[0]);
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
                 this.boundVertexArray = (int) c[0];
@@ -3351,6 +3367,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_END:
                 BEGIN_END_CALLS.incrementAndGet();
+                return 0L;
+            case SEM_COMPILED_ARRAYS:
+                replayCompiledArrays(c);
                 return 0L;
             case SEM_DRAW_ARRAYS:
                 drawArrays((int) c[0], (int) c[1], (int) c[2]);
@@ -6059,7 +6078,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      * {@code glCallList(-1)} there, because {@code generateSky2} only assigns {@code glSkyList2} when {@code vboEnabled}
      * is false: a no-op in real GL and recorded as such here.
      */
-    private void drawArrays(int mode, int first, int count) {
+    private void drawArrays(int mode, int first, int count) { drawArrays(mode, first, count, false); }
+
+    private void drawArrays(int mode, int first, int count, boolean compile) {
         DRAWARRAY_CALLS.incrementAndGet();
         // The owned-buffer publication is consumed by every draw, matched or not: one publication belongs to the one
         // glDrawArrays that follows it, and a publication left behind would otherwise be read as the next draw's
@@ -6095,8 +6116,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
         } else if (!(this.enables[GL_VERTEX_ARRAY] != 0)) {
             reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
-        } else if (mode != GL_QUADS) {
-            reason = "draw mode " + mode + " is not handled (only 7 = GL_QUADS)";
+        } else if (mode != GL_QUADS && mode != 4) {
+            reason = "draw mode " + mode + " is not handled (quads/triangles only)";
         } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT) {
             reason = "vertex pointer size=" + this.vertexPointerSize + " type=0x"
                     + Integer.toHexString(this.vertexPointerType)
@@ -6161,6 +6182,43 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (reason == null) {
             int stride = this.vertexPointerStride;
             address = (clientMemory ? offset : memAddress(storage, 0) + offset) + (long) first * stride;
+            int decodedStride = this.vertexPointerStride == 32 && formatId == 9 ? 24
+                    : this.vertexPointerStride == 32 && formatId == 8 ? 28 : this.vertexPointerStride;
+            if (compile) {
+                long bytes = (long) count * decodedStride;
+                if (bytes > MAX_LIST_PAYLOAD_BYTES) {
+                    this.listPayloadsUnsized++;
+                    DRAWARRAY_REFUSED.incrementAndGet();
+                    return;
+                }
+                ByteBuffer snapshot = copyClientVertices(address, count, this.vertexPointerStride, formatId);
+                NativeGeometryBuffer geometry = new NativeGeometryBuffer();
+                try {
+                    geometry.upload(snapshot, decodedStride, formatId);
+                } catch (RuntimeException | Error error) {
+                    geometry.close();
+                    throw error;
+                } finally { MemoryUtil.memFree(snapshot); }
+                if (this.openListGeometry == null) this.openListGeometry = new ArrayList<NativeGeometryBuffer>();
+                this.openListGeometry.add(geometry);
+                long litId = 0L;
+                if (hasItemTwin(this.vertexPointerStride, formatId)) {
+                    ByteBuffer litSnapshot = copyClientVerticesAsItem(address, count, formatId);
+                    NativeGeometryBuffer lit = new NativeGeometryBuffer();
+                    try {
+                        lit.upload(litSnapshot, ITEM_STRIDE, ITEM_FORMAT);
+                    } catch (RuntimeException | Error error) {
+                        lit.close();
+                        throw error;
+                    } finally { MemoryUtil.memFree(litSnapshot); }
+                    this.openListGeometry.add(lit);
+                    litId = lit.id();
+                }
+                this.openList.add(new Object[] {COMPILED_ARRAYS,
+                        new long[] {geometry.id(), decodedStride, formatId, count, mode, litId}});
+                this.listPayloadsOwned++;
+                return;
+            }
             TerrainGpuBackend backend;
             try {
                 // Resolved here rather than held as a field: this class is installed when the window is created, the
@@ -6198,8 +6256,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // client-memory path the menu and the loading screen use is stride 16 (POSITION_COLOR, id 1), and
                     // Forge's cloud VBO is stride 24 (POSITION_TEX_COLOR, id 2) - both carry attributes the format-7
                     // shader would read as the next vertex's position.
-                    taken = backend.submitImmediateBatch(null, this.vertexPointerStride, formatId, address,
-                            count, mode);
+                    boolean asItem = hasItemTwin(this.vertexPointerStride, formatId) && lightingOn(backend);
+                    ByteBuffer packed = asItem ? copyClientVerticesAsItem(address, count, formatId)
+                            : decodedStride == this.vertexPointerStride ? null
+                            : copyClientVertices(address, count, this.vertexPointerStride, formatId);
+                    try {
+                        taken = backend.submitImmediateBatch(null, asItem ? ITEM_STRIDE : decodedStride,
+                                asItem ? ITEM_FORMAT : formatId,
+                                packed == null ? address : memAddress(packed), count, mode);
+                    } finally {
+                        if (packed != null) MemoryUtil.memFree(packed);
+                    }
                 } catch (RuntimeException | LinkageError error) {
                     taken = false;
                     reason = "the backend threw: " + error;
@@ -6407,6 +6474,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             id = FORMAT_POSITION_TEX;                // 6: position and texture
         } else if (stride == 24 && otherArrays == 6) {
             id = FORMAT_POSITION_TEX_COLOR;          // 2: position, texture and colour - Forge's clouds
+        } else if (stride == 32 && otherArrays == 5) {
+            id = FORMAT_POSITION_TEX_NORMAL; // legacy interleaved UV12, byte normal24; repacked before submission
+        } else if (stride == 32 && otherArrays == 7) {
+            id = 8; // legacy interleaved UV12, colour20, byte normal24; omit trailing padding
         } else if (stride == 24 && otherArrays == 5) {
             id = FORMAT_POSITION_TEX_NORMAL;         // 9: position, texture and a normal
         } else {
@@ -6472,6 +6543,115 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         clientPointerAccepted++;
         return true;
+    }
+
+    /** The ITEM layout a lit draw of legacy interleaved geometry is repacked into: pos3f col4ub tex2f nrm3b pad1b. */
+    static final int ITEM_FORMAT = org.soutalab.celtium.vulkan.VulkanImmediateFormats.ITEM;
+    static final int ITEM_STRIDE = 28;
+
+    /**
+     * Whether a draw has an ITEM twin: the legacy 32-byte interleave (position 0, UV 12, colour 20, byte normal 24) that
+     * GVCLib's Tessellator2 writes, decoded as POSITION_TEX_NORMAL (9) or POSITION_TEX_COLOR_NORMAL (8). Those carry
+     * normals, but only the lit ITEM pipeline shades by them: drawn in their own layout the A4 came out flat white where
+     * OpenGL lit it facet by facet (E2E leg a4-colour1 against the Celeritas reference).
+     */
+    static boolean hasItemTwin(int stride, int format) {
+        return stride == 32 && (format == 8 || format == 9);
+    }
+
+    private static boolean lightingOn(TerrainGpuBackend backend) {
+        return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                && vulkan.fixedFunctionLightingEnabled();
+    }
+
+    /**
+     * Repacks the legacy 32-byte interleave into ITEM order. Without a colour array the vertex colour is opaque white,
+     * so the lit shader's group colour - the Mod's glColor - is the only tint, as in fixed-function lighting with
+     * GL_COLOR_MATERIAL.
+     */
+    static ByteBuffer copyClientVerticesAsItem(long address, int count, int format) {
+        ByteBuffer copy = MemoryUtil.memAlloc(Math.multiplyExact(count, ITEM_STRIDE));
+        long target = memAddress(copy);
+        for (int i = 0; i < count; i++) {
+            long from = address + (long) i * 32;
+            long to = target + (long) i * ITEM_STRIDE;
+            MemoryUtil.memCopy(from, to, 12);
+            MemoryUtil.memPutInt(to + 12, format == 8 ? MemoryUtil.memGetInt(from + 20) : -1);
+            MemoryUtil.memCopy(from + 12, to + 16, 8);
+            MemoryUtil.memCopy(from + 24, to + 24, 4);
+        }
+        return copy;
+    }
+
+    /** Takes ownership at compile/submit time; no replay may read the caller's reused array. */
+    static ByteBuffer copyClientVertices(long address, int count, int stride, int format) {
+        int targetStride = stride == 32 && format == 9 ? 24 : stride == 32 && format == 8 ? 28 : stride;
+        ByteBuffer copy = MemoryUtil.memAlloc(Math.multiplyExact(count, targetStride));
+        long target = memAddress(copy);
+        if (stride == 32 && format == 9) {
+            for (int i = 0; i < count; i++) {
+                MemoryUtil.memCopy(address + (long) i * stride, target + (long) i * targetStride, 20);
+                MemoryUtil.memCopy(address + (long) i * stride + 24, target + (long) i * targetStride + 20, 4);
+            }
+        } else if (stride != targetStride) {
+            for (int i = 0; i < count; i++)
+                MemoryUtil.memCopy(address + (long) i * stride, target + (long) i * targetStride, targetStride);
+        } else MemoryUtil.memCopy(address, target, (long) count * stride);
+        return copy;
+    }
+
+    private void replayDisplayList(int listId) {
+        // The replay, and the reason this field exists at all. Minecraft compiles a model once
+        // (ModelRenderer.compileDisplayList, under GL_COMPILE) and draws it with glCallList(displayList);
+        // VulkanModelQuadCapture's hook sits inside that compilation, so it saw the recording and refused the
+        // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
+        // player, held items, the sky, the stars and the horizon plane all arrive here.
+        this.lastCalledList = listId;
+        List<Object[]> list = this.displayLists.get(Integer.valueOf(this.lastCalledList));
+        if (list == null) {
+            // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible.
+            this.displayListsUnresolved++;
+        } else if (this.replayDepth < MAX_LIST_NESTING) {
+            this.replayDepth++;
+            this.executingList = this.lastCalledList;
+            try {
+                for (int i = 0; i < list.size(); i++) {
+                    Object[] call = list.get(i);
+                    Fn command = (Fn) call[0];
+                    if (command.semantics == SEM_COMPILED_ARRAYS) replayCompiledArrays((long[]) call[1]);
+                    else dispatchArgs(command, (long[]) call[1]);
+                }
+            } finally {
+                this.replayDepth--;
+                // Cleared on the way out so a quad drawn after the replay is not filed under the last list.
+                this.executingList = this.replayDepth == 0 ? 0 : this.executingList;
+            }
+            this.displayListsReplayed++;
+            if (this.lastCalledList >= 0 && this.lastCalledList < this.listReplayCounts.length) {
+                this.listReplayCounts[this.lastCalledList]++;
+                this.listReplayTotals[this.lastCalledList] += list.size();
+            }
+        }
+    }
+
+
+    private void replayCompiledArrays(long[] c) {
+        try {
+            TerrainGpuBackend backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            boolean lit = c.length > 5 && c[5] != 0L && lightingOn(backend);
+            NativeGeometryBuffer geometry = NativeGeometryBuffer.find((int) (lit ? c[5] : c[0]));
+            boolean taken = geometry != null && backend != null && (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend
+                    ? ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).submitRetainedGeometry(geometry, (int) c[4])
+                    : backend.submitImmediateBatch(null, lit ? ITEM_STRIDE : (int) c[1], lit ? ITEM_FORMAT : (int) c[2],
+                            geometry.address(), (int) c[3], (int) c[4]));
+            if (taken) {
+                DRAWARRAY_DRAWN.incrementAndGet();
+                DRAWARRAY_VERTICES.addAndGet(c[3]);
+            } else celtium$noteDrawArrayRefusal("compiled client arrays: "
+                    + (backend == null ? "no backend" : backend.lastRefusal()));
+        } catch (RuntimeException | LinkageError error) {
+            celtium$noteDrawArrayRefusal("compiled client arrays: " + error);
+        }
     }
 
     /** The index of the range containing {@code [start,end)}, or -1. */

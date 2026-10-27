@@ -35,7 +35,7 @@ public final class CeltiumModelCapture {
         } catch (RuntimeException | LinkageError ignored) {
             // A capture that cannot start must never stop the game from compiling: the replay path still works.
         }
-        CeltiumGllessHint.glNewList(list, mode);
+        CeltiumGllessHint.nativeNewList(list, mode);
         return true;
     }
 
@@ -48,7 +48,7 @@ public final class CeltiumModelCapture {
         if (!CeltiumGlStub.isInstalled()) {
             return false;
         }
-        CeltiumGllessHint.glEndList();
+        CeltiumGllessHint.nativeEndList();
         return true;
     }
 }

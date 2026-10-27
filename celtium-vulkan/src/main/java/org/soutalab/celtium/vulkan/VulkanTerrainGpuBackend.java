@@ -6334,6 +6334,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** Minecraft/Forge retained geometry enters with its layout and ownership already known, not through GL arrays. */
+    /**
+     * Whether fixed-function lighting is on in the mirror right now: a Mod's client-array geometry carries normals in
+     * a layout only the lit ITEM pipeline shades, so the GL stub picks that layout for a lit draw and keeps its own for
+     * an unlit one (whose group colour - a Mod's raw glColor - the ITEM layout's unlit shader would not apply).
+     */
+    public boolean fixedFunctionLightingEnabled() {
+        return this.immediateState.lightingEnabled();
+    }
+
     public boolean submitRetainedGeometry(NativeGeometryBuffer geometry, int drawMode) {
         if (geometry.vertexCount() == 0) {
             return true;
