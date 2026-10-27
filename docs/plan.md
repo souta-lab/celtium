@@ -42,9 +42,9 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | 報告 | 状況 |
    |---|---|
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
-   | 入world直後 約3秒の強いラグ | **未帰属**（0.1.0、vanillaで再現、利用者 2026-10-27）。計器: validation report の `slowFrames`（runで最も遅い12枚＝入world直後をpass内訳つき） |
+   | 入world直後 約3秒の強いラグ | **縮小・qmagnetではCeleritas同等**: vanillaの未使用chunk dispatcherがbuilder 61個（~610 MB）を入world時に確保・ゼロ埋め→1個に（`99e1daf77`、146→8 JFRサンプル）。AMD最初60tickの50ms超フレーム合計 Celtium 1.67–1.95 s / Celeritas 1.67–1.79 s（最初のフレーム 462–512 vs 661–671 ms）。残りは両者共通のchunk packet・class load。利用者の3秒は未再現 |
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚、Celtium同期は2–3枚。入室停止は未帰属。計器: `flightBlocksPerSecond`・`warmSpikes` |
-   | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`、直線飛行は非join時と同等・旋回中は毎フレームjoin）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`、A4がCeleritas参照と一致、world AMD/Intel・video PASSED）。A4のserver crashはMod側の不具合→`scripts/fix_gvcr2_a4.py` |
+   | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`、A4がCeleritas参照と一致）。A4のserver crashはMod側の不具合→`scripts/fix_gvcr2_a4.py` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
    | 色付きガラスのチカチカ | **未解決（0.1.0の実機で再現、利用者 2026-10-27）**。`de280e72a`（解放したarena区間を読みうる提出の完了まで再利用しない）では直らなかった。計器: `-Dceltium.debug.flickerSample=true`（連続2枚の差）、既定flat worldに `stained_glass` 層あり |
    | F3+T が重い | reload自体が 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
@@ -88,7 +88,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 
 
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
-| **巨大pack互換（E2E-E 1.87.3）** | **入world・exit 0、device lost 解消。提示画像は未受入** | AMD（leg e2ee-amd13・Celeritas対照 e2ee-ref2） | 未実行 | RLCraft 2.9.3 は対象外（Celtium無しでも `VerifyError`）。Cleanroom 0.7 の環境差は local置換（`.celtium-work/modpack-e2ee/SUBSTITUTIONS.md`）と上流PR（Fugue #136・Cleanroom #720）。Celtium側で直した: 競合modのfail-fast（CLS・SmoothFont）、chain pairの退去/resizeが記録中のimage・framebuffer・samplerを即時破棄していた use-after-free（`8f121acfb`）。**残り**: ①Xaero World Map のミニマップは4ユニットの固定機能COMBINE（`POSITION_TEX_TEX_TEX`）で描くため拒否され欠落 → 汎用combiner実装が必要 ②HUD欠落はGnetumのFBO管理が原因→競合modとして拒否（`889cc89e3`） ③atlas の `VUID-vkCmdDraw-None-09600` 10件（`-Dceltium.vulkan.descWriteCensus=true` で書き手特定） ④FTB Quests同期時の EnderIO `block_buffer` 欠落NPE（1/3回、時機依存） ⑤fixtureのvalidation数0でもコンソールにエラーがある計数の穴 |
+| **巨大pack互換（E2E-E 1.87.3）** | **入world・exit 0、device lost 解消。提示画像は未受入** | AMD（leg e2ee-amd13・Celeritas対照 e2ee-ref2） | 未実行 | Cleanroom 0.7 の環境差は local置換（`.celtium-work/modpack-e2ee/SUBSTITUTIONS.md`）と上流PR（Fugue #136・Cleanroom #720）。Celtium側で直した: 競合modのfail-fast（CLS・SmoothFont）、chain pairの退去/resizeが記録中のimage・framebuffer・samplerを即時破棄していた use-after-free（`8f121acfb`）。**残り**: ①Xaero World Map のミニマップは4ユニットの固定機能COMBINE（`POSITION_TEX_TEX_TEX`）で描くため拒否され欠落 → 汎用combiner実装が必要 ②HUD欠落はGnetumのFBO管理が原因→競合modとして拒否（`889cc89e3`） ③atlas の `VUID-vkCmdDraw-None-09600` 10件（`-Dceltium.vulkan.descWriteCensus=true` で書き手特定） ④FTB Quests同期時の EnderIO `block_buffer` 欠落NPE（1/3回、時機依存） ⑤fixtureのvalidation数0でもコンソールにエラーがある計数の穴 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②非instance lit fog ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
