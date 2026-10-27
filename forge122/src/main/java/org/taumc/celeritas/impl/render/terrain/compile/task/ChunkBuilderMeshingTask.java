@@ -64,8 +64,12 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
         this.renderContext = context;
     }
 
+    /** Meshing runs, for {@code -Dceltium.debug.markTrace}: set beside the marks, it says whether sections re-mesh unmarked. */
+    public static final java.util.concurrent.atomic.AtomicInteger EXECUTIONS = new java.util.concurrent.atomic.AtomicInteger();
+
     @Override
     public ChunkBuildOutput execute(ChunkBuildContext context, CancellationToken cancellationToken) {
+        EXECUTIONS.incrementAndGet();
         VintageChunkBuildContext buildContext = (VintageChunkBuildContext)context;
         MinecraftBuiltRenderSectionData<TextureAtlasSprite, TileEntity> renderData = new MinecraftBuiltRenderSectionData<>();
         VisGraph occluder = new VisGraph();

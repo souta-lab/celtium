@@ -288,7 +288,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         } else if (now - celtium$markWindowStart > 5_000_000_000L && celtium$markLines < 30) {
             celtium$markLines++;
             System.out.println("[Celtium] CELTIUM_MARK_TRACE calls=" + celtium$markCalls + " important="
-                    + celtium$markImportant + " distinctSections=" + celtium$markSections.size() + " in 5s");
+                    + celtium$markImportant + " distinctSections=" + celtium$markSections.size() + " meshed="
+                    + org.taumc.celeritas.impl.render.terrain.compile.task.ChunkBuilderMeshingTask.EXECUTIONS.getAndSet(0)
+                    + " in 5s");
             celtium$markWindowStart = now;
             celtium$markCalls = 0;
             celtium$markImportant = 0;

@@ -5054,6 +5054,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * first run of this hook, where eight shapes were the camera's and only two lines named anything else.
      */
     private void reportGluPerspective(float fovDegrees, float aspect, float near, float far, float[] before) {
+        // The site is a stack walk, and the census keeps it to the first calls: the few sites that exist all install
+        // a projection in the first frames, and walking the stack three times a frame forever - the set never reaches
+        // its bound of 12 with only three sites - was a per-frame Throwable on the client thread.
+        if (this.gluPerspectiveShapes.size() >= 12 || this.mirroredGluPerspectives > GLU_PERSPECTIVE_CENSUS_CALLS) {
+            return;
+        }
         String site = gluPerspectiveSite();
         if (this.gluPerspectiveShapes.size() >= 12 || !this.gluPerspectiveShapes.add(site)) {
             return;
@@ -5076,6 +5082,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * then reports as "the mirrored projection is the identity at draw time". Naming the site and the argument is what
      * tells that (correct, and vanilla's own behaviour) apart from the channel not arriving, which is the defect.
      */
+    private static final int GLU_PERSPECTIVE_CENSUS_CALLS = 4096;
+
     private void reportSkippedGluPerspective(float fovDegrees, float aspect, float near, float far) {
         String reason = aspect == 0.0f ? "aspect=0 (LWJGL returns before touching GL)"
                 : near == far ? "deltaZ=0 (LWJGL returns before touching GL)"

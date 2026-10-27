@@ -86,7 +86,14 @@ public class TextureUtilMixin {
             // BH-36/panorama: a bounded caller census for the int[] path, because "the game uploaded white" and "our
             // path filled white" are the same mirror line otherwise. id 8 and 20 both report
             // source=announced-int[] content=opaque=65536/65536 firstOpaque=0xffffffff with announced=0.
-            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            boolean nameScoped = glTextureId == org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.uploadCallerId();
+            boolean censusDue = nameScoped ? celtium$uploadCallerLogs < 200 : celtium$uploadCallerLogs < 16;
+            // The splash only runs before a world exists, so with a world loaded the stack has nothing to say unless the
+            // census wants it: the walk ran on every int[] upload - Forge's cloud colour texture every frame and the
+            // light map every tick - and was the main thread's largest allocation site after the frame arena (JFR,
+            // Intel world, ~1 MB/s of Throwable.fillInStackTrace with gluPerspectiveSite).
+            StackTraceElement[] stack = censusDue || net.minecraft.client.Minecraft.getMinecraft().world == null
+                    ? Thread.currentThread().getStackTrace() : new StackTraceElement[0];
             boolean fromSplash = false;
             for (StackTraceElement frame : stack) {
                 String name = frame.getClassName();
@@ -100,8 +107,7 @@ public class TextureUtilMixin {
             // uploads of ONE GL name carry which pixels. The splash's logo is the measured case - "the game uploaded
             // white" and "our path filled white" are the same mirror line, and only the sequence of first= values for
             // that name separates them. `-Dceltium.vulkan.uploadCallerId=<gl name>`; off by default.
-            boolean nameScoped = glTextureId == org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.uploadCallerId();
-            if (nameScoped ? celtium$uploadCallerLogs < 200 : celtium$uploadCallerLogs < 16) {
+            if (censusDue) {
                 celtium$uploadCallerLogs++;
                 StackTraceElement[] frames = stack;
                 StringBuilder caller = new StringBuilder();
