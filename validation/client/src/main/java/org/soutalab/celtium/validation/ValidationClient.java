@@ -3280,6 +3280,9 @@ public final class ValidationClient {
                     report.addProperty("statusCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium"));
                     report.addProperty("probeCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium probe"));
                     report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
+                    // The replies are report data, not part of the scene: left in the chat they covered the lower left of
+                    // the native arm's capture, which the reference arm (no such command) never shows.
+                    mc.ingameGUI.getChatGUI().clearChatMessages(false);
                 }
             }
             if (worldTicks >= 60 && !celtium$shadowStageBuilt

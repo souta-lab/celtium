@@ -319,7 +319,13 @@ public final class TerrainRenderer {
             return pipeline;
         }
         try {
-            pipeline = VulkanTerrainPipeline.create(this.context, pass, !pass.isSorted());
+            // Back faces are culled on every terrain pass, the sorted (translucent) one included: vanilla draws the
+            // translucent layer with GL_CULL_FACE enabled (EntityRenderer.renderWorldPass enables it just before), and
+            // the reference renderer inherits that state. "!isSorted" is the mesher's facing-group selection, not the
+            // GPU state - passed here it drew the far side of every glass, ice and slime block, a second blended layer
+            // that darkened stained glass by ~20-25 levels per channel against Celeritas and whose sort order changes
+            // with the view.
+            pipeline = VulkanTerrainPipeline.create(this.context, pass, true);
             this.pipelines.put(pass, pipeline);
             record("pipeline for " + nameOf(pass) + " created [" + pipeline.vertexInputSummary() + "]");
             if (pipeline.limitsWarning() != null) {
