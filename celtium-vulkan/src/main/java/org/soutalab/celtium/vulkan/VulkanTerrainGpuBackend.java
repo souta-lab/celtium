@@ -157,15 +157,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     int targetWidth;
     int targetHeight;
     /**
-     * The frame target's framebuffers keyed by the render pass each is compatible with. One entry per render pass,
-     * not one framebuffer total: the terrain and immediate pipelines build their own render passes, and a
-     * single-slot cache replaced the entry on every pass alternation - each replacement paying a device-idle wait
-     * to retire the old handle. Measured ~5 settleGpu calls per frame on leg ind2-amd.
-     */
-    private final java.util.Map<Long, Long> framebuffers = new java.util.HashMap<>();
-    /** Times a framebuffer recreation found the GPU unsettled and kept the old framebuffer instead. */
-    private int framebufferSettleFailures;
-    /**
      * The framebuffer over the owned off-target images, and the render pass it was built for.
      * <p>
      * One per pair, cached for the same reason: compatibility is defined by the render pass the pipeline built, and
@@ -262,8 +253,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
     int defaultPairClears;
     int chainPairClears;
-    /** Per identity, the chain-pair generation its cached framebuffers were built over. */
-    private final java.util.Map<Long, Long> chainPairFramebufferGenerations = new java.util.HashMap<Long, Long>();
     /**
      * glClear attribution, counted where the request is read: {@code gameClearsLatchedForFrame} were issued while the
      * game's own main framebuffer was bound (they clear the delivered image), {@code gameClearsRoutedToPairs} while
@@ -11926,106 +11915,35 @@ this.frameBufferOpen = false;
         return this.vulkanProjection;
     }
 
-    /**
-     * The framebuffer is created here rather than in the frame target because compatibility is defined by the
-     * render pass the pipeline built, and one framebuffer serves every pass that is compatible with it.
-     */
+    /** The frame target's framebuffer for a render pass; see {@link FramebufferCache#frame}. */
     private long ensureFramebuffer(long renderPass) {
-        return ensureFramebuffer(renderPass, this.frameTarget.colorView(), this.frameTarget.depthView());
+        return framebufferCache().frame(renderPass, this.frameTarget.colorView(), this.frameTarget.depthView(),
+                this.targetWidth, this.targetHeight);
     }
 
-    /**
-     * The framebuffer for a pass that draws into the target's own off-target images rather than the frame's.
-     * <p>
-     * The game's framebuffers are not the frame image: the entity outline draws its silhouette into
-     * {@code entityOutlineFramebuffer} before the chain that turns it into a glow, and drawing that into the frame
-     * image instead paints the silhouette flat onto the scene with the scene's depth buffer. With no OpenGL context
-     * there is no such framebuffer to bind, so the renderer keeps one image of its own for these draws.
-     */
+    /** The default off-target pair's framebuffer, 0 without an owned pair; see {@link FramebufferCache#offTarget}. */
     private long ensureOffTargetFramebuffer(long renderPass) {
         GllessFrameTarget glless = offTargetTarget();
-        if (glless == null) {
-            return 0L;
-        }
-        if (!glless.offTargetMatches(this.targetWidth, this.targetHeight)) {
-            // The images every cached framebuffer names were replaced with the target: all handles are stale
-            // regardless of their render-pass key, so the whole slot is rebuilt.
-            destroyOffTargetFramebuffer();
-        }
-        long cached = this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR, renderPass);
-        if (cached != 0L) {
-            return cached;
-        }
-        long handle = ensurePairFramebuffer(renderPass, glless.offTargetColorView(),
-                glless.offTargetDepthView(), "off-target");
-        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR, handle, renderPass);
-        // counted by notePairFramebuffer
-        return handle;
+        return glless == null ? 0L
+                : framebufferCache().offTarget(renderPass, glless, this.targetWidth, this.targetHeight);
     }
 
-    /**
-     * The framebuffer for a pass that draws into the chain pair: the game's own framebuffers' content, the
-     * entity-outline silhouette being the measured case. Separate from the default pair's framebuffer because the
-     * attachments differ; otherwise the same cache, keyed by the render pass it is compatible with.
-     */
+    /** The current identity's chain-pair framebuffer, 0 without owned pairs; see {@link FramebufferCache#chainPair}. */
     private long ensureChainPairFramebuffer(long renderPass) {
         GllessFrameTarget glless = offTargetTarget();
-        if (glless == null) {
-            return 0L;
-        }
-        long identity = this.targetRegistry.currentIdentity();
-        long generation = glless.chainPairGeneration(identity);
-        Long builtOver = this.chainPairFramebufferGenerations.get(Long.valueOf(identity));
-        if (builtOver == null || builtOver.longValue() != generation) {
-            // Same rule as the default pair: replaced images mean the views every cached handle named are dead. Asked
-            // of the pair's own images, not of the window's size - a pair at its framebuffer's size (Xaero's minimap)
-            // never matched the window, and every pass into it settled the GPU to rebuild an identical framebuffer
-            // (2,940 creations in a 65 s Intel run, vkDeviceWaitIdle 80% of the client thread's native samples).
-            destroyChainPairFramebuffer(identity);
-        }
-        long cached = this.targetRegistry.chainPairFramebuffer(identity, renderPass);
-        if (cached != 0L) {
-            return cached;
-        }
-        // The framebuffer's declared extent must cover the attachments': a chain pair renders at its own size
-        // (the fixture's 256x256 secondary measured this - declaring the window's 1280x720 was
-        // VUID-VkFramebufferCreateInfo-flags-04533/04534 on every such pair).
-        long[] pairExtent = glless.chainPairExtent(identity);
-        int pairWidth = pairExtent == null ? this.targetWidth : (int) pairExtent[0];
-        int pairHeight = pairExtent == null ? this.targetHeight : (int) pairExtent[1];
-        long handle = ensurePairFramebuffer(renderPass, glless.chainPairColorView(identity),
-                glless.chainPairDepthView(identity), pairWidth, pairHeight,
-                "chain-pair:" + Long.toHexString(identity));
-        this.targetRegistry.noteChainPairFramebuffer(identity, handle, renderPass);
-        this.chainPairFramebufferGenerations.put(Long.valueOf(identity), Long.valueOf(generation));
-        // counted by noteChainPairFramebuffer
-        return handle;
+        return glless == null ? 0L
+                : framebufferCache().chainPair(renderPass, glless, this.targetWidth, this.targetHeight);
     }
 
-    /** Builds one framebuffer over a pair's views at the attachment's declared size. */
-    private long ensurePairFramebuffer(long renderPass, long colorView, long depthView, String what) {
-        return ensurePairFramebuffer(renderPass, colorView, depthView, this.targetWidth, this.targetHeight, what);
+    /** Created on first use: the registry it records into is built with the backend's other render-target state. */
+    private FramebufferCache framebufferCache() {
+        if (this.framebufferCache == null) {
+            this.framebufferCache = new FramebufferCache(this.context, this.targetRegistry);
+        }
+        return this.framebufferCache;
     }
 
-    private long ensurePairFramebuffer(long renderPass, long colorView, long depthView,
-            int width, int height, String what) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            LongBuffer attachments = stack.mallocLong(2);
-            attachments.put(0, colorView);
-            attachments.put(1, depthView);
-            org.lwjgl.vulkan.VkFramebufferCreateInfo create = org.lwjgl.vulkan.VkFramebufferCreateInfo.calloc(stack)
-                    .sType$Default()
-                    .renderPass(renderPass)
-                    .pAttachments(attachments)
-                    .width(width)
-                    .height(height)
-                    .layers(1);
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateFramebuffer(this.context.device(), create, null, handle),
-                    "vkCreateFramebuffer(" + what + ")");
-            return handle.get(0);
-        }
-    }
+    private FramebufferCache framebufferCache;
 
     /** The owned off-target image pair, or null when this configuration has none (the GL bridge has real ones). */
     GllessFrameTarget offTargetTarget() {
@@ -12377,113 +12295,18 @@ this.frameBufferOpen = false;
         return (float) (Math.round(value * 1000.0D) / 1000.0D);
     }
 
-    private void destroyOffTargetFramebuffer() {
-        destroyPairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
-    }
-
-    /**
-     * Retires one identity's chain-pair framebuffers; the teardown variant below destroys them all in place.
-     * <p>
-     * This runs while the frame is recording - a pass asked for the pair after its images were replaced - and the
-     * open command buffer can already name the old handles, which a settle cannot wait for: it has not been submitted.
-     * Destroying them in place invalidated that command buffer (E2E-E leg e2ee-amd10: "VkFramebuffer ... was
-     * destroyed" on every later command of the frame), so they go to the retire queue like the pair's images.
-     */
-    private void destroyChainPairFramebuffer(long identity) {
-        java.util.Collection<Long> handles = this.targetRegistry.chainPairFramebufferHandles(identity);
-        if (handles.isEmpty()) {
-            return;
-        }
-        retireFramebuffers(handles);
-        this.targetRegistry.clearChainPairFramebuffer(identity);
-        this.chainPairFramebufferGenerations.remove(Long.valueOf(identity));
-    }
-
-    /** Destroys every chain-pair framebuffer, across identities; the teardown path's variant. */
-    private void destroyAllChainPairFramebuffers() {
-        java.util.Collection<Long> handles = this.targetRegistry.allChainPairFramebufferHandles();
-        if (handles.isEmpty()) {
-            return;
-        }
-        if (!settleGpu("chain-pair framebuffer release")) {
-            this.framebufferSettleFailures++;
-            throw new IllegalStateException("GPU did not settle for chain-pair framebuffer release");
-        }
-        for (Long handle : handles) {
-            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
-        }
-        this.targetRegistry.clearAllChainPairFramebuffers();
-        this.chainPairFramebufferGenerations.clear();
-    }
-
-    /**
-     * Pair replacement bypasses destroyFramebuffer() and runs while the frame records, so the handles are retired for
-     * the same reason as {@link #destroyChainPairFramebuffer}.
-     */
-    private void destroyPairFramebuffer(RenderTargetRegistry.ImageSlot slot) {
-        java.util.Collection<Long> handles = this.targetRegistry.pairFramebufferHandles(slot);
-        if (handles.isEmpty()) {
-            return;
-        }
-        retireFramebuffers(handles);
-        this.targetRegistry.clearPairFramebuffer(slot);
-    }
-
-    /** Hands framebuffers to {@link VulkanRetireQueue}, which destroys them once nothing in flight can name them. */
-    private void retireFramebuffers(java.util.Collection<Long> handles) {
-        org.lwjgl.vulkan.VkDevice device = this.context.device();
-        for (Long handle : handles) {
-            final long framebuffer = handle.longValue();
-            VulkanRetireQueue.retire(() -> vkDestroyFramebuffer(device, framebuffer, null));
-        }
-    }
-
-    private long ensureFramebuffer(long renderPass, long colorView, long depthView) {
-        Long cached = this.framebuffers.get(renderPass);
-        if (cached != null) {
-            return cached.longValue();
-        }
-        // Creating a new framebuffer needs no GPU settle: nothing is destroyed here, the map keeps the older
-        // passes' handles alive beside the new one. Destruction - the thing VUID-vkDestroyFramebuffer-00892 guards -
-        // only happens at teardown below, which establishes completion once for every cached handle.
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            LongBuffer attachments = stack.mallocLong(2);
-            attachments.put(0, colorView);
-            attachments.put(1, depthView);
-            org.lwjgl.vulkan.VkFramebufferCreateInfo create = org.lwjgl.vulkan.VkFramebufferCreateInfo.calloc(stack)
-                    .sType$Default()
-                    .renderPass(renderPass)
-                    .pAttachments(attachments)
-                    .width(this.targetWidth)
-                    .height(this.targetHeight)
-                    .layers(1);
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateFramebuffer(this.context.device(), create, null, handle), "vkCreateFramebuffer");
-            this.framebuffers.put(renderPass, handle.get(0));
-            return handle.get(0);
-        }
-    }
-
     private void destroyFramebuffer() {
-        // Full target teardown settles before releasing its caches. The pair helpers also
-        // establish completion for direct replacements from ensure*PairFramebuffer(), which
-        // bypass this method. VUID-vkDestroyFramebuffer-framebuffer-00892 applies to both routes.
-        if (this.framebuffers.isEmpty()
-                && this.targetRegistry.pairFramebufferHandles(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR).isEmpty()
-                && this.targetRegistry.allChainPairFramebufferHandles().isEmpty()) {
+        // Full target teardown settles once and then frees every framebuffer in place; mid-session replacements
+        // retire instead (FramebufferCache). VUID-vkDestroyFramebuffer-framebuffer-00892 is what the settle is for.
+        if (this.framebufferCache == null || this.framebufferCache.isEmpty()) {
             return;
         }
         if (!settleGpu("framebuffer release")) {
             // Fail closed, exactly as the callers do: an unsettled GPU means these handles cannot be released yet.
-            // Leaking them until process exit is the safe direction, and the caller's own counter records it.
+            // Leaking them until process exit is the safe direction.
             return;
         }
-        destroyOffTargetFramebuffer();
-        destroyAllChainPairFramebuffers();
-        for (Long handle : this.framebuffers.values()) {
-            vkDestroyFramebuffer(this.context.device(), handle.longValue(), null);
-        }
-        this.framebuffers.clear();
+        this.framebufferCache.destroyAll();
     }
 
 
