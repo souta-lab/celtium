@@ -915,7 +915,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     rgba[2] = latchedBlue;
                     rgba[3] = latchedAlpha;
                 } else {
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(rgba);
+                    // The frame image is the main framebuffer: its clear uses the values that clear was issued with.
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(rgba);
                 }
                 org.lwjgl.vulkan.VkClearColorValue value =
                         org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
@@ -939,8 +940,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         COLOR_CLEAR_TRANSFER ? DEPTH_TRANSFER_LAYOUT : COLOR_RENDER_LAYOUT, value, range);
             }
             if (depth) {
+                double mainDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(new float[4]);
                 double depthValue = latched || initializeOnly ? latchedDepth
-                        : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+                        : Double.isNaN(mainDepth) ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth() : mainDepth;
                 org.lwjgl.vulkan.VkClearDepthStencilValue value =
                         org.lwjgl.vulkan.VkClearDepthStencilValue.calloc(stack);
                 value.depth((float) depthValue).stencil(0);

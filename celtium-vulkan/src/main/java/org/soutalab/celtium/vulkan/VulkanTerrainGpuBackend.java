@@ -12169,8 +12169,11 @@ this.frameBufferOpen = false;
             return;
         }
         float[] rgba = new float[4];
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(rgba);
-        double depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+        // The values the main clear was issued with, not the live ones: see CeltiumGlStub.mainClearValues.
+        double depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(rgba);
+        if (Double.isNaN(depth)) {
+            depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+        }
         if (!this.targetRegistry.currentIsMain()) {
             // The non-main clear was already recorded into the pair's command stream when the game issued it
             // (CeltiumGlStub.recordClear -> celtium$gameClear); this consume keeps the pending mask honest.

@@ -642,6 +642,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     private float lastForeignClearGreen;
     private float lastForeignClearBlue;
     private float lastMainClearRed;
+    /** The alpha and depth of the last main-framebuffer clear, as the game set them when it issued that clear. */
+    private float lastMainClearAlpha;
+    private double lastMainClearDepth = 1.0D;
+    private boolean mainClearValuesKnown;
     private float lastMainClearGreen;
     private float lastMainClearBlue;
 
@@ -2055,9 +2059,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         // frame, while a census of the routes said the clear never reached the delivered image.
         if (this.drawFramebufferIsMain) {
             this.mainClears++;
-            this.lastMainClearRed = this.clearRed;
-            this.lastMainClearGreen = this.clearGreen;
-            this.lastMainClearBlue = this.clearBlue;
+            // Per buffer: a later depth-only clear must not replace the colour the colour clear was issued with.
+            if ((mask & 0x4000) != 0) {
+                this.lastMainClearRed = this.clearRed;
+                this.lastMainClearGreen = this.clearGreen;
+                this.lastMainClearBlue = this.clearBlue;
+                this.lastMainClearAlpha = this.clearAlpha;
+                this.mainClearValuesKnown = true;
+            }
+            if ((mask & 0x0100) != 0) {
+                this.lastMainClearDepth = this.clearDepth;
+            }
         } else {
             this.foreignClears++;
             this.lastForeignClearRed = this.clearRed;
@@ -2096,6 +2108,28 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static int consumePendingClears() {
         CeltiumGlStub stub = installed;
         return stub == null ? 0 : stub.pendingClears.getAndSet(0);
+    }
+
+    /**
+     * The colour and depth of the last {@code glClear} of the main framebuffer, as set when that clear was issued -
+     * into {@code out} as {r,g,b,a}; {@return the depth}, or NaN when no main clear has been seen (use the live values).
+     * <p>
+     * The main clear is carried to the frame later (the latch at the next bind, or the acquire), and reading the live
+     * {@code glClearColor} then gave whatever was set in between: a {@code Framebuffer.framebufferClear} sets its own
+     * colour (black) before clearing another target, so the world frame was cleared black instead of with the fog
+     * colour vanilla's clear used - the E2E pack's black area below the horizon beyond the loaded chunks.
+     */
+    public static double mainClearValues(float[] out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || !stub.mainClearValuesKnown) {
+            clearColor(out);
+            return Double.NaN;
+        }
+        out[0] = stub.lastMainClearRed;
+        out[1] = stub.lastMainClearGreen;
+        out[2] = stub.lastMainClearBlue;
+        out[3] = stub.lastMainClearAlpha;
+        return stub.lastMainClearDepth;
     }
 
     /** The colour the game last asked {@code glClear} to use, into {@code out} as {r,g,b,a}. */
