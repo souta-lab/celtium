@@ -13,7 +13,7 @@ than 16 levels apart.
 
 | Screen | GPU | mean diff | over 16 | over 48 | What differs |
 |---|---|---|---|---|---|
-| loading | AMD | — | — | — | Forge/Mojang splash drawn; the GL arm has no loading dump, so no reference |
+| loading | AMD | 0.74 | 0.45 % | 0.45 % | against vanilla's own layout (below); the differing pixels are 1-px glyph edges in the right half only |
 | home (menu) | AMD | 7.77 | 15.6 % | 1.3 % | random splash text and the panorama's rotation phase only |
 | home (menu) | Intel | 8.55 | 16.4 % | 1.8 % | same |
 | settings (video) | AMD | 0.00 | 0.00 % | 0.00 % | pixel-identical |
@@ -40,3 +40,12 @@ The game screen's remaining differences, read from full-size crops:
   is flat (0xfafafa–0xfcfcfc for every block level), so vanilla's value is texture (207) × south shade 0.8 × 0.98 ≈ 162:
   Celtium's 164 is that value and the reference's gradient is the reference's own. Also ruled out on the way: fog,
   the entity light cache, the mesher, the atlas mip reach.
+
+## Loading screen reference
+
+The GL arm cannot dump the loading frame (the splash hook is Celtium's own mixin and the fixture is not loaded yet), so
+the reference is vanilla's own procedure rebuilt from the source (`Minecraft.drawSplashScreen`): GUI scale 3 at
+1280×720 (426×240 units), a full-screen quad textured with `mojang.png`'s white texel (0,0), then the 256×256 logo at
+((426−256)/2, (240−256)/2) units = (255, −24) px, 768×768 px, nearest filtering. Against leg `load-amd`'s presented
+loading frame: mean 0.74, 0.45 % of pixels over 16 levels, all of them 1-px glyph edges in the right half — vanilla
+renders the 1278-px-wide framebuffer onto the 1280-px window, a stretch this reconstruction does not model.
