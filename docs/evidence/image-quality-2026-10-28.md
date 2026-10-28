@@ -34,10 +34,9 @@ The game screen's remaining differences, read from full-size crops:
   Sodium-style `VintageBlockRenderer`, which upstream Celeritas only enables in development; the reference meshes
   through Forge's block-model pipeline. Celtium now does the same by default (legs `iq-amd-forgepipe`, `iq-intel-fp`,
   PASSED, validation clean; Intel paired KPI `kpi5-intel` control ratio 0.997, i.e. frame time unchanged).
-- **Open:** one large wall face (x 1000–1150, y 200–280 of the capture) is flat at 163–165 where the reference falls
-  smoothly 157 → 145 left to right (legs `wall-celtium`/`wall-celeritas`, AMD). A smooth multi-block gradient points at
-  per-vertex light (block-light falloff in the light map) rather than per-block AO; the other faces now match, so the
-  cause is specific to this face's direction or light. Ruled out (each changed nothing on the Celtium column values):
-  fog (start 216 / end 288 blocks, colour light blue, which would brighten), the entity light cache
-  (`-Dceltium.entityLightCache=false`), the block mesher (both meshers give the flat value), and the atlas mip reach
-  (`-Dceltium.vulkan.mirrorReachOverride=4`). Next: dump the face's packed light values in both meshers.
+- **Not a Celtium defect:** one large wall face is flat at 163–165 where the reference falls 157 → 145 left to right.
+  `-Dceltium.validation.probePixel` (same answer in both arms) names it white concrete, south face, 21–24 blocks away,
+  sky light 15 and block light 4 → 0 across the gradient. The game's own light map row for sky 15 (`lightmapSky15Row`)
+  is flat (0xfafafa–0xfcfcfc for every block level), so vanilla's value is texture (207) × south shade 0.8 × 0.98 ≈ 162:
+  Celtium's 164 is that value and the reference's gradient is the reference's own. Also ruled out on the way: fog,
+  the entity light cache, the mesher, the atlas mip reach.

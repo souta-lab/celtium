@@ -5375,7 +5375,84 @@ public final class ValidationClient {
     }
 
     /** The scripted per-leg actions {@link #frame} runs once their tick arrives; see the call site. */
+    private boolean celtium$pixelProbed;
+
+    /**
+     * {@code -Dceltium.validation.probePixel=X,Y} (capture pixels, 1280x720): at tick 200, the block the camera's ray
+     * through that pixel hits, its face, and the light the world stores in front of the face. Renderer-agnostic, so the
+     * two arms of an image comparison can be asked what a differing pixel shows and what light it should carry.
+     */
+    private void celtium$probePixel(Minecraft mc) {
+        String spec = System.getProperty("celtium.validation.probePixel", "");
+        if (spec.isEmpty() || celtium$pixelProbed || worldTicks < 200 || mc.world == null) {
+            return;
+        }
+        celtium$pixelProbed = true;
+        net.minecraft.entity.Entity eye = mc.getRenderViewEntity();
+        if (eye == null) {
+            return;
+        }
+        StringBuilder out = new StringBuilder();
+        for (String point : spec.split(";")) {
+            String[] xy = point.split(",");
+            double px = Double.parseDouble(xy[0].trim()), py = Double.parseDouble(xy[1].trim());
+            double aspect = (double) mc.displayWidth / mc.displayHeight;
+            double tanY = Math.tan(Math.toRadians(mc.gameSettings.fovSetting) / 2.0D);
+            double ndcX = 2.0D * (px + 0.5D) / mc.displayWidth - 1.0D;
+            double ndcY = 1.0D - 2.0D * (py + 0.5D) / mc.displayHeight;
+            double cx = ndcX * tanY * aspect, cy = ndcY * tanY;
+            double yaw = Math.toRadians(eye.rotationYaw), pitch = Math.toRadians(eye.rotationPitch);
+            // Camera basis in world space: forward from yaw/pitch, right and up perpendicular to it.
+            double fx = -Math.sin(yaw) * Math.cos(pitch), fy = -Math.sin(pitch), fz = Math.cos(yaw) * Math.cos(pitch);
+            double rx = -Math.cos(yaw), rz = -Math.sin(yaw);
+            double ux = -Math.sin(yaw) * -Math.sin(pitch) * 1.0D, uy = Math.cos(pitch), uz = Math.cos(yaw) * -Math.sin(pitch);
+            double dx = fx + cx * rx + cy * ux, dy = fy + cy * uy, dz = fz + cx * rz + cy * uz;
+            double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            net.minecraft.util.math.Vec3d from = eye.getPositionEyes(1.0F);
+            net.minecraft.util.math.Vec3d to = from.add(dx / len * 512.0D, dy / len * 512.0D, dz / len * 512.0D);
+            net.minecraft.util.math.RayTraceResult hit = mc.world.rayTraceBlocks(from, to, false, true, false);
+            out.append(out.length() == 0 ? "" : " | ").append(point.trim()).append(" -> ");
+            if (hit == null || hit.getBlockPos() == null) {
+                out.append("nothing");
+                continue;
+            }
+            net.minecraft.util.math.BlockPos pos = hit.getBlockPos();
+            net.minecraft.util.math.BlockPos front = pos.offset(hit.sideHit);
+            out.append(mc.world.getBlockState(pos)).append(" at ").append(pos.getX()).append(',').append(pos.getY())
+                    .append(',').append(pos.getZ()).append(" face=").append(hit.sideHit)
+                    .append(String.format(java.util.Locale.ROOT, " dist=%.1f", Math.sqrt(hit.hitVec.squareDistanceTo(from))))
+                    .append(" frontSky=").append(mc.world.getLightFor(net.minecraft.world.EnumSkyBlock.SKY, front))
+                    .append(" frontBlock=").append(mc.world.getLightFor(net.minecraft.world.EnumSkyBlock.BLOCK, front))
+                    .append(" packed=0x").append(Integer.toHexString(mc.world.getCombinedLight(front, 0)));
+        }
+        report.addProperty("pixelProbe", out.toString());
+        // The light map the game computed this tick, sky 15 row, block light 0..15: what a lit face should be modulated by.
+        try {
+            java.lang.reflect.Field field = null;
+            for (String name : new String[] {"field_78504_Q", "lightmapColors"}) {
+                try {
+                    field = net.minecraft.client.renderer.EntityRenderer.class.getDeclaredField(name);
+                    break;
+                } catch (NoSuchFieldException ignored) {
+                    // the other name
+                }
+            }
+            if (field != null) {
+                field.setAccessible(true);
+                int[] colours = (int[]) field.get(mc.entityRenderer);
+                StringBuilder row = new StringBuilder();
+                for (int block = 0; block < 16; block++) {
+                    row.append(block == 0 ? "" : " ").append(Integer.toHexString(colours[15 * 16 + block] & 0xFFFFFF));
+                }
+                report.addProperty("lightmapSky15Row", row.toString());
+            }
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            report.addProperty("lightmapSky15Row", "unreadable: " + error);
+        }
+    }
+
     private void celtium$frameScriptedActions(Minecraft mc) {
+        celtium$probePixel(mc);
         if (worldTicks >= 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
             celtium$reloaded = true;
             // Resource reload, the way F3+T does it: every chunk renderer is rebuilt and every texture is re-stitched.
