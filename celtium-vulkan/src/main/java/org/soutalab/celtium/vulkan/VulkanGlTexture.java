@@ -197,6 +197,16 @@ public final class VulkanGlTexture {
     /** The GL name of this object's last upload, so the encoding rule can be applied to it. */
     private int encodeLabel = -1;
 
+    /** {@return the GL texture name this mirror was last filled for}, or -1 before any fill. */
+    public int glTextureName() {
+        return this.encodeLabel;
+    }
+
+    /** Names the GL texture this mirror stands for, when it is filled by a path that does not pass the name. */
+    public void noteGlTextureName(int glTextureId) {
+        this.encodeLabel = glTextureId;
+    }
+
     /**
      * GL names whose readback supply is suppressed, as {@code id,id}; for measurement only.
      * <p>

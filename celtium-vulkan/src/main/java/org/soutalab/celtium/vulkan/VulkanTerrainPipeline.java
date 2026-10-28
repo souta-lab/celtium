@@ -301,13 +301,15 @@ public final class VulkanTerrainPipeline {
      */
     private static int atlasSamplerReports;
 
-    private static void celtium$reportAtlasSamplerMaxLod(int effective, int mirrorLevels, String source) {
+    private static void celtium$reportAtlasSamplerMaxLod(int effective, int mirrorLevels, String source,
+            VulkanGlTexture atlas) {
         if (atlasSamplerReports >= 6) {
             return;
         }
         atlasSamplerReports++;
         System.out.println("[Celtium] CELTIUM_ATLAS_SAMPLER maxLod=" + effective
-                + " configured=" + ATLAS_MAX_LOD + " mirrorLevels=" + mirrorLevels + " source=" + source);
+                + " configured=" + ATLAS_MAX_LOD + " mirrorLevels=" + mirrorLevels + " source=" + source
+                + " glName=" + atlas.glTextureName() + " gameMaxLevel=" + celtium$gameMaxLevel(atlas));
     }
 
 
@@ -933,6 +935,29 @@ public final class VulkanTerrainPipeline {
      * clamp-to-edge addressing, no bias, no anisotropy - and the game's own {@code maxLod}. Only the clamp differs
      * from the mirror's sampler, which is the variable this exists to move.
      */
+    /**
+     * {@return the highest level the game gave the atlas}: its GL_TEXTURE_MAX_LEVEL when recorded, otherwise the
+     * highest level it allocated (TextureUtil.allocateTextureImpl issues one glTexImage2D per level 0..mipmapLevels);
+     * -1 when neither is known.
+     */
+    private static int celtium$gameMaxLevel(VulkanGlTexture atlas) {
+        int name = atlas.glTextureName();
+        if (name <= 0 || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            return -1;
+        }
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameterRecorded(name, 0x813D)) {
+            return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(name, 0x813D);
+        }
+        int highest = -1;
+        for (int level = 0; level < 16; level++) {
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(name, level, 0x1000) <= 0) {
+                break;
+            }
+            highest = level;
+        }
+        return highest;
+    }
+
     private long atlasSamplerFor(VulkanGlTexture atlas) {
         // BH-32: the value is the game's own mipmap setting, so it must follow the atlas that is actually mirrored
         // rather than a constant. The mirror allocates as many levels as the GL texture has, and a texture reload can
@@ -944,10 +969,19 @@ public final class VulkanTerrainPipeline {
         if (mirrorLevels > 0 && mirrorLevels - 1 < effectiveMaxLod) {
             effectiveMaxLod = mirrorLevels - 1;
         }
-        if (effectiveMaxLod <= 1) {
+        // The game's own GL_TEXTURE_MAX_LEVEL for the atlas: TextureUtil.allocateTextureImpl sets it to the mipmap
+        // setting, and the mirror allocates a full chain whatever that is. With mipmaps off (E2E's options:
+        // mipmapLevels 0) only level 0 is ever written, and a sampler reaching level 4 read zeros for everything
+        // a few blocks away - the pack's black band below the horizon, every probed pixel a lit block 12-21 blocks out.
+        int gameMaxLevel = celtium$gameMaxLevel(atlas);
+        if (gameMaxLevel >= 0 && gameMaxLevel < effectiveMaxLod) {
+            effectiveMaxLod = gameMaxLevel;
+        }
+        // The mirror's own sampler clamps at level 1, so it serves only that value; 0 needs its own sampler too.
+        if (effectiveMaxLod == 1 || (effectiveMaxLod < 1 && gameMaxLevel < 0)) {
             // BH-32: the value is reported even on this path, so a leg can quote the effective maxLod the terrain pass
             // draws with instead of inferring it from the mirror's level count. Bounded to the first few transitions.
-            celtium$reportAtlasSamplerMaxLod(effectiveMaxLod, mirrorLevels, "mirror-sampler");
+            celtium$reportAtlasSamplerMaxLod(effectiveMaxLod, mirrorLevels, "mirror-sampler", atlas);
             return atlas.sampler();
         }
         if (this.atlasSampler == 0L || this.atlasSamplerMaxLod != effectiveMaxLod) {
@@ -956,7 +990,7 @@ public final class VulkanTerrainPipeline {
                 this.atlasSampler = 0L;
             }
             this.atlasSamplerMaxLod = effectiveMaxLod;
-            celtium$reportAtlasSamplerMaxLod(effectiveMaxLod, mirrorLevels, "rebuilt");
+            celtium$reportAtlasSamplerMaxLod(effectiveMaxLod, mirrorLevels, "rebuilt", atlas);
         }
         if (this.atlasSampler == 0L) {
             try (MemoryStack stack = MemoryStack.stackPush()) {

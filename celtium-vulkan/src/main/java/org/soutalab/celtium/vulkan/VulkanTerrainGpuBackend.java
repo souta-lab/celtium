@@ -15427,6 +15427,8 @@ this.frameBufferOpen = false;
                     this.atlasTexture = celtium$registry().imageFor(atlasId, size[0], size[1], true);
                 }
                 this.celtium$establishAtlasImage(atlasId, this.atlasTexture, "atlas");
+                // The terrain sampler asks the atlas for its GL name to read the game's GL_TEXTURE_MAX_LEVEL.
+                this.atlasTexture.noteGlTextureName(atlasId);
                 this.atlasSourceGlId = atlasId;
                 int[] atlasSize = textureSize(atlasId);
                 record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);
