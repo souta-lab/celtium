@@ -27,11 +27,7 @@ public final class LWJGLServiceProvider {
             return constructInstance(override);
         }
 
-        try {
-            Class.forName("org.lwjgl.opengl.GL11C");
-            return constructInstance("org.taumc.celeritas.lwjgl.lwjgl3.LWJGL3Service");
-        } catch (ClassNotFoundException e) {
-            return constructInstance("org.taumc.celeritas.lwjgl.lwjgl2.LWJGL2Service");
-        }
+        // LWJGL 3 only: Celtium runs on Cleanroom, and the LWJGL 2 service it inherited was never selected there.
+        return constructInstance("org.taumc.celeritas.lwjgl.lwjgl3.LWJGL3Service");
     }
 }
