@@ -52,7 +52,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080で表示）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`） |
-   | E2E 1.93a（Cleanroom 0.7） | **AMD PASSED**（`e2e-lod3`、黒0.4%、原因はmip 0でも地形samplerがlevel 4を読んでいた `af1e97fe0`）。**Intel: atlas読込の40%で `libvulkan_intel.so` 内SIGSEGV（`vkCmdCopyBufferToImage`、addr 0、決定的）**。batch off・atlas 1 level・`INTEL_DEBUG=noccs` でも同じ、確保失敗・例外なし。次: Mesaのデバッグ情報で位置特定 |
+   | E2E 1.93a（Cleanroom 0.7） | **AMD PASSED**（`e2e-lod3`、`af1e97fe0`）。**Intel: atlas読込中にドライバ内SIGSEGV**（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
