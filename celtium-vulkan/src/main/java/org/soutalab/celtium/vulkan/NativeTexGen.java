@@ -90,7 +90,7 @@ public final class NativeTexGen {
      * at {@code (s / q, t / q)}.
      */
     public void eyeRows(float[] textureMatrix, float[] out) {
-        float[][] g = new float[4][];
+        float[][] g = this.rowPlanes;
         for (int k = 0; k < 4; k++) {
             if (this.enabled[k]) {
                 g[k] = this.eyePlane[k];
@@ -98,7 +98,7 @@ public final class NativeTexGen {
                 g[k] = k == Q ? CONSTANT_ONE : ZERO;
             }
         }
-        int[] rows = {0, 1, 3};
+        int[] rows = ROWS_STQ;
         for (int r = 0; r < 3; r++) {
             int row = rows[r];
             for (int col = 0; col < 4; col++) {
@@ -126,6 +126,9 @@ public final class NativeTexGen {
         }
     }
 
+    private static final float[] INVERT_SCRATCH = new float[16];
+    private static final int[] ROWS_STQ = {0, 1, 3};
+    private final float[][] rowPlanes = new float[4][];
     private static final float[] ZERO = {0, 0, 0, 0};
     /** The constant 1, as a plane over homogeneous positions whose w is 1. */
     private static final float[] CONSTANT_ONE = {0, 0, 0, 1};
@@ -137,7 +140,9 @@ public final class NativeTexGen {
 
     /** General 4x4 inverse (column-major in and out). {@return false when singular}. */
     static boolean invert(float[] m, float[] inv) {
-        float[] t = new float[16];
+        // Render thread only (see the class note), so one scratch serves every call: this ran per plane per draw and
+        // its 16-float temporary was 4% of the client thread's allocation in a world frame.
+        float[] t = INVERT_SCRATCH;
         t[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
         t[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
         t[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];

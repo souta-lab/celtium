@@ -173,8 +173,29 @@ public final class ImmediateGroup {
         this.formatId = formatId;
         this.texture = texture;
         this.stateKey = stateKey;
-        this.state = copyState(state);
+        this.state = POOL ? copyState(state) : sharedState(state);
         this.target = target;
+    }
+
+    /** The last state array handed to a constructed group; render thread only. */
+    private static int[] lastSharedState;
+
+    /**
+     * {@return the previous group's state array when {@code source} equals it, else a new copy}. Only without the
+     * pool: a pooled group writes into its own array on reuse, which a shared array cannot allow. Consecutive groups
+     * mostly differ in texture or matrix, not state, and the per-group copy was 3.5% of the client thread's allocation.
+     */
+    private static int[] sharedState(int[] source) {
+        if (source == null) {
+            return null;
+        }
+        int[] last = lastSharedState;
+        if (last != null && java.util.Arrays.equals(last, source)) {
+            return last;
+        }
+        last = source.clone();
+        lastSharedState = last;
+        return last;
     }
 
     /**

@@ -1,7 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
-import java.util.HashMap;
-import java.util.Map;
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 
 /** Render-thread texture environment owned by Vulkan; the raw GL adapter only forwards setters and queries. */
 public final class NativeTextureEnvironment {
@@ -14,7 +13,9 @@ public final class NativeTextureEnvironment {
             NativeTextureBindings.current(), NativeRasterState.current());
     private final NativeTextureBindings bindings;
     private final NativeRasterState boundaries;
-    private final Map<Integer, Integer>[] parameters;
+    /** Per unit, pname -> value; absent answers {@link #UNSET}. Primitive keys: read per batch, boxing was 1.6% of allocation. */
+    private final Int2IntOpenHashMap[] parameters;
+    private static final int UNSET = Integer.MIN_VALUE;
     private final float[][] colors = new float[32][4];
     private boolean snapshotValid;
     private float[] snapshot;
@@ -23,14 +24,17 @@ public final class NativeTextureEnvironment {
     public NativeTextureEnvironment(NativeTextureBindings bindings, NativeRasterState boundaries) {
         this.bindings = bindings;
         this.boundaries = boundaries;
-        this.parameters = new Map[32];
-        for (int i = 0; i < this.parameters.length; i++) this.parameters[i] = new HashMap<>();
+        this.parameters = new Int2IntOpenHashMap[32];
+        for (int i = 0; i < this.parameters.length; i++) {
+            this.parameters[i] = new Int2IntOpenHashMap();
+            this.parameters[i].defaultReturnValue(UNSET);
+        }
     }
     public static NativeTextureEnvironment current() { return CURRENT; }
 
     public int unitParameter(int unit, int pname) {
-        Integer value = this.parameters[unit].get(pname);
-        if (value != null) return value;
+        int value = this.parameters[unit].get(pname);
+        if (value != UNSET) return value;
         if (pname == MODE || pname == RGB || pname == ALPHA) return MODULATE;
         if (pname == SOURCE0_RGB || pname == 0x8588) return 0x1702; // TEXTURE
         if (pname == OPERAND0_RGB) return SRC_COLOR;

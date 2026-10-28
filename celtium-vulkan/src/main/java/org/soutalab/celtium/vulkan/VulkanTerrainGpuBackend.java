@@ -7101,7 +7101,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     && liveTextureImage == this.currentGroupTextureImage
                     && ((formatId != 1 && formatId != 3 && formatId != 5)
                             || this.lightmapTexture == this.currentGroupLightmapImage)
-                    && celtium$groupMaterialMatches(formatId);
+                    && celtium$groupMaterialMatches(formatId)
+                    // No texture written since the last batch took the slow path, which is where raw GL writes are
+                    // brought into the mirror (and the queue flushed ahead of them): a write between two batches of
+                    // one texture must not be merged past.
+                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch() == this.slowPathWriteEpoch;
             if (fastMerged) {
                 this.immediateStatistics.noteFastMergedBatches();
             }
@@ -7169,6 +7173,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             else if (boundTexture > 0 && boundTexture != this.atlasGlId && boundTexture != this.lightmapGlId) {
                 celtium$refreshRawWrites(boundTexture, existing);
             }
+            this.slowPathWriteEpoch = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch();
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
             long preflightCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
@@ -8282,26 +8287,52 @@ this.frameBufferOpen = false;
         if (epoch == Long.MIN_VALUE) {
             return;
         }
+        if (texture >= RAW_WRITE_TRACKED_IDS) {
+            // GL names are small and dense; a name past this bound is not worth an array that size. The mirror's
+            // own serial check keeps the untracked call cheap when nothing changed.
+            celtium$applyRawWrites(texture, mirror);
+            return;
+        }
         if (texture >= this.rawWriteEpochChecked.length) {
-            int grown = Math.max(texture + 1, this.rawWriteEpochChecked.length * 2);
+            int grown = Math.min(RAW_WRITE_TRACKED_IDS, Math.max(texture + 1, this.rawWriteEpochChecked.length * 2));
             this.rawWriteEpochChecked = java.util.Arrays.copyOf(this.rawWriteEpochChecked, grown);
             this.rawWriteSerialApplied = java.util.Arrays.copyOf(this.rawWriteSerialApplied, grown);
         }
         if (this.rawWriteEpochChecked[texture] == epoch) {
             return;
         }
+        // Checked at this epoch whatever the outcome: a failing upload is retried when the next write lands anywhere,
+        // not on every batch.
         this.rawWriteEpochChecked[texture] = epoch;
         long serial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(texture, 0);
         if (serial == Long.MIN_VALUE || serial == this.rawWriteSerialApplied[texture]) {
             return;
         }
-        this.rawWriteSerialApplied[texture] = serial;
+        if (celtium$applyRawWrites(texture, mirror)) {
+            // Only after the upload succeeded: marking first made a failed upload look applied, and the write would
+            // never be retried.
+            this.rawWriteSerialApplied[texture] = serial;
+        }
+    }
+
+    /** GL names up to this bound are tracked in the per-name arrays above. */
+    private static final int RAW_WRITE_TRACKED_IDS = 1 << 16;
+    /** The stub's write epoch when a batch last took the slow path; the fast merge requires it unchanged. */
+    private long slowPathWriteEpoch = Long.MIN_VALUE;
+
+    /** {@return whether the mirror took the texture's current captured content}. */
+    private boolean celtium$applyRawWrites(int texture, org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
+        // Draws queued before the write sampled the old content in GL: submit them before the mirror changes, or they
+        // would be recorded later against the new image.
+        flushPendingBeforeGlDraw();
         try {
             mirror.uploadFromGlTexture(texture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
             this.rawWriteRefreshes++;
+            return true;
         } catch (RuntimeException | LinkageError error) {
             this.lazyMirrorFailures++;
             this.lastLazyMirrorFailure = texture + " (raw write): " + error;
+            return false;
         }
     }
 
@@ -8310,8 +8341,11 @@ this.frameBufferOpen = false;
         if (texture <= 0) {
             return;
         }
+        if (texture >= RAW_WRITE_TRACKED_IDS) {
+            return;
+        }
         if (texture >= this.rawWriteSerialApplied.length) {
-            int grown = Math.max(texture + 1, this.rawWriteSerialApplied.length * 2);
+            int grown = Math.min(RAW_WRITE_TRACKED_IDS, Math.max(texture + 1, this.rawWriteSerialApplied.length * 2));
             this.rawWriteEpochChecked = java.util.Arrays.copyOf(this.rawWriteEpochChecked, grown);
             this.rawWriteSerialApplied = java.util.Arrays.copyOf(this.rawWriteSerialApplied, grown);
         }
@@ -10489,16 +10523,37 @@ this.frameBufferOpen = false;
         }
     }
 
+    private final float[] closeProjectionScratch = new float[16];
+    private float[] lastSharedProjection;
+    private float[] lastSharedModelView;
+
+    /** {@return the last queued group's array when {@code values} equals it, else a new copy that becomes the last}. */
+    private float[] celtium$shareMatrix(float[] values, boolean projection) {
+        float[] last = projection ? this.lastSharedProjection : this.lastSharedModelView;
+        if (last != null && java.util.Arrays.equals(last, values)) {
+            return last;
+        }
+        float[] copy = values.clone();
+        if (projection) {
+            this.lastSharedProjection = copy;
+        } else {
+            this.lastSharedModelView = copy;
+        }
+        return copy;
+    }
+
     private void closeCurrentImmediateGroupBody() {
         // Group boundary for the font batching (task-59): a held run is closed out through the normal path here, so it
         // cannot be appended to a group that opens after it.
         celtium$flushPendingFontBatch("boundary");
         if (this.currentImmediateMesh != null && this.currentGroupUsed) {
-            float[] projection = new float[16];
-            float[] modelView = new float[16];
             // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
-            remapClipDepth(this.currentGroupProjection, projection);
-            System.arraycopy(this.currentGroupModelView, 0, modelView, 0, 16);
+            remapClipDepth(this.currentGroupProjection, this.closeProjectionScratch);
+            // A group's matrices are read-only once it is queued (the compositor already shares one identity array
+            // between groups), so consecutive groups with equal matrices share one array instead of two new ones each:
+            // the per-group copies were the largest single item of the client thread's allocation.
+            float[] projection = celtium$shareMatrix(this.closeProjectionScratch, true);
+            float[] modelView = celtium$shareMatrix(this.currentGroupModelView, false);
             // The largest group the immediate path closed, in vertices. It is the number that says whether separate
             // batches merged into one draw: the S05 acceptance fixture draws two quads into a single batch and expects to
             // see eight vertices here, where the base-vertex defect would still have shown eight vertices but drawn the
@@ -14815,8 +14870,18 @@ this.frameBufferOpen = false;
 
     /** The light-map coordinate pair the last capture stored, as {x, y}. */
     private float[] lightmapCoords() {
-        return new float[] {this.lightmapCoordX, this.lightmapCoordY};
+        // Held by queued groups and never written after: equal pairs share one array (2% of the client thread's
+        // allocation was these two floats, one pair per model instance).
+        float[] last = this.lastLightmapCoords;
+        if (last != null && last[0] == this.lightmapCoordX && last[1] == this.lightmapCoordY) {
+            return last;
+        }
+        last = new float[] {this.lightmapCoordX, this.lightmapCoordY};
+        this.lastLightmapCoords = last;
+        return last;
     }
+
+    private float[] lastLightmapCoords;
 
     /**
      * The full-bright light-map coordinate, the pair {@code GuiContainer.java:107} sets before it draws its items:
@@ -15196,12 +15261,21 @@ this.frameBufferOpen = false;
      * buffer per call was ~1.4% of the client thread's samples on the dense world scene (JFR line census). */
     private static final IntBuffer VIEWPORT_SCRATCH = org.lwjgl.BufferUtils.createIntBuffer(4);
 
+    private static long lastViewportPacked = Long.MIN_VALUE;
+    private static int[] lastViewport;
+
     private static int[] currentViewport() {
         // Under the GL-less window the answer is the rectangle the game last set, kept by the stub: asking GL through
         // the direct buffer below costs an allocation and a query for every group.
         long packed = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewportPacked();
         if (packed >= 0L) {
-            return new int[] { (int) ((packed >> 48) & 0xFFFF) - (((packed >> 48) & 0x8000) != 0 ? 0x10000 : 0),
+            // Held by queued groups and never written: the same rectangle shares one array (a new one per group was
+            // 1.7% of the client thread's allocation). Render thread only.
+            if (packed == lastViewportPacked && lastViewport != null) {
+                return lastViewport;
+            }
+            lastViewportPacked = packed;
+            return lastViewport = new int[] { (int) ((packed >> 48) & 0xFFFF) - (((packed >> 48) & 0x8000) != 0 ? 0x10000 : 0),
                     (int) ((packed >> 32) & 0xFFFF) - (((packed >> 32) & 0x8000) != 0 ? 0x10000 : 0),
                     (int) ((packed >> 16) & 0xFFFF), (int) (packed & 0xFFFF) };
         }

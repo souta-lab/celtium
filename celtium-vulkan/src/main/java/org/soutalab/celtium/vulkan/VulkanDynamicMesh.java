@@ -32,6 +32,26 @@ public final class VulkanDynamicMesh {
         public final int normal;
         public final int light;
 
+        private static final Layout POSITION_COLOR_LIGHT = new Layout(24, 0, -1, 12, -1, 16);
+        private static final Layout POSITION_TEX_LIGHT_COLOR = new Layout(24, 0, 12, 20, -1, 16);
+        private static final Layout POSITION_TEX_COLOR = new Layout(24, 0, 12, 20, -1, -1);
+        private static final Layout POSITION_NORMAL_TEX_LIGHT_COLOR = new Layout(32, 0, 16, 28, 12, 24);
+        /** Immutable, so one instance per stride serves every mesh (a new one per copy was 2% of allocation). */
+        private static final Layout[] POSITION_ONLY = new Layout[257];
+
+        /** {@code stride} bytes per vertex with only the position known (a copied batch's own layout). */
+        public static Layout positionOnly(int stride) {
+            if (stride < 0 || stride >= POSITION_ONLY.length) {
+                return new Layout(stride, 0, -1, -1, -1, -1);
+            }
+            Layout layout = POSITION_ONLY[stride];
+            if (layout == null) {
+                layout = new Layout(stride, 0, -1, -1, -1, -1);
+                POSITION_ONLY[stride] = layout;
+            }
+            return layout;
+        }
+
         public Layout(int stride, int position, int uv, int color, int normal, int light) {
             this.stride = stride;
             this.position = position;
@@ -43,22 +63,22 @@ public final class VulkanDynamicMesh {
 
         /** {@code DefaultVertexFormats.POSITION_COLOR} plus the light map coordinate. */
         public static Layout positionColorLight() {
-            return new Layout(24, 0, -1, 12, -1, 16);
+            return POSITION_COLOR_LIGHT;
         }
 
         /** {@code DefaultVertexFormats.POSITION_TEX_LIGHTMAP_COLOR}: the GUI and font layout. */
         public static Layout positionTexLightColor() {
-            return new Layout(24, 0, 12, 20, -1, 16);
+            return POSITION_TEX_LIGHT_COLOR;
         }
 
         /** {@code DefaultVertexFormats.POSITION_TEX_COLOR} without lighting. */
         public static Layout positionTexColor() {
-            return new Layout(24, 0, 12, 20, -1, -1);
+            return POSITION_TEX_COLOR;
         }
 
         /** {@code DefaultVertexFormats.POSITION_NORMAL_TEX_LIGHTMAP_COLOR}: world-space entities and items. */
         public static Layout positionNormalTexLightColor() {
-            return new Layout(32, 0, 16, 28, 12, 24);
+            return POSITION_NORMAL_TEX_LIGHT_COLOR;
         }
     }
 
@@ -509,7 +529,7 @@ public final class VulkanDynamicMesh {
                 MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
             }
         }
-        this.layout = new Layout(stride, 0, -1, -1, -1, -1);
+        this.layout = Layout.positionOnly(stride);
         this.vertexBytes = requiredVertices;
         this.indexBytes = requiredIndices;
         this.vertexCount += count;
@@ -607,7 +627,7 @@ public final class VulkanDynamicMesh {
                 MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
             }
         }
-        this.layout = new Layout(stride, 0, -1, -1, -1, -1);
+        this.layout = Layout.positionOnly(stride);
         this.vertexBytes = requiredVertices;
         this.indexBytes = requiredIndices;
         this.vertexCount += count;
