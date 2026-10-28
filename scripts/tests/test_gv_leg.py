@@ -123,7 +123,23 @@ sys.exit(code)
 
 
 class LegRunnerTests(unittest.TestCase):
+    def test_child_exit_grace_waits_for_a_group_that_empties_and_gives_up_on_one_that_does_not(self):
+        clock = [0.0]
+        def advance(seconds):
+            clock[0] += seconds
+        # A pack helper that exits two seconds after the game: waited for, not reported.
+        waited = runner.wait_group_empty(1, 60.0, exists=lambda pgid: clock[0] < 2.0, sleep=advance,
+                                         clock=lambda: clock[0])
+        self.assertEqual(waited, 2.0)
+        clock[0] = 0.0
+        # One that never exits: the wait stops at the grace and the caller still reports it.
+        waited = runner.wait_group_empty(1, 3.0, exists=lambda pgid: True, sleep=advance, clock=lambda: clock[0])
+        self.assertGreaterEqual(waited, 3.0)
+
     def setUp(self):
+        self._grace = runner.CHILD_EXIT_GRACE
+        runner.CHILD_EXIT_GRACE = 0.2
+        self.addCleanup(setattr, runner, "CHILD_EXIT_GRACE", self._grace)
         self.temporary = tempfile.TemporaryDirectory(prefix="gv-leg-test-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)

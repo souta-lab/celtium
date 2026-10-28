@@ -510,6 +510,21 @@ def group_exists(pgid: int) -> bool:
         return False
 
 
+# A pack's own helper process may outlive the game by a few seconds: E2E-E's Crash Assistant starts a separate JVM that
+# watches the game and exits after it (measured: still present when the harness returned, gone moments later, under
+# both renderers). The group is given this long to empty before a leftover is reported.
+CHILD_EXIT_GRACE = float(os.environ.get("CELTIUM_LEG_CHILD_EXIT_GRACE", "60"))
+
+
+def wait_group_empty(pgid: int, grace: float, exists=None, sleep=time.sleep, clock=time.monotonic) -> float:
+    """Wait up to ``grace`` seconds for the group to empty; return the seconds waited (``grace`` or more if it did not)."""
+    exists = exists or group_exists
+    started = clock()
+    while exists(pgid) and clock() - started < grace:
+        sleep(0.5)
+    return clock() - started
+
+
 def group_members(pgid: int) -> list[str]:
     """The processes still in a group, as 'pid command' lines, so a leftover is named rather than only counted."""
     try:
@@ -600,6 +615,8 @@ def execute(plan: Plan, *, timeout: float | None = None, terminate_grace: float 
                             pass
                     if result is None:
                         result = postcheck(plan, process.returncode)
+                        if group_exists(process.pid):
+                            result["childExitWaitSeconds"] = round(wait_group_empty(process.pid, CHILD_EXIT_GRACE), 1)
                         if group_exists(process.pid):
                             result.update(accepted=False, verdict="FAILED", exitCode=1)
                             result["problems"].append("harness left owned child processes running")
