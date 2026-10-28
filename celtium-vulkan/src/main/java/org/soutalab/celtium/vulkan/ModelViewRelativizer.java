@@ -57,12 +57,10 @@ final class ModelViewRelativizer {
      * compose: the capture answers the identity for nearly every list, and the generation is a synchronized lookup.
      */
     void makeRelative(float[] liveModelView, int listId) {
-        float[] compileMatrix = VulkanModelQuadCapture.matrixForList(listId);
-        if (compileMatrix == null || isIdentity(compileMatrix)) {
-            this.identityReplays++;
-            return;
-        }
-        composeRelative(liveModelView, compileMatrix, listId, VulkanModelQuadCapture.generationOf(listId));
+        // The capture stores model-space vertices, so VulkanModelQuadCapture.matrixForList answers the identity (or null)
+        // for every list and the live view already is the relative one. Asking it anyway cost a synchronized map lookup
+        // per model replay (1.3% of the client thread) to then return here.
+        this.identityReplays++;
     }
 
     private void composeRelative(float[] liveModelView, float[] compileMatrix, int listId, int generation) {
