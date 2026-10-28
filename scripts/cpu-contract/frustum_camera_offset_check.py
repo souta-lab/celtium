@@ -186,9 +186,12 @@ public class FrustumCameraOffsetProbe {
 
     static void permissivePlanes(Matrix4f projection, Matrix4f modelView, String label) throws Exception {
         PlaneHook hook = new PlaneHook();
-        FrustumIntersection planes = updatePlanes(hook, new Matrix4f(), new Matrix4f());
-        require(!planes.testAab(128, 128, 128, 129, 129, 129), label + " valid precondition did not reject");
-        updatePlanes(hook, projection, modelView);
+        FrustumIntersection valid = updatePlanes(hook, new Matrix4f(), new Matrix4f());
+        require(!valid.testAab(128, 128, 128, 129, 129, 129), label + " valid precondition did not reject");
+        FrustumIntersection planes = updatePlanes(hook, projection, modelView);
+        // Planes a viewport already captured stay as they were: the terrain search tests against them on its own
+        // thread while the next init runs.
+        require(!valid.testAab(128, 128, 128, 129, 129, 129), label + " captured planes changed under a later init");
         setModelView(modelView);
         FrustumMixin camera = camera(planes, new Vector3d(29999900.125, 12.0, -29999900.375));
         Viewport viewport = camera.sodium$createViewport();
@@ -199,8 +202,8 @@ public class FrustumCameraOffsetProbe {
                     coordinate + 1.0, coordinate + 1.0, coordinate + 1.0),
                     label + " permissive viewport rejected remote world AABB");
         }
-        updatePlanes(hook, new Matrix4f(), new Matrix4f());
-        require(!planes.testAab(128, 128, 128, 129, 129, 129), label + " valid planes did not recover");
+        FrustumIntersection recovered = updatePlanes(hook, new Matrix4f(), new Matrix4f());
+        require(!recovered.testAab(128, 128, 128, 129, 129, 129), label + " valid planes did not recover");
     }
 
     public static void main(String[] args) throws Exception {

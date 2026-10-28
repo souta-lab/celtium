@@ -3745,9 +3745,16 @@ public final class ValidationClient {
                 }
                 // Overlay ALL is the required fixture phase; do not let a copied setting make the test unreachable.
                 if (commandBufferTargets) mc.gameSettings.hideGUI = false;
-                WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
+                // -Dceltium.validation.worldType=default: generated terrain (caves, oceans, overhangs) from the same
+                // fixed seed, for the visibility questions a flat world cannot ask - a turn that briefly showed caves
+                // through the surface was reported on generated terrain only.
+                boolean generated = "default".equalsIgnoreCase(System.getProperty("celtium.validation.worldType"));
+                WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false,
+                        generated ? WorldType.DEFAULT : WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
-                settings.setGeneratorOptions(celtium$worldLayers);
+                if (!generated) {
+                    settings.setGeneratorOptions(celtium$worldLayers);
+                }
                 if (Boolean.getBoolean("celtium.validation.probeLoadingProgress")) {
                     // Controlled API case, not a claim that native world generation supplies a numeric bar.
                     // displayLoadingString resets the producer's throttle, so the following numeric frame is drawn.

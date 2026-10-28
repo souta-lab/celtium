@@ -14,8 +14,14 @@ import org.taumc.celeritas.impl.render.frustum.IClippingHelper;
 /** Uses the same camera matrices as vanilla and the terrain, including Forge camera transforms. */
 @Mixin(ClippingHelperImpl.class)
 public abstract class ClippingHelperImplMixin extends ClippingHelper implements IClippingHelper {
+    /**
+     * Replaced, never rewritten: a viewport captures this object and the terrain search tests boxes against it on its
+     * own thread, while the next ClippingHelperImpl.init (the next frame, or another pass's camera) runs on the render
+     * thread. Rewriting the planes in place let a search see them change under it - surface sections were culled for
+     * a frame and the caves and sea floor behind them showed as the view moved.
+     */
     @Unique
-    private final FrustumIntersection celeritas$frustum = new FrustumIntersection();
+    private FrustumIntersection celeritas$frustum = new FrustumIntersection();
     @Unique
     private Matrix4f celeritas$viewProjection;
 
@@ -30,10 +36,10 @@ public abstract class ClippingHelperImplMixin extends ClippingHelper implements 
         this.celeritas$viewProjection = vp.isFinite() ? new Matrix4f(vp) : null;
         if (!vp.isFinite() || vp.determinant() == 0.0f) {
             // A zero, non-normalized plane accepts every box. Identity would instead cull outside [-1,1]^3.
-            this.celeritas$frustum.set(new Matrix4f().zero(), false);
+            this.celeritas$frustum = new FrustumIntersection(new Matrix4f().zero(), false);
         } else {
             // These are OpenGL clip coordinates; only the draw backend remaps depth to Vulkan [0,1].
-            this.celeritas$frustum.set(vp, true);
+            this.celeritas$frustum = new FrustumIntersection(vp, true);
         }
     }
 
