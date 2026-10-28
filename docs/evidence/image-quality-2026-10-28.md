@@ -37,4 +37,7 @@ The game screen's remaining differences, read from full-size crops:
 - **Open:** one large wall face (x 1000–1150, y 200–280 of the capture) is flat at 163–165 where the reference falls
   smoothly 157 → 145 left to right (legs `wall-celtium`/`wall-celeritas`, AMD). A smooth multi-block gradient points at
   per-vertex light (block-light falloff in the light map) rather than per-block AO; the other faces now match, so the
-  cause is specific to this face's direction or light. Next: dump the face's packed light values in both meshers.
+  cause is specific to this face's direction or light. Ruled out (each changed nothing on the Celtium column values):
+  fog (start 216 / end 288 blocks, colour light blue, which would brighten), the entity light cache
+  (`-Dceltium.entityLightCache=false`), the block mesher (both meshers give the flat value), and the atlas mip reach
+  (`-Dceltium.vulkan.mirrorReachOverride=4`). Next: dump the face's packed light values in both meshers.
