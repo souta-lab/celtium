@@ -2993,6 +2993,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    /** {@link VulkanImmediateFormats#COMBINE4}: the multi-unit combine Xaero's World Map draws its tiles with. */
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> combine4PipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     /**
@@ -6622,7 +6625,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.lightCoordLogged = 4;
             }
         }
-        int expectedStride = formatId == 11 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_FLOAT_BYTES
+        int expectedStride = formatId == VulkanImmediateFormats.COMBINE4 ? VulkanImmediateTexturePipeline.COMBINE4_BYTES
+                : formatId == 11 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_FLOAT_BYTES
                 : formatId == 10 ? VulkanImmediateTexturePipeline.POSITION_NORMAL_BYTES
                 : formatId == 9 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES
                 : formatId == 8 ? VulkanImmediateTexturePipeline.POSITION_TEX_COLOR_NORMAL_BYTES
@@ -8006,7 +8010,7 @@ this.frameBufferOpen = false;
     /** {@code -Dceltium.debug.noAffineBake}, read once: the pre-transform check asks it per offer. */
     private static final boolean NO_AFFINE_BAKE = Boolean.getBoolean("celtium.debug.noAffineBake");
 
-    private final int[] celtium$stateScratch = new int[15];
+    private final int[] celtium$stateScratch = new int[16];
 
     int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
@@ -8128,6 +8132,12 @@ this.frameBufferOpen = false;
         state[12] = colorOp;
         state[13] = alphaOp;
         state[14] = alphaFunction;
+        // The multi-unit light combine (COMBINE4's fragment stage): unit 0 COMBINE with a SUBTRACT RGB function is the
+        // set-up GuiMap.setupTextures makes, and the only one that shader evaluates beyond MODULATE. In the key, so a
+        // combined tile and a plain one never share a group.
+        NativeTextureEnvironment environment = NativeTextureEnvironment.current();
+        state[15] = environment.unitParameter(0, NativeTextureEnvironment.MODE) == NativeTextureEnvironment.COMBINE
+                && environment.unitParameter(0, NativeTextureEnvironment.RGB) == 0x84E7 ? 1 : 0;
         return state;
     }
 
@@ -8495,6 +8505,7 @@ this.frameBufferOpen = false;
         released += releaseTexturePipelineCache(this.positionOnlyPipelineCache);
         released += releaseTexturePipelineCache(this.positionNormalPipelineCache);
         released += releaseTexturePipelineCache(this.positionTexPipelineCache);
+        released += releaseTexturePipelineCache(this.combine4PipelineCache);
         released += releaseTexturePipelineCache(this.texturedPipelineCache);
         released += releaseTexturePipelineCache(this.texGenPipelineCache);
         for (VulkanImmediateItemPipeline item : this.itemPipelineCache.values()) {
@@ -9667,7 +9678,9 @@ this.frameBufferOpen = false;
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare");
             pipeline = value;
         } else if (format >= 2) {
-            java.util.Map<Long, VulkanImmediateTexturePipeline> cache = format == 10 ? this.positionNormalPipelineCache
+            java.util.Map<Long, VulkanImmediateTexturePipeline> cache =
+                    format == VulkanImmediateFormats.COMBINE4 ? this.combine4PipelineCache
+                    : format == 10 ? this.positionNormalPipelineCache
                     : format == 9 ? this.positionTexNormalPipelineCache
                     : format == 8 ? this.positionTexColorNormalPipelineCache : format == 7 ? this.positionOnlyPipelineCache
                     : format == 6 ? this.positionTexPipelineCache : this.texturedPipelineCache;
@@ -9681,7 +9694,9 @@ this.frameBufferOpen = false;
                 // reach the image at all". Default on, so the shipped behaviour is unchanged.
                 boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
                 VulkanColorBlendState colorBlend = celtium$blendState(state);
-                value = format == 11 ? VulkanImmediateTexturePipeline.createForPositionTexNormalFloat(this.context,
+                value = format == VulkanImmediateFormats.COMBINE4 ? VulkanImmediateTexturePipeline.createForCombine4(
+                        this.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        : format == 11 ? VulkanImmediateTexturePipeline.createForPositionTexNormalFloat(this.context,
                         pass, colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
                         colorBlend, positionNormalDepthTest, state[4] != 0, state[5] != 0, compareOp)
@@ -14373,6 +14388,11 @@ this.frameBufferOpen = false;
         return this.textureCopyService.celtium$getTexImage(textureName, level, format, type, address);
     }
 
+    /** As {@link #celtium$getTexImage(int, int, int, int, long)}, bounded to a pack buffer's remaining bytes. */
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address, long capacity) {
+        return this.textureCopyService.celtium$getTexImage(textureName, level, format, type, address, capacity);
+    }
+
     /**
      * The backend side of {@link TextureCopyService.Host}: one method per fact the copy path reads.
      * <p>
@@ -16134,6 +16154,9 @@ this.frameBufferOpen = false;
                 // never reads it (a negative alpha reference selects the mix path before the comparison).
                 int alphaSelector = celtium$alphaFuncSelector(state);
                 push.putFloat(100, alphaSelector);
+                // COMBINE4's combine selector, in the texture block's unused w (92); written for every group because
+                // the push buffer is shared, and only the combine shader reads it.
+                push.putFloat(92, group.formatId == VulkanImmediateFormats.COMBINE4 && state.length > 15 ? state[15] : 0);
                 if (texMat != null && texMat.length == 12) {
                     // A texgen group: the generated-coordinate rows over this group's positions fill 64..111, which
                     // the texgen shaders declare instead of the affine, the colour alpha and the alpha selector.

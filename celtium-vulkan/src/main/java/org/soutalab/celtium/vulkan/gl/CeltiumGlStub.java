@@ -4941,6 +4941,21 @@ public final class CeltiumGlStub implements FunctionProvider {
                 c[8]);
     }
 
+    /** The mean byte value of the bytes an upload is about to read from a pixel unpack buffer, for the PBO log line. */
+    private static String celtium$pboMean(ByteBuffer storage, long offset, long bytes) {
+        if (storage == null || offset < 0L || offset + bytes > storage.capacity() || bytes <= 0L) {
+            return "n/a";
+        }
+        long sum = 0L;
+        long nonZero = 0L;
+        for (long i = 0; i < bytes; i++) {
+            int value = storage.get((int) (offset + i)) & 0xFF;
+            sum += value;
+            if (value != 0) nonZero++;
+        }
+        return String.format(java.util.Locale.ROOT, "%.1f nonZero=%d/%d", (double) sum / bytes, nonZero, bytes);
+    }
+
     /** The one tex-sub-image producer: the dispatch case and the transformer's route both land here. */
     private void texSubImage(int target, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
@@ -4956,7 +4971,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             System.out.println("[Celtium] CELTIUM_PBO_UPLOAD texture=" + name + " level=" + level + " at=" + x + ","
                     + y + " size=" + width + "x" + height + " format=0x" + Integer.toHexString(format) + " type=0x"
                     + Integer.toHexString(type) + " buffer=" + this.pixelUnpackBuffer + " offset=" + pixels
-                    + " storage=" + (storage == null ? "none" : storage.capacity() + "B"));
+                    + " storage=" + (storage == null ? "none" : storage.capacity() + "B")
+                    + " sourceMean=" + celtium$pboMean(storage, pixels, (long) width * height * 4L));
         }
         if (name == 0 || !carriesPixels(pixels, this.pixelUnpackBuffer) || width <= 0 || height <= 0) {
             return;
@@ -5954,9 +5970,20 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || target != 0x0DE1) {
             return;
         }
+        long capacity = Long.MAX_VALUE;
+        if (stub.pixelPackBuffer > 0) {
+            // With a pack buffer bound the argument is an offset into it: resolve it against the buffer's storage,
+            // and refuse an offset outside it rather than write through a small integer taken as an address.
+            ByteBuffer storage = stub.bufferStore.get(stub.pixelPackBuffer);
+            if (storage == null || address < 0L || address >= storage.capacity()) {
+                return;
+            }
+            capacity = storage.capacity() - address;
+            address = memAddress(storage) + address;
+        }
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-            vulkan.celtium$getTexImage(stub.textures.texture2d(), level, format, type, address);
+            vulkan.celtium$getTexImage(stub.textures.texture2d(), level, format, type, address, capacity);
         }
     }
 

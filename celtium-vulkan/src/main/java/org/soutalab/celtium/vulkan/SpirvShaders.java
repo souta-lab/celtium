@@ -112,6 +112,10 @@ public final class SpirvShaders {
     public static final String IMMEDIATE_POSITION_FRAGMENT = "immediate_position.frag";
     public static final String IMMEDIATE_POSITION_TEX_VERTEX = "immediate_position_tex.vert";
 
+    /** The four-coordinate multi-unit combine ({@link VulkanImmediateFormats#COMBINE4}). */
+    public static final String IMMEDIATE_COMBINE4_VERTEX = "immediate_combine4.vert";
+    public static final String IMMEDIATE_COMBINE4_FRAGMENT = "immediate_combine4.frag";
+
     /** Fragment module for textured geometry with no colour. */
     public static final String IMMEDIATE_POSITION_TEX_FRAGMENT = "immediate_position_tex.frag";
 

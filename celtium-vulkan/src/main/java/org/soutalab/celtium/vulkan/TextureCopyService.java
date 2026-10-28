@@ -1163,7 +1163,24 @@ public final class TextureCopyService {
      * routed pair, so the read follows the same routing rule the draws did.
      */
     public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
-        if (level != 0 || address == 0L || format != 0x80E1 || type != 0x8367 || textureName <= 0) {
+        return celtium$getTexImage(textureName, level, format, type, address, Long.MAX_VALUE);
+    }
+
+    /**
+     * As above, writing at most {@code capacity} bytes: the destination may be a pixel pack buffer's storage, whose
+     * end is known, rather than a client pointer.
+     * <p>
+     * Packs any RGBA/BGRA x {@code UNSIGNED_BYTE}/{@code 8_8_8_8}/{@code 8_8_8_8_REV} request, at the texture's own
+     * level-0 extent when the stub recorded one: Xaero's World Map renders each zoomed-out map tile into a texture
+     * through a framebuffer and reads it back with {@code GL_BGRA}/{@code GL_UNSIGNED_INT_8_8_8_8} into a pack buffer,
+     * then keeps those bytes as the tile's data - and this path answered only {@code 8_8_8_8_REV} at the screen's
+     * extent, so the tile data stayed zero and the minimap drew black.
+     */
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address, long capacity) {
+        boolean bgra = format == 0x80E1;
+        boolean packedForward = type == 0x8035; // GL_UNSIGNED_INT_8_8_8_8: the first component in the high byte
+        if (level != 0 || address == 0L || textureName <= 0 || (!bgra && format != 0x1908)
+                || (type != 0x8367 && type != 0x8035 && type != 0x1401)) {
             return false;
         }
         long identity = this.host.identityForColorTexture(textureName);
@@ -1188,6 +1205,19 @@ public final class TextureCopyService {
         }
         int width = this.host.targetWidth();
         int height = this.host.targetHeight();
+        if (identity != 0L && identity != this.host.mainTargetIdentity()) {
+            int recordedWidth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(textureName, 0,
+                    0x1000);
+            int recordedHeight = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(textureName, 0,
+                    0x1001);
+            if (recordedWidth > 0 && recordedHeight > 0) {
+                width = recordedWidth;
+                height = recordedHeight;
+            }
+        }
+        if ((long) width * height * 4L > capacity) {
+            return false;
+        }
         int[] pixels = readImageRectangle(image, 0, 0, width, height);
         if (pixels == null) {
             return false;
@@ -1195,12 +1225,23 @@ public final class TextureCopyService {
         long dst = address;
         int count = Math.min(pixels.length, width * height);
         for (int i = 0; i < count; i++) {
-            org.lwjgl.system.MemoryUtil.memPutInt(dst + (long) i * 4L, pixels[i]);
+            int argb = pixels[i];
+            int a = argb >>> 24, r = (argb >>> 16) & 0xFF, g = (argb >>> 8) & 0xFF, b = argb & 0xFF;
+            int word;
+            if (packedForward) {
+                word = bgra ? (b << 24) | (g << 16) | (r << 8) | a : (r << 24) | (g << 16) | (b << 8) | a;
+            } else {
+                // Byte order in memory: B,G,R,A or R,G,B,A, read back as a little-endian word.
+                word = bgra ? argb : (a << 24) | (b << 16) | (g << 8) | r;
+            }
+            org.lwjgl.system.MemoryUtil.memPutInt(dst + (long) i * 4L, word);
         }
         this.readPixelsServed++;
         if (this.getTexImageServes < 4) {
             this.getTexImageServes++;
-            System.out.println("[Celtium] CELTIUM_GET_TEX_IMAGE texture=" + textureName + " " + width + "x" + height);
+            System.out.println("[Celtium] CELTIUM_GET_TEX_IMAGE texture=" + textureName + " " + width + "x" + height
+                    + " format=0x" + Integer.toHexString(format) + " type=0x" + Integer.toHexString(type)
+                    + (capacity == Long.MAX_VALUE ? "" : " into a pack buffer"));
         }
         return true;
     }

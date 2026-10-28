@@ -126,6 +126,10 @@ public final class VulkanImmediateTexturePipeline {
     private int explicitStride;
     /** POSITION_COLOR drawn with generated texture coordinates; see {@link #createForTexGen}. */
     private boolean texGen;
+    /** Position and four texture coordinates sampling one texture through a multi-unit combine; see {@link #createForCombine4}. */
+    private boolean combine4;
+    /** Stride of the {@link VulkanImmediateFormats#COMBINE4} layout: a float3 position and four float2 coordinates. */
+    public static final int COMBINE4_BYTES = 44;
 
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -219,6 +223,19 @@ public final class VulkanImmediateTexturePipeline {
                 depthWrite, cull, depthCompareOp);
         pipeline.records = true;
         pipeline.recordsLayout = recordsSetLayout;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the {@link VulkanImmediateFormats#COMBINE4} variant: position plus the coordinates of units 0, 2 and 3 (unit 1
+     * is not sampled), one texture, and the fragment stage that evaluates the combine the group's push block selects.
+     */
+    public static VulkanImmediateTexturePipeline createForCombine4(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp);
+        pipeline.combine4 = true;
+        pipeline.explicitStride = COMBINE4_BYTES;
         return pipeline.build();
     }
 
@@ -969,11 +986,13 @@ public final class VulkanImmediateTexturePipeline {
             // BH-30: the shared pair carries the world fog block at 128..207, which this layout declares 208 bytes for
             // and the backend writes for every group without a lighting payload. The lit ITEM variant has its own
             // fragment (IMMEDIATE_TEX_COLOR_LIT_FRAGMENT) because its block spends 128..215 on lighting.
-            ByteBuffer vertexCode = SpirvShaders.load(this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_VERTEX
+            ByteBuffer vertexCode = SpirvShaders.load(this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_VERTEX
+                    : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_VERTEX
                     : this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX
                     : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
                     : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
-            ByteBuffer fragmentCode = SpirvShaders.load(this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_FRAGMENT
+            ByteBuffer fragmentCode = SpirvShaders.load(this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_FRAGMENT
+                : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_FRAGMENT
                 : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT
                 : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_FRAGMENT : SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
             long vertexModule = VK_NULL_HANDLE;
@@ -999,9 +1018,14 @@ public final class VulkanImmediateTexturePipeline {
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
                 binding.get(0).binding(0).stride(vertexStride()).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
                 VkVertexInputAttributeDescription.Buffer attributes = VkVertexInputAttributeDescription.calloc(
-                        this.texGen ? 2 : this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
+                        this.combine4 ? 4 : this.texGen ? 2 : this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                if (this.texGen) {
+                if (this.combine4) {
+                    // Units 0, 2 and 3's coordinates at 12, 28 and 36; unit 1's at 20 is not read.
+                    attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
+                    attributes.get(2).location(3).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(28);
+                    attributes.get(3).location(4).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(36);
+                } else if (this.texGen) {
                     // POSITION_COLOR: the colour follows the position directly; there is no texture coordinate.
                     attributes.get(1).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(12);
                 } else if (!this.positionNoTexture) {
@@ -1009,7 +1033,7 @@ public final class VulkanImmediateTexturePipeline {
                     // struct for the one-attribute layouts wrote 16 bytes past the end of a one-element array.
                     attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
                 }
-                if (!this.texGen && !this.positionOnly && !this.positionNoTexture) {
+                if (!this.combine4 && !this.texGen && !this.positionOnly && !this.positionNoTexture) {
                     // The colourless format has nothing at offset 20 - describing an attribute there would read past
                     // the end of every vertex.
                     attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(20);

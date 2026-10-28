@@ -180,16 +180,23 @@ public final class VulkanImmediateFormats {
      */
     public static final int POSITION_COLOR_TEXGEN = 12;
 
+    /**
+     * Position and four texture coordinates, 44 bytes: one per texture unit 0..3. Xaero's World Map draws its map tiles
+     * in this layout ({@code GuiMap.POSITION_TEX_TEX_TEX}) with the same tile texture bound on units 0, 2 and 3 and a
+     * fixed-function combine across them; the minimap with the World Map installed draws through it as well.
+     */
+    public static final int COMBINE4 = 13;
+
     /** One past the highest id, for every array, mask and range check that has to cover them all. */
     /** Ids are dense and allocated in order, so the arrays the census keeps are sized from the highest one. */
-    public static final int COUNT = POSITION_COLOR_TEXGEN + 1;
+    public static final int COUNT = COMBINE4 + 1;
 
     /** Ids the acceptance mask admits by default: every layout this class names. */
     /**
      * The formats the immediate path accepts by default. Id 11 joined the list with the layout itself: a mapped but
      * unaccepted format is still refused, and the 268-mod E2E pack draws 24,143 batches in it.
      */
-    public static final String DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9,10,11,12";
+    public static final String DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9,10,11,12,13";
 
     /**
      * {@return the id whose element list is exactly the given one at the given width, or 0 when no known layout matches}.
@@ -243,6 +250,8 @@ public final class VulkanImmediateFormats {
             "3,Position,Float 4,Vertex Color,Unsigned Byte 2,UV,Float 2,UV,Short";
     public static final String LAYOUT_ITEM =
             "3,Position,Float 4,Vertex Color,Unsigned Byte 2,UV,Float 3,Normal,Byte 1,Padding,Byte";
+    public static final String LAYOUT_COMBINE4 =
+            "3,Position,Float 2,UV,Float 2,UV,Float 2,UV,Float 2,UV,Float";
     public static final String LAYOUT_PARTICLE =
             "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short";
 
@@ -269,6 +278,7 @@ public final class VulkanImmediateFormats {
         if (elements.equals(LAYOUT_POSITION_TEX_NORMAL_FLOAT) && size == 32 && count == 3) {
             return POSITION_TEX_NORMAL_FLOAT;
         }
+        if (elements.equals(LAYOUT_COMBINE4) && size == 44 && count == 5) return COMBINE4;
         return 0;
     }
 
@@ -292,6 +302,7 @@ public final class VulkanImmediateFormats {
             case POSITION_TEX_NORMAL: return "POSITION_TEX_NORMAL/OLDMODEL_POSITION_TEX_NORMAL";
             case POSITION_NORMAL: return "POSITION_NORMAL";
             case POSITION_TEX_NORMAL_FLOAT: return "POSITION_TEX_NORMAL_FLOAT";
+            case COMBINE4: return "POSITION_TEX4 (multi-unit combine)";
             default: return id == 0 ? "unmapped" : "unknown id " + id;
         }
     }
