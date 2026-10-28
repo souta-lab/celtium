@@ -34,4 +34,7 @@ The game screen's remaining differences, read from full-size crops:
   Sodium-style `VintageBlockRenderer`, which upstream Celeritas only enables in development; the reference meshes
   through Forge's block-model pipeline. Celtium now does the same by default (legs `iq-amd-forgepipe`, `iq-intel-fp`,
   PASSED, validation clean; Intel paired KPI `kpi5-intel` control ratio 0.997, i.e. frame time unchanged).
-- **Open:** one large far wall face is flat (164) where the reference shades it 156 → 148 across its width.
+- **Open:** one large wall face (x 1000–1150, y 200–280 of the capture) is flat at 163–165 where the reference falls
+  smoothly 157 → 145 left to right (legs `wall-celtium`/`wall-celeritas`, AMD). A smooth multi-block gradient points at
+  per-vertex light (block-light falloff in the light map) rather than per-block AO; the other faces now match, so the
+  cause is specific to this face's direction or light. Next: dump the face's packed light values in both meshers.
