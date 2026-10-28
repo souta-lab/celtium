@@ -1438,14 +1438,41 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.celtium$noteTextureCopy("glCopyTexSubImage2D", target, level, xoffset, yoffset, x, y, width, height);
     }
 
-    /** Serves a {@code glCopyTexImage2D}, from the transformer's route; the internal format is not part of the copy. */
+    /**
+     * Serves a {@code glCopyTexImage2D}, from the transformer's route.
+     * <p>
+     * A depth-format destination is not served: the copy service reads the read framebuffer's colour image, so serving
+     * it wrote colour into a depth texture, and every call paid a flush, a queue wait and a full-screen readback. The
+     * measured caller is The Betweenlands ({@code DepthBuffer.blitDepthBuffer}, every frame, 6402 = GL_DEPTH_COMPONENT)
+     * whose only reader is its own GLSL post-processing, which GL-less does not run. The extent is still recorded, so
+     * size queries answer as GL would; {@code depthCopiesSkipped} counts the calls.
+     */
     public static void celtium$copyTexImage2D(int target, int level, int internalFormat, int x, int y, int width,
             int height) {
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
         }
+        if (isDepthInternalFormat(internalFormat)) {
+            stub.recordExtent(target, level, internalFormat, width, height);
+            if (stub.depthCopiesSkipped++ == 0) {
+                System.out.println("[Celtium] CELTIUM_DEPTH_COPY_SKIPPED internalFormat=0x"
+                        + Integer.toHexString(internalFormat) + " " + width + "x" + height
+                        + " (a depth copy is not read back; the size is recorded)");
+            }
+            return;
+        }
         stub.celtium$noteTextureCopy("glCopyTexImage2D", target, level, 0, 0, x, y, width, height);
+    }
+
+    private long depthCopiesSkipped;
+
+    /** GL_DEPTH_COMPONENT, DEPTH_COMPONENT16/24/32, DEPTH_COMPONENT32F, DEPTH24_STENCIL8, DEPTH32F_STENCIL8, DEPTH_STENCIL. */
+    private static boolean isDepthInternalFormat(int internalFormat) {
+        return switch (internalFormat) {
+            case 0x1902, 0x81A5, 0x81A6, 0x81A7, 0x8CAC, 0x88F0, 0x8CAD, 0x84F9 -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -3285,6 +3312,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 celtium$getTexEnvFloats((int) c[0], (int) c[1], c[2]);
                 return 0L;
             case SEM_COPY_TEX_IMAGE:
+                if (isDepthInternalFormat((int) c[2])) {
+                    // Same refusal as the transformer's route (celtium$copyTexImage2D): a depth copy is not read back.
+                    recordExtent((int) c[0], (int) c[1], (int) c[2], (int) c[5], (int) c[6]);
+                    this.depthCopiesSkipped++;
+                    return 0L;
+                }
                 celtium$noteTextureCopy(fn.name, (int) c[0], (int) c[1], 0, 0, (int) c[3], (int) c[4],
                         (int) c[5], (int) c[6]);
                 return 0L;
