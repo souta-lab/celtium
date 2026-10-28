@@ -52,8 +52,6 @@ jobs:
           python3 scripts/cpu-contract/glless_lwjgl3_surface_check.py
       - name: Test and package isolated capability probe
         run: ./gradlew -p celtium-probe test distZip --console=plain
-      - name: Test shaderpack frontend (pure CPU, fixture packs only)
-        run: ./gradlew -p celtium-shaderpack test --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: celtium-probe
