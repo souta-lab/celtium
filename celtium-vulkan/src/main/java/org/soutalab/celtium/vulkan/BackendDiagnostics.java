@@ -603,7 +603,9 @@ final class BackendDiagnostics {
         if (b.DUMP_TEXTURE_IDS != null && b.dumpedTextureImages < 8 && b.presentHookCalls >= 120) {
             for (int di = 0; di < b.immediateGroups.size(); di++) {
                 ImmediateGroup dumpGroup = b.immediateGroups.get(di);
-                if (!b.DUMP_TEXTURE_IDS.contains(Integer.valueOf(dumpGroup.texture))) {
+                if (!b.DUMP_TEXTURE_IDS.contains(Integer.valueOf(dumpGroup.texture))
+                        || !b.dumpedTextureIds.add(Integer.valueOf(dumpGroup.texture))) {
+                    // Once per texture: the same id drawn every frame used to spend the whole budget on itself.
                     continue;
                 }
                 VulkanGlTexture dumpImage = dumpGroup.textureImage;

@@ -1293,8 +1293,10 @@ public final class TextureCopyService {
         if (pixels == null || pixels.length < width * height) {
             return false;
         }
+        // ARGB: the read packs alpha, and a texture's alpha is half of what a dump is asked about (a transparent tile
+        // and a black one were indistinguishable in RGB).
         java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(width, height,
-                java.awt.image.BufferedImage.TYPE_INT_RGB);
+                java.awt.image.BufferedImage.TYPE_INT_ARGB);
         out.setRGB(0, 0, width, height, pixels, 0, width);
         try {
             java.nio.file.Files.createDirectories(path.toAbsolutePath().getParent());

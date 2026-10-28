@@ -1671,6 +1671,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private String presentSkipReason = "never called";
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     private int lazyMirrorSupplies;
+    /**
+     * Mirrors with full content refreshed because the game wrote the texture through raw GL since - a write no upload
+     * hook announces. JourneyMap allocates each 512x512 map tile with one glTexImage2D and then fills it with 16x16
+     * glTexSubImage2D patches; the first (blank) image made the mirror "full", the lazy supply never looked again, and
+     * every minimap tile was drawn transparent.
+     */
+    private int rawWriteRefreshes;
+    /** Per GL id: the stub's write epoch when the texture's write serial was last compared, so a quiet frame costs one read. */
+    private long[] rawWriteEpochChecked = new long[4096];
+    /** Per GL id: the write serial the mirror was last refreshed for. */
+    private long[] rawWriteSerialApplied = new long[4096];
     private int lazyMirrorFailures;
     /**
      * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
@@ -2787,7 +2798,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " texCopy[calls=" + this.textureCopyCalls + " totalMs=" + (this.textureCopyNanos / 1000000L) + "]"
                 + " copyBlit[refusals=" + this.textureCopyService.textureCopyBlitRefusals()
                 + " last=" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
-                + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " skips=" + this.lazyMirrorRetrySkips
+                + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " rawWriteRefreshes=" + this.rawWriteRefreshes
+                + " skips=" + this.lazyMirrorRetrySkips
                 + " failures=" + this.lazyMirrorFailures + "]"
                 // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
                 // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
@@ -3217,6 +3229,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@code -Dceltium.debug.dumpTextureIds=23}: write those textures' images to the temp directory once. */
     static final java.util.Set<Integer> DUMP_TEXTURE_IDS = dumpTextureIds();
     int dumpedTextureImages;
+    final java.util.Set<Integer> dumpedTextureIds = new java.util.HashSet<Integer>();
 
     private static java.util.Set<Integer> dumpTextureIds() {
         String spec = System.getProperty("celtium.debug.dumpTextureIds");
@@ -4265,6 +4278,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // GLESS_KEEPS_INVALIDATIONS.
         if (GLESS_KEEPS_INVALIDATIONS && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             this.textureInvalidationsKeptGlless++;
+            // The upload hook announces the image it just wrote, so the raw-write check owes this texture nothing.
+            celtium$noteMirrorCurrent(glTextureId);
             celtium$reportGllessInvalidation(glTextureId);
             return;
         }
@@ -4760,6 +4775,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         System.out.println("[Celtium] CELTIUM_GLESS_INVALIDATE kept=" + kept + " glTexture=" + glTextureId
                 + " atlasGlId=" + this.atlasSourceGlId + " lightmapGlId=" + this.lightmapSourceGlId
                 + " lazySupply=" + this.lazyMirrorSupplies + "/" + this.lazyMirrorFailures
+                + " rawWriteRefreshes=" + this.rawWriteRefreshes
                 + "/" + this.lazyMirrorRetrySkips
                 + " lastLazyFailure=[" + this.lastLazyMirrorFailure + "]"
                 + " partialRefusals=" + this.immediateStatistics.partialMirrorRefusals() + " partialCompleted=" + this.immediateStatistics.partialMirrorsCompleted()
@@ -7138,6 +7154,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 celtium$registry().imageFor(boundTexture, size[0], size[1], true);
                         created.uploadFromGlTexture(boundTexture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                         celtium$registry().markFullyInitialized(boundTexture);
+                        celtium$noteMirrorCurrent(boundTexture);
                         this.lazyMirrorSupplies++;
                         if (existing != null) {
                             this.immediateStatistics.notePartialMirrorsCompleted();
@@ -7148,6 +7165,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     }
                 }
                 }
+            }
+            else if (boundTexture > 0 && boundTexture != this.atlasGlId && boundTexture != this.lightmapGlId) {
+                celtium$refreshRawWrites(boundTexture, existing);
             }
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
             long preflightCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
@@ -8246,6 +8266,52 @@ this.frameBufferOpen = false;
             text.append(round3(values[i]));
         }
         return text.append(']').toString();
+    }
+
+    /**
+     * Brings a full mirror up to date with writes the game made through raw GL (see {@link #rawWriteRefreshes}).
+     * Writes through TextureUtil arrive announced as well; for those the mirror's own serial check makes the call a
+     * no-op once it has caught up. The atlas and the light map are refreshed by their own paths and never come here.
+     */
+    private void celtium$refreshRawWrites(int texture, org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
+        long epoch = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch();
+        if (epoch == Long.MIN_VALUE) {
+            return;
+        }
+        if (texture >= this.rawWriteEpochChecked.length) {
+            int grown = Math.max(texture + 1, this.rawWriteEpochChecked.length * 2);
+            this.rawWriteEpochChecked = java.util.Arrays.copyOf(this.rawWriteEpochChecked, grown);
+            this.rawWriteSerialApplied = java.util.Arrays.copyOf(this.rawWriteSerialApplied, grown);
+        }
+        if (this.rawWriteEpochChecked[texture] == epoch) {
+            return;
+        }
+        this.rawWriteEpochChecked[texture] = epoch;
+        long serial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(texture, 0);
+        if (serial == Long.MIN_VALUE || serial == this.rawWriteSerialApplied[texture]) {
+            return;
+        }
+        this.rawWriteSerialApplied[texture] = serial;
+        try {
+            mirror.uploadFromGlTexture(texture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+            this.rawWriteRefreshes++;
+        } catch (RuntimeException | LinkageError error) {
+            this.lazyMirrorFailures++;
+            this.lastLazyMirrorFailure = texture + " (raw write): " + error;
+        }
+    }
+
+    /** Records that the mirror already holds every write up to now - after a supply, or an announced upload. */
+    private void celtium$noteMirrorCurrent(int texture) {
+        if (texture <= 0) {
+            return;
+        }
+        if (texture >= this.rawWriteSerialApplied.length) {
+            int grown = Math.max(texture + 1, this.rawWriteSerialApplied.length * 2);
+            this.rawWriteEpochChecked = java.util.Arrays.copyOf(this.rawWriteEpochChecked, grown);
+            this.rawWriteSerialApplied = java.util.Arrays.copyOf(this.rawWriteSerialApplied, grown);
+        }
+        this.rawWriteSerialApplied[texture] = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(texture, 0);
     }
 
     static long celtium$stateKey(int formatId, int[] state) {

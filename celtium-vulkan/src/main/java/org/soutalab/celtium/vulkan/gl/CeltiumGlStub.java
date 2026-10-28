@@ -2286,6 +2286,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      * @param textureName the GL texture name
      * @param level       the mip level
      */
+    /** {@return the serial the most recent level write took}, any texture: unchanged means no texture was written. */
+    public static long textureWriteEpoch() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? Long.MIN_VALUE : stub.texUploadSerial.get();
+    }
+
     public static long textureUploadSerial(int textureName, int level) {
         CeltiumGlStub stub = installed;
         if (stub == null) {
