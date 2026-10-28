@@ -30,7 +30,6 @@ naming them. Remove them from the instance; Celtium provides the corresponding f
 
 | Mod | Gap | Status |
 | --- | --- | --- |
-| Enigmatica 2: Expert 1.93a (pack) | Beyond the render distance, below the horizon, the frame is black where Celeritas shows the fog colour (the superflat fixture world, player at y=12 under the horizon). 10 % of the capture is black, which fails the image gate (`FAILED_PRESENTED_IMAGE`, Vulkan validation clean, leg `e2e-amd-c4`). The terrain fog colour is right; the black is the region vanilla fills with the fogged lower-sky plane or the fog-coloured clear. | Open |
 | Xaero's Minimap (in E2E-E) | Entity icons on the radar are missing. (The player arrow, which the depth mask used to reject, is fixed after 0.1.1-alpha.) | Open |
 
 ## Not working because of the platform (not Celtium)
