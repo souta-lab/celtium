@@ -322,7 +322,13 @@ public final class VulkanDisplayListCensus {
     }
 
     /** Records one cancelled replay. */
-    public static synchronized void cancelled(int list) {
+    public static void cancelled(int list) {
+        if (ENABLED) {
+            cancelledCensus(list);
+        }
+    }
+
+    private static synchronized void cancelledCensus(int list) {
         cancelled++;
         if (list > 0) {
             // Per list as well as in total: whether a list's replay was taken over by the native path is the difference
@@ -343,7 +349,20 @@ public final class VulkanDisplayListCensus {
         return cancelled;
     }
 
-    public static synchronized void replay(int list) {
+    /**
+     * Whether the per-replay census runs. It is diagnostic only (nothing draws from it), and it ran on every
+     * {@code callList} - synchronized, boxing, two map lookups - which was 2.9% of the client thread on the qmagnet
+     * scene. {@code -Dceltium.debug.displayListCensus=true} or periodic logs turn it on.
+     */
+    static final boolean ENABLED = Boolean.getBoolean("celtium.debug.displayListCensus") || PeriodicLog.ENABLED;
+
+    public static void replay(int list) {
+        if (ENABLED) {
+            replayCensus(list);
+        }
+    }
+
+    private static synchronized void replayCensus(int list) {
         total++;
         if (frameOpen) {
             replaysWithFrameOpen++;
