@@ -7968,7 +7968,11 @@ this.frameBufferOpen = false;
         }
         boolean narrowerViewport = this.liveViewportWidth < this.targetWidth
                 || this.liveViewportHeight < this.targetHeight;
-        if (!narrowerViewport) {
+        // The HUD too: GL computes P * (MV * v), and the axis-aligned HUD batches beside a rotated one are baked in that
+        // order. A rotated batch left to the shader got (P * MV) * v instead, whose depth differs in the last bits - and
+        // a minimap that clips with a depth mask and then draws its rotated player arrow with LEQUAL at the mask's own
+        // depth (Xaero's Minimap) lost the arrow to that rounding. HUD batches are few and small, so the bake is cheap.
+        if (!narrowerViewport && !FramePassTimings.guiSectionActive()) {
             return false;
         }
         boolean affine = this.glModelView[3] == 0.0f && this.glModelView[7] == 0.0f

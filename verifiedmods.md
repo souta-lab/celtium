@@ -14,7 +14,7 @@ The mod's own drawing was compared against Celeritas 2.5.0-dev (OpenGL) on the s
 | Mod | Version | What was checked | Evidence |
 | --- | --- | --- | --- |
 | Xaero's Minimap | 25.3.13 | Minimap frame, map, compass and coordinates on the QMAGNET world; AMD and Intel PASSED, Vulkan validation clean | [plan.md](docs/plan.md) (Xaero row) |
-| Xaero's World Map (+ xaerolib) | 1.40.16 (lib 1.1.0) | Map tiles in the minimap (four-texture-unit combine, `e57b51421`); matches Celeritas on AMD and Intel. **Known gap:** the minimap's player arrow is not drawn when the arrow style is enabled — see [notworkingmods.md](notworkingmods.md) | [image](docs/evidence/2026-10-28-xaero-worldmap-minimap.png) |
+| Xaero's World Map (+ xaerolib) | 1.40.16 (lib 1.1.0) | Map tiles in the minimap (four-texture-unit combine, `e57b51421`); matches Celeritas on AMD and Intel. The player arrow is drawn after 0.1.1-alpha (it was lost to a depth-rounding mismatch with the minimap's mask) | [image](docs/evidence/2026-10-28-xaero-worldmap-minimap.png) |
 | JourneyMap | 5.7.1p3 | Minimap tiles, grid, compass and labels on the qmagnet world (`54b42982d`: tiles are written through raw `glTexSubImage2D`); AMD PASSED. Tile content matches JourneyMap's own saved region image | world-jm leg |
 | Had Enough Items (HEI) | 4.31.2 | Item list, search field, creative inventory and tooltip on both GPUs | [mod-compatibility.md](docs/mod-compatibility.md) |
 | GVC (GVCLib / GVCR2) | as in the user's instance | Mobs and vehicles drawn through client-array display lists; A4 matches the Celeritas reference (`eeb6b1d0e`). The A4 server crash is GVCR2's own bug, patched by `scripts/fix_gvcr2_a4.py` | [plan.md](docs/plan.md) |
