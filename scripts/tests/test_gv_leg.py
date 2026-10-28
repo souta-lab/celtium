@@ -474,3 +474,12 @@ class LegRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveMemberStatesTest(unittest.TestCase):
+    def test_zombies_do_not_count_as_running(self):
+        self.assertFalse(runner.live_member_states(["Z", "Z+"]))
+        self.assertFalse(runner.live_member_states([]))
+        self.assertTrue(runner.live_member_states(["Z", "Sl"]))
+        self.assertTrue(runner.live_member_states(["R+"]))
+
