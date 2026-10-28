@@ -63,8 +63,8 @@ public class CeltiumAtlasLoader {
     static final AtomicLong workerBusyMillis=new AtomicLong();
     static long submittedSprites,firstSubmitNanos,parallelLoads,awaitedSprites,awaitedMillis,lastReportedStitch,windowMillis;
     static ResourceLocation resourceLocationOf(String base,TextureAtlasSprite sprite){return new ResourceLocation();}
-    static boolean generateMipmapsSequential(String base,int mip,IResourceManager mgr,TextureAtlasSprite sprite){return sprite.loaded;}
-    static boolean generateMipmapsWorker(IResourceManager mgr,ResourceLocation loc,int mip,TextureAtlasSprite s){return true;}
+    static boolean generateMipmapsBody(IResourceManager mgr,ResourceLocation loc,int mip,TextureAtlasSprite sprite,boolean custom){return !custom||sprite.loaded;}
+    static void reportFailure(TextureAtlasSprite sprite){}
     static String summary(){return "atlas test";}
 '''+submit+'\n'+await_body+'\n'+helper+'''
     static void require(boolean v,String msg){if(!v)throw new AssertionError(msg);}

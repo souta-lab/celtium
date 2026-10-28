@@ -11,6 +11,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.taumc.celeritas.impl.CeltiumAtlasLoader;
 
 import java.util.ArrayList;
@@ -57,6 +58,17 @@ public class TextureMapParallelMixin {
             return this.func_184397_a(resourceManager, sprite);
         }
         return CeltiumAtlasLoader.submit(self, this.field_94254_c, this.field_147636_j, resourceManager, sprite);
+    }
+
+    /** A custom loader may read other sprites' frames, which must have finished loading as they would in vanilla. */
+    @Inject(method = "loadTexture(Lnet/minecraft/client/renderer/texture/Stitcher;Lnet/minecraft/client/resources/IResourceManager;Lnet/minecraft/util/ResourceLocation;Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;Lnet/minecraftforge/fml/common/ProgressManager$ProgressBar;II)I",
+            remap = false,
+            at = @At(value = "INVOKE", remap = false,
+                    target = "Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;load(Lnet/minecraft/client/resources/IResourceManager;Lnet/minecraft/util/ResourceLocation;Ljava/util/function/Function;)Z"))
+    private void celeritas$finishFramesBeforeCustomLoad(CallbackInfoReturnable<Integer> cir) {
+        if (CeltiumAtlasLoader.ENABLED) {
+            CeltiumAtlasLoader.awaitSubmitted();
+        }
     }
 
     @Redirect(method = "loadTexture(Lnet/minecraft/client/renderer/texture/Stitcher;Lnet/minecraft/client/resources/IResourceManager;Lnet/minecraft/util/ResourceLocation;Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;Lnet/minecraftforge/fml/common/ProgressManager$ProgressBar;II)I",

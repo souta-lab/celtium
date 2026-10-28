@@ -44,6 +44,7 @@ public class CeltiumAtlasLoader {
     static long awaitedSprites, awaitedMillis, lastReportedStitch, windowMillis;
     static long firstSubmitNanos=System.nanoTime();
     static String summary() {return "atlas test";}
+    static void reportFailure(TextureAtlasSprite sprite) {}
 ''' + await_method + '\n' + helper + '''
     static void require(boolean v, String msg) {if(!v)throw new AssertionError(msg);}
     public static void main(String[] args) throws Throwable {

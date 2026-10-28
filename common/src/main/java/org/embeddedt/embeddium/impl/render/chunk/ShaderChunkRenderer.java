@@ -39,7 +39,8 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
         this.environment = new ChunkShaderEnvironment(fogService);
         this.renderPassConfiguration = renderPassConfiguration;
         this.enableLegacyGLPatches = ShaderLoader.useLegacyGlsl();
-        if (this.enableLegacyGLPatches) {
+        // GL-less (the default) draws terrain with Vulkan; the GL version here is the stub's, not a limitation.
+        if (this.enableLegacyGLPatches && "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
             LOGGER.warn("System does not support modern GLSL, will attempt to patch terrain shaders");
         }
     }

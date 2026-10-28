@@ -269,6 +269,7 @@ public class ClippingHelper implements org.taumc.celeritas.impl.render.frustum.I
  public ClippingHelper() {this(new org.joml.FrustumIntersection());}
  public ClippingHelper(org.joml.FrustumIntersection planes) {this.planes=planes;}
  public org.joml.FrustumIntersection celeritas$getJomlFrustum() {return planes;}
+ public org.joml.Matrix4fc celeritas$getViewProjection() {return null;}
 }""",
         "org/taumc/celeritas/mixin/core/terrain/ActiveRenderInfoAccessor.java": """package org.taumc.celeritas.mixin.core.terrain;
 public class ActiveRenderInfoAccessor {

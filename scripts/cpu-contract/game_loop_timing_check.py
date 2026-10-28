@@ -69,7 +69,13 @@ class GameLoopTimingCheck {
     with tempfile.TemporaryDirectory(prefix="celtium-looptiming-") as tmp:
         path = Path(tmp) / "GameLoopTimingCheck.java"
         path.write_text(java)
-        subprocess.run([shutil.which("javac"), "-d", tmp, str(SOURCE), str(path)], check=True)
+        # GameLoopTiming tells the Vulkan frame timer that a tick ran; a stand-in keeps this check off the
+        # Vulkan module's classpath.
+        stub = Path(tmp) / "org/soutalab/celtium/vulkan/FramePassTimings.java"
+        stub.parent.mkdir(parents=True)
+        stub.write_text("package org.soutalab.celtium.vulkan; public final class FramePassTimings "
+                        "{ public static void noteTick() {} }")
+        subprocess.run([shutil.which("javac"), "-d", tmp, str(SOURCE), str(stub), str(path)], check=True)
         subprocess.run([shutil.which("java"), "-cp", tmp, "GameLoopTimingCheck"], check=True)
 
 

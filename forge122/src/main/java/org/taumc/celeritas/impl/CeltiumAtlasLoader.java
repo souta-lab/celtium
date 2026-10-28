@@ -9,6 +9,7 @@ import net.minecraft.util.ReportedException;
 import net.minecraft.crash.CrashReport;
 import net.minecraft.crash.CrashReportCategory;
 import net.minecraft.crash.ICrashReportDetail;
+import net.minecraftforge.fml.client.FMLClientHandler;
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -19,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -86,13 +88,16 @@ public final class CeltiumAtlasLoader {
             // TextureMap.loadTexture only calls stitcher.addSprite when this return value is true.
             // A false return therefore never reaches await(): retaining a REFUSED marker here
             // used to leak the sprite and could reject it on a subsequent successful reload.
-            return generateMipmapsSequential(basePath, mipmapLevels, resourceManager, sprite);
+            boolean loaded = generateMipmapsBody(resourceManager, resourceLocationOf(basePath, sprite), mipmapLevels,
+                    sprite, true);
+            reportFailure(sprite);
+            return loaded;
         }
         final ResourceLocation resourceLocation = resourceLocationOf(basePath, sprite);
         PENDING.put(sprite, POOL.submit(() -> {
             long started = System.nanoTime();
             try {
-                return generateMipmapsWorker(resourceManager, resourceLocation, mipmapLevels, sprite);
+                return generateMipmapsBody(resourceManager, resourceLocation, mipmapLevels, sprite, false);
             } finally {
                 workerBusyMillis.addAndGet((System.nanoTime() - started) / 1000000L);
             }
@@ -102,6 +107,27 @@ public final class CeltiumAtlasLoader {
         }
         parallelLoads++;
         return true;
+    }
+
+    /**
+     * Waits for every submitted frame load to finish, before a custom loader runs. A custom loader reads other
+     * sprites' frames through its getter - Tinkers' Construct's coloured parts copy their base texture's frame 0
+     * and give up with {@code width = height = 1} and no frames when it has none. In vanilla the base (a
+     * dependency) was fully loaded by then; here its frame load may still be on the pool, which crashed the
+     * atlas at {@code tconstruct:items/arrow/head_obsidian} ({@code getFrameTextureData(0)}, IndexOutOfBounds).
+     * Failures are not reported here: each sprite's own await reports its result.
+     */
+    public static void awaitSubmitted() {
+        for (Future<Boolean> future : PENDING.values()) {
+            try {
+                future.get();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (ExecutionException ignored) {
+                // Reported by await(sprite).
+            }
+        }
     }
 
     /**
@@ -119,6 +145,7 @@ public final class CeltiumAtlasLoader {
         long started = System.nanoTime();
         try {
             Boolean result = future.get();
+            reportFailure(sprite);
             // Worker success does not guarantee that a modded sprite supplied frame 0.
             // Conversely, missing frames before future.get() says nothing about the eventual result.
             return Boolean.TRUE.equals(result) && stitchable(sprite);
@@ -135,6 +162,39 @@ public final class CeltiumAtlasLoader {
         }
     }
 
+    /**
+     * A sprite whose frames could not be read. It is reported to FML's texture-error summary - the same place
+     * Forge's own {@code loadTexture} reports a missing or broken texture - on the render thread, at the await:
+     * FML's tracking maps are not thread-safe. This also keeps the report where the pack expects it: VintageFix
+     * routes vanilla's per-texture stack trace from {@code generateMipmaps} into the same summary, and this
+     * loader replaces that method, so logging here produced ~880 stack traces E2E-E does not print.
+     */
+    private static final class Failure {
+        final ResourceLocation location;
+        final String message;
+        final boolean missing;
+
+        Failure(ResourceLocation location, String message, boolean missing) {
+            this.location = location;
+            this.message = message;
+            this.missing = missing;
+        }
+    }
+
+    private static final Map<TextureAtlasSprite, Failure> FAILURES = new ConcurrentHashMap<>();
+
+    private static void reportFailure(TextureAtlasSprite sprite) {
+        Failure failure = FAILURES.remove(sprite);
+        if (failure == null) {
+            return;
+        }
+        if (failure.missing) {
+            FMLClientHandler.instance().trackMissingTexture(failure.location);
+        } else {
+            FMLClientHandler.instance().trackBrokenTexture(failure.location, failure.message);
+        }
+    }
+
     /** Only call after the sprite's worker finishes (or when it never had an async worker). */
     private static boolean stitchable(TextureAtlasSprite sprite) {
         if (sprite.getFrameCount() == 0) {
@@ -145,48 +205,28 @@ public final class CeltiumAtlasLoader {
         return true;
     }
 
-    /** The sequential equivalent for sprites whose own loader code may not be thread-safe. */
-    private static boolean generateMipmapsSequential(String basePath, int mipmapLevels,
-            IResourceManager resourceManager, TextureAtlasSprite sprite) {
-        return generateMipmapsBody(resourceManager, resourceLocationOf(basePath, sprite), mipmapLevels, sprite);
-    }
-
-    /** Worker entry: the replicated body of {@code TextureMap.generateMipmaps}, minus its crash wrapping. */
-    private static boolean generateMipmapsWorker(IResourceManager resourceManager,
-            ResourceLocation resourceLocation, int mipmapLevels, TextureAtlasSprite sprite) {
-        try {
-            return generateMipmapsBody(resourceManager, resourceLocation, mipmapLevels, sprite);
-        } catch (ReportedException crash) {
-            // The original throws from generateMipmaps itself; the caller rethrows at the await point.
-            throw crash;
-        }
-    }
-
     /**
      * The body of {@code TextureMap.generateMipmaps}, faithfully: custom-loader sprites skip the frame load
      * entirely, a runtime exception in the frame load logs and refuses the sprite, an IO exception refuses it,
      * and a throwable from the mip pass is wrapped in the same crash report the original builds.
      */
     private static boolean generateMipmapsBody(IResourceManager resourceManager,
-            final ResourceLocation resourceLocation, int mipmapLevels, final TextureAtlasSprite sprite) {
-        // Frames are read when the sprite does not already have them. Vanilla asks {@code hasCustomLoader}
-        // here instead, but this loader can only ask that question against the location it reconstructed from
-        // the sprite's icon name - not the one {@code TextureMap.loadTexture} was handed. When the two
-        // disagree the frame read was skipped for a sprite that had none, and the sprite reached
-        // {@code finishLoading} with an empty frame list: measured with Tinkers' Construct loaded, that
-        // crashed the atlas at {@code tconstruct:items/arrow/head_obsidian} on
-        // {@code getFrameTextureData(0)} (IndexOutOfBounds, "Stitching texture atlas"). A sprite whose own
-        // loader already produced its frames still skips the read, so the fast path is unchanged.
-        if (sprite.getFrameCount() == 0) {
+            final ResourceLocation resourceLocation, int mipmapLevels, final TextureAtlasSprite sprite,
+            boolean customLoader) {
+        // A sprite with a custom loader never has its frames read from a file, exactly as vanilla: its loader is
+        // the source. (OpenBlocks' canvas sprites have no file at all; reading one logged 256 "Using missing
+        // texture" errors and refused every canvas sprite, which vanilla stitches.) A custom sprite that still
+        // has no frames is refused at the await by stitchable() rather than crashing the atlas.
+        if (!customLoader && sprite.getFrameCount() == 0) {
             IResource resource = null;
             try {
                 resource = resourceManager.getResource(resourceLocation);
                 sprite.loadSpriteFrames(resource, mipmapLevels + 1);
             } catch (RuntimeException runtimeException) {
-                LOGGER.error("Unable to parse metadata from {}", resourceLocation, runtimeException);
+                FAILURES.put(sprite, new Failure(resourceLocation, runtimeException.getMessage(), false));
                 return false;
             } catch (IOException ioException) {
-                LOGGER.error("Using missing texture, unable to load {}", resourceLocation, ioException);
+                FAILURES.put(sprite, new Failure(resourceLocation, null, true));
                 return false;
             } finally {
                 IOUtils.closeQuietly((Closeable) resource);
