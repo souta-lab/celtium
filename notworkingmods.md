@@ -30,6 +30,8 @@ naming them. Remove them from the instance; Celtium provides the corresponding f
 
 | Mod | Gap | Status |
 | --- | --- | --- |
+| Enigmatica 2: Expert 1.93a (pack) | Beyond the render distance, below the horizon, the frame is black where Celeritas shows the fog colour (the superflat fixture world, player at y=12 under the horizon). 10 % of the capture is black, which fails the image gate (`FAILED_PRESENTED_IMAGE`, Vulkan validation clean, leg `e2e-amd-c4`). The terrain fog colour is right; the black is the region vanilla fills with the fogged lower-sky plane or the fog-coloured clear. | Open |
+| JourneyMap 5.7.1 (in E2E 1.93a) | The minimap shows its frame, grid, compass and coordinates but no map tiles; Celeritas shows them. | Open |
 | Xaero's Minimap with Xaero's World Map | The minimap's player arrow is not drawn when the arrow style is enabled (the radar's dot shows instead). The arrow's quad is drawn at the right place and is rejected by the depth test against the minimap's circular depth mask; with the depth test off it appears. Entity icons on the radar are missing in E2E-E. | Open |
 
 ## Not working because of the platform (not Celtium)

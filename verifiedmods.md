@@ -30,7 +30,7 @@ draw, nothing more specific.
 | Pack | Mods | Result | Notes |
 | --- | --- | --- | --- |
 | Enigmatica 2: Expert - Extended (E2E-E) | 1.87.3, 421 jars | AMD: fixture PASSED, validation 0 (leg `e2ee-amd-c4`, renderer `e5cef155…`); presented image within 0.25 % of Celeritas over 16 levels | Needs the Cleanroom 0.7 substitutions in `.celtium-work/modpack-e2ee/SUBSTITUTIONS.md` (ThaumcraftFix, Trinity, Fugue lists, ZenUtils, CodeChickenLib) — those are Cleanroom 0.7 issues, present without Celtium too. Custom Loading Screen, SmoothFont, Gnetum and Nothirium are removed (see [notworkingmods.md](notworkingmods.md)) |
-| Enigmatica 2: Expert (E2E) | 1.93a, 270 jars | Previously passed with StellarCore installed; re-run on the current build is in progress | Nothirium removed |
+| Enigmatica 2: Expert (E2E) | 1.93a, 270 jars | **Fails on the current build**: loads and enters the world with Vulkan validation clean, but the presented image fails the gate (black beyond the render distance; JourneyMap tiles missing) — see [notworkingmods.md](notworkingmods.md) | Nothirium removed |
 
 Notable mods inside the E2E-E pass (loaded and present in the world, not individually compared): Thaumcraft 6 and its
 addons, Applied Energistics 2 (UEL), Mekanism CE, Thermal series, Immersive Engineering, Tinkers' Construct (Antique),
