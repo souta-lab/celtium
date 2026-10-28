@@ -93,8 +93,23 @@ public final class CeltiumFontGlyphCapture {
             new java.util.IdentityHashMap<>();
 
     /** {@return the index {@code table.indexOf(ch)} would return}, from a per-table direct map. */
+    /** The table looked up last and its map, as one immutable pair so a reader never sees one without the other. */
+    private static final class LastTable {
+        final String table;
+        final int[] cache;
+
+        LastTable(String table, int[] cache) {
+            this.table = table;
+            this.cache = cache;
+        }
+    }
+
+    /** Consecutive glyphs use the same table, so this answers most calls without the identity map (1.3% of a frame). */
+    private static LastTable lastTable;
+
     public static int tableCharIndex(String table, int ch) {
-        int[] cache = CHAR_INDEX_CACHES.get(table);
+        LastTable last = lastTable;
+        int[] cache = last != null && last.table == table ? last.cache : CHAR_INDEX_CACHES.get(table);
         if (cache == null) {
             char[] chars = table.toCharArray();
             int hi = 0;
@@ -112,6 +127,9 @@ public final class CeltiumFontGlyphCapture {
                 }
             }
             CHAR_INDEX_CACHES.put(table, cache);
+        }
+        if (last == null || last.table != table) {
+            lastTable = new LastTable(table, cache);
         }
         return ch >= 0 && ch < cache.length ? cache[ch] : table.indexOf(ch);
     }
