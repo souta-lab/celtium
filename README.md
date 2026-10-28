@@ -41,6 +41,8 @@ See [the single current status table](<docs/plan.md>) for per-GPU verdicts, arti
 
 ## Scope and compatibility
 
+Tested mods and packs: [verifiedmods.md](verifiedmods.md). Refused, unsupported and known-broken mods: [notworkingmods.md](notworkingmods.md).
+
 - **Minecraft 1.12.2 / CleanroomMC only.** Stock Forge with Java 8/LWJGL2 and other Forge + LWJGL3 replacement stacks are not supported.
 - Ordinary gameplay/content mods are a compatibility goal. Minecraft/Forge public entry points, model data and event semantics are preserved where possible; compatibility is **not yet complete**.
 - **Competing renderer replacements are not supported alongside Celtium.** Celtium replaces the renderer, so another renderer overhaul in the same instance is not a configuration this project tests. These mods are detected at startup and the game stops with a message naming them: **Custom Loading Screen, SmoothFont, Gnetum, Nothirium, Naughthirium** (each replaces a part Celtium draws natively: the loading screen, glyph drawing, the HUD, the terrain renderer). `-Dceltium.allowCompetitors=true` skips the check for diagnosis only. Ordinary optimization mods are different: the test instance runs the standard 1.12.2 performance stack as **coexistence targets** (see below), and the 268-mod E2E pack passes with StellarCore installed.

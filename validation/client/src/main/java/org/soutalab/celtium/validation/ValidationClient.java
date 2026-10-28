@@ -3717,6 +3717,10 @@ public final class ValidationClient {
                 // -Dceltium.validation.framerate: a capped run separates "the tick is slower" from "the tick is slowed
                 // by the frames around it" - at a cap both renderers draw the same number of frames per tick.
                 mc.gameSettings.limitFramerate = Integer.getInteger("celtium.validation.framerate", 260).intValue();
+                // The tutorial toast covers the top right of every capture - where a minimap sits - in both arms alike;
+                // it is not part of what an image comparison is about.
+                mc.gameSettings.tutorialStep = net.minecraft.client.tutorial.TutorialSteps.NONE;
+                mc.getTutorial().setStep(net.minecraft.client.tutorial.TutorialSteps.NONE);
                 mc.gameSettings.enableVsync = false;
                 // The field write is not the option-page setter: nothing pushes the request to the Vulkan swapchain,
                 // which stays FIFO and keeps the legs vsync-bound at ~16.3ms whatever this line says. The request
