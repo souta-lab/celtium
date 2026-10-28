@@ -4080,6 +4080,17 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void deleteTexture(int name) {
+        int[] level0 = this.texLevels.get(texLevelKey(name, 0));
+        if (level0 != null && level0[0] * level0[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
+            StringBuilder callers = new StringBuilder();
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            for (int i = 2; i < stack.length && i < 14; i++) {
+                callers.append(i == 2 ? "" : " <- ").append(stack[i].getClassName().replaceAll(".*\\.", ""))
+                        .append('.').append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+            }
+            System.out.println("[Celtium] CELTIUM_TEXTURE_DELETED name=" + name + " " + level0[0] + "x" + level0[1]
+                    + " callers=[" + callers + "]");
+        }
         this.textures.delete(name);
         it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
         while (bindings.hasNext()) {
@@ -4731,8 +4742,26 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (name == 0) {
             return;
         }
-        this.texLevels.put(texLevelKey(name, level), new int[] { width, height, internal });
+        int[] previous = this.texLevels.put(texLevelKey(name, level), new int[] { width, height, internal });
+        if (level == 0 && previous != null && (previous[0] != width || previous[1] != height)
+                && previous[0] * previous[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
+            // A large level re-specified at another size: the texture name was handed to something else (a mod that
+            // deleted and re-generated it, or one that uploaded while it believed its own texture was bound). The
+            // mirror under that name is then replaced, so this is the line that names who took a block atlas's name.
+            StringBuilder callers = new StringBuilder();
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            for (int i = 2; i < stack.length && i < 14; i++) {
+                callers.append(i == 2 ? "" : " <- ").append(stack[i].getClassName().replaceAll(".*\\.", ""))
+                        .append('.').append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+            }
+            System.out.println("[Celtium] CELTIUM_TEXTURE_RESPECIFIED name=" + name + " " + previous[0] + "x"
+                    + previous[1] + " -> " + width + "x" + height + " callers=[" + callers + "]");
+        }
     }
+
+    /** Bounded: a run reports the first few large re-specifications. */
+    private static final java.util.concurrent.atomic.AtomicInteger RESPECIFIED_LINES =
+            new java.util.concurrent.atomic.AtomicInteger(8);
 
     /**
      * {@code glTexStorage2D/3D}: storage is reserved for level 0 (the level count is not walked) and its content is

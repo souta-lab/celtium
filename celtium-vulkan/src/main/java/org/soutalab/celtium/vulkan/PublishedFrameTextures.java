@@ -63,6 +63,17 @@ final class PublishedFrameTextures {
         this.colorTextureReports++;
     }
 
+    /** Drops every framebuffer's colour-attachment record that names this GL texture (it was deleted or reused). */
+    void forgetColorTexture(int glTextureName) {
+        Long identity = this.identitiesByTexture.remove(Integer.valueOf(glTextureName));
+        if (identity != null) {
+            long[] recorded = this.colorTextures.get(identity);
+            if (recorded != null && recorded[0] == glTextureName) {
+                this.colorTextures.remove(identity);
+            }
+        }
+    }
+
     /** {@return the colour texture recorded for a framebuffer identity as {texture, width, height}, or null}. */
     long[] colorTexture(long identity) {
         return this.colorTextures.get(Long.valueOf(identity));

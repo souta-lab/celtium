@@ -76,6 +76,22 @@ public final class VulkanTerrainFactory {
             return existing;
         }
 
+        if (current != null) {
+            // A second world renderer while one is installed: it gets its own device, and installing it replaces the
+            // backend every other drawing path uses. Named with its caller chain, because a mod that builds its own
+            // RenderGlobal is the only thing that does this (four times in ATM3, each taking the block atlas's mirror
+            // with the replaced backend's texture registry).
+            StringBuilder callers = new StringBuilder();
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            for (int i = 2; i < stack.length && i < 16; i++) {
+                callers.append(i == 2 ? "" : " <- ").append(stack[i].getClassName().replaceAll(".*\\.", ""))
+                        .append('.').append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+            }
+            System.out.println("[Celtium] CELTIUM_SECOND_TERRAIN_BACKEND replacing=" + current.getClass().getSimpleName()
+                    + "@" + Integer.toHexString(System.identityHashCode(current))
+                    + (current instanceof VulkanTerrainGpuBackend v ? " " + v.celtium$ownershipSummary() : "")
+                    + " callers=[" + callers + "]");
+        }
         VulkanContext context = null;
         try {
             context = VulkanContext.create("Celtium terrain backend");

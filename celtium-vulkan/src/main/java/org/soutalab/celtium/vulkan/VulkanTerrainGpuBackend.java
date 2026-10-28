@@ -650,6 +650,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.windowBackend;
     }
 
+    /** {@return the ownership flags and delete count}, for the line that reports a backend being replaced. */
+    public String celtium$ownershipSummary() {
+        return "windowOwned=" + this.windowOwned + " windowBackend=" + this.windowBackend + " deletes=" + this.deleteCalls;
+    }
+
+    private int deleteCalls;
+
     /**
      * {@return the name of the Vulkan device this renderer draws with}, or {@code null} when there is none.
      * <p>
@@ -4396,6 +4403,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * than reused.
      */
     public void onGlTextureReallocated(int glTextureId) {
+        // A deleted name is no framebuffer's colour attachment any more; its next owner must not inherit the record.
+        this.publishedTextures.forgetColorTexture(glTextureId);
         onGlTextureReallocated(glTextureId, -1, -1);
     }
 
@@ -5659,8 +5668,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (glTextureName == 0) {
             return Long.MIN_VALUE;
         }
-        return this.publishedTextures.identityForColorTexture(glTextureName);
+        long identity = this.publishedTextures.identityForColorTexture(glTextureName);
+        if (identity == Long.MIN_VALUE || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            return identity;
+        }
+        // The association is by name, and a name outlives its texture: a mod's framebuffer colour texture deleted
+        // through raw GL leaves the record, and the name's next owner - ATM3's 8192x4096 block atlas - was then taken
+        // for that framebuffer's image, its mirror superseded by the framebuffer's and the terrain drawn black. A name
+        // whose current level 0 is not the size the framebuffer reported is not that attachment any more.
+        long[] attachment = this.publishedTextures.colorTexture(identity);
+        int width = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureName, 0, 0x1000);
+        int height = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureName, 0, 0x1001);
+        if (attachment != null && width > 0 && height > 0 && (attachment[1] != width || attachment[2] != height)) {
+            this.publishedTextures.forgetColorTexture(glTextureName);
+            if (this.staleColorTextureLogs++ < 4) {
+                System.out.println("[Celtium] CELTIUM_STALE_COLOR_TEXTURE name=" + glTextureName + " is " + width + "x"
+                        + height + " but was recorded as framebuffer 0x" + Long.toHexString(identity) + "'s "
+                        + attachment[1] + "x" + attachment[2] + " colour attachment; the record is dropped");
+            }
+            return Long.MIN_VALUE;
+        }
+        return identity;
     }
+
+    private int staleColorTextureLogs;
 
     /**
      * Links a framebuffer's GL object name to its identity, from the mixin that sees both at bind time.
@@ -11481,6 +11512,9 @@ this.frameBufferOpen = false;
             this.textureArray.destroy();
             this.textureArray = null;
         }
+        this.deleteCalls++;
+        System.out.println("[Celtium] CELTIUM_BACKEND_DELETE backend@" + Integer.toHexString(System.identityHashCode(this))
+                + " " + celtium$ownershipSummary());
         if (this.windowOwned) {
             // The world renderer is leaving, not the window. Release what the world owns, detach the world's objects and
             // keep the device, the frame target and the swapchain: the menu and the loading screens draw through them,

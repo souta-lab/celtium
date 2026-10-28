@@ -159,8 +159,22 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         return this.renderer;
     }
 
+    /**
+     * Whether this is the game's own RenderGlobal. Celtium has one device and one texture registry, so only that one
+     * drives the renderer: a mod that builds a RenderGlobal of its own (ATM3 has several) used to give it a world, which
+     * created a second terrain backend that replaced the installed one - and with it the registry holding the block
+     * atlas, which is too large to be refilled from the stub's capture. The game's terrain then drew black.
+     */
+    @Unique
+    private boolean celtium$isGameRenderGlobal() {
+        return (Object) this == Minecraft.getMinecraft().renderGlobal;
+    }
+
     @Inject(method = "setWorldAndLoadRenderers", at = @At("RETURN"))
     private void onWorldChanged(WorldClient world, CallbackInfo ci) {
+        if (!celtium$isGameRenderGlobal()) {
+            return;
+        }
         RenderDevice.enterManagedCode();
 
         try {
@@ -176,6 +190,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     public int getRenderedChunks() {
+        if (!celtium$isGameRenderGlobal()) {
+            return 0;
+        }
         return this.renderer.getVisibleChunkCount();
     }
 
@@ -185,11 +202,17 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     public boolean hasNoChunkUpdates() {
+        if (!celtium$isGameRenderGlobal()) {
+            return true;
+        }
         return this.renderer.isTerrainRenderComplete();
     }
 
     @Inject(method = "setDisplayListEntitiesDirty", at = @At("RETURN"))
     private void onTerrainUpdateScheduled(CallbackInfo ci) {
+        if (!celtium$isGameRenderGlobal()) {
+            return;
+        }
         this.renderer.scheduleTerrainUpdate();
     }
 
@@ -199,6 +222,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     public int renderBlockLayer(BlockRenderLayer blockLayerIn, double partialTicks, int pass, Entity entityIn) {
+        if (!celtium$isGameRenderGlobal()) {
+            return 0;
+        }
         // One counter, because whether this method runs at all is an open question in the runtime we target:
         // Cleanroom's Kirino replaces EntityRenderer.renderWorld, its classes reference neither renderWorldPass nor
         // renderBlockLayer by name, and yet the terrain draws. Either this entry point is alive (and only the entity
@@ -239,6 +265,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     public void setupTerrain(Entity entity, double tick, ICamera camera, int frame, boolean spectator) {
+        if (!celtium$isGameRenderGlobal()) {
+            return;
+        }
         RenderDevice.enterManagedCode();
 
         try {
@@ -255,6 +284,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     private void markBlocksForUpdate(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, boolean important) {
+        if (!celtium$isGameRenderGlobal()) {
+            return;
+        }
         if (celtium$MARK_TRACE) {
             celtium$noteMark(minX, minY, minZ, maxX, maxY, maxZ, important);
         }
@@ -327,6 +359,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
 
     @Inject(method = "loadRenderers", at = @At("RETURN"))
     private void onReload(CallbackInfo ci) {
+        if (!celtium$isGameRenderGlobal()) {
+            return;
+        }
         RenderDevice.enterManagedCode();
 
         try {
@@ -346,6 +381,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         if (celtium$renderEntitiesInjections <= 3) {
             System.out.println("[Celtium] CELTIUM_RENDERENTITIES pass=" + pass
                     + " calls=" + celtium$renderEntitiesInjections);
+        }
+        if (!celtium$isGameRenderGlobal()) {
+            return;
         }
         this.renderer.renderBlockEntities(new CeleritasWorldRenderer.TileEntityRenderContext(damagedBlocks, partialTicks));
 
@@ -381,7 +419,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         // this line is the overlay's own render-info slot - appending keeps the vanilla chunk counts readable while
         // naming the renderer. Both accessors are static and return "unavailable" before a device exists, so the
         // line is honest on a run that never selected Vulkan.
-        String base = this.renderer.getChunksDebugString();
+        String base = celtium$isGameRenderGlobal() ? this.renderer.getChunksDebugString() : "";
         String device = org.soutalab.celtium.vulkan.VulkanContext.deviceSummary();
         String driver = org.soutalab.celtium.vulkan.VulkanContext.driverSummary();
         if (device == null || device.isEmpty()) {

@@ -283,6 +283,7 @@ public final class VulkanTextureRegistry {
             retireExternal(existing, "GL texture " + glTextureId + " was published with new handles");
         }
         Entry superseded = this.entries.remove((int) (id));
+        celtium$noteLargeRemoval(glTextureId, superseded, "superseded by a published image");
         celtium$dropMemo();
         if (superseded != null) {
             // A mirror this registry created for the same name is superseded by the renderer's own live image. It is
@@ -1698,6 +1699,7 @@ public final class VulkanTextureRegistry {
             retireExternal(external, "GL texture " + glTextureId + " was forgotten by its owner");
         }
         Entry entry = this.entries.remove((int) (id));
+        celtium$noteLargeRemoval(glTextureId, entry, "forgetTexture");
         celtium$dropMemo();
         this.fullyInitialized.remove(id);
         // The GL name is free for reuse the moment it is deleted ("its name is free for reuse"), so the label that
@@ -2169,8 +2171,31 @@ public final class VulkanTextureRegistry {
         return this.entries.size();
     }
 
+    /**
+     * Names who removes a large mirror (a block atlas): bounded, with the caller chain. A removed atlas mirror is
+     * recreated empty when the terrain next asks for it, and an atlas too large for the stub's capture cannot be
+     * refilled from it - the terrain then draws black (ATM3).
+     */
+    private static int largeRemovalLogs;
+
+    private static void celtium$noteLargeRemoval(int glTextureId, Entry entry, String why) {
+        if (entry == null || (long) entry.width * entry.height < 1024L * 1024L || largeRemovalLogs >= 6) {
+            return;
+        }
+        largeRemovalLogs++;
+        StringBuilder callers = new StringBuilder();
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        for (int i = 3; i < stack.length && i < 15; i++) {
+            callers.append(i == 3 ? "" : " <- ").append(stack[i].getClassName().replaceAll(".*\\.", ""))
+                    .append('.').append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+        }
+        System.out.println("[Celtium] CELTIUM_LARGE_MIRROR_REMOVED id=" + glTextureId + " " + entry.width + "x"
+                + entry.height + " why=[" + why + "] callers=[" + callers + "]");
+    }
+
     public void delete() {
         for (Entry entry : this.entries.values()) {
+            celtium$noteLargeRemoval(entry.glId, entry, "registry deleted");
             entry.texture.delete();
         }
         this.entries.clear();
