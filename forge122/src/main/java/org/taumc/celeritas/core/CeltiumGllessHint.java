@@ -473,6 +473,17 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * The transformer's form: it hands every one of the GL entry point's eight arguments over, so this is the overload
+     * its {@code (IIIIIIII)V} call resolves to. Only the 7-argument one existed, and the first mod to copy through
+     * {@code GL11.glCopyTexImage2D} died with NoSuchMethodError (The Betweenlands' depth-buffer blit, in ATM3). The
+     * border must be 0 in GL; nothing else is defined, so it carries no information here.
+     */
+    public static void glCopyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height,
+            int border) {
+        glCopyTexImage2D(target, level, internalFormat, x, y, width, height);
+    }
+
+    /**
      * The client-array/VBO draw family, as {@code VertexBuffer} issues it.
      *
      * <p>{@code bindBuffer -> glEnableClientState/glVertexPointer -> glDrawArrays} is how the sky dome, the stars, the
