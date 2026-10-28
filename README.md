@@ -36,7 +36,7 @@ Vulkan-only startup and presentation have been exercised on **AMD Radeon RX 6400
 
 See [the single current status table](<docs/plan.md>) for per-GPU verdicts, artifact scope and outstanding defects, and [the process re-audit](<docs/history/audit-2026-10-17-sol-review.md>) for corrected claims. In particular, the earlier blanket “resize/reload/minimize passed on both GPUs” claim was incorrect: a recorded Intel resize run failed Vulkan validation, and the named minimize run was AMD-only. Cloud input observations also did not establish complete image parity.
 
-[User reports](<docs/reports/0.0.5-user-reported-defects.md>), [the performance design](<docs/performance_plan.md>) and [mod compatibility](<docs/mod-compatibility.md>) provide supporting detail, not independent current-state registers. [Historical records](<docs/history>) describe their particular builds, not latest-HEAD acceptance.
+[User reports](<docs/reports/0.0.5-user-reported-defects.md>), [the archived performance plan](<docs/history/performance-plan-2026-10-12.md>) and [mod compatibility](<docs/mod-compatibility.md>) provide supporting detail, not independent current-state registers. [Historical records](<docs/history>) describe their particular builds, not latest-HEAD acceptance.
 
 ## Scope and compatibility
 
@@ -149,7 +149,7 @@ The test instance runs the standard 1.12.2 performance stack — these are **coe
 
 - **Item mesh cache** (`RenderItemMixin`, PR #21) — after [Angelica PR #1034, "Optimize in-world item rendering"](https://github.com/GTNewHorizons/Angelica/pull/1034) (VBO caching of held/dropped/GUI item geometry, ~4–6x on item-heavy scenes).
 
-The inventoried candidates per project are kept in [docs/performance_plan.md](docs/performance_plan.md). Porting a listed item means: check the file/module license first (FalseTweaks and ArchaicFix contain non-LGPL islands), re-implement — do not copy code —, then credit in commit, code comment and PR.
+The inventoried candidates per project are kept in [the archived performance plan](docs/history/performance-plan-2026-10-12.md). Porting a listed item means: check the file/module license first (FalseTweaks and ArchaicFix contain non-LGPL islands), re-implement — do not copy code —, then credit in commit, code comment and PR.
 
 **GPL and LGPL sources are used within their terms**, which for a GPL project means design reference only: adapting GPL code into this LGPL-3.0 renderer would relicense the combined work, so a GPL project is read for its technique and re-implemented here, with the source named in the commit, the code comment and the PR. LGPL-3.0 sources may be adapted, and where code is adapted rather than re-implemented the file keeps its notice and the adaption is named the same way.
 

@@ -2,12 +2,12 @@
 
 開発ベース **0.1.1-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開最新版は **v0.1.1-alpha**（2026-10-28、[release notes](<releases/0.1.1-alpha.md>)）。
 2026-10-28 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
-製品の出口は [goal.md](<goal.md>)、目標設計は [new_architecture.md](<new_architecture.md>)。
+製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案であり拘束しない（利用者指示 2026-10-28: 「new_architectureを絶対とするな」）。実測でより良い方法があればそちらを採る。
 利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
-## 2026-10-24: 新アーキテクチャへ全面移行（利用者指示）
+## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
-目標設計は [new_architecture.md](<new_architecture.md>)（scene database・Native Everything Culling・frame compiler・
+設計案は [new_architecture.md](<new_architecture.md>)（scene database・Native Everything Culling・frame compiler・
 Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理・capture・record仕事を消す）と一致し、互換方針の変更
 （描画改変Modは競合として非サポート）でproducerまで所有できるため。**順序は実測コストで並べ替える**
 （leg `tickjfr-celtium-2`・JAR `652075c9…`・AMD・world・validation off・warm窓のclient threadサンプル692）:
@@ -101,7 +101,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 ## 更新と参照
 
 - この表は実装・根因・受入の意味が変わった時だけ更新する。round日記・毎回のPR作成は不要。
-- [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [設計](<new_architecture.md>) /
+- [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [設計案（参考）](<new_architecture.md>) /
   [手順](<development.md>) / [計器索引](<instruments.md>) / [検証の罠](<verification-traps.md>)。
 - 計測の生ログと棄却済みの詳細（`duplicate()`除去の反証、packet内訳の旧版、1.70x/1.49xの履歴）は
   [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)（packet loopの撤回・validation層による膨張の記録もここ）。

@@ -5,6 +5,7 @@
 **対象:** Minecraft 1.12.2 / CleanroomMC / Java 21 API（Java 27 runtime利用可能）/ LWJGL 3 / SDL3 / Vulkan 1.2+  
 **目標:** 全描画領域の統合・Native Everything Culling・最小CPU overhead・低転送量・低レイテンシ・AMD RX 6400/Intel UHD 630両対応。
 
+> **参考の設計案（2026-10-28 利用者指示: 絶対としない）。実測でより良い方法があればそちらを採る。** 本書の「描画に介入するModはすべて非サポート」という互換方針も、Xaero・JourneyMap 等への実際の対応方針（[plan.md](plan.md)）が優先する。
 > **設計書であり実装・性能改善の完了宣言ではない。** 現状と実測の正典は [docs/plan.md](plan.md)、性能検証は [docs/development.md](development.md)。
 > **最新の利用者指定:** Forge API以外のraw GLはstub。**描画実装・描画経路・描画処理に介入するModはすべて競合扱いで非サポート。** この互換ポリシーは [docs/goal.md](goal.md) の旧来の広いMod互換目標に優先する「新設計の指定」であり、実装移行時には製品契約も更新する。既存の停止状態・作業許可は変更しない。
 
