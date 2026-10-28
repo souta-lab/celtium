@@ -9,17 +9,16 @@ An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, 
 >
 > **native Vulkanで描画・提示する実装がありますが、描画・互換性・性能の受入は未完です。** 最新の判定と未解決項目は [現在表](<docs/plan.md>)だけで管理します。
 
-Status reviewed: **2026-10-28** (release 0.1.0-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks).
+Status reviewed: **2026-10-28** (release 0.1.1-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks).
 
-**On `main`, not yet released:** stained glass, ice and slime no longer draw their back faces (the reported glass
-flicker), lit models clamp their lighting like fixed-function GL, blocks mesh through Forge's block-model pipeline as in
-upstream Celeritas, a world frame limit is honoured instead of the display refresh rate, and ~600 MB of unused vanilla
-chunk buffers are no longer allocated when joining a world. Against Celeritas on the current main build (no Xaero):
-AMD p50/p95/p99 0.62/0.62/0.81x; Intel 0.90/0.89/1.05x ([current table](<docs/plan.md>)).
+**0.1.1-alpha against Celeritas 2.5.0-dev:** on the AMD RX 6400, frame time is **0.59x at p50, 0.60x at p95 and 0.83x
+at p99**, with every one of the nine paired ratios below 1 - median frame 0.63 ms against 1.06 ms. On the Intel UHD 630 it is
+0.90x and 0.87x at p50 and p95, and still **1.05x (slower) at p99**. One scene, measured as described under
+[Performance](#performance); [release notes](<docs/releases/0.1.1-alpha.md>).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/benchmark-dark.svg">
-  <img alt="Frame time of Celtium 0.1.0-alpha and Celeritas 2.5.0-dev at p50, p95 and p99 on AMD RX 6400 and Intel UHD 630" src="docs/img/benchmark-light.svg">
+  <img alt="Frame time of Celtium 0.1.1-alpha and Celeritas 2.5.0-dev at p50, p95 and p99 on AMD RX 6400 and Intel UHD 630" src="docs/img/benchmark-light.svg">
 </picture>
 
 *Frame time against Celeritas 2.5.0-dev, lower is better. Conditions, ratios and verdicts: [Performance](#performance).*
@@ -72,7 +71,7 @@ The exact minimum feature/format contract is still being audited and reduced. **
 
 ## Downloads
 
-[**Celtium 0.1.0-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.1.0-alpha) (2026-10-27) is the newest published binary; see [its release notes](<docs/releases/0.1.0-alpha.md>). **0.0.14-alpha must not be used** (its indirect draw path discarded the item and colour families). Every release carries the limitations described above.
+[**Celtium 0.1.1-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.1.1-alpha) (2026-10-28) is the newest published binary; see [its release notes](<docs/releases/0.1.1-alpha.md>). **0.0.14-alpha must not be used** (its indirect draw path discarded the item and colour families). Every release carries the limitations described above.
 
 ## Building and trying a development build
 
@@ -85,7 +84,7 @@ Run Gradle with JDK 25. The build also uses the JDK 21 compilation toolchain and
 The packaged jar is written under a directory named after the version, which the build takes from `build-1122/build.gradle.kts` unless `-Pceltium_release_version` overrides it:
 
 ```text
-build-1122/build/libs/0.1.0-alpha/celtium-forge-mc1.12.2-0.1.0-alpha.jar
+build-1122/build/libs/0.1.1-alpha/celtium-forge-mc1.12.2-0.1.1-alpha.jar
 ```
 
 Use a separate Cleanroom test instance and install the packaged Celtium jar (the plain `celtium-forge-mc1.12.2-<version>.jar`, not the `-dev` or `-reobf` one) instead of Celeritas; no JVM argument is required. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
@@ -94,19 +93,23 @@ For reproducible validation and development, use [the current development proced
 
 ## Performance
 
-Paired, interleaved runs against Celeritas 2.5.0-dev with the 0.1.0-alpha jar (`scripts/gv-kpi.sh`: same instance with
-Xaero's Minimap, the qmagnet test map, warm world ticks [400, 600), 1280x720, vsync off, frame limit 260, periodic dumps
-off; median of 3 pairs). Lower is better. The chart at the top is drawn from [the measured values](<docs/img/benchmark-0.1.0.json>)
-by `scripts/bench_chart.py`.
+Paired, interleaved runs against Celeritas 2.5.0-dev with the 0.1.1-alpha jar (`scripts/gv-kpi.sh`: the same
+Cleanroom 0.7.11 instance with Fugue and Scalar, the qmagnet test map, warm world ticks [400, 600), 1280x720, vsync off,
+frame limit 260, periodic dumps off; 3 pairs). Lower is better. The chart at the top is drawn from
+[the measured values](<docs/img/benchmark-0.1.1.json>) by `scripts/bench_chart.py`.
 
-| GPU | Celtium / Celeritas (p50, median of 3 pairs) | Verdict |
-| --- | --- | --- |
-| AMD RX 6400 | **0.992x** - parity; p95 equal, p99 3.08 vs 2.93 ms | no formal verdict (pairs not all one direction) |
-| Intel UHD 630 | 1.205x - slower in all 3 pairs | no formal verdict in this run; the same build measured **SLOWER** (1.200x) with the load gate passed |
+| GPU | p50 | p95 | p99 | Verdict |
+| --- | --- | --- | --- | --- |
+| AMD RX 6400 | **0.59x** (0.63 vs 1.06 ms) | **0.60x** | **0.83x** | faster in all 3 pairs at every percentile |
+| Intel UHD 630 | 0.90x (1.58 vs 1.77 ms) | 0.87x | 1.05x | faster at p50/p95; p99 slower in all 3 pairs |
 
-Moving through the world is where 0.1.0 changed most: the terrain occlusion search now runs on its own thread, which
-took a flight replay's median frame from 1.03-1.34 ms to 0.74-0.89 ms on the AMD card. Intel is GPU-bound in this scene
-and still behind; closing that gap is the current work in [the current table](<docs/plan.md>).
+The ratio is the median of the three pairs' Celtium/Celeritas ratios. The measurement covers one scene; it includes the
+client tick, the GUI and the frame limiter, and claims no significance beyond the pairs agreeing in direction.
+Intel's remaining p99 gap is in the frames that carry a client tick ([analysis](<docs/evidence/intel-p99-2026-10-28.md>)).
+
+For comparison, 0.1.0-alpha measured 0.99x (AMD) and 1.21x (Intel) at p50 on the same kind of run, with Xaero's
+Minimap installed. Since then the terrain occlusion search has run on its own thread, block meshing follows Forge's
+block-model pipeline, and the translucent pass no longer draws back faces.
 
 ## License and attribution
 
