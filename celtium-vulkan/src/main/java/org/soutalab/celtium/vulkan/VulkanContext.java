@@ -611,6 +611,17 @@ public final class VulkanContext {
      */
     public VkCommandBuffer beginCommands() {
         requireUsable();
+        // Loading a large atlas can submit thousands of texture patches without presenting a frame. Frame-boundary
+        // polling therefore cannot bound the number of command buffers (and their driver-side state) retained here.
+        // First reclaim completed submissions; if the queue is still full, wait for its oldest submission before
+        // allocating another buffer. The wait also flushes an unarmed batched submission before inspecting its fence.
+        if (this.idleCommandBuffers.isEmpty() && this.deferredSubmitsOutstanding >= MAX_DEFERRED_COMMAND_BUFFERS) {
+            celtium$pollDeferredSubmits();
+            if (this.idleCommandBuffers.isEmpty() && this.deferredSubmitsOutstanding >= MAX_DEFERRED_COMMAND_BUFFERS) {
+                celtium$awaitOldestDeferredSubmit("command buffer pressure");
+                celtium$pollDeferredSubmits();
+            }
+        }
         // The driver may hand back a command buffer whose memory a previous submission is still reading, so the
         // queue is drained before a new one is allocated. Validation flags the alternative as a pending-state
         // reuse, and a half-rewritten command stream is exactly the kind of fault that makes a shader read the
@@ -658,6 +669,7 @@ public final class VulkanContext {
      */
     private final java.util.ArrayDeque<VkCommandBuffer> idleCommandBuffers = new java.util.ArrayDeque<VkCommandBuffer>();
     private static final int IDLE_COMMAND_BUFFER_CAP = 256;
+    private static final int MAX_DEFERRED_COMMAND_BUFFERS = 128;
     static long commandBufferAllocations;
     static long commandBufferReuses;
 

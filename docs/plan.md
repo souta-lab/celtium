@@ -3,7 +3,6 @@
 開発ベース **0.1.1-alpha**（[build定義](<../build-1122/build.gradle.kts>)）。公開最新版は **v0.1.1-alpha**（2026-10-28、[release notes](<releases/0.1.1-alpha.md>)）。
 2026-10-28 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案であり拘束しない（利用者指示 2026-10-28: 「new_architectureを絶対とするな」）。実測でより良い方法があればそちらを採る。
-利用者の最新指示とGoal停止状態をこの表で上書きしない。
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
@@ -52,7 +51,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080で表示）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`） |
-   | E2E 1.93a（Cleanroom 0.7） | **AMD PASSED**（`e2e-lod3`、`af1e97fe0`）。**Intel: atlas読込中にドライバ内SIGSEGV**（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾） |
+   | E2E 1.93a（Cleanroom 0.7） | **AMD PASSED**（`e2e-lod3`、`af1e97fe0`）。Intelのatlas読込中SIGSEGVは未回収command bufferの抑制後に1回通過・validation 0。ただし画像比較未成立、atlasを使う即時描画の拒否あり（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
@@ -101,7 +100,6 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 
 ## 更新と参照
 
-- この表は実装・根因・受入の意味が変わった時だけ更新する。round日記・毎回のPR作成は不要。
 - [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [設計案（参考）](<new_architecture.md>) /
   [手順](<development.md>) / [計器索引](<instruments.md>) / [検証の罠](<verification-traps.md>)。
 - 計測の生ログと棄却済みの詳細（`duplicate()`除去の反証、packet内訳の旧版、1.70x/1.49xの履歴）は
