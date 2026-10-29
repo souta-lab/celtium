@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import sys
 import time
+import urllib.request
 import uuid
 
 from headless_wayland import HeadlessWayland
@@ -83,10 +84,58 @@ def digest(path, algorithm="sha256"):
     return result.hexdigest()
 
 
-def coordinate_path(name):
-    group, artifact, version, *classifier = name.split(":")
-    suffix = "-" + classifier[0] if classifier else ""
+def coordinate_path(name, classifier=None):
+    group, artifact, version, *extra = name.split(":")
+    suffix = ""
+    if classifier:
+        suffix = "-" + classifier
+    elif extra:
+        suffix = "-" + extra[0]
     return Path(group.replace(".", "/")) / artifact / version / f"{artifact}-{version}{suffix}.jar"
+
+
+NATIVES_CLASSIFIERS = ("natives-linux", "natives-linux-64", "natives-linux-amd64", "natives-linux-arm64")
+
+
+def library_descriptor(lib):
+    """{@return} the Linux jar descriptor for this library, with its classifier recorded.
+
+    Some 1.12.2 libraries carry their OS natives as classifiers instead of an artifact - jinput-platform is the one
+    that bites a fresh imported profile, because the launcher extracts it as a native and never caches the coordinate
+    the profile names. Returning the descriptor the launcher itself would place means the harness resolves the file
+    that exists instead of refusing the profile over a jar no launcher keeps in that shape.
+    """
+    downloads = lib.get("downloads", {})
+    artifact = downloads.get("artifact") or {}
+    if artifact:
+        return artifact
+    classifiers = downloads.get("classifiers") or {}
+    for key in NATIVES_CLASSIFIERS:
+        descriptor = classifiers.get(key)
+        if descriptor:
+            found = dict(descriptor)
+            found["classifier"] = key
+            return found
+    return {}
+
+
+def fetch_library(url, destination, expected_sha1=None):
+    """Download one library into the launcher's cache and verify the profile's own SHA-1."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    request = urllib.request.Request(url, headers={"User-Agent": "celtium-validation"})
+    with urllib.request.urlopen(request, timeout=180) as response:
+        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=destination.name + ".",
+                                         delete=False) as handle:
+            shutil.copyfileobj(response, handle)
+            temporary = Path(handle.name)
+    try:
+        if expected_sha1:
+            actual = digest(temporary, "sha1")
+            if actual != expected_sha1:
+                raise ValueError(f"downloaded library does not match the profile SHA-1: {url} ({actual})")
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def allowed(library):
@@ -105,7 +154,25 @@ def allowed(library):
     return permitted
 
 
-def inspect(instance, java):
+def component_patch(instance, prism, component):
+    """{@return} (json path, "local"|"meta") for one profile component, or (None, None).
+
+    A profile Prism imported (a CurseForge Forge pack - exactly the Cleanroom Relauncher setup the external testers
+    run) carries no local patches: the launcher resolves every standard component from its shared meta when it
+    launches. Reading only patches/ made such a profile look like it had no Minecraft, no main class and no assets, so
+    the harness refused the very configuration it is meant to test. The meta file has the same shape as a patch.
+    """
+    local = instance / "patches" / (component["uid"] + ".json")
+    if local.is_file():
+        return local, "local"
+    version = component.get("version")
+    if not version:
+        return None, None
+    meta = prism / "meta" / str(component["uid"]) / (str(version) + ".json")
+    return (meta, "meta") if meta.is_file() else (None, None)
+
+
+def inspect(instance, java, fetch_missing=False):
     prism = instance.parent.parent
     pack = json.loads((instance / "mmc-pack.json").read_text())
     libraries = {}
@@ -116,17 +183,17 @@ def inspect(instance, java):
     assets = None
     patches = []
     for component in pack["components"]:
-        patch = instance / "patches" / (component["uid"] + ".json")
-        if not patch.exists():
-            # A meta component can be listed without a local patch - the 1.12.2 component tree keeps an org.lwjgl3 entry
-            # whose patch Prism prunes, and that entry's libraries are the 3.3.1 ones a 3.4.3 renderer must not load.
-            # Skipping it is therefore both what the launcher needs and what this harness needs; anything the component
-            # would have contributed (main class, tweakers, libraries) is absent from the classpath, which is the safe
-            # direction: the harness passes its own LWJGL and natives.
-            print(f"note: {component['uid']} has no local patch; treated as empty")
+        patch, patch_source = component_patch(instance, prism, component)
+        if patch is None:
+            # A meta component Prism itself prunes (the 1.12.2 tree keeps an org.lwjgl3 entry whose libraries are the
+            # 3.3.1 ones a 3.4.3 renderer must not load) stays empty; anything it would have contributed (main class,
+            # tweakers, libraries) is absent from the classpath, which is the safe direction: the harness passes its
+            # own LWJGL and natives.
+            print(f"note: {component['uid']} {component.get('version')} is not resolvable; treated as empty")
             continue
         data = json.loads(patch.read_text())
-        patches.append({"uid": component["uid"], "version": data["version"], "sha256": digest(patch)})
+        patches.append({"uid": component["uid"], "version": data.get("version", component.get("version")),
+                        "sha256": digest(patch), "source": patch_source})
         main_class = data.get("mainClass", main_class)
         main_jar = data.get("mainJar", main_jar)
         assets = data.get("assetIndex", assets)
@@ -175,27 +242,38 @@ def inspect(instance, java):
             "mainClass": main_class,
             "mainJar": str(main_jar),
         },
-        "java": {"executable": str(java), "version": (java_version.stderr + java_version.stdout).strip()},
+        "java": {"executable": str(java),
+                 "version": (java_version.stderr + java_version.stdout).strip(),
+                 "major": java_major_version(java_version.stderr + java_version.stdout)},
         "components": patches,
         "libraries": [],
         "mods": [],
     }
     classpath = []
     for lib in list(libraries.values()) + [main_jar]:
-        descriptor = lib.get("downloads", {}).get("artifact", {})
+        descriptor = library_descriptor(lib)
         # Prism stores by the coordinate, including patched version suffixes
         # such as 3.4.1-unsafe, even when downloads.artifact.path differs.
-        path = prism / "libraries" / coordinate_path(lib["name"])
+        path = prism / "libraries" / coordinate_path(lib["name"], descriptor.get("classifier"))
         if not path.is_file() and descriptor.get("path"):
             path = prism / "libraries" / descriptor["path"]
         if not path.is_file():
             # A pack may ship its own copies beside the instance (Cleanroom 0.7 does: it drops vanilla libraries by
             # overriding them with "999999.0-empty" jars that only exist under the instance's libraries/).
-            local = instance / "libraries" / coordinate_path(lib["name"]).name
+            local = instance / "libraries" / path.name
             if local.is_file():
                 path = local
+        if not path.is_file() and fetch_missing and descriptor.get("url"):
+            # A profile the launcher imported but never launched has none of its standard 1.12.2/Forge jars: the
+            # launcher downloads them on first launch and this harness runs before that. Fetching them from the
+            # profile's own recorded URL is what the launcher would do, and the SHA-1 is checked against that record.
+            print(f"fetching missing library {lib['name']} -> {path}")
+            fetch_library(descriptor["url"], path, descriptor.get("sha1"))
         if not path.is_file():
-            raise FileNotFoundError(f"Missing cached library: {path}")
+            hint = "" if descriptor.get("url") else (
+                " (the profile records no download for this artifact; the launcher provides it as a native)")
+            raise FileNotFoundError(f"Missing cached library: {path}{hint}"
+                                    + ("" if fetch_missing else "; --fetch-missing-libraries downloads it"))
         if descriptor.get("sha1") and digest(path, "sha1") != descriptor["sha1"]:
             raise ValueError(f"Library does not match the profile SHA-1: {path}")
         report["libraries"].append({"coordinate": lib["name"], "sha256": digest(path), "size": path.stat().st_size})
@@ -290,6 +368,129 @@ def release_game_slot(lock):
         if holder == os.getpid():
             lock.unlink(missing_ok=True)
 
+
+RELAUNCHER_MOD_GLOB = "*cleanroom-relauncher*.jar"
+
+
+def instance_heap_mib(instance, explicit=None):
+    """{@return} the heap the launched JVM is given, in MiB.
+
+    An explicit value wins. Otherwise the instance's own MaxMemAlloc is used, because a pack that needs a large heap
+    records it there. The old fixed 2G is only the last resort, and it is a measured defect rather than a default: a
+    Cleanroom Relauncher copies the launcher JVM's -Xmx into the relaunched game, so a harness that always asked for 2G
+    handed a pack that asks for 10G a 2G heap. That fails as an OutOfMemoryError while the world loads, which reads
+    like a renderer or pack fault and is neither.
+    """
+    if explicit is not None:
+        if explicit < 512:
+            raise ValueError("--memory must be at least 512 MiB")
+        return explicit
+    config = configparser.ConfigParser(interpolation=None)
+    config.read(instance / "instance.cfg")
+    try:
+        value = int(config["General"]["MaxMemAlloc"])
+    except (KeyError, ValueError):
+        return 2048
+    return value if value >= 512 else 2048
+
+
+def relauncher_version(mod_name):
+    """{@return} the version in a relauncher jar's name, or None."""
+    match = re.search(r"(\d+(?:\.\d+)+)", mod_name or "")
+    return match.group(1) if match else None
+
+
+def java_major_version(version_text):
+    """{@return} the Java major version from `java -version` output, or None.
+
+    Forge 1.12.2's launchwrapper casts the system classloader to a URLClassLoader, which Java 9 removed; the launcher
+    therefore runs a 1.12.2 Forge profile on Java 8 and lets the Cleanroom Relauncher provide a modern JVM for the
+    relaunched game. The harness has to know which of the two it is starting, because some of its own flags
+    (`--enable-native-access`) do not exist before Java 17.
+    """
+    match = re.search(r'version "(\d+)(?:\.(\d+))?', version_text or "")
+    if not match:
+        return None
+    major = int(match.group(1))
+    if major == 1 and match.group(2):
+        return int(match.group(2))
+    return major
+
+
+def java_supports_native_access(version_or_major):
+    """{@return} whether `--enable-native-access` can be passed to this JVM (Java 17 and newer can)."""
+    major = version_or_major if isinstance(version_or_major, int) else java_major_version(version_or_major)
+    return major is not None and major >= 17
+
+
+def cleanroom_generation(version_text):
+    """{@return} (major, minor) for a Cleanroom version string, or None.
+
+    0.7 is the SDL3 / LWJGL 3.4.3 generation, which is the one Celtium is built for; 0.6 and older cannot host a
+    gl-less Vulkan window at all, so a run pinned to them is worth naming before it starts rather than after it fails.
+    """
+    match = re.search(r"(\d+)\.(\d+)", version_text or "")
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def relauncher_summary(instance):
+    """{@return} how this instance reaches Cleanroom, or None when it is not a relauncher instance.
+
+    The Cleanroom Relauncher is a Forge coremod: the profile starts Forge, that plugin prepares Cleanroom and starts a
+    second JVM on Cleanroom's classpath, and it forwards the launcher JVM's input arguments (-D flags and -Xmx) to that
+    second JVM. That forwarding is why the acceptance flags reach the game on a relauncher instance at all, and why the
+    heap has to be right on the first launch: the relaunched JVM never reads the instance's memory settings itself.
+    Recording the version here stops a run of the Forge profile from being reported as a run of Cleanroom.
+    """
+    mods = sorted((instance / "minecraft" / "mods").glob(RELAUNCHER_MOD_GLOB))
+    if not mods:
+        return None
+    config = {}
+    path = instance / "minecraft" / "config" / "relauncher.json"
+    if path.is_file():
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            config = {}
+    return {
+        "mod": mods[0].name,
+        "version": relauncher_version(mods[0].name),
+        "configPath": "config/relauncher.json",
+        "cleanroomVersion": config.get("selectedVersion"),
+        "latestKnownVersion": config.get("latestVersion"),
+        "autoSetup": config.get("autoSetup"),
+        "enableRelauncher": config.get("enableRelauncher"),
+        "targetJavaVersion": config.get("targetJavaVersion"),
+        "launcherJvmArgs": config.get("args"),
+        "forwardsLauncherJvmArgs": True,
+    }
+
+
+def inject_relauncher_arguments(game, runner_arguments):
+    """{@return} the -D flags written into the isolated copy's relauncher config.
+
+    The relauncher starts the game in a second JVM and builds that command itself: -Xmx is forwarded from the launcher
+    JVM, and a 1.3.0 run here reached the game without the harness's -D flags. That is not good enough for an
+    acceptance run, because a diagnostic flag that silently does not arrive makes the run look clean and unexplained at
+    the same time. Its documented lever is config/relauncher.json's "args", which it appends to the child's command, so
+    the flags go there - in the copy only, never in the source instance.
+    """
+    added = [str(arg) for arg in runner_arguments or [] if str(arg).startswith("-D")]
+    if not added:
+        return []
+    path = game / "config" / "relauncher.json"
+    config = {}
+    if path.is_file():
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            config = {}
+    config["args"] = ((config.get("args") or "").strip() + " " + " ".join(added)).strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return added
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("instance", type=Path, help="Prism instance directory (parent of minecraft/)")
@@ -313,6 +514,15 @@ def main():
                              "Wayland keyboard path compiles the compositor's keymap with libxkbcommon and a "
                              "rolling distribution can break that path for the client")
     parser.add_argument("--jvm-arg", action="append", default=[])
+    parser.add_argument("--fetch-missing-libraries", action="store_true",
+                        help="Download libraries the launcher has not cached yet, from the profile's own meta URLs, "
+                             "into <prism>/libraries and verify their SHA-1. A profile Prism imported but never "
+                             "launched has none of the standard 1.12.2/Forge jars, and refusing it was the harness's "
+                             "relauncher-instance gap")
+    parser.add_argument("--memory", type=int, default=None, metavar="MIB",
+                        help="Heap for the launched JVM (-Xmx). Defaults to the instance's MaxMemAlloc, else 2048. "
+                             "A Cleanroom Relauncher instance copies this to the relaunched game, so a pack that asks"
+                             " for 10G must say so here - the old fixed 2G became an OutOfMemoryError during load")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--validate", action="store_true", help="Enable and require the separately installed validation fixture")
     parser.add_argument("--duration", type=int, default=60, help="Maximum runtime in seconds; a timeout is not success")
@@ -343,7 +553,29 @@ def main():
     if args.require_gpu and not args.validate:
         parser.error("--require-gpu requires --validate")
     instance = args.instance.resolve()
-    report, java, cp, main_class, tweakers, jvm_args, assets, asset_index = inspect(instance, args.java)
+    report, java, cp, main_class, tweakers, jvm_args, assets, asset_index = inspect(
+        instance, args.java, fetch_missing=args.fetch_missing_libraries)
+    try:
+        memory_mib = instance_heap_mib(instance, args.memory)
+    except ValueError as error:
+        parser.error(str(error))
+    report["heapMiB"] = memory_mib
+    # The launcher profile is not always the runtime: a Cleanroom Relauncher instance starts Forge, that coremod
+    # prepares Cleanroom, and the game the operator sees is a second JVM. What it forwards (the launcher's -D flags and
+    # -Xmx) is the contract this record exists for, so a run can never be cited as a Cleanroom run without it.
+    relauncher = relauncher_summary(instance)
+    if relauncher is not None:
+        report["relauncher"] = relauncher
+        print("Relauncher instance: " + relauncher["mod"] + " prepares Cleanroom "
+              + str(relauncher.get("cleanroomVersion")) + " and forwards the launcher's -D flags and -Xmx " + str(memory_mib)
+              + "m to the relaunched game")
+        if relauncher.get("enableRelauncher") is False:
+            parser.error("the instance carries the Cleanroom Relauncher but config/relauncher.json disables it; "
+                         "Celtium needs the Cleanroom runtime, not the Forge profile")
+        generation = cleanroom_generation(relauncher.get("cleanroomVersion"))
+        if generation is not None and generation < (0, 7):
+            print("warning: the relauncher is pinned to Cleanroom " + str(relauncher.get("cleanroomVersion"))
+                  + "; Celtium requires the 0.7 line (SDL3, LWJGL 3.4.3) and will refuse the older generation")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Locked {len(report['libraries'])} library jars and {len(report['mods'])} mods")
@@ -381,6 +613,16 @@ def main():
     supplemental = copy_pack_into_game_dir(source_game, game, args.copy_pack_dir, ignored_mods)
     if supplemental:
         report["supplementalPackDirs"] = supplemental
+    # A relauncher instance runs the game in a second JVM whose command the relauncher builds. Writing the diagnostic
+    # flags into the copy's config/relauncher.json is the path the relauncher documents, and the only one that does not
+    # depend on the version's argument forwarding: a 1.3.0 run reached the game without the harness's -D flags while
+    # keeping glless (which is on by default on Linux), so a run could otherwise be judged without its instruments.
+    # This has to happen after the profile is copied into the isolated directory, or the copy fails on config/ existing.
+    if relauncher is not None:
+        injected = inject_relauncher_arguments(game, args.jvm_arg)
+        if injected:
+            relauncher["injectedJvmArgs"] = injected
+            print("Relauncher arguments: wrote " + str(len(injected)) + " -D flag(s) into the copy's config/relauncher.json")
     (game / "mods").mkdir(exist_ok=True)
     for mod in args.mod:
         target = game / "mods" / mod.name
@@ -445,12 +687,14 @@ def main():
         print(f"Waiting for the game slot (held by pid {holder}) ...")
         time.sleep(5)
     try:
-        return run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser)
+        return run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser, memory_mib,
+                          report["java"].get("major"))
     finally:
         release_game_slot(lock)
 
 
-def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser):
+def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser, memory_mib=2048,
+               java_major=None):
     player = "CeltiumValidation"
     player_uuid = uuid.UUID(bytes=hashlib.md5(("OfflinePlayer:" + player).encode("utf-8")).digest(), version=3).hex
     validation_args = ["-Dceltium.validation=true"] if args.validate else []
@@ -466,8 +710,11 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         window_height = int(window_size[1])
     except ValueError:
         parser.error("--window-size must be WxH with integer values, e.g. 1920x1080")
-    command = [str(java), "-Xms512m", "-Xmx2g", "--enable-native-access=ALL-UNNAMED",
-               *jvm_args, *args.jvm_arg, *validation_args, "-cp", ":".join(cp), main_class,
+    java_supports_native = java_supports_native_access(java_major)
+    command = [str(java), "-Xms512m", f"-Xmx{memory_mib}m"]
+    if java_supports_native:
+        command.append("--enable-native-access=ALL-UNNAMED")
+    command += [*jvm_args, *args.jvm_arg, *validation_args, "-cp", ":".join(cp), main_class,
                "--username", player, "--version", "1.12.2", "--gameDir", str(game),
                "--assetsDir", str(assets), "--assetIndex", asset_index,
                "--uuid", player_uuid, "--accessToken", "0", "--userType", "legacy",

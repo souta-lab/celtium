@@ -77,6 +77,18 @@ scripts/gv-leg.sh <different-leg> .gv-verify/jars/<tag> cohort intel 900
   同マップのGL参照runから測った床で判定する（`celtium$worldMapGate`）。instanceが無ければ
   `CELTIUM_INSTANCE_COHORT` のcloneを作り `.celtium-work/worlds/qmagnet` を `minecraft/saves/qmagnet` へコピーする。
 - `CELTIUM_ROOT` / `CELTIUM_INSTANCE_COHORT` / `CELTIUM_INSTANCE_WORLD` / `CELTIUM_INSTANCE_E2E` / `CELTIUM_INSTANCE_RECIPE`でcheckout/instanceを差し替える。
+- **Cleanroom Relauncher 構成（2026-10-29・テスターと同条件）**: 実プレイ報告の環境は「CurseForgeのForge profile +
+  `!cleanroom-relauncher-*.jar`」。ForgeのcoremodがCleanroomを用意し、**2つ目のJVM**をCleanroomのclasspathで起動する。
+  検証時の要点:
+  - Prismが取り込んだだけのprofileは `patches/` を持たず、メタはlauncherの `meta/` にある。ハーネスは両方を解決し、未取得の
+    ライブラリは `--fetch-missing-libraries` でprofile記録のSHA-1付きURLから取得する
+  - **親（Forge）はJava 8**（launchwrapperがURLClassLoaderへキャストするため9+では即死）。子はrelauncherが
+    `config/relauncher.json` の `targetJavaVersion` で用意する。Relauncherは0.7.14のMMC zipレイアウトに1.2.0以降が必要
+  - `-Xmx` は親から子へ転送される。**`-D` の転送はRelauncherの版依存**（1.3.0では届かなかった）。ハーネスは隔離copyの
+    `config/relauncher.json` の `args` に `-D` を書いて子へ届ける（原instanceは変更しない）。ヒープは `--memory` で
+    明示する（既定は instance.cfg の MaxMemAlloc。旧固定2Gは10G要求のpackでload時OOMになり描画不良に見えた）
+  - `selectedVersion` が0.6.xだとCeltiumは0.7系（SDL3/LWJGL 3.4.3）を要求して拒否する。ハーネスは実行前に警告する
+  - launcher同梱JREが壊れている（`server/libjvm.so`欠落）とRelauncherのJava探索が例外で落ちる。`java/` の外へ退避してから実行する
 - IntelはrunnerがMesaの `DRI_PRIME=pci-0000_00_02_0!` を設定する。それでも結果のnative device行とGPU gateを読む。
 - 追加JVM引数は秒数の**後**へ1引数ずつ渡す（空白を含む値はquote）。同じキーを複数回書いた時の有効値も記録する。
 - **ゲームは同時に1つ**。ハーネスのworktree共通 `game-slot/owner.pid` が直列化する。旧 `gpu.lock` のmkdir待ちを重ねない。
