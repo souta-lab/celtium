@@ -15,6 +15,14 @@ class PresenterFatalResultTest {
         assertTrue(VulkanContext.presenterResultIsFatal(1), "An unexpected non-error status is not safe to ignore");
     }
 
+    @Test void aLostDeviceFenceMustNotReachResetOrRecycling() {
+        assertTrue(VulkanContext.canReclaimDeferred(VK_SUCCESS));
+        assertFalse(VulkanContext.canReclaimDeferred(VK_ERROR_DEVICE_LOST),
+                "Native vkResetFences on a lost NVIDIA device crashed in hs_err_pid24484.log");
+        assertFalse(VulkanContext.canReclaimDeferred(VK_ERROR_OUT_OF_DEVICE_MEMORY));
+        assertFalse(VulkanContext.canReclaimDeferred(VK_ERROR_OUT_OF_DATE_KHR));
+    }
+
     @Test void windowsDefaultsToSingleThreadedPresentUntilDriverIsValidated() {
         assertFalse(VulkanContext.asyncPresentDefaultForOs("Windows 11"));
         assertFalse(VulkanContext.asyncPresentDefaultForOs("Windows 10"));

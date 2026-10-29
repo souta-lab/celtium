@@ -120,6 +120,9 @@ public final class VulkanContext {
      */
     private boolean interopPath;
     private VkDevice device;
+    // Once the driver reports device loss, even fence reset/destroy can crash natively.
+    // Deliberately leak device-owned handles until the failed process exits.
+    private volatile boolean deviceLost;
     private VkQueue queue;
     private int queueFamilyIndex = -1;
     private String deviceName;
@@ -1240,6 +1243,12 @@ public final class VulkanContext {
      * completion counts once in the OPT-04 epoch.
      */
     private void celtium$reclaimDeferred(DeferredSubmit entry, boolean lostDevice) {
+        // The 2026-10-29 Windows crash is precisely inside vkResetFences on this path:
+        // vkWaitForFences reported DEVICE_LOST, then reclaim tried to reset its fence.
+        // No Vulkan handle recycling, resetting, or destruction is safe to assume now.
+        if (lostDevice || this.deviceLost) {
+            throw celtium$lostDevice("reclaimDeferred");
+        }
         if (entry.frameSlot >= 0) {
             // A slot-owned buffer is never freed: the slot's own pool keeps it for the next recording. The reclaim
             // is the completion event the slot fence stood for, so the callback runs the slot bookkeeping instead.
@@ -1341,7 +1350,10 @@ public final class VulkanContext {
         Throwable submitError = submitBatch(batch, entries);
         if (submitError != null) {
             this.usable = false;
-            failBatch(batch, entries);
+            this.deviceLost = true;
+            // Some chunks may already be executing, and this failure might be
+            // VK_ERROR_DEVICE_LOST. Freeing their buffers/fence is unsafe.
+            abandonFailedBatch(batch, entries);
             if (submitError instanceof RuntimeException runtime) {
                 throw runtime;
             }
@@ -1410,6 +1422,27 @@ public final class VulkanContext {
      * The queue never saw the batch: the entries leave the deferred queue and their resources free the same way the
      * single-submit failure path frees them, and the shared fence goes with them. Runs on the owning thread.
      */
+    private void abandonFailedBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
+        // In a multi-chunk batch, earlier chunks may have reached the GPU.
+        // Do not free their VkCommandBuffers or reset/destroy the shared fence.
+        this.usable = false;
+        this.deviceLost = true;
+        if (batch != null && batch.fence != VK_NULL_HANDLE) {
+            this.quarantinedFences.add(Long.valueOf(batch.fence));
+        }
+        for (DeferredSubmit entry : entries) {
+            this.deferredSubmits.remove(entry);
+            this.deferredSubmitsOutstanding--;
+            if (entry.commandBuffer != null && entry.frameSlot < 0) {
+                this.quarantinedCommandBuffers.add(entry.commandBuffer);
+            }
+            entry.commandBuffer = null;
+            entry.slotReclaim = null;
+        }
+        System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: quarantined "
+                + entries.size() + " deferred entries without calling the native driver.");
+    }
+
     private void failBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
         for (DeferredSubmit entry : entries) {
             this.deferredSubmits.remove(entry);
@@ -1499,12 +1532,13 @@ public final class VulkanContext {
         this.presenterEntries = null;
         this.presenterBatchError = null;
         if (error != null) {
+            this.deviceLost = true;
             // VK_ERROR_DEVICE_LOST is terminal, not another swapchain-out-of-date event.
             // Both Neeyo logs continued after vkQueueSubmit -4, then hung/crashed in the
             // NVIDIA driver. Fail on the *first* loss, before any more queue operations.
             this.usable = false;
             if (batch != null && entries != null) {
-                failBatch(batch, entries);
+                abandonFailedBatch(batch, entries);
             }
             throw new IllegalStateException("CELTIUM_ASYNC_PRESENT fatal Vulkan presenter failure. "
                     + "No more Vulkan commands may be submitted; this is not a resize or a "
@@ -1513,6 +1547,7 @@ public final class VulkanContext {
         int result = this.presenterResult;
         if (presenterResultIsFatal(result)) {
             this.usable = false;
+            this.deviceLost = true;
             throw new IllegalStateException("CELTIUM_ASYNC_PRESENT fatal VkResult " + result
                     + " (VK_ERROR_DEVICE_LOST=-4). Stop the renderer; "
                     + "recreating the swapchain cannot recover a lost device.");
@@ -1618,6 +1653,9 @@ public final class VulkanContext {
      * fences are unarmed and read NOT_READY, which is the truthful answer a poll owes.
      */
     public int celtium$pollDeferredSubmits() {
+        if (this.deviceLost) {
+            throw celtium$lostDevice("pollDeferredSubmits after previous loss");
+        }
         int reclaimed = 0;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();
@@ -1634,14 +1672,17 @@ public final class VulkanContext {
             if (status == org.lwjgl.vulkan.VK10.VK_NOT_READY) {
                 break;
             }
-            if (status != org.lwjgl.vulkan.VK10.VK_SUCCESS
-                    && status != org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+            if (status == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                submitDeviceLost++;
+                throw celtium$lostDevice("vkGetFenceStatus(deferred)");
+            }
+            if (status != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 // OUT_OF_HOST_MEMORY and the like say nothing about the fence's state: leave the entry pending and
                 // let a later poll or wait answer it instead of treating an inconclusive result as completion.
                 break;
             }
             this.deferredSubmits.poll();
-            celtium$reclaimDeferred(head, status == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
+            celtium$reclaimDeferred(head, false);
             reclaimed++;
         }
         return reclaimed;
@@ -1669,6 +1710,9 @@ public final class VulkanContext {
      * (a texture's staging buffer), so the wait covers only that one submission, never the whole queue.
      */
     public boolean celtium$awaitDeferredSubmit(long fence, String reason) {
+        if (this.deviceLost) {
+            throw celtium$lostDevice("awaitDeferredSubmit after previous loss");
+        }
         if (fence == VK_NULL_HANDLE) {
             return false;
         }
@@ -1682,8 +1726,25 @@ public final class VulkanContext {
         return false;
     }
 
-    /** The bounded wait itself, on one tracked entry; on success or device loss the entry is reclaimed in place. */
+    static boolean canReclaimDeferred(int waitResult) {
+        // A lost device is completion-equivalent for *pending ownership*, NOT a
+        // license to call into a driver whose internal objects may already be gone.
+        return waitResult == VK_SUCCESS;
+    }
+
+    private IllegalStateException celtium$lostDevice(String operation) {
+        this.usable = false;
+        this.deviceLost = true;
+        return new IllegalStateException("CELTIUM_VULKAN_DEVICE_LOST at " + operation
+                + ": stop all GPU operations. Driver objects/fences are held for process teardown; "
+                + "a new Vulkan instance in this process cannot recover this device.");
+    }
+
+    /** The bounded wait itself, on one tracked entry; only an actually signaled fence is recycled. */
     private void celtium$awaitDeferredEntry(DeferredSubmit entry, String reason) {
+        if (this.deviceLost) {
+            throw celtium$lostDevice("awaitDeferredEntry after previous loss");
+        }
         if (entry.batch != null && entry.batch == this.presenterBatch) {
             celtium$awaitPresenter();
         }
@@ -1695,19 +1756,16 @@ public final class VulkanContext {
         if (waitedNanos / 1_000_000L > this.deferredWaitWorstMillis) {
             this.deferredWaitWorstMillis = waitedNanos / 1_000_000L;
         }
-        if (waited == org.lwjgl.vulkan.VK10.VK_SUCCESS
-                || waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-            boolean lost = waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
-            if (lost) {
-                this.usable = false;
-            }
+        if (waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+            submitDeviceLost++;
+            // DO NOT call reclaimDeferred: it issues vkResetFences, the exact
+            // native call in Neeyo's hs_err_pid24484.log crash stack. Keep all
+            // handles untouched and stop the renderer.
+            throw celtium$lostDevice("vkWaitForFences(deferred " + reason + ")");
+        }
+        if (canReclaimDeferred(waited)) {
             this.deferredSubmits.remove(entry);
-            celtium$reclaimDeferred(entry, lost);
-            if (lost) {
-                throw new IllegalStateException("vkWaitForFences(deferred " + reason + ") reported"
-                        + " VK_ERROR_DEVICE_LOST: treated as completion-equivalent for the resources, and the context"
-                        + " is marked unusable (deferredWaits=" + this.deferredWaits + ")");
-            }
+            celtium$reclaimDeferred(entry, false);
             return;
         }
         if (waited == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
@@ -1966,6 +2024,14 @@ public final class VulkanContext {
     }
 
     public void delete() {
+        if (this.deviceLost) {
+            // Let the OS reclaim native resources when the process exits. A
+            // vkResetFences dereference already faulted in NVIDIA's driver, so
+            // repeating vkDeviceWaitIdle/vkDestroyDevice here risks a second AV.
+            System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: skipping Vulkan driver cleanup "
+                    + "after a fatal native device loss; terminate the Minecraft process.");
+            return;
+        }
         if (this.device != null) {
             System.out.println("[Celtium] CELTIUM_WAIT_CENSUS bootstrapQueueWaits=" + bootstrapQueueWaits
                     + " bootstrapQueueWaitMillis=" + bootstrapQueueWaitMillis
@@ -2001,6 +2067,13 @@ public final class VulkanContext {
             }
             // The quarantined submissions are released here and only here: the device-wide wait above is the one point
             // where "the queue is finished with them" is a fact. Before this they are neither reset nor freed.
+            if (idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                this.deviceLost = true;
+                this.usable = false;
+                System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: teardown wait reported "
+                        + "device loss; skipping further native cleanup.");
+                return;
+            }
             if (releaseQuarantined) {
                 for (VkCommandBuffer quarantined : this.quarantinedCommandBuffers) {
                     vkFreeCommandBuffers(this.device, this.commandPool, quarantined);
