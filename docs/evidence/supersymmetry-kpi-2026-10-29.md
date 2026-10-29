@@ -38,6 +38,32 @@ dump readback が 90–100ms の `displayUpdate` ブロックを生んでいた*
 残る差は **中央値の +3.6ms**（7.09 vs 3.48）に集約される。P99 では Celtium が Celeritas より良い（11.06 vs 12.92）。
 したがって KPI の残差は「スパイク」ではなく「毎フレームの定常コスト」である。
 
+### readback 税を切った真の比較（kpi3, 両アーム同一 flags）
+
+`presentReadback` / presented dump を両アームで外した（画像証拠は取れないが、`holdUntilTick=1300` により
+warm 窓まで継続する）。Celtium の present stage は `readbackMs=0 wholeMs=1025 calls=17958` = 0.057ms/call になり、
+present 税が消えたことを確認（従来は readback 2.26ms/call）。
+
+| 指標 | **Celtium (kpi3)** | **Celeritas (kpi3)** | 比 |
+|---|---|---|---|
+| warm P50 | **4.05 ms** | **2.38 ms** | 1.70 倍遅い |
+| warm P95 | 6.91 ms | 4.47 ms | 1.55 |
+| warm P99 | 7.99 ms | 5.41 ms | 1.48 |
+| >33ms / >50ms | 0 / 0 | 0 / 0 | — |
+| samples | 2326 | 3895 | — |
+| captureListedSections | 17 | 3 | **内容が一致しない** |
+
+Celeritas アームは capture 時の可視セクションが 3（Celtium 17）と報告され、両レンダラでセクション列挙が
+一致しない。warm 窓の tick とカメラは同一で、コンテンツを画像で突き合わせるには較正 gate が要る。
+よって **kpi3 は「readback 税を除いた定常コストの差は約 1.7 倍」までを言い、KPI の最終判定には使わない**。
+
+### 定常コストの内訳（passSplit, dump OFF・readback ON の run）
+
+frame bracket p50 = 2.0ms（world 1.3 / gui 0.7 / hand 0.1）。world の内訳は winRecord 0.6 / flush 0.8 /
+winBarrier 0.1 / sky 0.2 / grpDraw 0.2 / offMerge 0.5（重複あり）。fixture の warm P50 4.05 との差 約2.0ms は
+frame bracket 外（ゲーム tick・present 0.06ms・ループ）。**Celeritas の全フレームが 2.38ms なので、Celtium は
+frame bracket 2.0ms をさらに削る必要がある**。次の最適化対象は winRecord/flush（即時windowの記録・提出）と gui。
+
 ### 残差 +3.6ms の内訳（Celtium 側、passSplit / frameBudget / warmSpikes から）
 
 | 要素 | 実測 | 出所 |
