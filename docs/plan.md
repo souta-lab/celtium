@@ -1,7 +1,7 @@
 # Celtium 現状表（唯一の現在状態表）
 
-開発ベース **0.1.3-alpha-rc.8**（[build定義](<../build-1122/build.gradle.kts>)）。Windows検証用プレリリースは **v0.1.3-alpha-rc.8**（2026-10-29、[release notes](<releases/0.1.3-alpha-rc.8.md>)）。これまでの性能検証は本文に記載した 0.1.1-alpha を基準とする。
-2026-10-28 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
+開発ベース **0.1.4-alpha-rc.1**（[build定義](<../build-1122/build.gradle.kts>)）。Windows検証用プレリリースは **v0.1.4-alpha-rc.1**（2026-10-30、[release notes](<releases/0.1.4-alpha-rc.1.md>)）。これまでの性能検証は本文に記載した 0.1.1-alpha を基準とする。
+2026-10-30 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案であり拘束しない（利用者指示 2026-10-28: 「new_architectureを絶対とするな」）。実測でより良い方法があればそちらを採る。
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
