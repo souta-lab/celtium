@@ -739,9 +739,21 @@ public final class CeltiumGllessHint {
 
     private static final boolean HINT_MATRIX_TRACE = Boolean.getBoolean("celtium.vulkan.matrixTrace");
     private static int hintMultiplyDumps;
+    /**
+     * {@code GL_MATRIX_MODE}, kept here as well as in the mirror.
+     * <p>
+     * GL's matrix mode is state of the context, not of this renderer's mirror object, and the mirror is per backend
+     * instance: a mod that sets PROJECTION and then multiplies across a point where the backend was replaced (the
+     * mod-reload path does exactly that) had its multiply land on the new backend's default MODELVIEW while the mode
+     * switch stayed on the old one. The measured symptom was a projection multiply arriving with m00=0.03 (an ortho)
+     * and the backend recording mode=MODELVIEW. Re-applying this value before a matrix operation is a few counter
+     * increments and makes the stack independent of instance lifetime.
+     */
+    private static volatile int lastMatrixMode = 5888;
     private static int hintMatrixDumps;
 
     public static void glMatrixMode(int mode) {
+        lastMatrixMode = mode;
         var backend = rawMatrix(MATRIX_MODE);
         if (backend != null) backend.matrixMode(mode);
         if (HINT_MATRIX_TRACE && hintMatrixDumps < 8) {
@@ -794,6 +806,7 @@ public final class CeltiumGllessHint {
         vanillaMatrixCall = 0;
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) {
+            backend.matrixMode(lastMatrixMode);
             backend.multiplyMatrix(org.lwjgl.system.MemoryUtil.memFloatBuffer(pointer, 16));
         }
     }
@@ -806,6 +819,7 @@ public final class CeltiumGllessHint {
         vanillaMatrixCall = 0;
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) {
+            backend.matrixMode(lastMatrixMode);
             java.nio.FloatBuffer buffer = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
             try {
                 for (int i = 0; i < 16; i++) {
