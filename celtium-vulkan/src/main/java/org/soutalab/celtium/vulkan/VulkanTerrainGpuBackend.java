@@ -10957,6 +10957,64 @@ this.frameBufferOpen = false;
     }
 
 
+    /**
+     * Per-frame cap on chunk outputs uploaded, or 0 for the unbudgeted path.
+     * <p>
+     * A burst of finished sections used to be uploaded inside one frame: the measured ATM3 world-only frame had
+     * {@code setupTerrain} p95 2.2 ms and frame p95 15.9 ms against a 1.44 ms Celeritas frame, and the burst is what
+     * made the distribution, not the mean, expensive. With a budget the finished outputs queue and drain at the head of
+     * the next {@code setupTerrain}, which runs every frame - the queue therefore cannot starve. Off by default: the
+     * ordering and the pop-in cost are measured before the default changes.
+     */
+    private static final int UPLOAD_BUDGET = Integer.getInteger("celtium.vulkan.uploadBudget", 0).intValue();
+    private final java.util.ArrayDeque<DeferredUpload> deferredUploads = new java.util.ArrayDeque<>();
+    private long deferredUploadsQueued;
+    private long deferredUploadsDropped;
+
+    /** One region's remaining outputs, with the graph trigger that arrives with the batch. */
+    private static final class DeferredUpload {
+        final RenderRegion region;
+        final List<ChunkTaskOutput> outputs;
+        final Runnable trigger;
+
+        DeferredUpload(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable trigger) {
+            this.region = region;
+            this.outputs = outputs;
+            this.trigger = trigger;
+        }
+    }
+
+    /**
+     * Drains the deferred chunk uploads, up to the configured budget. Called at the head of {@code setupTerrain}, which
+     * runs once per frame whatever the job queue does, so a deferred batch always reaches the terrain within a frame or
+     * two even when no further build results arrive.
+     */
+    public void celtium$drainDeferredUploads() {
+        if (UPLOAD_BUDGET <= 0 || this.deferredUploads.isEmpty()) {
+            return;
+        }
+        int remaining = UPLOAD_BUDGET;
+        while (remaining > 0 && !this.deferredUploads.isEmpty()) {
+            DeferredUpload entry = this.deferredUploads.peekFirst();
+            List<ChunkTaskOutput> take;
+            if (entry.outputs.size() <= remaining) {
+                this.deferredUploads.pollFirst();
+                take = entry.outputs;
+            } else {
+                take = new ArrayList<>(entry.outputs.subList(0, remaining));
+                entry.outputs.subList(0, remaining).clear();
+            }
+            try {
+                this.terrain.uploadRegion(entry.region, take, entry.trigger);
+            } catch (RuntimeException error) {
+                // The same rule the unbudgeted loop follows: one region's failure is counted, the rest still go.
+                this.regionUploadFailures++;
+                this.lastRegionUploadFailure = String.valueOf(error);
+            }
+            remaining -= take.size();
+        }
+    }
+
     @Override
     public void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results, Runnable graphUpdateTrigger) {
         // "chunkUpload" inside "world": the section rebuild uploads are the last unnamed part of a world-pass
@@ -10972,6 +11030,25 @@ this.frameBufferOpen = false;
 
     private void celtium$uploadMeshesPass(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
             Runnable graphUpdateTrigger) {
+        if (UPLOAD_BUDGET > 0) {
+            // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
+            Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = new Reference2ReferenceOpenHashMap<>();
+            for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
+                ChunkTaskOutput output = holder.output();
+                List<ChunkTaskOutput> queue = queued.get(output.render.getRegion());
+                if (queue == null) {
+                    queue = new ArrayList<>();
+                    queued.put(output.render.getRegion(), queue);
+                }
+                queue.add(output);
+            }
+            for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry
+                    : queued.reference2ReferenceEntrySet()) {
+                this.deferredUploads.addLast(new DeferredUpload(entry.getKey(), entry.getValue(), graphUpdateTrigger));
+                this.deferredUploadsQueued += entry.getValue().size();
+            }
+            return;
+        }
         Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = new Reference2ReferenceOpenHashMap<>();
         for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
             ChunkTaskOutput output = holder.output();
@@ -11506,6 +11583,12 @@ this.frameBufferOpen = false;
 
     @Override
     public void celtium$releaseWorldResources() {
+        // Chunk outputs are per-world job results; keeping them across a world change would upload a section into the
+        // wrong world's region storage.
+        if (!this.deferredUploads.isEmpty()) {
+            this.deferredUploadsDropped += this.deferredUploads.size();
+            this.deferredUploads.clear();
+        }
         // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
         // the Celeritas section of the overlay is drawn - a leg with F3 requested but no such line printed every counter
         // as absent, which reads exactly like a counter that never fired. World teardown happens at least once per leg

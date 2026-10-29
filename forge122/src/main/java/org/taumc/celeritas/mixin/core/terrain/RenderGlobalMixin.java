@@ -127,6 +127,12 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             net.minecraft.client.renderer.culling.ICamera camera, int frameCount, boolean playerSpectator,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("setupTerrain");
+        // Once per frame, whatever the job queue does: the deferred chunk uploads drain here, so a budgeted burst can
+        // never starve waiting for build results that will not come.
+        if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends
+                .current() instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$drainDeferredUploads();
+        }
     }
 
     @Inject(method = "func_174970_a(Lnet/minecraft/entity/Entity;DLnet/minecraft/client/renderer/culling/ICamera;IZ)V",
