@@ -54,8 +54,9 @@ public final class VulkanTerrainFactory {
                     + String.join(", ", unimplementedAreas()));
             return null;
         }
-        if (!VulkanContext.isAvailable()) {
-            reasons.add("Vulkan bindings are not available on this classpath");
+        String availabilityProblem = VulkanContext.availabilityProblem();
+        if (availabilityProblem != null) {
+            reasons.add(availabilityProblem);
             return null;
         }
 
@@ -135,8 +136,9 @@ public final class VulkanTerrainFactory {
                     + String.join(", ", unimplementedAreas()));
             return null;
         }
-        if (!VulkanContext.isAvailable()) {
-            reasons.add("Vulkan bindings are not available on this classpath");
+        String availabilityProblem = VulkanContext.availabilityProblem();
+        if (availabilityProblem != null) {
+            reasons.add(availabilityProblem);
             return null;
         }
         TerrainGpuBackend current = TerrainGpuBackends.current();

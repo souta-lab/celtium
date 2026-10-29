@@ -6257,8 +6257,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
         } else if (!(this.enables[GL_VERTEX_ARRAY] != 0)) {
             reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
-        } else if (mode != GL_QUADS && mode != 4) {
-            reason = "draw mode " + mode + " is not handled (quads/triangles only)";
+        } else if (mode != GL_QUADS && mode != 4 && mode != 6) {
+            reason = "draw mode " + mode + " is not handled (quads/triangles/fans only)";
+        } else if (mode == 6 && count < 3) {
+            // A fan with fewer than three vertices has no triangles to present.
+            DRAWARRAY_EMPTY.incrementAndGet();
+            celtium$reportDrawArrays();
+            return;
         } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT) {
             reason = "vertex pointer size=" + this.vertexPointerSize + " type=0x"
                     + Integer.toHexString(this.vertexPointerType)
@@ -6287,8 +6292,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // Linux-only. A draw the publication covers needs no guard at all; a draw it does not cover (a mod's
                 // direct client-array call, or a pointer the publication does not describe) keeps the guard and the
                 // cap, and is counted separately so the two paths stay distinguishable.
-                boolean ownedCovers = owned != null && owned[1] > 0L && offset >= owned[0]
-                        && offset + asked <= owned[0] + owned[1];
+                boolean ownedCovers = owned != null
+                        && ClientArrayRange.covers(owned[0], owned[1], offset, asked);
                 if (asked > MAX_CLIENT_DRAW_BYTES) {
                     reason = "the draw asks for " + asked + " bytes of client memory, over the "
                             + MAX_CLIENT_DRAW_BYTES + "-byte cap one draw may read";

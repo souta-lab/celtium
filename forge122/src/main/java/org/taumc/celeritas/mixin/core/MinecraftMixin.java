@@ -320,6 +320,11 @@ public class MinecraftMixin {
     @Inject(method = "drawSplashScreen", at = @At("HEAD"), require = 0)
     private void celtium$dumpLoadingFrame(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK drawSplashScreen=true");
+        // The validation fixture is omitted from production jars. Avoid a ClassNotFoundException
+        // and reflective lookup every splash frame outside the explicitly opt-in validation runs.
+        if (!Boolean.getBoolean("celtium.validation")) {
+            return;
+        }
         try {
             Class<?> fixture = Class.forName("org.soutalab.celtium.validation.ValidationClient");
             fixture.getMethod("requestLoadingDump").invoke(null);
@@ -445,6 +450,9 @@ public class MinecraftMixin {
     }
 
     @Unique
+    private static String celtium$windowRendererLastFailure = "no diagnostic recorded";
+
+    @Unique
     private static void celtium$ensureWindowRenderer() {
         // Re-checked on every tick: Forge replaces System.out with its tracing stream after the display exists, so the
         // first install can be undone; the check is one instanceof once installed.
@@ -452,7 +460,20 @@ public class MinecraftMixin {
         // Latched on success, not on the attempt: latching the attempt would leave the menu blank for the whole session
         // after one transient device-creation failure. The retries are bounded and spaced so a configuration that
         // cannot have a window renderer prints its reason a handful of times instead of every tick.
-        if (celtium$windowRendererCreated || celtium$windowRendererAttempts >= celtium$WINDOW_RENDERER_ATTEMPTS) {
+        if (celtium$windowRendererCreated) {
+            return;
+        }
+        // A GL-less window has no OpenGL fallback. Leaving it alive after every Vulkan
+        // attempt fails produces an endless black screen and a deceptively successful exit.
+        // Terminate with an actionable crash report after the bounded retry window.
+        if (celtium$windowRendererAttempts >= celtium$WINDOW_RENDERER_ATTEMPTS) {
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                throw new IllegalStateException("Celtium could not start the GL-less Vulkan renderer after "
+                        + celtium$windowRendererAttempts + " attempts. Last failure: "
+                        + celtium$windowRendererLastFailure
+                        + ". Check the Vulkan driver and Celtium's bundled LWJGL Vulkan bindings, "
+                        + "or use -Dceltium.vulkan.glless=false to switch to the OpenGL bridge.");
+            }
             return;
         }
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
@@ -497,11 +518,15 @@ public class MinecraftMixin {
             Class<?> factory = Class.forName("org.soutalab.celtium.vulkan.VulkanTerrainFactory");
             Object backend = factory.getMethod("createForWindow", java.util.List.class).invoke(null, reasons);
             celtium$windowRendererCreated = backend != null;
+            if (backend == null) {
+                celtium$windowRendererLastFailure = reasons.toString();
+            }
             System.out.println("[Celtium] CELTIUM_WINDOW_RENDERER created=" + (backend != null)
                     + " attempt=" + celtium$windowRendererAttempts + " ticks=" + ticks
                     + " stage=" + celtium$windowRendererStage + " reasons=" + reasons);
         } catch (ClassNotFoundException | NoSuchMethodException absent) {
             celtium$windowRendererAttempts = celtium$WINDOW_RENDERER_ATTEMPTS;
+            celtium$windowRendererLastFailure = absent.toString();
             System.out.println("[Celtium] CELTIUM_WINDOW_RENDERER unavailable: " + absent);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             // Fail-closed: without a renderer the menu is blank, which is the state this replaces, and the reason is on
@@ -521,6 +546,7 @@ public class MinecraftMixin {
                 cause = cause.getCause();
                 depth++;
             }
+            celtium$windowRendererLastFailure = chain.toString() + " " + reasons;
             System.out.println("[Celtium] CELTIUM_WINDOW_RENDERER failed: attempt=" + celtium$windowRendererAttempts
                     + " error=" + chain + " reasons=" + reasons);
             error.printStackTrace(System.out);

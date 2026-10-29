@@ -107,6 +107,8 @@ public final class VulkanContext {
     private static final long STAGING_MINIMUM_BYTES = 64L * 1024L;
 
     private VkInstance instance;
+    /** Extensions actually enabled on this instance (not merely advertised by the loader). */
+    private java.util.Set<String> enabledInstanceExtensions = java.util.Collections.emptySet();
     private VkPhysicalDevice physicalDevice;
     /**
      * Whether this context is the OpenGL-interop (bridge) configuration, i.e. whether a GL device identity was
@@ -474,10 +476,28 @@ public final class VulkanContext {
      * instance; {@link #create(String)} does that and reports the reason when it fails.
      */
     public static boolean isAvailable() {
+        return availabilityProblem() == null;
+    }
+
+    /**
+     * Returns null when the Vulkan loader supports at least 1.2, or a bounded,
+     * actionable diagnostic. This deliberately does not create a Vulkan instance.
+     * A missing Java binding and a broken native loader must not produce the same
+     * misleading "bindings unavailable on classpath" error.
+     */
+    public static String availabilityProblem() {
         try {
-            return VK.getInstanceVersionSupported() >= VK12.VK_API_VERSION_1_2;
+            int version = VK.getInstanceVersionSupported();
+            if (version >= VK12.VK_API_VERSION_1_2) {
+                return null;
+            }
+            return "Vulkan loader API " + ((version >>> 22) & 0x7f) + "."
+                    + ((version >>> 12) & 0x3ff) + " is below the required Vulkan 1.2";
+        } catch (NoClassDefFoundError error) {
+            return "LWJGL Vulkan Java binding class missing: " + error;
         } catch (RuntimeException | LinkageError error) {
-            return false;
+            return "Vulkan loader/binding initialization failed: " + error.getClass().getName()
+                    + (error.getMessage() == null ? "" : ": " + error.getMessage());
         }
     }
 
@@ -545,26 +565,7 @@ public final class VulkanContext {
     }
 
     public boolean hasInstanceExtension(String name) {
-        if (name == null || this.instance == null) {
-            return false;
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            IntBuffer count = stack.mallocInt(1);
-            if (vkEnumerateInstanceExtensionProperties((java.nio.ByteBuffer) null, count, null) != VK_SUCCESS) {
-                return false;
-            }
-            org.lwjgl.vulkan.VkExtensionProperties.Buffer properties =
-                    org.lwjgl.vulkan.VkExtensionProperties.calloc(count.get(0), stack);
-            if (vkEnumerateInstanceExtensionProperties((java.nio.ByteBuffer) null, count, properties) != VK_SUCCESS) {
-                return false;
-            }
-            for (int i = 0; i < properties.capacity(); i++) {
-                if (name.equals(properties.get(i).extensionNameString())) {
-                    return true;
-                }
-            }
-            return false;
-        }
+        return name != null && this.instance != null && this.enabledInstanceExtensions.contains(name);
     }
 
     public VkInstance instance() {
@@ -2244,6 +2245,18 @@ public final class VulkanContext {
         vkGetPhysicalDeviceMemoryProperties(this.physicalDevice, this.memoryProperties);
     }
 
+    /** Select supported instance extensions for the desktop platforms handled by VulkanSwapchain. */
+    static List<String> presentationInstanceExtensions(java.util.Set<String> available) {
+        List<String> selected = new ArrayList<String>();
+        for (String candidate : new String[] {
+                "VK_KHR_surface", "VK_KHR_xlib_surface", "VK_KHR_wayland_surface", "VK_KHR_win32_surface"}) {
+            if (available.contains(candidate)) {
+                selected.add(candidate);
+            }
+        }
+        return selected;
+    }
+
     private void createInstance(String applicationName) {
         boolean validation = Boolean.getBoolean(VALIDATION_PROPERTY);
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -2263,11 +2276,7 @@ public final class VulkanContext {
             if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
                     || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
                 java.util.Set<String> available = instanceExtensionNames(stack);
-                for (String candidate : new String[]{"VK_KHR_surface", "VK_KHR_xlib_surface", "VK_KHR_wayland_surface"}) {
-                    if (available.contains(candidate)) {
-                        enabledInstanceExtensions.add(candidate);
-                    }
-                }
+                enabledInstanceExtensions.addAll(presentationInstanceExtensions(available));
             }
             Object messengerInfo = null;
             if (validation) {
@@ -2296,6 +2305,8 @@ public final class VulkanContext {
             PointerBuffer handle = stack.mallocPointer(1);
             check(vkCreateInstance(createInfo, null, handle), "vkCreateInstance");
             this.instance = new VkInstance(handle.get(0), createInfo);
+            this.enabledInstanceExtensions = java.util.Collections.unmodifiableSet(
+                    new java.util.HashSet<String>(enabledInstanceExtensions));
             if (validation) {
                 this.debugMessenger = ValidationBridge.createMessenger(this, messengerInfo);
             }

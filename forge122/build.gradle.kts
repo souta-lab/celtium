@@ -185,6 +185,10 @@ tasks.named<Jar>("jar") {
         into("licenses")
         rename { "bitraster-LICENSE" }
     }
+    // LWJGL Vulkan Java bindings are bundled since v0.1.2-alpha; include their BSD-3-Clause notice.
+    from(file("$repositoryRoot/licenses/lwjgl-LICENSE")) {
+        into("licenses")
+    }
     manifest {
         attributes["FMLAT"] = "celeritas_at.cfg"
         attributes["FMLCorePlugin"] = "org.taumc.celeritas.core.CeleritasLoadingPlugin"

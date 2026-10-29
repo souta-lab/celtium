@@ -39,6 +39,15 @@ class VulkanImmediateDrawerTest {
     }
 
     @Test
+    void triangleFansPreserveWindingAndFanOrigin() {
+        assertArrayEquals(new int[] {0, 1, 2}, VulkanImmediateDrawer.expandIndices(GL11.GL_TRIANGLE_FAN, 3));
+        assertArrayEquals(new int[] {0, 1, 2, 0, 2, 3},
+                VulkanImmediateDrawer.expandIndices(GL11.GL_TRIANGLE_FAN, 4));
+        assertArrayEquals(new int[] {0, 1, 2, 0, 2, 3, 0, 3, 4},
+                VulkanImmediateDrawer.expandIndices(GL11.GL_TRIANGLE_FAN, 5));
+    }
+
+    @Test
     void quadsStillExpandToTwoTriangles() {
         assertArrayEquals(new int[] {0, 1, 2, 0, 2, 3}, VulkanImmediateDrawer.expandIndices(GL11.GL_QUADS, 4));
     }
