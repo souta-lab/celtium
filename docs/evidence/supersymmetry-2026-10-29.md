@@ -85,3 +85,19 @@ commit `d1b30cc06`。
 **結果**: 8件の拒否は不変。multMatrix は適用先スタックがガードの読む PROJECTION でないか、IR の projection 設定が
 別の未ルート呼び出し（glLoadMatrix/glFrustum 等）である可能性。次の計器は「適用時の matrix mode と、
 拒否時の projection matrix のダンプ」で、ここから先は推測ではなくその2点で判別する。
+
+## mirror 拒否の削減（2026-10-30, build `574dc59d`）
+
+FBO の color attachment に対しては content-less な mirror を作らないようにした（`get()` で
+`celtium$framebufferForColorTexture(id) != 0` なら null を返し、公開/採用の経路に任せる）。
+
+| 指標 | 変更前 | 変更後 |
+|---|---|---|
+| `CELTIUM_PATCH_REJECTED` | 7 | **4** |
+| `offTargetRefusals`（summary） | 0 | **0** |
+| capture | sections 17 | sections 17 |
+| warm P50 / P95 | 2.50 / 4.61 ms | **2.37 / 4.54 ms**（無退行） |
+
+残り: 1280x720 の texture 478/110194/7 はまだ raw FBO map に載る前の時点で mirror を作ろうとしている
+（vanilla Framebuffer 側の関連は backend の publishedTextures が持ち、registry からは見えない）。
+texture 502 は extent 自体が未記録（`COMPOSITE_REFUSED` も同 texture）。CAPTURE_MISS 3件は 110194/7/89。

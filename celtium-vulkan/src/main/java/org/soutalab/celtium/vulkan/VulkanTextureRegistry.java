@@ -2064,6 +2064,15 @@ public final class VulkanTextureRegistry {
             // is left content-less: the sampling side refuses a mirror whose whole content never arrived instead of
             // drawing texels nothing ever wrote.
             this.readbacksSkippedWithoutContent++;
+            // A framebuffer's colour attachment stands for the image that framebuffer draws into. The prepare path
+            // publishes or adopts that image before this name is sampled (CELTIUM_EXTERNAL_IMAGE), so a content-less
+            // mirror built here is a second, empty image that the publication supersedes a moment later - and each one
+            // logged a PATCH_REJECTED (measured: seven per run, for 1280x720 render targets). Returning null leaves the
+            // decision to the path that owns the association; if that path cannot publish either, the draw refuses and
+            // says so, which is the honest outcome rather than drawing black.
+            if (CeltiumGlStub.isInstalled() && CeltiumGlStub.celtium$framebufferForColorTexture(glTextureId) != 0) {
+                return null;
+            }
             // Asked by name, not of whatever happens to be bound: the stub records an extent per texture, and the
             // binding the state manager believes in can be one bind ahead of the one the stub saw.
             int width = textureLevelParameter(glTextureId, 0,
