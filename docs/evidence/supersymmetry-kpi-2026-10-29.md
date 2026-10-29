@@ -98,3 +98,26 @@ run: `.gv-verify/run-kpi2-susy-celtium/`（dump周期OFF）と `.gv-verify/run-k
 | **FPS** | 上表のとおり Celeritas 優勢（本 unit の主課題） |
 | **エラー/拒否** | device lost 0・validation 0。ただし `DRAWARRAY_REFUSAL_CONTEXT`（IR の stride48 client arrays）8件、`UNMAPPED_REFUSED`（32B particle+normal）3件、mirror の `PATCH_REJECTED` 7件（IR の render target）は残る |
 | **完全動作** | メニューはローカル 61.3 FPS（`CELTIUM_PRESENT_INTERVAL`）。利用者の 6FPS・背景黒・文字重なりは次回のログ（frameBudget + validation 有効）で切り分け |
+
+## paired rep（Supersymmetry, 2repずつ, 2026-10-30）
+
+同一 flags（kpi3 と完全一致 + presentInterval）、同一 instance/save/camera、warm 窓 400..600。
+
+| arm | rep1 | rep2 | 備考 |
+|---|---|---|---|
+| Celtium (`f78b7c03` / `4874d688`) | **4.05 ms** | **4.12 ms** | P95 6.91 / 7.12 |
+| Celeritas (`567dcf8a`) | **2.38 ms** | **2.36 ms** | P95 4.47 / 4.95 |
+| 比 | 1.70 | 1.75 | 安定 |
+
+→ Supersymmetry の定常差は **約1.7倍**（Celtium が遅い）で安定。ATM3 は約4.4倍。
+
+### 重要な落とし穴（2つ）
+
+1. **flags を落とすと warm 窓の意味が変わる**: `minWorldFrames`/`screenshotAtTick` を外した run は
+   warm P50 29.1ms になった。fixture の GUI stage が warm 窓に入り、画面描画中の数字を拾っていた。
+   paired は flags 完全一致が必須（lock JSON の jvmArgs を複製する）。
+2. **ホットGLパスにスタック走査を入れるな**: `rawMatrix` を「呼び出し元フレーム判定」に変えた版は、
+   glPushMatrix/glTranslate が毎モデル走るため warm P50 が 4.05 → **28.5–29.2ms** に退行した。
+   旧JAR `f78b7c03` で 4.30ms、フラグ方式へ戻した修正版 `4874d688` で 4.12ms を実測し、
+   退行の原因がスタック走査そのものであることを確認（commit `d83489bd9`）。
+   mod 起点 glMultMatrix のルートは `-Dceltium.glless.modMatrixRoutes` で**既定OFF**（ホットパス保護）。
