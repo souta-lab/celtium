@@ -211,7 +211,7 @@ tasks.register("packageJar", Copy::class) {
 tasks.processResources.configure {
     inputs.property("version", version)
 
-    filesMatching("mcmod.info") {
+    filesMatching(listOf("mcmod.info", "version.properties")) {
         expand(mapOf("version" to inputs.properties["version"]))
     }
 

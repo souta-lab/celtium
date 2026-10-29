@@ -1,6 +1,7 @@
 {
   "required": true,
   "minVersion": "0.8",
+  "refmap": "mixins.celeritas.refmap.json",
   "plugin": "org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin",
   "package": "org.taumc.celeritas.mixin",
   "compatibilityLevel": "JAVA_8",
