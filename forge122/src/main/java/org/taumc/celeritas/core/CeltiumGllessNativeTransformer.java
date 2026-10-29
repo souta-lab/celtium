@@ -703,6 +703,40 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("nglTexCoordPointer".equals(name) || "glTexCoordPointer".equals(name)) {
+                // (IIIJ)V - size, type, stride, pointer. The stride-48 client-array draw (Immersive Railroading's OBJ
+                // binding) sets its texture coordinates through this native, and without the route the stub's split
+                // arrays stayed zero and the draw was refused for a layout it could have repacked.
+                for (int slot = 0; slot < 3; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexCoordPointer", "(IIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("nglColorPointer".equals(name) || "glColorPointer".equals(name)) {
+                // (IIIJ)V - size, type, stride, pointer.
+                for (int slot = 0; slot < 3; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glColorPointer", "(IIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("nglNormalPointer".equals(name) || "glNormalPointer".equals(name)) {
+                // (IIJ)V - type, stride, pointer.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glNormalPointer", "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("glFramebufferTexture2D".equals(name) || "nglFramebufferTexture2D".equals(name)) {
                 // (IIIII)V - target, attachment, textarget, texture, level.
                 for (int slot = 0; slot < 5; slot++) {

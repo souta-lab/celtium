@@ -548,6 +548,21 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexPointer(size, type, stride, pointer);
     }
 
+    /** Sets the split texture-coordinate pointer, as {@code glTexCoordPointer(size, type, stride, pointer)} does. */
+    public static void glTexCoordPointer(int size, int type, int stride, long pointer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texCoordPointer(size, type, stride, pointer);
+    }
+
+    /** Sets the split colour pointer, as {@code glColorPointer(size, type, stride, pointer)} does. */
+    public static void glColorPointer(int size, int type, int stride, long pointer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colorPointer(size, type, stride, pointer);
+    }
+
+    /** Sets the split normal pointer, as {@code glNormalPointer(type, stride, pointer)} does. */
+    public static void glNormalPointer(int type, int stride, long pointer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$normalPointer(type, stride, pointer);
+    }
+
     /**
      * The texture upload family: every texture's pixels arrive through these two, and under GL-less they were dropped.
      * The measured case is the 268-mod E2E pack's block atlas (GL 353): the stub captured no upload, the mirror never

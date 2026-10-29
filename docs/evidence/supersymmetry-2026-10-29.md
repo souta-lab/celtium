@@ -51,3 +51,17 @@ Cleanroom 0.7.14-alpha、Fugue 0.25.5、Hesperus 無し）。Celtium `a7f4798e�
 → 32B を `PARTICLE` にマップし、uploader で 32→28 に詰めて送出するよう修正（`CELTIUM_COMPACTED_BATCH` で実行を確認可能）。
 layout マッピングと stride 規則は unit test 済み。**GPU での絵の確認は未実施**（この layout はこちらの qmagnet シーンでは
 発生しないため、利用者ログまたは該当modのシーンで `CELTIUM_COMPACTED_BATCH` が出ることを確認する）。
+
+## 追加: IR の stride-48 split client arrays（2026-10-30）
+
+Immersive Railroading の `DRAWARRAY_REFUSAL_CONTEXT`（8件/run）は `stride=48 otherArrays=NORMAL,COLOR,TEX`。
+- 原因1: `glTexCoordPointer`/`glColorPointer`/`glNormalPointer` は transformer が**ルートしていなかった**ため、
+  stub の split pointer は常に 0 で「layout不明」として拒否されていた。
+  → `CeltiumGllessNativeTransformer` に ngl*/gl* のルートを追加、`CeltiumGllessHint` に橋、stub に記録を追加。
+- 原因2: layout を `POSITION_TEX_COLOR`(24B) にマップし、uploader ではなく stub の drawArrays で
+  pos/tex/color を各配列ポインタから読み直して repack（`CELTIUM_CLIENT_ARRAY_REPACK`）。
+- 実測: 拒否理由が **「stride 48 … layout unknown」→「the mirrored projection is the identity at draw time」** に変化。
+  つまり配列追跡と repack は作動し、**残ブロッカーは IR の行列がミラーに届かない別問題**。
+  repack 自体は各配列のポインタから読むため layout 非依存で、色は float/ubyte を判定して変換する。
+- この8件はメニュー/ローディング中の IR 描画で、projection を直すまで描かれない（in-world の同レイアウトは
+  正しい projection なら repack 描画される）。GPU 画像での最終確認は projection 修正後に行う。

@@ -990,6 +990,16 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private volatile int vertexPointerSize, vertexPointerType, vertexPointerStride;
     private volatile long vertexPointerOffset;
+    /** The split client arrays, for the stride-48 repack; a normal is recorded but never drawn. */
+    private volatile int texCoordPointerSize, texCoordPointerType, texCoordPointerStride;
+    private volatile long texCoordPointerOffset;
+    private volatile int colorPointerSize, colorPointerType, colorPointerStride;
+    private volatile long colorPointerOffset;
+    private volatile int normalPointerType, normalPointerStride;
+    private volatile long normalPointerOffset;
+    /** Per-draw bases of the split arrays, already advanced by {@code first} and validated readable. */
+    private long texColorRepackTexBase, texColorRepackColorBase;
+    private int texColorRepacks, texColorRepackDumps;
 
     /** The installed stub - one per process; GL capabilities are process-global so this is a singleton. */
     private static CeltiumGlStub installed;
@@ -1586,6 +1596,45 @@ public final class CeltiumGlStub implements FunctionProvider {
             stub.vertexPointerType = type;
             stub.vertexPointerStride = stride;
             stub.vertexPointerOffset = pointer;
+        }
+    }
+
+    /**
+     * Records the split texture-coordinate pointer, from the transformer's route.
+     * <p>
+     * These are the native calls the transformer used to drop: the pointer families it did not route reached
+     * {@code emitDefaultReturn}, so the stub's fields stayed zero while a stride-48 draw was refused for "client arrays"
+     * it could never see. The first version of the repack registered the names in the stub's table instead, which
+     * changed nothing for the measured draw - the transformer is the route, and a table row alone does not install it.
+     */
+    public static void celtium$texCoordPointer(int size, int type, int stride, long pointer) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.texCoordPointerSize = size;
+            stub.texCoordPointerType = type;
+            stub.texCoordPointerStride = stride;
+            stub.texCoordPointerOffset = pointer;
+        }
+    }
+
+    /** Records the split colour pointer, from the transformer's route. */
+    public static void celtium$colorPointer(int size, int type, int stride, long pointer) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.colorPointerSize = size;
+            stub.colorPointerType = type;
+            stub.colorPointerStride = stride;
+            stub.colorPointerOffset = pointer;
+        }
+    }
+
+    /** Records the split normal pointer, from the transformer's route; the normal is recorded but never drawn. */
+    public static void celtium$normalPointer(int type, int stride, long pointer) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.normalPointerType = type;
+            stub.normalPointerStride = stride;
+            stub.normalPointerOffset = pointer;
         }
     }
 
@@ -6388,6 +6437,28 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
             }
         }
+        if (reason == null && clientMemory && this.vertexPointerStride == 48
+                && formatId == FORMAT_POSITION_TEX_COLOR) {
+            // The repack reads two more client arrays than the vertex one the range above covers, so their ranges are
+            // guarded the same way: a stale split pointer would fault the process rather than refuse the draw.
+            int texStride = this.texCoordPointerStride > 0 ? this.texCoordPointerStride : 8;
+            boolean floatColor = this.colorPointerType == GL_FLOAT;
+            int colorStride = this.colorPointerStride > 0 ? this.colorPointerStride : (floatColor ? 16 : 4);
+            long texFrom = this.texCoordPointerOffset + (long) first * texStride;
+            long colorFrom = this.colorPointerOffset + (long) first * colorStride;
+            long texBytes = (long) (count - 1) * texStride + 8L;
+            long colorBytes = (long) (count - 1) * colorStride + (floatColor ? 16L : 4L);
+            if (!celtium$readableMapping(texFrom, texBytes)) {
+                reason = "the split texture array at 0x" + Long.toHexString(this.texCoordPointerOffset)
+                        + " is not readable for " + count + " vertices";
+            } else if (!celtium$readableMapping(colorFrom, colorBytes)) {
+                reason = "the split colour array at 0x" + Long.toHexString(this.colorPointerOffset)
+                        + " is not readable for " + count + " vertices";
+            } else {
+                this.texColorRepackTexBase = texFrom;
+                this.texColorRepackColorBase = colorFrom;
+            }
+        }
         if (reason == null) {
             celtium$noteClientTuple(clientMemory, buffer, count, formatId);
         }
@@ -6395,7 +6466,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (reason == null) {
             int stride = this.vertexPointerStride;
             address = (clientMemory ? offset : memAddress(storage, 0) + offset) + (long) first * stride;
-            int decodedStride = this.vertexPointerStride == 32 && formatId == 9 ? 24
+            int decodedStride = this.vertexPointerStride == 48 && formatId == FORMAT_POSITION_TEX_COLOR ? 24
+                    : this.vertexPointerStride == 32 && formatId == 9 ? 24
                     : this.vertexPointerStride == 32 && formatId == 8 ? 28 : this.vertexPointerStride;
             if (compile) {
                 long bytes = (long) count * decodedStride;
@@ -6404,7 +6476,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     DRAWARRAY_REFUSED.incrementAndGet();
                     return;
                 }
-                ByteBuffer snapshot = copyClientVertices(address, count, this.vertexPointerStride, formatId);
+                ByteBuffer snapshot = celtium$copyClientVerticesForDraw(address, count, this.vertexPointerStride, formatId);
                 NativeGeometryBuffer geometry = new NativeGeometryBuffer();
                 try {
                     geometry.upload(snapshot, decodedStride, formatId);
@@ -6472,7 +6544,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     boolean asItem = hasItemTwin(this.vertexPointerStride, formatId) && lightingOn(backend);
                     ByteBuffer packed = asItem ? copyClientVerticesAsItem(address, count, formatId)
                             : decodedStride == this.vertexPointerStride ? null
-                            : copyClientVertices(address, count, this.vertexPointerStride, formatId);
+                            : celtium$copyClientVerticesForDraw(address, count, this.vertexPointerStride, formatId);
                     try {
                         taken = backend.submitImmediateBatch(null, asItem ? ITEM_STRIDE : decodedStride,
                                 asItem ? ITEM_FORMAT : formatId,
@@ -6691,6 +6763,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             id = FORMAT_POSITION_TEX_NORMAL; // legacy interleaved UV12, byte normal24; repacked before submission
         } else if (stride == 32 && otherArrays == 7) {
             id = 8; // legacy interleaved UV12, colour20, byte normal24; omit trailing padding
+        } else if (stride == 48 && otherArrays == 7 && celtium$texColorPointersKnown()) {
+            // Immersive Railroading's item models: position, texcoord, float4 colour and a normal in one 48-byte
+            // vertex, drawn from separate client pointers. The normal is not drawn and the three arrays this decoder
+            // can read are repacked into POSITION_TEX_COLOR; the refusal this replaces fired eight times per run.
+            id = FORMAT_POSITION_TEX_COLOR;
         } else if (stride == 24 && otherArrays == 5) {
             id = FORMAT_POSITION_TEX_NORMAL;         // 9: position, texture and a normal
         } else {
@@ -6797,6 +6874,57 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Takes ownership at compile/submit time; no replay may read the caller's reused array. */
+    /** Whether the split arrays describe the layout the stride-48 repack can build. */
+    private boolean celtium$texColorPointersKnown() {
+        boolean colorOk = (this.colorPointerType == GL_FLOAT && this.colorPointerSize == 4)
+                || (this.colorPointerType == GL_UNSIGNED_BYTE && this.colorPointerSize == 4);
+        return this.texCoordPointerType == GL_FLOAT && this.texCoordPointerSize == 2
+                && this.texCoordPointerOffset != 0L && colorOk && this.colorPointerOffset != 0L;
+    }
+
+    /** Takes the repack for the stride-48 split layout, and the ordinary copy for every other layout. */
+    private ByteBuffer celtium$copyClientVerticesForDraw(long address, int count, int stride, int format) {
+        if (stride == 48 && format == FORMAT_POSITION_TEX_COLOR && celtium$texColorPointersKnown()) {
+            return celtium$repackPaddedTexColor(address, count);
+        }
+        return copyClientVertices(address, count, stride, format);
+    }
+
+    /**
+     * Builds POSITION_TEX_COLOR vertices (position, float2 texture, 4 unsigned-byte colour) from the split client arrays
+     * of a stride-48 draw. The bases were advanced by {@code first} and their ranges validated by the caller.
+     */
+    private ByteBuffer celtium$repackPaddedTexColor(long vertexAddress, int count) {
+        int texStride = this.texCoordPointerStride > 0 ? this.texCoordPointerStride : 8;
+        boolean floatColor = this.colorPointerType == GL_FLOAT;
+        int colorStride = this.colorPointerStride > 0 ? this.colorPointerStride : (floatColor ? 16 : 4);
+        ByteBuffer out = MemoryUtil.memAlloc(Math.multiplyExact(count, 24));
+        long to = MemoryUtil.memAddress(out);
+        for (int i = 0; i < count; i++) {
+            long target = to + (long) i * 24;
+            MemoryUtil.memCopy(vertexAddress + (long) i * 48, target, 12);
+            MemoryUtil.memCopy(this.texColorRepackTexBase + (long) i * texStride, target + 12, 8);
+            long color = this.texColorRepackColorBase + (long) i * colorStride;
+            if (floatColor) {
+                for (int c = 0; c < 4; c++) {
+                    float value = MemoryUtil.memGetFloat(color + (long) c * 4L);
+                    int byteValue = value <= 0.0F ? 0 : value >= 1.0F ? 255 : (int) (value * 255.0F + 0.5F);
+                    MemoryUtil.memPutByte(target + 20 + c, (byte) byteValue);
+                }
+            } else {
+                MemoryUtil.memCopy(color, target + 20, 4);
+            }
+        }
+        this.texColorRepacks++;
+        if (this.texColorRepackDumps < 2) {
+            this.texColorRepackDumps++;
+            System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY_REPACK layout=pos3f+tex2f+col4 fromStride=48 toStride=24"
+                    + " vertices=" + count + " colorType=0x" + Integer.toHexString(this.colorPointerType)
+                    + " texCoordType=0x" + Integer.toHexString(this.texCoordPointerType));
+        }
+        return out;
+    }
+
     static ByteBuffer copyClientVertices(long address, int count, int stride, int format) {
         int targetStride = stride == 32 && format == 9 ? 24 : stride == 32 && format == 8 ? 28 : stride;
         ByteBuffer copy = MemoryUtil.memAlloc(Math.multiplyExact(count, targetStride));
