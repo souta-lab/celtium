@@ -52,7 +52,9 @@ public abstract class ClientArrayBufferOwnershipMixin {
             if (data == null) {
                 return;
             }
-            long address = org.lwjgl.system.MemoryUtil.memAddress(data);
+            // ByteBuffer.position() is the current write/read cursor, not the start of the allocation.
+            // glVertexPointer addresses the allocation base; the published range covers capacity bytes.
+            long address = org.soutalab.celtium.vulkan.gl.ClientArrayRange.base(data);
             long bytes = data.capacity();
             if (address == 0L || bytes <= 0L) {
                 return;

@@ -5,6 +5,8 @@ import org.lwjgl.glfw.GLFWNativeWayland;
 import org.lwjgl.glfw.GLFWNativeX11;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.KHRWin32Surface;
+import org.lwjgl.vulkan.VkWin32SurfaceCreateInfoKHR;
 import org.lwjgl.vulkan.KHRWaylandSurface;
 import org.lwjgl.vulkan.KHRXlibSurface;
 import org.lwjgl.vulkan.VkClearColorValue;
@@ -677,6 +679,56 @@ public final class VulkanSwapchain {
             // libSDL3, 15 seconds in - because that call runs against an SDL library instance the loader is still using
             // from its own thread. Wayland has no such detour: its surface must be SDL's own, so SDL stays in that path.
             long nativeWindow = CeltiumWindow.sdlNativeHandle();
+            // On Cleanroom 0.7 SDL owns the HWND. Do not call SDL_Vulkan_CreateSurface
+            // from here: after its surface-creation failures the reporter crashed in
+            // SDL3.dll (Windows / Cleanroom 0.7.14 / Celtium 0.1.2-alpha). A Win32
+            // Vulkan surface only needs the existing HWND and its window-class HINSTANCE.
+            if (compositor != null && (compositor.equalsIgnoreCase("WIN32")
+                    || compositor.equalsIgnoreCase("WINDOWS"))) {
+                if (!context.hasInstanceExtension("VK_KHR_surface")
+                        || !context.hasInstanceExtension("VK_KHR_win32_surface")) {
+                    reasons.add("Windows presentation requires enabled VK_KHR_surface and "
+                            + "VK_KHR_win32_surface instance extensions");
+                    return null;
+                }
+                long sdlWindow = CeltiumWindow.sdlWindowPointer();
+                if (sdlWindow == 0L) {
+                    reasons.add("SDL reported WIN32 but its SDL_Window pointer was unavailable");
+                    return null;
+                }
+                // The SDL property is the authoritative HWND; nativeWindow from
+                // Cleanroom's wrapper is only a fallback if SDL lacks this property.
+                int properties = org.lwjgl.sdl.SDLVideo.SDL_GetWindowProperties(sdlWindow);
+                long hwnd = properties == 0L ? 0L
+                        : org.lwjgl.sdl.SDLProperties.SDL_GetPointerProperty(properties,
+                                org.lwjgl.sdl.SDLVideo.SDL_PROP_WINDOW_WIN32_HWND_POINTER, 0L);
+                if (hwnd == 0L) {
+                    hwnd = nativeWindow;
+                }
+                if (hwnd == 0L) {
+                    reasons.add("SDL reported WIN32 but the native HWND was unavailable");
+                    return null;
+                }
+                long hinstance = org.lwjgl.system.windows.User32.GetWindowLongPtr(hwnd, -6); // GWLP_HINSTANCE
+                if (hinstance == 0L) {
+                    reasons.add("GetWindowLongPtr(GWLP_HINSTANCE) returned 0 for the SDL HWND");
+                    return null;
+                }
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    LongBuffer handle = stack.mallocLong(1);
+                    VkWin32SurfaceCreateInfoKHR create = VkWin32SurfaceCreateInfoKHR.calloc(stack).sType$Default()
+                            .hinstance(hinstance).hwnd(hwnd);
+                    int result = KHRWin32Surface.vkCreateWin32SurfaceKHR(context.instance(), create, null, handle);
+                    if (result != VK_SUCCESS) {
+                        reasons.add("vkCreateWin32SurfaceKHR for the SDL HWND failed: VkResult " + result);
+                        return null;
+                    }
+                    System.out.println("[Celtium] CELTIUM_SURFACE_WIN32 created=true hwnd=0x"
+                            + Long.toHexString(hwnd) + " hinstance=0x" + Long.toHexString(hinstance));
+                    return buildForSurface(context, window, handle.get(0), "win32-raw",
+                            width, height, reasons);
+                }
+            }
             if (compositor != null && compositor.equalsIgnoreCase("X11")) {
                 if (nativeWindow == 0L) {
                     reasons.add("SDL reported X11 but no window id was available");
