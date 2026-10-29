@@ -1340,6 +1340,7 @@ public final class VulkanContext {
         this.pendingBatchedSubmits.clear();
         Throwable submitError = submitBatch(batch, entries);
         if (submitError != null) {
+            this.usable = false;
             failBatch(batch, entries);
             if (submitError instanceof RuntimeException runtime) {
                 throw runtime;
@@ -1439,8 +1440,18 @@ public final class VulkanContext {
      * {@link #queue()} or this class's own submit paths, and both join the worker first, so the queue stays externally
      * synchronized. The swapchain joins before its next acquire.
      */
-    public static final boolean ASYNC_PRESENT =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.asyncPresent"));
+    // The async presenter is benchmarked on Intel/Linux and AMD/Linux but not on
+    // Windows/NVIDIA. External Win11/RTX3070 testing twice lost the Vulkan device
+    // while the worker was submitting deferred batches. Until an A/B driver test
+    // rules out unsafe cross-thread queue/lifetime interaction, default to the
+    // single-threaded present path on Windows. Users can explicitly opt back in.
+    static boolean asyncPresentDefaultForOs(String osName) {
+        return osName == null || !osName.toLowerCase(java.util.Locale.ROOT).contains("win");
+    }
+
+    public static final boolean ASYNC_PRESENT = Boolean.parseBoolean(
+            System.getProperty("celtium.vulkan.asyncPresent",
+                    Boolean.toString(asyncPresentDefaultForOs(System.getProperty("os.name", "")))));
     private java.util.concurrent.ExecutorService presenter;
     private java.util.concurrent.Future<?> presenterJob;
     private SharedBatch presenterBatch;
@@ -1452,6 +1463,13 @@ public final class VulkanContext {
     public static long presenterJobs;
 
     /** Waits for the worker's queue work, then frees a batch it could not submit; a no-op without a job in flight. */
+    /** The only recoverable asynchronous present results are success and a changed swapchain. */
+    static boolean presenterResultIsFatal(int result) {
+        return result != VK_SUCCESS
+                && result != org.lwjgl.vulkan.KHRSwapchain.VK_SUBOPTIMAL_KHR
+                && result != org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR;
+    }
+
     public void celtium$awaitPresenter() {
         java.util.concurrent.Future<?> job = this.presenterJob;
         if (job == null) {
@@ -1462,7 +1480,13 @@ public final class VulkanContext {
         try {
             job.get();
         } catch (InterruptedException interrupted) {
+            // The worker may still be using the VkQueue. Never clear the only join handle
+            // and proceed as though the submission had finished.
+            this.presenterJob = job;
+            this.usable = false;
             Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while joining the Vulkan presenter; "
+                    + "the queue's completion state is unknown and further GPU work is disabled", interrupted);
         } catch (java.util.concurrent.ExecutionException failed) {
             this.presenterBatchError = failed.getCause();
         }
@@ -1474,9 +1498,24 @@ public final class VulkanContext {
         this.presenterBatch = null;
         this.presenterEntries = null;
         this.presenterBatchError = null;
-        if (error != null && batch != null) {
-            failBatch(batch, entries);
-            System.out.println("[Celtium] CELTIUM_ASYNC_PRESENT batch submit failed on the presenter: " + error);
+        if (error != null) {
+            // VK_ERROR_DEVICE_LOST is terminal, not another swapchain-out-of-date event.
+            // Both Neeyo logs continued after vkQueueSubmit -4, then hung/crashed in the
+            // NVIDIA driver. Fail on the *first* loss, before any more queue operations.
+            this.usable = false;
+            if (batch != null && entries != null) {
+                failBatch(batch, entries);
+            }
+            throw new IllegalStateException("CELTIUM_ASYNC_PRESENT fatal Vulkan presenter failure. "
+                    + "No more Vulkan commands may be submitted; this is not a resize or a "
+                    + "swapchain-recreation request: " + error, error);
+        }
+        int result = this.presenterResult;
+        if (presenterResultIsFatal(result)) {
+            this.usable = false;
+            throw new IllegalStateException("CELTIUM_ASYNC_PRESENT fatal VkResult " + result
+                    + " (VK_ERROR_DEVICE_LOST=-4). Stop the renderer; "
+                    + "recreating the swapchain cannot recover a lost device.");
         }
     }
 
@@ -3716,8 +3755,9 @@ public final class VulkanContext {
             // A submission timed out: the queue may still be executing work whose fence never signalled, so the
             // device's state is unknown. Refusing here is the other half of quarantining the resources - a context
             // that keeps submitting after that is how a stall turns into a validation error storm (audit A02).
-            throw new IllegalStateException("This VulkanContext is unusable: a submission timed out and its command"
-                    + " buffer and fence are quarantined (submitWithSemaphores timeouts=" + submitTimeouts + ")");
+            throw new IllegalStateException("This VulkanContext is unusable: a Vulkan submission failed, "
+                    + "the device was lost, or a fence wait timed out; further GPU work is disabled "
+                    + "(submitWithSemaphores timeouts=" + submitTimeouts + ")");
         }
     }
 
