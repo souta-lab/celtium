@@ -1482,9 +1482,31 @@ public final class VulkanContext {
         return osName == null || !osName.toLowerCase(java.util.Locale.ROOT).contains("win");
     }
 
-    public static final boolean ASYNC_PRESENT = Boolean.parseBoolean(
-            System.getProperty("celtium.vulkan.asyncPresent",
-                    Boolean.toString(asyncPresentDefaultForOs(System.getProperty("os.name", "")))));
+    /**
+     * Three NVIDIA/Windows reports showed device loss with asyncPresent=true, including
+     * RC5 when Prism retained the old -Dceltium.vulkan.asyncPresent=true argument.
+     * Require a SEPARATE, explicitly named unsafe opt-in on Windows so stale
+     * launcher arguments cannot defeat the safe default.
+     */
+    static boolean asyncPresentEnabledForOs(String os, boolean requested, boolean unsafeWindowsOverride) {
+        return requested && (asyncPresentDefaultForOs(os) || unsafeWindowsOverride);
+    }
+
+    private static boolean configureAsyncPresent() {
+        String os = System.getProperty("os.name", "");
+        boolean requested = Boolean.parseBoolean(System.getProperty(
+                "celtium.vulkan.asyncPresent", Boolean.toString(asyncPresentDefaultForOs(os))));
+        boolean unsafe = Boolean.getBoolean("celtium.vulkan.unsafeWindowsAsyncPresent");
+        boolean enabled = asyncPresentEnabledForOs(os, requested, unsafe);
+        System.out.println("[Celtium] CELTIUM_ASYNC_PRESENT_CONFIG os=" + os
+                + " requested=" + requested + " unsafeWindowsOverride=" + unsafe
+                + " enabled=" + enabled + (requested && !enabled
+                ? " (ignored stale asyncPresent=true; set unsafeWindowsAsyncPresent=true for explicit driver A/B)"
+                : ""));
+        return enabled;
+    }
+
+    public static final boolean ASYNC_PRESENT = configureAsyncPresent();
     private java.util.concurrent.ExecutorService presenter;
     private java.util.concurrent.Future<?> presenterJob;
     private SharedBatch presenterBatch;
@@ -1730,6 +1752,14 @@ public final class VulkanContext {
         // A lost device is completion-equivalent for *pending ownership*, NOT a
         // license to call into a driver whose internal objects may already be gone.
         return waitResult == VK_SUCCESS;
+    }
+
+    boolean celtium$isDeviceLost() {
+        return this.deviceLost;
+    }
+
+    IllegalStateException celtium$reportDeviceLost(String operation, int result) {
+        return celtium$lostDevice(operation + " (VkResult=" + result + ")");
     }
 
     private IllegalStateException celtium$lostDevice(String operation) {

@@ -30,6 +30,20 @@ class PresenterFatalResultTest {
         assertTrue(VulkanContext.asyncPresentDefaultForOs("Mac OS X"));
     }
 
+    @Test void descriptorAllocationMustPropagateDeviceLoss() {
+        assertTrue(VulkanImmediateTexturePipeline.descriptorResultIsDeviceLost(VK_ERROR_DEVICE_LOST));
+        assertFalse(VulkanImmediateTexturePipeline.descriptorResultIsDeviceLost(VK_SUCCESS));
+        assertFalse(VulkanImmediateTexturePipeline.descriptorResultIsDeviceLost(VK_ERROR_OUT_OF_DEVICE_MEMORY));
+    }
+
+    @Test void stalePrismAsyncFlagCannotReenableWindowsPresenter() {
+        assertFalse(VulkanContext.asyncPresentEnabledForOs("Windows 11", true, false));
+        assertFalse(VulkanContext.asyncPresentEnabledForOs("Windows 11", false, true));
+        assertTrue(VulkanContext.asyncPresentEnabledForOs("Windows 11", true, true));
+        assertTrue(VulkanContext.asyncPresentEnabledForOs("Linux", true, false));
+        assertFalse(VulkanContext.asyncPresentEnabledForOs("Linux", false, true));
+    }
+
     @Test void recoverableSwapchainResultsDoNotAbortDevice() {
         assertFalse(VulkanContext.presenterResultIsFatal(VK_SUCCESS));
         assertFalse(VulkanContext.presenterResultIsFatal(VK_SUBOPTIMAL_KHR));

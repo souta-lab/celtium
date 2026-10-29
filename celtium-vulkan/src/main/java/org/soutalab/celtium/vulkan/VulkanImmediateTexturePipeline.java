@@ -651,6 +651,23 @@ public final class VulkanImmediateTexturePipeline {
         return "none-seen";
     }
 
+    private static int descriptorFailureReports;
+
+    static boolean descriptorResultIsDeviceLost(int result) {
+        return result == VK_ERROR_DEVICE_LOST;
+    }
+
+    private void celtium$descriptorFailure(String operation, int result) {
+        if (descriptorFailureReports++ < 12) {
+            System.err.println("[Celtium] CELTIUM_DESCRIPTOR_VK_RESULT phase=" + operation
+                    + " result=" + result + " pools=" + this.descriptorPools.size()
+                    + " setsAllocated=" + this.descriptorSetsAllocated);
+        }
+        if (descriptorResultIsDeviceLost(result)) {
+            throw this.context.celtium$reportDeviceLost("descriptor " + operation, result);
+        }
+    }
+
     public long descriptorSetFor(VulkanGlTexture texture) {
         if (this.descriptorPools.isEmpty() || texture == null) {
             return 0L;
@@ -728,6 +745,9 @@ public final class VulkanImmediateTexturePipeline {
             DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
+            if (this.context.celtium$isDeviceLost()) {
+                throw error;
+            }
             return 0L;
         }
     }
@@ -793,7 +813,9 @@ public final class VulkanImmediateTexturePipeline {
                     org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                             .maxSets(DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
             LongBuffer poolHandle = stack.mallocLong(1);
-            if (vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle) != VK_SUCCESS) {
+            int poolResult = vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle);
+            if (poolResult != VK_SUCCESS) {
+                celtium$descriptorFailure("createPool", poolResult);
                 return VK_NULL_HANDLE;
             }
             this.descriptorPools.add(Long.valueOf(poolHandle.get(0)));
@@ -830,11 +852,13 @@ public final class VulkanImmediateTexturePipeline {
                             .descriptorPool(pool.longValue())
                             .pSetLayouts(stack.longs(this.descriptorSetLayout));
             LongBuffer handle = stack.mallocLong(1);
-            if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) == VK_SUCCESS) {
+            int allocationResult = vkAllocateDescriptorSets(this.context.device(), allocate, handle);
+            if (allocationResult == VK_SUCCESS) {
                 this.descriptorSetsAllocated++;
                 DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
                 return handle.get(0);
             }
+            celtium$descriptorFailure("allocateSet", allocationResult);
             // The pool is full (or refused for another reason). One growth attempt, then the caller refuses the batch.
             if (createDescriptorPool() == VK_NULL_HANDLE) {
                 break;
