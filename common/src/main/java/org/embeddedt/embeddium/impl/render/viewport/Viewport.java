@@ -7,6 +7,8 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.RoundingMode;
 import org.joml.Vector3d;
+import org.joml.Vector3f;
+import org.joml.Vector3fc;
 import org.joml.Vector3i;
 import org.joml.Vector3ic;
 
@@ -18,16 +20,22 @@ public final class Viewport {
     private final Vector3i blockCoords;
 
     private final @Nullable Matrix4fc vpMatrix;
+    private final @Nullable Vector3fc frustumOffset;
 
     public Viewport(Frustum frustum, Vector3d position) {
         this(frustum, position, null);
     }
 
     public Viewport(Frustum frustum, Vector3d position, @Nullable Matrix4fc vpMatrix) {
+        this(frustum, position, vpMatrix, null);
+    }
+
+    public Viewport(Frustum frustum, Vector3d position, @Nullable Matrix4fc vpMatrix, @Nullable Vector3fc frustumOffset) {
         this.frustum = frustum;
         this.transform = new CameraTransform(position.x, position.y, position.z);
 
         this.vpMatrix = vpMatrix == null ? null : new Matrix4f(vpMatrix);
+        this.frustumOffset = frustumOffset == null ? null : new Vector3f(frustumOffset);
 
         this.chunkCoords = new Vector3i(
                 PositionUtil.posToSectionCoord(position.x),
@@ -75,6 +83,30 @@ public final class Viewport {
 
     public @Nullable Matrix4fc getVpMatrix() {
         return this.vpMatrix;
+    }
+
+    /** True only when the search would test the same boxes against the same camera. */
+    public boolean sameSearchView(@Nullable Viewport other) {
+        if (other == null || this.vpMatrix == null || other.vpMatrix == null
+                || this.frustumOffset == null || other.frustumOffset == null
+                || !this.blockCoords.equals(other.blockCoords)) {
+            return false;
+        }
+        CameraTransform a = this.transform;
+        CameraTransform b = other.transform;
+        if (a.intX != b.intX || a.intY != b.intY || a.intZ != b.intZ
+                || a.fracX != b.fracX || a.fracY != b.fracY || a.fracZ != b.fracZ
+                || !this.frustumOffset.equals(other.frustumOffset)) {
+            return false;
+        }
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                if (this.vpMatrix.get(column, row) != other.vpMatrix.get(column, row)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     public Frustum getFrustum() {

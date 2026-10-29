@@ -9,7 +9,6 @@ import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
 import org.embeddedt.embeddium.impl.render.chunk.sorting.SortState;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.viewport.Viewport;
-import org.joml.Matrix4fc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3fc;
@@ -167,13 +166,7 @@ public class RenderListManager {
         this.needsUpdate = false;
     }
 
-    /**
-     * Whether the published lists may stand in for a search from {@code viewport}: searched from the same block and
-     * from a view whose camera-relative view-projection differs by no more than {@link #VIEW_TOLERANCE} in any
-     * element (about a tenth of a degree of rotation). A search the async path has not joined yet is then one frame
-     * of motion the lists cannot miss anything over; a turn or a step into another block is not, and drawing the
-     * older lists then exposes surfaces the new view hides behind sections the old frustum never visited.
-     */
+    /** Whether the published lists were searched against this exact visibility view. */
     public boolean publishedListsMatch(@Nullable Viewport viewport) {
         Viewport published = this.publishedViewport;
         if (viewport == null || published == null || viewport.getVpMatrix() == null || published.getVpMatrix() == null) {
@@ -183,17 +176,8 @@ public class RenderListManager {
             this.joinsForBlock++;
             return false;
         }
-        Matrix4fc a = viewport.getVpMatrix();
-        Matrix4fc b = published.getVpMatrix();
-        float worst = 0F;
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                worst = Math.max(worst, Math.abs(a.get(column, row) - b.get(column, row)));
-            }
-        }
-        if (worst > VIEW_TOLERANCE) {
+        if (!viewport.sameSearchView(published)) {
             this.joinsForView++;
-            this.worstViewDelta = Math.max(this.worstViewDelta, worst);
             return false;
         }
         this.joinsSkipped++;
@@ -204,14 +188,15 @@ public class RenderListManager {
     private long joinsForBlock;
     private long joinsForView;
     private long joinsSkipped;
-    private float worstViewDelta;
 
     public String joinDecisionSummary() {
-        return "joinsForBlock=" + this.joinsForBlock + " joinsForView=" + this.joinsForView + " skipped=" + this.joinsSkipped
-                + " worstViewDelta=" + this.worstViewDelta;
+        return "joinsForBlock=" + this.joinsForBlock + " joinsForView=" + this.joinsForView + " skipped=" + this.joinsSkipped;
     }
 
-    private static final float VIEW_TOLERANCE = 0.002F;
+    /** No census side effects: used to decide whether a new search is needed. */
+    public boolean matchesPublishedViewport(@Nullable Viewport viewport) {
+        return viewport != null && viewport.sameSearchView(this.publishedViewport);
+    }
 
     public void finishPreviousGraphUpdate() {
         if (currentOcclusionFuture != null) {

@@ -39,6 +39,6 @@ public class FrustumMixin implements ViewportProvider {
                 new org.joml.Vector3d(this.x, this.y, this.z).add(offset),
                 // The view the planes came from, so the terrain search can tell whether the lists it published were
                 // searched from (nearly) this view; see RenderListManager.publishedListsMatch.
-                ((IClippingHelper)clippingHelper).celeritas$getViewProjection());
+                ((IClippingHelper)clippingHelper).celeritas$getViewProjection(), offset);
     }
 }

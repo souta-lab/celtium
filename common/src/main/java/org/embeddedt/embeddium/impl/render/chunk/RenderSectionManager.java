@@ -622,10 +622,8 @@ public abstract class RenderSectionManager {
             System.out.println("[Celtium] CELTIUM_RENDER_LAYER pass=" + pass + " backend=" + this.terrainBackend.getClass().getSimpleName());
         }
 
-        // This frame's search must be published before terrain is drawn whenever the view moved: the previous
-        // camera's lists miss sections the new view reveals, so a turn showed the caves and sea floor behind them
-        // for a frame. Joining unconditionally made the search synchronous again (straight 20 b/s flight, AMD:
-        // p50 2.44-2.47 -> 2.90-3.01 ms); an unchanged view keeps the overlap.
+        // A changed search view may reveal sections missing from the published lists. Join its search before drawing;
+        // an unchanged view keeps the overlap with the worker. Small turns and motion inside a block count too.
         if (this.isInShadowPass() || !this.renderListManager.publishedListsMatch(this.lastTerrainViewport)) {
             this.finishAllGraphUpdates();
         }
@@ -1150,6 +1148,11 @@ public abstract class RenderSectionManager {
             return this.shadowRenderListManager.isNeedsUpdate();
         }
         return this.renderListManager.isNeedsUpdate() || this.shadowPassRanThisFrame;
+    }
+
+    /** Compare against the view that produced the published terrain lists. */
+    public boolean matchesPublishedViewport(Viewport viewport) {
+        return this.renderListManager.matchesPublishedViewport(viewport);
     }
 
     public ChunkBuilder getBuilder() {
