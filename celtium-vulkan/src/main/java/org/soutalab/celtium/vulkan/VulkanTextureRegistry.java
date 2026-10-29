@@ -613,9 +613,9 @@ public final class VulkanTextureRegistry {
         }
         Entry entry = this.entries.get((int) (id));
         if (entry != null && entry.texture.hasFullContent()) {
-            // A patch that completed the tile coverage holds the image's whole content the same way a whole
-            // write does - this is the fact the gate above asks, and without it every later patch was refused
-            // "before initialization" even as the image stood complete.
+            // The image is sample-ready after either full coverage or a defined blank baseline followed by a patch.
+            // Keep the registry's initialization gate aligned with the image; this does not mean the producer wrote
+            // every texel of a sparse texture.
             this.fullyInitialized.add(id);
         }
     }

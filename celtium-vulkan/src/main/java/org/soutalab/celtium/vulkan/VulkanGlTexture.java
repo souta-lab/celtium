@@ -249,16 +249,18 @@ public final class VulkanGlTexture {
      */
     private int[] levelLayouts = new int[0];
     /**
-     * Whether this image has ever been given its whole content.
+     * Whether this image has defined storage and can be sampled.
      * <p>
-     * A mirror created because a partial write arrived has only the patch that created it: the rest of the atlas is undefined,
-     * and the registry used to clear its stale mark anyway, which made an image of mostly-nothing drawable. Drawing from it is
-     * worse than sending the batch back to GL, so the acceptance path asks this before it builds a descriptor (audit A04).
+     * A full upload or a published image supplies the contents. A newly allocated, explicitly sized image may instead
+     * be cleared before its first patch; its written regions then contain the supplied pixels and untouched regions zero.
+     * This is readiness to sample, not a claim that every texel was supplied by the producer (audit A04).
      */
     private boolean fullContentArrived;
     private int currentLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
     /** GPU blits recorded into this mirror (the copy path's native route; see blitRectangleFrom). */
     private int blitRectangles;
+    /** Image generation last written by a recorded GPU blit; an initial clear must never erase that write. */
+    private long lastBlitGeneration = Long.MIN_VALUE;
     private boolean nearestFilter;
     /** The source GL texture's wrap on each axis: {@code true} for GL_REPEAT, {@code false} for a clamp mode. */
     private boolean wrapRepeatU;
@@ -1511,7 +1513,7 @@ public final class VulkanGlTexture {
      * @return whether the image was written, false when the content was already there
      */
     /** {@return whether a patch was written into a sub-region}, for the animated writes that cover part of a texture. */
-    /** {@return whether the image has been given its whole content at least once} (audit A04). */
+    /** {@return whether the image's storage is defined and it can be sampled} (audit A04). */
     public boolean hasFullContent() {
         return this.fullContentArrived;
     }
@@ -1663,9 +1665,15 @@ public final class VulkanGlTexture {
         } else {
             commandBuffer = context.beginCommands();
         }
+        // A native image can be populated entirely by sub-image writes. Give its untouched space a defined value
+        // before the first patch, so sampling does not depend on every tile of a sparse atlas being written.
+        boolean clearedBaseline = celtium$canInitializePatchBaseline();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+            if (clearedBaseline) {
+                celtium$clearPatchBaseline(commandBuffer, stack, barrier);
+            }
             for (int level = 0; level < depth; level++) {
                 int patchWidth = pixelWidth >> level;
                 int patchHeight = pixelHeight >> level;
@@ -1715,9 +1723,12 @@ public final class VulkanGlTexture {
         for (int level = 0; level < depth; level++) {
             setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
+        if (clearedBaseline) {
+            this.fullContentArrived = true;
+        }
         recordPatchWrite(depth, producerDepth, mirrorLevels, Math.max(0, producerDepth - mirrorLevels));
         boolean wholeImage = x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height;
-        if (!wholeImage) {
+        if (!wholeImage && !this.fullContentArrived) {
             // A patch smaller than the image still contributes to it: count the tiles it wrote, and treat the image as
             // fully initialized once every tile has been written at least once. This is what the pack's tiled 8192x8192
             // atlas needs, and it does not weaken the one-patch case, which stays the fast path below.
@@ -1747,6 +1758,44 @@ public final class VulkanGlTexture {
         // have been replaced wholesale (audit A06).
         invalidateUploadCache();
         return true;
+    }
+
+    /** Only clear a newly allocated, explicitly sized image before any of its levels have received data. */
+    private boolean celtium$canInitializePatchBaseline() {
+        if (this.fullContentArrived || this.width <= 0 || this.height <= 0
+                || this.lastBlitGeneration == this.generation) {
+            return false;
+        }
+        for (long writes : this.levelWrites) {
+            if (writes != 0L) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Clear the untouched mip chain before recording its first patch, in the same ordered submission. */
+    private void celtium$clearPatchBaseline(VkCommandBuffer commandBuffer, MemoryStack stack,
+            VkImageMemoryBarrier.Buffer barrier) {
+        barrier.get(0).sType$Default()
+                .srcAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .oldLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(this.image);
+        barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
+        vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+        org.lwjgl.vulkan.VkClearColorValue clear = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+        org.lwjgl.vulkan.VkImageSubresourceRange.Buffer range =
+                org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
+        range.get(0).set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
+        vkCmdClearColorImage(commandBuffer, this.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, range);
+        barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL).newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
     }
 
     /**
@@ -2876,6 +2925,7 @@ public final class VulkanGlTexture {
             this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             setLevelLayout(0, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             this.blitRectangles++;
+            this.lastBlitGeneration = this.generation;
             return null;
         }
     }

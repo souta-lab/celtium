@@ -51,7 +51,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080で表示）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`） |
-   | E2E 1.93a（Cleanroom 0.7） | **AMD PASSED**（`e2e-lod3`、`af1e97fe0`）。Intelのatlas読込中SIGSEGVは未回収command bufferの抑制後に1回通過・validation 0。ただし画像比較未成立、atlasを使う即時描画の拒否あり（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
+   | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。最終jarはE2E未再検証、画像比較未成立（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。glow sceneは未較正） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:

@@ -2122,8 +2122,42 @@ public final class ValidationClient {
         report.addProperty("drawTestSecondTarget", true);
     }
 
+    private int celtium$sparseTexture;
+
+    /** Draw two independently uploaded regions of an allocated texture larger than the capture budget. */
+    private void celtium$drawSparseTexture(net.minecraftforge.client.event.RenderGameOverlayEvent.Post event) {
+        if (!Boolean.getBoolean("celtium.validation.sparseTexture") || worldTicks < 150
+                || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
+            return;
+        }
+        if (celtium$sparseTexture == 0) {
+            final int extent = 4097;
+            celtium$sparseTexture = net.minecraft.client.renderer.texture.TextureUtil.glGenTextures();
+            net.minecraft.client.renderer.texture.TextureUtil.allocateTexture(celtium$sparseTexture, extent, extent);
+            net.minecraft.client.renderer.GlStateManager.bindTexture(celtium$sparseTexture);
+            int[] red = new int[64 * 64];
+            int[] green = new int[64 * 64];
+            java.util.Arrays.fill(red, 0xFFFF0000);
+            java.util.Arrays.fill(green, 0xFF00FF00);
+            net.minecraft.client.renderer.texture.TextureUtil.uploadTextureMipmap(new int[][] {red},
+                    64, 64, 64, 64, false, true);
+            net.minecraft.client.renderer.texture.TextureUtil.uploadTextureMipmap(new int[][] {green},
+                    64, 64, 256, 64, false, true);
+            report.addProperty("sparseTextureId", celtium$sparseTexture);
+            report.addProperty("sparseTextureExtent", extent);
+        }
+        net.minecraft.client.renderer.GlStateManager.enableTexture2D();
+        net.minecraft.client.renderer.GlStateManager.disableDepth();
+        net.minecraft.client.renderer.GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+        net.minecraft.client.renderer.GlStateManager.bindTexture(celtium$sparseTexture);
+        net.minecraft.client.gui.Gui.drawModalRectWithCustomSizedTexture(20, 20, 64, 64, 64, 64, 4097, 4097);
+        net.minecraft.client.gui.Gui.drawModalRectWithCustomSizedTexture(100, 20, 256, 64, 64, 64, 4097, 4097);
+        net.minecraft.client.renderer.GlStateManager.enableDepth();
+    }
+
     @net.minecraftforge.fml.common.eventhandler.SubscribeEvent
     public void onRenderOverlay(net.minecraftforge.client.event.RenderGameOverlayEvent.Post event) {
+        celtium$drawSparseTexture(event);
         // The game's own composite call - Framebuffer.framebufferRender - is the POSITION_TEX_COLOR batch the present path
         // keys on, and this scene never issues one, which is why that path has been inert in every measurement so far. Called
         // once, behind its own flag, so the present can be exercised rather than described.
