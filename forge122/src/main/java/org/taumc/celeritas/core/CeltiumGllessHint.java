@@ -699,32 +699,19 @@ public final class CeltiumGllessHint {
      * after the minimap kept the minimap's projection and drew in the wrong place.
      */
     private static org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend rawMatrix(int kind) {
-        // Read the caller, not just the one-shot flag. The flag was set by a vanilla GlStateManager mixin whose native
-        // call then never arrived (GlStateManager caches state and skips the GL call), and it stayed set: the next raw
-        // matrix call - cam72cam's glMatrixMode(GL_PROJECTION) - was skipped as if it were vanilla, the mode stayed
-        // MODELVIEW, its projection multiply landed on the wrong stack, and the stride-48 draw was refused with an
-        // identity projection (measured: CELTIUM_MATRIX_TRACE mode=0). The stack names the origin every time, so the
-        // stale flag cannot block a mod call again.
-        if (vanillaMatrixFrame()) {
+        // The one-shot flag, read cheaply. Reading the caller frame here instead was measured at 29.2 ms of warm frame
+        // against 4.3 ms with the flag: glPushMatrix/glPopMatrix/glTranslate run per model and per entity, and a stack
+        // walk on each of them costs more than the whole frame. The flag's stale case (a GlStateManager method whose
+        // native call never arrives) is real but rare, and it can be cleared by the mixin's own return hook rather than
+        // paid for on every matrix call.
+        if (vanillaMatrixCall != 0) {
+            boolean vanilla = vanillaMatrixCall == kind;
             vanillaMatrixCall = 0;
-            return null;
-        }
-        vanillaMatrixCall = 0;
-        return org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-    }
-
-    /** {@return whether the raw matrix call is being made from vanilla GlStateManager}, whose mirror already applied it. */
-    private static boolean vanillaMatrixFrame() {
-        StackTraceElement[] trace = new Throwable().getStackTrace();
-        for (int i = 3; i < Math.min(trace.length, 9); i++) {
-            String type = trace[i].getClassName();
-            if (type.startsWith("org.taumc.") || type.startsWith("org.soutalab.") || type.startsWith("java.")
-                    || type.startsWith("org.lwjgl.")) {
-                continue;
+            if (vanilla) {
+                return null;
             }
-            return type.startsWith("net.minecraft.client.renderer.GlStateManager");
         }
-        return false;
+        return org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
     }
 
     public static void glPushMatrix() {
@@ -750,6 +737,9 @@ public final class CeltiumGllessHint {
      * increments and makes the stack independent of instance lifetime.
      */
     private static volatile int lastMatrixMode = 5888;
+
+    /** Mirrors {@link CeltiumGllessNativeTransformer#MOD_MATRIX_ROUTES}; see there for why it is off by default. */
+    private static final boolean MOD_MATRIX_ROUTES = Boolean.getBoolean("celtium.glless.modMatrixRoutes");
     private static int hintMatrixDumps;
 
     public static void glMatrixMode(int mode) {
@@ -783,7 +773,7 @@ public final class CeltiumGllessHint {
      * a call from {@code net.minecraft*} is skipped, anything else is applied to the current matrix stack.
      */
     public static void glMultMatrixf(long pointer) {
-        if (pointer == 0L || !modMatrixCaller()) {
+        if (!MOD_MATRIX_ROUTES || pointer == 0L || !modMatrixCaller()) {
             return;
         }
         if (HINT_MATRIX_TRACE && hintMultiplyDumps < 12) {
@@ -813,7 +803,7 @@ public final class CeltiumGllessHint {
 
     /** The {@code glMultMatrixd} native, narrowed to the float route. */
     public static void glMultMatrixd(long pointer) {
-        if (pointer == 0L || !modMatrixCaller()) {
+        if (!MOD_MATRIX_ROUTES || pointer == 0L || !modMatrixCaller()) {
             return;
         }
         vanillaMatrixCall = 0;

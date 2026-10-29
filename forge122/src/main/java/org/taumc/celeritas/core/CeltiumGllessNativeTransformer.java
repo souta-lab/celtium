@@ -201,6 +201,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         return true;
     }
 
+    /**
+     * Whether mod-originated {@code glMultMatrix} is applied to the matrix mirror.
+     * <p>
+     * Off by default: the route decides its caller with a stack walk, and a mod that multiplies once per object made
+     * that walk a per-draw cost. Measured on Supersymmetry: the warm frame went from 4.05 ms to 29.2 ms with the route
+     * live, while the stride-48 draw it was added for still refuses for a different reason (the projection stack), so
+     * it bought nothing and cost a third of the frame. The route stays, behind this property, for the leg that fixes
+     * the projection; the default path is the one that was measured good.
+     */
+    private static final boolean MOD_MATRIX_ROUTES = Boolean.getBoolean("celtium.glless.modMatrixRoutes");
+
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
 
@@ -708,7 +719,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
-            if ("nglMultMatrixf".equals(name) && descriptor.equals("(J)V")) {
+            if (MOD_MATRIX_ROUTES && "nglMultMatrixf".equals(name) && descriptor.equals("(J)V")) {
                 // The raw matrix multiply, from mod code. Vanilla's camera reaches glMultMatrix through
                 // Project.gluPerspective, which GluProjectionMixin already mirrors, so the hint decides by caller:
                 // a net.minecraft caller is skipped, a mod caller is applied. Measured need: cam72cam's
@@ -720,7 +731,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
-            if ("nglMultMatrixd".equals(name) && descriptor.equals("(J)V")) {
+            if (MOD_MATRIX_ROUTES && "nglMultMatrixd".equals(name) && descriptor.equals("(J)V")) {
                 method.visitVarInsn(Opcodes.LLOAD, 0);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glMultMatrixd", "(J)V", false);
