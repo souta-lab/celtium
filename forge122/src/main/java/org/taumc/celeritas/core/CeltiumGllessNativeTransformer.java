@@ -703,6 +703,25 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("nglMultMatrixf".equals(name) && descriptor.equals("(J)V")) {
+                // The raw matrix multiply, from mod code. Vanilla's camera reaches glMultMatrix through
+                // Project.gluPerspective, which GluProjectionMixin already mirrors, so the hint decides by caller:
+                // a net.minecraft caller is skipped, a mod caller is applied. Measured need: cam72cam's
+                // RenderContext.multMatrix could never set the projection mirror, and the stride-48 item-model draw
+                // was refused with "the mirrored projection is the identity at draw time".
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glMultMatrixf", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("nglMultMatrixd".equals(name) && descriptor.equals("(J)V")) {
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glMultMatrixd", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("nglTexCoordPointer".equals(name) || "glTexCoordPointer".equals(name)) {
                 // (IIIJ)V - size, type, stride, pointer. The stride-48 client-array draw (Immersive Railroading's OBJ
                 // binding) sets its texture coordinates through this native, and without the route the stub's split

@@ -384,7 +384,24 @@ public final class CeltiumGllessHint {
         }
         count.incrementAndGet();
         noteDisplayListCall();
+        // The matrix natives that are NOT routed are invisible in the stub: they reach emitDefaultReturn and the mirror
+        // never sees them. The stride-48 draw's refusal named "the mirrored projection is the identity", so the call
+        // that should have set it has to be named. Three lines, only under the census, only for matrix-family names.
+        if ((name.contains("Matrix") || name.contains("Frustum") || name.contains("Ortho"))
+                && MATRIX_NATIVE_NAMES.size() < 8 && MATRIX_NATIVE_NAMES.add(name)) {
+            StackTraceElement[] trace = new Throwable().getStackTrace();
+            StringBuilder callers = new StringBuilder();
+            for (int i = 2; i < Math.min(trace.length, 10); i++) {
+                if (i > 2) callers.append(" <- ");
+                callers.append(trace[i].getClassName()).append('.').append(trace[i].getMethodName());
+            }
+            System.out.println("[Celtium] CELTIUM_GLLESS_MATRIX_NATIVE name=" + name + " callers=[" + callers + "]");
+        }
     }
+
+    /** First calls of each matrix-family native, for the bounded {@link #noteRewritten} report. */
+    private static final java.util.Set<String> MATRIX_NATIVE_NAMES =
+            java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<String>());
 
     /** {@return the rewritten-native census, largest first, for the exit line}. */
     public static String rewriteCensus() {
@@ -705,6 +722,72 @@ public final class CeltiumGllessHint {
     public static void glMatrixMode(int mode) {
         var backend = rawMatrix(MATRIX_MODE);
         if (backend != null) backend.matrixMode(mode);
+    }
+
+    /**
+     * The raw {@code glMultMatrixf} native, from mod code.
+     * <p>
+     * Not routed for a long time, and the note above still applies to vanilla: the camera reaches glMultMatrix through
+     * {@code Project.gluPerspective}, which {@code GluProjectionMixin} already mirrors, and routing it too applied the
+     * projection twice. But the same refusal left every mod that builds its own matrices without a mirror:
+     * cam72cam's {@code RenderContext.multMatrix} (Immersive Railroading's item models) could not set a projection, and
+     * its stride-48 draw was refused with "the mirrored projection is the identity at draw time". The caller decides:
+     * a call from {@code net.minecraft*} is skipped, anything else is applied to the current matrix stack.
+     */
+    public static void glMultMatrixf(long pointer) {
+        if (pointer == 0L || !modMatrixCaller()) {
+            return;
+        }
+        if (vanillaMatrixCall != 0) {
+            vanillaMatrixCall = 0;
+            return;
+        }
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) {
+            backend.multiplyMatrix(org.lwjgl.system.MemoryUtil.memFloatBuffer(pointer, 16));
+        }
+    }
+
+    /** The {@code glMultMatrixd} native, narrowed to the float route. */
+    public static void glMultMatrixd(long pointer) {
+        if (pointer == 0L || !modMatrixCaller()) {
+            return;
+        }
+        if (vanillaMatrixCall != 0) {
+            vanillaMatrixCall = 0;
+            return;
+        }
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) {
+            java.nio.FloatBuffer buffer = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
+            try {
+                for (int i = 0; i < 16; i++) {
+                    buffer.put(i, (float) org.lwjgl.system.MemoryUtil.memGetDouble(pointer + (long) i * 8L));
+                }
+                backend.multiplyMatrix(buffer);
+            } finally {
+                org.lwjgl.system.MemoryUtil.memFree(buffer);
+            }
+        }
+    }
+
+    /**
+     * {@return whether the caller of the native is mod code rather than vanilla}, read from the first frame that is
+     * neither the JVM, LWJGL, nor this project. The distinction is the whole safety argument of the matrix routes: the
+     * vanilla paths are mirrored by mixins and must not be applied twice, while a mod's own matrices have no other
+     * mirror at all.
+     */
+    private static boolean modMatrixCaller() {
+        StackTraceElement[] trace = new Throwable().getStackTrace();
+        for (int i = 2; i < Math.min(trace.length, 8); i++) {
+            String type = trace[i].getClassName();
+            if (type.startsWith("java.") || type.startsWith("org.lwjgl.") || type.startsWith("org.soutalab.")
+                    || type.startsWith("org.taumc.")) {
+                continue;
+            }
+            return !(type.startsWith("net.minecraft.") || type.startsWith("net.minecraftforge."));
+        }
+        return false;
     }
 
     public static void glLoadIdentity() {
