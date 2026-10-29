@@ -505,6 +505,10 @@ def main():
                              " It is how a launch condition the game reads from options - fullscreen, GUI scale,"
                              " render distance - is reproduced in a fresh directory, which the game otherwise"
                              " starts with defaults.")
+    parser.add_argument("--seed-save", type=Path, action="append", default=[],
+                        help="Copy this world save directory into the isolated game dir as saves/<name>. A fixture "
+                             "scene that loads a named save needs it there, and the isolated directory starts empty so "
+                             "the source instance never has to be modified")
     parser.add_argument("--copy-pack-dir", action="append", default=[],
                         help="Also copy one of the pack's content directories (" + ", ".join(SUPPLEMENTAL_PACK_DIRS)
                              + ") into the test game dir; the source profile is never changed")
@@ -613,6 +617,18 @@ def main():
     supplemental = copy_pack_into_game_dir(source_game, game, args.copy_pack_dir, ignored_mods)
     if supplemental:
         report["supplementalPackDirs"] = supplemental
+    # After the profile is copied: the copy already carries the instance's own saves/, so seeding first made the copy
+    # fail on an existing directory (measured, first in-world Supersymmetry attempt).
+    for save in args.seed_save:
+        if not save.is_dir():
+            parser.error(f"--seed-save is not a directory: {save}")
+        target = game / "saves" / save.resolve().name
+        if target.exists():
+            parser.error(f"the isolated game dir already has a save named {target.name}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(save, target)
+        print(f"Seeded save {target.name} from {save}")
+        report.setdefault("seededSaves", []).append({"name": target.name, "source": str(save.resolve())})
     # A relauncher instance runs the game in a second JVM whose command the relauncher builds. Writing the diagnostic
     # flags into the copy's config/relauncher.json is the path the relauncher documents, and the only one that does not
     # depend on the version's argument forwarding: a 1.3.0 run reached the game without the harness's -D flags while
