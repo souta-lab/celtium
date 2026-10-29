@@ -151,6 +151,5 @@ The test instance runs the standard 1.12.2 performance stack — these are **coe
 
 The inventoried candidates per project are kept in [the archived performance plan](docs/history/performance-plan-2026-10-12.md). Porting a listed item means: check the file/module license first (FalseTweaks and ArchaicFix contain non-LGPL islands), re-implement — do not copy code —, then credit in commit, code comment and PR.
 
-**GPL and LGPL sources are used within their terms**, which for a GPL project means design reference only: adapting GPL code into this LGPL-3.0 renderer would relicense the combined work, so a GPL project is read for its technique and re-implemented here, with the source named in the commit, the code comment and the PR. LGPL-3.0 sources may be adapted, and where code is adapted rather than re-implemented the file keeps its notice and the adaption is named the same way.
-
+ライセンスには細心の注意を払って作っています。GPLやLGPL以外のソースを取り込むことはありません。
 Current Sodium source under its newer restrictive license (and any other source-available-but-not-free project) is not imported, not adapted, and not copied: published descriptions of its techniques are read the way a paper is read, and the resulting design is this renderer's own. **Provenance is never concealed** - every derived change names its source, because a change that has to hide where it came from is not one this project can ship. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.
