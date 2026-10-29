@@ -14146,6 +14146,9 @@ this.frameBufferOpen = false;
             long spentNanos = System.nanoTime() - presentStartedNanos;
             this.swapPointNanos += spentNanos;
             FrameBudgetTimings.addPresent(spentNanos);
+            // The cadence mark: a menu presents frames without ever reaching the frame boundary, so this is the only
+            // place the frame period is measured there (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
+            FrameBudgetTimings.markPresent();
             this.swapPointCalls++;
             if (spentNanos > this.swapPointWorstNanos) {
                 this.swapPointWorstNanos = spentNanos;

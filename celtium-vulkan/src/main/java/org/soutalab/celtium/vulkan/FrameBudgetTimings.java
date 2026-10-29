@@ -83,11 +83,19 @@ public final class FrameBudgetTimings {
     private static final long[] presentRing = new long[CAPACITY];
     private static final long[] gpuRing = new long[CAPACITY];
     private static final long[] otherRing = new long[CAPACITY];
+    /** Intervals between presented frames; see {@link #markPresent}. */
+    private static final long[] presentIntervalRing = new long[CAPACITY];
 
     /** Frames filed since the start; also the ring's write cursor once it wraps. */
     private static int written;
     /** Periodic lines printed so far, against {@link #MAX_LINES}. */
     private static int lines;
+    /** Presented frames marked since the start; independent of {@link #written}, which counts world frames. */
+    private static int presentIntervals;
+    /** Clock of the previous present mark, or 0 before the first one. */
+    private static long lastPresentMarkNanos;
+    /** Present-cadence lines printed, against the same {@link #MAX_LINES} budget. */
+    private static int presentIntervalLines;
 
     /** The current frame's accumulators, reset at each boundary. */
     private static long currentRecord;
@@ -171,6 +179,47 @@ public final class FrameBudgetTimings {
         if (ENABLED) currentGpu = nanos;
     }
 
+    /**
+     * Marks one presented frame: the cadence where no frame boundary runs.
+     * <p>
+     * The frame boundary only exists in the world path. The menu presents frames without ever reaching it, so a menu
+     * at 6 FPS carried no measurement at all - a report whose frame count was zero while the operator watched a
+     * slideshow. The interval between presents is the frame period wherever a frame was presented, and it costs one
+     * clock read. It is a separate ring from the world frames so the two are never added: a world frame files both a
+     * boundary sample and a present interval, and only the boundary sample has the record/batch/submit split.
+     */
+    public static void markPresent() {
+        if (!ENABLED) {
+            return;
+        }
+        long now = System.nanoTime();
+        long previous = lastPresentMarkNanos;
+        lastPresentMarkNanos = now;
+        if (previous == 0L || now <= previous) {
+            return;
+        }
+        presentIntervalRing[presentIntervals % CAPACITY] = now - previous;
+        presentIntervals++;
+        if (presentIntervals % REPORT_EVERY_FRAMES == 0 && presentIntervalLines < MAX_LINES) {
+            presentIntervalLines++;
+            int count = Math.min(REPORT_EVERY_FRAMES, Math.min(presentIntervals, CAPACITY));
+            System.out.println("[Celtium] CELTIUM_PRESENT_INTERVAL presents=" + presentIntervals
+                    + " window=" + count
+                    + " intervalMs[" + triple(presentIntervalRing, count) + "]"
+                    + " fps=" + presentRate(presentIntervalRing, count));
+        }
+    }
+
+    /** {@return} frames per second implied by a window's median interval as {@code p50}}. */
+    private static String presentRate(long[] ring, int count) {
+        long[] copy = window(ring, count);
+        long median = percentile(copy, 0.50D);
+        if (median <= 0L) {
+            return "0.0";
+        }
+        return String.format(Locale.ROOT, "%.1f", 1_000_000_000.0D / (double) median);
+    }
+
     /** Files one frame's sample, prints the window's line when due, and resets the accumulators. */
     private static void file(long frameNanos) {
         long[] sample = split(frameNanos, currentRecord, currentBatch, currentSubmit, currentFence, currentSlot,
@@ -237,6 +286,13 @@ public final class FrameBudgetTimings {
         if (written == 0) {
             System.out.println("[Celtium] CELTIUM_FRAME_BUDGET_SUMMARY frames=0 (no frame boundary was measured)");
             return;
+        }
+        if (presentIntervals > 0) {
+            int presentCount = Math.min(presentIntervals, CAPACITY);
+            System.out.println("[Celtium] CELTIUM_PRESENT_INTERVAL_SUMMARY presents=" + presentIntervals
+                    + " window=" + presentCount
+                    + " intervalMs[" + triple(presentIntervalRing, presentCount) + "]"
+                    + " fps=" + presentRate(presentIntervalRing, presentCount));
         }
         int count = Math.min(written, CAPACITY);
         System.out.println("[Celtium] CELTIUM_FRAME_BUDGET_SUMMARY frames=" + written
