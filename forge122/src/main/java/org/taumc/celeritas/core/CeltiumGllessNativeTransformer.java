@@ -565,7 +565,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // is false, and the quads only run inside it), so that one refusal costs the model its only chance.
         // The hint tracks the open list and answers GL_LIST_INDEX from it; these three calls are what set and use it.
         // Both spellings again: GL11 keeps some legacy natives under their bare name, as glGenLists does.
-        if (emitRawMatrixRoute(method, name, descriptor)) {
+        // Both spellings reach the raw matrix routes: GL11 keeps some legacy natives under the bare name while the
+        // generated surfaces also expose the pointer ("ngl") form, and the route table used to match the bare name
+        // only. Measured: cam72cam's glMatrixMode(GL_PROJECTION) went through an ngl spelling, the route missed it, the
+        // matrix mode stayed MODELVIEW and its projection multiply landed on the model-view stack.
+        String matrixEntry = name.startsWith("ngl") ? name.substring(1) : name;
+        if (emitRawMatrixRoute(method, matrixEntry, descriptor)) {
             return;
         }
         if (returnType.equals("V")) {

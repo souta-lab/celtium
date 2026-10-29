@@ -699,14 +699,32 @@ public final class CeltiumGllessHint {
      * after the minimap kept the minimap's projection and drew in the wrong place.
      */
     private static org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend rawMatrix(int kind) {
-        if (vanillaMatrixCall != 0) {
-            boolean vanilla = vanillaMatrixCall == kind;
+        // Read the caller, not just the one-shot flag. The flag was set by a vanilla GlStateManager mixin whose native
+        // call then never arrived (GlStateManager caches state and skips the GL call), and it stayed set: the next raw
+        // matrix call - cam72cam's glMatrixMode(GL_PROJECTION) - was skipped as if it were vanilla, the mode stayed
+        // MODELVIEW, its projection multiply landed on the wrong stack, and the stride-48 draw was refused with an
+        // identity projection (measured: CELTIUM_MATRIX_TRACE mode=0). The stack names the origin every time, so the
+        // stale flag cannot block a mod call again.
+        if (vanillaMatrixFrame()) {
             vanillaMatrixCall = 0;
-            if (vanilla) {
-                return null;
-            }
+            return null;
         }
+        vanillaMatrixCall = 0;
         return org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+    }
+
+    /** {@return whether the raw matrix call is being made from vanilla GlStateManager}, whose mirror already applied it. */
+    private static boolean vanillaMatrixFrame() {
+        StackTraceElement[] trace = new Throwable().getStackTrace();
+        for (int i = 3; i < Math.min(trace.length, 9); i++) {
+            String type = trace[i].getClassName();
+            if (type.startsWith("org.taumc.") || type.startsWith("org.soutalab.") || type.startsWith("java.")
+                    || type.startsWith("org.lwjgl.")) {
+                continue;
+            }
+            return type.startsWith("net.minecraft.client.renderer.GlStateManager");
+        }
+        return false;
     }
 
     public static void glPushMatrix() {
@@ -719,9 +737,27 @@ public final class CeltiumGllessHint {
         if (backend != null) backend.popMatrix();
     }
 
+    private static final boolean HINT_MATRIX_TRACE = Boolean.getBoolean("celtium.vulkan.matrixTrace");
+    private static int hintMultiplyDumps;
+    private static int hintMatrixDumps;
+
     public static void glMatrixMode(int mode) {
         var backend = rawMatrix(MATRIX_MODE);
         if (backend != null) backend.matrixMode(mode);
+        if (HINT_MATRIX_TRACE && hintMatrixDumps < 8) {
+            // Whether the route is reached at all: the backend-side trace showed no projection multiply, and this says
+            // whether the mode switch that should precede it ever arrived.
+            hintMatrixDumps++;
+            StringBuilder callers = new StringBuilder();
+            StackTraceElement[] trace = new Throwable().getStackTrace();
+            for (int i = 2; i < Math.min(trace.length, 9); i++) {
+                if (i > 2) callers.append(" <- ");
+                callers.append(trace[i].getClassName()).append('.').append(trace[i].getMethodName());
+                if (callers.length() > 170) break;
+            }
+            System.out.println("[Celtium] CELTIUM_HINT_MATRIXMODE mode=" + mode + " applied=" + (backend != null)
+                    + " callers=[" + callers + "]");
+        }
     }
 
     /**
@@ -738,10 +774,24 @@ public final class CeltiumGllessHint {
         if (pointer == 0L || !modMatrixCaller()) {
             return;
         }
-        if (vanillaMatrixCall != 0) {
-            vanillaMatrixCall = 0;
-            return;
+        if (HINT_MATRIX_TRACE && hintMultiplyDumps < 12) {
+            hintMultiplyDumps++;
+            StringBuilder callers = new StringBuilder();
+            StackTraceElement[] trace = new Throwable().getStackTrace();
+            for (int i = 2; i < Math.min(trace.length, 9); i++) {
+                if (i > 2) callers.append(" <- ");
+                callers.append(trace[i].getClassName()).append('.').append(trace[i].getMethodName());
+                if (callers.length() > 150) break;
+            }
+            System.out.println("[Celtium] CELTIUM_HINT_MULTMATRIX m00="
+                    + org.lwjgl.system.MemoryUtil.memGetFloat(pointer) + " m11="
+                    + org.lwjgl.system.MemoryUtil.memGetFloat(pointer + 20L) + " callers=[" + callers + "]");
         }
+        // No one-shot flag here: the stack already says whether this call is vanilla's (whose mirror ran) or a mod's.
+        // The flag was a second gate, and a stale set - a GlStateManager method whose native call never arrived - then
+        // skipped the next mod multiply, which is how the projection multiply went missing while its matrix-mode switch
+        // was applied.
+        vanillaMatrixCall = 0;
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) {
             backend.multiplyMatrix(org.lwjgl.system.MemoryUtil.memFloatBuffer(pointer, 16));
@@ -753,10 +803,7 @@ public final class CeltiumGllessHint {
         if (pointer == 0L || !modMatrixCaller()) {
             return;
         }
-        if (vanillaMatrixCall != 0) {
-            vanillaMatrixCall = 0;
-            return;
-        }
+        vanillaMatrixCall = 0;
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) {
             java.nio.FloatBuffer buffer = org.lwjgl.system.MemoryUtil.memAllocFloat(16);

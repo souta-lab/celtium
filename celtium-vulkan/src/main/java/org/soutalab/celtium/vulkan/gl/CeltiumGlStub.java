@@ -7304,6 +7304,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * kind draws the plane itself. Refusing the degenerate transform keeps the wrong pixels out of the frame and
      * names the gap instead of hiding it - the projection channel is the fix, not this class.
      */
+    /** Opt-in trace at the projection guard; pairs with the backend's CELTIUM_MATRIX_TRACE. */
+    private static final boolean MATRIX_TRACE = Boolean.getBoolean("celtium.vulkan.matrixTrace");
+    private static int projectionRefusalDumps;
+
     private static String celtium$projectionRefusal(TerrainGpuBackend backend) {
         if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
             return null;
@@ -7329,6 +7333,25 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (Math.abs(m00 - 1.0F) < 1.0E-4F && Math.abs(m11 - 1.0F) < 1.0E-4F && Math.abs(m22 - 1.0F) < 1.0E-4F
                 && Math.abs(m23) < 1.0E-4F && Math.abs(m32) < 1.0E-4F && Math.abs(m33 - 1.0F) < 1.0E-4F) {
+            if (MATRIX_TRACE && projectionRefusalDumps < 6) {
+                projectionRefusalDumps++;
+                StringBuilder callers = new StringBuilder();
+                StackTraceElement[] trace = Thread.currentThread().getStackTrace();
+                for (int i = 3; i < Math.min(trace.length, 12); i++) {
+                    String type = trace[i].getClassName();
+                    if (type.startsWith("java.") || type.startsWith("org.lwjgl.") || type.startsWith("org.soutalab.")
+                            || type.startsWith("org.taumc.")) {
+                        continue;
+                    }
+                    if (callers.length() > 0) callers.append(" <- ");
+                    callers.append(type).append('.').append(trace[i].getMethodName());
+                    if (callers.length() > 200) break;
+                }
+                System.out.println("[Celtium] CELTIUM_PROJECTION_REFUSED_TRACE projection=["
+                        + celtium$round3(projection[0]) + "," + celtium$round3(projection[5]) + ","
+                        + celtium$round3(projection[10]) + "," + celtium$round3(projection[15]) + "] callers=["
+                        + callers + "]");
+            }
             return "the mirrored projection is the identity at draw time (Kirino's gluPerspective does not reach the"
                     + " mirror), so this batch would be drawn with the wrong transform";
         }

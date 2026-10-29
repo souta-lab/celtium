@@ -5176,6 +5176,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.frustumCalls++;
     }
 
+    /** Opt-in trace of the matrix multiplies the mirror receives; see {@link #multiplyMatrix}. */
+    private static final boolean MATRIX_TRACE = Boolean.getBoolean("celtium.vulkan.matrixTrace");
+    private static int matrixTraceDumps;
+
     @Override
     public void multiplyMatrix(java.nio.FloatBuffer buffer) {
         celtium$fontMatrixBoundary();
@@ -5186,6 +5190,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // purpose (one operation, one owner), and this counts the multiplies that actually reached the mirror -
         // whether from GlStateManager's own multMatrix or from ForgeHooksClientMixin's item camera transform.
         this.mirroredMultiplies++;
+        if (MATRIX_TRACE && matrixTraceDumps < 24) {
+            // Which stack the multiply landed on, and what the projection looks like after it. The stride-48 draw is
+            // refused for an identity projection; this says whether the mod's multiply went to the projection stack at
+            // all, which is the one question the count of refusals cannot answer.
+            matrixTraceDumps++;
+            float[] projection = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+            StringBuilder callers = new StringBuilder();
+            StackTraceElement[] trace = Thread.currentThread().getStackTrace();
+            for (int i = 2; i < Math.min(trace.length, 9); i++) {
+                String type = trace[i].getClassName();
+                if (type.startsWith("java.") || type.startsWith("org.lwjgl.") || type.startsWith("org.soutalab.")
+                        || type.startsWith("org.taumc.")) {
+                    continue;
+                }
+                if (callers.length() > 0) callers.append(" <- ");
+                callers.append(type).append('.').append(trace[i].getMethodName());
+                if (callers.length() > 180) break;
+            }
+            System.out.println("[Celtium] CELTIUM_MATRIX_TRACE site=multiply mode=" + this.immediateState.matrixMode()
+                    + " projection=[m00=" + projection[0] + " m11=" + projection[5] + " m22=" + projection[10]
+                    + " m33=" + projection[15] + "] callers=[" + callers + "]");
+        }
     }
 
     @Override
