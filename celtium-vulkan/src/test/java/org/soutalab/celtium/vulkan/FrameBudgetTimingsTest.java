@@ -16,6 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 class FrameBudgetTimingsTest {
 
     @Test
+    void presentIntervalIsOptInAndSeparateFromTheSplit() {
+        // -Dceltium.vulkan.presentInterval=true turns on the cadence alone; a normal run must not pay for it, and this
+        // is the only assertion that catches the default being flipped.
+        assertFalse(FrameBudgetTimings.presentIntervalEnabled(), "the cadence must stay opt-in");
+    }
+
+    @Test
     void frameBudgetIsOffUnlessTheArgumentAsksForIt() {
         // The test JVM passes no -Dceltium.vulkan.frameBudget, which is the shipping configuration: a normal run
         // must not pay for the instrument, and this is the only assertion that can catch the default being flipped.

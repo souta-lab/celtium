@@ -188,8 +188,18 @@ public final class FrameBudgetTimings {
      * clock read. It is a separate ring from the world frames so the two are never added: a world frame files both a
      * boundary sample and a present interval, and only the boundary sample has the record/batch/submit split.
      */
+    /**
+     * Whether the present cadence is measured. It is cheap enough to ask for on its own: the world-frame sample costs
+     * four clock reads and a timestamp query per window, while the cadence costs one clock read per present. A leg
+     * that only needs the frame period (the menu, or a renderer comparison where the split's own tax would change the
+     * number it is trying to measure) turns this on with {@code -Dceltium.vulkan.presentInterval=true} and pays
+     * nothing for the split.
+     */
+    private static final boolean PRESENT_INTERVAL = ENABLED
+            || Boolean.getBoolean("celtium.vulkan.presentInterval");
+
     public static void markPresent() {
-        if (!ENABLED) {
+        if (!PRESENT_INTERVAL) {
             return;
         }
         long now = System.nanoTime();
@@ -248,6 +258,11 @@ public final class FrameBudgetTimings {
     }
 
     /** Prints the last window's percentiles, or nothing once the line budget is spent. */
+    /** {@return whether the present cadence is being measured}, for the call site's own conditional work. */
+    public static boolean presentIntervalEnabled() {
+        return PRESENT_INTERVAL;
+    }
+
     private static void printWindow() {
         if (lines >= MAX_LINES) {
             return;
@@ -280,19 +295,24 @@ public final class FrameBudgetTimings {
      * whether or not the line budget was reached, so a long session's diagnostic is never empty.
      */
     public static void printSummary() {
-        if (!ENABLED) {
+        if (!PRESENT_INTERVAL) {
             return;
         }
-        if (written == 0) {
-            System.out.println("[Celtium] CELTIUM_FRAME_BUDGET_SUMMARY frames=0 (no frame boundary was measured)");
-            return;
-        }
+        // The cadence is independent of the split and prints first, because the two can be asked for separately: a
+        // renderer-comparison leg wants the frame period without the split's tax, and a split leg still wants both.
         if (presentIntervals > 0) {
             int presentCount = Math.min(presentIntervals, CAPACITY);
             System.out.println("[Celtium] CELTIUM_PRESENT_INTERVAL_SUMMARY presents=" + presentIntervals
                     + " window=" + presentCount
                     + " intervalMs[" + triple(presentIntervalRing, presentCount) + "]"
                     + " fps=" + presentRate(presentIntervalRing, presentCount));
+        }
+        if (!ENABLED) {
+            return;
+        }
+        if (written == 0) {
+            System.out.println("[Celtium] CELTIUM_FRAME_BUDGET_SUMMARY frames=0 (no frame boundary was measured)");
+            return;
         }
         int count = Math.min(written, CAPACITY);
         System.out.println("[Celtium] CELTIUM_FRAME_BUDGET_SUMMARY frames=" + written
