@@ -104,7 +104,7 @@ def plan_release_versions():
     path = os.path.join(ROOT, "docs/plan.md")
     lines = open(path, encoding="utf-8").read().splitlines()
     header = "\n".join(lines[:80])
-    return re.findall(r"\*\*(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)\*\*", header)
+    return re.findall(r"\*\*(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)*)\*\*", header)
 
 
 def stale_artifacts():
