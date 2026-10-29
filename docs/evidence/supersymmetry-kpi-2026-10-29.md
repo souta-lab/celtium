@@ -188,3 +188,25 @@ fixture の warm P50 2.69ms はこの tickなしループと整合する。
 → Supersymmetry world-only の Celtium コストは「world window 1.0ms + その外の HUD/即時 0.9ms」。
 Celeritas の全フレーム 1.70ms を上回るには、この **0.9ms 側（即時/HUD のバッチ処理）**が最大の候補。
 ATM3 側の最大候補は chunk upload スパイク（p95 setupTerrain 2.2ms）。
+
+## world-only の rep2（2026-10-30）
+
+| arm | rep1 | rep2 | 比 |
+|---|---|---|---|
+| Celtium | **2.50 ms** (P95 4.83, n=3668) | **2.50 ms** (P95 4.61, n=3739) | 1.48–1.50× |
+| Celeritas | **1.70 ms** (P95 2.57, n=5416) | **1.67 ms** (P95 2.35, n=5574) | |
+
+Supersymmetry は **2rep で完全に再現**（Celtium 2.50ms、Celeritas 1.67–1.70ms）。中央値比 **1.48倍**。
+両アームとも sections=17/3 の差は残る（Celeritas のセクション列挙が 3 と少ないのは列挙側の差）。
+
+## ATM3 world-only の rep 追加（pinSections 固定）
+
+| arm | rep1 | rep2 | rep3(pinSections) | 中央値 |
+|---|---|---|---|---|
+| Celtium | 3.42 | 5.25 | **3.82** | **3.82** |
+| Celeritas | 1.25 | 1.47 | **1.44** | **1.44** |
+
+→ ATM3 の中央値比 **2.65倍**。Celtium 側の分散が大きい（3.42–5.25）。
+rep3 は両アーム同一カメラ（0.5/12/0.5, yaw180, pitch20）に固定。Celtium は sections=11 / Celeritas 12 の1件差。
+Celtium の status は `FAILED_PRESENTED_IMAGE` だが、これは presented dump を要求していないため（frame統計は
+ticks=1299 まで有効）。機能確認は dump 有効の run（`run-atm3-611b`, picture present）で別途行う。
