@@ -48,6 +48,9 @@ public abstract class WorldVertexBufferUploaderMixin {
     /** Bounded prints for the layouts whose refusal used to have to be derived from a number: 10 and the unmapped case. */
     private static int celtium$positionNormalRefusals;
     private static int celtium$unmappedRefusals;
+    /** How many batches the compacted layout has been taken from, bounded like the other first-arrival reports. */
+    private static int celtium$compactedBatches;
+    private static int celtium$compactedDumps;
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
     /** Refusals by "format reason": the family-specific prints did not cover every format. */
     private static final java.util.LinkedHashMap<String, Integer> celtium$refusalsByFormat =
@@ -292,6 +295,39 @@ public abstract class WorldVertexBufferUploaderMixin {
                             + " stack=" + celtium$stack());
                 }
             }
+            // A batched layout whose trailing normal and padding no shader reads arrives at 32 bytes but is drawn by the
+            // 28-byte PARTICLE pipeline. Compacting here is what keeps the stride and the pipeline in agreement: the
+            // alternative - a second stride for one id - is the confusion that answered the 24-byte normal format with the
+            // 28-byte id and had the backend refuse every one of its arrivals.
+            int submitStride = stride;
+            long submitAddress = address;
+            ByteBuffer celtium$compacted = null;
+            if (formatId == org.soutalab.celtium.vulkan.VulkanImmediateFormats.PARTICLE && stride == 32) {
+                int compactedStride = org.soutalab.celtium.vulkan.VulkanImmediateFormats.compactedStride(
+                        celtium$signature(format), stride);
+                if (compactedStride < stride) {
+                    celtium$compacted = org.lwjgl.system.MemoryUtil.memAlloc(
+                            Math.multiplyExact(vertices, compactedStride));
+                    long to = org.lwjgl.system.MemoryUtil.memAddress(celtium$compacted);
+                    for (int i = 0; i < vertices; i++) {
+                        org.lwjgl.system.MemoryUtil.memCopy(address + (long) i * stride,
+                                to + (long) i * compactedStride, compactedStride);
+                    }
+                    submitStride = compactedStride;
+                    submitAddress = to;
+                    celtium$compactedBatches++;
+                    if (celtium$compactedDumps < 2) {
+                        // The evidence that this path ran at all: the layout is rare (three arrivals in the measured
+                        // Supersymmetry session), so without this line a silent no-op and a working compaction look
+                        // the same in a log.
+                        celtium$compactedDumps++;
+                        System.out.println("[Celtium] CELTIUM_COMPACTED_BATCH format="
+                                + org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(formatId)
+                                + " from=" + stride + " to=" + compactedStride + " vertices=" + vertices
+                                + " callers=[" + celtium$drawCallers() + "]");
+                    }
+                }
+            }
             int mode = celtium$drawMode(buffer);
             // The call that decides everything. It was lost when a dead branch was cleaned out of this method, and
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
@@ -301,7 +337,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             try {
                 celtium$noteProbedTextureSite();
                 celtium$noteProbedFormatSite(formatId);
-                accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+                accepted = backend.submitImmediateBatch(format, submitStride, formatId, submitAddress, vertices, mode);
                 if (!accepted) {
                     // Why a batch was not taken, by format. The refusals were recorded in the backend, but only some families
                     // printed them, so a format could arrive hundreds of times, be accepted for a handful and be refused for the
@@ -321,6 +357,9 @@ public abstract class WorldVertexBufferUploaderMixin {
                     }
                 }
             } finally {
+                if (celtium$compacted != null) {
+                    org.lwjgl.system.MemoryUtil.memFree(celtium$compacted);
+                }
                 long batchCallTook = System.nanoTime() - batchCallStarted;
                 long batchCallCpuEnded = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
                 if (batchCallCpuStarted >= 0 && batchCallCpuEnded >= 0) {

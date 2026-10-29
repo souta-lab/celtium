@@ -254,6 +254,16 @@ public final class VulkanImmediateFormats {
             "3,Position,Float 2,UV,Float 2,UV,Float 2,UV,Float 2,UV,Float";
     public static final String LAYOUT_PARTICLE =
             "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short";
+    /**
+     * A mod's particle layout with a trailing normal and padding: 32 bytes, of which the first 28 are exactly
+     * {@link #LAYOUT_PARTICLE}. Measured in the Supersymmetry pack (three arrivals named by the unmapped-shape dump) and in
+     * the ATM3 census. Nothing reads the normal, and no shader in this renderer evaluates fixed-function lighting, so the
+     * trailing bytes are not part of the picture - but they are part of the stride, and a batch submitted at 32 bytes with
+     * the 28-byte pipeline is a wrong picture. The uploader therefore submits a compacted copy; see
+     * {@link #compactedStride(String, int)}.
+     */
+    public static final String LAYOUT_PARTICLE_NORMAL_PAD =
+            "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short 3,Normal,Byte 1,Padding,Byte";
 
     public static int layout(String elements, int size, int count) {
         if (elements == null) {
@@ -279,7 +289,26 @@ public final class VulkanImmediateFormats {
             return POSITION_TEX_NORMAL_FLOAT;
         }
         if (elements.equals(LAYOUT_COMBINE4) && size == 44 && count == 5) return COMBINE4;
+        // The first 28 bytes of this one are PARTICLE and the shaders read nothing after them; the uploader compacts the
+        // copy it hands to the backend so that the stride and the pipeline agree again.
+        if (elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) && size == 32 && count == 6) return PARTICLE;
         return 0;
+    }
+
+    /**
+     * {@return the stride the immediate path must read for this layout}, which is the uploader's own width except for the
+     * one layout whose trailing bytes no shader reads.
+     * <p>
+     * The table's contract is that a mapped id's pipeline stride equals the stride the batch arrives with: the 24-byte
+     * normal format was once answered with the 28-byte id and the backend refused every arrival for carrying the wrong
+     * stride. Compacted layouts keep that contract by cutting the source down to the pipeline's width instead of teaching
+     * the backend a second stride for one id.
+     */
+    public static int compactedStride(String elements, int size) {
+        if (elements != null && elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) && size == 32) {
+            return 28;
+        }
+        return size;
     }
 
     /**
