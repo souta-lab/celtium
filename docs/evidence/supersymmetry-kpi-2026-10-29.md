@@ -137,3 +137,34 @@ world FPS として拾っていた。`keepGui=false` + `holdUntilTick=1300` で 
 - ATM3 は両アーム `captureListedSections=12` で内容一致、Supersymmetry は Celtium 17 / Celeritas 3（列挙差）。
 - **KPI の現実の差は 1.47 倍（Susy）/ 2.74 倍（ATM3）**。以前の 1.7 倍 / 4.4 倍は GUI stage 込みで水増しされていた。
 - ATM3 の P95（13.9 vs 3.8）が残課題: 1フレームのスパイクが Celeritas の 3.6 倍。
+
+## world-only の passSplit（2026-10-30）
+
+`keepGui=false` の warm 窓で passSplit を取った（`run-susy-nogui-split`）。
+
+| ブラケット | p50 | p95 | 解釈 |
+|---|---|---|---|
+| frame / world | **1.0 ms** | 1.1 | world 描画はここに収まる |
+| flush | 0.4 | 0.5 | うち winRecord 0.3 / offMerge 0.2 / grpDraw 0.1 |
+| sky | 0.1 | 0.1 | |
+| terrain / gui / hand | 0.0 | 0.0 | |
+
+fixture の warm P50 は 2.50ms なので、**frame bracket の外に約1.5ms**（ゲームtick・present・ループ）。
+Celeritas の全フレームは 1.70ms（world-only）。Celtium の *render だけ* は 1.0ms で Celeritas の全frameより
+小さいが、外側のコストが Celtium 側で大きい。
+
+### ATM3 world-only（`run-atm3-nogui-split`）
+
+| ブラケット | p50 | p95 | worst |
+|---|---|---|---|
+| frame / world | **2.1 ms** | 6.0 | 8.4 |
+| terrain | 0.2 | 1.0 | 4.6 |
+| setupTerrain | 0.2 | 2.2 | 5.9 |
+| chunkUpload | 0.1 | 0.6 | 4.7 |
+| stUpload | 0.1 | 0.9 | 4.7 |
+| flush | 0.1 | 0.9 | 4.5 |
+| particles | 0.1 | 0.4 | 4.2 |
+
+Celeritas の全フレームは 1.25ms → **Celtium は render 単体で Celeritas の全フレームを超える**。
+p95 の 6.0ms は chunk 構築/アップロード系（setupTerrain/chunkUpload/stUpload）のスパイクが支配。
+最適化の第一候補は (a) chunk upload のスパイク平準化、(b) フレーム内 window 記録の削減、の2つ。
