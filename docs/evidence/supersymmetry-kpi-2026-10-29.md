@@ -121,3 +121,19 @@ run: `.gv-verify/run-kpi2-susy-celtium/`（dump周期OFF）と `.gv-verify/run-k
    旧JAR `f78b7c03` で 4.30ms、フラグ方式へ戻した修正版 `4874d688` で 4.12ms を実測し、
    退行の原因がスタック走査そのものであることを確認（commit `d83489bd9`）。
    mod 起点 glMultMatrix のルートは `-Dceltium.glless.modMatrixRoutes` で**既定OFF**（ホットパス保護）。
+
+## world-only の paired（GUI stage を除外した KPI 数値, 2026-10-30）
+
+`keepGui=true` の warm 窓は fixture の GUI stage（video settings 画面）と重なり、画面描画のコストを
+world FPS として拾っていた。`keepGui=false` + `holdUntilTick=1300` で world-only の warm 窓が取れる。
+
+| pack | arm | keepGui あり（参考） | **world-only** | 比（world-only） |
+|---|---|---|---|---|
+| Supersymmetry | Celtium | 4.05–4.12 ms | **2.50 ms** (P95 4.83) | |
+| Supersymmetry | Celeritas | 2.38–2.36 ms | **1.70 ms** (P95 2.57) | **1.47 倍** |
+| ATM3 | Celtium | 9.75–10.00 ms | **3.42 ms** (P95 13.91) | |
+| ATM3 | Celeritas | 2.24–2.26 ms | **1.25 ms** (P95 3.81) | **2.74 倍** |
+
+- ATM3 は両アーム `captureListedSections=12` で内容一致、Supersymmetry は Celtium 17 / Celeritas 3（列挙差）。
+- **KPI の現実の差は 1.47 倍（Susy）/ 2.74 倍（ATM3）**。以前の 1.7 倍 / 4.4 倍は GUI stage 込みで水増しされていた。
+- ATM3 の P95（13.9 vs 3.8）が残課題: 1フレームのスパイクが Celeritas の 3.6 倍。
