@@ -19,17 +19,42 @@
 
 ## 結果（warm 窓 400..600、同一内容）
 
-| 指標 | Celtium | Celeritas | Celeritas/Celtium |
-|---|---|---|---|
-| warm P50 | **9.04 ms** (≈111 FPS) | **3.48 ms** (≈288 FPS) | 0.385（Celeritas が約 2.6 倍速い） |
-| warm P95 | **32.56 ms** | **8.15 ms** | 0.25（約 4 倍速い） |
-| warm P99 | 105.12 ms | 12.92 ms | |
-| warm >33ms フレーム | **34** | **0** | |
-| warm >50ms フレーム | **24** | **0** | |
-| warm サンプル数 | 704 | 2415 | |
-| cold P50（参考・構築中） | 5.44 ms | 1.68 ms | 0.31 |
+最初の Celtium アームは `presentedDumpEvery=40`（既定）のまま実行しており、**40 フレームごとの presented
+dump readback が 90–100ms の `displayUpdate` ブロックを生んでいた**（`passes` run の warmSpikes で確認:
+`loopMs=95 tickMs=2 displayUpdateMs=86`、ほぼ 9 tick 周期）。これは計測税であり、描画のスパイクではない。
+`-Dceltium.vulkan.presentedDumpEvery=0` で再実行した Celtium が下段。
 
-run: `.gv-verify/run-kpi-susy-celtium/`、`.gv-verify/run-kpi-susy-celeritas/`（lock JSON に全 flags とハッシュを記録）。
+| 指標 | Celtium(dump周期ON) | **Celtium(dump周期OFF)** | Celeritas | OFF/Celeritas |
+|---|---|---|---|---|
+| warm P50 | 9.04 ms | **7.09 ms** (≈141 FPS) | **3.48 ms** (≈288 FPS) | 2.04 倍遅い |
+| warm P95 | 32.56 ms | **10.18 ms** | **8.15 ms** | 1.25 倍遅い |
+| warm P99 | 105.12 ms | **11.06 ms** | 12.92 ms | 0.86（Celtium が良い） |
+| warm >33ms フレーム | 34 | **1** | **0** | |
+| warm >50ms フレーム | 24 | **0** | **0** | |
+| warm サンプル数 | 704 | **1331** | 2415 | |
+| cold P50（参考・構築中） | 5.44 ms | — | 1.68 ms | |
+
+**結論**: 前回の「2.6 倍遅い」のうち P95/P99 の悪化は大半が計測税だった。dump 周期を止めるとスパイクは消え、
+残る差は **中央値の +3.6ms**（7.09 vs 3.48）に集約される。P99 では Celtium が Celeritas より良い（11.06 vs 12.92）。
+したがって KPI の残差は「スパイク」ではなく「毎フレームの定常コスト」である。
+
+### 残差 +3.6ms の内訳（Celtium 側、passSplit / frameBudget / warmSpikes から）
+
+| 要素 | 実測 | 出所 |
+|---|---|---|
+| world pass（うち flush 1.3–1.4） | 2.8–3.2 ms | `CELTIUM_FRAME_PASS_SPLIT`（dump OFF 前の run） |
+| gui / hand / particles | 0.8 / 0.1 / 0.1 ms | 同上 |
+| frame bracket 合計 | 3.6–4.0 ms | 同上 |
+| fixture の warm P50 | 7.09 ms | `frameIntervalWarmP50Ms` |
+| → bracket 外（tick / present / loop） | **約 3.1–3.5 ms** | 差 |
+| present（frameBudget, tax込） | 1.8 ms | `CELTIUM_FRAME_BUDGET` |
+
+推定: **flush（即時window記録/提出）1.3ms + present 1.5–1.8ms + world の残り**。Celeritas の frame 全体が
+3.48ms なので、Celeritas の world+present+tick はこの半分以下。次の最適化対象は flush と present。
+
+run: `.gv-verify/run-kpi2-susy-celtium/`（dump周期OFF）と `.gv-verify/run-kpi-susy-celeritas/`。lock JSON に
+全 flags とハッシュを記録。**性能 leg では `-Dceltium.vulkan.presentedDumpEvery=0` を必ず付ける**
+（AGENTS.md の計測負荷分離の規則。付け忘れると 40 フレームごとに 90ms の readback が乗る）。
 
 ## 解釈（この計測が言えること・言えないこと）
 
