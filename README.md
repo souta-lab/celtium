@@ -9,7 +9,7 @@ An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, 
 >
 > **native Vulkanで描画・提示する実装がありますが、描画・互換性・性能の受入は未完です。** 最新の判定と未解決項目は [現在表](<docs/plan.md>)だけで管理します。
 
-Status reviewed: **2026-10-28** (release 0.1.1-alpha; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks).
+Status reviewed: **2026-10-29** (0.1.2-alpha packaging hotfix; AMD RX 6400 and Intel UHD Graphics 630 world legs and paired benchmarks below remain from 0.1.1-alpha).
 
 **0.1.1-alpha against Celeritas 2.5.0-dev:** on the AMD RX 6400, frame time is **0.59x at p50, 0.60x at p95 and 0.83x
 at p99**, with every one of the nine paired ratios below 1 - median frame 0.63 ms against 1.06 ms. On the Intel UHD 630 it is
@@ -60,7 +60,7 @@ The supported development direction is Vulkan-only. Old bridge/probe experiments
 | --- | --- |
 | Minecraft | 1.12.2 |
 | Loader | CleanroomMC **0.7.11-alpha** (SDL 3). Builds from 0.0.14 on detect the SDL 3 binding and **refuse to start on the 0.6.x GLFW generation** by name, instead of failing later in `GL.createCapabilities` — the window creation path and the `glfwIconifyWindow` fixture would both change |
-| LWJGL | LWJGL3 **3.4.3** (the SDL 3 generation Cleanroom 0.7 ships). Vulkan bindings/native libraries must match the Cleanroom installation |
+| LWJGL | LWJGL3 **3.4.3** (the SDL 3 generation Cleanroom 0.7 ships). Celtium bundles the matching `lwjgl-vulkan` Java bindings; the LWJGL core, SDL and native libraries still come from Cleanroom |
 | Java | JDK 25 to build; the verified gameplay JVM is **Java 27** (Cleanroom 0.7.11 on the SDL 3 loader) |
 | Celtium's own module bytecode | `--release 21`, class major 65 or lower; no Java 22+ API or preview dependency |
 | Vulkan | 1.2+ loader and physical device, with the required graphics/presentation, format and resource capabilities |
@@ -71,7 +71,7 @@ The exact minimum feature/format contract is still being audited and reduced. **
 
 ## Downloads
 
-[**Celtium 0.1.1-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.1.1-alpha) (2026-10-28) is the newest published binary; see [its release notes](<docs/releases/0.1.1-alpha.md>). **0.0.14-alpha must not be used** (its indirect draw path discarded the item and colour families). Every release carries the limitations described above.
+[**Celtium 0.1.2-alpha**](https://github.com/souta-lab/celtium/releases/tag/v0.1.2-alpha) (2026-10-29) is the newest published binary, a Vulkan-binding packaging hotfix; see [its release notes](<docs/releases/0.1.2-alpha.md>). The previous [0.1.1-alpha notes](<docs/releases/0.1.1-alpha.md>) cover the last measured graphics/performance changes. **0.0.14-alpha must not be used** (its indirect draw path discarded the item and colour families). Every release carries the limitations described above.
 
 ## Building and trying a development build
 
@@ -84,10 +84,10 @@ Run Gradle with JDK 25. The build also uses the JDK 21 compilation toolchain and
 The packaged jar is written under a directory named after the version, which the build takes from `build-1122/build.gradle.kts` unless `-Pceltium_release_version` overrides it:
 
 ```text
-build-1122/build/libs/0.1.1-alpha/celtium-forge-mc1.12.2-0.1.1-alpha.jar
+build-1122/build/libs/0.1.2-alpha/celtium-forge-mc1.12.2-0.1.2-alpha.jar
 ```
 
-Use a separate Cleanroom test instance and install the packaged Celtium jar (the plain `celtium-forge-mc1.12.2-<version>.jar`, not the `-dev` or `-reobf` one) instead of Celeritas; no JVM argument is required. Keep LWJGL/Vulkan bindings consistent with that instance. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
+Use a separate Cleanroom test instance and install the packaged Celtium jar (the plain `celtium-forge-mc1.12.2-<version>.jar`, not the `-dev` or `-reobf` one) instead of Celeritas; no JVM argument or separate `lwjgl-vulkan` jar is required. The packaged bindings target Cleanroom 0.7's LWJGL 3.4.3; never add a different LWJGL version alongside them. Development builds still carry the open defects listed above, so keep a working Celeritas setup to fall back to.
 
 For reproducible validation and development, use [the current development procedure](<docs/development.md>) and the tracked [leg runner](<scripts/gv-leg.sh>). [AGENTS.md](<AGENTS.md>) contains working rules, [the objective](<docs/goal.md>) defines completion. The [verification skill](<.agents/skills/celtium-verify/SKILL.md>) is versioned with this checkout; it is not permission to start GPU work.
 

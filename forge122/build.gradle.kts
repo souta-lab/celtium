@@ -103,9 +103,16 @@ dependencies {
     // Own Java-8-compatible classes only. LWJGL and native libraries belong to the active loader.
     implementation(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
     modEmbedDependencies(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
-    // In-mod Vulkan bootstrap/backend classes. Compiled against LWJGL, never bundled with it.
+    // In-mod Vulkan bootstrap/backend classes. Keep LWJGL core/platform/native modules supplied by Cleanroom.
     implementation(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }
     modEmbedDependencies(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }
+    // The Vulkan *Java bindings* are not part of every Cleanroom 0.7 installation. The validation
+    // harness adds this jar to the process classpath, but stock Prism instances do not, causing
+    // a GL-less window with no Vulkan renderer (permanent black screen). Embed exactly this module
+    // at Cleanroom 0.7's LWJGL version, without any transitives or replacement LWJGL natives.
+    modEmbedDependencies("org.lwjgl:lwjgl-vulkan:${rootProject.findProperty("celtium_mod_lwjgl_version")}") {
+        isTransitive = false
+    }
     val lombokVersion = rootProject.findProperty("lombok_version").toString()
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")
