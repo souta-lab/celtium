@@ -101,3 +101,19 @@ FBO の color attachment に対しては content-less な mirror を作らない
 残り: 1280x720 の texture 478/110194/7 はまだ raw FBO map に載る前の時点で mirror を作ろうとしている
 （vanilla Framebuffer 側の関連は backend の publishedTextures が持ち、registry からは見えない）。
 texture 502 は extent 自体が未記録（`COMPOSITE_REFUSED` も同 texture）。CAPTURE_MISS 3件は 110194/7/89。
+
+## 残り mirror 拒否への試行と negative result（2026-10-30）
+
+FBO 添付 skip（`159f13b30`, PATCH_REJECTED 7→4）の残りを消すため、次を試して**破棄**した:
+
+1. `glTexStorage2D/3D` の transformer ルート追加（extent を記録）
+2. backend が publish した color texture 名を stub の Set に記録し、registry の skip 条件に追加
+
+結果（同一 world-only run）: `PATCH_REJECTED 4` / `COMPOSITE_REFUSED 1` のまま、`offTargetRefusals=0`、
+capture 17 sections、P50 2.47ms で**改善なし**。
+
+- texture 502 は texStorage ルート後も「no recorded size」→ この texture の確保は texStorage ではない
+  （またはルートが発火していない）。別経路の特定が必要。
+- 478/110275/7 は **publish 関連が作られる前に最初のサンプリングが来る**ため、published Set では防げない。
+  mirror 生成の時点で「この name は後で FBO 画像になる」と知る手段が要る（stub の attach 履歴 or 順序の変更）。
+- 変更は revert し、ビルドは検証済みの `574dc59d` に戻した（クリーンツリーから同一ハッシュを再現）。
