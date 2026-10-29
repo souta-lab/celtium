@@ -1481,8 +1481,13 @@ public final class VulkanGlTexture {
             }
         } finally {
             // Only a buffer this class allocated may be freed: a captured upload belongs to the stub, and freeing it
-            // would hand the stub's own memory back to the allocator.
-            if (level.owned) {
+            // would hand the stub's own memory back to the allocator. The level can be absent and the try above is
+            // exactly where that is discovered and refused (captureMiss at the null-level branch), so this guard is
+            // not cosmetic: without it the refusal itself threw NullPointerException ("Cannot read field owned
+            // because level is null") - measured in the Supersymmetry pack, where Immersive Railroading samples a
+            // 1280x720 render target (GL texture 589) whose level record the stub never held, and the throw replaced
+            // the honest refusal with a composite failure that named no cause.
+            if (level != null && level.owned) {
                 MemoryUtil.memFree(level.pixels);
             }
         }
