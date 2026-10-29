@@ -1,6 +1,8 @@
 package org.soutalab.celtium.vulkan;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +43,33 @@ public final class ModelGeometryCache {
     private LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
     /** The capture stamp the table was built from; {@link Long#MIN_VALUE} forces a build. */
     private long builtStamp = Long.MIN_VALUE;
+
+    // A model list can be captured and still be absent from the current GPU table after
+    // a world/backend transition. Recover once per list per capture version, not every frame.
+    private int missingRecoveryVersion = Integer.MIN_VALUE;
+    private final Set<Integer> missingRecoveryAttempts = new HashSet<Integer>();
+
+    /**
+     * Reopen a completed model table for a single captured-but-missing list.
+     * A full builder retry shares unchanged meshes, so this is not a full GPU upload.
+     * Exactly one retry per (list, capture version) prevents runaway rebuilds.
+     */
+    boolean requestMissingCapturedListRebuild(int listId, int capturedQuads, int captureVersion) {
+        if (listId <= 0 || capturedQuads <= 0 || !MODEL_MESH_BUILD) {
+            return false;
+        }
+        if (this.missingRecoveryVersion != captureVersion) {
+            this.missingRecoveryVersion = captureVersion;
+            this.missingRecoveryAttempts.clear();
+        }
+        if (!this.missingRecoveryAttempts.add(Integer.valueOf(listId))) {
+            return false;
+        }
+        // build() skips identical global capture stamps even if the current table omitted
+        // a valid list. Force a single reconciliation, preserving the existing live meshes.
+        this.builtStamp = Long.MIN_VALUE;
+        return true;
+    }
 
     /** Display lists a replay asked for that this cache has no mesh for, and the bounded log of them. */
     private int modelMissingMeshes;
