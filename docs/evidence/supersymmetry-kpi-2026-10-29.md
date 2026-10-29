@@ -168,3 +168,23 @@ Celeritas の全フレームは 1.70ms（world-only）。Celtium の *render だ
 Celeritas の全フレームは 1.25ms → **Celtium は render 単体で Celeritas の全フレームを超える**。
 p95 の 6.0ms は chunk 構築/アップロード系（setupTerrain/chunkUpload/stUpload）のスパイクが支配。
 最適化の第一候補は (a) chunk upload のスパイク平準化、(b) フレーム内 window 記録の削減、の2つ。
+
+## ループ構成（world-only, frameTail）
+
+`run-susy-nogui-tail`（passSplit + frameTail、keepGui=false）の TAIL 平均:
+
+| 部位 | tickなしループ | tickループ |
+|---|---|---|
+| loop | **2095 µs** | 4276 µs |
+| render（updateCameraAndRender 全体） | **1944 µs** | 2338 µs |
+| tick（ゲーム） | 0 | 1734 µs |
+| display（present） | 53 µs | 72 µs |
+| fmlTick / scheduled | 83 / 3 µs | 103 / 8 µs |
+
+ここで **render 1944µs に対し passSplit の frame bracket は 1000µs**。差の約0.9ms は
+`updateCameraAndRender` のうちフレームブラケット外（HUD/オーバーレイ・即時バッチの前処理など）。
+fixture の warm P50 2.69ms はこの tickなしループと整合する。
+
+→ Supersymmetry world-only の Celtium コストは「world window 1.0ms + その外の HUD/即時 0.9ms」。
+Celeritas の全フレーム 1.70ms を上回るには、この **0.9ms 側（即時/HUD のバッチ処理）**が最大の候補。
+ATM3 側の最大候補は chunk upload スパイク（p95 setupTerrain 2.2ms）。
