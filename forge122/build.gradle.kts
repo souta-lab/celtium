@@ -255,6 +255,8 @@ dependencies {
     add(validation.compileOnlyConfigurationName, platform("org.lwjgl:lwjgl-bom:3.4.1"))
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl")
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-opengl")
+    // The GPU copy fixture records barriers and reads back the result; the runtime binding is supplied by Celtium.
+    add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-vulkan")
     // The fixture drives window resizes to prove the renderer survives a framebuffer size change, so it needs the GLFW
     // binding at compile time. Compile-only, like the rest: nothing here is part of Celtium's distributable.
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-glfw")

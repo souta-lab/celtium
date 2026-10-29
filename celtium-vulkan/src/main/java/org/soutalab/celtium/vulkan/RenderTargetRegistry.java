@@ -37,6 +37,11 @@ import java.util.Set;
  */
 public final class RenderTargetRegistry {
 
+    /** Identity shared by raw framebuffer bind and colour-texture adoption. */
+    public static long rawFramebufferIdentity(int framebuffer) {
+        return framebuffer == 0 ? 0L : (1L << 40) | (framebuffer & 0xFFFFFFFFL);
+    }
+
     /** The four real images a framebuffer identity can be drawn into. */
     public enum ImageSlot {
         /** The delivered frame image the present path blits from (the game's main framebuffer). */
@@ -391,6 +396,16 @@ public final class RenderTargetRegistry {
     /** Forgets one identity's chain-pair framebuffers, after they have been destroyed. */
     public void clearChainPairFramebuffer(long identity) {
         this.chainPairFramebuffers.remove(Long.valueOf(identity));
+    }
+
+    /** Drops per-target bookkeeping once its owner has deleted the framebuffer. */
+    public void forgetChainPair(long identity) {
+        Long key = Long.valueOf(identity);
+        this.chainPairClears.remove(key);
+        this.chainPairLayouts.remove(key);
+        this.chainPairFramebufferCreationCounts.remove(key);
+        this.aliases.remove(key);
+        this.framebufferNames.values().removeIf(key::equals);
     }
 
     /** Forgets every chain-pair framebuffer, after they have been destroyed. */

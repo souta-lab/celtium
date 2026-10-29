@@ -131,6 +131,14 @@ final class FramebufferCache {
                 && this.registry.allChainPairFramebufferHandles().isEmpty();
     }
 
+    /** Retire framebuffer handles before retiring the image views they reference. */
+    void retireChainPair(long identity) {
+        Collection<Long> handles = this.registry.chainPairFramebufferHandles(identity);
+        if (!handles.isEmpty()) retire(handles);
+        this.registry.clearChainPairFramebuffer(identity);
+        this.chainPairGenerations.remove(Long.valueOf(identity));
+    }
+
     /**
      * Destroys every framebuffer in place. Only for teardown, after the caller settled the GPU: no submission can
      * still be reading these handles and nothing more will be recorded against them

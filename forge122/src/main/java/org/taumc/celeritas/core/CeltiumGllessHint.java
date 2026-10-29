@@ -519,6 +519,20 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glDeleteTextures(count, names);
     }
 
+    /** A deleted bound draw FBO becomes the default framebuffer before the stub forgets it. */
+    public static void glDeleteFramebuffers(int count, long names) {
+        if (names == 0L) return;
+        for (int i = 0; i < count; i++) {
+            int name = org.lwjgl.system.MemoryUtil.memGetInt(names + (long) i * 4L);
+            if (name != 0 && name == rawDrawFramebuffer) {
+                if (vanillaFramebufferDepth == 0) reportRawFramebuffer(0);
+                rawDrawFramebuffer = 0;
+                break;
+            }
+        }
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glDeleteFramebuffers(count, names);
+    }
+
     /** Enables a client array, as {@code glEnableClientState(capability)} does. */
     public static void glEnableClientState(int capability) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, true);
@@ -577,9 +591,6 @@ public final class CeltiumGllessHint {
     /** The draw framebuffer the last raw bind named; 0 is the default framebuffer. */
     private static int rawDrawFramebuffer;
 
-    /** Raw framebuffer names get identities of their own, outside the range identityHashCode returns. */
-    private static final long RAW_FRAMEBUFFER_IDENTITY = 1L << 40;
-
     /**
      * Tells the renderer which target a raw framebuffer bind makes current, and which colour texture stands for it.
      * <p>
@@ -598,7 +609,7 @@ public final class CeltiumGllessHint {
             backend.bindFramebuffer(0L, false);
             return;
         }
-        long identity = RAW_FRAMEBUFFER_IDENTITY | (framebuffer & 0xFFFFFFFFL);
+        long identity = org.soutalab.celtium.vulkan.RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
         backend.bindFramebuffer(identity, false);
         int color = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer);
         int[] extent = color == 0 ? null : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureExtent(color);

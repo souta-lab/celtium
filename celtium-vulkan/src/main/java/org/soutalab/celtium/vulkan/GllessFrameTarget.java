@@ -157,17 +157,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * as the world going black when the loading overlay's FBO and the frame's own passes alternated (legs
      * bisect4/5: acceptedForOtherTargets=11942 with pairClearsRefusedOtherIdentity=3), and as the fixture's second
      * framebuffer never holding its quad (leg fboalias-amd: every pixel check failed). Each identity now owns its
-     * own pair, which is what the BH-14 census's "widest pair must fall to 1" acceptance meant. The pool is bounded:
-     * a mod cycling framebuffers evicts the oldest member rather than growing images forever; the evicted pair is
-     * retired, not deleted in place, because an in-flight command buffer can still name it.
+     * own pair, which is what the BH-14 census's "widest pair must fall to 1" acceptance meant. A live framebuffer
+     * keeps its pair until its owner deletes it; an arbitrary size cap would discard images still needed by later passes.
      */
-    // Insertion-ordered (eviction takes the oldest) and primitive-keyed: existingChainPair runs per drawn group.
+    // Primitive-keyed: existingChainPair runs per drawn group.
     private final it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<Pair> chainPairs =
             new it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<Pair>();
-    /** The eviction bound for {@link #chainPairs}; a session that binds more targets reuses the oldest. */
-    private static final int MAX_CHAIN_PAIRS = 8;
-    /** Pairs evicted because the bound was reached; a menu that cycles more framebuffers than the bound thrashes. */
-    private long chainPairEvictions;
+    /** Reverse lookup for the sampling hot path; only live colour images have entries. */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairOwners =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** Chain-pair image sets created so far; the source of {@link #chainPairGeneration}. */
     private long chainPairGenerations;
 
@@ -1133,6 +1131,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.defaultPair.colorImage;
     }
 
+    /** The default pair's actual extent, or null before allocation. */
+    public int[] offTargetExtent() {
+        return this.defaultPair.exists() ? new int[] {this.defaultPair.width, this.defaultPair.height} : null;
+    }
+
     public long offTargetColorView() {
         checkAlive();
         return this.defaultPair.colorView;
@@ -1177,33 +1180,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * {@return the chain pair an identity owns}, creating it on first ask and evicting the oldest member when the
-     * pool is full. Creating is what a binding's ensures and pass attaches need; callers that only look up - the
+     * {@return the chain pair an identity owns}, creating it on first ask. Creating is what a binding's ensures and pass attaches need; callers that only look up - the
      * census, the summary, a report - use {@link #existingChainPair} so the pool does not grow on a read.
      */
     private Pair chainPairFor(long identity) {
         Pair pair = this.chainPairs.get(identity);
         if (pair != null) {
             return pair;
-        }
-        if (this.chainPairs.size() >= MAX_CHAIN_PAIRS) {
-            // Evict the oldest member by retiring it: its image can still be named by an in-flight command buffer,
-            // so the image goes to the retire queue rather than being destroyed where it stands.
-            Long oldest = null;
-            for (Long key : this.chainPairs.keySet()) {
-                oldest = key;
-                break;
-            }
-            Pair evicted = this.chainPairs.remove(oldest);
-            if (evicted != null) {
-                evicted.retire();
-                this.chainPairEvictions++;
-                if (this.chainPairEvictions <= 12) {
-                    System.out.println("[Celtium] CELTIUM_CHAIN_EVICT identity=" + Long.toHexString(oldest)
-                            + " evictions=" + this.chainPairEvictions + " live=" + this.chainPairs.size()
-                            + " limit=" + MAX_CHAIN_PAIRS);
-                }
-            }
         }
         Pair created = new Pair("chain-" + Long.toHexString(identity));
         this.chainPairs.put(identity, created);
@@ -1213,6 +1196,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /** {@return the identity's chain pair without creating it}, null when none exists yet. */
     private Pair existingChainPair(long identity) {
         return this.chainPairs.get(identity);
+    }
+
+    /** Retire the pair after its framebuffer and owned texture have been deleted. */
+    public void retireChainPair(long identity) {
+        Pair pair = this.chainPairs.remove(identity);
+        if (pair != null) {
+            if (pair.colorImage != 0L) this.chainPairOwners.remove(pair.colorImage);
+            pair.retire();
+        }
     }
 
     /** {@return whether the identity's chain pair exists}, i.e. whether that framebuffer has drawn into it. */
@@ -1300,7 +1292,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     /** Makes the identity's chain pair exist at the requested size. See {@link Pair#ensure(int, int)}. */
     public void ensureChainPair(long identity, int width, int height) {
-        chainPairFor(identity).ensure(width, height);
+        Pair pair = chainPairFor(identity);
+        if (pair.matches(width, height)) return;
+        if (pair.colorImage != 0L) this.chainPairOwners.remove(pair.colorImage);
+        try {
+            pair.ensure(width, height);
+        } finally {
+            // Invalid dimensions can leave the old pair alive; allocation failure can leave no image.
+            if (pair.colorImage != 0L) this.chainPairOwners.put(pair.colorImage, identity);
+        }
     }
 
     /**
@@ -1373,15 +1373,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * identity in hand; their question is a membership test over the pool, not a lookup.
      */
     public boolean isChainPairColorImage(long image) {
-        if (image == 0L) {
-            return false;
-        }
-        for (Pair pair : this.chainPairs.values()) {
-            if (pair.colorImage == image) {
-                return true;
-            }
-        }
-        return false;
+        return image != 0L && this.chainPairOwners.containsKey(image);
     }
 
     /** {@return every chain pair's identity}, for iteration in the dump and summary paths. */
@@ -1391,12 +1383,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     /** {@return the identity whose chain pair holds this colour image}, or {@code Long#MIN_VALUE} when none does. */
     public long chainPairIdentityForImage(long image) {
-        for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
-            if (entry.getValue().colorImage == image) {
-                return entry.getKey().longValue();
-            }
-        }
-        return Long.MIN_VALUE;
+        return image == 0L ? Long.MIN_VALUE : this.chainPairOwners.getOrDefault(image, Long.MIN_VALUE);
     }
 
     /** {@return one line per pair}, naming the counters that used to be one unlabelled set. */
@@ -2072,6 +2059,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             pair.release();
         }
         this.chainPairs.clear();
+        this.chainPairOwners.clear();
         if (this.waitSemaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(device, this.waitSemaphore, null);
             this.waitSemaphore = VK_NULL_HANDLE;

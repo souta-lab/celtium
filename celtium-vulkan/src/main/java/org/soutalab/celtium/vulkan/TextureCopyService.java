@@ -59,6 +59,9 @@ public final class TextureCopyService {
 
         int targetHeight();
 
+        /** Generation of the frame image, including replacements that may reuse Vulkan handles. */
+        long targetGeneration();
+
         long frameId();
 
         /**
@@ -137,6 +140,9 @@ public final class TextureCopyService {
         /** Submits the frame's queued groups: the copy must read what the game has already drawn. */
         void flushPendingBeforeGlDraw();
 
+        /** Submit any open frame recording before an asynchronous copy, without waiting for GPU completion. */
+        boolean submitCopySource();
+
         /** {@return whether the GPU confirmed every submission}; a false is a refusal, never a fallback. */
         boolean waitForIdle();
 
@@ -170,21 +176,6 @@ public final class TextureCopyService {
     private static final boolean NATIVE_TEXTURE_COPY = !"false".equalsIgnoreCase(
         System.getProperty("celtium.vulkan.nativeTextureCopy", "true"));
     /**
-     * Whether a copy whose source is the window may take the blit route, which cannot force the alpha GL reads back.
-     *
-     * <p>Measured on the title screen (leg gv-ab-menu-new, jar fba1c9f2): the panorama's copies read the window, every
-     * one of them declined the blit for the alpha reason, and the host route cost
-     * {@code textureCopyReadbacks=324} and {@code textureCopyReadbackMillis=7440} in one 200-tick menu leg - about
-     * 23 ms per copy, which is the whole frame, because the arm flushes and waits for the device. That is the
-     * user-reported "the panorama is very laggy", and it is a stall rather than work: the same pixels are already on
-     * the GPU.
-     *
-     * <p>On by default: a window-source copy used to need the host route because a blit carries alpha verbatim while
-     * the window's GL alpha must read 1. The capture now masks alpha writes on the delivered frame (the GL default
-     * framebuffer has no alpha bits), so the image's alpha is the acquire's clear - 1 - and the blit's verbatim copy
-     * is the answer GL owes. {@code -Dceltium.vulkan.windowCopyBlit=false} keeps the host route for comparison.
-     */
-    /**
      * {@code -Dceltium.vulkan.copyOrderWithoutIdle=false} restores the device-idle wait that used to order the source's
      * draws before a native copy. The A/B switch stays because the wait is what the copy's ordering was measured with.
      */
@@ -194,16 +185,12 @@ public final class TextureCopyService {
     /**
      * Whether a window-source copy ({@code readFbo == 0}) may take the native blit route.
      * <p>
-     * Off by default, and the reason is measured rather than stylistic. The title screen copies the window's
-     * (0,0)-(256,256) corner into a texture several times a frame and magnifies it into the background; with the blit
-     * route that background is a field of letterforms - the GUI text the corner held before this frame's panorama was
-     * drawn into it - while the host route, which flushes and waits before it reads, produces the blurred landscape.
-     * Reading the corner back with the device idle shows a landscape in both arms, so the difference is that the blit
-     * copies an image the frame's own draws have not reached yet. {@code -Dceltium.vulkan.windowCopyBlit=true} keeps
-     * the blit route for the A/B.
+     * A default-framebuffer read owes alpha 1, even when the shared frame image has nonopaque alpha. The native route
+     * therefore uses a scratch image and compute pass to set alpha within the copied rectangle. When unsupported,
+     * the host route still applies the rule. The false setting remains available as a comparison arm.
      */
     private static final boolean WINDOW_COPY_BLIT = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.windowCopyBlit", "false"));
+            System.getProperty("celtium.vulkan.windowCopyBlit", "true"));
 
     /**
      * {@code -Dceltium.debug.copyOrderProbe=true}: read the copy's source corner back and name its content. The probe
@@ -216,6 +203,8 @@ public final class TextureCopyService {
             Integer.getInteger("celtium.vulkan.readResolveLog", 6).intValue();
 
     private final Host host;
+    private VulkanOpaqueCopy opaqueCopy;
+    private String opaqueCopyUnavailable;
 
     /** Copy requests served from an owned image, and those refused, with the reason of the last refusal. */
     private int textureCopiesServed;
@@ -283,6 +272,12 @@ public final class TextureCopyService {
             throw new IllegalArgumentException("host must be set");
         }
         this.host = host;
+    }
+
+    /** Called only after GPU work has settled and retired scratch images were drained. */
+    void delete() {
+        if (this.opaqueCopy != null) this.opaqueCopy.delete();
+        this.opaqueCopy = null;
     }
 
     /** {@return copies served}, for the backend's summary line (the field itself stays here). */
@@ -409,15 +404,15 @@ public final class TextureCopyService {
         if (image == 0L) {
             return refuseTextureCopy("read framebuffer " + readFbo + " is not an image this renderer owns");
         }
-        // The source rectangle is checked against the image it will be read from, because the mapping below depends on
-        // the image's height: GL's copy y counts from the bottom of the framebuffer while a Vulkan image's rows count
-        // from the top. An out-of-range rectangle is refused by name rather than clamped, since a clamped read is a
-        // silently different picture. Every image `celtium$ownedReadImage` returns - the frame image, the chain pair
-        // and the default pair - is the target's size, which is what `targetWidth`/`targetHeight` carry.
-        int sourceImageHeight = this.host.targetHeight();
-        if (!rectangleFits(x, y, width, height, this.host.targetWidth(), sourceImageHeight)) {
+        // Chain pairs can be smaller than the window. Never pass the window extent as the source extent of a
+        // downsample framebuffer: a rectangle valid for the window can lie outside the actual Vulkan image.
+        int[] sourceExtent = ownedImageExtent(image);
+        if (sourceExtent == null) return refuseTextureCopy("the source image extent is unknown");
+        int sourceImageWidth = sourceExtent[0];
+        int sourceImageHeight = sourceExtent[1];
+        if (!rectangleFits(x, y, width, height, sourceImageWidth, sourceImageHeight)) {
             return refuseTextureCopy("the source rectangle " + x + "," + y + " " + width + "x" + height
-                    + " is not inside the " + this.host.targetWidth() + "x" + sourceImageHeight + " image");
+                    + " is not inside the " + sourceImageWidth + "x" + sourceImageHeight + " image");
         }
         // The frame's first request for this destination rectangle pays for the readback; the rest are answered from it.
         // B08: the key is the exact tuple, as a string, because the bit-mix this used to be collided across different
@@ -473,21 +468,36 @@ public final class TextureCopyService {
         // nor round-trips the pixels through host memory. Everything checkable was checked before this point, and the
         // blit's own refusal names itself; the host route below stays reachable and the counters say which ran.
         if (NATIVE_TEXTURE_COPY) {
-            String blitRefusal = this.host.registry().blitRefusal(destName, image, this.host.targetWidth(),
-                    this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
+            String blitRefusal = this.host.registry().blitRefusal(destName, image, sourceImageWidth,
+                    sourceImageHeight, x, y, width, height, xoffset, yoffset);
+            boolean windowSource = windowAlphaSource(readFbo, image);
+            long sourceGeneration = windowSource ? this.host.targetGeneration() : 0L;
+            long sourceView = windowSource ? this.host.frameTarget().colorView() : 0L;
             // The host route is for the title screen's background chain: it needs the read that flushes and waits,
             // because the blit copies an image this frame's draws have not reached. Inside a world pass the copy is the
             // sun glare's own screen grab, where the blit is both correct and much cheaper - taking the host route there
             // cost the world 2.03-2.05 ms p50 against 1.56 ms for the same jar with the blit (KPI legs final3 against
             // bake, same machine), which is why the condition is "outside a world pass", not "always".
-            if (blitRefusal == null && windowAlphaSource(readFbo, image)
+            if (blitRefusal == null && windowSource
                     && (!WINDOW_COPY_BLIT && !this.host.worldPassActive())) {
-                // The host route is the comparison arm only: with alpha writes masked on the delivered frame the
-                // blit's verbatim copy already carries the alpha-1 the window's GL read owes. The switch stays so a
-                // leg can still measure the two routes against each other.
+                // The host route is the comparison arm for window copies outside a world pass.
                 this.textureCopyWindowAlphaBlitsDeclined++;
                 blitRefusal = "the source is the window outside a world pass (the background chain needs the read"
                         + " that flushes and waits)";
+            }
+            if (blitRefusal == null && windowSource) {
+                try {
+                    if (this.opaqueCopyUnavailable != null) {
+                        blitRefusal = this.opaqueCopyUnavailable;
+                    } else {
+                        if (this.opaqueCopy == null) this.opaqueCopy = new VulkanOpaqueCopy(this.host.context());
+                        this.opaqueCopy.prepare(width, height, image, sourceView, sourceGeneration);
+                    }
+                } catch (RuntimeException | LinkageError error) {
+                    if (this.host.context().celtium$isDeviceLost()) throw error;
+                    this.opaqueCopyUnavailable = "the opaque window-copy pipeline is unavailable: " + error;
+                    blitRefusal = this.opaqueCopyUnavailable;
+                }
             }
             if (blitRefusal == null) {
                 // Whatever is already recorded is submitted before this copy is recorded, unconditionally. Gating it on
@@ -497,9 +507,7 @@ public final class TextureCopyService {
                 // previous frame's GUI text from that corner (texture 23 dumped as mirrored overlay strings at mean 67.8
                 // against 122.1 for a panorama-only frame) and the blur chain magnified it across the background.
                 boolean pendingBeforeCopy = this.host.hasPendingImmediateWork();
-                if (pendingBeforeCopy) {
-                    this.host.flushPendingBeforeGlDraw();
-                }
+                this.host.flushPendingBeforeGlDraw();
                 if (COPY_ORDER_PROBE && this.copyOrderLogs < 20) {
                     this.copyOrderLogs++;
                     // What the corner holds *after* the flush: the copy's own source, measured before the copy takes it.
@@ -534,18 +542,30 @@ public final class TextureCopyService {
                             + " src=" + x + "," + y + " " + width + "x" + height + " corner=" + corner);
                 }
                 if (COPY_ORDER_WITHOUT_IDLE) {
-                    this.host.context().celtium$flushBatchedSubmits();
-                } else if (this.host.hasPendingImmediateWork() && !this.host.waitForIdle()) {
+                    if (!this.host.submitCopySource()) {
+                        blitRefusal = "the source's recordings could not be submitted before the native copy";
+                    }
+                } else if (!this.host.waitForIdle()) {
                     blitRefusal = "the GPU did not confirm the source's draws before the native copy";
                 }
+            }
+            if (windowSource && (this.host.targetGeneration() != sourceGeneration
+                    || this.host.frameTarget() == null || this.host.frameTarget().colorImage() != image
+                    || this.host.frameTarget().colorView() != sourceView)) {
+                return refuseTextureCopy("the source frame image changed while preparing the copy");
             }
             if (blitRefusal == null) {
                 VkCommandBuffer commands = this.host.context().beginCommands();
                 try {
                     String recorded = this.host.registry().blitInto(destName, commands, image,
-                            this.host.targetWidth(), this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
+                            sourceImageWidth, sourceImageHeight, x, y, width, height, xoffset, yoffset,
+                            windowSource ? this.opaqueCopy : null);
                     if (recorded == null) {
-                        this.host.context().celtium$submitDeferred(commands, 0L);
+                        // Relinquish the buffer before handing it off: a failed submit may already have disposed
+                        // of it, and a later flush may fail after a batch has partly reached the GPU.
+                        VkCommandBuffer submitted = commands;
+                        commands = null;
+                        this.host.context().celtium$submitDeferred(submitted, 0L);
                         // Ordering: the deferred list is normally flushed at the frame boundary, which is *after* the
                         // draws that sample the mirror this blit fills - the blur passes (`rotateAndBlurSkybox`) land
                         // in the same frame's recordings and would read the stale mirror. Submitting now keeps the
@@ -554,7 +574,6 @@ public final class TextureCopyService {
                         // the host route (nativeTextureCopy=false) the frame held 50,882 distinct colours, with the
                         // deferred blit 1,830 - a grey background.
                         this.host.context().celtium$flushBatchedSubmits();
-                        commands = null; // submitted: the context owns it and frees it at its fence
                         this.textureCopyBlits++;
                         this.textureCopiesServedThisFrame.put(copyKey, Long.valueOf(copyMarker));
                         this.textureCopiesServed++;
@@ -563,9 +582,10 @@ public final class TextureCopyService {
                     }
                     blitRefusal = recorded;
                 } catch (RuntimeException | LinkageError error) {
+                    if (this.host.context().celtium$isDeviceLost()) throw error;
                     blitRefusal = "the native copy threw: " + error;
                 } finally {
-                    if (commands != null) {
+                    if (commands != null && !this.host.context().celtium$isDeviceLost()) {
                         this.host.context().celtium$abandonCommands(commands);
                     }
                 }
@@ -652,7 +672,7 @@ public final class TextureCopyService {
         if (pixels == null) {
             return refuseTextureCopy("the rectangle read of the owned image failed");
         }
-        // The GL rule this path owes the game, and the reason the main menu was flat grey (round 223).
+        // The GL rule the host path owes the game, and the reason the main menu was flat grey (round 223).
         // `glCopyTexSubImage2D` reads the *bound read framebuffer*. When that is the default framebuffer - GL name 0,
         // the window - there are no alpha bits, so every pixel it yields is opaque whatever the colour attachment
         // held; the hardware emulation of that is an alpha read of 1 (the same value ANGLE's Vulkan backend pins for
@@ -934,6 +954,23 @@ public final class TextureCopyService {
         }
     }
 
+    /** Extent of the actual owned read image; unknown handles cannot safely be copied. */
+    private int[] ownedImageExtent(long image) {
+        if (image == 0L) return null;
+        FrameImageTarget frame = this.host.frameTarget();
+        if (frame != null && frame.colorImage() == image) {
+            int width = this.host.targetWidth(), height = this.host.targetHeight();
+            return width > 0 && height > 0 ? new int[] {width, height} : null;
+        }
+        GllessFrameTarget target = this.host.offTargetTarget();
+        if (target == null) return null;
+        if (target.offTargetColorImage() == image) return target.offTargetExtent();
+        long identity = target.chainPairIdentityForImage(image);
+        if (identity == Long.MIN_VALUE) return null;
+        long[] extent = target.chainPairExtent(identity);
+        return extent == null ? null : new int[] {(int) extent[0], (int) extent[1]};
+    }
+
     private long ownedReadImage(int readFbo) {
         GllessFrameTarget glless = this.host.offTargetTarget();
         if (readFbo != 0) {
@@ -1110,6 +1147,10 @@ public final class TextureCopyService {
             }
             return false;
         }
+        int[] extent = ownedImageExtent(image);
+        if (extent == null || !rectangleFits(x, y, width, height, extent[0], extent[1])) {
+            return false;
+        }
         // The draws the read must see, then the submission the wait must cover. Both were already the copy path's
         // contract; under batchFrameSubmits the wait's own submitOpenFrameBuffer is what sends them to the queue.
         if (this.host.hasPendingImmediateWork()) {
@@ -1218,6 +1259,8 @@ public final class TextureCopyService {
         if ((long) width * height * 4L > capacity) {
             return false;
         }
+        int[] extent = ownedImageExtent(image);
+        if (extent == null || !rectangleFits(0, 0, width, height, extent[0], extent[1])) return false;
         int[] pixels = readImageRectangle(image, 0, 0, width, height);
         if (pixels == null) {
             return false;
@@ -1354,9 +1397,7 @@ public final class TextureCopyService {
      * {@return whether this copy's GL source is the window} - the default framebuffer, whose alpha GL reports as 1
      * whatever the colour attachment holds (GL name 0, no alpha bits; the emulation pins 1, the value ANGLE's Vulkan
      * backend uses for its window surface). The rule lives here, once, because the two routes owe it differently: the
-     * host route applies it to the pixels it read, and the native route gets it for free: alpha writes are masked on
-     * the delivered frame, so its image's alpha channel holds the acquire's alpha-1 clear and the blit's verbatim
-     * copy already yields 1.
+     * host route applies it to pixels read back; the native route applies it to its scratch image on the GPU.
      */
     private boolean windowAlphaSource(int readFbo, long image) {
         return readFbo == 0 && this.host.currentRenderTarget() == 0L && this.host.frameTarget() != null

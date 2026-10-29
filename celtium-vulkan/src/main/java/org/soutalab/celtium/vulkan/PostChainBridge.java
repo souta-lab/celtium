@@ -442,6 +442,28 @@ b.frameBufferOpen = false;
         }
     }
 
+    /** Drop wrappers for a deleted target before its owner retires the image and view. */
+    void celtium$forgetPublishedTarget(long identity) {
+        java.util.Iterator<java.util.Map.Entry<Integer, Long>> it =
+                b.publishedFrameImageIdentities.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<Integer, Long> entry = it.next();
+            if (entry.getValue().longValue() != identity) continue;
+            int name = entry.getKey().intValue();
+            b.celtium$registry().unpublishExternalImage(name);
+            b.publishedTextures.removePublished(name);
+            b.publishedFrameImages.remove(entry.getKey());
+            it.remove();
+        }
+        if (b.publishedChainOutput != null && b.publishedChainIdentity == identity) {
+            b.celtium$registry().unpublishExternalImage(b.publishedChainTexture);
+            b.publishedChainOutput = null;
+            b.publishedChainTexture = 0;
+            b.publishedChainImage = 0L;
+            b.publishedChainIdentity = 0L;
+        }
+    }
+
     /**
      * The mean colour of a small rectangle of an image, as {@code (r,g,b)}, read back through the copy path.
      * <p>

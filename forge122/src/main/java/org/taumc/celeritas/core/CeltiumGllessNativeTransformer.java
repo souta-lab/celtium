@@ -795,6 +795,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("nglDeleteFramebuffers".equals(name) && "(IJ)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDeleteFramebuffers", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
         }
         switch (returnType) {
             case "V":

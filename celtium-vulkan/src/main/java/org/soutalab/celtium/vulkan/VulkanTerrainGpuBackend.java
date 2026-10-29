@@ -5419,6 +5419,60 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.gameFramebufferIdentity;
     }
 
+    /** The vanilla framebuffer deletes its colour texture with the framebuffer, including on resize. */
+    public void celtium$forgetDeletedFramebuffer(long identity) {
+        if (identity == 0L || identity == this.gameFramebufferIdentity || this.gpuStalled
+                || this.context.celtium$isDeviceLost()) return;
+        GllessFrameTarget target = offTargetTarget();
+        if (target == null) return;
+        this.postChainBridge.celtium$forgetPublishedTarget(identity);
+        this.publishedTextures.bindColorTexture(identity, 0, 0, 0);
+        if (this.framebufferCache != null) this.framebufferCache.retireChainPair(identity);
+        target.retireChainPair(identity);
+        this.targetRegistry.forgetChainPair(identity);
+        this.framebufferIdentityIsMain.remove(Long.valueOf(identity));
+        this.rawDeletedAttachmentTargets.remove(Long.valueOf(identity));
+    }
+
+    /** Raw FBO deletion does not delete its colour texture: keep its image until the texture is also deleted. */
+    private final java.util.Map<Integer, java.util.Set<Long>> rawOrphanedTargets = new java.util.HashMap<>();
+    private final java.util.Set<Long> rawDeletedAttachmentTargets = new java.util.HashSet<>();
+
+    public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
+        long identity = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
+        GllessFrameTarget target = offTargetTarget();
+        if (target != null && target.chainPairExists(identity)) {
+            this.rawDeletedAttachmentTargets.add(Long.valueOf(identity));
+        }
+    }
+
+    public void celtium$rawAttachmentChanged(int framebuffer) {
+        this.rawDeletedAttachmentTargets.remove(Long.valueOf(RenderTargetRegistry.rawFramebufferIdentity(framebuffer)));
+    }
+
+    public void celtium$rawFramebufferDeleted(int framebuffer, int colorTexture) {
+        if (framebuffer == 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
+        long identity = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
+        GllessFrameTarget target = offTargetTarget();
+        if (target == null || !target.chainPairExists(identity)) return;
+        if (this.rawDeletedAttachmentTargets.remove(Long.valueOf(identity))) {
+            celtium$forgetDeletedFramebuffer(identity);
+            return;
+        }
+        if (colorTexture == 0) colorTexture = this.publishedTextures.colorTextureName(identity);
+        // No recorded name is not proof that the old texture was deleted; keep the image until teardown.
+        if (colorTexture == 0) return;
+        this.rawOrphanedTargets.computeIfAbsent(Integer.valueOf(colorTexture),
+                key -> new java.util.HashSet<Long>()).add(Long.valueOf(identity));
+    }
+
+    public void celtium$rawTextureDeleted(int texture) {
+        java.util.Set<Long> orphans = this.rawOrphanedTargets.remove(Integer.valueOf(texture));
+        if (orphans != null) {
+            for (Long identity : orphans) celtium$forgetDeletedFramebuffer(identity.longValue());
+        }
+    }
+
     @Override
     public void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
         this.publishedTextures.bindColorTexture(framebufferIdentity, colorTexture, width, height);
@@ -5631,7 +5685,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (framebuffer == 0) {
             return false;
         }
-        long identity = RAW_FRAMEBUFFER_IDENTITY_BASE + framebuffer;
+        long identity = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
         int width = 0;
         int height = 0;
         int[] size = textureSize(glTextureName);
@@ -5658,12 +5712,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Bounded count for {@link #celtium$adoptRawFramebufferColorTexture}. */
     private int rawFramebufferAdoptions;
-    /**
-     * The identity space for framebuffers created through raw GL. It sits below the main identity's own space and is
-     * only ever used as a map key, so any value that cannot collide with a framebuffer name works.
-     */
-    private static final long RAW_FRAMEBUFFER_IDENTITY_BASE = Long.MIN_VALUE / 4;
-
     private long celtium$framebufferIdentityForColorTexture(int glTextureName) {
         if (glTextureName == 0) {
             return Long.MIN_VALUE;
@@ -11541,6 +11589,7 @@ this.frameBufferOpen = false;
         if (drained > 0) {
             record("teardown destroyed " + drained + " retired resources");
         }
+        this.textureCopyService.delete();
         releaseRetiredImmediateGroups();
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
         uninstall();
@@ -14591,6 +14640,11 @@ this.frameBufferOpen = false;
         }
 
         @Override
+        public long targetGeneration() {
+            return VulkanTerrainGpuBackend.this.targetRegistry.generation();
+        }
+
+        @Override
         public long frameId() {
             return VulkanTerrainGpuBackend.this.frameId;
         }
@@ -14709,6 +14763,20 @@ this.frameBufferOpen = false;
         @Override
         public void flushPendingBeforeGlDraw() {
             VulkanTerrainGpuBackend.this.flushPendingBeforeGlDraw();
+        }
+
+        @Override
+        public boolean submitCopySource() {
+            if (VulkanTerrainGpuBackend.this.immediateWindowBusy
+                    || VulkanTerrainGpuBackend.this.gpuStalled
+                    || VulkanTerrainGpuBackend.this.context.celtium$isDeviceLost()
+                    || hasPendingImmediateWork()) return false;
+            VulkanTerrainGpuBackend.this.submitOpenFrameBuffer();
+            if (VulkanTerrainGpuBackend.this.frameBufferOpen
+                    || VulkanTerrainGpuBackend.this.commandState.recording()) return false;
+            VulkanTerrainGpuBackend.this.context.celtium$flushBatchedSubmits();
+            return !VulkanTerrainGpuBackend.this.gpuStalled
+                    && !VulkanTerrainGpuBackend.this.context.celtium$isDeviceLost();
         }
 
         @Override

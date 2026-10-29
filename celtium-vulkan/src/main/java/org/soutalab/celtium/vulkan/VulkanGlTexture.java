@@ -2852,6 +2852,12 @@ public final class VulkanGlTexture {
      */
     public String blitRectangleFrom(VkCommandBuffer commandBuffer, long sourceImage, int sourceWidth, int sourceHeight,
             int sx, int sy, int width, int height, int xoffset, int yoffset) {
+        return blitRectangleFrom(commandBuffer, sourceImage, sourceWidth, sourceHeight, sx, sy, width, height,
+                xoffset, yoffset, null);
+    }
+
+    String blitRectangleFrom(VkCommandBuffer commandBuffer, long sourceImage, int sourceWidth, int sourceHeight,
+            int sx, int sy, int width, int height, int xoffset, int yoffset, VulkanOpaqueCopy opaqueCopy) {
         if (commandBuffer == null || sourceImage == VK_NULL_HANDLE) {
             return "no command buffer or no source image";
         }
@@ -2874,11 +2880,16 @@ public final class VulkanGlTexture {
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
             // The mirror's way in: whatever it was in (UNDEFINED at creation, SHADER_READ_ONLY once sampled) to the
             // transfer-destination layout the blit names.
+            boolean initialized = this.currentLayout != VK_IMAGE_LAYOUT_UNDEFINED;
             barrier.get(0).oldLayout(this.currentLayout)
                     .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-                    .srcAccessMask(0)
+                    // The previous blur pass can still be reading this image. Queue order alone does not
+                    // prevent its shader reads from overlapping this transfer write or layout transition.
+                    .srcAccessMask(initialized ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : 0)
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            vkCmdPipelineBarrier(commandBuffer,
+                    initialized ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, barrier);
 
             // The source's availability: its layout stays GENERAL (VUID-vkCmdBlitImage-srcImageLayout-01398 allows
@@ -2891,9 +2902,11 @@ public final class VulkanGlTexture {
             sourceBarrier.get(0).oldLayout(VK_IMAGE_LAYOUT_GENERAL)
                     .newLayout(VK_IMAGE_LAYOUT_GENERAL)
                     .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+                    .dstAccessMask(opaqueCopy == null ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_READ_BIT);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                    | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, sourceBarrier);
+                    | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    opaqueCopy == null ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    0, null, null, sourceBarrier);
 
             VkImageBlit.Buffer region = VkImageBlit.calloc(1, stack);
             region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
@@ -2912,8 +2925,21 @@ public final class VulkanGlTexture {
                     .layerCount(1);
             region.get(0).dstOffsets().get(0).set(xoffset, yoffset, 0);
             region.get(0).dstOffsets().get(1).set(xoffset + width, yoffset + height, 1);
-            vkCmdBlitImage(commandBuffer, sourceImage, VK_IMAGE_LAYOUT_GENERAL, this.image,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+            if (opaqueCopy == null) {
+                vkCmdBlitImage(commandBuffer, sourceImage, VK_IMAGE_LAYOUT_GENERAL, this.image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+            } else {
+                opaqueCopy.record(commandBuffer, sourceImage, sx, sy, this.image, xoffset, yoffset, width, height, stack);
+            }
+
+            // The source can be rendered into again as soon as the game continues. Its next write must not race
+            // the transfer read (or the compute sampler read) just recorded above.
+            sourceBarrier.get(0).srcAccessMask(opaqueCopy == null ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_READ_BIT)
+                    .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            vkCmdPipelineBarrier(commandBuffer,
+                    opaqueCopy == null ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, sourceBarrier);
 
             // The mirror's way back out: transfer writes to shader reads, which is the state the next pass samples it
             // in. The ledger follows in the same call, or the next pass would transition from a stale layout.
@@ -3495,6 +3521,7 @@ public final class VulkanGlTexture {
         }
 
         VkCommandBuffer commandBuffer = context.beginCommands();
+        boolean finishedSamplingTransition = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             // The whole chain is re-uploaded from scratch, so the old layout may be anything - including the
@@ -3548,6 +3575,7 @@ public final class VulkanGlTexture {
                     for (int covered = 0; covered < this.mipLevels; covered++) {
                         setLevelLayout(covered, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                     }
+                    finishedSamplingTransition = true;
                 }
         } finally {
             // Always close the one-shot command buffer, also when recording threw half way through, so the
@@ -3555,6 +3583,9 @@ public final class VulkanGlTexture {
             // is what the next staging write awaits, since this copy reads the staging buffer.
             this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
         }
+        // The blit path uses currentLayout as its next oldLayout. Keep it in step with the tail barrier;
+        // the per-level ledger alone does not update this field.
+        if (finishedSamplingTransition) this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         // The copy and the blitted chain execute ahead of every later submission on the same queue, so every level
         // now holds content from this write: level 0 from the copy, the levels above it from the chain. Recorded
         // after the submission, so a refused one cannot claim levels it did not write (audit N07).

@@ -69,6 +69,15 @@ public abstract class FramebufferMixin {
         }
     }
 
+    /** deleteFramebuffer also deletes its colour texture; the pair can now be retired after pending GPU work. */
+    @Inject(method = "func_147608_a", at = @At("RETURN"), require = 0)
+    private void celtium$retireDeletedFramebuffer(CallbackInfo info) {
+        TerrainGpuBackend current = TerrainGpuBackends.current();
+        if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend) {
+            backend.celtium$forgetDeletedFramebuffer(System.identityHashCode(this));
+        }
+    }
+
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
         // Announce a framebuffer replacement before the bind below, so the flush that a target change would otherwise do

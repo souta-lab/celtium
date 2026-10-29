@@ -1382,6 +1382,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** Records the transformer's glDeleteFramebuffers(count, pointer) route. */
+    public static void celtium$glDeleteFramebuffers(int count, long names) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || names == 0L) return;
+        for (int i = 0; i < count; i++) {
+            int name = memGetInt(names + (long) i * 4L);
+            stub.liveNames.remove(name);
+            stub.forgetFramebuffer(name);
+        }
+    }
+
     /**
      * Remembers the first caller that bound each texture name. A stack walk is paid once per name (the map lookup
      * keeps repeat binds cheap), so the common hot binds cost a contains-key and nothing else.
@@ -4117,6 +4128,17 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void deleteTexture(int name) {
+        if (name != 0) {
+            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                for (java.util.Map.Entry<Integer, Integer> entry : this.framebufferColorTextures.entrySet()) {
+                    if (entry.getValue().intValue() == name) {
+                        vulkan.celtium$rawAttachmentTextureDeleted(entry.getKey().intValue());
+                    }
+                }
+                vulkan.celtium$rawTextureDeleted(name);
+            }
+        }
         int[] level0 = this.texLevels.get(texLevelKey(name, 0));
         if (level0 != null && level0[0] * level0[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
             StringBuilder callers = new StringBuilder();
@@ -4657,14 +4679,23 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void forgetFramebuffer(int name) {
+        if (name == 0) return;
+        Integer color = this.framebufferColorTextures.get(Integer.valueOf(name));
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$rawFramebufferDeleted(name, color == null ? 0 : color.intValue());
+        }
         updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, name, 0);
-        if (this.drawFbo == name) this.drawFbo = 0;
+        if (this.drawFbo == name) {
+            this.drawFbo = 0;
+            this.framebufferBindSerial++;
+        }
         if (this.readFbo == name) this.readFbo = 0;
     }
 
     /** The attachment record {@code glFramebufferTexture2D} writes and the backend reads. */
     private void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
-        int framebuffer = target == 0x8CA9 ? this.readFbo : this.drawFbo;
+        int framebuffer = target == 0x8CA8 ? this.readFbo : this.drawFbo;
         if (framebuffer == 0 || level != 0) {
             return;
         }
@@ -4672,6 +4703,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         // is 0x8CE0 - the attachment a render target's pixels come from.
         if ((attachment & 0xFFFF) != 0x8CE0) {
             return;
+        }
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
         updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, framebuffer, texture);
         if (texture == 0) return;

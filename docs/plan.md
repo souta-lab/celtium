@@ -1,8 +1,14 @@
 # Celtium 現状表（唯一の現在状態表）
 
-開発ベース **0.1.3-alpha-rc.7**（[build定義](<../build-1122/build.gradle.kts>)）。Windows検証用プレリリースは **v0.1.3-alpha-rc.7**（2026-10-29、[release notes](<releases/0.1.3-alpha-rc.7.md>)）。これまでの性能検証は本文に記載した 0.1.1-alpha を基準とする。
+開発ベース **0.1.3-alpha-rc.8**（[build定義](<../build-1122/build.gradle.kts>)）。Windows検証用プレリリースは **v0.1.3-alpha-rc.8**（2026-10-29、[release notes](<releases/0.1.3-alpha-rc.8.md>)）。これまでの性能検証は本文に記載した 0.1.1-alpha を基準とする。
 2026-10-28 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案であり拘束しない（利用者指示 2026-10-28: 「new_architectureを絶対とするな」）。実測でより良い方法があればそちらを採る。
+
+## Windows/NVIDIA報告への優先対応（2026-10-29）
+
+- **未解決**: Supersymmetryでの最初の `VK_ERROR_DEVICE_LOST` と約10 FPS。RC5の喪失後Fence reset修正は後続AV対策であり、根本解決の証拠ではない。明示されたasync presentは維持する。
+- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（公開JAR `release-rc8-{amd,intel}2`、renderer `72665b41e3040da63bfc0555aded6f8b053babd5b304ec2df5d6c4e7208a1d7d`、fixture `c82c4bc8d8fdcbfe6d131db6ad8964ae874c7ebcb1b6f49dc556fec1789fcc72`、`rawFboIdentityProbePassed=true`・`CELTIUM_OPAQUE_COPY_PROBE partial/alpha/resize` PASSED）。Bloom画素やWindows受入ではない。
+- **次**: menu性能を同一JARのhost/GPU 3組で比較中。raw FBO付替えと実packのGPU fault/frame timeを検証。Windows実測なしに根因解決やFPS改善を宣言しない。RC8監査の小gap（次round）: 呼び出し0の `celtium$submitDeferredWithSemaphores` は喪失時にfree、`opaqueCopyUnavailable` は恒久化。
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
@@ -108,24 +114,6 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
   [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)、[diary](<history/plan-diary.md>)。
   履歴を現在の命令・判定として読み戻さない。
 
-## 再開手順（2026-10-22 時点の実コマンド）
+## 再開手順
 
-ビルド（GradleはJDK25で起動、ゲームはJDK27）:
-```
-JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64 ./gradlew -p build-1122 \
-  :celtium-vulkan:test :forge122:packageJar :forge122:validationRemapJar --console=plain \
-  '-Porg.gradle.java.installations.paths=/usr/lib/jvm/java-21-openjdk-amd64,/home/s0u7a/projects/celtium/.celtium-work/jdks/8/jdk8u504-b01'
-```
-leg（world・影OFF）:
-```
-CELTIUM_INSTANCE_WORLD=$PWD/.celtium-work/modpack-p0/prism-e2e-private/instances/world-0.7.11 \
-CELTIUM_LEG_LWJGL_VULKAN=$PWD/.gv-verify/lib/lwjgl-vulkan-3.4.3.jar \
-scripts/gv-leg.sh <leg名> .gv-verify/jars/<stage> world {amd|intel} 150 \
-  -Dorg.lwjgl.librarypath=$PWD/.gv-verify/lib/lwjgl-natives-3.4.3 \
-  -Dceltium.validation.fixedWorldTime=true -Dceltium.validation.worldTime=1500
-```
-- `.gv-verify/jars/<stage>` には **forge jar と validation-client jar の2つ**を置き、`build-provenance.json` を作る（KPIは両方を要求）
-- **stage名・leg名の再利用は不可**（"artifact already exists" でFAIL）
-- 影は native 実装を削除済み（pack 側の影は Demonica fork で実装する）。比較画像は presented dump の最終枚を使う
-- ディスク: `.gv-verify/run-*` と `stage-*` は毎回消す（16G→405M、空き18G）
-
+ビルド・stage・実機検証は[開発・検証手順](<development.md>)を参照する。

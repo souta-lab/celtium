@@ -877,13 +877,13 @@ public final class VulkanContext {
      */
     private void quarantine(VkCommandBuffer commandBuffer, long fence) {
         this.quarantinedCommandBuffers.add(commandBuffer);
-        QUARANTINED_COUNTS[0] = this.quarantinedCommandBuffers.size();
-        QUARANTINED_COUNTS[1] = this.quarantinedFences.size();
         if (fence != VK_NULL_HANDLE) {
             // A bootstrap-path submission carries no fence: the queue wait is the only completion signal there, and on
             // a non-confirming result the command buffer alone is held.
             this.quarantinedFences.add(Long.valueOf(fence));
         }
+        QUARANTINED_COUNTS[0] = this.quarantinedCommandBuffers.size();
+        QUARANTINED_COUNTS[1] = this.quarantinedFences.size();
     }
 
     /** {@return the quarantined command buffers and fences still held, for the report}. */
@@ -1060,12 +1060,20 @@ public final class VulkanContext {
             long fence = celtium$borrowDeferredFence();
             try {
                 VulkanContext.queueSubmitCalls++;
-                        celtium$awaitPresenter();
-                        check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit (deferred)");
+                celtium$awaitPresenter();
+                int result = vkQueueSubmit(this.queue, submit, fence);
+                if (result == VK_ERROR_DEVICE_LOST) {
+                    throw celtium$reportDeviceLost("vkQueueSubmit (deferred)", result);
+                }
+                check(result, "vkQueueSubmit (deferred)");
             } catch (RuntimeException | LinkageError submitError) {
-                // The queue never saw the submission, so freeing here is the cleanup endCommands already proves.
-                vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
-                vkDestroyFence(this.device, fence, null);
+                if (this.deviceLost) {
+                    // A lost NVIDIA device may no longer tolerate fence or command-buffer operations.
+                    quarantine(commandBuffer, fence);
+                } else {
+                    vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+                    vkDestroyFence(this.device, fence, null);
+                }
                 throw submitError;
             }
             DeferredSubmit entry = new DeferredSubmit();

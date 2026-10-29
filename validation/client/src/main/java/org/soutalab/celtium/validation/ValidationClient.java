@@ -38,6 +38,7 @@ import java.util.List;
 /** Explicitly installed validation fixture; never embedded in the renderer mod. */
 @Mod(modid = "celtium_validation", name = "Celtium validation fixture", version = "0.1.0", clientSideOnly = true)
 public final class ValidationClient {
+    private RawFboIdentityProbe rawFboIdentityProbe;
     /**
      * Latches the live fixture at construction, which is the earliest point there is.
      * <p>
@@ -134,6 +135,8 @@ public final class ValidationClient {
     private final JsonObject report = new JsonObject();
     private net.minecraft.client.shader.Framebuffer celtium$secondary;
     private final List<Double> frameIntervals = new ArrayList<Double>();
+    private final List<Double> menuFrameIntervals = new ArrayList<Double>();
+    private long previousMenuFrame;
     /**
      * The warm window's intervals, sampled after the world is built.
      * <p>
@@ -3145,6 +3148,13 @@ public final class ValidationClient {
             }
         }
         if (enabled) MinecraftForge.EVENT_BUS.register(this);
+        if (enabled && Boolean.getBoolean("celtium.validation.cameraEventProbe")) {
+            MinecraftForge.EVENT_BUS.register(new CameraEventProbe());
+        }
+        if (enabled && Boolean.getBoolean("celtium.validation.rawFboIdentityProbe")) {
+            rawFboIdentityProbe = new RawFboIdentityProbe();
+            MinecraftForge.EVENT_BUS.register(rawFboIdentityProbe);
+        }
         if (enabled && Boolean.getBoolean("celtium.validation.gvcA4Probe"))
             MinecraftForge.EVENT_BUS.register(new GvcA4Probe());
     }
@@ -5855,6 +5865,18 @@ public final class ValidationClient {
             System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=END first clientTicks=" + celtium$clientTicks);
         }
         Minecraft mc = Minecraft.getMinecraft();
+        if (Boolean.getBoolean("celtium.validation.menuFrameStats")) {
+            long menuNow = System.nanoTime();
+            if (mc.world == null && mc.currentScreen instanceof GuiMainMenu) {
+                if (this.previousMenuFrame != 0 && this.celtium$menuHeldTicks >= 20
+                        && this.celtium$menuHeldTicks < 70 && this.menuFrameIntervals.size() < 100000) {
+                    this.menuFrameIntervals.add((menuNow - this.previousMenuFrame) / 1_000_000.0);
+                }
+                this.previousMenuFrame = menuNow;
+            } else {
+                this.previousMenuFrame = 0;
+            }
+        }
         // Every render tick: see whether a requested dump has been written, and complete its identity from the
         // renderer's own counters if it has. This is the frame-bound step - the identity is taken from the observation
         // that the file appeared while the presented-frame counter had advanced by exactly one from the request.
@@ -6332,6 +6354,15 @@ public final class ValidationClient {
             return;
         }
         try {
+            if (Boolean.getBoolean("celtium.validation.rawFboIdentityProbe")) {
+                boolean attempted = rawFboIdentityProbe != null && rawFboIdentityProbe.attempted();
+                boolean passed = attempted && rawFboIdentityProbe.passed();
+                report.addProperty("rawFboIdentityProbeAttempted", attempted);
+                report.addProperty("rawFboIdentityProbePassed", passed);
+                report.addProperty("rawFboIdentityProbeFailure", rawFboIdentityProbe == null
+                        ? "probe not registered" : rawFboIdentityProbe.failure());
+                if (!passed) throw new IllegalStateException("Required raw FBO identity probe failed or never ran");
+            }
             if (commandBufferTargets && (!commandBufferTargetsAttempted || !commandBufferTargetsPassed)) {
                 throw new IllegalStateException("Required commandBufferTargets fixture "
                         + (commandBufferTargetsAttempted ? "failed: " + report.get("commandBufferTargets") : "never exercised"));
@@ -6646,6 +6677,15 @@ public final class ValidationClient {
      * with a warmed benchmark.
      */
     private void celtium$reportFrameIntervals() {
+        if (Boolean.getBoolean("celtium.validation.menuFrameStats")) {
+            Collections.sort(this.menuFrameIntervals);
+            report.addProperty("menuFrameIntervalFromHoldTick", 20);
+            report.addProperty("menuFrameIntervalToHoldTick", 70);
+            report.addProperty("menuFrameIntervalSampleCount", this.menuFrameIntervals.size());
+            report.addProperty("menuFrameIntervalP50Ms", percentile(this.menuFrameIntervals, 0.50));
+            report.addProperty("menuFrameIntervalP95Ms", percentile(this.menuFrameIntervals, 0.95));
+            report.addProperty("menuFrameIntervalP99Ms", percentile(this.menuFrameIntervals, 0.99));
+        }
         report.addProperty("cameraSweepDegreesPerSecond", celtium$cameraSweepRate);
         report.addProperty("cameraSweepFromTick", celtium$cameraSweepFromTick);
         report.addProperty("cameraSweepFrames", celtium$cameraSweepFrames);

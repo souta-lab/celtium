@@ -1812,6 +1812,13 @@ public final class VulkanTextureRegistry {
      */
     public String blitInto(int glTextureId, VkCommandBuffer commandBuffer, long sourceImage, int sourceWidth,
             int sourceHeight, int sx, int sy, int width, int height, int xoffset, int yoffset) {
+        return blitInto(glTextureId, commandBuffer, sourceImage, sourceWidth, sourceHeight, sx, sy, width, height,
+                xoffset, yoffset, null);
+    }
+
+    String blitInto(int glTextureId, VkCommandBuffer commandBuffer, long sourceImage, int sourceWidth,
+            int sourceHeight, int sx, int sy, int width, int height, int xoffset, int yoffset,
+            VulkanOpaqueCopy opaqueCopy) {
         String refusal = blitRefusal(glTextureId, sourceImage, sourceWidth, sourceHeight, sx, sy, width, height,
                 xoffset, yoffset);
         if (refusal != null) {
@@ -1821,7 +1828,7 @@ public final class VulkanTextureRegistry {
         }
         Entry entry = this.entries.get((int) (glTextureId));
         String reason = entry.texture.blitRectangleFrom(commandBuffer, sourceImage, sourceWidth, sourceHeight, sx, sy,
-                width, height, xoffset, yoffset);
+                width, height, xoffset, yoffset, opaqueCopy);
         if (reason != null) {
             this.blitRefusals++;
             this.lastBlitRefusal = reason;
