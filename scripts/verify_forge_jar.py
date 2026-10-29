@@ -89,6 +89,7 @@ def license_errors(jar, names, repository):
     coverage = {
         "grondag/bitraster/": "licenses/bitraster-LICENSE",
         "org/embeddedt/embeddium/impl/shadow/joml/": "META-INF/LICENSE",
+        "org/lwjgl/vulkan/": "licenses/lwjgl-LICENSE",
     }
     census = {}
     for prefix, notice in coverage.items():
@@ -99,6 +100,14 @@ def license_errors(jar, names, repository):
     notes["licenseCensus"] = census
 
     return errors, notes
+
+
+def unexpected_runtime_entry(name):
+    """The one bundled LWJGL module must not open the door to core/native dependencies."""
+    return (name.startswith(("org/joml/", "com/google/gson/"))
+            or (name.startswith("org/lwjgl/")
+                and name != "org/lwjgl/"  # package-directory entry is harmless
+                and not name.startswith("org/lwjgl/vulkan/")))
 
 
 def verify(path):
@@ -120,6 +129,8 @@ def verify(path):
             "META-INF/celeritas_at.cfg", "mixins.celeritas.json",
             "COPYING", "COPYING.LESSER", "README.md", "docs/upstream-README.md",
             "licenses/bitraster-LICENSE",
+            "licenses/lwjgl-LICENSE", "org/lwjgl/vulkan/VK.class",
+            "org/lwjgl/vulkan/KHRWin32Surface.class",
             "org/taumc/celeritas/CeleritasVintage.class",
             "org/taumc/celeritas/core/CeleritasLoadingPlugin.class",
             "org/soutalab/celtium/forge/CeltiumCommand.class",
@@ -197,6 +208,7 @@ def verify(path):
             "README.md": "README.md",
             "docs/upstream-README.md": "docs/upstream-README.md",
             "licenses/bitraster-LICENSE": "common/src/main/java/grondag/bitraster/LICENSE",
+            "licenses/lwjgl-LICENSE": "licenses/lwjgl-LICENSE",
         }
         for entry, original in notices.items():
             if entry in names and jar.read(entry) != (repository / original).read_bytes():
@@ -206,7 +218,9 @@ def verify(path):
         errors.extend(license_problems)
 
         for name in entries:
-            if name.startswith(("org/lwjgl/", "org/joml/", "com/google/gson/")):
+            # Only Vulkan Java bindings are intentionally embedded. Core LWJGL, SDL,
+            # OpenGL, native binaries, and all other LWJGL modules belong to Cleanroom.
+            if unexpected_runtime_entry(name):
                 errors.append(f"Unexpected bundled runtime / unrelocated dependency: {name}")
             if name.startswith("org/soutalab/celtium/validation/"):
                 errors.append(f"Validation fixture must not be embedded in the mod: {name}")
