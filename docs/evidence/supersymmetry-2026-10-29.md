@@ -42,3 +42,12 @@ Cleanroom 0.7.14-alpha、Fugue 0.25.5、Hesperus 無し）。Celtium `a7f4798e�
    ownership を採用し mirror を作る（`custombackgrounds` の 1920x1080 で検証）。
 3. format 32B（normal+pad 付き）の即時描画対応。
 4. 利用者側で `-Dceltium.vulkan.frameBudget=true` を付けたメニュー/ワールドのログを取れば、6FPS の内訳が1行で出る。
+
+## 追加修正: 32バイト粒子レイアウト（2026-10-30, commit `0f7474c88`）
+
+利用者ログの `CELTIUM_UNMAPPED_REFUSED` 3件は、format table に無い
+`3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short 3,Normal,Byte 1,Padding,Byte`（32B）。
+先頭28Bは `PARTICLE_POSITION_TEX_COLOR_LMAP` と同一で、normal/padding はどのシェーダも読まない。
+→ 32B を `PARTICLE` にマップし、uploader で 32→28 に詰めて送出するよう修正（`CELTIUM_COMPACTED_BATCH` で実行を確認可能）。
+layout マッピングと stride 規則は unit test 済み。**GPU での絵の確認は未実施**（この layout はこちらの qmagnet シーンでは
+発生しないため、利用者ログまたは該当modのシーンで `CELTIUM_COMPACTED_BATCH` が出ることを確認する）。
