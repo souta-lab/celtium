@@ -50,6 +50,19 @@ sha256sum "$STAGE"/*.jar
 hashはbytesの識別であり、単独では「そのHEADからbuildされた」証明ではない。build成功・差分・source revisionも紐づける。
 stageにはそれぞれ正しいfamilyのJARを**ちょうど1個**置く。既存tagを使い回さない。
 
+**stale JARの罠（2026-10-30 実測）**: `forge122` のmixin/modクラスを編集した後の `scripts/build.sh` が
+「up-to-date」と表示して**旧クラスをpackagingした**ことが2回あった（Gradleのタスク入力判定がmixin sourceの
+一部変更を拾わないことがある）。jar内の文字列で確認できる目印（例: 新しい `FramePassTimings.begin("...")` 名）を
+`unzip -p "$JAR" <class> | strings | grep <marker>` で確かめるか、編集後は次を実行してからpackaged JARを採用する:
+
+```sh
+rm -rf forge122/build build-1122/build/libs celtium-vulkan/build/libs
+JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64 scripts/build.sh
+```
+
+同じsourceからは同じhashになる（実測: 574dc59d を2回再現）。hashが変わらないときは、差分が実際にそのJARへ
+入っていない可能性を先に疑う。
+
 ## 4. freshなGPU leg
 
 正典は [gv-leg.sh](<../scripts/gv-leg.sh>) → [gv_leg.py](<../scripts/gv_leg.py>) → [prism_validation.py](<../scripts/prism_validation.py>)。
