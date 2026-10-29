@@ -1334,7 +1334,9 @@ public final class VulkanContext {
                 + " totalMs=" + (batchedSubmitNanos / 1000000L)
                 + " meanMs=" + String.format(java.util.Locale.ROOT, "%.3f",
                         calls == 0 ? 0.0 : batchedSubmitNanos / 1e6 / calls)
-                + " flushes=" + batchedFlushCalls + "]";
+                + " flushes=" + batchedFlushCalls
+                + " commandBuffers=" + coalescedCommandBuffers
+                + " submitInfosSaved=" + savedSubmitInfos + "]";
     }
 
     public void celtium$flushBatchedSubmits() {
@@ -1364,13 +1366,48 @@ public final class VulkanContext {
     /** About 14 KiB of MemoryStack per chunk, leaving room for frames the callers already hold. */
     private static final int SUBMIT_CHUNK = 128;
 
+    static int[] planSubmitGroups(boolean[] barriers) {
+        int[] sizes = new int[barriers.length];
+        int n = 0;
+        for (int i = 0; i < barriers.length;) {
+            int end = i + 1;
+            if (!barriers[i]) {
+                while (end < barriers.length && !barriers[end]) end++;
+            }
+            sizes[n++] = end - i;
+            i = end;
+        }
+        return java.util.Arrays.copyOf(sizes, n);
+    }
+
+    static long coalescedCommandBuffers;
+    static long savedSubmitInfos;
+
     private Throwable submitChunk(java.util.ArrayList<DeferredSubmit> entries, int from, int to, long fence) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkSubmitInfo.Buffer submits = VkSubmitInfo.calloc(to - from, stack);
+            boolean[] barriers = new boolean[to - from];
             for (int i = from; i < to; i++) {
-                DeferredSubmit entry = entries.get(i);
-                VkSubmitInfo submit = submits.get(i - from).sType$Default();
-                submit.pCommandBuffers(stack.pointers(entry.commandBuffer));
+                DeferredSubmit e = entries.get(i);
+                barriers[i - from] = (e.waitSemaphores != null && e.waitSemaphores.length > 0)
+                        || (e.signalSemaphores != null && e.signalSemaphores.length > 0);
+            }
+            int[] groups = planSubmitGroups(barriers);
+            VkSubmitInfo.Buffer submits = VkSubmitInfo.calloc(groups.length, stack);
+            int position = from;
+            for (int i = 0; i < groups.length; i++) {
+                int count = groups[i];
+                DeferredSubmit entry = entries.get(position);
+                VkSubmitInfo submit = submits.get(i).sType$Default();
+                if (count == 1) {
+                    submit.pCommandBuffers(stack.pointers(entry.commandBuffer));
+                } else {
+                    PointerBuffer pointers = stack.mallocPointer(count);
+                    for (int j = 0; j < count; j++) {
+                        pointers.put(entries.get(position + j).commandBuffer);
+                    }
+                    pointers.flip();
+                    submit.pCommandBuffers(pointers);
+                }
                 if (entry.waitSemaphores != null) {
                     submit.waitSemaphoreCount(entry.waitSemaphores.length);
                     submit.pWaitSemaphores(stack.longs(entry.waitSemaphores));
@@ -1379,6 +1416,7 @@ public final class VulkanContext {
                 if (entry.signalSemaphores != null) {
                     submit.pSignalSemaphores(stack.longs(entry.signalSemaphores));
                 }
+                position += count;
             }
             try {
                 VulkanContext.queueSubmitCalls++;
@@ -1386,6 +1424,8 @@ public final class VulkanContext {
                 check(vkQueueSubmit(this.queue, submits, fence), "vkQueueSubmit (batched deferred)");
                 batchedSubmitNanos += System.nanoTime() - batchedSubmitStarted;
                 batchedSubmitCalls++;
+                coalescedCommandBuffers += to - from;
+                savedSubmitInfos += (to - from) - groups.length;
             } catch (RuntimeException | LinkageError submitError) {
                 return submitError;
             }
@@ -1482,31 +1522,12 @@ public final class VulkanContext {
         return osName == null || !osName.toLowerCase(java.util.Locale.ROOT).contains("win");
     }
 
-    /**
-     * Three NVIDIA/Windows reports showed device loss with asyncPresent=true, including
-     * RC5 when Prism retained the old -Dceltium.vulkan.asyncPresent=true argument.
-     * Require a SEPARATE, explicitly named unsafe opt-in on Windows so stale
-     * launcher arguments cannot defeat the safe default.
-     */
-    static boolean asyncPresentEnabledForOs(String os, boolean requested, boolean unsafeWindowsOverride) {
-        return requested && (asyncPresentDefaultForOs(os) || unsafeWindowsOverride);
-    }
+    // Windows defaults off, but an explicit opt-in must always be respected.
+    // Async-present A/B is intentional for external testers, not a stale flag.
+    public static final boolean ASYNC_PRESENT = Boolean.parseBoolean(
+            System.getProperty("celtium.vulkan.asyncPresent",
+                    Boolean.toString(asyncPresentDefaultForOs(System.getProperty("os.name", "")))));
 
-    private static boolean configureAsyncPresent() {
-        String os = System.getProperty("os.name", "");
-        boolean requested = Boolean.parseBoolean(System.getProperty(
-                "celtium.vulkan.asyncPresent", Boolean.toString(asyncPresentDefaultForOs(os))));
-        boolean unsafe = Boolean.getBoolean("celtium.vulkan.unsafeWindowsAsyncPresent");
-        boolean enabled = asyncPresentEnabledForOs(os, requested, unsafe);
-        System.out.println("[Celtium] CELTIUM_ASYNC_PRESENT_CONFIG os=" + os
-                + " requested=" + requested + " unsafeWindowsOverride=" + unsafe
-                + " enabled=" + enabled + (requested && !enabled
-                ? " (ignored stale asyncPresent=true; set unsafeWindowsAsyncPresent=true for explicit driver A/B)"
-                : ""));
-        return enabled;
-    }
-
-    public static final boolean ASYNC_PRESENT = configureAsyncPresent();
     private java.util.concurrent.ExecutorService presenter;
     private java.util.concurrent.Future<?> presenterJob;
     private SharedBatch presenterBatch;

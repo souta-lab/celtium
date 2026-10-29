@@ -4040,6 +4040,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             }
             boolean buffers = "glDeleteBuffers".equals(fn.name);
+            boolean framebuffers = "glDeleteFramebuffers".equals(fn.name);
             for (int i = 0; i < count; i++) {
                 int name = memGetInt(names + (long) i * 4L);
                 this.liveNames.remove(name);
@@ -4048,6 +4049,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 if (buffers) {
                     forgetBuffer(name);
+                }
+                if (framebuffers) {
+                    forgetFramebuffer(name);
                 }
             }
             return;
@@ -4636,10 +4640,32 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.Map<Integer, Integer> framebufferColorTextures =
             new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
 
+    /** Reverse lookup for texture sampling: avoid a scan through every Mod FBO on each draw. */
+    private final java.util.Map<Integer, Integer> colorTextureFramebuffers =
+            new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
+
+    /** OpenGL texture 0 detaches GL_COLOR_ATTACHMENT0, never leaves its previous image alive. */
+    static void updateColorAttachment(java.util.Map<Integer, Integer> forward,
+            java.util.Map<Integer, Integer> reverse, int framebuffer, int texture) {
+        if (framebuffer == 0) return;
+        Integer previous = forward.remove(Integer.valueOf(framebuffer));
+        if (previous != null) reverse.remove(previous, Integer.valueOf(framebuffer));
+        if (texture != 0) {
+            forward.put(Integer.valueOf(framebuffer), Integer.valueOf(texture));
+            reverse.put(Integer.valueOf(texture), Integer.valueOf(framebuffer));
+        }
+    }
+
+    private void forgetFramebuffer(int name) {
+        updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, name, 0);
+        if (this.drawFbo == name) this.drawFbo = 0;
+        if (this.readFbo == name) this.readFbo = 0;
+    }
+
     /** The attachment record {@code glFramebufferTexture2D} writes and the backend reads. */
     private void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
         int framebuffer = target == 0x8CA9 ? this.readFbo : this.drawFbo;
-        if (framebuffer == 0 || texture == 0 || level != 0) {
+        if (framebuffer == 0 || level != 0) {
             return;
         }
         // Only the colour attachment: depth and stencil attachments are not sampled as colour, and GL_COLOR_ATTACHMENT0
@@ -4647,7 +4673,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if ((attachment & 0xFFFF) != 0x8CE0) {
             return;
         }
-        this.framebufferColorTextures.put(Integer.valueOf(framebuffer), Integer.valueOf(texture));
+        updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, framebuffer, texture);
+        if (texture == 0) return;
         if (framebufferAttachmentLogs < 8) {
             framebufferAttachmentLogs++;
             System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " colorTexture=" + texture
@@ -4685,8 +4712,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glTextureName == 0) {
             return 0;
         }
+        Integer cached = stub.colorTextureFramebuffers.get(Integer.valueOf(glTextureName));
+        if (cached != null && Integer.valueOf(glTextureName).equals(
+                stub.framebufferColorTextures.get(cached))) return cached.intValue();
+        stub.colorTextureFramebuffers.remove(Integer.valueOf(glTextureName));
         for (java.util.Map.Entry<Integer, Integer> entry : stub.framebufferColorTextures.entrySet()) {
             if (entry.getValue().intValue() == glTextureName) {
+                stub.colorTextureFramebuffers.put(Integer.valueOf(glTextureName), entry.getKey());
                 return entry.getKey().intValue();
             }
         }

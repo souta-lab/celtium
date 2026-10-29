@@ -36,12 +36,13 @@ class PresenterFatalResultTest {
         assertFalse(VulkanImmediateTexturePipeline.descriptorResultIsDeviceLost(VK_ERROR_OUT_OF_DEVICE_MEMORY));
     }
 
-    @Test void stalePrismAsyncFlagCannotReenableWindowsPresenter() {
-        assertFalse(VulkanContext.asyncPresentEnabledForOs("Windows 11", true, false));
-        assertFalse(VulkanContext.asyncPresentEnabledForOs("Windows 11", false, true));
-        assertTrue(VulkanContext.asyncPresentEnabledForOs("Windows 11", true, true));
-        assertTrue(VulkanContext.asyncPresentEnabledForOs("Linux", true, false));
-        assertFalse(VulkanContext.asyncPresentEnabledForOs("Linux", false, true));
+    @Test void semaphoreBoundariesPreserveOrderWhilePlainBuffersCoalesce() {
+        assertArrayEquals(new int[]{128}, VulkanContext.planSubmitGroups(new boolean[128]));
+        assertArrayEquals(new int[]{1, 1, 1},
+                VulkanContext.planSubmitGroups(new boolean[]{true, true, true}));
+        assertArrayEquals(new int[]{2, 1, 3, 1, 1},
+                VulkanContext.planSubmitGroups(new boolean[]{false, false, true, false, false, false, true, false}));
+        assertArrayEquals(new int[0], VulkanContext.planSubmitGroups(new boolean[0]));
     }
 
     @Test void recoverableSwapchainResultsDoNotAbortDevice() {
