@@ -3430,6 +3430,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** CPU time of the same handoffs, so wall minus CPU says how much of it is blocking in a native call. */
     int frameDrawn;
     private int whiteTextureGlId;
+    private int blackTextureGlId;
+    private int blackTextureSubstitutions;
     private int immediatePresentedFrames;
     private int immediateTextureInvalidations;
     private int directMirrorRefreshes;
@@ -7068,6 +7070,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 compareMirroredAndLiveMatrices();
             }
             int boundTexture = this.immediateState.boundTextureName();
+            if (boundTexture != 0 && this.textureRegistry != null && this.textureRegistry.get(boundTexture) == null) {
+                // GL samples a never-allocated texture as black; draw it with a 1x1 black mirror instead of refusing the
+                // batch. Substituted here, before the group is opened, so the group's key records the image it will
+                // really sample. Measured: the loading screen's background quad and one composite drew texture 502, a
+                // name the stub never saw allocated, and both were refused for it.
+                int width = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1000);
+                int height = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1001);
+                if (width <= 0 && height <= 0) {
+                    this.blackTextureSubstitutions++;
+                    boundTexture = blackTextureId();
+                    if (this.blackTextureSubstitutions == 1) {
+                        System.out.println("[Celtium] CELTIUM_INCOMPLETE_TEXTURE_BLACK format=" + formatId
+                                + " (a bound texture with no recorded extent now samples black, as GL does)");
+                    }
+                }
+            }
             this.currentImmediateTexture = boundTexture;
             if (boundTexture != 0 && VulkanTextureFault.shouldFail("immediate")) {
                 this.textureUploadFailures++;
@@ -10032,6 +10050,26 @@ this.frameBufferOpen = false;
             }
         }
         return this.whiteTextureGlId;
+    }
+
+    /**
+     * {@return the GL name of a 1x1 black texture}, created once.
+     * <p>
+     * GL samples an incomplete texture as black. A draw that binds a name which was never allocated therefore has a
+     * faithful result without any upload, and dropping the batch (the previous behaviour) loses the picture instead of
+     * matching it: measured as the loading screen's background quad sampling texture 502, a name the stub never saw
+     * allocated, plus the one COMPOSITE_REFUSED line for the same texture.
+     */
+    int blackTextureId() {
+        if (this.blackTextureGlId == 0) {
+            if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                ByteBuffer pixel = stack.malloc(4);
+                pixel.putInt(0, 0xFF000000);
+                this.blackTextureGlId = this.textureRegistry.createTexture2d(1, 1, true, pixel);
+            }
+        }
+        return this.blackTextureGlId;
     }
 
     /** Records the exception with its stack, so a failure identifies its own origin instead of being guessed at. */

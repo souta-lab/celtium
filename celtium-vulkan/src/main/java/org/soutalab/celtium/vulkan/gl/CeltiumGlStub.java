@@ -1000,6 +1000,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Per-draw bases of the split arrays, already advanced by {@code first} and validated readable. */
     private long texColorRepackTexBase, texColorRepackColorBase;
     private boolean drawClientMemory, texColorRepackArmed;
+    private int texColorRepackSourceStride = 48;
     private int texColorRepacks, texColorRepackDumps;
 
     /** The installed stub - one per process; GL capabilities are process-global so this is a singleton. */
@@ -6453,7 +6454,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (reason == null) {
             int stride = this.vertexPointerStride;
             address = (clientMemory ? offset : memAddress(storage, 0) + offset) + (long) first * stride;
-            int decodedStride = this.vertexPointerStride == 48 && formatId == FORMAT_POSITION_TEX_COLOR ? 24
+            int decodedStride = formatId == FORMAT_POSITION_TEX_COLOR && this.texColorRepackArmed ? 24
                     : this.vertexPointerStride == 32 && formatId == 9 ? 24
                     : this.vertexPointerStride == 32 && formatId == 8 ? 28 : this.vertexPointerStride;
             if (compile) {
@@ -6751,8 +6752,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             id = FORMAT_POSITION_TEX_NORMAL; // legacy interleaved UV12, byte normal24; repacked before submission
         } else if (stride == 32 && otherArrays == 7) {
             id = 8; // legacy interleaved UV12, colour20, byte normal24; omit trailing padding
-        } else if (stride == 48 && otherArrays == 7
-                && celtium$splitArraysValid(count, first, clientMemory, storageBase, storageCapacity, refusalOut)) {
+        } else if (otherArrays == 7
+                && celtium$splitArraysValid(stride, count, first, clientMemory, storageBase, storageCapacity,
+                        refusalOut)) {
             // Immersive Railroading's item models: position, texcoord, float4 colour and a normal in one 48-byte
             // vertex, drawn from separate client pointers. The normal is not drawn and the three arrays this decoder
             // can read are repacked into POSITION_TEX_COLOR; the refusal this replaces fired eight times per run.
@@ -6870,8 +6872,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * copy through a path without that validation copied from address zero and took the JVM down with SIGSEGV. The
      * acceptance of the layout and the validity of its pointers are the same decision.
      */
-    private boolean celtium$splitArraysValid(int count, int first, boolean clientMemory, long storageBase,
-            int storageCapacity, String[] refusalOut) {
+    private boolean celtium$splitArraysValid(int sourceStride, int count, int first, boolean clientMemory,
+            long storageBase, int storageCapacity, String[] refusalOut) {
         if (!celtium$texColorPointersKnown()) {
             return false;
         }
@@ -6919,6 +6921,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         this.texColorRepackTexBase = texFrom;
         this.texColorRepackColorBase = colorFrom;
+        this.texColorRepackSourceStride = sourceStride;
         this.texColorRepackArmed = true;
         return true;
     }
@@ -6933,9 +6936,8 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Takes the repack for the stride-48 split layout, and the ordinary copy for every other layout. */
     private ByteBuffer celtium$copyClientVerticesForDraw(long address, int count, int stride, int format) {
-        if (stride == 48 && format == FORMAT_POSITION_TEX_COLOR && this.texColorRepackArmed
-                && celtium$texColorPointersKnown()) {
-            return celtium$repackPaddedTexColor(address, count);
+        if (format == FORMAT_POSITION_TEX_COLOR && this.texColorRepackArmed) {
+            return celtium$repackPaddedTexColor(address, this.texColorRepackSourceStride, count);
         }
         return copyClientVertices(address, count, stride, format);
     }
@@ -6944,7 +6946,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Builds POSITION_TEX_COLOR vertices (position, float2 texture, 4 unsigned-byte colour) from the split client arrays
      * of a stride-48 draw. The bases were advanced by {@code first} and their ranges validated by the caller.
      */
-    private ByteBuffer celtium$repackPaddedTexColor(long vertexAddress, int count) {
+    private ByteBuffer celtium$repackPaddedTexColor(long vertexAddress, int sourceStride, int count) {
         int texStride = this.texCoordPointerStride > 0 ? this.texCoordPointerStride : 8;
         boolean floatColor = this.colorPointerType == GL_FLOAT;
         int colorStride = this.colorPointerStride > 0 ? this.colorPointerStride : (floatColor ? 16 : 4);
@@ -6952,7 +6954,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long to = MemoryUtil.memAddress(out);
         for (int i = 0; i < count; i++) {
             long target = to + (long) i * 24;
-            MemoryUtil.memCopy(vertexAddress + (long) i * 48, target, 12);
+            MemoryUtil.memCopy(vertexAddress + (long) i * sourceStride, target, 12);
             MemoryUtil.memCopy(this.texColorRepackTexBase + (long) i * texStride, target + 12, 8);
             long color = this.texColorRepackColorBase + (long) i * colorStride;
             if (floatColor) {
@@ -6968,7 +6970,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.texColorRepacks++;
         if (this.texColorRepackDumps < 2) {
             this.texColorRepackDumps++;
-            System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY_REPACK layout=pos3f+tex2f+col4 fromStride=48 toStride=24"
+            System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY_REPACK layout=pos3f+tex2f+col4 fromStride="
+                    + sourceStride + " toStride=24"
                     + " vertices=" + count + " colorType=0x" + Integer.toHexString(this.colorPointerType)
                     + " texCoordType=0x" + Integer.toHexString(this.texCoordPointerType));
         }
