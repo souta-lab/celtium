@@ -88,16 +88,20 @@ final class ModelReplay {
         java.util.Map<Integer, VulkanDynamicMesh> meshes = b.modelGeometry.modelMeshes();
         VulkanDynamicMesh mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
         if ((mesh == null || mesh.isEmpty()) && b.context != null
-                && b.modelMeshBuiltCaptureVersion != VulkanModelQuadCapture.captureVersion()
-                && VulkanModelQuadCapture.quadsForList(listId) > 0) {
+                && VulkanModelQuadCapture.quadsForList(listId) > 0
+                && (b.modelMeshBuiltCaptureVersion != VulkanModelQuadCapture.captureVersion()
+                    || b.modelGeometry.requestMissingCapturedListRebuild(
+                            listId, VulkanModelQuadCapture.quadsForList(listId),
+                            VulkanModelQuadCapture.captureVersion()))) {
             // The table is built at the frame's first terrain pass, and a model's own replay can come before the
             // next one: a list compiled in this frame is drawn for the first time in this frame, so the measured
             // shape was `CELTIUM_MODEL_MISSING` for every list's first replay while every later replay drew (leg
             // gv-cohort-dl11ent: 8 missing against 38538 draws). The geometry is already captured, so the build is
             // asked for it here - the same call the pass makes, which reuses every mesh whose generation has not
             // moved - and the lookup is retried once. A list nobody captured keeps the old path.
-            // Once per new capture at most: a scene that compiles many lists at once would otherwise rebuild the
-            // table once per new list, and the first rebuild already finds them all.
+            // Normally once per capture version. If a captured list is absent from
+            // the GPU table after a world switch, perform one bounded reconciliation
+            // for that list and version rather than silently losing its first draws.
             b.celtium$buildModelMeshes();
             meshes = b.modelGeometry.modelMeshes();
             mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
@@ -109,7 +113,11 @@ final class ModelReplay {
             b.modelGeometry.noteMissingMesh();
             if (b.modelGeometry.shouldLogMissingMesh(listId)) {
                 System.out.println("[Celtium] CELTIUM_MODEL_MISSING list=" + listId + " texture=" + boundTextureId
-                        + " (no captured mesh for this display list; the GL body runs and there is no context)");
+                        + " capturedQuads=" + VulkanModelQuadCapture.quadsForList(listId)
+                        + " captureVersion=" + VulkanModelQuadCapture.captureVersion()
+                        + " cachedVersion=" + b.modelMeshBuiltCaptureVersion
+                        + " meshBuildFailure=" + b.modelGeometry.modelMeshFailure()
+                        + " (no GPU mesh available; GL-less cannot replay this list)");
             }
             return false;
         }
