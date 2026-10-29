@@ -494,6 +494,15 @@ passSplit: frame 6.8 / world 6.8（terrain 4.5 / flush 3.3）/ hand 0.1 / clouds
 `debugFrameReports`（レポート回数）で割っているため**フレーム毎コストとして読めない**。判定には `passSplit` の
 `clock=cpu` 行を使うこと（この行は 512 フレームの p50/p95/worst を出す）。
 
+**フレーム予算の内訳（2026-10-29・計器追加・既定off）**: `passSplit` はゲーム側のpassに分けるが、**自前のrecord /
+driver submit / GPU待ち**のどこで詰まるかは分けない。Windows報告（RC5ログ `mclo.gs/Yv63NpH`）はこの区別が無いため
+「10 FPS がCPUかGPUか」を言えなかった。`-Dceltium.vulkan.frameBudget=true` で `CELTIUM_FRAME_BUDGET` を
+1行/`-Dceltium.vulkan.frameBudgetFrames`（既定60）フレーム出し、world teardown で `CELTIUM_FRAME_BUDGET_SUMMARY`
+を出す（行数は `-Dceltium.vulkan.frameBudgetLines`、既定120）。内訳は
+`frame/record/batch/submit/fence/slot/present/gpu/other` の ms（p50/p95/worst）と `gpuShare`。
+`other` は**下限**（`batch` がflushを含むと `submit` と二重計上するぶん小さく出る）、`gpu` はこのフラグがtimestampを
+開いたwindow passのみ。**1 runの値は性能の受入主張ではない**。意味の正典は `FrameBudgetTimings` のjavadoc。
+
 **fps300 KPI: ワールド中のJFR（2026-10-23・実測）**
 
 `-Dceltium.validation.holdUntilTick=1200 -Dceltium.vulkan.paceToRefresh=false`、

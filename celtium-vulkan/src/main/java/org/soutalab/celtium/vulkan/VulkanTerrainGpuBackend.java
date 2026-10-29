@@ -6064,6 +6064,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             gllessFrame.setPresentLag(this.presentLagMax, this.presentLagOne, this.presentLagMore);
         }
         this.frameId++;
+        // The frame that just ended is priced here, at the one place every per-frame counter is reset
+        // (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
+        FrameBudgetTimings.frameBoundary();
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;
         this.immediateOffersThisFrame = 0;
         // Third trigger for the counter summary: a fixture that exits without tearing its world down never reaches the
@@ -6534,6 +6537,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         } finally {
             long submitNanos = System.nanoTime() - submitStart;
             this.immediateSubmitNanos += submitNanos;
+            FrameBudgetTimings.addBatch(submitNanos);
             if (submitNanos > 200_000) {
                 this.immediateSubmitTailCalls++;
                 this.immediateStatistics.addImmediateSubmitTailNanos(submitNanos);
@@ -8784,6 +8788,7 @@ this.frameBufferOpen = false;
             celtium$finishFrameBuffer();
             long finishNanos = System.nanoTime() - finishStart;
             this.boundarySubmitNanos += finishNanos;
+            FrameBudgetTimings.addSubmit(finishNanos);
             this.boundaryFrames++;
             if (this.boundaryFrames % 600 == 0) {
                 System.out.println("[Celtium] CELTIUM_BOUNDARY_SPLIT frames=" + this.boundaryFrames
@@ -9264,6 +9269,7 @@ this.frameBufferOpen = false;
                             recordImmediateOnlyPass(stack, terrain);
                             long windowRecordTook = System.nanoTime() - windowRecordStarted;
                             this.windowRecordNanos += windowRecordTook;
+                            FrameBudgetTimings.addRecord(windowRecordTook);
                             this.windowRecords++;
                             int arm = this.abBaselineArm ? 1 : 0;
                             this.windowRecordNanosByArm[arm] += windowRecordTook;
@@ -10493,8 +10499,11 @@ this.frameBufferOpen = false;
                 record(probeLine);
             }
         }
+        // The window timestamps feed the GPU pass report and, through windowGpuMainNanos, the frame budget's gpu
+        // column: -Dceltium.vulkan.frameBudget=true asks for that column, so it opens this path too. The cost (two
+        // timestamp writes per window and one readback per frame) is paid only by a run that asked for a measurement.
         boolean timeImmediatePass = this.timestampsUsable && this.timestampPool != 0L
-                && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled();
+                && celtium$windowTimestampsActive();
         int windowSlot = timeImmediatePass && this.windowTimestampCount < WINDOW_SLOTS
                 ? WINDOW_SLOT_BASE + this.windowTimestampCount : -1;
         if (windowSlot >= 0) {
@@ -10554,12 +10563,27 @@ this.frameBufferOpen = false;
 
     /** Adds one frame fence wait's duration to the totals, so the frame's own serialisation is a number. */
     private void celtium$recordFrameWait(long startedNanos) {
-        long millis = (System.nanoTime() - startedNanos) / 1_000_000L;
+        long waitedNanos = System.nanoTime() - startedNanos;
+        long millis = waitedNanos / 1_000_000L;
+        FrameBudgetTimings.addFenceWait(waitedNanos);
         this.submissionStatistics.addFrameFenceWaitMillis(millis);
         this.submissionStatistics.noteFrameFenceWaitCount();
         if (millis > this.submissionStatistics.frameFenceWaitWorstMillis()) {
             this.submissionStatistics.setFrameFenceWaitWorstMillis(millis);
         }
+    }
+
+    /**
+     * Whether the window timestamp queries are being written this run.
+     * <p>
+     * Two instruments read the same measurement: the GPU pass report ({@code -Dceltium.gpuPassTimings=true}) and the
+     * frame budget's {@code gpu} column ({@code -Dceltium.vulkan.frameBudget=true}). The write side and the query reset
+     * must ask the same question - the reset range only covers those slots while this is true - because a window write
+     * without its reset is VUID-vkCmdWriteTimestamp-00830, which the frame budget's first positive-control leg did
+     * reproduce (twenty errors, and a validation verdict of dirty).
+     */
+    private static boolean celtium$windowTimestampsActive() {
+        return org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() || FrameBudgetTimings.enabled();
     }
 
     /**
@@ -11154,6 +11178,7 @@ this.frameBufferOpen = false;
                 }
                 this.immediatePassGpuNanos = main + off;
                 this.windowGpuMainNanos = main;
+                FrameBudgetTimings.setGpuPass(main + off);
                 this.windowGpuOffNanos = off;
                 this.windowGpuMaxNanos = max;
                 this.windowGpuCount = counted;
@@ -11461,6 +11486,9 @@ this.frameBufferOpen = false;
         // (the fixture leaves the world before exiting), so this makes the summary reachable without depending on the
         // overlay, and prints once so a leg that tears down twice does not repeat it.
         celtium$printVerificationSummary("world teardown", false);
+        // The per-frame split's session summary: printed here rather than at device teardown because the log is
+        // already closed by then, and this is the last point a leg is guaranteed to reach while it is alive.
+        FrameBudgetTimings.printSummary();
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
         // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
         // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a
@@ -14117,6 +14145,7 @@ this.frameBufferOpen = false;
             // wall-vs-CPU gap cannot attribute them without a dedicated counter.
             long spentNanos = System.nanoTime() - presentStartedNanos;
             this.swapPointNanos += spentNanos;
+            FrameBudgetTimings.addPresent(spentNanos);
             this.swapPointCalls++;
             if (spentNanos > this.swapPointWorstNanos) {
                 this.swapPointWorstNanos = spentNanos;
@@ -15842,6 +15871,7 @@ this.frameBufferOpen = false;
             }
             long waitNanos = System.nanoTime() - waitStart;
             this.slotWaitNanos += waitNanos;
+            FrameBudgetTimings.addSlotWait(waitNanos);
             if (waitNanos > 50_000_000L) {
                 System.out.println("[Celtium] CELTIUM_SLOT_WAIT millis=" + (waitNanos / 1_000_000L)
                         + " slot=" + this.frameSlot + " frame=" + this.frameId);
@@ -15881,11 +15911,13 @@ this.frameBufferOpen = false;
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
-                // Only the terrain pairs unless the GPU report collects: the pool grew to TIMESTAMP_SLOTS for the report's
-                // window and mark slots, and resetting all of them at every command buffer was a per-frame cost the
-                // shipping path paid for a report it does not run (measured: 1.032x slower against the build before).
+                // Only the terrain pairs unless a report collects: the pool grew to TIMESTAMP_SLOTS for the window and
+                // mark slots, and resetting all of them at every command buffer was a per-frame cost the shipping path
+                // paid for a report it does not run (measured: 1.032x slower against the build before). The range must
+                // follow the write path's own predicate - a window write without its reset is precisely
+                // VUID-vkCmdWriteTimestamp-00830, which the frame budget's first leg reproduced.
                 vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0,
-                        org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() ? TIMESTAMP_SLOTS : WINDOW_SLOT_BASE * 2);
+                        celtium$windowTimestampsActive() ? TIMESTAMP_SLOTS : WINDOW_SLOT_BASE * 2);
                 this.windowTimestampCount = 0;
                 this.gpuMarkCount = 0;
                 if (this.timestampsUsable && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
