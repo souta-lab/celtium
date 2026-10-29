@@ -10967,6 +10967,23 @@ this.frameBufferOpen = false;
      * ordering and the pop-in cost are measured before the default changes.
      */
     private static final int UPLOAD_BUDGET = Integer.getInteger("celtium.vulkan.uploadBudget", 0).intValue();
+    /**
+     * Frames after a world is installed during which the budget does not apply.
+     * <p>
+     * The startup burst is the one that must not be throttled: the world's first seconds build hundreds of sections, and
+     * a per-frame cap made the fixture's capture deadline find zero of its sixty-four pinned sections (measured with
+     * budget 8). Past the warm-up only the steady-state trickle is budgeted, which is where the p95 spikes are.
+     */
+    private static final int UPLOAD_BUDGET_WARMUP =
+            Integer.getInteger("celtium.vulkan.uploadBudgetWarmupFrames", 240).intValue();
+    /**
+     * The queue size above which an arriving batch is budgeted instead of uploaded at once.
+     * <p>
+     * A plain per-frame cap throttled the startup build and the fixture's capture could not list its pinned sections
+     * (measured twice: listed 0 of 64 with 28-35 pending at the deadline). The burst is what needs the cap, so small
+     * arrivals go straight through and only a queue over this threshold is spread over frames.
+     */
+    private static final int UPLOAD_BURST = Integer.getInteger("celtium.vulkan.uploadBurstThreshold", 32).intValue();
     private final java.util.ArrayDeque<DeferredUpload> deferredUploads = new java.util.ArrayDeque<>();
     private long deferredUploadsQueued;
     private long deferredUploadsDropped;
@@ -11030,8 +11047,12 @@ this.frameBufferOpen = false;
 
     private void celtium$uploadMeshesPass(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
             Runnable graphUpdateTrigger) {
-        if (UPLOAD_BUDGET > 0) {
+        // Only a burst is budgeted. A batch smaller than the threshold - the steady-state trickle, and the batch the
+        // fixture's capture deadline waits on - goes straight through, so the deadline never sees a queue it must wait
+        // out. A larger arrival is spread over the following frames by the drain at the head of setupTerrain.
+        if (UPLOAD_BUDGET > 0 && results.size() > UPLOAD_BURST) {
             // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
+            // Before the warm-up the outputs go straight through - the startup build is what a capture deadline needs.
             Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = new Reference2ReferenceOpenHashMap<>();
             for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
                 ChunkTaskOutput output = holder.output();
