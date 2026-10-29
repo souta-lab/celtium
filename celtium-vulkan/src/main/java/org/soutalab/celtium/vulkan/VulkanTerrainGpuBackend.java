@@ -5441,6 +5441,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** {@return the identity the game's own framebuffer field names}, or {@code MIN_VALUE} when none was reported. */
+    /**
+     * {@return whether a draw framebuffer is the window's own image}.
+     * <p>
+     * The projection guard refuses an identity projection because the world scene would be drawn with the wrong
+     * transform - measured as a sky plane clipped to slivers of pure blue. A mod's off-target sprite capture is the other
+     * case: it binds a 128x128 framebuffer, draws with whatever projection the game left (identity at mod-reload time)
+     * and expects clip space. The guard has to tell the two apart by target, not by refusing both.
+     */
+    public boolean celtium$isMainDrawTarget(int framebufferObject) {
+        if (framebufferObject == 0) {
+            return true;
+        }
+        long identity = this.targetRegistry.identityForFramebufferName(framebufferObject);
+        return identity == this.targetRegistry.mainIdentity() || identity == this.gameFramebufferIdentity;
+    }
+
     public long celtium$gameFramebufferIdentity() {
         return this.gameFramebufferIdentity;
     }

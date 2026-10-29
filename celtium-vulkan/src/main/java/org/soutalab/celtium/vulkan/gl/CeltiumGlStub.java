@@ -999,6 +999,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile long normalPointerOffset;
     /** Per-draw bases of the split arrays, already advanced by {@code first} and validated readable. */
     private long texColorRepackTexBase, texColorRepackColorBase;
+    private boolean drawClientMemory, texColorRepackArmed;
     private int texColorRepacks, texColorRepackDumps;
 
     /** The installed stub - one per process; GL capabilities are process-global so this is a singleton. */
@@ -6364,6 +6365,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         // class adds is the guard below, because a stale pointer would fault the process and a blank menu is the
         // lesser failure.
         boolean clientMemory = buffer == 0;
+        // The split-array repack reads client pointers, so the layout may only be accepted when the vertices are client
+        // memory: a VBO-bound draw carries offsets, and repacking those addresses is a segfault (measured: SIGSEGV in
+        // repackPaddedTexColor on the first run where the projection guard stopped refusing these draws).
+        this.drawClientMemory = clientMemory;
+        this.texColorRepackArmed = false;
         long offset = this.vertexPointerOffset;
         long end = 0L;
         long asked = 0L;
@@ -6386,7 +6392,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                     + " is not the float3 position every layout this path decodes uses";
         } else {
             String[] layoutRefusal = new String[1];
-            formatId = celtium$drawArrayFormat(this.vertexPointerStride, celtium$otherArrayMask(), layoutRefusal);
+            long storageBase = (clientMemory || storage == null) ? 0L : memAddress(storage, 0);
+            int storageCapacity = storage == null ? 0 : storage.capacity();
+            formatId = celtium$drawArrayFormat(this.vertexPointerStride, celtium$otherArrayMask(), count, first,
+                    clientMemory, storageBase, storageCapacity, layoutRefusal);
             reason = layoutRefusal[0];
             if (reason == null && clientMemory && offset == 0L) {
                 reason = "the client vertex pointer is null, so there is no vertex array to read";
@@ -6435,28 +6444,6 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (end > storage.capacity()) {
                     reason = "the draw reads to byte " + end + " of a " + storage.capacity() + "-byte buffer";
                 }
-            }
-        }
-        if (reason == null && clientMemory && this.vertexPointerStride == 48
-                && formatId == FORMAT_POSITION_TEX_COLOR) {
-            // The repack reads two more client arrays than the vertex one the range above covers, so their ranges are
-            // guarded the same way: a stale split pointer would fault the process rather than refuse the draw.
-            int texStride = this.texCoordPointerStride > 0 ? this.texCoordPointerStride : 8;
-            boolean floatColor = this.colorPointerType == GL_FLOAT;
-            int colorStride = this.colorPointerStride > 0 ? this.colorPointerStride : (floatColor ? 16 : 4);
-            long texFrom = this.texCoordPointerOffset + (long) first * texStride;
-            long colorFrom = this.colorPointerOffset + (long) first * colorStride;
-            long texBytes = (long) (count - 1) * texStride + 8L;
-            long colorBytes = (long) (count - 1) * colorStride + (floatColor ? 16L : 4L);
-            if (!celtium$readableMapping(texFrom, texBytes)) {
-                reason = "the split texture array at 0x" + Long.toHexString(this.texCoordPointerOffset)
-                        + " is not readable for " + count + " vertices";
-            } else if (!celtium$readableMapping(colorFrom, colorBytes)) {
-                reason = "the split colour array at 0x" + Long.toHexString(this.colorPointerOffset)
-                        + " is not readable for " + count + " vertices";
-            } else {
-                this.texColorRepackTexBase = texFrom;
-                this.texColorRepackColorBase = colorFrom;
             }
         }
         if (reason == null) {
@@ -6517,7 +6504,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 reason = "no terrain backend is installed";
             }
             if (backend != null && reason == null) {
-                reason = celtium$projectionRefusal(backend);
+                reason = celtium$projectionRefusal(backend, this.drawFbo);
             }
             if (backend != null && reason == null) {
                 // The two conditions that used to refuse a draw here are gone, each because the capability it named
@@ -6746,7 +6733,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Anything else is refused by name with the tuple and the enabled arrays on the line, because a wrong layout is a
      * wrong picture with nothing in the frame to say so - the same rule the position-only case has always followed.
      */
-    private int celtium$drawArrayFormat(int stride, int otherArrays, String[] refusalOut) {
+    private int celtium$drawArrayFormat(int stride, int otherArrays, int count, int first, boolean clientMemory,
+            long storageBase, int storageCapacity, String[] refusalOut) {
         int id = 0;
         String what = null;
         if (stride == POSITION_STRIDE && otherArrays == 0) {
@@ -6763,7 +6751,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             id = FORMAT_POSITION_TEX_NORMAL; // legacy interleaved UV12, byte normal24; repacked before submission
         } else if (stride == 32 && otherArrays == 7) {
             id = 8; // legacy interleaved UV12, colour20, byte normal24; omit trailing padding
-        } else if (stride == 48 && otherArrays == 7 && celtium$texColorPointersKnown()) {
+        } else if (stride == 48 && otherArrays == 7
+                && celtium$splitArraysValid(count, first, clientMemory, storageBase, storageCapacity, refusalOut)) {
             // Immersive Railroading's item models: position, texcoord, float4 colour and a normal in one 48-byte
             // vertex, drawn from separate client pointers. The normal is not drawn and the three arrays this decoder
             // can read are repacked into POSITION_TEX_COLOR; the refusal this replaces fired eight times per run.
@@ -6874,6 +6863,66 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Takes ownership at compile/submit time; no replay may read the caller's reused array. */
+    /**
+     * Validates the split arrays for a stride-48 draw and arms the repack with their per-draw bases.
+     * <p>
+     * Asked at the format decision, not at the copy: the first version validated later, and the draw that reached the
+     * copy through a path without that validation copied from address zero and took the JVM down with SIGSEGV. The
+     * acceptance of the layout and the validity of its pointers are the same decision.
+     */
+    private boolean celtium$splitArraysValid(int count, int first, boolean clientMemory, long storageBase,
+            int storageCapacity, String[] refusalOut) {
+        if (!celtium$texColorPointersKnown()) {
+            return false;
+        }
+        int texStride = this.texCoordPointerStride > 0 ? this.texCoordPointerStride : 8;
+        boolean floatColor = this.colorPointerType == GL_FLOAT;
+        int colorStride = this.colorPointerStride > 0 ? this.colorPointerStride : (floatColor ? 16 : 4);
+        long texBytes = (long) (count - 1) * texStride + 8L;
+        long colorBytes = (long) (count - 1) * colorStride + (floatColor ? 16L : 4L);
+        long texFrom;
+        long colorFrom;
+        if (clientMemory) {
+            texFrom = this.texCoordPointerOffset + (long) first * texStride;
+            colorFrom = this.colorPointerOffset + (long) first * colorStride;
+            if (!celtium$readableMapping(texFrom, texBytes)) {
+                refusalOut[0] = "the split texture array at 0x" + Long.toHexString(this.texCoordPointerOffset)
+                        + " is not readable for " + count + " vertices";
+                return false;
+            }
+            if (!celtium$readableMapping(colorFrom, colorBytes)) {
+                refusalOut[0] = "the split colour array at 0x" + Long.toHexString(this.colorPointerOffset)
+                        + " is not readable for " + count + " vertices";
+                return false;
+            }
+        } else {
+            // A VBO-bound draw passes offsets into the bound buffer, and the stub owns a mirror of its contents: the
+            // addresses are mirror base + offset. Measured: Immersive Railroading's stride-48 item draws are VBO-backed,
+            // which is why requiring client memory refused them again after the projection guard was relaxed.
+            if (this.texCoordPointerOffset < 0L || this.colorPointerOffset < 0L) {
+                refusalOut[0] = "the split arrays are at negative offsets " + this.texCoordPointerOffset + " and "
+                        + this.colorPointerOffset;
+                return false;
+            }
+            if (this.texCoordPointerOffset + texBytes > storageCapacity) {
+                refusalOut[0] = "the split texture array reads to byte " + (this.texCoordPointerOffset + texBytes)
+                        + " of a " + storageCapacity + "-byte buffer";
+                return false;
+            }
+            if (this.colorPointerOffset + colorBytes > storageCapacity) {
+                refusalOut[0] = "the split colour array reads to byte " + (this.colorPointerOffset + colorBytes)
+                        + " of a " + storageCapacity + "-byte buffer";
+                return false;
+            }
+            texFrom = storageBase + this.texCoordPointerOffset + (long) first * texStride;
+            colorFrom = storageBase + this.colorPointerOffset + (long) first * colorStride;
+        }
+        this.texColorRepackTexBase = texFrom;
+        this.texColorRepackColorBase = colorFrom;
+        this.texColorRepackArmed = true;
+        return true;
+    }
+
     /** Whether the split arrays describe the layout the stride-48 repack can build. */
     private boolean celtium$texColorPointersKnown() {
         boolean colorOk = (this.colorPointerType == GL_FLOAT && this.colorPointerSize == 4)
@@ -6884,7 +6933,8 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Takes the repack for the stride-48 split layout, and the ordinary copy for every other layout. */
     private ByteBuffer celtium$copyClientVerticesForDraw(long address, int count, int stride, int format) {
-        if (stride == 48 && format == FORMAT_POSITION_TEX_COLOR && celtium$texColorPointersKnown()) {
+        if (stride == 48 && format == FORMAT_POSITION_TEX_COLOR && this.texColorRepackArmed
+                && celtium$texColorPointersKnown()) {
             return celtium$repackPaddedTexColor(address, count);
         }
         return copyClientVertices(address, count, stride, format);
@@ -7308,7 +7358,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final boolean MATRIX_TRACE = Boolean.getBoolean("celtium.vulkan.matrixTrace");
     private static int projectionRefusalDumps;
 
-    private static String celtium$projectionRefusal(TerrainGpuBackend backend) {
+    private static String celtium$projectionRefusal(TerrainGpuBackend backend, int drawFramebuffer) {
         if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
             return null;
         }
@@ -7333,27 +7383,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (Math.abs(m00 - 1.0F) < 1.0E-4F && Math.abs(m11 - 1.0F) < 1.0E-4F && Math.abs(m22 - 1.0F) < 1.0E-4F
                 && Math.abs(m23) < 1.0E-4F && Math.abs(m32) < 1.0E-4F && Math.abs(m33 - 1.0F) < 1.0E-4F) {
-            if (MATRIX_TRACE && projectionRefusalDumps < 6) {
-                projectionRefusalDumps++;
-                StringBuilder callers = new StringBuilder();
-                StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-                for (int i = 3; i < Math.min(trace.length, 12); i++) {
-                    String type = trace[i].getClassName();
-                    if (type.startsWith("java.") || type.startsWith("org.lwjgl.") || type.startsWith("org.soutalab.")
-                            || type.startsWith("org.taumc.")) {
-                        continue;
-                    }
-                    if (callers.length() > 0) callers.append(" <- ");
-                    callers.append(type).append('.').append(trace[i].getMethodName());
-                    if (callers.length() > 200) break;
-                }
-                System.out.println("[Celtium] CELTIUM_PROJECTION_REFUSED_TRACE projection=["
-                        + celtium$round3(projection[0]) + "," + celtium$round3(projection[5]) + ","
-                        + celtium$round3(projection[10]) + "," + celtium$round3(projection[15]) + "] callers=["
-                        + callers + "]");
+            // An identity projection is wrong for the window's scene and correct for a mod's off-target sprite capture:
+            // Immersive Railroading draws unit-sized models into a 128x128 framebuffer at mod-reload time, before any
+            // perspective exists, and expects clip space. Measured: eight such draws per run were refused here.
+            if (vulkan.celtium$isMainDrawTarget(drawFramebuffer)) {
+                return "the mirrored projection is the identity at draw time (Kirino's gluPerspective does not reach the"
+                        + " mirror), so this batch would be drawn with the wrong transform";
             }
-            return "the mirrored projection is the identity at draw time (Kirino's gluPerspective does not reach the"
-                    + " mirror), so this batch would be drawn with the wrong transform";
+            return null;
         }
         return null;
     }
