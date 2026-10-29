@@ -65,3 +65,23 @@ Immersive Railroading の `DRAWARRAY_REFUSAL_CONTEXT`（8件/run）は `stride=4
   repack 自体は各配列のポインタから読むため layout 非依存で、色は float/ubyte を判定して変換する。
 - この8件はメニュー/ローディング中の IR 描画で、projection を直すまで描かれない（in-world の同レイアウトは
   正しい projection なら repack 描画される）。GPU 画像での最終確認は projection 修正後に行う。
+
+## 追加: projection mirror の欠落（2026-10-30）
+
+IR の stride-48 拒否は layout から **「the mirrored projection is the identity at draw time」** に移った。
+`-Dceltium.glless.census=true` の matrix native census で原因の呼び出しを特定:
+
+```
+nglMultMatrixf callers=[org.lwjgl.opengl.GL11.glMultMatrixf <- GL11.glMultMatrix
+  <- cam72cam.mod.render.opengl.RenderContext.multMatrix <- RenderContext.apply
+  <- VBO$Binding.<init> <- OBJRender$Binding.<init> <- OBJModel$Binder.bind]
+```
+
+transformer は glMultMatrix を意図的にルートしていなかった（vanilla の camera は Project.gluPerspective 経由で
+GluProjectionMixin が既にミラーしており、二重適用で world が真っ白になった実測がある）。
+→ **mod 起点のみ適用**するルートを追加（呼び出し元の最初の非 JVM/LWJGL/Celtium フレームが net.minecraft* なら skip）。
+commit `d1b30cc06`。
+
+**結果**: 8件の拒否は不変。multMatrix は適用先スタックがガードの読む PROJECTION でないか、IR の projection 設定が
+別の未ルート呼び出し（glLoadMatrix/glFrustum 等）である可能性。次の計器は「適用時の matrix mode と、
+拒否時の projection matrix のダンプ」で、ここから先は推測ではなくその2点で判別する。
