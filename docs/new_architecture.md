@@ -334,6 +334,17 @@ GPUに十分な候補が残った時のみ実行。
 **最終設計原則:** 個別の描画最適化Modの処理を寄せ集めない。**世界の全描画物を登録→変更時だけ構築→共有可視性で棄却→描画条件で分類→最小の転送/コマンドで提出**という一つのエンジンに、最適化の原理を吸収する。最速かどうかは、同一画像・同一環境のCPU/GPU両方のフレーム時間で決着をつける。
 
 
+
+### 決定的測定（2026-10-31、Susy world、rc.14）
+
+`-Dceltium.debug.drawKeyCensus=true` の実測: 1報告期間で **groups=13,440 / distinctKeys=54 / switches=12,839 / largestBucket=2,040**。
+つまり**1groupあたりほぼ毎回keyが変わる**一方、マテリアルは54種しかない（112 groups/frame換算で約120フレーム分）。**opaque groupをmaterial keyで並べ替えるだけで平均run長 ≈249 group**になり、drawを~54回まで畳める計算。スキャフォールド（`sortOrder[segments=0 ordered=0]`）は未実装状態。
+
+実装上の注意:
+- opaque groupのみ並べ替え（blendedは到着順のまま）。深度比較LOWERで同一深度の重なりは順序依存なので、コピー面の重なりで描画差が出る可能性→正典ゲートで判定。
+- 並べ替え後もgroup meshがarena sliceで同一バッファならrun keyが一致し、records indirectで1 draw/runに。array setは不要になる可能性（keyのalpha差が残る場合はarray不要でもrun数は54前後）。
+- 計測再現: `-Dceltium.vulkan.frameStats=true -Dceltium.debug.drawKeyCensus=true`。
+
 ## array-records — bindless即時描画（設計確定 2026-10-31）
 
 **目的**: per-groupのpush/drawを廃し、window内のtextured groupを1-3 drawに畳む（残差の主因である112 groups/frameのper-batchコスト）。
