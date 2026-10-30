@@ -1281,7 +1281,8 @@ public final class VulkanGlTexture {
         synchronized (VulkanGlTexture.class) {
             capturedUploadMisses++;
             if (capturedUploadMissIdsLogged.size() < CAPTURE_LOG_IDS
-                    && capturedUploadMissIdsLogged.add(Integer.valueOf(glTextureId))) {
+                    && capturedUploadMissIdsLogged.add(Integer.valueOf(glTextureId))
+                    && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, level)) {
                 System.out.println("[Celtium] CELTIUM_CAPTURE_MISS glTexture=" + glTextureId + " level=" + level
                         + " misses=" + capturedUploadMisses + " reason=" + reason);
             }

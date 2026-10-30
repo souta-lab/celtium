@@ -109,6 +109,16 @@ public final class VulkanTextureRegistry {
     /** GL names whose publication has been named in the log, so a per-frame publish cannot flood it. */
     private final java.util.Set<Integer> externalLogged = new java.util.HashSet<Integer>();
     private int mirrorCount;
+    private int mirrorDeferredLines;
+
+    /** Bounded deferred-mirror notice: the level is a render target, so an empty mirror is the expected state. */
+    private void noteMirrorDeferred(int glTextureId, int width, int height, String why) {
+        if (this.mirrorDeferredLines < 6) {
+            this.mirrorDeferredLines++;
+            System.out.println("[Celtium] CELTIUM_MIRROR_DEFERRED glTexture=" + glTextureId + " size=" + width + "x"
+                    + height + " (" + why + "; content arrives from the framebuffer that renders into it)");
+        }
+    }
     private int imageUploads;
     /** Transfers the image refused because the content was already there. */
     private int imageUploadsSkipped;
@@ -879,9 +889,16 @@ public final class VulkanTextureRegistry {
             // frame-sized colour textures and the light map's first read arrived exactly this way. Refused and counted:
             // the mirror keeps whatever it had, and the announcement carrying the real pixels fills it as before.
             this.capturesRefusedWithoutGamePixels++;
-            this.rejectPatch("GL-less mirror: the captured surface for GL texture " + glTextureId + " is " + extent[0]
-                    + "x" + extent[1] + " with no game pixels (an allocation with a NULL data pointer) and nothing"
-                    + " announced a write into it; a mirror is not built from it");
+            if (CeltiumGlStub.textureAllocatedWithoutData(glTextureId)
+                    || CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
+                // The render-target idiom: GL reserves the level with NULL data and a framebuffer renders into it. The
+                // content is not late, it never comes through an upload, so this is a deferred fill rather than a miss.
+                this.noteMirrorDeferred(glTextureId, extent[0], extent[1], "level allocated with no data");
+            } else {
+                this.rejectPatch("GL-less mirror: the captured surface for GL texture " + glTextureId + " is " + extent[0]
+                        + "x" + extent[1] + " with no game pixels (an allocation with a NULL data pointer) and nothing"
+                        + " announced a write into it; a mirror is not built from it");
+            }
             return false;
         }
         try {
@@ -2082,8 +2099,10 @@ public final class VulkanTextureRegistry {
             if (width <= 0 || height <= 0) {
                 this.failureCount++;
                 this.lastFailure = "GL texture " + glTextureId + " has no pixels and no recorded size under the GL stub";
-                this.rejectPatch("GL-less mirror: no announced pixels, no captured upload and no recorded size for GL"
-                        + " texture " + glTextureId + "; no mirror can be created");
+                // A name with no extent at all is not a render target the stub can size; the draw path substitutes the
+                // 1x1 black mirror for it (CELTIUM_INCOMPLETE_TEXTURE_BLACK), so nothing is lost here and the notice is
+                // classification, not a refusal.
+                this.noteMirrorDeferred(glTextureId, 0, 0, "no recorded extent");
                 return null;
             }
             VulkanGlTexture empty = VulkanGlTexture.create(this.context, width, height, nearestFilter);
@@ -2092,8 +2111,19 @@ public final class VulkanTextureRegistry {
         celtium$dropMemo();
             this.mirrorCount++;
             celtium$noteMirrorSource(glTextureId, "none", width, height, null);
-            this.rejectPatch("GL-less mirror: GL texture " + glTextureId + " has no announced pixels and no captured"
-                    + " upload; mirror created content-less at " + width + "x" + height);
+            if (CeltiumGlStub.textureAllocatedWithoutData(glTextureId)
+                    || CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
+                // The level was allocated with NULL data, which is how GL reserves a render target: its content arrives
+                // when its framebuffer render is published, so an empty mirror now is the expected state, not a refusal.
+                if (this.mirrorDeferredLines < 4) {
+                    this.mirrorDeferredLines++;
+                    System.out.println("[Celtium] CELTIUM_MIRROR_DEFERRED glTexture=" + glTextureId + " size=" + width
+                            + "x" + height + " (level allocated with no data; filled when its render is published)");
+                }
+            } else {
+                this.rejectPatch("GL-less mirror: GL texture " + glTextureId + " has no announced pixels and no captured"
+                        + " upload; mirror created content-less at " + width + "x" + height);
+            }
             HIT_CALLS++;
             return empty;
         }

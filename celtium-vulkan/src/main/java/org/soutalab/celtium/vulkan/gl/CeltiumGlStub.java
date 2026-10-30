@@ -1490,6 +1490,10 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private long depthCopiesSkipped;
 
+    /** Names allocated with a NULL data pointer (the render-target idiom), for the deferred-mirror classification. */
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet nullAllocatedNames =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+
     /** GL_DEPTH_COMPONENT, DEPTH_COMPONENT16/24/32, DEPTH_COMPONENT32F, DEPTH24_STENCIL8, DEPTH32F_STENCIL8, DEPTH_STENCIL. */
     private static boolean isDepthInternalFormat(int internalFormat) {
         return switch (internalFormat) {
@@ -2431,6 +2435,28 @@ public final class CeltiumGlStub implements FunctionProvider {
             serial = Math.max(serial, pending.get(pending.size() - 1).serial);
         }
         return serial;
+    }
+
+    /**
+     * {@return whether the level exists but was allocated with no data}, the render-target idiom.
+     * <p>
+     * GL reserves the storage and leaves the content undefined, and a framebuffer then renders into it. For such a
+     * level the stub holds an extent and a zero surface by design: it is neither a missed upload nor a refused fill, so
+     * the mirror path reports it as deferred rather than as a rejection.
+     */
+    /** {@return whether the texture was allocated with a NULL data pointer and no data has arrived since}. */
+    public static boolean textureAllocatedWithoutData(int textureName) {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.nullAllocatedNames.contains(textureName);
+    }
+
+    public static boolean textureLevelAllocatedWithoutPixels(int textureName, int level) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return false;
+        }
+        TexCapture capture = stub.texCaptures.get(texLevelKey(textureName, level));
+        return capture != null && !capture.gamePixels;
     }
 
     public static boolean textureLevelHasGamePixels(int textureName, int level) {
@@ -5091,9 +5117,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if (!carriesPixels(pixels, this.pixelUnpackBuffer)) {
+            if (level == 0) {
+                this.nullAllocatedNames.add(targetName);
+            }
             undefinedLevel(targetName, level, width, extentHeight, depth);
             return;
         }
+        this.nullAllocatedNames.remove(targetName);
         if (depth > 1) {
             // A 2D mirror cannot hold the remaining slices: the extent is recorded and the upload counted rather than
             // storing the first slice as if it were the whole image.
@@ -5470,6 +5500,10 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Deletes the named storage record too when native glDeleteTextures cannot reach callback dispatch. */
     public static void forgetTextureAllocation(int name) {
+        CeltiumGlStub stub0 = installed;
+        if (stub0 != null) {
+            stub0.nullAllocatedNames.remove(name);
+        }
         CeltiumGlStub stub = installed;
         if (stub != null && name > 0) {
             stub.deleteTexture(name);
