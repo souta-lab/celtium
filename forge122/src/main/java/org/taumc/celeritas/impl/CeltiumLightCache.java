@@ -38,7 +38,13 @@ public final class CeltiumLightCache {
 
     private static final boolean ENABLED =
             !"false".equals(System.getProperty("celtium.entityLightCache", "true"));
-    private static final int CAP = 1024;
+    /**
+     * Entries per map. The cache is cleared on every world-time or light-map change, so this is the working set of
+     * one tick's lookups, not a long-lived cache. It used to be 1,024, which a chunk rebuild exceeds (a 16^3 section
+     * holds 4,096 positions): evictions sent the lookups back to World#getCombinedLight, whose block lookups are the
+     * expensive part. Measured on ATM3 as 3.7% of client-thread CPU inclusive before the change.
+     */
+    private static final int CAP = 8192;
 
     private static long tick = Long.MIN_VALUE;
     /**
