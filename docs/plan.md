@@ -102,6 +102,8 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 - 残差の主因はwindow固定費とper-batch呼び出し。parityにはmaterial順統合かnativeバッチ記録が必要（残るマイクロ余地~0.2-0.3ms）。
 - 棄却: bind flush延期（2回SIGSEGV・[罠](<verification-traps.md>)）、indirect immediate（全singleton、悪化）、フレーム再利用（アニメ凍結で目標(3)を損なう）。
 
+- **次の実装単位: array-records（bindless即時描画）** — 設計と判明済みの土台は[新アーキテクチャ資料](<new_architecture.md>)の「array-records」節。
+
 ## 撤回した前提
 
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因・GLスタブ解消済み 等。再入条件つき）。

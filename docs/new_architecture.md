@@ -332,3 +332,23 @@ GPUに十分な候補が残った時のみ実行。
 - [Khronos: timeline semaphores](https://docs.vulkan.org/tutorial/latest/Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.html)
 
 **最終設計原則:** 個別の描画最適化Modの処理を寄せ集めない。**世界の全描画物を登録→変更時だけ構築→共有可視性で棄却→描画条件で分類→最小の転送/コマンドで提出**という一つのエンジンに、最適化の原理を吸収する。最速かどうかは、同一画像・同一環境のCPU/GPU両方のフレーム時間で決着をつける。
+
+
+## array-records — bindless即時描画（設計確定 2026-10-31）
+
+**目的**: per-groupのpush/drawを廃し、window内のtextured groupを1-3 drawに畳む（残差の主因である112 groups/frameのper-batchコスト）。
+
+**判明済みの土台**（コード確認済み）:
+- `VulkanTextureArray`: 4096枠のCOMBINED_IMAGE_SAMPLER bindless set（UPDATE_AFTER_BIND+PARTIALLY_BOUND）を**作成・充填済み**。描画未接続。`context.textureArraySupported()`でgate。
+- records系は配線済み: `immediate_tex_color_records.vert`等がset1のSSBOからrecordを読み、`drawIndirectRange`がrun単位で1つの`vkCmdDrawIndexedIndirect`を発行。record stride=224B（litが208..215を使うため**216..223の8Bが空き**）。
+- 現状runがsingletonなのはfragが`set0=sampler2D u_Texture`（per-texture set）だから。textureがkeyに入りrunが切れる。
+
+**実装手順（フラグ`-Dceltium.vulkan.arrayRecords=true`、既定off）**:
+1. `celtium$writeDrawRecord`でrecord offset 216にtexture array indexを書く。
+2. 新シェーダ: records vertのコピー＋`layout(location=3) flat out int v_TextureIndex`（recordの216を読む）。fragは`layout(set=0,binding=0) uniform sampler2D u_Textures[];`で`texture(u_Textures[v_TextureIndex], uv)`。まず**unlit textured familyのみ**（lightmap不要、fogブロックは既存と同一）。
+3. pipeline: records variantの新create（array set layout=TextureArray.layout、set1=records、pushなし）。
+4. run keyからtexture setを外し、array setをrun開始時に1回bind。
+5. 検証: 正典plainゲート（画像・床値）＋`CELTIUM_MERGE_CENSUS`/`drawn[perFrame]`でrun長を確認。device lost/VUIDゼロを必須条件。クラッシュ時は前回同様すぐrevert。
+
+**注意**: bindless setはrecorded bufferが名前を残したまま書き換わるためUPDATE_AFTER_BIND前提。array indexの寿命はwindow内で固定（arrayはresetされない）。
+
