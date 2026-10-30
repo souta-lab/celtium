@@ -8289,6 +8289,48 @@ this.frameBufferOpen = false;
         }
     }
 
+    /** Opt-in: which call site opens each window flush, so the count can be attacked at its cause. */
+    private static final boolean FLUSH_REASON_CENSUS = Boolean.getBoolean("celtium.vulkan.flushReasonCensus");
+    private final java.util.Map<String, Integer> flushReasons = new java.util.HashMap<String, Integer>();
+    private static final int FLUSH_REASON_FRAMES = 600;
+
+    /** Records the call site of one flush, by the first stack frame outside this renderer. */
+    private void celtium$noteFlushReason() {
+        if (!FLUSH_REASON_CENSUS) {
+            return;
+        }
+        StackTraceElement[] trace = Thread.currentThread().getStackTrace();
+        String reason = "unknown";
+        for (StackTraceElement frame : trace) {
+            String type = frame.getClassName();
+            if (type.startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")
+                    || type.startsWith("java.")) {
+                // The census call itself lives in this class, and getStackTrace is java.lang.Thread.
+                continue;
+            }
+            reason = type.replaceAll("^.*\\.", "") + "." + frame.getMethodName();
+            break;
+        }
+        this.flushReasons.merge(reason, Integer.valueOf(1), Integer::sum);
+    }
+
+    /** Prints the flush-reason census, largest first, every {@link #FLUSH_REASON_FRAMES} frames. */
+    private void celtium$reportFlushReasons() {
+        if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty() || this.frameId % FLUSH_REASON_FRAMES != 0L) {
+            return;
+        }
+        java.util.List<java.util.Map.Entry<String, Integer>> rows =
+                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
+        rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < rows.size() && i < 10; i++) {
+            line.append(' ').append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
+        }
+        System.out.println("[Celtium] CELTIUM_FLUSH_REASONS frame=" + this.frameId
+                + " windows=" + this.immediateStatistics.immediateWindows() + " [" + line + "]");
+        record("flush reasons frame=" + this.frameId + " [" + line + "]");
+    }
+
     /** GL names up to this bound are tracked in the per-name arrays above. */
     private static final int RAW_WRITE_TRACKED_IDS = 1 << 16;
     /** The stub's write epoch when a batch last took the slow path; the fast merge requires it unchanged. */
@@ -8650,6 +8692,7 @@ this.frameBufferOpen = false;
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
+        celtium$reportFlushReasons();
         DrawCounters.reportIfDue(this.frameId);
         this.frameCoordinator.celtium$finishFrameBuffer(true);
     }
@@ -8730,6 +8773,9 @@ this.frameBufferOpen = false;
     long flushBeforeGlDrawWithGroups;
 
     void flushPendingBeforeGlDraw() {
+        if (!this.immediateGroups.isEmpty()) {
+            celtium$noteFlushReason();
+        }
         this.flushBeforeGlDrawCalls++;
         if (this.immediateWindowBusy) return;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("flushCloseGroup");
