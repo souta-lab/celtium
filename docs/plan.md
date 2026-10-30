@@ -8,7 +8,7 @@
 
 - **未解決**: Supersymmetryでの最初の `VK_ERROR_DEVICE_LOST` と約10 FPS。RC5の喪失後Fence reset修正は後続AV対策であり、根本解決の証拠ではない。明示されたasync presentは維持する。
 - **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（公開JAR `release-rc8-{amd,intel}2`、renderer `72665b41e3040da63bfc0555aded6f8b053babd5b304ec2df5d6c4e7208a1d7d`、fixture `c82c4bc8d8fdcbfe6d131db6ad8964ae874c7ebcb1b6f49dc556fec1789fcc72`、`rawFboIdentityProbePassed=true`・`CELTIUM_OPAQUE_COPY_PROBE partial/alpha/resize` PASSED）。Bloom画素やWindows受入ではない。
-- **次**: menu性能を同一JARのhost/GPU 3組で比較中。raw FBO付替えと実packのGPU fault/frame timeを検証。Windows実測なしに根因解決やFPS改善を宣言しない。RC8監査の小gap（次round）: 呼び出し0の `celtium$submitDeferredWithSemaphores` は喪失時にfree、`opaqueCopyUnavailable` は恒久化。
+- **次**: menu性能を同一JARのhost/GPU 3組で比較中。raw FBO付替えと実packのGPU fault/frame timeを検証。Windows実測なしに根因解決やFPS改善を宣言しない。RC8監査の小gap: 呼び出し0の `celtium$submitDeferredWithSemaphores` は #417 で削除済み、`opaqueCopyUnavailable` は恒久化。
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 

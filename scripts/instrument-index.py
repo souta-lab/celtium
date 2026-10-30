@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs/instruments.md"
 SCAN_DIRS = (
     "celtium-vulkan/src/main", "forge122/src/main", "common/src/main",
-    "validation/client", "celtium-interop/src/main", "celtium-probe/src/main",
+    "validation/client", "celtium-probe/src/main",
 )
 STRING = r'"(?:\\.|[^"\\])*"'
 LEXICAL = re.compile(STRING + r"|'(?:\\.|[^'\\])*'|//[^\n]*|/\*.*?\*/", re.DOTALL)
