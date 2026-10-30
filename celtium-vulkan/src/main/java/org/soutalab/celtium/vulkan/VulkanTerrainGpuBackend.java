@@ -1643,7 +1643,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * adopted, not on every bind). Recorded where the bind reports it - {@code FramebufferMixin} calls
      * {@code bindFramebuffer(identity, isMain)} immediately before the census call - so the two facts travel together.
      */
-    private final java.util.Map<Long, Boolean> framebufferIdentityIsMain = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * Whether an identity has been bound as the game's main framebuffer. A primitive map, because this is written on
+     * every framebuffer bind - hundreds to thousands a frame while block entities draw - and java.util's Map boxes the
+     * key and the value on each put (profile: bindFramebuffer was 14.5% of client-thread CPU in a world leg).
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap framebufferIdentityIsMain =
+            new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
     /**
      * The colour texture names the game's own framebuffer reports, which is what identifies main-ness by attachment.
      * <p>
@@ -5436,7 +5442,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         this.gameFramebufferIdentity = identity;
-        this.framebufferIdentityIsMain.put(Long.valueOf(identity), Boolean.TRUE);
+        this.framebufferIdentityIsMain.put(identity, true);
         if (colorTexture != 0) {
             this.mainFramebufferColorNames.add(Integer.valueOf(colorTexture));
         }
@@ -5479,7 +5485,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.framebufferCache != null) this.framebufferCache.retireChainPair(identity);
         target.retireChainPair(identity);
         this.targetRegistry.forgetChainPair(identity);
-        this.framebufferIdentityIsMain.remove(Long.valueOf(identity));
+        this.framebufferIdentityIsMain.remove(identity);
         this.rawDeletedAttachmentTargets.remove(Long.valueOf(identity));
     }
 
@@ -5832,14 +5838,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         int width = reported == null || reported[1] <= 0 ? this.targetWidth : (int) reported[1];
         int height = reported == null || reported[2] <= 0 ? this.targetHeight : (int) reported[2];
         boolean isMain = identity == this.targetRegistry.mainIdentity() || identity == this.gameFramebufferIdentity
-                || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(identity)))
+                || this.framebufferIdentityIsMain.get(identity)
                 || this.mainFramebufferColorNames.contains(Integer.valueOf(glTextureName));
         String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
         if (this.framebufferCensusLogs < 12) {
             this.framebufferCensusLogs++;
             System.out.println("[Celtium] CELTIUM_FBO_CENSUS name=" + glTextureName + " identity=0x"
                     + Long.toHexString(identity) + " isMain=" + isMain + " route=" + route
-                    + " boundAsMain=" + this.framebufferIdentityIsMain.get(Long.valueOf(identity))
+                    + " boundAsMain=" + this.framebufferIdentityIsMain.get(identity)
                     + " adoptedMain=0x" + Long.toHexString(this.targetRegistry.mainIdentity())
                     + " gameField=0x" + Long.toHexString(this.gameFramebufferIdentity)
                     + " adoptedMainName=" + framebufferColorTextureName(this.targetRegistry.mainIdentity())
@@ -5920,7 +5926,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
-        this.framebufferIdentityIsMain.put(Long.valueOf(targetIdentity), Boolean.valueOf(isMain));
+        this.framebufferIdentityIsMain.put(targetIdentity, isMain);
         // The stub classifies a clear by this decision, not by the raw GL name: the game's main render target is not
         // necessarily the default framebuffer, so name-based classification dropped the frame's own clears.
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noteDrawFramebufferIsMain(isMain);
@@ -10220,7 +10226,7 @@ this.frameBufferOpen = false;
         }
         long mainIdentity = this.targetRegistry.mainIdentity();
         if (owner == mainIdentity || owner == this.gameFramebufferIdentity
-                || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(owner)))) {
+                || this.framebufferIdentityIsMain.get(owner)) {
             return false;
         }
         // Self means the same image: the sampled name's framebuffer must route to the pair this group's pass writes.
