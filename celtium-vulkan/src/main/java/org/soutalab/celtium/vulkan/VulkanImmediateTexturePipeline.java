@@ -397,6 +397,13 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
+    /**
+     * Whether the per-group bind timings are collected. They were unconditional: five {@code System.nanoTime} calls per
+     * group, and {@code __vdso_clock_gettime} was 1.2% of client-thread CPU on a world profile with about seventy
+     * groups a frame. Off unless asked for; the counters below are instrumentation, not state the renderer reads.
+     */
+    private static final boolean BIND_TIMINGS = Boolean.getBoolean("celtium.vulkan.bindTimings");
+
     public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
                      long descriptorSetToBind, long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
@@ -407,9 +414,11 @@ public final class VulkanImmediateTexturePipeline {
         // A pipeline switch disturbs the sets bound under the old layout, so the descriptor slot is invalidated on
         // every rebind rather than trusted across layouts.
         if (bindCache[4] != this.pipeline) {
-            long pipelineStart = System.nanoTime();
+            long pipelineStart = BIND_TIMINGS ? System.nanoTime() : 0L;
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
-            PIPELINE_BIND_NANOS += System.nanoTime() - pipelineStart;
+            if (BIND_TIMINGS) {
+                PIPELINE_BIND_NANOS += System.nanoTime() - pipelineStart;
+            }
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }
@@ -419,34 +428,42 @@ public final class VulkanImmediateTexturePipeline {
         // "VUID-vkCmdBindDescriptorSets-pDescriptorSets-06563: pDescriptorSets[0] (VkDescriptorSet 0x0) is not a
         // valid VkDescriptorSet", ten times - and leaving a statically unused set unbound is legal.
         if (descriptorSetToBind != 0L && bindCache[5] != descriptorSetToBind) {
-            long descriptorStart = System.nanoTime();
+            long descriptorStart = BIND_TIMINGS ? System.nanoTime() : 0L;
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
-            DESCRIPTOR_BIND_NANOS += System.nanoTime() - descriptorStart;
+            if (BIND_TIMINGS) {
+                DESCRIPTOR_BIND_NANOS += System.nanoTime() - descriptorStart;
+            }
             bindCache[5] = descriptorSetToBind;
         }
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
-        long viewStart = System.nanoTime();
+        long viewStart = BIND_TIMINGS ? System.nanoTime() : 0L;
         ByteBuffer clamped = this.clampedView.view(pushConstants, PUSH_CONSTANT_BYTES);
-        VIEW_NANOS += System.nanoTime() - viewStart;
+        if (BIND_TIMINGS) {
+            VIEW_NANOS += System.nanoTime() - viewStart;
+        }
         // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
         // past the range is a validation error, so only the declared bytes go out.
         
         if (!SKIP_PUSH_CALLS && !abSkipPush
                 && this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, clamped)) {
-            long pushStart = System.nanoTime();
+            long pushStart = BIND_TIMINGS ? System.nanoTime() : 0L;
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, clamped);
-            PUSH_CALL_NANOS += System.nanoTime() - pushStart;
+            if (BIND_TIMINGS) {
+                PUSH_CALL_NANOS += System.nanoTime() - pushStart;
+            }
         }
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
-        long meshStart = System.nanoTime();
+        long meshStart = BIND_TIMINGS ? System.nanoTime() : 0L;
         mesh.bindAndDraw(commandBuffer, bindCache);
-        MESH_BIND_NANOS += System.nanoTime() - meshStart;
+        if (BIND_TIMINGS) {
+            MESH_BIND_NANOS += System.nanoTime() - meshStart;
+        }
     }
 
     /** Nanoseconds spent in the two state binds, so the per-group cost can be attributed without guessing. */
