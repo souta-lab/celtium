@@ -6577,6 +6577,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     private boolean submitImmediateBatchBody(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                              int vertexCount, int drawMode, NativeGeometryBuffer retained) {
+        if (COALESCE_RAW_WRITES && !this.pendingRawWrites.isEmpty() && !this.immediateWindowBusy) {
+            // A batch is about to be accepted; it may sample a texture whose copy is still pending, so the queued groups
+            // are recorded first and the copies follow them before this batch can be recorded anywhere.
+            flushPendingBeforeGlDraw();
+            celtium$applyPendingRawWrites();
+        }
         long afterBatchStartNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
@@ -8342,6 +8348,48 @@ this.frameBufferOpen = false;
 
     /** GL names up to this bound are tracked in the per-name arrays above. */
     private static final int RAW_WRITE_TRACKED_IDS = 1 << 16;
+    /**
+     * Lab switch: {@code -Dceltium.vulkan.coalesceRawWrites=true} records a raw write ordered against queued work as a
+     * pending copy instead of flushing a window for it. The copies are recorded after the queued groups they must
+     * follow (at the next window flush, or at the first batch that samples them), so several writes between two windows
+     * cost one window instead of one each. Measured: raw-write flushes are about seventeen a frame on a world scene and
+     * a mod's bloom copies several framebuffers into textures before drawing any of them.
+     */
+    private static final boolean COALESCE_RAW_WRITES =
+            !"false".equals(System.getProperty("celtium.vulkan.coalesceRawWrites", "true"));
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<PendingRawWrite> pendingRawWrites =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<PendingRawWrite>();
+
+    private static final class PendingRawWrite {
+        final org.soutalab.celtium.vulkan.VulkanGlTexture mirror;
+
+        PendingRawWrite(org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
+            this.mirror = mirror;
+        }
+    }
+
+    /** Records every pending raw write after the queued groups already recorded; called once those are in the buffer. */
+    private void celtium$applyPendingRawWrites() {
+        if (!COALESCE_RAW_WRITES || this.pendingRawWrites.isEmpty()) {
+            return;
+        }
+        int[] textures = this.pendingRawWrites.keySet().toIntArray();
+        for (int i = 0; i < textures.length; i++) {
+            PendingRawWrite pending = this.pendingRawWrites.get(textures[i]);
+            if (pending == null || pending.mirror == null || pending.mirror.image() == 0L
+                    || pending.mirror.view() == 0L || !pending.mirror.celtium$ownsImage()) {
+                continue;
+            }
+            try {
+                pending.mirror.uploadFromGlTexture(textures[i], org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.rawWriteRefreshes++;
+            } catch (RuntimeException | LinkageError error) {
+                this.lazyMirrorFailures++;
+                this.lastLazyMirrorFailure = textures[i] + " (coalesced raw write): " + error;
+            }
+        }
+        this.pendingRawWrites.clear();
+    }
     /** The stub's write epoch when a batch last took the slow path; the fast merge requires it unchanged. */
     private long slowPathWriteEpoch = Long.MIN_VALUE;
 
@@ -8384,6 +8432,13 @@ this.frameBufferOpen = false;
         // into a texture it samples later.
         if (celtium$queuedWorkSamples(texture)) {
             celtium$noteFlushSite(5);
+            if (COALESCE_RAW_WRITES) {
+                // Ordered against queued work: record the write and let the next point that records those groups copy
+                // it after them. The serial is marked applied by the caller; a later write replaces this entry, and the
+                // upload reads the texture's newest captured content either way.
+                this.pendingRawWrites.put(texture, new PendingRawWrite(mirror));
+                return true;
+            }
             flushPendingBeforeGlDraw();
         }
         try {
@@ -8759,6 +8814,7 @@ this.frameBufferOpen = false;
         this.fog.tracePeriodically(this.frameId);
         try {
             flushPendingBeforeGlDraw();
+            celtium$applyPendingRawWrites();
             // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
             // which is the only way to price the command itself without the rest of the frame in the way.
             celtium$runDrawBench();
@@ -8879,6 +8935,8 @@ this.frameBufferOpen = false;
                     // The window's own census, taken before the window so a failure still names its caller.
                     celtium$noteWindowOpenSite();
                     flushImmediateWindow();
+                    // The window's groups are in the command buffer now; copies ordered after them can be recorded.
+                    celtium$applyPendingRawWrites();
                 }
             } finally {
                 FramePassTimings.end("flush");
