@@ -36,23 +36,12 @@ sourceSets {
     main {
         compileClasspath += lwjglCommon.output
     }
-    jmh {
-        compileClasspath += main.output
-        compileClasspath += main.compileClasspath
-        runtimeClasspath += main.output
-        runtimeClasspath += main.runtimeClasspath
-        runtimeClasspath += lwjglCommon.output
-        runtimeClasspath += lwjgl3.output
-    }
 }
 
-// The benchmarks run against main's code, so the jmh source set needs main's dependencies too.
 configurations {
     // LWJGL 2's GL classes, read by the generator only: the generated GLxx wrappers keep the signatures both LWJGL
     // generations share. Nothing of LWJGL 2 is compiled or shipped - Celtium runs on Cleanroom's LWJGL 3 alone.
     lwjgl2Signatures
-    jmhImplementation.extendsFrom(implementation)
-    jmhRuntimeOnly.extendsFrom(runtimeOnly)
 }
 
 def generateAbstractionLayer = tasks.register("generateLWJGLAbstraction", GenerateLWJGLAbstraction) {
@@ -64,22 +53,6 @@ def generateAbstractionLayer = tasks.register("generateLWJGLAbstraction", Genera
 tasks.named("compileLwjglCommonJava") {
     dependsOn(generateAbstractionLayer)
 }
-
-// Natives classifier for the current machine; the benchmarks need real LWJGL natives to open a GL context.
-def lwjglNatives = {
-    def os = System.getProperty("os.name").toLowerCase()
-    def arch = System.getProperty("os.arch").toLowerCase()
-
-    if (os.contains("linux")) {
-        return arch.startsWith("aarch64") ? "natives-linux-arm64" : "natives-linux"
-    } else if (os.contains("mac") || os.contains("darwin")) {
-        return arch.startsWith("aarch64") ? "natives-macos-arm64" : "natives-macos"
-    } else if (os.contains("windows")) {
-        return "natives-windows"
-    }
-
-    throw new GradleException("Unsupported platform for the benchmark GL context: $os $arch")
-}()
 
 dependencies {
     def lwjglVersion = "3.3.1"
@@ -103,19 +76,6 @@ dependencies {
 
     implementation "com.google.code.gson:gson:2.10.1"
 
-    def benchLwjglVersion = "3.3.6"
-
-    jmhImplementation(platform("org.lwjgl:lwjgl-bom:$benchLwjglVersion"))
-    jmhImplementation "org.lwjgl:lwjgl"
-    jmhImplementation "org.lwjgl:lwjgl-opengl"
-    jmhImplementation "org.lwjgl:lwjgl-egl"
-    jmhRuntimeOnly "org.lwjgl:lwjgl:$benchLwjglVersion:$lwjglNatives"
-    jmhRuntimeOnly "org.lwjgl:lwjgl-opengl:$benchLwjglVersion:$lwjglNatives"
-
-    jmhImplementation "org.openjdk.jmh:jmh-core:${jmh_version}"
-    jmhAnnotationProcessor "org.openjdk.jmh:jmh-generator-annprocess:${jmh_version}"
-    jmhCompileOnly "org.jetbrains:annotations:24.1.0"
-
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
@@ -128,45 +88,6 @@ tasks.named('test', Test) {
     testLogging {
         events "passed"
     }
-}
-
-// Run the benchmarks through Gradle. Any JMH argument can be passed through, e.g.
-//   ./gradlew :common:jmh -Pjmhargs="-f 1 -p renderDistance=64 OcclusionCullerBench.rotatingCamera"
-tasks.register('jmh', JavaExec) {
-    group = 'verification'
-    description = 'Runs the JMH benchmarks.'
-
-    classpath = sourceSets.jmh.runtimeClasspath
-    mainClass = 'org.openjdk.jmh.Main'
-
-    // Measured live set is ~128 MB at renderDistance=64 (424 536 sections); this is headroom for the
-    // collector's per-frame allocation, not a requirement.
-    maxHeapSize = '1g'
-
-    // Read at configuration time: the configuration cache forbids touching the project from doFirst.
-    if (project.hasProperty('jmhargs')) {
-        args(project.property('jmhargs').toString().split('\\s+').findAll { !it.isEmpty() })
-    }
-}
-
-tasks.register('rasterCullReport', JavaExec) {
-    group = 'verification'
-    description = 'Reports visible section counts per world and camera placement.'
-
-    classpath = sourceSets.jmh.runtimeClasspath
-    mainClass = 'org.embeddedt.embeddium.impl.render.chunk.occlusion.bench.RasterCullReport'
-
-    maxHeapSize = '1g'
-    // e.g. ./gradlew :common:rasterCullReport -Dreport.renderDistance=64
-    // Read through a provider so the configuration cache tracks them: taken from System.getProperties() at
-    // configuration time they are invisible to it, and a cached configuration is reused whatever -D flags are passed.
-    forwardReportProperties(it)
-}
-
-/** Forwards every -Dreport.* on the Gradle command line to the task's JVM, in a configuration-cache-safe way. */
-def forwardReportProperties(JavaExec task) {
-    def reportProperties = providers.systemPropertiesPrefixedBy('report.')
-    task.jvmArgumentProviders.add({ reportProperties.get().collect { k, v -> "-D$k=$v".toString() } } as CommandLineArgumentProvider)
 }
 
 publishing {
@@ -251,14 +172,4 @@ def transformedAttr = Attribute.of("rfgDeobfuscatorTransformed", Boolean)
         attribute(obfAttr, "mcp")
         attribute(transformedAttr, true)
     }
-}
-
-tasks.register('rasterStats', JavaExec) {
-    group = 'verification'
-    classpath = sourceSets.jmh.runtimeClasspath
-    mainClass = 'org.embeddedt.embeddium.impl.render.chunk.occlusion.bench.RasterStatsReport'
-    maxHeapSize = '1g'
-    jvmArgs '-Dbitraster.stats=true'
-    forwardReportProperties(it)
-    if (project.hasProperty('statargs')) args(project.property('statargs').toString().split('\\s+').findAll { !it.isEmpty() })
 }
