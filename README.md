@@ -25,8 +25,8 @@ at p99**, with every one of the nine paired ratios below 1 - median frame 0.63 m
 
 ## Current status
 
-The mode documented here is the **Vulkan-only / GL-less mode**. It is on by default; no JVM argument is needed.
-(`-Dceltium.vulkan.glless=false` turns it off for diagnosis only — the OpenGL path is not a supported renderer.)
+Celtium is **Vulkan-only / GL-less**. There is no mode switch and no JVM argument: the window is created without an
+OpenGL context, and the OpenGL-bridge arm that used to be selectable was removed (2026-10-30).
 
 It creates a window without an OpenGL context (`GLFW_NO_API`), renders into Vulkan-owned images, and presents the finished frame through a Vulkan swapchain. It does not depend on OpenGL drawing, GL readback, a GL/Vulkan bridge, GL swap or GL fallback.
 
@@ -50,7 +50,7 @@ Tested mods and packs: [verifiedmods.md](verifiedmods.md). Refused, unsupported 
 - Shadows and shader packs are not part of Celtium itself: they are planned as a separate addon jar (a Demonica fork, AGPL-3.0), after the shaderless renderer and major gameplay mods work. Vanilla ShaderGroup, spectator effects and entity outlines remain part of the base renderer's scope.
 - This is not a general OpenGL-to-Vulkan translator. Native passes follow Minecraft's terrain, model/item, entity/TESR, particle, UI, texture and framebuffer semantics.
 - Mesh shaders are **not required or planned**. Optimizations must preserve a usable baseline on weaker GPUs.
-- **GL-less is installed from the coremod transformer chain**, immediately before the window is created, so a mod that loads `org.lwjgl.opengl.Display` early cannot turn the run into a hybrid any more. This was a real failure until 2026-10-15: in the 268-mod pack RandomPatches defined `Display` at 8.975 s while the mixin list was still being built at 9.837 s, so the `GLFW_NO_API` hint was never applied and the window came up with a real OpenGL 4.6 context. The hint now comes from `CeltiumGllessWindowTransformer`. Read `CELTIUM_GLLESS` lines in the log to confirm which path a run took rather than assuming it.
+- **GL-less is installed from the coremod transformer chain**, immediately before the window is created, so a mod that loads `org.lwjgl.opengl.Display` early cannot turn the run into a hybrid any more. This was a real failure until 2026-10-15: in the 268-mod pack RandomPatches defined `Display` at 8.975 s while the mixin list was still being built at 9.837 s, so the `GLFW_NO_API` hint was never applied and the window came up with a real OpenGL 4.6 context. The hint now comes from `CeltiumGllessWindowTransformer`. Read `CELTIUM_GLSTUB` lines in the log to confirm the stub was installed rather than assuming it.
 
 The supported development direction is Vulkan-only. Old bridge/probe experiments and retained upstream OpenGL code are not a supported alternate renderer or a promise of custom OpenGL compatibility.
 

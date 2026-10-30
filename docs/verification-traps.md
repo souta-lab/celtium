@@ -169,3 +169,14 @@ KPI harness は計測用に次の3つを**明示的に切る**（`scripts/gv_kpi
 
 差は validation layer・present readback・周期 dump の計測税で、レンダラの退行ではない。
 **この2つを同じ表に入れない。** 「30秒後に5倍遅くなる」と読める観測が出たら、まず KPI flags の有無を確認する。
+
+## 旧 GL bridge を対照に使わない（2026-10-30・モード削除）
+
+旧プロパティ `celtium.vulkan.glless` と GL bridge（実OpenGL）の leg は**削除された**。渡しても無視され、ウィンドウは常に
+`GLFW_NO_API` で作られ、GL は常に stub が答える。したがって:
+
+- 「bridge leg と比べて差が出た」という形の A/B はもう成立しない。比較の対照は Celeritas 参照JARか、同一JAR内の
+  lab switch（`-Dceltium.vulkan.*` の測定用スイッチ）に限る。
+- ログで経路を確認するときは `CELTIUM_GLSTUB` 行（旧 `CELTIUM_GLLESS`）を見る。旧タグを grep しても 0 行になる。
+- 旧手順・旧レシピに残る `celtium.vulkan.glless=true` は無害だが、**フラグを渡したこと自体を「GL-lessで走った証拠」
+  にしない**。証拠は `CELTIUM_GLSTUB` 行、window の `GLFW_NO_API`、present のカウンタで取る。

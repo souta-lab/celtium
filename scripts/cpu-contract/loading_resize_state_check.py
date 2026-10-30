@@ -43,24 +43,18 @@ class LoadingResizeCheck {
     }
     public static void main(String[] args) {
         Minecraft mc = new Minecraft();
-        System.setProperty("celtium.vulkan.glless","true");
         LoadingScreenRenderer first = resize(mc);
         check(first.currentlyDisplayedText.equals("") && first.message.equals("") && !first.loadingSuccess,
               "initial construction fabricated a loading task");
         mc.loadingScreen = new Object();
-        check(resize(mc).currentlyDisplayedText.equals(""),"non-bridge predecessor was not safe");
+        check(resize(mc).currentlyDisplayedText.equals(""),"non-screen predecessor was not safe");
         LoadingScreenRenderer old = new LoadingScreenRenderer();
         old.currentlyDisplayedText = "Loading world"; old.message = "Building terrain"; old.loadingSuccess = true;
         mc.loadingScreen = old;
         LoadingScreenRenderer unrelated = new LoadingScreenRenderer();
         check(unrelated.currentlyDisplayedText.equals("") && !unrelated.loadingSuccess,
               "unrelated progress renderer inherited another task");
-        System.setProperty("celtium.vulkan.glless","false");
-        LoadingScreenRenderer legacy = resize(mc);
-        check(legacy.currentlyDisplayedText.equals("") && legacy.message.equals("") && !legacy.loadingSuccess,
-              "changed the legacy GL path");
         mc.loadingScreen = old;
-        System.setProperty("celtium.vulkan.glless","true");
         LoadingScreenRenderer next = resize(mc);
         check(next.currentlyDisplayedText.equals("Loading world"),"resize lost loading title");
         check(next.message.equals("Building terrain"),"resize lost secondary message");
@@ -72,7 +66,7 @@ class LoadingResizeCheck {
         LoadingScreenRenderer third = resize(mc);
         check(third.currentlyDisplayedText.equals("世界を保存中") && third.message.equals("最新の状態")
               && !third.loadingSuccess,"consecutive replacement did not copy the current task exactly");
-        System.out.println("Loading resize transfer: initial/foreign/legacy/native/repeated/resources/unrelated cases PASS");
+        System.out.println("Loading resize transfer: initial/foreign/repeated/resources/unrelated cases PASS");
     }
 }
 '''

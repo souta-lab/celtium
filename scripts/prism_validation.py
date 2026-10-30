@@ -631,8 +631,8 @@ def main():
         report.setdefault("seededSaves", []).append({"name": target.name, "source": str(save.resolve())})
     # A relauncher instance runs the game in a second JVM whose command the relauncher builds. Writing the diagnostic
     # flags into the copy's config/relauncher.json is the path the relauncher documents, and the only one that does not
-    # depend on the version's argument forwarding: a 1.3.0 run reached the game without the harness's -D flags while
-    # keeping glless (which is on by default on Linux), so a run could otherwise be judged without its instruments.
+    # depend on the version's argument forwarding: a 1.3.0 run reached the game without the harness's -D flags, so a
+    # run could otherwise be judged without its instruments.
     # This has to happen after the profile is copied into the isolated directory, or the copy fails on config/ existing.
     if relauncher is not None:
         injected = inject_relauncher_arguments(game, args.jvm_arg)
