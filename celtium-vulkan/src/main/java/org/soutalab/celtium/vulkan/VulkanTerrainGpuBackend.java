@@ -5920,6 +5920,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         if (!this.immediateWindowBusy && targetIdentity != this.targetRegistry.currentIdentity() && !this.targetRegistry.replacementInProgress()) {
             // Framebuffer.bind HEAD: the OLD framebuffer is still bound, so complete its accepted draws before switching.
+            celtium$noteFlushSite(6);
             flushPendingBeforeGlDraw();
         }
         if (targetIdentity != this.targetRegistry.currentIdentity() && this.currentImmediateMesh != null) {
@@ -6650,6 +6651,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             reason = null;
         }
         if (reason != null) {
+            celtium$noteFlushSite(2);
             this.immediateLastRefusal = reason;
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             this.flushPendingBeforeGlDraw();
@@ -7744,6 +7746,7 @@ this.frameBufferOpen = false;
             this.immediateLastRefusal = "copy failed: " + describe(error);
             record("immediate batch refused: " + describe(error));
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            celtium$noteFlushSite(1);
             this.flushPendingBeforeGlDraw();
             return false;
         }
@@ -8312,12 +8315,7 @@ this.frameBufferOpen = false;
             break;
         }
         this.flushReasons.merge(reason, Integer.valueOf(1), Integer::sum);
-        // Printed from the census call itself, every thousand flushes: the frame-id gate this used to sit behind
-        // never fired in the world phase (the report ran where frameId is still 0 during loading), so the world's own
-        // reasons were never printed even though the loading ones were.
-        if (++this.flushReasonCount % 1000 == 0) {
-            celtium$reportFlushReasons(true);
-        }
+        this.flushReasonCount++;
     }
 
     private long flushReasonCount;
@@ -8347,11 +8345,38 @@ this.frameBufferOpen = false;
     /** The stub's write epoch when a batch last took the slow path; the fast merge requires it unchanged. */
     private long slowPathWriteEpoch = Long.MIN_VALUE;
 
+    /**
+     * {@return whether queued work samples a texture}: the open group's batches or a group already in the queue.
+     * <p>
+     * The mirror re-fills from the GL texture, so a queued draw recorded after the write would sample content the game
+     * had not written yet. When nothing queued names the texture, the write can be applied in place - which is what a
+     * copy into a texture before the draw that samples it looks like, the measured case.
+     */
+    private boolean celtium$queuedWorkSamples(int texture) {
+        if (this.currentGroupUsed && this.currentGroupTexture == texture) {
+            return true;
+        }
+        java.util.List<ImmediateGroup> groups = this.immediateGroups;
+        for (int i = 0; i < groups.size(); i++) {
+            ImmediateGroup group = groups.get(i);
+            if (group.texture == texture || (group.modelRun != null && group.modelRun.usesTexture(texture))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** {@return whether the mirror took the texture's current captured content}. */
     private boolean celtium$applyRawWrites(int texture, org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
         // Draws queued before the write sampled the old content in GL: submit them before the mirror changes, or they
-        // would be recorded later against the new image.
-        flushPendingBeforeGlDraw();
+        // would be recorded later against the new image. Only when one of them does sample this texture: a write that
+        // lands before its own draw has nothing queued to order against, and the flush that used to run anyway was
+        // measured at twenty-nine windows a frame on a world scene whose writes are mostly a mod copying a framebuffer
+        // into a texture it samples later.
+        if (celtium$queuedWorkSamples(texture)) {
+            celtium$noteFlushSite(5);
+            flushPendingBeforeGlDraw();
+        }
         try {
             mirror.uploadFromGlTexture(texture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
             this.rawWriteRefreshes++;
@@ -8782,6 +8807,18 @@ this.frameBufferOpen = false;
 
     long flushBeforeGlDrawCalls;
     long flushBeforeGlDrawWithGroups;
+
+    /** Per-site flush counts: which refusal/order path opened the windows, by id. */
+    private final long[] flushSiteCounts = new long[16];
+    private static final String[] FLUSH_SITE_NAMES = {
+        "other", "copy-catch", "unsupported-mode", "drawing-disabled", "format-2-run", "raw-write",
+        "bind-framebuffer", "clear", "boundary", "present", "terrain-pass", "geometry"};
+
+    private void celtium$noteFlushSite(int site) {
+        if (site >= 0 && site < this.flushSiteCounts.length) {
+            this.flushSiteCounts[site]++;
+        }
+    }
 
     void flushPendingBeforeGlDraw() {
         this.flushBeforeGlDrawCalls++;
@@ -11491,7 +11528,32 @@ this.frameBufferOpen = false;
         return true;
     }
 
+    /** Prints the flush-reason census with the verification summary, which is known to reach the log. */
+    private void celtium$reportFlushReasonsForSummary() {
+        if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty()) {
+            return;
+        }
+        java.util.List<java.util.Map.Entry<String, Integer>> rows =
+                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
+        rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < rows.size() && i < 12; i++) {
+            line.append(' ').append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
+        }
+        StringBuilder sites = new StringBuilder();
+        for (int i = 0; i < this.flushSiteCounts.length; i++) {
+            if (this.flushSiteCounts[i] > 0) {
+                sites.append(' ').append(i < FLUSH_SITE_NAMES.length ? FLUSH_SITE_NAMES[i] : String.valueOf(i))
+                        .append('=').append(this.flushSiteCounts[i]);
+            }
+        }
+        System.out.println("[Celtium] CELTIUM_FLUSH_SITES" + sites);
+        System.out.println("[Celtium] CELTIUM_FLUSH_SOURCES total=" + this.flushReasonCount + " [" + line + "]");
+        record("flush sources total=" + this.flushReasonCount + " [" + line + "]");
+    }
+
     private void celtium$printVerificationSummary(String trigger, boolean snapshot) {
+        celtium$reportFlushReasonsForSummary();
         // The guard and the line's shape live in BackendReport now; the counter text is still this class's.
         this.report.printSummary(trigger, this.verificationSummary(), snapshot);
     }
