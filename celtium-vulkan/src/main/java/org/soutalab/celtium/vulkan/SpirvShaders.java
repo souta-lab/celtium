@@ -63,6 +63,10 @@ public final class SpirvShaders {
      * material cannot share a push block.
      */
     public static final String IMMEDIATE_TEX_COLOR_RECORDS_VERTEX = "immediate_tex_color_records.vert";
+    /** The bindless form of {@link #IMMEDIATE_TEX_COLOR_RECORDS_VERTEX}: the texture index comes from the record. */
+    public static final String IMMEDIATE_TEX_COLOR_ARRAY_VERTEX = "immediate_tex_color_array.vert";
+    /** The bindless fragment: samples {@code u_Textures[v_TextureIndex]} instead of one bound texture. */
+    public static final String IMMEDIATE_TEX_COLOR_ARRAY_FRAGMENT = "immediate_tex_color_array.frag";
 
     /** The record-reading form of {@link #IMMEDIATE_TEX_COLOR_LIT_VERTEX}: the lit item family, from the record buffer. */
     public static final String IMMEDIATE_TEX_COLOR_LIT_RECORDS_VERTEX = "immediate_tex_color_lit_records.vert";

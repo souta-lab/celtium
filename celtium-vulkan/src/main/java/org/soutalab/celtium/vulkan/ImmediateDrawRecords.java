@@ -124,6 +124,21 @@ final class ImmediateDrawRecords {
      * @return the record's index, which is the indirect command's firstInstance, or -1 when the block is too short
      */
     int record(ByteBuffer pushBlock) {
+        return record(pushBlock, -1);
+    }
+
+    /**
+     * Appends one record and stores the texture's bindless array index in the eight bytes past the lit block's payload.
+     * <p>
+     * Offset 216 is free in both families: the textured block ends at 208 and the lit one spends 208..215 on its light
+     * coordinates. The index is written as float bits because the GLSL struct is a vec4 block and the shader reads it back
+     * with {@code floatBitsToInt}; an index of -1 means "no array index", which is what the per-texture path records.
+     *
+     * @param pushBlock the block; the first 208 bytes are copied, the lit family's 216 when present
+     * @param arrayIndex the bindless texture index, or -1 when the group has none
+     * @return the record's index or -1 when the block is too short
+     */
+    int record(ByteBuffer pushBlock, int arrayIndex) {
         // 208 is the smallest push block the two families produce; the stride rounds that up to 224 with a zeroed pad.
         if (pushBlock == null || pushBlock.capacity() < 208) {
             return -1;
@@ -142,6 +157,9 @@ final class ImmediateDrawRecords {
         int copy = Math.min(pushBlock.capacity(), RECORD_BYTES);
         org.lwjgl.system.MemoryUtil.memCopy(org.lwjgl.system.MemoryUtil.memAddress(pushBlock), target, copy);
         org.lwjgl.system.MemoryUtil.memSet(target + copy, 0, RECORD_BYTES - copy);
+        if (arrayIndex >= 0) {
+            org.lwjgl.system.MemoryUtil.memPutFloat(target + 216, Float.intBitsToFloat(arrayIndex));
+        }
         return this.records++;
     }
 

@@ -2377,6 +2377,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * here used to say "on by default", which the code has never been.
      */
     private static final boolean INDIRECT_IMMEDIATE = Boolean.getBoolean("celtium.vulkan.indirectImmediate");
+    /** {@code -Dceltium.vulkan.arrayRecords=true}: also store each group's bindless texture index in its draw record. */
+    static final boolean ARRAY_RECORDS = Boolean.getBoolean("celtium.vulkan.arrayRecords");
+    private static final boolean DRAW_RECORDS_ARRAY_INDEX = ARRAY_RECORDS;
     private static final int INDIRECT_COMMAND_BYTES = 20;
     private final java.util.Map<Object, VulkanImmediateTexturePipeline> recordsPipelines = new java.util.IdentityHashMap<>();
     private final java.util.Map<Object, VulkanImmediateItemPipeline> recordsItemPipelines = new java.util.IdentityHashMap<>();
@@ -2489,7 +2492,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.indirectRunActive && key != this.indirectRunKey) {
             celtium$flushIndirectRun();
         }
-        int recordIndex = this.drawRecords.record(push);
+        int recordIndex = this.drawRecords.record(push, DRAW_RECORDS_ARRAY_INDEX ? group.textureArrayIndex : -1);
         if (recordIndex < 0) {
             return false;
         }
