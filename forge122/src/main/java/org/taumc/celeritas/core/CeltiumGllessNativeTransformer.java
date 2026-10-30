@@ -215,6 +215,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      */
     private static final boolean MOD_MATRIX_ROUTES = Boolean.getBoolean("celtium.glless.modMatrixRoutes");
 
+    /**
+     * {@code -Dceltium.gless.legacyImmediate=true} re-enables the legacy glBegin/glVertex3f routes.
+     * <p>
+     * Off by default while the menu crash one tester reports is bisected: both of that session's logs end in the same
+     * RADV GPUVM fault immediately after the legacy loading-bar quad was submitted, and the build that introduced the
+     * route (0.1.4-alpha-rc.2) is the first one that crashed. The routes are what the screenshot shows as a missing
+     * loading bar; nothing else in the picture depends on them, so turning them off is a clean A/B.
+     */
+    private static final boolean LEGACY_IMMEDIATE =
+            Boolean.parseBoolean(System.getProperty("celtium.gless.legacyImmediate", "false"));
+
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
 
@@ -372,27 +383,27 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         // Legacy immediate mode. The census measured these as the largest unmapped class in a menu run (82% of the
         // zero-answered calls), and unlike the state classes each call is a draw the picture lost.
-        if ("glBegin".equals(name) && "(I)V".equals(descriptor)) {
+        if (LEGACY_IMMEDIATE && "glBegin".equals(name) && "(I)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyBegin", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if ("glEnd".equals(name) && "()V".equals(descriptor)) {
+        if (LEGACY_IMMEDIATE && "glEnd".equals(name) && "()V".equals(descriptor)) {
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyEnd", "()V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if ("glVertex3f".equals(name) && "(FFF)V".equals(descriptor)) {
+        if (LEGACY_IMMEDIATE && "glVertex3f".equals(name) && "(FFF)V".equals(descriptor)) {
             for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyVertex3f", "(FFF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if ("glTexCoord2f".equals(name) && "(FF)V".equals(descriptor)) {
+        if (LEGACY_IMMEDIATE && "glTexCoord2f".equals(name) && "(FF)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.FLOAD, 0);
             method.visitVarInsn(Opcodes.FLOAD, 1);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
@@ -400,7 +411,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if ("glTexCoord2d".equals(name) && "(DD)V".equals(descriptor)) {
+        if (LEGACY_IMMEDIATE && "glTexCoord2d".equals(name) && "(DD)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.DLOAD, 0);
             method.visitVarInsn(Opcodes.DLOAD, 2);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
