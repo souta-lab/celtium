@@ -1680,6 +1680,7 @@ public final class VulkanContext {
     }
 
     private IllegalStateException celtium$lostDevice(String operation) {
+        CrashBreadcrumbs.dump(operation);
         this.usable = false;
         this.deviceLost = true;
         return new IllegalStateException("CELTIUM_VULKAN_DEVICE_LOST at " + operation

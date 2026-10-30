@@ -1044,6 +1044,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         terrainPrepClosed = true;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainHandoff");
             this.frameTarget.beginFrame();
+            if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+                org.soutalab.celtium.vulkan.CrashBreadcrumbs.note("terrain-pass begin");
+            }
             this.windowOpen = true;
             this.frameOpens++;
             recordHandoff(System.nanoTime() - handoffStart);
@@ -8814,6 +8817,10 @@ this.frameBufferOpen = false;
     /** Synchronous same-target LOAD window; no draw command is emitted outside this backend's pass. */
     private void flushImmediateWindow() {
         if (this.immediateWindowBusy) return;
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note("window target=0x"
+                    + Long.toHexString(this.targetRegistry.currentIdentity()) + " groups=" + this.immediateGroups.size());
+        }
         // Kept from the reverted drain (e87aa0ec1): how many of the bound target's groups are present at flush entry,
         // and how often that target was visited. The drain itself is reverted - a device-lost regression outranks it -
         // but this counter is what said the one-shot identity's groups are not in the queue at a flush at all, and it

@@ -1291,6 +1291,10 @@ public final class VulkanGlTexture {
     }
 
     public void uploadFromGlTexture(int glTextureId, int glTextureTarget) {
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note("upload gl=" + glTextureId + " target=0x"
+                    + Integer.toHexString(glTextureTarget) + " mirror=" + this.width + "x" + this.height);
+        }
         long celtium$uploadStart = System.nanoTime();
         final int celtium$uploadGlId = glTextureId;
         if (suppressedReadbackIds.contains(Integer.valueOf(glTextureId))) {
