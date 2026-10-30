@@ -8356,7 +8356,16 @@ this.frameBufferOpen = false;
         if (this.currentGroupUsed && this.currentGroupTexture == texture) {
             return true;
         }
-        java.util.List<ImmediateGroup> groups = this.immediateGroups;
+        if (celtium$listSamplesTexture(this.immediateGroups, texture)
+                || celtium$listSamplesTexture(this.retiredImmediateGroups, texture)
+                || celtium$listSamplesTexture(this.keptImmediateGroups, texture)) {
+            return true;
+        }
+        return false;
+    }
+
+    /** {@return whether any group of a queue samples the texture}; the queues are short and this runs only on a write. */
+    private static boolean celtium$listSamplesTexture(java.util.List<ImmediateGroup> groups, int texture) {
         for (int i = 0; i < groups.size(); i++) {
             ImmediateGroup group = groups.get(i);
             if (group.texture == texture || (group.modelRun != null && group.modelRun.usesTexture(texture))) {

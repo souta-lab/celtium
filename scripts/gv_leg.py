@@ -282,7 +282,11 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     command.extend(f"--jvm-arg={arg}" for arg in jvm_args)
     if window_system == "x11":
         command.append("--force-x11")
-    command.extend(["--run", "--validate", "--duration", str(duration), "--headless",
+    # --fetch-missing-libraries: the cohort and world profiles are clones whose minecraft/libraries is not complete
+    # (the sources stage libraries through the launcher, not through the instance directory). Without it the run dies in
+    # ForgeHooksClient.<clinit> with NoClassDefFoundError: org/lwjgl/BufferUtils before any renderer code runs, which was
+    # measured on 0.7.11 with the plain and world modes on 2026-10-31 - a launch failure, not a gate failure.
+    command.extend(["--run", "--validate", "--fetch-missing-libraries", "--duration", str(duration), "--headless",
                     "--render-node", render_node, "--require-gpu", required_gpu])
     artifacts = {name: {"source": str(path), "sha256": sha256(path)} for name, path in
                  (("renderer", renderer), ("fixture", fixture), ("harness", harness), ("headless", headless))}
