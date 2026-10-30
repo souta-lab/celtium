@@ -142,6 +142,10 @@ public final class VulkanImmediateTexturePipeline {
     private boolean records;
     /** The records set layout, owned by {@link ImmediateDrawRecords}; this pipeline only references it. */
     private long recordsLayout = VK_NULL_HANDLE;
+    /** Set 0 layout of the bindless texture array, when this variant samples through it instead of one texture. */
+    private long arrayLayout = VK_NULL_HANDLE;
+    /** Whether this variant's fragment stage samples {@code u_Textures[]} and its vertex stage publishes the index. */
+    private boolean arrayRecords;
 
     /**
      * Every descriptor pool this pipeline has allocated sets from, oldest first, all destroyed in {@link #delete()}.
@@ -223,6 +227,23 @@ public final class VulkanImmediateTexturePipeline {
                 depthWrite, cull, depthCompareOp);
         pipeline.records = true;
         pipeline.recordsLayout = recordsSetLayout;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the bindless record-reading variant: the record buffer at set 1 as in {@link #createRecords}, but set 0 is
+     * the texture array rather than one texture pair, and the fragment stage samples {@code u_Textures[v_TextureIndex]}.
+     * A run of this pipeline does not stop when the texture changes, which is the point of the array.
+     */
+    public static VulkanImmediateTexturePipeline createRecordsArray(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp,
+            long recordsSetLayout, long arraySetLayout) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp);
+        pipeline.records = true;
+        pipeline.arrayRecords = true;
+        pipeline.recordsLayout = recordsSetLayout;
+        pipeline.arrayLayout = arraySetLayout;
         return pipeline.build();
     }
 
@@ -992,7 +1013,18 @@ public final class VulkanImmediateTexturePipeline {
             this.descriptorSetsAllocated++;
             DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
             VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default();
-            if (this.records) {
+            if (this.records && this.arrayRecords) {
+                if (this.recordsLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the array-records pipeline needs the records set layout");
+                }
+                if (this.arrayLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the array-records pipeline needs the texture array layout");
+                }
+                VkPushConstantRange.Buffer fragmentRange = VkPushConstantRange.calloc(1, stack);
+                fragmentRange.get(0).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT).offset(0).size(PUSH_CONSTANT_BYTES);
+                create.pSetLayouts(stack.longs(this.arrayLayout, this.recordsLayout))
+                        .pPushConstantRanges(fragmentRange);
+            } else if (this.records) {
                 // Two sets and no push range: set 0 is the per-texture pair this class already builds, set 1 is the
                 // records buffer. The record-reading shader declares no push constants at all.
                 if (this.recordsLayout == VK_NULL_HANDLE) {
@@ -1029,10 +1061,13 @@ public final class VulkanImmediateTexturePipeline {
             // fragment (IMMEDIATE_TEX_COLOR_LIT_FRAGMENT) because its block spends 128..215 on lighting.
             ByteBuffer vertexCode = SpirvShaders.load(this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_VERTEX
                     : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_VERTEX
+                    : this.records && this.arrayRecords ? SpirvShaders.IMMEDIATE_TEX_COLOR_ARRAY_VERTEX
                     : this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX
                     : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
                     : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
-            ByteBuffer fragmentCode = SpirvShaders.load(this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_FRAGMENT
+            ByteBuffer fragmentCode = SpirvShaders.load(this.records && this.arrayRecords
+                    ? SpirvShaders.IMMEDIATE_TEX_COLOR_ARRAY_FRAGMENT
+                    : this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_FRAGMENT
                 : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_FRAGMENT
                 : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT
                 : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_FRAGMENT : SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
