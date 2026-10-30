@@ -8254,6 +8254,15 @@ this.frameBufferOpen = false;
         if (epoch == Long.MIN_VALUE) {
             return;
         }
+        if (mirror == null || mirror.image() == 0L || mirror.view() == 0L || mirror.sampler() == 0L
+                || !mirror.celtium$ownsImage()) {
+            // Nothing here can take content: a released wrapper, or one that shares an image the renderer owns (a
+            // framebuffer's colour attachment, which is what a mod's post-processing copy samples). Asked before the
+            // tracked/untracked split below: a texture whose GL name is past the tracked bound (a mod that allocates
+            // many textures - GregTech's bloom does, once per frame) used to reach the upload from the untracked branch,
+            // which threw requireOwned's IllegalStateException and paid the ordering flush before it, per batch.
+            return;
+        }
         if (texture >= RAW_WRITE_TRACKED_IDS) {
             // GL names are small and dense; a name past this bound is not worth an array that size. The mirror's
             // own serial check keeps the untracked call cheap when nothing changed.
@@ -8275,16 +8284,7 @@ this.frameBufferOpen = false;
         if (serial == Long.MIN_VALUE || serial == this.rawWriteSerialApplied[texture]) {
             return;
         }
-        if (mirror == null || mirror.image() == 0L || mirror.view() == 0L || mirror.sampler() == 0L
-                || !mirror.celtium$ownsImage()) {
-            // Nothing here can take content: either the wrapper shares an image the renderer owns, or it has already
-            // been released (a resource reload destroys the mirror; the GL name outlives it). Asking anyway reached
-            // the upload, which threw an IllegalStateException - and the version that let this through paid the
-            // ordering flush before the throw, per batch: measured 14.0% of client-thread CPU in a world profile, with
-            // 2.8% of it in the exception itself. The serial is marked seen so the next write does not ask again.
-            this.rawWriteSerialApplied[texture] = serial;
-            return;
-        }
+        // The wrapper was checked at the top of this method: every path here has an owner of the image it may write.
         if (celtium$applyRawWrites(texture, mirror)) {
             // Only after the upload succeeded: marking first made a failed upload look applied, and the write would
             // never be retried.
