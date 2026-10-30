@@ -1066,7 +1066,6 @@ public abstract class BoxOccluder {
 		return hasNearOccluders;
 	}
 
-	//final MicroTimer timer = new MicroTimer("boxTests.apply", 500000);
 
 	public abstract boolean isBoxVisible(int packedBox, int fuzz);
 

@@ -1961,15 +1961,6 @@ public final class VulkanContext {
         }
     }
 
-    /** Adds one bootstrap queue wait's duration to the totals task-60 reports; called from both wait sites. */
-    private static void celtium$recordBootstrapWait(long startedNanos) {
-        long millis = (System.nanoTime() - startedNanos) / 1_000_000L;
-        bootstrapQueueWaitMillis += millis;
-        if (millis > bootstrapQueueWaitWorstMillis) {
-            bootstrapQueueWaitWorstMillis = millis;
-        }
-    }
-
     public void delete() {
         if (this.deviceLost) {
             // Let the OS reclaim native resources when the process exits. A

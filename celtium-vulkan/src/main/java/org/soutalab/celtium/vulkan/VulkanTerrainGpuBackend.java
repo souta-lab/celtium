@@ -3609,17 +3609,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean splashUploadsThisFrame;
     /** Splash canvases whose mirrors were dropped at the end of the splash. */
 
-    /** {@return whether the announcing call came from the splash's own draw path}. */
-    private static boolean celtium$callerIsSplash() {
-        for (StackTraceElement frame : new Throwable().getStackTrace()) {
-            String name = frame.getClassName();
-            if (name.contains("SplashProgress") || name.contains("drawSplashScreen")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /** Format-2 groups sampling a mirror filled by the int[] announcement path (the splash's own canvas). */
 
     /** Bounded lines of {@code CELTIUM_MIRROR_DRAW} (the panorama's descriptor/mirror line). */
@@ -6350,11 +6339,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     private void celtium$fontMatrixBoundary() {
         this.fontBatch.celtium$fontMatrixBoundary();
-    }
-
-    private static int celtium$colourByte(float value) {
-        int quantised = Math.round(value * 255.0f);
-        return quantised < 0 ? 0 : Math.min(quantised, 255);
     }
 
 
@@ -9808,10 +9792,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    private float sampleBoundFramebufferMean() {
-        return sampleBoundFramebufferMean(this.targetWidth, this.targetHeight);
-    }
-
     /**
      * {@return the GL name of a 1x1 white texture}, created once.
      * <p>
@@ -11700,21 +11680,6 @@ this.frameBufferOpen = false;
 
 
 
-
-    /**
-     * Debug aid: copies the arena bytes for the just-uploaded range back to host memory and decodes them. This is
-     * the one comparison that the draw-time readback cannot make - whether the arena holds what the upload path was
-     * given.
-     */
-
-
-    private TerrainRenderer.RegionResources resourcesFor(RenderRegion region) {
-        return this.terrain.resourcesFor(this.context, region, this.commonVertexStride);
-    }
-
-    private VulkanArena indexArena(TerrainRenderer.RegionResources resources) {
-        return this.terrain.indexArena(this.context, resources);
-    }
 
     // ------------------------------------------------------------------ draw path
 
@@ -15917,11 +15882,6 @@ this.frameBufferOpen = false;
             MemoryUtil.memFree(push);
         }
     }
-
-    private void drawPendingImmediate() {
-        drawPendingImmediate(null);
-    }
-
 
     /**
      * Draws the pending groups, optionally only those belonging to one render target.
