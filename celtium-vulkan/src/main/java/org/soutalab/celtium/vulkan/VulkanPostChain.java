@@ -1524,7 +1524,12 @@ public final class VulkanPostChain {
                 throw new IllegalStateException("adopted post chain target " + fbId + " is " + target.width + "x"
                         + target.height + ", the pass asks for " + width + "x" + height);
             }
-            target.delete(this.context.device());
+            // Retired, not freed here: a command buffer this chain recorded before the resize may still name the old
+            // image and view, and destroying them in place is the use-after-free RADV reports as a GPUVM fault (the
+            // whole device is lost, so the screen goes black). The retire queue drains only after a wait that
+            // actually succeeded.
+            Target replaced = target;
+            org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(() -> replaced.delete(this.context.device()));
             trace("resize identity=" + fbId + " replaced image=0x" + hex(target.image)
                     + " (the replacement starts UNDEFINED and gets its own barrier)");
             target = null;
