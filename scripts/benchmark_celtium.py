@@ -27,8 +27,7 @@ measured, and it hashes the pinned jar again after every run.
 
 Configurations (``--configs``):
 
-  celtium-glless                Celtium, GL-less native Vulkan terrain. The objective's target.
-  celtium-bridge                Celtium, native Vulkan terrain through the GL bridge (shipped default).
+  celtium                       Celtium, GL-less native Vulkan terrain. The objective's target.
   reference-celeritas-989ebf2e  pinned upstream Celeritas 989ebf2e, OpenGL terrain. The reference.
   celtium-gl-only               Celtium with the native model draws disabled. Not a GL reference: the
                                 terrain backend stays Vulkan. Only for use as a labelled substitute if
@@ -37,7 +36,7 @@ Configurations (``--configs``):
 Usage:
 
     python3 scripts/benchmark_celtium.py --rounds 2 --frames 900 --warmup-ticks 600
-    python3 scripts/benchmark_celtium.py --configs celtium-glless --rounds 1 --frames 120 --dry-run
+    python3 scripts/benchmark_celtium.py --configs celtium --rounds 1 --frames 120 --dry-run
 """
 
 import argparse
@@ -134,15 +133,9 @@ BASELINE_JAR = (ROOT / ".celtium-work/upstream-baseline/forge122/build/libs/"
                        "celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar")
 
 CONFIGS = {
-    "celtium-glless": {
+    "celtium": {
         "jar": CELTIUM_JAR,
         "what": "Celtium fork, GL-less native Vulkan terrain (the objective's target configuration)",
-        "jvmArgs": ["-Dceltium.vulkan.glless=true"],
-        "native": True,
-    },
-    "celtium-bridge": {
-        "jar": CELTIUM_JAR,
-        "what": "Celtium fork, native Vulkan terrain through the GL bridge (the shipped default)",
         "jvmArgs": [],
         "native": True,
     },
@@ -162,7 +155,7 @@ CONFIGS = {
     },
 }
 
-DEFAULT_CONFIGS = "celtium-glless,celtium-bridge,reference-celeritas-989ebf2e"
+DEFAULT_CONFIGS = "celtium,reference-celeritas-989ebf2e"
 DEFAULT_BASELINE = "reference-celeritas-989ebf2e"
 # A static flat world: no lava, fire, water or leaves, because those keep producing block updates (the
 # chunk queue then never rests, the visible scene drifts between runs, and the chunk-update cost the
@@ -1815,7 +1808,7 @@ def main():
         "schemaVersion": 2,
         "scope": ("steady-state frame timing, process CPU/RSS, renderer-published chunk-queue and "
                   "device-memory counters, chunk-rebuild burst cost and selected GPU for the Celtium "
-                  "GL-less and GL-bridge configurations and the pinned Celeritas 989ebf2e reference, "
+                  "GL-less configuration and the pinned Celeritas 989ebf2e reference, "
                   "under identical settings; no speed-up is asserted by this file"),
         "stamp": args.stamp,
         "host": host,

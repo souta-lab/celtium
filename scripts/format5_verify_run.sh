@@ -44,7 +44,7 @@ timeout 300 python3 scripts/prism_validation.py /home/s0u7a/.local/share/PrismLa
   --mod "$MOD_JAR" \
   --mod "$CLIENT_JAR" \
   --library .celtium-work/runtime/celtium-headless-interop/test-libraries/lwjgl-vulkan-3.4.1.jar \
-  --jvm-arg=-Dceltium.vulkan.glless=true --jvm-arg=-Dceltium.vulkan.validation=true \
+  --jvm-arg=-Dceltium.vulkan.validation=true \
   --jvm-arg=-Dceltium.vulkan.presentReadback=true --jvm-arg=-Dceltium.validation.dumpPresentedImage=true \
   --jvm-arg=-Dceltium.validation.minWorldFrames=5 --jvm-arg=-Dceltium.validation.allBlocks=true \
   --run --validate --duration 110 --headless --force-x11 \

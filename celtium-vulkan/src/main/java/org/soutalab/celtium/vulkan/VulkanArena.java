@@ -54,7 +54,7 @@ public final class VulkanArena {
     /**
      * One census line per upload burst (one frame). It used to be on by default "because it costs a counter and says
      * the numbers" - but on the operator's own session every one of those lines is a synchronous stdout write per
-     * frame, and the log passed 100,000 lines with nothing but {@code -Dceltium.vulkan.glless} set. It is now on for
+     * frame, and the log passed 100,000 lines. It is now on for
      * a diagnostics/validation run ({@link VulkanDiagnostics}) or when asked for explicitly.
      */
     private static final boolean CENSUS_ENABLED =

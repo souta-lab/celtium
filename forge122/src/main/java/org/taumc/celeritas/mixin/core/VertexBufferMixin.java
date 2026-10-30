@@ -28,7 +28,6 @@ public abstract class VertexBufferMixin {
     @Redirect(method = "<init>", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/OpenGlHelper;glGenBuffers()I"), require = 1)
     private int celtium$createNativeBuffer() {
-        if (!CeltiumNativeDraw.enabled()) return OpenGlHelper.glGenBuffers();
         this.celtium$geometry = new NativeGeometryBuffer();
         return this.celtium$geometry.id();
     }

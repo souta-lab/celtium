@@ -56,7 +56,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * <p>
  * It consumes the same meshing output, the same per-section metadata, the same culling and batch assembly and the
  * same render lists as the OpenGL backend; only the GPU resources and the draw calls differ. Renders into the
- * game's framebuffer through {@link VulkanFrameTarget}, which shares the colour and depth images with OpenGL.
+ * game's framebuffer through {@link GllessFrameTarget}, which owns the colour and depth images outright.
  * <p>
  * Runs on the client/render thread with a current GL context, like the OpenGL backend it replaces.
  */
@@ -767,8 +767,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " (" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + ")");
         // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
         this.diagnostics.add("stateMirror: stubTransformCalls="
-                + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge"));
+                + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary());
         if (Boolean.getBoolean("celtium.vulkan.handoffTimings")) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
@@ -776,8 +775,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // the head of the GlStateManager method and does not cancel the GL body - but the denominator for the
             // mirror's own application counts, which is the comparison that found the missing float translate.
             this.diagnostics.add("stateMirror: stubTransformCalls="
-                    + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge"));
+                    + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary());
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.immediateStatistics.refusedBeforeAppend()
                     + " fullGlUploads=" + VulkanGlTexture.fullUploadSummary()
                 + " submitFaultInjections=" + VulkanSubmitFault.injections()
@@ -790,12 +788,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + this.modelStats.run0(this.modelDraws)
                 + " texMatrixGroups=" + this.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + this.modelDrawRefusals
-                + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge")
-                + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge")
-                + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge") + " modelMissingMeshes=" + this.modelGeometry.modelMissingMeshes()
+                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary()
+                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary()
+                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() + " modelMissingMeshes=" + this.modelGeometry.modelMissingMeshes()
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
@@ -1012,7 +1007,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // In GL-less, terrain may be reached after the game has switched away from
         // the lightmap unit. Recover its mirror from the unit announced by Minecraft
         // before rejecting the terrain pass; a refused pass never reaches the queue.
-        if (this.lightmapTexture == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (this.lightmapTexture == null) {
             ensureLightmapMirror();
         }
         if (this.atlasTexture == null || this.lightmapTexture == null) {
@@ -4239,8 +4234,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * renderer where a GL query buys something a hook cannot supply.
      */
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
-        int bound = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))
-                ? NativeTextureBindings.current().texture2d() : this.immediateState.boundTextureName();
+        int bound = NativeTextureBindings.current().texture2d();
         compareBoundTextureWithGl(bound);
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
@@ -4288,12 +4282,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // own NDC) and produced no pixels, because the upload hook announces the image and then invalidates it, and the
         // re-read the invalidation relies on cannot happen. Keeping the mirror is the correct behaviour there: the
         // announcement that arrives with the upload is the new content.
-        // The predicate is the GL provider, not the frame target: textures are uploaded while the game registers them,
-        // which is before any frame target exists, so a frame-target check would answer "GL is there" for exactly the
-        // uploads that matter. isInstalled() is true from the moment the stub takes over the GL entry points.
+        // Textures are uploaded while the game registers them, which is before any frame target exists, so the
+        // registry's image is the only source of pixels for the uploads that matter.
         // The control switch is what separates the two candidate causes of a missing format-6 draw; see
         // GLESS_KEEPS_INVALIDATIONS.
-        if (GLESS_KEEPS_INVALIDATIONS && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (GLESS_KEEPS_INVALIDATIONS) {
             this.textureInvalidationsKeptGlless++;
             // The upload hook announces the image it just wrote, so the raw-write check owes this texture nothing.
             celtium$noteMirrorCurrent(glTextureId);
@@ -4756,8 +4749,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     @Override
     public void invalidateBoundTexture() {
         this.lastInvalidationOrigin = "invalidateBoundTexture";
-        int bound = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))
-                ? NativeTextureBindings.current().texture2d() : this.immediateState.boundTextureName();
+        int bound = NativeTextureBindings.current().texture2d();
         if (bound != 0) {
             invalidateTexture(bound);
         }
@@ -5263,31 +5255,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         this.mirrorSeeded = true;
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // Nothing to seed from: the matrices this would read belong to a context that does not exist, and the
-            // stub answers both queries with the identity. Seeding the mirror from that would replace a camera
-            // transform the hooks did observe with the identity - measured, the world then draws from the origin as
-            // a wedge instead of a plane. The mirror already holds what the hooked GlStateManager calls produced,
-            // and the projection comes from applyDerivedProjection, so the honest answer is to leave it alone.
-            this.cameraSetupSeedsSkipped++;
-            return;
-        }
-        java.nio.FloatBuffer projection = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
-        java.nio.FloatBuffer modelView = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
-        try {
-            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, projection);
-            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, modelView);
-            float[] p = new float[16];
-            float[] m = new float[16];
-            projection.get(p);
-            modelView.get(m);
-            this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, p);
-            this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW, m);
-            this.cameraSetupSeeds++;
-        } finally {
-            org.lwjgl.system.MemoryUtil.memFree(projection);
-            org.lwjgl.system.MemoryUtil.memFree(modelView);
-        }
+        // Nothing to seed from: the matrices a GL read would return belong to a context that does not exist, and the
+        // queries answer the identity. Seeding the mirror from that would replace a camera transform the hooks did
+        // observe with the identity - measured, the world then draws from the origin as a wedge instead of a plane.
+        // The mirror already holds what the hooked GlStateManager calls produced, and the projection comes from
+        // applyDerivedProjection, so the honest answer is to leave it alone.
+        this.cameraSetupSeedsSkipped++;
     }
 
     /** {@return one line per off-target render target that received batches}, for the per-target work's sizing. */
@@ -5774,7 +5747,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return Long.MIN_VALUE;
         }
         long identity = this.publishedTextures.identityForColorTexture(glTextureName);
-        if (identity == Long.MIN_VALUE || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (identity == Long.MIN_VALUE) {
             return identity;
         }
         // The association is by name, and a name outlives its texture: a mod's framebuffer colour texture deleted
@@ -5918,13 +5891,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * @param recorded the publication census that {@code bindFramebufferColorTexture} fills
      */
     static int offTargetRenderedTextureName(long identity, PublishedFrameTextures recorded) {
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            return recorded.colorTextureName(identity);
-        }
-        int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
-        return org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
-                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0,
-                org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+        return recorded.colorTextureName(identity);
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
@@ -6003,9 +5970,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     public void viewport(int x, int y, int width, int height) {
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);
-        }
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);
         // No flush here. Every queued group is drawn with the current target's own viewport and scissor, so a viewport
         // change cannot strand or invalidate one; it only makes *new* offers outside the full-target contract, and those
         // are refused before acceptance, where the ordering flush already happens. Flushing here as well cost a whole
@@ -6190,20 +6155,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         float[] derived = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
         System.arraycopy(derived, 0, this.worldSnapshotProjection, 0, 16);
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // The camera transform is mirrored from the hooked GlStateManager matrix calls, so it is already here:
-            // the GL read would answer zeros, and a zeroed camera transform degenerates every world draw.
-            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
-                    this.worldSnapshotModelView, 0, 16);
-        } else {
-            java.nio.FloatBuffer modelView = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
-            try {
-                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, modelView);
-                modelView.get(this.worldSnapshotModelView);
-            } finally {
-                org.lwjgl.system.MemoryUtil.memFree(modelView);
-            }
-        }
+        // The camera transform is mirrored from the hooked GlStateManager matrix calls, so it is already here: the
+        // GL read would answer zeros, and a zeroed camera transform degenerates every world draw.
+        System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+                this.worldSnapshotModelView, 0, 16);
         this.worldSnapshotValid = true;
         // Seed the mirror's base: the projection derived from Minecraft's numbers and the camera transform as the camera
         // setup left it. Everything the pass then does through the hooked matrix calls - per-model, per-entity, per-TESR
@@ -6276,19 +6231,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // "unrecorded (format=5 ...) stage=10" and could not be told from the conditions that do name
                 // themselves. The draw path already substitutes the standalone pass for exactly this case
                 // (prepareImmediate and the flush path both use the terrain pass only when there is one), so this is
-                // the draw path's own rule rather than a relaxation of the gate; the bridge leg keeps refusing
-                // because prepareImmediate refuses there too.
+                // the draw path's own rule rather than a relaxation of the gate.
                 VulkanTerrainPipeline ui = this.terrain.pipelineFor(this.lastUiPass);
-                long renderPass;
-                if (ui != null) {
-                    renderPass = ui.renderPass();
-                } else if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                    renderPass = uiRenderPass();
-                } else {
-                    this.immediateLastRefusal = "the particle descriptor probe needs a pass and none has run yet"
-                            + " (lastUiPass=" + nameOf(this.lastUiPass) + ")";
-                    return false;
-                }
+                long renderPass = ui != null ? ui.renderPass() : uiRenderPass();
                 this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, renderPass,
                         VulkanColorBlendState.of(false, 0, 0,
                                 org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE,
@@ -6372,15 +6317,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateState.activeTextureUnit(0);
             this.immediateState.texture2dEnabled(true);
             this.immediateState.bindTexture(run.texture);
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                // The run's texture is also bound through the direct-GL route: submitImmediateBatch supersedes
-                // boundTexture with the live glBindTexture whenever the latest bind came through that route, and a
-                // state-model write alone is invisible to it. Without this the last page the game bound for the NEXT
-                // glyph overrode the run's texture at flush - measured as ja_jp text drawn from the wrong page at the
-                // right cell: カ rendered page_00's «, 漢 rendered page_5b's glyph.
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(
-                        org.lwjgl.opengl.GL11.GL_TEXTURE_2D, run.texture);
-            }
+            // The run's texture is also bound through the direct-GL route: submitImmediateBatch supersedes
+            // boundTexture with the live glBindTexture whenever the latest bind came through that route, and a
+            // state-model write alone is invisible to it. Without this the last page the game bound for the NEXT
+            // glyph overrode the run's texture at flush - measured as ja_jp text drawn from the wrong page at the
+            // right cell: カ rendered page_00's «, 漢 rendered page_5b's glyph.
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_2D, run.texture);
             this.immediateState.alphaTestEnabled(run.alphaTest);
             this.immediateState.alphaFuncReference(run.alphaRef);
             System.arraycopy(run.projection, 0, this.glProjection, 0, 16);
@@ -6394,11 +6337,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateState.activeTextureUnit(0);
             this.immediateState.texture2dEnabled(savedTexture2d);
             this.immediateState.bindTexture(savedTexture);
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                // Restore through the same direct route so the GL-binding record matches the state model again.
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(
-                        org.lwjgl.opengl.GL11.GL_TEXTURE_2D, savedTexture);
-            }
+            // Restore through the same direct route so the GL-binding record matches the state model again.
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_2D, savedTexture);
             this.immediateState.activeTextureUnit(savedUnit);
             this.immediateState.alphaTestEnabled(savedAlphaTest);
             this.immediateState.alphaFuncReference(savedAlphaRef);
@@ -6842,137 +6783,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // as Framebuffer.func_178038_a - the game framebuffer blitted onto the screen - and taking it cancels GL's
             // blit, so the screen shows the Vulkan present instead. It runs before the acceptance mask, which keeps
             // this layout on GL by default.
-            try {
-                // Under the GL-less window the swap point presents the finished frame, so this mid-frame present would
-                // be a second one for the same frame - and it restores the colour image to a layout the owned target
-                // does not use. The bridge configuration keeps it: that is where it was measured.
-                // The GL-less check comes FIRST: it used to be the last term, so every format-2 composite candidate
-                // still ran ensureSwapchain() before being refused the present - a GLFW framebuffer-size query and a
-                // surface-capabilities query per font/text batch. Measured with JFR native samples on the client
-                // thread: of 201 glfwGetFramebufferSize samples, 195 came from ensureSwapchain() on this path
-                // (celtium$submitFontRun -> submitImmediateBatch -> ensureSwapchain), while GL-less never presents
-                // here at all. Reordering changes no behaviour: both terms must hold, and the skipped work is the
-                // side effect of a call whose result could not be used.
-                if (this.frameTarget != null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        && ensureSwapchain()) {
-                    this.frameSubmitReachedQueue = false;
-                    this.frameTarget.beginFrameForPresent();
-                    long bridgeWait = this.frameTarget.waitSemaphore();
-                    long bridgeDone = this.frameTarget.doneSemaphore();
-                    // The swapchain indexes the present-wait semaphore by the image it acquires, so it needs the
-                    // target that owns that array; set once here rather than threaded through every call.
-                    this.swapchain.setBridgeTarget(this.frameTarget);
-                    // A binary semaphore may only be signalled again after its previous signal has been waited on, and
-                    // the present submit is the only producer of this pair's done signal while endFrame is its only
-                    // consumer. When a previous signal is still outstanding - a re-present, or a second
-                    // beginFrameForPresent before the wait - presenting with the bridge pair would signal it twice and
-                    // the layer reports VUID-vkQueueSubmit-pSignalSemaphores-00067, measured as ten messages in one
-                    // leg with the semaphore traced to this pair rather than the swapchain's. Presenting without the
-                    // bridge pair is what the other two call sites already do, so the fallback is a shape the path
-                    // has, and it is counted rather than silent.
-                    // Do NOT skip the pair here. Measured: skipping it left the wait semaphore's signal unconsumed, so the
-                    // next beginFrame signalled it a second time - the VUID count stayed at ten and moved from the done
-                    // semaphore to the wait semaphore rather than disappearing. Both halves of the bridge pair must stay
-                    // 1:1, so the fix belongs in the frame-open contract (drain before re-signalling), not at this call
-                    // site. The tracking below is what such a drain would consult.
-                    int sourceLayout = this.frameTarget.colorImageLayout();
-                    int restoredLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                    String result = this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(), sourceLayout,
-                            this.targetWidth, this.targetHeight, bridgeWait, bridgeDone, restoredLayout);
-                    // Recorded from the outcome, not from the intent. This flag answers "is the done semaphore's signal
-                    // outstanding?", and it was being set before the present ran - so a present that did not submit left
-                    // it claiming a signal that never happened, and the next producer (submitSignalOnly, the second
-                    // producer of the same semaphore) was suppressed, shifting the pairing the other way. Measured: the
-                    // ten VUID-vkQueueSubmit-pSignalSemaphores-00067 messages survive with the guard, with a drain, and
-                    // with the consumer reporting consumption, so the producer is none of those paths and the flag's
-                    // own accuracy is what is left to correct.
-                    if (bridgeDone != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE
-                            && this.swapchain.lastPresentSubmitDone()) {
-                        this.frameTarget.noteDoneSemaphoreSignalled();
-                    }
-                    // The present moved the shared image through the transfer layout and this hands it back, so the
-                    // owner's bookkeeping follows what the commands actually did.
-                    this.frameTarget.noteColorImageLayout(restoredLayout);
-                    // Report both facts before anything acts on them: the previous attempt to fail closed on them
-                    // broke the run (four terrain passes instead of two thousand), and which flag was false is the
-                    // question to answer with a measurement rather than another guess.
-                    if (this.immediatePresentedFrames < 3) {
-                        record("composite present: submitDone=" + this.swapchain.lastPresentSubmitDone()
-                                + " succeeded=" + this.swapchain.lastPresentSucceeded() + " frameTargetWidth="
-                                + this.targetWidth + " result=" + result);
-                    }
-                    // End the frame only when the submission that signals the bridge's done semaphore was made; and
-                    // leave GL's composite in place unless the frame actually reached the screen. Both flags are now
-                    // set inside presentImage itself - the first attempt set them in the probe by mistake, which is why
-                    // submitDone read false here and skipping endFrame broke the bridge's copy-back.
-                    if (this.swapchain.lastPresentSubmitDone()) {
-                        // The present submit waited on the bridge's wait semaphore, so the target's signal is consumed -
-                        // and this path never said so. The flag stayed true after a perfectly normal frame, which is
-                        // what made every later "is it outstanding?" decision wrong: endFrame cleared it blindly (so a
-                        // spurious drain was the alternative), and the drain submitted a wait on an already-consumed
-                        // semaphore, which then consumed the *next* frame's signal and shifted the whole pairing by one
-                        // frame. Both are the same root cause - the consumer did not report the consumption - and this
-                        // is where the report belongs, next to the submit that did the waiting.
-                        if (this.frameTarget instanceof GllessFrameTarget gllessTarget) {
-                            gllessTarget.noteWaitConsumed();
-                        }
-                        this.frameTarget.endFrame();
-                    } else {
-                        // The frame is open and its GL-to-Vulkan semaphore has been acquired, but nothing was submitted:
-                        // endFrame() makes GL wait on the Vulkan-to-GL semaphore, so without a submission that signals it
-                        // the render thread deadlocks - which is exactly what a forced out-of-date acquire produced when
-                        // the failure path was first made reachable (audit S18).
-                        this.frameCoordinator.submitSignalOnly();
-                        this.frameTarget.endFrame();
-                        this.emptyFrameReleases++;
-                    }
-                    if (!this.swapchain.lastPresentSucceeded()) {
-                        this.immediatePresentFailures++;
-                        this.immediateLastRefusal = "the composite present did not reach the screen";
-                        record("composite present did not reach the screen, GL's composite stays: " + result);
-                        return false;
-                    }
-                    if (this.swapchain.outOfDate()) {
-                        // The swapchain no longer matches the surface. Dropping it is the whole rebuild: the next
-                        // present calls ensureSwapchain(), which creates one against the surface as it is by then.
-                        //
-                        // OPT-04 contract, stated because this delete rests on a basis other than a device-wide idle:
-                        // it runs inside the present path, *after* this frame's submission completed and its images
-                        // were handed to the presentation engine (the fence this path waits on before reaching here),
-                        // and the only resources it frees are the swapchain's own images, semaphores and surface
-                        // wrapper - none of which this frame's command buffer still references, because the blit into
-                        // them is part of the submission that already signalled. So the basis is "the submission that
-                        // used these completed", which is the same guarantee settleGpu() would give, obtained from the
-                        // present path's own fence instead of a queue wait. A future change that moves this delete
-                        // before that wait, or that frees anything the frame's command buffer can still name, breaks
-                        // the contract and needs the idle wait instead.
-                        record("the swapchain is out of date with the surface, rebuilding it for the next present");
-                        releaseSwapchainForRebuild();
-                    }
-                    this.immediatePresentedFrames++;
-                    if (this.immediatePresentedFrames == 1) {
-                        record("presented the frame from the composite: " + result);
-                        record("presented image mean=" + this.swapchain.lastPresentedMean());
-                        record("submitWithSemaphores calls=" + VulkanContext.submitWithSemaphoresCalls
-                                + " withWait=" + VulkanContext.submitWithSemaphoresWaits);
-                    }
-                    return true;
-                }
-            } catch (RuntimeException | LinkageError error) {
-                if (this.immediatePresentedFrames == 0) {
-                    this.immediateLastRefusal = "presenting from the composite failed";
-                    record("presenting from the composite failed: " + describe(error));
-                }
-            }
-            // Under the GL-less window there is no GL composite to replace - the mid-frame present above is the
-            // bridge's, and the swap point presents the finished frame - so this branch could only ever refuse. What
-            // separates the two kinds of format-2 quad is the texture it samples: the frame's own blit samples this
-            // target's own colour image and stays refused, because presenting it again is exactly the duplicate the
-            // swap point already avoided; anything else is an overlay blended into the frame (the entity outline's
-            // composite is the case) and belongs to the acceptance mask below. The question is answered from the map
-            // the game's own framebuffer binds fill, because the stub cannot answer an attachment query.
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                    && !celtium$samplesCurrentTargetColor(this.immediateState.boundTextureName())) {
+            // There is no GL composite to replace: the swap point presents the finished frame, so presenting here
+            // would be a second one for the same frame. What separates the two kinds of format-2 quad is the texture
+            // it samples: the frame's own blit samples this target's own colour image and stays refused, because
+            // presenting it again is exactly the duplicate the swap point already avoided; anything else is an overlay
+            // blended into the frame (the entity outline's composite is the case) and belongs to the acceptance mask
+            // below. The question is answered from the map the game's own framebuffer binds fill, because the stub
+            // cannot answer an attachment query.
+            if (!celtium$samplesCurrentTargetColor(this.immediateState.boundTextureName())) {
                 this.immediateLastRefusal = null;
             } else {
                 return false;
@@ -7926,8 +7744,7 @@ this.frameBufferOpen = false;
                             + " blendingOff=" + this.immediateOpaqueAccepted
                             // With the counters, not only in the report: how many transform calls reached the stub, to be read
                             // against the mirror's own application counts rather than on its own.
-                            + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                                    ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge"));
+                            + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary());
                 }
             }
             this.immediateLastRefusal = "none";
@@ -9028,10 +8845,7 @@ this.frameBufferOpen = false;
         }
         if (!supportedImmediateTarget()) throw new IllegalStateException("accepted target disappeared before flush");
         VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
-        if (terrain == null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            throw new IllegalStateException("accepted geometry has no render pass");
-        }
-        // GL-less frames can hold UI batches with no terrain pass ever run (the menu screen): the standalone
+        // Frames can hold UI batches with no terrain pass ever run (the menu screen): the standalone
         // frame-compatible render pass records them the same way.
         long renderPassHandle = terrain != null ? terrain.renderPass() : uiRenderPass();
         if (!this.windowOrderLogged) {
@@ -9297,7 +9111,6 @@ this.frameBufferOpen = false;
                     }
                     if (!this.boxPreProbeDone && this.frameId == 0L && this.targetRegistry.currentIdentity() == 0L
                             && this.frameTarget.colorImage() != 0L
-                            && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
                             && System.getProperty("celtium.vulkan.mirrorDump") != null
                             && this.celtium$presentCount >= 100) {
                         this.boxPreProbeDone = true;
@@ -9492,47 +9305,8 @@ this.frameBufferOpen = false;
         if (this.lightmapTexture != null) {
             return;
         }
-        boolean nativeFrontend = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
-        if (nativeFrontend) {
-            int resource = LightmapIdSource.lightmapTextureId();
-            if (resource > 0) this.lightmapGlId = resource;
-        }
-        if (!nativeFrontend && this.lightmapGlId <= 0 && this.lightmapUnit > 0) {
-            // The id is asked of GL on the unit the mod side named, rather than remembered: the reallocation path zeroes
-            // it. The previous active unit is restored, so this is a query and not a state change.
-            try {
-                int previous = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-                // The mod side hands over OpenGlHelper.lightmapTexUnit, which is already the GL enum (GL_TEXTURE1 =
-                // 33985), not a unit index. Adding GL_TEXTURE0 to it asked for unit 33985 - a unit that cannot exist -
-                // so the light map's id was never learned and the terrain pass never opened.
-                int wanted = this.lightmapUnit >= 0x84C0 ? this.lightmapUnit : 33984 + this.lightmapUnit;
-                if (previous != wanted) {
-                    org.lwjgl.opengl.GL13.glActiveTexture(wanted);
-                }
-                int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-                if (previous != wanted) {
-                    org.lwjgl.opengl.GL13.glActiveTexture(previous);
-                }
-                if (bound > 0) {
-                    this.lightmapGlId = bound;
-                }
-            } catch (RuntimeException | LinkageError error) {
-                // A query that cannot run must not stop the frame; the source below answers either way.
-            }
-
-            if (this.lightmapGlId <= 0) {
-                // The GL answer is not always available even when the bind happened: GlStateManager.bindTexture skips
-                // the GL call when its own per-unit cache already holds the name, so the stub never sees the light
-                // map's bind and this query returns nothing. Measured on leg gv-cohort-vp1, where the refusal read
-                // "lightmapped batch with no lightmap texture mirrored (id=-1 unit=33985)" - the unit was right and
-                // the id was not. The DynamicTexture that owns the name is asked instead, through the source the game
-                // side installs; it is a supplier because the light map is reallocated on resource reloads.
-                int fromGame = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapTextureId();
-                if (fromGame > 0) {
-                    this.lightmapGlId = fromGame;
-                }
-            }
-        }
+        int resource = LightmapIdSource.lightmapTextureId();
+        if (resource > 0) this.lightmapGlId = resource;
         if (this.lightmapGlId > 0) {
             try {
                 int[] size = textureSize(this.lightmapGlId);
@@ -9666,7 +9440,7 @@ this.frameBufferOpen = false;
         // still read "unrecorded").
         int fbo = drawFramebufferBinding();
         boolean sharedComposite = false;
-        if (fbo == 0 && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (fbo == 0) {
             // No GL framebuffers exist under the stub, so every default-framebuffer draw - the world pass, menus, the
             // composite, overlays - lands in the owned image. This is that path and it must keep taking them.
             //
@@ -9827,21 +9601,6 @@ this.frameBufferOpen = false;
         // settled the question. Under the GL-less window the same absence means a UI-only screen, and those batches
         // must still draw: the standalone frame-compatible render pass stands in.
         if (BATCH_TIMINGS) this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
-        if (terrain == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            terrain = null; // keep the pass lookup result; the render pass handle below substitutes for it
-        } else if (terrain == null) {
-            // Every null return names its cause here, so the offer path has one reason to report instead of judging the
-            // same condition again with a message that merged three different causes.
-            this.prepareDescriptorFailures++;
-            // Which pass was asked for, and whether there was one at all: "no pipeline for this pass" covers both "the
-            // pass has not run yet in this instance" and "this pass has no pipeline", and the two need different fixes.
-            this.prepareNoPassRefusals++;
-            this.prepareNoPassFirstFrame = this.prepareNoPassRefusals == 1 ? this.frameId : this.prepareNoPassFirstFrame;
-            this.prepareNoPassLastFrame = this.frameId;
-            this.lastPrepareFailure = "format=" + format + " texture=" + textureId
-                    + (this.lastUiPass == null ? " (no pass has run yet in this instance)" : " (no pipeline for this pass)");
-            return null;
-        }
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
         long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
@@ -10144,7 +9903,7 @@ this.frameBufferOpen = false;
      * by identity and the chain's input image, not the drawing of the composite, is what moved.
      */
     private boolean celtium$isScreenSelfComposite() {
-        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || this.targetRegistry.currentIdentity() != 0L) {
+        if (this.targetRegistry.currentIdentity() != 0L) {
             return false;
         }
         int frameColorTexture = framebufferColorTextureName(this.targetRegistry.mainIdentity());
@@ -10215,8 +9974,7 @@ this.frameBufferOpen = false;
      * published splash name into the frame image, which is a different group and is not matched here.
      */
     private boolean celtium$isPairSelfCompositeGroup(ImmediateGroup group) {
-        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || group.texture == 0
-                || group.target == 0L) {
+        if (group.texture == 0 || group.target == 0L) {
             return false;
         }
         GllessFrameTarget offTarget = offTargetTarget();
@@ -10284,7 +10042,7 @@ this.frameBufferOpen = false;
     private final long[] windowRecordsByArm = new long[2];
 
     private boolean celtium$isSelfCompositeGroup(ImmediateGroup group) {
-        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || this.frameTarget == null) {
+        if (this.frameTarget == null) {
             return false;
         }
         if (group.target != 0L || group.texture == 0) {
@@ -11436,8 +11194,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    private String depthSharingSummary;
-
     /**
      * Roadmap S4/S6 wiring: when enabled, the first non-terrain geometry (a textured quad built through
      * {@link VulkanDynamicMesh} and drawn by {@link VulkanUiPipeline}) is recorded into the same render pass as the
@@ -11607,19 +11363,12 @@ this.frameBufferOpen = false;
     public String getTransferQueueDebugString() {
         // The debug overlay shows this line, so it carries the backend's own state: without it a terrain pass that
         // silently skips (missing textures, no frame target, a failed pipeline) would look like a rendering bug.
-        if (this.depthSharingSummary == null) {
-            try {
-                this.depthSharingSummary = VulkanFrameTarget.describeDepthFormatSharing(this.context);
-            } catch (RuntimeException | LinkageError error) {
-                this.depthSharingSummary = "shared depth formats: probe failed";
-            }
-        }
         String handoff = takeHandoffSummary();
         String detail = this.frameTarget == null ? null : this.frameTarget.takeTimingSummary();
         String base = describe();
         String withHandoff = handoff == null ? base : base + " | " + handoff;
         String withDetail = detail == null ? withHandoff : withHandoff + " | " + detail;
-        return withDetail + " | " + this.depthSharingSummary + " | " + verificationSummary();
+        return withDetail + " | " + verificationSummary();
     }
 
     /**
@@ -12465,10 +12214,6 @@ this.frameBufferOpen = false;
     }
 
     private void celtium$latchGameClearAtTargetChange() {
-        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // The bridge leg has real GL: it clears for itself, and the stub's request is not this path's to consume.
-            return;
-        }
         if (!celtium$gameClearLatchEnabled()) {
             // Control leg: leave the request pending, exactly as it was before this latch existed, so the live read
             // in applyGameClears makes the decision at the next acquire.
@@ -12528,7 +12273,7 @@ this.frameBufferOpen = false;
      */
     public void celtium$gameClear(int mask, int drawFbo) {
         GllessFrameTarget glless = offTargetTarget();
-        if (glless == null || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (glless == null) {
             return;
         }
         if (mask == 0) {
@@ -13243,8 +12988,6 @@ this.frameBufferOpen = false;
     /** One-shot: the frame's order, for settling whether the window runs before the terrain. */
     private boolean windowOrderLogged;
     /** One-shots: the frame-target refusals that used to collapse into "no frame target". */
-    private int nonTextureAttachmentLogged;
-    private int foreignFboLogged;
     /** One-shot: the distinct projection depth rows the groups of a frame draw with. */
     private int groupDepthRowsSeen;
     /** One-shot: the matrices a model group is stored with. */
@@ -14520,7 +14263,7 @@ this.frameBufferOpen = false;
             // +13.4 ms per frame on Intel with them (AMD: no measurable cost), which is the price of a second copyback and
             // its waits per frame. The shared image is left in the layout GL declares, which is what is passed here.
             // VK_IMAGE_LAYOUT_GENERAL is the layout both targets leave the colour image in after a frame's release
-            // barrier (VulkanFrameTarget.recordReleaseBarriers and GllessFrameTarget.recordReleaseBarriers both end
+            // barrier (GllessFrameTarget.recordReleaseBarriers ends
             // there), so it is the layout this present really finds. Taking it from the target's own bookkeeping was
             // tried and reverted: the bridge target records the layout its *GL* side leaves, which is a different
             // question from the one this call asks.
@@ -14531,9 +14274,7 @@ this.frameBufferOpen = false;
             // "vkCmdDraw" is a hardcoded label rather than the command). The GL-less target's own bookkeeping answers
             // this exactly - UNDEFINED while fresh, GENERAL once a submitted frame has transitioned it - so it is
             // asked only in the configuration that owns the image; the bridge's tracking answers a different question.
-            int presentSourceLayout = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                    ? this.frameTarget.colorImageLayout()
-                    : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+            int presentSourceLayout = this.frameTarget.colorImageLayout();
             // The image is handed back in GENERAL whatever it was found in, because UNDEFINED is a legal oldLayout for
             // the source transition and an illegal newLayout for the hand-back: passing the found layout through as the
             // restore target produced VUID-VkImageMemoryBarrier-newLayout-01198 on a freshly rebuilt target (the
@@ -15481,68 +15222,29 @@ this.frameBufferOpen = false;
     }
 
     private boolean ensureFrameTarget() {
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // The window's own framebuffer size is what the frame target must match: it is the drawable the swapchain
-            // presents, and it does not move when the game binds one of its own framebuffers. Sizing from the GL viewport
-            // instead adopted whatever framebuffer was bound last - the splash's own FBO during startup - so the target
-            // (and with it the pairs and every name published over them) was created at the wrong size and then rebuilt
-            // when the main framebuffer arrived, which threw the splash's pixels away and left the composite sampling an
-            // empty image: the white loading screen. The main framebuffer's reported size is the second choice, the
-            // viewport the last.
-            int[] window = cachedWindowFramebufferSize();
-            if (window[0] > 0 && window[1] > 0) {
-                return ensureFrameTarget(window[0], window[1]);
-            }
-            int[] drawable = currentViewport();
-            int width = this.mainFramebufferWidth > 0 ? this.mainFramebufferWidth : drawable[2];
-            int height = this.mainFramebufferHeight > 0 ? this.mainFramebufferHeight : drawable[3];
-            return ensureFrameTarget(width, height);
+        // The window's own framebuffer size is what the frame target must match: it is the drawable the swapchain
+        // presents, and it does not move when the game binds one of its own framebuffers. Sizing from the GL viewport
+        // instead adopted whatever framebuffer was bound last - the splash's own FBO during startup - so the target
+        // (and with it the pairs and every name published over them) was created at the wrong size and then rebuilt
+        // when the main framebuffer arrived, which threw the splash's pixels away and left the composite sampling an
+        // empty image: the white loading screen. The main framebuffer's reported size is the second choice, the
+        // viewport the last.
+        int[] window = cachedWindowFramebufferSize();
+        if (window[0] > 0 && window[1] > 0) {
+            return ensureFrameTarget(window[0], window[1]);
         }
-        int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
-        if (fbo == 0) return false;
-        int type = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
-                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
-        if (type != org.lwjgl.opengl.GL11.GL_TEXTURE) {
-            if (this.nonTextureAttachmentLogged < 6) {
-                this.nonTextureAttachmentLogged++;
-                // First seen as a steady "no frame target" refusal for format-2 quads; the reason this gate fails has to
-                // name the framebuffer and its attachment, which only the dedicated line surfaces.
-                System.out.println("[Celtium] CELTIUM_TARGET_REFUSAL fbo=" + fbo + " attachmentType=" + type
-                        + " target=" + this.targetWidth + "x" + this.targetHeight);
-            }
-            return false;
-        }
-        int texture = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
-                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-        int w = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-        int h = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
-        if (w != this.targetWidth || h != this.targetHeight) {
-            // A non-shared framebuffer - a mod's or the post-chain's - reads a different size than the game target.
-            if (this.foreignFboLogged < 8) {
-                this.foreignFboLogged++;
-                System.out.println("[Celtium] CELTIUM_TARGET_FOREIGN fbo=" + fbo + " attachment=" + texture
-                        + " " + w + "x" + h + " target=" + this.targetWidth + "x" + this.targetHeight);
-            }
-        }
-        if (w <= 0 || h <= 0) {
-            if (this.nonTextureAttachmentLogged < 6) {
-                this.nonTextureAttachmentLogged++;
-                System.out.println("[Celtium] CELTIUM_TARGET_REFUSAL fbo=" + fbo + " attachment=" + texture
-                        + " size " + w + "x" + h + " (dead or incomplete)");
-            }
-            return false;
-        }
-        return ensureFrameTarget(w, h);
+        int[] drawable = currentViewport();
+        int width = this.mainFramebufferWidth > 0 ? this.mainFramebufferWidth : drawable[2];
+        int height = this.mainFramebufferHeight > 0 ? this.mainFramebufferHeight : drawable[3];
+        return ensureFrameTarget(width, height);
     }
 
     /**
      * Ensures the frame target exists for the given size, without asking the bound framebuffer how big it is.
      * <p>
-     * The callers that read the attachment are left on {@link #ensureFrameTarget()}; this overload is for the adoption
-     * path, where the framebuffer object's own width and height are the authoritative size. The bound colour
-     * attachment can be a shared image that died together with an earlier backend instance - a world change recreates
-     * the renderer and this backend but not the framebuffer - which reads back as 0x0 and would otherwise leave the
-     * target, and with it every draw, unrecoverable.
+     * The adoption path passes the framebuffer object's own width and height, which are the authoritative size there.
+     * A world change recreates the renderer and this backend but not the framebuffer, and a size cached from the old
+     * target would otherwise leave the target, and with it every draw, unrecoverable.
      */
     private boolean ensureFrameTarget(int width, int height) {
         if (this.frameTarget != null && this.frameTarget.matches(width, height)) {
@@ -15565,14 +15267,9 @@ this.frameBufferOpen = false;
             this.targetRegistry.noteFrameTargetReplaced();
         }
         try {
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                // With the stub answering GL there is no GL side to share images with: the frame lands in an
-                // owned target whose semaphores are signalled and consumed by Vulkan submissions alone.
-                this.frameTarget = GllessFrameTarget.create(this.context, width, height);
-            } else {
-                this.frameTarget = VulkanFrameTarget.create(this.context.instance(), this.context.physicalDevice(),
-                        this.context.device(), this.context.queue(), this.context.queueFamilyIndex(), width, height);
-            }
+            // There is no GL side to share images with: the frame lands in an owned target whose semaphores are
+            // signalled and consumed by Vulkan submissions alone.
+            this.frameTarget = GllessFrameTarget.create(this.context, width, height);
             if (this.gameFramebufferIsShared) {
                 this.frameTarget.noteGameFramebufferAdopted();
             }
@@ -15706,15 +15403,11 @@ this.frameBufferOpen = false;
     }
 
     private int groupDepthRowChecks;
-    /** Read once: refreshTextures runs per pass, and a property read is a synchronized table lookup. */
-    private static final boolean REFRESH_NATIVE_FRONTEND =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
 
     private void refreshTextures() {
-        boolean nativeFrontend = REFRESH_NATIVE_FRONTEND;
         // A terrain material names the atlas and lightmap resources. Whichever GUI/entity texture happened to be
         // bound last is not the terrain material, and querying that binding must not mutate the active unit.
-        int atlasId = nativeFrontend ? LightmapIdSource.atlasTextureId() : boundTextureId(0);
+        int atlasId = LightmapIdSource.atlasTextureId();
         if (atlasId <= 0) {
             // The GL answer is not available without a GL context - the stub records bindings it is told about,
             // and 1.12.2 binds the atlas through paths that skip the call. Measured on leg gv-cohort-dev10:
@@ -15724,7 +15417,7 @@ this.frameBufferOpen = false;
                 atlasId = fromGame;
             }
         }
-        int lightmapId = nativeFrontend ? LightmapIdSource.lightmapTextureId() : boundTextureId(1);
+        int lightmapId = LightmapIdSource.lightmapTextureId();
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
         // nothing the game is drawing can be disturbed.
@@ -15820,52 +15513,20 @@ this.frameBufferOpen = false;
         this.lightmapRefreshCountdown--;
     }
 
-    private static int boundTextureId(int unit) {
-        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
-            return NativeTextureBindings.current().texture2d(unit);
-        }
-        int previous = org.lwjgl.opengl.GL11C.glGetInteger(org.lwjgl.opengl.GL13C.GL_ACTIVE_TEXTURE);
-        org.lwjgl.opengl.GL13C.glActiveTexture(org.lwjgl.opengl.GL13C.GL_TEXTURE0 + unit);
-        int texture = org.lwjgl.opengl.GL11C.glGetInteger(org.lwjgl.opengl.GL11C.GL_TEXTURE_BINDING_2D);
-        org.lwjgl.opengl.GL13C.glActiveTexture(previous);
-        return texture;
-    }
-
     /**
      * The size of a GL texture's level 0, asked through the binding rather than through direct state access.
      * <p>
-     * {@code glGetTextureLevelParameteri} needs GL 4.5 or {@code ARB_direct_state_access}, and when the context does
-     * not have it the query answers 0 - which the {@code Math.max(1, ...)} here turned into a 1x1 image. The mirror
-     * was then created at 1x1 and the upload had to replace it, so every descriptor built in between pointed at an
-     * image that no longer existed: the atlas sampled as black while the registry's current image held the real
-     * pixels. The bound form works wherever a texture can be bound at all, and under the GL-less stub it answers from
-     * the extents the stub recorded. The binding is restored, so the game sees no state change.
+     * The extent comes from the allocation the stub recorded, not from a bound GL query: {@code glGetTextureLevelParameteri}
+     * needs GL 4.5 or {@code ARB_direct_state_access}, and there is no context to ask anyway.
      */
     private static int[] textureSize(int texture) {
         if (texture == 0) {
             return new int[] { 0, 0 };
         }
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // Native GL bind/query entry points may be replaced; the named allocation owns this texture's extent.
-            return new int[] {
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1000),
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1001) };
-        }
-        int previous = org.lwjgl.opengl.GL11C.glGetInteger(org.lwjgl.opengl.GL11C.GL_TEXTURE_BINDING_2D);
-        try {
-            if (previous != texture) {
-                org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, texture);
-            }
-            int width = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
-                    org.lwjgl.opengl.GL11C.GL_TEXTURE_WIDTH);
-            int height = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
-                    org.lwjgl.opengl.GL11C.GL_TEXTURE_HEIGHT);
-            return new int[] { width, height };
-        } finally {
-            if (previous != texture) {
-                org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, previous);
-            }
-        }
+        // Native GL bind/query entry points may be replaced; the named allocation owns this texture's extent.
+        return new int[] {
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1000),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1001) };
     }
 
     // ------------------------------------------------------------------ command resources

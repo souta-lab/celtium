@@ -27,9 +27,6 @@ public final class CeltiumModelCapture {
      * @return whether the native renderer took it, in which case the caller must cancel the GL body
      */
     public static boolean onNewList(int list, int mode) {
-        if (!CeltiumGlStub.isInstalled()) {
-            return false;
-        }
         try {
             VulkanModelQuadCapture.listCompileStarted(list);
         } catch (RuntimeException | LinkageError ignored) {
@@ -45,9 +42,6 @@ public final class CeltiumModelCapture {
      * @return whether the native renderer took it, in which case the caller must cancel the GL body
      */
     public static boolean onEndList() {
-        if (!CeltiumGlStub.isInstalled()) {
-            return false;
-        }
         CeltiumGllessHint.nativeEndList();
         return true;
     }

@@ -89,7 +89,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 return basicClass;
             }
             CeleritasVintageMixinPlugin.LOGGER.info(
-                    "CELTIUM_GLLESS replaced {} native GL method(s) in {}", rewritten[0], target);
+                    "CELTIUM_GLSTUB replaced {} native GL method(s) in {}", rewritten[0], target);
             return writer.toByteArray();
         } catch (Throwable error) {
             CeleritasVintageMixinPlugin.LOGGER.error(

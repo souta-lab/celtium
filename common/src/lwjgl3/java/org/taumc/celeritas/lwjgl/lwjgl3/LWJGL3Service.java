@@ -232,11 +232,8 @@ public record LWJGL3Service(
             timerQueryMode = TimerQueryMode.EXT;
         } else {
             timerQueryMode = TimerQueryMode.NONE;
-            // GL-less (the default): these are Celtium's stub capabilities, not a driver's, and GPU time is not a
-            // GL query there, so the warning would only report the stub.
-            if ("false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
-                LOGGER.warn("Timer query support not available - GPU profiling will be disabled");
-            }
+            // These are Celtium's stub capabilities, not a driver's, and GPU time is not a GL query, so the
+            // "timer query support not available" warning would only report the stub.
         }
 
         DebugMode debugMode;

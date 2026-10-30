@@ -173,56 +173,42 @@ public final class VulkanModelQuadCapture {
     public static synchronized void quad(int count, float[] xs, float[] ys, float[] zs, float[] us, float[] vs,
             float nx, float ny, float nz) {
         celtium$noteSourceOnce();
-        boolean glless = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
-        int listId = glless
-                ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compilingList()
-                : celtium$glInt(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
-        if (glless && listId <= 0) {
+        int listId = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compilingList();
+        if (listId <= 0) {
             // GL_LIST_INDEX names the list under construction and the spec keeps it at 0 while one is being executed.
             // A compiled model is drawn by glCallList, so its quads arrive with the query answering 0 while a list is
             // in fact executing - which is how every model in the game came to be refused with `list=0`. The stub
-            // knows which list it is replaying; ask it, and keep the query's answer for the compile side.
+            // knows which list it is replaying; ask it, and keep the compile-side answer for the compile side.
             listId = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.executingList();
         }
         int texture = UNKNOWN;
-        if (glless) {
-            if (listId <= 0) {
-                // A quad drawn outside a display list is not an error and must not be refused. Measured on leg
-                // gv-cohort-dl8: the transformer's own census reports glNewList arriving (glEndList=49,
-                // glCallList=36040), while the capture ran exactly once in the whole run - before the first
-                // glNewList - and refused that one quad, so no model geometry was ever captured. GL_LIST_INDEX
-                // is 0 for a quad drawn immediately rather than compiled into a list, and 0 is a real answer.
-                // It is filed under a synthetic id so the census still separates the two cases.
-                listId = NO_LIST;
-            }
-            if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
-                texture = NativeTextureBindings.current().texture2d(0);
-            } else {
-                texture = celtium$glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-            }
-            if (texture <= 0) {
-                // A model quad is drawn with a texture bound (the arm above is compiled under the player's 64x64 skin),
-                // so a name of 0 here is the read failing, not a textureless draw.
-                celtium$trace(listId, texture, false);
-                celtium$refuse(REFUSED_UNKNOWN_TEXTURE,
-                        "list=" + listId + " texture=" + celtium$value(texture) + " " + celtium$textureDiagnostic(),
-                        count);
-                return;
-            }
-            String unusable = celtium$unusable(count, xs, ys, zs, us, vs);
-            if (unusable != null) {
-                // A model face is a rectangle in one plane, so one constant coordinate is normal - the first quad this
-                // capture saw had x constant at 0.063 and the normal (1,0,0) that says it is a box's +X face. What is
-                // refused here is the area the four vertices span, not a coordinate.
-                celtium$trace(listId, texture, false);
-                celtium$refuse(REFUSED_DEGENERATE, "list=" + listId + " " + unusable, count);
-                return;
-            }
-        } else if (listId == UNKNOWN) {
-            // The GL bridge keeps the behaviour it has always had: a query that fails is list 0, which is what the old
-            // catch around this read produced. The identity rules above are the GL-less path's, where the stub answers
-            // from what the game actually did.
-            listId = 0;
+        if (listId <= 0) {
+            // A quad drawn outside a display list is not an error and must not be refused. Measured on leg
+            // gv-cohort-dl8: the transformer's own census reports glNewList arriving (glEndList=49,
+            // glCallList=36040), while the capture ran exactly once in the whole run - before the first
+            // glNewList - and refused that one quad, so no model geometry was ever captured. GL_LIST_INDEX
+            // is 0 for a quad drawn immediately rather than compiled into a list, and 0 is a real answer.
+            // It is filed under a synthetic id so the census still separates the two cases.
+            listId = NO_LIST;
+        }
+        texture = NativeTextureBindings.current().texture2d(0);
+        if (texture <= 0) {
+            // A model quad is drawn with a texture bound (the arm above is compiled under the player's 64x64 skin),
+            // so a name of 0 here is the read failing, not a textureless draw.
+            celtium$trace(listId, texture, false);
+            celtium$refuse(REFUSED_UNKNOWN_TEXTURE,
+                    "list=" + listId + " texture=" + celtium$value(texture) + " " + celtium$textureDiagnostic(),
+                    count);
+            return;
+        }
+        String unusable = celtium$unusable(count, xs, ys, zs, us, vs);
+        if (unusable != null) {
+            // A model face is a rectangle in one plane, so one constant coordinate is normal - the first quad this
+            // capture saw had x constant at 0.063 and the normal (1,0,0) that says it is a box's +X face. What is
+            // refused here is the area the four vertices span, not a coordinate.
+            celtium$trace(listId, texture, false);
+            celtium$refuse(REFUSED_DEGENERATE, "list=" + listId + " " + unusable, count);
+            return;
         }
         ListGeometry geometry = LISTS.get(listId);
         if (geometry == null) {

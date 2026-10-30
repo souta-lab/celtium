@@ -5,6 +5,8 @@
 コンパイルする**こと。互換性を広げるほど共通の高速描画経路（batch/cache/送信最適化）を使い回せる設計を目指す。
 
 この文書は**方針と受入**の正典。実装状況・優先順は [plan.md](<plan.md>)、手順は [development.md](<development.md>)。
+GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vulkan.glless`）と実 OpenGL の bridge 経路は
+2026-10-30 に削除した。以下の interception・GL 意味論の話はすべてこの単一モードの内側の話である。
 
 ## 現行コードの事実（2026-10-29 時点で確認）
 

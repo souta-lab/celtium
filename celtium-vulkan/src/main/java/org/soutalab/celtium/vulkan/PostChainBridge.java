@@ -710,8 +710,8 @@ b.frameBufferOpen = false;
         }
         GllessFrameTarget offTarget = b.offTargetTarget();
         if (offTarget == null) {
-            // Not the GL-less frame target (the bridge configuration keeps its own target type): the published names are
-            // not ours to judge here.
+            // Only the owned target carries the chain pairs the published names stand for; without one there is
+            // nothing here to judge.
             return;
         }
         java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =

@@ -44,7 +44,7 @@ public abstract class ClientArrayBufferOwnershipMixin {
             target = "Lnet/minecraft/client/renderer/GlStateManager;func_187439_f(III)V",
             shift = At.Shift.BEFORE), require = 0)
     private void celtium$publishOwnedBuffer(BufferBuilder buffer, CallbackInfo ci) {
-        if (buffer == null || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (buffer == null) {
             return;
         }
         try {

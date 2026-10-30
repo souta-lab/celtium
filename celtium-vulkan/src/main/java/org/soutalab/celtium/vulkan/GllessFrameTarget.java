@@ -87,13 +87,13 @@ import org.lwjgl.vulkan.VkSubmitInfo;
  */
 public final class GllessFrameTarget implements FrameImageTarget {
 
-    private static final int COLOR_RENDER_LAYOUT = VK_IMAGE_LAYOUT_GENERAL;
+    static final int COLOR_RENDER_LAYOUT = VK_IMAGE_LAYOUT_GENERAL;
     /**
      * Depth rests in the attachment layout, not GENERAL: on Intel gfx9 a writable GENERAL depth image has no HiZ
      * (no hierarchical depth culling, no fast depth clears), and nothing outside this renderer reads it - the GL-less
      * target is never handed to OpenGL. Clears and readbacks move it to their transfer layouts and back.
      */
-    private static final int DEPTH_RENDER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    static final int DEPTH_RENDER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     private static final int DEPTH_TRANSFER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
     /** What the game clears its own framebuffers to before drawing into them: transparent black, depth 1. */
@@ -458,10 +458,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * submission) for ordering the queue already guarantees. Measured on a held leg: the frame pass's own submit
      * work is the renderer's largest steady-state line item ({@code terrain+flush} p50 ~7.5 ms of a ~10 ms world
      * pass, with per-stage submit cycles of three). The pair is skipped by default and
-     * {@code -Dceltium.vulkan.gllessFrameSemaphores=true} keeps it.
+     * {@code -Dceltium.vulkan.frameSemaphores=true} keeps it.
      */
     private static final boolean FRAME_SEMAPHORES =
-            Boolean.parseBoolean(System.getProperty("celtium.vulkan.gllessFrameSemaphores", "false"));
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.frameSemaphores", "false"));
 
     @Override
     public boolean needsFrameSemaphores() {

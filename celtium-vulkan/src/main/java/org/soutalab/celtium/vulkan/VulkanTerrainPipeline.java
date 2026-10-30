@@ -52,7 +52,7 @@ import static org.lwjgl.vulkan.VK10.*;
  *       by the {@code VulkanBuffer} overload of {@link #bindTextures}. The backend's own uniform buffer is a
  *       {@code VulkanUniformBuffer}, which is a different type, so {@link #bindTextures(VulkanGlTexture,
  *       VulkanGlTexture, long, long)} takes its two handles directly.</li>
- *   <li>{@code VulkanFrameTarget.COLOR_RENDER_LAYOUT} / {@code DEPTH_RENDER_LAYOUT} - the layouts the frame target's
+ *   <li>{@code GllessFrameTarget.COLOR_RENDER_LAYOUT} / {@code DEPTH_RENDER_LAYOUT} - the layouts the frame target's
  *       acquire and release barriers use; the render pass reuses those constants so the two can never drift.</li>
  *   <li>{@code SpirvShaders.load(String)} with {@code SpirvShaders.SOLID_VERTEX} / {@code SpirvShaders.SOLID_FRAGMENT}
  *       - the SPIR-V for the two stages. {@code SpirvShaders} documents that the caller owns the returned buffer and
@@ -64,7 +64,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * <b>Render pass ownership.</b> The pipeline creates its own {@code VkRenderPass} because pipeline creation needs
  * one. It is exposed through {@link #renderPass()} so the backend can record {@code vkCmdBeginRenderPass} with it,
  * and the backend builds its framebuffer from that same handle. The layout transition into the attachment layouts is
- * done by {@code VulkanFrameTarget.recordAcquireBarriers} before the render pass and back to
+ * done by {@code GllessFrameTarget.recordAcquireBarriers} before the render pass and back to
  * {@code VK_IMAGE_LAYOUT_GENERAL} by {@code recordReleaseBarriers} after it; this render pass therefore declares no
  * layout transitions of its own and needs no subpass dependencies, because those two barriers already publish and
  * claim the attachment accesses with {@code VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} on both sides.
@@ -90,19 +90,19 @@ public final class VulkanTerrainPipeline {
      * The layout the color attachment is expected to be in when the render pass begins, and the layout it is left
      * in when the render pass ends.
      * <p>
-     * This is {@code VulkanFrameTarget.COLOR_RENDER_LAYOUT} by reference rather than by value: the frame target
+     * This is {@code GllessFrameTarget.COLOR_RENDER_LAYOUT} by reference rather than by value: the frame target
      * transitions the shared color image from {@code VK_IMAGE_LAYOUT_GENERAL} (the layout OpenGL declares through
      * {@code GL_LAYOUT_GENERAL_EXT}) into this layout in {@code recordAcquireBarriers} and back in
      * {@code recordReleaseBarriers}. Reusing the constant makes a mismatch impossible; a literal here would be a
      * silent validation error the first time the frame target changes.
      */
-    public static final int COLOR_ATTACHMENT_LAYOUT = VulkanFrameTarget.COLOR_RENDER_LAYOUT;
+    public static final int COLOR_ATTACHMENT_LAYOUT = GllessFrameTarget.COLOR_RENDER_LAYOUT;
 
     /**
      * The layout the depth attachment is expected to be in when the render pass begins, and the layout it is left
      * in when the render pass ends. See {@link #COLOR_ATTACHMENT_LAYOUT} for why this references the frame target.
      */
-    public static final int DEPTH_ATTACHMENT_LAYOUT = VulkanFrameTarget.DEPTH_RENDER_LAYOUT;
+    public static final int DEPTH_ATTACHMENT_LAYOUT = GllessFrameTarget.DEPTH_RENDER_LAYOUT;
 
     /**
      * The front face orientation the terrain vertex data needs.
@@ -942,7 +942,7 @@ public final class VulkanTerrainPipeline {
      */
     private static int celtium$gameMaxLevel(VulkanGlTexture atlas) {
         int name = atlas.glTextureName();
-        if (name <= 0 || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (name <= 0) {
             return -1;
         }
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameterRecorded(name, 0x813D)) {
@@ -1187,7 +1187,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
 
         // No subpass dependencies are declared, for two reasons. First, this render pass performs no layout
         // transition of its own: initialLayout and finalLayout are the same attachment layouts, and
-        // VulkanFrameTarget.recordAcquireBarriers / recordReleaseBarriers do the transitions outside the pass.
+        // GllessFrameTarget.recordAcquireBarriers / recordReleaseBarriers do the transitions outside the pass.
         // Second, those two barriers already carry every dependency this pass needs: both use
         // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT on both sides with the attachment read and write access masks, so the
         // GL blit written into the shared images is available and visible to the attachment loads, and the terrain

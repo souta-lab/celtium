@@ -148,11 +148,11 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
             # comes from) while the shipping configuration has it off; measured on the standard scene it costs 6.6 ms
             # of an 11.0 ms frame.
             # -Dceltium.vulkan.presentReadback: the runner's default reads the presented image back on every present
-            # (the bridge legs' picture check), which JFR put 16% of the client thread's samples inside - a GPU sync
+            # (the picture check), which JFR put 16% of the client thread's samples inside - a GPU sync
             # and a full 1280x720 readback per frame. A performance arm turns both off and checks its picture through
             # the requested dump instead; the numbers from such a leg have to be labelled as the shipping arm.
             pass
-        elif key in ("-Dceltium.vulkan.glless", "-Dceltium.vulkan.validation", "-Dceltium.validation",
+        elif key in ("-Dceltium.vulkan.validation", "-Dceltium.validation",
                      "-Dceltium.vulkan.presentReadback", "-Dceltium.validation.dumpPresentedImage") and value.lower() != "true":
             raise LegError(f"this native acceptance runner requires {key}=true")
     root = require_dir(root or Path(os.environ.get("CELTIUM_ROOT", Path(__file__).resolve().parent.parent)))
@@ -250,7 +250,7 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     # distance; every other mode keeps the flat acceptance scene.
     scene = "world" if mode == "world" else "terrain"
     jvm_args = (["-Xmx5g"] if mode in ("e2e", "recipe") else []) + [
-        "-Dceltium.vulkan.glless=true", "-Dceltium.vulkan.presentReadback=true", "-Dfml.readTimeout=120",
+        "-Dceltium.vulkan.presentReadback=true", "-Dfml.readTimeout=120",
         "-Dceltium.vulkan.validation=true", "-Dceltium.validation=true",
         f"-Dceltium.validation.scene={scene}",
         "-Dceltium.validation.keepGui=true", "-Dceltium.validation.minWorldFrames=5",

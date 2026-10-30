@@ -454,7 +454,7 @@ frame=3 ... 1920x1080 display[close=true  ... fullscreen=true]
 GL-lessではGLコンテキストが無いのでこのswapは何も提示しないが、Waylandのexplicit sync予約を壊し、swayが
 `wp_linux_drm_syncobj_surface_v1 error 4` で接続を切っていた（→ SDLがQUIT → ゲームは正常終了）。
 
-対策: `CeltiumGllessSdlSwapTransformer` で **GL-less時のみ `Window.swapBuffers()` を no-op** に（戻り値はthis）。
+対策: `CeltiumGllessSdlSwapTransformer` で **`Window.swapBuffers()` を常に no-op** に（戻り値はthis）。
 計器: `-Dceltium.vulkan.windowDiag`, `-Dceltium.vulkan.eventTrace`（追加済み）。
 
 実測（headless隔離sway, render node D128, seed `fullscreen:true`, jar `fsfix-1`）:
@@ -1517,7 +1517,7 @@ Long2ObjectOpenHashMap 3%。
 一方 v0.0.14-alpha のjarを 0.6.13 cohort で起動すると:
 
 ```
-CELTIUM_GLLESS Display transformer installed / window hinted GLFW_NO_API
+CELTIUM_GLSTUB Display transformer installed / window hinted GLFW_NO_API
 java.lang.IllegalStateException: There is no OpenGL context current in the current thread.
   at org.lwjgl.opengl.GL.createCapabilities
   at org.lwjgl.opengl.Display.create

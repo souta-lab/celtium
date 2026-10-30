@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capability-safety contract: GL-less chunk initialization never attempts persistent GL mapping."""
+"""Capability-safety contract: chunk initialization never attempts persistent GL mapping."""
 from pathlib import Path
 import re
 import sys
@@ -18,18 +18,16 @@ manager = (root / 'common/src/main/java/org/embeddedt/embeddium/impl/render/chun
 display = (root / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java').read_text()
 
 conditions = {
-    'GL-less default matches GLFW_NO_API enabled default':
-        'return !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));' in display,
-    'mapped staging checks the same explicit GL-less default':
-        'if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {' in staging,
-    'GL-less guard returns before any live GL capability query':
-        bool(re.search(r'public static boolean isSupported\(RenderDevice instance\) \{\s*(?://[^\n]*\n|\s)*if \(!"false"\.equalsIgnoreCase\(System\.getProperty\("celtium\.vulkan\.glless"\)\)\) \{\s*return false;\s*\}\s*var functions = instance\.getDeviceFunctions\(\);',staging)),
+    'mapped staging is unsupported, with no property to override it':
+        bool(re.search(r'public static boolean isSupported\(RenderDevice instance\) \{(?:\s*//[^\n]*\n)*\s*return false;\s*\}', staging))
+        and 'System.getProperty' not in staging,
+    'mapped staging never reaches a live GL capability query':
+        staging.index('public static boolean isSupported(') < staging.index('return false;')
+        and 'getDeviceFunctions' not in staging,
     'region manager preserves the non-mapped staging fallback':
         'return new FallbackStagingBuffer(commandList);' in manager,
-    'legacy GL enabled option still can use mapped buffers':
-        'LWJGL.isOpenGLVersionSupported(4, 4)' in staging and 'LWJGL.isExtensionSupported(GLExtension.ARB_buffer_storage)' in staging,
-    'no speculative 16MiB GL mapping before GL-less branch':
-        staging.index('public static boolean isSupported(') < staging.index('if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {') < staging.index('var functions = instance.getDeviceFunctions();'),
+    'the constructor still installs the fallback staging buffer':
+        'this.fallbackStagingBuffer = new FallbackStagingBuffer(commandList);' in staging,
 }
 for label,passed in conditions.items():
     print(('PASS ' if passed else 'FAIL ')+label)
