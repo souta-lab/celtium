@@ -76,7 +76,7 @@ public class CeltiumGllessWindowTransformer implements IClassTransformer {
                 }
             }, 0);
             CeleritasVintageMixinPlugin.LOGGER.info(
-                    "CELTIUM_GLLESS Display transformer installed on {} (hint injected before glfwCreateWindow)",
+                    "CELTIUM_GLSTUB Display transformer installed on {} (hint injected before glfwCreateWindow)",
                     target);
             return writer.toByteArray();
         } catch (Throwable error) {

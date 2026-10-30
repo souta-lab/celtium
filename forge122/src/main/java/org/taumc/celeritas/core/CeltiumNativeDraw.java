@@ -6,13 +6,7 @@ import org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
 
 /** Native Minecraft/Forge draw entry. Raw GL calls made by mods have a separate compatibility adapter. */
 public final class CeltiumNativeDraw {
-    private static final boolean ENABLED = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
-
     private CeltiumNativeDraw() {
-    }
-
-    public static boolean enabled() {
-        return ENABLED;
     }
 
     /** A native resource cannot fall back to GL: its opaque API identity is not a GL object or mirrored GL storage. */

@@ -294,7 +294,6 @@ public final class CeltiumFontGlyphCapture {
     private static long windows;
     private static long defaultWindows;
     private static long unicodeWindows;
-    private static long bridgeWindows;
     private static long quads;
     private static long submitted;
     /** Wall time spent inside the backend's batch call, so the per-glyph cost is measured rather than assumed. */
@@ -415,14 +414,10 @@ public final class CeltiumFontGlyphCapture {
         } else {
             defaultWindows++;
         }
-        // The bridge keeps its GL drawing: capturing there would draw the glyph twice. A frame with no backend yet -
-        // the splash and loading screens - has nothing to draw into either, so it is skipped at the window rather than
-        // counted as a refusal: measured, that is 291500 glyph quads in 45 s of startup and none of them geometry.
-        boolean glless = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
-        if (!glless) {
-            bridgeWindows++;
-        }
-        armed = glless && TerrainGpuBackends.current() != null;
+        // A frame with no backend yet - the splash and loading screens - has nothing to draw into, so it is skipped at
+        // the window rather than counted as a refusal: measured, that is 291500 glyph quads in 45 s of startup and
+        // none of them geometry.
+        armed = TerrainGpuBackends.current() != null;
         windowUnicode = unicode;
         if (GLYPH_DEBUG && unicode && openLogged < 60) {
             openLogged++;
@@ -441,11 +436,11 @@ public final class CeltiumFontGlyphCapture {
         // with; the bridge prints the same pair from real OpenGL, so the two configurations can be read side by side.
         if (STATE_PROBE && stateProbeLines < 3) {
             stateProbeLines++;
-            System.out.println("[Celtium] CELTIUM_FONT_STATE first glless=" + glless + " armed=" + armed
+            System.out.println("[Celtium] CELTIUM_FONT_STATE first armed=" + armed
                     + " unicode=" + unicode + " " + glState() + " " + matrices() + " " + mirroredMatrices());
         } else if (STATE_PROBE && stateProbeGuiLines < 3 && overlayProjection()) {
             stateProbeGuiLines++;
-            System.out.println("[Celtium] CELTIUM_FONT_STATE overlay glless=" + glless + " armed=" + armed
+            System.out.println("[Celtium] CELTIUM_FONT_STATE overlay armed=" + armed
                     + " unicode=" + unicode + " " + glState() + " " + matrices() + " " + mirroredMatrices());
         }
         reset();
@@ -453,8 +448,7 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@return whether the Celtium-side default-glyph path may draw a glyph itself right now}. */
     public static boolean fastPathAvailable() {
-        return FAST_PATH && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                && TerrainGpuBackends.current() != null;
+        return FAST_PATH && TerrainGpuBackends.current() != null;
     }
 
     /** Records that the fast path had to re-bind the font sheet because another texture had taken the unit. */
@@ -1351,14 +1345,7 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@return the GL name the font's own texture is bound under, or 0 when the read fails}. */
     private static int celtium$boundTexture() {
-        if (org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) {
-            return org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
-        }
-        try {
-            return org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-        } catch (RuntimeException | LinkageError error) {
-            return 0;
-        }
+        return org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
     }
 
     /** {@return a float colour component as the unsigned byte the vertex layout carries}. */
@@ -1398,7 +1385,7 @@ public final class CeltiumFontGlyphCapture {
         progressLines++;
         System.out.println("[Celtium] CELTIUM_FONT_GLYPH submitted=" + submitted + " accepted=" + accepted
                 + " refused=" + refused + " windows=" + windows + " defaultWindows=" + defaultWindows
-                + " unicodeWindows=" + unicodeWindows + " bridgeWindows=" + bridgeWindows
+                + " unicodeWindows=" + unicodeWindows
                 + " submitMillis=" + (submitNanos / 1000000L)
                 + " windowMillis=" + (windowNanos / 1000000L)
                 + " hookMillis=" + (hookNanos / 1000000L)
@@ -1416,7 +1403,7 @@ public final class CeltiumFontGlyphCapture {
     /** {@return the one-line counter summary, for the report}. */
     public static synchronized String summary() {
         return "windows=" + windows + " defaultWindows=" + defaultWindows + " unicodeWindows=" + unicodeWindows
-                + " bridgeWindows=" + bridgeWindows + " quads=" + quads + " submitted=" + submitted
+                + " quads=" + quads + " submitted=" + submitted
                 + " accepted=" + accepted + " refused=" + refused + " refusedQuads=" + refusedQuads
                 + " submitMillis=" + (submitNanos / 1000000L)
                 + " windowMillis=" + (windowNanos / 1000000L) + " hookMillis=" + (hookNanos / 1000000L)

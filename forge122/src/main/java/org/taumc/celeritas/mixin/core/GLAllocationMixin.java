@@ -25,8 +25,6 @@ import org.taumc.celeritas.core.CeltiumGllessHint;
 public class GLAllocationMixin {
     @Inject(method = "generateDisplayLists", at = @At("HEAD"), cancellable = true)
     private static void celtium$generateDisplayLists(int range, CallbackInfoReturnable<Integer> cir) {
-        if (CeltiumGllessHint.isGllessClaimed()) {
-            cir.setReturnValue(Integer.valueOf(CeltiumGllessHint.glGenName()));
-        }
+        cir.setReturnValue(Integer.valueOf(CeltiumGllessHint.glGenName()));
     }
 }

@@ -29,19 +29,17 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
      */
     @Override
     public @Nullable String[] getASMTransformerClass() {
-        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
-            try {
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.install();
-                // The terrain backend needs the light map's texture name and cannot ask GL for it: 1.12.2 binds it
-                // through GlStateManager.bindTexture, which skips the GL call when its cache already holds the name,
-                // so the stub never sees it and every lightmapped batch was refused with id=-1. The object that owns
-                // the name answers instead.
-                org.taumc.celeritas.core.CeltiumLightmapIdInstaller.install();
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.installFirstCapabilities();
-            } catch (Throwable error) {
-                org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
-                        "CELTIUM_GLLESS early capabilities install failed: {}", error.toString());
-            }
+        try {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.install();
+            // The terrain backend needs the light map's texture name and cannot ask GL for it: 1.12.2 binds it
+            // through GlStateManager.bindTexture, which skips the GL call when its cache already holds the name,
+            // so the stub never sees it and every lightmapped batch was refused with id=-1. The object that owns
+            // the name answers instead.
+            org.taumc.celeritas.core.CeltiumLightmapIdInstaller.install();
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.installFirstCapabilities();
+        } catch (Throwable error) {
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
+                    "CELTIUM_GLSTUB early capabilities install failed: {}", error.toString());
         }
 
         return new String[] {"org.taumc.celeritas.core.CeltiumGllessWindowTransformer",

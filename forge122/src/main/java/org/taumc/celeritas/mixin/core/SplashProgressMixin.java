@@ -39,9 +39,7 @@ public class SplashProgressMixin {
      */
     @Inject(method = "start", at = @At("HEAD"), cancellable = true, remap = false)
     private static void celtium$skipSplashWithoutContext(CallbackInfo ci) {
-        if (CeltiumGllessHint.isGllessClaimed()) {
-            ci.cancel();
-        }
+        ci.cancel();
     }
 
     /**
@@ -57,9 +55,7 @@ public class SplashProgressMixin {
      */
     @Inject(method = "finish", at = @At("HEAD"), cancellable = true, remap = false)
     private static void celtium$skipSplashFinish(CallbackInfo ci) {
-        if (CeltiumGllessHint.isGllessClaimed()) {
-            ci.cancel();
-        }
+        ci.cancel();
     }
 
     @Inject(method = "getMaxTextureSize", at = @At("RETURN"), cancellable = true, remap = false)

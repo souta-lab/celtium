@@ -38,10 +38,6 @@ public final class CeltiumGllessHint {
         }
     }
 
-    public static boolean isGllessClaimed() {
-        return !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
-    }
-
     /**
      * Writes {@code count} fresh non-zero names into the caller's buffer, for the array forms of the generators
      * ({@code glGenTextures(int n, IntBuffer)}, {@code glGenBuffers}, {@code glGenFramebuffers} and the rest).
@@ -395,7 +391,7 @@ public final class CeltiumGllessHint {
                 if (i > 2) callers.append(" <- ");
                 callers.append(trace[i].getClassName()).append('.').append(trace[i].getMethodName());
             }
-            System.out.println("[Celtium] CELTIUM_GLLESS_MATRIX_NATIVE name=" + name + " callers=[" + callers + "]");
+            System.out.println("[Celtium] CELTIUM_MATRIX_NATIVE name=" + name + " callers=[" + callers + "]");
         }
     }
 
@@ -1252,7 +1248,7 @@ public final class CeltiumGllessHint {
 
     /** Called from the injected instruction; never throws into the window creation path. */
     public static void beforeWindowCreation() {
-        if (applied || "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
+        if (applied) {
             return;
         }
         applied = true;
@@ -1270,11 +1266,11 @@ public final class CeltiumGllessHint {
             Class.forName("org.lwjgl.glfw.GLFW").getMethod("glfwWindowHint", int.class, int.class)
                     .invoke(null, Integer.valueOf(0x00022001), Integer.valueOf(0));
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(
-                    "CELTIUM_GLLESS window hinted GLFW_NO_API before glfwCreateWindow (from the coremod transformer)");
+                    "CELTIUM_GLSTUB window hinted GLFW_NO_API before glfwCreateWindow (from the coremod transformer)");
         } catch (Throwable error) {
             // A failed hint must not stop the window: the run is then a hybrid, which the leg's own counters show.
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
-                    "CELTIUM_GLLESS window hint failed in the transformer path: {}", error.toString());
+                    "CELTIUM_GLSTUB window hint failed in the transformer path: {}", error.toString());
         }
     }
 }

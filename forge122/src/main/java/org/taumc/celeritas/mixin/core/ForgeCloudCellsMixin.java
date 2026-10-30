@@ -99,7 +99,7 @@ public abstract class ForgeCloudCellsMixin {
             target = "Lnet/minecraft/client/renderer/vertex/VertexBuffer;func_177358_a(I)V", remap = false),
             remap = false, require = 0)
     private void celtium$drawCells(VertexBuffer forgeMesh, int mode) {
-        VertexBuffer cells = CELTIUM_CELLS && CeltiumNativeDraw.enabled() ? celtium$cellsForThisFrame() : null;
+        VertexBuffer cells = CELTIUM_CELLS ? celtium$cellsForThisFrame() : null;
         if (cells == null) {
             forgeMesh.drawArrays(mode);
             return;
