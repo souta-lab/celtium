@@ -94,6 +94,14 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない。2026-10-30: `celtium.vulkan.glless`とGL bridgeを削除 |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②非instance lit fog ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
 
+## FPSの現状と残る道（2026-10-31実測）
+
+- **cool状態のpaired（ABBA）**: Susy Celtium 2.565ms vs Celeritas 1.755ms = **1.46×**、ATM3 ~2.27 vs ~1.56 = **1.45×**。どちらもCPU律速（client thread 94.3% of wall、GPUは地形375us＋immediates 48usで待ち）。
+- **フレーム内訳（Susy、pass split p50）**: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin-pass 0.1、winBarrier 0.1、winSubmit 0.1）/ terrain 0.1 / sky 0.1。30 windows/frame、112 groups/frame。
+- **既に消したコスト**: raw-write flush 26.7→17.3/frame（coalescing）、refreshRawWrites 8.3%→0.4%、published遷移 3.5%→0.8%、epoch lock spin 3.0%→0、per-group nanoTime 1.2%→0、window begin/clear構造体の再生成を廃止。
+- **残差の主因**: window固定費（30枚×~22us）とper-batchのJava/ドライバ呼び出し（112 groups×~1.8us）。parityには**material順の並べ替え＋連続スライス統合**か**ネイティブバッチ記録**（下述のnative実装）が必要で、マイクロ最適化の余地は残り~0.2-0.3ms。
+- **棄却**: bind時flushの延期（2回試作→2回RADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate（runが全てsingleton、A/Bで2.39→2.44ms悪化）、静的フレーム再利用（カメラ/時刻/アニメをフリーズさせ目標(3)を損なう）。
+
 ## 撤回した前提
 
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因・GLスタブ解消済み 等。再入条件つき）。
