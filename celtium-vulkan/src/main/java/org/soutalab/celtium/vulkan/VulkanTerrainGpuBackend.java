@@ -13390,7 +13390,10 @@ this.frameBufferOpen = false;
             return texture.celtium$depthWrites() && texture.celtium$depthTests() && !texture.celtium$blends();
         }
         if (pipeline instanceof VulkanImmediateItemPipeline item) {
-            return item.lit() && item.celtium$depthWrites() && item.celtium$depthTests() && !item.celtium$blends();
+            // The lit requirement was what kept the bulk of a world frame in arrival order: the unlit item variant draws
+            // entities and particles that are just as depth-tested, depth-writing and unblended as the lit one, so the
+            // same argument that makes a lit group reorderable applies to it.
+            return item.celtium$depthWrites() && item.celtium$depthTests() && !item.celtium$blends();
         }
         if (pipeline instanceof VulkanImmediatePipeline colour) {
             return colour.celtium$depthWrites() && colour.celtium$depthTests() && !colour.celtium$blends();
