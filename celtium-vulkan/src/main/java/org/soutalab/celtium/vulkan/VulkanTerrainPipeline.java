@@ -653,6 +653,15 @@ public final class VulkanTerrainPipeline {
         if (uniformBufferSize <= 0L) {
             throw new IllegalArgumentException("The uniform buffer has no storage");
         }
+        if (atlas.image() == 0L || atlas.view() == 0L || atlas.sampler() == 0L) {
+            // The block atlas is recreated on every resource reload; a pass that kept the old wrapper would bind a
+            // released view. Validation reports that, and without the layer RADV was measured faulting (GPUVM) and
+            // losing the device - the black screen after a reload. Refusing the pass is a missing frame of terrain,
+            // not a dead device.
+            VulkanDescriptorWrites.celtium$noteDeadTexture("terrain-atlas");
+            throw new IllegalStateException("Terrain pass '" + passName + "' would bind a released atlas image"
+                    + " (image=" + atlas.image() + " view=" + atlas.view() + " sampler=" + atlas.sampler() + ")");
+        }
         if (lightmap == null) {
             if (!hasNoLightmap) {
                 throw new IllegalStateException("Terrain pass '" + passName + "' samples the lightmap,"
@@ -661,6 +670,12 @@ public final class VulkanTerrainPipeline {
             // The shader variant for a pass without a lightmap never samples the lightmap binding, but the
             // descriptor must still hold a valid image view and sampler, otherwise the set is invalid.
             lightmap = atlas;
+        }
+
+        if (lightmap.image() == 0L || lightmap.view() == 0L || lightmap.sampler() == 0L) {
+            VulkanDescriptorWrites.celtium$noteDeadTexture("terrain-lightmap");
+            throw new IllegalStateException("Terrain pass '" + passName + "' would bind a released lightmap image"
+                    + " (image=" + lightmap.image() + " view=" + lightmap.view() + " sampler=" + lightmap.sampler() + ")");
         }
 
         this.uniformsSize = uniformBufferSize;

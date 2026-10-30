@@ -25,6 +25,32 @@ final class VulkanDescriptorWrites {
     private VulkanDescriptorWrites() {
     }
 
+    /**
+     * {@return whether a texture wrapper still holds a live image, view and sampler}.
+     * <p>
+     * A destroyed wrapper clears all three handles. Writing a descriptor from one hands the GPU a null or freed handle,
+     * which validation reports and a driver without the layer may fault on - the measured case was a menu phase that
+     * deletes and recreates its screen-sized framebuffers: a RADV GPUVM fault, device lost, and a black screen because
+     * a lost device has nothing left to present. A batch whose texture is gone is refused and named instead.
+     */
+    static boolean celtium$isLive(VulkanGlTexture texture) {
+        return texture != null && texture.image() != 0L && texture.view() != 0L && texture.sampler() != 0L;
+    }
+
+    /** How many dead-texture refusals were printed, so a long run cannot flood the log. */
+    private static int deadTextureRefusals;
+
+    /** Prints one bounded line when a descriptor is refused because its wrapper no longer has an image. */
+    static void celtium$noteDeadTexture(String owner) {
+        if (deadTextureRefusals >= 8) {
+            return;
+        }
+        deadTextureRefusals++;
+        System.out.println("[Celtium] CELTIUM_DEAD_TEXTURE_REFUSED owner=" + owner
+                + " (the wrapper\'s image/view/sampler were released; the batch is refused instead of binding a"
+                + " freed image)");
+    }
+
     /** Writes whose image info could not be read, so a silent miss is a number rather than nothing. */
     private static int unreadable;
 

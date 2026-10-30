@@ -1571,6 +1571,13 @@ public final class VulkanPostChain {
      */
     private int descriptorSet(long inView, long auxView) {
         VkDevice device = this.context.device();
+        if (inView == 0L || auxView == 0L) {
+            // The chain's own targets are recreated when the screen or the window changes; a pass still naming the
+            // released view binds a null image view, which validation reports and RADV was measured faulting on.
+            VulkanDescriptorWrites.celtium$noteDeadTexture("post-chain");
+            throw new IllegalStateException("post chain pass would sample a released image view (in="
+                    + inView + " aux=" + auxView + ")");
+        }
         if (this.setsThisRecording >= this.setRing.length) {
             // Refused rather than wrapped. The alternative is to update a set that a not-yet-submitted recording
             // already bound, which changes the image a pass reads and shows up as a wrong glow rather than as an
