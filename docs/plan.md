@@ -96,11 +96,11 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 
 ## FPSの現状と残る道（2026-10-31実測）
 
-- **cool状態のpaired（ABBA）**: Susy Celtium 2.565ms vs Celeritas 1.755ms = **1.46×**、ATM3 ~2.27 vs ~1.56 = **1.45×**。どちらもCPU律速（client thread 94.3% of wall、GPUは地形375us＋immediates 48usで待ち）。
-- **フレーム内訳（Susy、pass split p50）**: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin-pass 0.1、winBarrier 0.1、winSubmit 0.1）/ terrain 0.1 / sky 0.1。30 windows/frame、112 groups/frame。
-- **既に消したコスト**: raw-write flush 26.7→17.3/frame（coalescing）、refreshRawWrites 8.3%→0.4%、published遷移 3.5%→0.8%、epoch lock spin 3.0%→0、per-group nanoTime 1.2%→0、window begin/clear構造体の再生成を廃止。
-- **残差の主因**: window固定費（30枚×~22us）とper-batchのJava/ドライバ呼び出し（112 groups×~1.8us）。parityには**material順の並べ替え＋連続スライス統合**か**ネイティブバッチ記録**（下述のnative実装）が必要で、マイクロ最適化の余地は残り~0.2-0.3ms。
-- **棄却**: bind時flushの延期（2回試作→2回RADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate（runが全てsingleton、A/Bで2.39→2.44ms悪化）、静的フレーム再利用（カメラ/時刻/アニメをフリーズさせ目標(3)を損なう）。
+- cool状態のABBA: Susy **1.46×**（2.565 vs 1.755ms）、ATM3 **~1.45×**（~2.27 vs ~1.56）。CPU律速（client thread 94.3% of wall、GPUは地形375us＋immediates 48usで待ち）。
+- 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier 0.1、submit 0.1）。30 windows・112 groups/frame。
+- 今セッションで除去: raw-write flush -38%、refreshRawWrites 8.3→0.4%、published遷移 3.5→0.8%、epoch spin 3.0→0、nanoTime 1.2→0、window構造体再生成の廃止。
+- 残差の主因はwindow固定費とper-batch呼び出し。parityにはmaterial順統合かnativeバッチ記録が必要（残るマイクロ余地~0.2-0.3ms）。
+- 棄却: bind flush延期（2回SIGSEGV・[罠](<verification-traps.md>)）、indirect immediate（全singleton、悪化）、フレーム再利用（アニメ凍結で目標(3)を損なう）。
 
 ## 撤回した前提
 
