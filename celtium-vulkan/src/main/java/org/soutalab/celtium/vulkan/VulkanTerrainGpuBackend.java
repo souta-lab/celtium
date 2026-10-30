@@ -7070,11 +7070,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 compareMirroredAndLiveMatrices();
             }
             int boundTexture = this.immediateState.boundTextureName();
-            if (boundTexture != 0 && this.textureRegistry != null && this.textureRegistry.get(boundTexture) == null) {
+            if (boundTexture != 0) {
                 // GL samples a never-allocated texture as black; draw it with a 1x1 black mirror instead of refusing the
-                // batch. Substituted here, before the group is opened, so the group's key records the image it will
-                // really sample. Measured: the loading screen's background quad and one composite drew texture 502, a
-                // name the stub never saw allocated, and both were refused for it.
+                // batch. The test is the stub's extent only: an earlier version asked the registry first, and a
+                // registry.get() on a name with no entry runs the capture path - per batch, in this hot loop. Measured
+                // on ATM3: warm P50 20.3 ms against 4.3 ms with the same flags and the previous jar.
                 int width = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1000);
                 int height = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1001);
                 if (width <= 0 && height <= 0) {
