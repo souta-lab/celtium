@@ -1350,6 +1350,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * {@return which images the identity's chain pair holds now}, 0 before it exists. Changes whenever the pair is
      * created or replaced, at any size: a framebuffer over the previous images names dead views.
      */
+    /** {@return how many chain-pair image sets have been created}, the cache key for name-to-image resolutions. */
+    public long chainPairGenerationTotal() {
+        return this.chainPairGenerations;
+    }
+
     public long chainPairGeneration(long identity) {
         Pair pair = existingChainPair(identity);
         return pair == null || !pair.exists() ? 0L : pair.generation;

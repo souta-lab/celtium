@@ -543,19 +543,63 @@ b.frameBufferOpen = false;
      * SHADER_READ_ONLY_OPTIMAL. {@code general} picks which one is next; the sampling side is the transition that was
      * missing, and its absence is the VUID-vkCmdDraw-None-09600 the vsync leg reported at vkQueueSubmit.
      */
+    /**
+     * Name-to-image resolution cached for the transition loop, rebuilt only when the publication set or a chain pair
+     * changes. The loop runs once per window (about fifty a frame on a world scene), and it used to prune and rebuild
+     * its map views on every one of them.
+     */
+    private long publishedCacheVersion = Long.MIN_VALUE;
+    private long publishedCachePairs = Long.MIN_VALUE;
+    private int[] cachedNames = new int[0];
+    private VulkanGlTexture[] cachedWrappers = new VulkanGlTexture[0];
+    private long[] cachedImages = new long[0];
+
+    private void celtium$rebuildPublishedCache() {
+        java.util.List<Integer> names = new java.util.ArrayList<Integer>();
+        java.util.List<VulkanGlTexture> wrappers = new java.util.ArrayList<VulkanGlTexture>();
+        java.util.List<Long> images = new java.util.ArrayList<Long>();
+        for (java.util.Map.Entry<Integer, VulkanGlTexture> entry : b.publishedTextures.publishedEntries()) {
+            names.add(entry.getKey());
+            wrappers.add(entry.getValue());
+            Long image = b.publishedFrameImages.get(entry.getKey());
+            images.add(Long.valueOf(image == null ? 0L : image.longValue()));
+        }
+        this.cachedNames = new int[names.size()];
+        this.cachedWrappers = new VulkanGlTexture[names.size()];
+        this.cachedImages = new long[names.size()];
+        for (int i = 0; i < names.size(); i++) {
+            this.cachedNames[i] = names.get(i).intValue();
+            this.cachedWrappers[i] = wrappers.get(i);
+            this.cachedImages[i] = images.get(i).longValue();
+        }
+    }
+
     void celtium$transitionPublishedFrameTextures(boolean general) {
         if (b.publishedTextures.isEmptyPublished() || b.commandBuffer == null) {
             return;
         }
-        celtium$pruneStalePublishedNames();
-        if (b.publishedTextures.isEmptyPublished()) {
-            return;
+        long publications = b.publishedTextures.publishedVersion();
+        GllessFrameTarget cachePairsOwner = b.offTargetTarget();
+        long pairs = cachePairsOwner == null ? -1L : cachePairsOwner.chainPairGenerationTotal();
+        if (publications != this.publishedCacheVersion || pairs != this.publishedCachePairs) {
+            // The prune re-publishes a name whose pair image was recreated; it is the reason a stale resolution cannot
+            // simply be cached forever, and the generation is part of the key for exactly that case.
+            celtium$pruneStalePublishedNames();
+            this.publishedCacheVersion = b.publishedTextures.publishedVersion();
+            this.publishedCachePairs = pairs;
+            celtium$rebuildPublishedCache();
+            if (b.publishedTextures.isEmptyPublished()) {
+                return;
+            }
         }
-        for (java.util.Map.Entry<Integer, VulkanGlTexture> entry : b.publishedTextures.publishedEntries()) {
+        for (int cachedIndex = 0; cachedIndex < this.cachedNames.length; cachedIndex++) {
+            int entryKey = this.cachedNames[cachedIndex];
+            VulkanGlTexture entryValue = this.cachedWrappers[cachedIndex];
+            long entryImage = this.cachedImages[cachedIndex];
             GllessFrameTarget pairOwner = b.offTargetTarget();
-            Long publishedImageHandle = b.publishedFrameImages.get(entry.getKey());
-            long publishedImageIdentity = pairOwner == null || publishedImageHandle == null
-                    ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(publishedImageHandle.longValue());
+            long publishedImageHandleValue = entryImage;
+            long publishedImageIdentity = pairOwner == null || publishedImageHandleValue == 0L
+                    ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(publishedImageHandleValue);
             boolean pairImageName = publishedImageIdentity != Long.MIN_VALUE;
             // The sampling side must not move the image this pass is about to attach: the pass declares GENERAL for
             // attachment 0, and the transition to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass is
@@ -563,11 +607,10 @@ b.frameBufferOpen = false;
             // moved it to GENERAL for this pass; leaving it there is the whole fix. A batch that samples this same
             // image inside the pass would be a feedback loop and is not a case this rule has to serve.
             if (!general && b.passAttachedColorImage != 0L) {
-                Long image = b.publishedFrameImages.get(entry.getKey());
-                if (image != null && image.longValue() == b.passAttachedColorImage) {
+                if (publishedImageHandleValue != 0L && publishedImageHandleValue == b.passAttachedColorImage) {
                     b.publishedTextures.noteSkippedForAttach();
                     if (b.publishedTextures.skippedForAttach() == 1) {
-                        b.record("published name " + entry.getKey() + " stands for the image this pass attaches (0x"
+                        b.record("published name " + entryKey + " stands for the image this pass attaches (0x"
                                 + Long.toHexString(b.passAttachedColorImage) + "); the sampling-side transition"
                                 + " would leave it in SHADER_READ_ONLY under a pass that declares GENERAL, so it is"
                                 + " skipped and the attach-side hand-back keeps it in GENERAL");
@@ -577,7 +620,7 @@ b.frameBufferOpen = false;
                         // of groups that sampled a published chain-pair name, this frame and cumulatively.
                         b.pairSkipLogs++;
                         System.out.println("[Celtium] CELTIUM_PAIR_SKIP frame=" + b.frameId
-                                + " name=" + entry.getKey() + " attached=0x"
+                                + " name=" + entryKey + " attached=0x"
                                 + Long.toHexString(b.passAttachedColorImage)
                                 + " identity=0x" + Long.toHexString(b.targetRegistry.currentIdentity())
                                 + " samplingDrawsThisRun=" + b.pairNameSamplingDraws
@@ -588,7 +631,7 @@ b.frameBufferOpen = false;
                 }
             }
             if (general) {
-                entry.getValue().ensureGeneralLayout(b.commandBuffer);
+                entryValue.ensureGeneralLayout(b.commandBuffer);
             } else if (b.PAIR_STAY_GENERAL && pairImageName) {
                 // The pair is never moved out of the layout its pass declares, so its sampling transition is not
                 // served. Counted, so "the transition was skipped" is a measurement; and the pair's own record follows,
@@ -599,7 +642,7 @@ b.frameBufferOpen = false;
                             org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
                 }
             } else {
-                entry.getValue().ensureSampledLayout(b.commandBuffer);
+                entryValue.ensureSampledLayout(b.commandBuffer);
             }
             // The pair's own record of the image's layout follows the wrapper's barrier, but only for the names that
             // stand for the pair image: a name published over the frame image is not the pair's business. This is what

@@ -32,6 +32,9 @@ final class PublishedFrameTextures {
     /** GL texture name to the texture published for it, which is what the sampling side resolves. */
     private final Map<Integer, VulkanGlTexture> published = new ConcurrentHashMap<>();
 
+    /** Bumped on every change to {@link #published}, so a reader can cache the name-to-image resolution. */
+    private long publishedVersion;
+
     /** How many framebuffer binds carried a colour texture, published or not. */
     private int colorTextureReports;
 
@@ -95,7 +98,13 @@ final class PublishedFrameTextures {
     }
 
     /** Records a published texture for a GL name. */
+    /** {@return the publication version}, incremented whenever the published set changes. */
+    long publishedVersion() {
+        return this.publishedVersion;
+    }
+
     void putPublished(int glTextureName, VulkanGlTexture texture) {
+        this.publishedVersion++;
         this.published.put(Integer.valueOf(glTextureName), texture);
     }
 
@@ -106,6 +115,7 @@ final class PublishedFrameTextures {
 
     /** Forgets a published name. */
     void removePublished(int glTextureName) {
+        this.publishedVersion++;
         this.published.remove(Integer.valueOf(glTextureName));
     }
 
