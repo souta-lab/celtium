@@ -19,7 +19,7 @@ allprojects {
 // version tracks the release it is working towards, and an explicit release build still passes
 // -Pceltium_release_version, exactly as 0.0.1-alpha did.
 version = providers.gradleProperty("celtium_release_version")
-    .orElse("0.1.4-alpha-rc.9").get()
+    .orElse("0.1.4-alpha-rc.10").get()
 extra["celtium_repository_root"] = rootProject.file("..").canonicalFile
 
 // Evidence ties a validation run to an exact artifact. Without this, every rebuild embeds a new timestamp and
