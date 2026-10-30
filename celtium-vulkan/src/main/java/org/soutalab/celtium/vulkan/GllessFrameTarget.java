@@ -1627,6 +1627,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * Recorded outside a render pass instance, as both clear commands require. The commands land in the
          * caller's command buffer, which is the one the pair's pass will be recorded into.
          */
+        /** Reused clear structures; see clear(). */
+        private VkImageSubresourceRange clearRange;
+        private VkClearColorValue clearColour;
+        private VkClearDepthStencilValue clearDepthValue;
+        private float[] clearColourFloats;
+
         private void clear(VkCommandBuffer command) {
             checkAlive();
             if (command == null || command.address() == 0L) {
@@ -1640,15 +1646,25 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     recordAcquire(command);
                     this.acquired = true;
                 }
-                VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
+                // The clear's structures are the same every frame: one range, one colour, one depth value. Building them
+                // on the stack per clear put three allocations and a float[4] on a path that runs once per pair per
+                // frame; the values still come from GL every time, because a mod may change its clear colour.
+                if (this.clearRange == null) {
+                    this.clearRange = VkImageSubresourceRange.malloc();
+                    this.clearRange.levelCount(1).layerCount(1);
+                    this.clearColour = VkClearColorValue.malloc();
+                    this.clearDepthValue = VkClearDepthStencilValue.malloc();
+                    this.clearColourFloats = new float[4];
+                }
+                VkImageSubresourceRange range = this.clearRange;
 
                 // The game's own clear colour and depth, not a renderer-chosen one: this pair is the framebuffer's
                 // image, and glClear on a framebuffer clears with the current glClearColor - a mod's 256x256 target
                 // keeps its own background (measured: the fixture's 0x081020 read back as 0 under the fixed pair
                 // clear, every untouched pixel a mismatch).
-                float[] clearColor = new float[4];
+                float[] clearColor = this.clearColourFloats;
                 org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(clearColor);
-                VkClearColorValue color = VkClearColorValue.calloc(stack);
+                VkClearColorValue color = this.clearColour;
                 color.float32(0, clearColor[0]);
                 color.float32(1, clearColor[1]);
                 color.float32(2, clearColor[2]);
@@ -1657,7 +1673,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 colorToTransfer(command);
                 vkCmdClearColorImage(command, this.colorImage, colorClearLayout(), color, range);
 
-                VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
+                VkClearDepthStencilValue depth = this.clearDepthValue;
                 depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 depthToTransfer(command);

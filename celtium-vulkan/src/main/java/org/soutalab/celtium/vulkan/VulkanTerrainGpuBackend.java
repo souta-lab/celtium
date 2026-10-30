@@ -10464,13 +10464,7 @@ this.frameBufferOpen = false;
             framebuffer = ensureFramebuffer(renderPass);
         }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
-                org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack).sType$Default();
-        begin.renderPass(renderPass);
-        begin.framebuffer(framebuffer);
-        org.lwjgl.vulkan.VkRect2D.Buffer area = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-        area.get(0).offset().set(0, 0);
-        area.get(0).extent().set(passWidth, passHeight);
-        begin.renderArea(area.get(0));
+                celtium$windowBeginInfo(renderPass, framebuffer, passWidth, passHeight);
         if (this.publishedChainOutput != null
                 && celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)) {
             // The immediate pipelines declare SHADER_READ_ONLY_OPTIMAL in their descriptors while the published
@@ -11707,6 +11701,14 @@ this.frameBufferOpen = false;
     }
 
     public void delete() {
+        if (this.cachedWindowBegin != null) {
+            this.cachedWindowBegin.free();
+            this.cachedWindowBegin = null;
+        }
+        if (this.cachedWindowBeginArea != null) {
+            this.cachedWindowBeginArea.free();
+            this.cachedWindowBeginArea = null;
+        }
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
@@ -14074,6 +14076,46 @@ this.frameBufferOpen = false;
         }
         System.out.println("[Celtium] CELTIUM_DRAW_BENCH run=" + this.drawBenchDone + " n=" + DRAW_BENCH
                 + " perCallNanos=" + perCall + " bestNanos=" + this.drawBenchBestNanos);
+    }
+
+    /** The window begin struct reused across frames: its contents change only when the pass, framebuffer or extent do. */
+    private org.lwjgl.vulkan.VkRenderPassBeginInfo cachedWindowBegin;
+    private org.lwjgl.vulkan.VkRect2D cachedWindowBeginArea;
+    private long cachedWindowBeginPass;
+    private long cachedWindowBeginFramebuffer;
+    private int cachedWindowBeginWidth = -1;
+    private int cachedWindowBeginHeight = -1;
+    private boolean cachedWindowBeginValid;
+
+    /**
+     * {@return the window's render-pass begin info}, reusing the struct and its render area while the pass, the
+     * framebuffer and the extent stay the same. Every window used to calloc a begin struct and a rectangle and fill
+     * them: thirty windows a frame, each about 3 us of the measured winBeginPass span including the caller's vkCmd.
+     */
+    private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$windowBeginInfo(long renderPass, long framebuffer,
+                                                                          int width, int height) {
+        if (this.cachedWindowBegin == null) {
+            this.cachedWindowBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.malloc();
+            this.cachedWindowBeginArea = org.lwjgl.vulkan.VkRect2D.malloc();
+            this.cachedWindowBeginValid = false;
+        }
+        // Compared field by field, not by a hash: two different framebuffers whose hash collided would have recorded a
+        // pass against the wrong one, and a device loss on a loaded world is exactly what that costs.
+        if (!this.cachedWindowBeginValid || renderPass != this.cachedWindowBeginPass
+                || framebuffer != this.cachedWindowBeginFramebuffer
+                || width != this.cachedWindowBeginWidth || height != this.cachedWindowBeginHeight) {
+            org.lwjgl.vulkan.VkRect2D area = this.cachedWindowBeginArea;
+            area.offset().set(0, 0);
+            area.extent().set(width, height);
+            this.cachedWindowBegin.sType$Default().renderPass(renderPass).framebuffer(framebuffer)
+                    .renderArea(area);
+            this.cachedWindowBeginPass = renderPass;
+            this.cachedWindowBeginFramebuffer = framebuffer;
+            this.cachedWindowBeginWidth = width;
+            this.cachedWindowBeginHeight = height;
+            this.cachedWindowBeginValid = true;
+        }
+        return this.cachedWindowBegin;
     }
 
     private void celtium$noteWindowOpenSite() {
