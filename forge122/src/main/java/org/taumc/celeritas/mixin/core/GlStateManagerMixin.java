@@ -62,35 +62,7 @@ public abstract class GlStateManagerMixin {
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
                 if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                    int boundTexture;
-                    if (org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) {
-                        boundTexture = org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
-                    } else {
-                        // Asked of GL here: the model's own texture is bound at replay time, and it is not the texture the
-                        // immediate path happened to leave behind.
-                        int activeUnit = -1;
-                        try {
-                            activeUnit = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x84E0);
-                            // The name the game last bound, which is the model's own: this hook runs at the replay, and
-                            // the GL query cannot answer it under GL-less (measured: it read 0 for every model list).
-                            boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
-                            if (boundTexture <= 0) {
-                                boundTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
-                            }
-                            if (activeUnit == Integer.MIN_VALUE) {
-                                activeUnit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-                            }
-                            if (boundTexture <= 0) {
-                                boundTexture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-                            }
-                            if (!org.soutalab.celtium.vulkan.VulkanDisplayListCensus.textureLogged(list)) {
-                                System.out.println("[Celtium] CELTIUM_MODEL_TEXTURE list=" + list + " unit=" + activeUnit
-                                        + " texture=" + boundTexture);
-                            }
-                        } catch (RuntimeException | LinkageError ignored) {
-                            boundTexture = 0;
-                        }
-                    }
+                    int boundTexture = org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
                     drawn = vulkan.celtium$drawModelList(list, boundTexture);
                 }
                 if (drawn) {
@@ -227,16 +199,8 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179144_i", at = @At("HEAD"), require = 0)
     private static void celtium$bindTexture(int glTextureId, CallbackInfo info) {
-        if (org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) {
-            // The API owns this binding even before backend/device creation; mod GL is only another writer.
-            org.soutalab.celtium.vulkan.NativeTextureBindings.current().bindTexture2d(glTextureId);
-            return;
-        }
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
-        if (backend != null && backend.skipUnchangedBind(glTextureId)) {
-            return;
-        }
-        celtium$mirror(backend2 -> backend2.bindTexture(glTextureId));
+        // The API owns this binding even before backend/device creation; mod GL is only another writer.
+        org.soutalab.celtium.vulkan.NativeTextureBindings.current().bindTexture2d(glTextureId);
     }
 
     @Inject(method = "func_179131_c", at = @At("HEAD"), require = 0)
@@ -444,14 +408,12 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "glTexEnvi", at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$nativeTextureEnvironmentInt(int target, int pname, int value, CallbackInfo info) {
-        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
         org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, value);
         info.cancel();
     }
 
     @Inject(method = "glTexEnvf", at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$nativeTextureEnvironmentFloat(int target, int pname, float value, CallbackInfo info) {
-        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
         org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, Math.round(value));
         info.cancel();
     }
@@ -459,7 +421,6 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "glTexEnv", at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$nativeTextureEnvironmentColor(int target, int pname, java.nio.FloatBuffer values,
             CallbackInfo info) {
-        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
         var env = org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
         int p = values.position();
         if (pname == org.soutalab.celtium.vulkan.NativeTextureEnvironment.COLOR) {

@@ -17,37 +17,31 @@ public abstract class GlStateManagerFogMixin {
 
     @Inject(method = "func_179127_m", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$enableFog(CallbackInfo info) {
-        if (!celtiumFog$native()) return;
         state().enabled(true); info.cancel();
     }
 
     @Inject(method = "func_179106_n", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$disableFog(CallbackInfo info) {
-        if (!celtiumFog$native()) return;
         state().enabled(false); info.cancel();
     }
 
     @Inject(method = "func_179093_d", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$setFogMode(int glMode, CallbackInfo info) {
-        if (!celtiumFog$native()) return;
         state().parameter(0x0B65, glMode); info.cancel();
     }
 
     @Inject(method = "func_179095_a", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$setFogDensity(float density, CallbackInfo info) {
-        if (!celtiumFog$native()) return;
         state().parameter(0x0B62, density); info.cancel();
     }
 
     @Inject(method = "func_179102_b", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$setFogStart(float start, CallbackInfo info) {
-        if (!celtiumFog$native()) return;
         state().parameter(0x0B63, start); info.cancel();
     }
 
     @Inject(method = "func_179153_c", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$setFogEnd(float end, CallbackInfo info) {
-        if (!celtiumFog$native()) return;
         state().parameter(0x0B64, end); info.cancel();
     }
 
@@ -57,7 +51,7 @@ public abstract class GlStateManagerFogMixin {
      */
     @Inject(method = "func_187402_b", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$glFog(int pname, FloatBuffer params, CallbackInfo info) {
-        if (!celtiumFog$native() || params == null || !params.hasRemaining()) return;
+        if (params == null || !params.hasRemaining()) return;
         int position = params.position();
         if (pname == GL_FOG_COLOR) {
             if (params.remaining() < 4) return;
@@ -68,12 +62,10 @@ public abstract class GlStateManagerFogMixin {
 
     @Inject(method = "func_187412_c", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$glFogi(int pname, int param, CallbackInfo info) {
-        if (!celtiumFog$native()) return;
         state().parameter(pname, param);
         info.cancel();
     }
 
-    private static boolean celtiumFog$native() { return org.taumc.celeritas.core.CeltiumNativeDraw.enabled(); }
     private static org.soutalab.celtium.vulkan.ImmediateFogState state() {
         return org.soutalab.celtium.vulkan.ImmediateFogState.current();
     }

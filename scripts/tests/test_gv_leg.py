@@ -312,7 +312,6 @@ class LegRunnerTests(unittest.TestCase):
 
     def test_reject_unusable_extra_and_known_wrong_control(self):
         for extra in ("--game-dir=/escape", "argument", "-D", "-Dceltium.validation.presentedDumpEvery=0",
-                      "-Dceltium.vulkan.glless=false",
                       "-Dceltium.validation.dumpPresentedImage=false"):
             with self.subTest(extra=extra), self.assertRaises(runner.LegError):
                 self.plan(extras=[extra])

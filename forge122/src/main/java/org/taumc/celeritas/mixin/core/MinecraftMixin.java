@@ -47,7 +47,7 @@ public class MinecraftMixin {
                     target = "Lnet/minecraft/client/Minecraft;loadingScreen:Lnet/minecraft/client/LoadingScreenRenderer;"))
     private void celtium$replaceLoadingScreen(Minecraft mc, LoadingScreenRenderer replacement) {
         // Scope the handover to resize, not arbitrary progress-renderer construction by other mods.
-        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless")) && mc.loadingScreen instanceof LoadingProgressState
+        if (mc.loadingScreen instanceof LoadingProgressState
                 && replacement instanceof LoadingProgressState) {
             ((LoadingProgressState) replacement).celtium$copyLoadingTask((LoadingProgressState) mc.loadingScreen);
         }
@@ -420,13 +420,13 @@ public class MinecraftMixin {
                 capabilitiesState = "throws(" + cause.getClass().getSimpleName() + ")";
             }
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(
-                    "CELTIUM_GLLESS LWJGL3 dispatch on thread={} provider={} capabilities={}",
+                    "CELTIUM_GLSTUB LWJGL3 dispatch on thread={} provider={} capabilities={}",
                     Thread.currentThread().getName(),
                     provider == null ? "null" : provider.getClass().getName(),
                     capabilitiesState);
         } catch (Throwable error) {
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
-                    "CELTIUM_GLLESS LWJGL3 dispatch report failed: {}", error.toString());
+                    "CELTIUM_GLSTUB LWJGL3 dispatch report failed: {}", error.toString());
         }
     }
 
@@ -467,14 +467,10 @@ public class MinecraftMixin {
         // attempt fails produces an endless black screen and a deceptively successful exit.
         // Terminate with an actionable crash report after the bounded retry window.
         if (celtium$windowRendererAttempts >= celtium$WINDOW_RENDERER_ATTEMPTS) {
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                throw new IllegalStateException("Celtium could not start the GL-less Vulkan renderer after "
-                        + celtium$windowRendererAttempts + " attempts. Last failure: "
-                        + celtium$windowRendererLastFailure
-                        + ". Check the Vulkan driver and Celtium's bundled LWJGL Vulkan bindings, "
-                        + "or use -Dceltium.vulkan.glless=false to switch to the OpenGL bridge.");
-            }
-            return;
+            throw new IllegalStateException("Celtium could not start the Vulkan renderer after "
+                    + celtium$windowRendererAttempts + " attempts. Last failure: "
+                    + celtium$windowRendererLastFailure
+                    + ". Check the Vulkan driver and Celtium's bundled LWJGL Vulkan bindings.");
         }
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
         // The saved VSync option is pushed once, here, before anything creates a swapchain: the option page's setter
@@ -504,11 +500,6 @@ public class MinecraftMixin {
         }
         java.util.List<String> reasons = new java.util.ArrayList<String>();
         try {
-            if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                // A bridge frame draws its menu with OpenGL, so the world-time creation stays the only one.
-                celtium$windowRendererAttempts = celtium$WINDOW_RENDERER_ATTEMPTS;
-                return;
-            }
             if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() != null) {
                 celtium$windowRendererCreated = true;
                 return;
@@ -577,8 +568,7 @@ public class MinecraftMixin {
         try {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 // The frame's pending work is flushed at GL draw and bind boundaries, and a GL-less frame crosses none
                 // of them - measured on legs gv-cohort-fix154/155, where submitCommands was never entered and every
                 // present skipped with "no completed frame waiting". This is the boundary both paths do reach, so the

@@ -194,37 +194,4 @@ public abstract class EntityRendererMixin {
             // A hint must never break the frame; the mirror simply keeps whatever it had.
         }
     }
-
-    /**
-     * Presents the previous frame from Vulkan at the head of this frame's world render.
-     * <p>
-     * The head of the world render is used because it is a point that is proven to be reached every frame, and because by
-     * then the previous frame is complete - world, entities and the GUI - which is what the shared colour image holds. The
-     * GL swap is deliberately left alone: the result is not used to skip it, so a failure here cannot leave the window
-     * without a frame. What this establishes is that the frame content Vulkan presents is this frame's content; whether the
-     * GL swap can then be skipped is the next step.
-     */
-    @org.spongepowered.asm.mixin.injection.Inject(method = "func_175068_a", at = @org.spongepowered.asm.mixin.injection.At("HEAD"), require = 0)
-    private void celtium$presentPreviousFrame(int pass, float partialTicks, long finishTimeNano,
-            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
-        try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                    && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                // GL-less has one present site per frame and it is the swap point: this one would present the same
-                // frame a second time and overwrite the skip reason with its own refusal.
-                // "present" inside "world": the pass split's own bracket names the renderer's present/composite
-                // share of a spike inside renderWorldPass, which the frame brackets alone leave unnamed.
-                org.soutalab.celtium.vulkan.FramePassTimings.begin("present");
-                try {
-                    vulkan.celtium$presentFrame();
-                } finally {
-                    org.soutalab.celtium.vulkan.FramePassTimings.end("present");
-                }
-            }
-        } catch (RuntimeException | LinkageError ignored) {
-            // Presenting from Vulkan must never stop the game from rendering a frame.
-        }
-    }
 }

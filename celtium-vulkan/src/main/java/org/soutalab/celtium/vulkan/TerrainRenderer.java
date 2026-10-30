@@ -706,37 +706,9 @@ public final class TerrainRenderer {
             Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
     static int fogMode() {
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            ImmediateFogState fog = ImmediateFogState.current();
-            if (!fog.enabled()) return 0;
-            return fog.glMode() == 2049 ? 1 : fog.glMode() == 2048 ? 2 : 3;
-        }
-        if (VulkanFogMirror.hasValue()) {
-            // No GL query on this path: the game pushed GlStateManager.fogState (the same source the GL fog service
-            // reads). The query below stays as the fallback for a caller that has not pushed yet.
-            int mirrored = VulkanFogMirror.enabled() ? VulkanFogMirror.mode() : 0;
-            if (mirrored == 0) {
-                return 0;
-            }
-            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP2) {
-                return 1;
-            }
-            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP) {
-                return 2;
-            }
-            return 3;
-        }
-        if (!org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_FOG)) {
-            return 0;
-        }
-        int mode = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_FOG_MODE);
-        if (mode == org.lwjgl.opengl.GL11.GL_EXP2) {
-            return 1;
-        }
-        if (mode == org.lwjgl.opengl.GL11.GL_EXP) {
-            return 2;
-        }
-        return 3;
+        ImmediateFogState fog = ImmediateFogState.current();
+        if (!fog.enabled()) return 0;
+        return fog.glMode() == 2049 ? 1 : fog.glMode() == 2048 ? 2 : 3;
     }
 
     long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {

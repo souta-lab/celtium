@@ -27,9 +27,6 @@ public class CeltiumGllessSdlSwapTransformer implements IClassTransformer {
         if (basicClass == null || !TARGET.equals(name) && !TARGET.equals(transformedName)) {
             return basicClass;
         }
-        if ("false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
-            return basicClass;
-        }
         ClassReader reader = new ClassReader(basicClass);
         ClassWriter writer = new ClassWriter(reader, 0);
         reader.accept(new org.objectweb.asm.ClassVisitor(ASM_API, writer) {
@@ -46,7 +43,7 @@ public class CeltiumGllessSdlSwapTransformer implements IClassTransformer {
                 target.visitInsn(Opcodes.ARETURN);
                 target.visitMaxs(1, 1);
                 target.visitEnd();
-                System.out.println("[Celtium] CELTIUM_GLLESS stubbed Window.swapBuffers (the Vulkan swapchain is the"
+                System.out.println("[Celtium] CELTIUM_GLSTUB stubbed Window.swapBuffers (the Vulkan swapchain is the"
                         + " only presenter on this wl_surface; SDL's own swap would attach a second buffer)");
                 return null;
             }

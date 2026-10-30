@@ -198,9 +198,7 @@ public final class VulkanDisplayListCensus {
      * reads 0 while the compile half reads the real name.
      */
     private static int modelTexture() {
-        return !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))
-                ? NativeTextureBindings.current().texture2d(0)
-                : glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        return NativeTextureBindings.current().texture2d(0);
     }
 
     /** {@return the recorded origin of a list, or null}. */

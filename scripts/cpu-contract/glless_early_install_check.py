@@ -8,8 +8,9 @@ after its target class is defined can never apply, so `core.LwjglxDisplayMixin` 
 the GL-less stub was never installed, the window was created with a real GL 4.6 context and
 CleanMix logged nothing about it at all. `onLoad` runs at 7.1 s in the same leg.
 
-The contract is that the two things that mixin does are also done from the plugin, gated on
-GL-less, and that the mixin itself stays as the strongest place for the window hint.
+The contract is that the two things that mixin does are also done from the plugin, with no
+property to opt out of them, and that the mixin itself stays as the strongest place for the
+window hint.
 """
 import sys
 from pathlib import Path
@@ -28,8 +29,8 @@ def main():
     plugin = PLUGIN.read_text(encoding='utf-8')
     require('onLoad installs GL-less early',
             'celtium$installGllessEarly();' in plugin and 'public void onLoad(String mixinPackage)' in plugin)
-    require('the early path is gated on the GL-less property',
-            'celtium.vulkan.glless' in plugin and 'GLLESS_ENABLED' in plugin)
+    require('the early path has no mode property to opt out of',
+            'System.getProperty' not in plugin)
     require('the early path installs the stub',
             'CeltiumGlStub.install()' in plugin)
     # A call, not a mention: the method's javadoc explains why the hint cannot be set here.
@@ -57,8 +58,8 @@ def main():
     require('the transformer returns the original bytes on failure',
             'catch (Throwable error)' in transformer and 'return basicClass;' in transformer)
     hint = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java').read_text(encoding='utf-8')
-    require('the hint is gated on GL-less and applied once',
-            'celtium.vulkan.glless' in hint and 'applied' in hint)
+    require('the hint has no mode property and is applied once',
+            'System.getProperty' not in hint and 'if (applied) {' in hint)
     require('the hint sets GLFW_CLIENT_API to GLFW_NO_API',
             'glfwWindowHint' in hint and '0x00022001' in hint)
 

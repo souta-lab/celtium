@@ -31,9 +31,6 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
         if (basicClass == null || !client && !TARGET.equals(name) && !TARGET.equals(transformedName)) {
             return basicClass;
         }
-        if ("false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
-            return basicClass;
-        }
         ClassReader reader = new ClassReader(basicClass);
         ClassWriter writer = new ClassWriter(reader, 0);
         reader.accept(new org.objectweb.asm.ClassVisitor(ASM_API, writer) {
@@ -64,7 +61,7 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
                     target.visitInsn(Opcodes.IRETURN);
                     target.visitMaxs(1, 0);
                     target.visitEnd();
-                    System.out.println("[Celtium] CELTIUM_GLLESS answered SplashProgress.getMaxTextureSize with 16384"
+                    System.out.println("[Celtium] CELTIUM_GLSTUB answered SplashProgress.getMaxTextureSize with 16384"
                             + " (the proxy-texture probe cannot run without a GL context)");
                     return null;
                 }
@@ -80,7 +77,7 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
                 target.visitInsn(Opcodes.RETURN);
                 target.visitMaxs(0, 0);
                 target.visitEnd();
-                System.out.println("[Celtium] CELTIUM_GLLESS stubbed SplashProgress." + methodName
+                System.out.println("[Celtium] CELTIUM_GLSTUB stubbed SplashProgress." + methodName
                         + " (the splash needs a shared GL context a GLFW_NO_API window cannot provide)");
                 return null;
             }

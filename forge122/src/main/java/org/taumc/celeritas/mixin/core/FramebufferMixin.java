@@ -42,7 +42,6 @@ public abstract class FramebufferMixin {
     /** Native phase boundary: metadata only; the renderer owns the fullscreen geometry/material and execution. */
     @Inject(method = "func_178038_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$nativeComposite(int width, int height, boolean opaque, CallbackInfo info) {
-        if (!org.taumc.celeritas.core.CeltiumNativeDraw.enabled()) return;
         TerrainGpuBackend current = TerrainGpuBackends.current();
         if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) return;
         Framebuffer self = (Framebuffer) (Object) this;

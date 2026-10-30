@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Exercise the production GL-less off-target rendered-texture name resolver.
+"""Exercise the production off-target rendered-texture name resolver.
 
 The off-target copy-back used to ask GL45C.glGetNamedFramebufferAttachmentParameteri
 for the colour attachment of the bound framebuffer unconditionally. Under the GL stub
 that query is unanswerable by contract (the stub writes GL_NONE for every attachment
-pname), so the invalidation silently targeted texture 0. The resolver now answers from
-the publication census the framebuffer mixin fills when the stub is installed, and keeps
-asking GL under the interop target. A future change that reaches for GL45 under the stub
-must fail this test; the real method body and the real PublishedFrameTextures are copied
-verbatim into the harness and executed.
+pname), so the invalidation silently targeted texture 0. The resolver answers from the
+publication census the framebuffer mixin fills at every bind, and there is no other arm:
+a future change that reaches for GL45 here must fail this test. The real method body and
+the real PublishedFrameTextures are copied verbatim into the harness and executed.
 """
 from pathlib import Path
 import re
@@ -40,8 +39,10 @@ def main():
     # block (glGetInteger + glGetNamedFramebufferAttachmentParameteri + invalidate) is gone, and the
     # call site delegates.
     assert 'offTargetRenderedTextureName(identity, this.publishedTextures)' in backend_source
-    assert 'int source = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri' not in backend_source
-    assert len(re.findall(r'glGetNamedFramebufferAttachmentParameteri', backend_source)) == 5
+    assert 'glGetNamedFramebufferAttachmentParameteri' not in resolver
+    # The two remaining queries are the framebuffer-adoption probe, which reads the bound framebuffer's
+    # own attachment; the off-target name path no longer contains one.
+    assert len(re.findall(r'glGetNamedFramebufferAttachmentParameteri', backend_source)) == 2
 
     harness = '''package org.soutalab.celtium.vulkan;
 import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
@@ -65,15 +66,7 @@ class OffTargetRenderedNameContract {
         // A bind reporting no colour attachment clears the record; the resolver then answers 0 again.
         census.bindColorTexture(0x15f76244L, 0, 0, 0);
         assertValue(offTargetRenderedTextureName(0x15f76244L, census), 0, "cleared record");
-        // Interop: the GL query is asked exactly as before and the census is not consulted.
-        CeltiumGlStub.installed = null;
-        census.bindColorTexture(0x15f76244L, 42, 256, 256);
-        org.lwjgl.opengl.GL11.nextBinding = 7;
-        org.lwjgl.opengl.GL45C.nextName = 88;
-        assertValue(offTargetRenderedTextureName(0x15f76244L, census), 88, "interop named attachment");
-        assertValue(org.lwjgl.opengl.GL45C.calls, 1, "GL45C queries under interop");
-        assertValue(org.lwjgl.opengl.GL45C.lastFbo, 7, "interop queried the bound framebuffer");
-        System.out.println("GL-less off-target rendered texture: recorded census + interop fallback PASS");
+        System.out.println("off-target rendered texture: recorded census only PASS");
     }
 }
 '''

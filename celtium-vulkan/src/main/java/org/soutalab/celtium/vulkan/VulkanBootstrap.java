@@ -68,27 +68,12 @@ public final class VulkanBootstrap {
             report.reasons.add("OpenGL device identity unavailable: " + describe(error));
             return finish(report);
         }
-        // Under the GL-less path there is no OpenGL context at all: the window is GLFW_NO_API and every GL query is
-        // answered by the stub, so the UUID and fd-extension questions below have no true answer and asking them
-        // refused the whole device. Measured 2026-10-15 (leg gv-cohort-rl9): the device report read
-        // status=UNSUPPORTED_OR_UNAVAILABLE, logicalDeviceCreated=false and reasons=["The current OpenGL context does
-        // not expose device UUIDs (GL_EXT_memory_object / GL_EXT_memory_object_fd missing)."], while the run drew its
-        // GUI through the stub and dropped every 3D batch for want of a device - 14500 batches accepted, 93% of the
-        // presented image black. Interop with a context that does not exist is not a requirement; the device is
-        // chosen without the UUID match instead.
-        boolean glless = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
-        if (!glless && report.openGl.deviceUuids.isEmpty()) {
-            report.reasons.add("The current OpenGL context does not expose device UUIDs"
-                    + " (GL_EXT_memory_object / GL_EXT_memory_object_fd missing).");
-            return finish(report);
-        }
-        if (!glless && (!report.openGl.memoryObjectFd || !report.openGl.semaphoreFd)) {
-            report.reasons.add("The current OpenGL context lacks GL_EXT_memory_object_fd or GL_EXT_semaphore_fd.");
-            return finish(report);
-        }
-        if (glless) {
-            report.warnings.add("The GL-less path has no OpenGL context, so no device UUID was required.");
-        }
+        // There is no OpenGL context at all: the window is GLFW_NO_API and every GL query is answered by the stub, so
+        // the UUID and fd-extension questions have no true answer. Asking them once refused the whole device - measured
+        // 2026-10-15 (leg gv-cohort-rl9): status=UNSUPPORTED_OR_UNAVAILABLE, logicalDeviceCreated=false, reasons=["The
+        // current OpenGL context does not expose device UUIDs..."], while the run drew its GUI through the stub and
+        // dropped every 3D batch for want of a device. Interop with a context that does not exist is not a
+        // requirement; the device is chosen without the UUID match instead.
         try {
             inspectVulkan(report);
         } catch (RuntimeException | LinkageError error) {
@@ -438,11 +423,8 @@ public final class VulkanBootstrap {
                     || (this.apiMajor == REQUIRED_API_MAJOR && this.apiMinor < REQUIRED_API_MINOR)) {
                 return false;
             }
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-                // No OpenGL context exists, so there is no UUID to match against and no interop to keep.
-                return true;
-            }
-            return openGl.deviceUuids.contains(this.deviceUuid);
+            // No OpenGL context exists, so there is no UUID to match against and no interop to keep.
+            return true;
         }
 
         VulkanDeviceReport.MatchedDevice toReport(VulkanDeviceReport.OpenGl openGl) {

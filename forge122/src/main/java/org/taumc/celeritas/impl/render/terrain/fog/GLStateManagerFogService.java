@@ -1,13 +1,9 @@
 package org.taumc.celeritas.impl.render.terrain.fog;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.EntityRenderer;
-import net.minecraft.client.renderer.GlStateManager;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
 import org.embeddedt.embeddium.impl.render.chunk.shader.ChunkFogMode;
 
 public class GLStateManagerFogService implements FogService {
-    private static boolean nativeFog() { return org.taumc.celeritas.core.CeltiumNativeDraw.enabled(); }
     private static org.soutalab.celtium.vulkan.ImmediateFogState state() {
         return org.soutalab.celtium.vulkan.ImmediateFogState.current();
     }
@@ -15,47 +11,36 @@ public class GLStateManagerFogService implements FogService {
 
     @Override
     public float getFogEnd() {
-        if (nativeFog()) return state().getFogEnd();
-        return GlStateManager.fogState.end;
+        return state().getFogEnd();
     }
 
     @Override
     public float getFogStart() {
-        if (nativeFog()) return state().getFogStart();
-        return GlStateManager.fogState.start;
+        return state().getFogStart();
     }
 
     @Override
     public float getFogDensity() {
-        if (nativeFog()) return state().getFogDensity();
-        return GlStateManager.fogState.density;
+        return state().getFogDensity();
     }
 
     @Override
     public int getFogShapeIndex() {
-        if (nativeFog()) return state().getFogShapeIndex();
-        return 0;
+        return state().getFogShapeIndex();
     }
 
     @Override
     public float getFogCutoff() {
-        if (nativeFog()) return state().getFogCutoff();
-        return GlStateManager.fogState.end;
+        return state().getFogCutoff();
     }
 
     @Override
     public float[] getFogColor() {
-        if (nativeFog()) return state().getFogColor();
-        EntityRenderer entityRenderer = Minecraft.getMinecraft().entityRenderer;
-        return new float[]{entityRenderer.fogColorRed, entityRenderer.fogColorGreen, entityRenderer.fogColorBlue, 1.0F};
+        return state().getFogColor();
     }
 
     @Override
     public ChunkFogMode getFogMode() {
-        if (nativeFog()) return state().getFogMode();
-        if (!GlStateManager.fogState.fog.currentState) {
-            return ChunkFogMode.NONE;
-        }
-        return ChunkFogMode.fromGLMode(GlStateManager.fogState.mode);
+        return state().getFogMode();
     }
 }
