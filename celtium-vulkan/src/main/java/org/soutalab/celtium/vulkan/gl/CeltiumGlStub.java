@@ -1606,6 +1606,20 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * {@code glDeleteSync}, from the transformer's route.
+     * <p>
+     * The generic delete dispatch already removes the id from the live set, but the transformer answered the native
+     * with a zero, so a run logged 487 {@code glDeleteSync} calls as unmapped and the set only ever grew. The ids are
+     * the stub's own (no native object exists), so releasing the bookkeeping is the whole operation.
+     */
+    public static void celtium$deleteSync(long sync) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.liveSync.remove(sync);
+        }
+    }
+
+    /**
      * Legacy immediate-mode capture: {@code glBegin}/{@code glEnd} with {@code glVertex3f} and a current texture
      * coordinate.
      * <p>

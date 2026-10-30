@@ -346,6 +346,30 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
         if (emitNativeRasterAdapter(method, name, descriptor)) return;
         if (emitRawColourRoute(method, name, descriptor)) return;
+        if (("nglAlphaFunc".equals(name) || "glAlphaFunc".equals(name)) && "(IF)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.FLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glAlphaFunc", "(IF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        // Small but real unmapped classes the surface census named: a sync id the stub owns (its removal is the whole
+        // operation) and a raw depth comparison every immediate pipeline carries.
+        if (("nglDeleteSync".equals(name) || "glDeleteSync".equals(name)) && "(J)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.LLOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glDeleteSync", "(J)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (("nglDepthFunc".equals(name) || "glDepthFunc".equals(name)) && "(I)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glDepthFunc", "(I)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         // Legacy immediate mode. The census measured these as the largest unmapped class in a menu run (82% of the
         // zero-answered calls), and unlike the state classes each call is a draw the picture lost.
         if ("glBegin".equals(name) && "(I)V".equals(descriptor)) {

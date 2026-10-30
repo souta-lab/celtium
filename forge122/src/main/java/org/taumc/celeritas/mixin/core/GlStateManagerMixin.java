@@ -697,6 +697,10 @@ public abstract class GlStateManagerMixin {
     }
 
     private static void celtium$multMatrix(java.nio.FloatBuffer buffer) {
+        // The native glMultMatrixf route applies mod-originated multiplies; this one is vanilla's, already mirrored
+        // here, so it marks itself and the route skips exactly one call.
+        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall =
+                org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_MULT;
         TerrainGpuBackend backend = celtium$backendOrNull();
         if (backend == null) {
             return;

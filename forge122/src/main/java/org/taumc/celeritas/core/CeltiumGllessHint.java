@@ -768,8 +768,16 @@ public final class CeltiumGllessHint {
      */
     private static volatile int lastMatrixMode = 5888;
 
-    /** Mirrors {@link CeltiumGllessNativeTransformer#MOD_MATRIX_ROUTES}; see there for why it is off by default. */
+    /**
+     * Mod-originated {@code glMultMatrix} stays parked behind a property. The caller test that used to decide it walked
+     * a stack per call and cost 4.05 -> 28.5 ms of warm frame; the flag the GlStateManager mixin sets for its own
+     * multMatrix replaced that walk, and re-measured with the cheap flag the route still costs: SuperSymmetry warm P50
+     * 2.54 -> 3.49 ms and ATM3 4.25 -> 6.07 ms, because each mod multiply also allocates a float view and multiplies
+     * the mirror. The route is correct and cheap to enable for a leg that needs it; it is not a default.
+     */
     private static final boolean MOD_MATRIX_ROUTES = Boolean.getBoolean("celtium.glless.modMatrixRoutes");
+    /** The GlStateManager multMatrix kind, so its mirrored call is not applied twice. */
+    public static final int MATRIX_MULT = 6;
     private static int hintMatrixDumps;
 
     public static void glMatrixMode(int mode) {
@@ -941,7 +949,32 @@ public final class CeltiumGllessHint {
         glColor4f((red & 0xFF) / 255.0F, (green & 0xFF) / 255.0F, (blue & 0xFF) / 255.0F, (alpha & 0xFF) / 255.0F);
     }
 
-    /** A raw {@code GL11.glDepthMask}, for the same reason as {@link #glColor4f}: canopies and overlays set it raw. */
+    /**
+     * A raw {@code GL11.glAlphaFunc}: cutout rendering reads the comparison, and a mod that sets it straight through
+     * GL11 (the ATM3 pack's mods do - 2583 calls in one world leg) had it answered with a zero, so the mirror kept
+     * whichever comparison the last GlStateManager call left.
+     */
+    public static void glAlphaFunc(int func, float reference) {
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) backend.setAlphaFunc(func, reference);
+    }
+
+        /** Releases a sync id, as {@code glDeleteSync} does; the transformer used to answer this with a zero. */
+    public static void glDeleteSync(long sync) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteSync(sync);
+    }
+
+    /**
+     * A raw {@code GL11.glDepthFunc}: the pipelines carry the comparison, and mods and Immersive Railroading's own
+     * passes set it straight through GL11. The state mirror has the value; without this route the call was answered
+     * with a zero and the mirror kept whichever comparison the last mirrored call left.
+     */
+    public static void glDepthFunc(int func) {
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) backend.depthFunc(func);
+    }
+
+        /** A raw {@code GL11.glDepthMask}, for the same reason as {@link #glColor4f}: canopies and overlays set it raw. */
     public static void glDepthMask(boolean mask) {
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.setDepthMask(mask);
