@@ -2366,11 +2366,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private ImmediateDrawRecords drawRecords;
 
-    /** {@code -Dceltium.vulkan.indirectImmediate=true}: record opaque textured groups as indirect runs. */
     /**
-     * Record opaque textured and lit item groups as records plus indirect commands, one command per group and one call per
-     * material run. On by default: about 194 draws become about three commands a frame; pass
-     * {@code -Dceltium.vulkan.indirectImmediate=false} to fall back to per-group draws.
+     * {@code -Dceltium.vulkan.indirectImmediate=true}: record opaque textured and lit item groups as records plus
+     * indirect commands, one command per group and one call per material run.
+     * <p>
+     * Off, and measured off: an A/B on the Susy world leg (2026-10-31, rc.12) read warm P50 2.391 ms with per-group
+     * draws and 2.444 ms with the flag on - the run formation and its record buffer cost more CPU than the binds it
+     * replaces at this scene's group count, and the draw count it saves is small next to the flush path's. The javadoc
+     * here used to say "on by default", which the code has never been.
      */
     private static final boolean INDIRECT_IMMEDIATE = Boolean.getBoolean("celtium.vulkan.indirectImmediate");
     private static final int INDIRECT_COMMAND_BYTES = 20;
