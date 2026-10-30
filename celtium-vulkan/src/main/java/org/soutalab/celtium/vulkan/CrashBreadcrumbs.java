@@ -1,49 +1,57 @@
 package org.soutalab.celtium.vulkan;
 
 /**
- * The last few renderer operations before a device loss, for a crash that only reproduces on someone else's machine.
+ * The last few renderer operations before a device loss, kept as numbers so the ring costs almost nothing and can stay
+ * on for every session.
  * <p>
- * A RADV GPUVM fault reports an address and nothing else, and the log around it carries whatever diagnostic lines
- * happened to be printed - in the measured case a texture-dump line and a loading-bar quad, neither of which is the
- * faulting call. This is a ring of the operations themselves (which window, which submit, which upload, which pair),
- * dumped only when the device is lost, so the next report names the operation instead of leaving it inferred.
- * <p>
- * Off unless {@code -Dceltium.vulkan.crashBreadcrumbs=true}: the ring writes one string reference per operation, which
- * is not free in a 400-fps frame, and a working session never reads it.
+ * A RADV GPUVM fault reports an address and nothing else; the log around it carries whatever diagnostic lines happened
+ * to print, which in the measured case were a texture dump and a loading-bar quad rather than the faulting call. This
+ * ring records the operations themselves - code, and two numbers that mean whatever the code says (a window's target and
+ * group count, an upload's GL name and extent, a chain pair's identity) - and formats them only when the device is
+ * actually lost. That is why there is no switch to remember in the launcher: three array writes per operation.
  */
 public final class CrashBreadcrumbs {
-    private static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.crashBreadcrumbs");
-    private static final int CAPACITY = 96;
-    private static final String[] RING = new String[CAPACITY];
+    /** {@code -Dceltium.vulkan.crashBreadcrumbs=false} turns the ring off; it is on by default. */
+    private static final boolean ENABLED =
+            !"false".equals(System.getProperty("celtium.vulkan.crashBreadcrumbs", "true"));
+    private static final int CAPACITY = 128;
+    private static final int[] CODES = new int[CAPACITY];
+    private static final long[] FIRST = new long[CAPACITY];
+    private static final long[] SECOND = new long[CAPACITY];
     private static int cursor;
     private static boolean dumped;
+
+    /** Operation codes; the dump names them, so the numbers stay readable in a log. */
+    public static final int WINDOW = 1;
+    public static final int TERRAIN_PASS = 2;
+    public static final int CHAIN_PAIR = 3;
+    public static final int TEXTURE_UPLOAD = 4;
+    public static final int RAW_WRITE = 5;
+    public static final int PRESENT = 6;
+    public static final int COALESCED_COPY = 7;
+    public static final int FRAMEBUFFER_BIND = 8;
 
     private CrashBreadcrumbs() {
     }
 
-    /** {@return whether the ring is enabled}, so a hot site can skip formatting its tag. */
+    /** {@return whether the ring is recording}, so a caller can skip reading fields it would only pass here. */
     public static boolean enabled() {
         return ENABLED;
     }
 
-    /** Records one operation, bounded to the ring. */
-    public static void note(String tag) {
+    /** Records one operation. No allocation and no formatting: three array writes. */
+    public static void note(int code, long first, long second) {
         if (!ENABLED) {
             return;
         }
-        RING[cursor % CAPACITY] = tag;
+        int index = cursor % CAPACITY;
+        CODES[index] = code;
+        FIRST[index] = first;
+        SECOND[index] = second;
         cursor++;
     }
 
-    /** Records one operation with a cheap integer, so a hot site does not format a string unless the ring wraps. */
-    public static void note(String tag, long a, long b) {
-        if (!ENABLED) {
-            return;
-        }
-        note(tag + " a=" + a + " b=" + b);
-    }
-
-    /** Prints the ring, newest last, once; the first device loss is the one whose context matters. */
+    /** Prints the ring once, oldest first, naming each operation; the first device loss is the one that matters. */
     public static void dump(String trigger) {
         if (!ENABLED || dumped) {
             return;
@@ -51,10 +59,33 @@ public final class CrashBreadcrumbs {
         dumped = true;
         int count = Math.min(cursor, CAPACITY);
         System.out.println("[Celtium] CELTIUM_CRASH_BREADCRUMBS trigger=" + trigger + " count=" + count
-                + " (the operations before the device loss, oldest first)");
+                + " (renderer operations before the device loss, oldest first)");
         for (int i = 0; i < count; i++) {
             int index = Math.floorMod(cursor - count + i, CAPACITY);
-            System.out.println("[Celtium] CELTIUM_CRUMB #" + i + " " + RING[index]);
+            System.out.println("[Celtium] CELTIUM_CRUMB #" + i + " " + describe(CODES[index], FIRST[index], SECOND[index]));
+        }
+    }
+
+    private static String describe(int code, long first, long second) {
+        switch (code) {
+            case WINDOW:
+                return "window target=0x" + Long.toHexString(first) + " groups=" + second;
+            case TERRAIN_PASS:
+                return "terrain-pass frame=" + first;
+            case CHAIN_PAIR:
+                return "chain-pair identity=0x" + Long.toHexString(first);
+            case TEXTURE_UPLOAD:
+                return "texture-upload gl=" + first + " extent=" + (second >>> 32) + "x" + (second & 0xffffffffL);
+            case RAW_WRITE:
+                return "raw-write texture=" + first + " serial=" + second;
+            case PRESENT:
+                return "present frame=" + first + " presented=" + second;
+            case COALESCED_COPY:
+                return "coalesced-copy texture=" + first + " mirrors=" + second;
+            case FRAMEBUFFER_BIND:
+                return "framebuffer-bind identity=0x" + Long.toHexString(first) + " main=" + (second != 0L);
+            default:
+                return "op=" + code + " a=" + first + " b=" + second;
         }
     }
 }

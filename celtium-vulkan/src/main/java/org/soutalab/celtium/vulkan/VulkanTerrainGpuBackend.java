@@ -1045,7 +1045,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainHandoff");
             this.frameTarget.beginFrame();
             if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
-                org.soutalab.celtium.vulkan.CrashBreadcrumbs.note("terrain-pass begin");
+                org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(
+                        org.soutalab.celtium.vulkan.CrashBreadcrumbs.TERRAIN_PASS, this.frameId, 0L);
             }
             this.windowOpen = true;
             this.frameOpens++;
@@ -8376,6 +8377,10 @@ this.frameBufferOpen = false;
         if (!COALESCE_RAW_WRITES || this.pendingRawWrites.isEmpty()) {
             return;
         }
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.COALESCED_COPY,
+                    this.pendingRawWrites.size(), this.frameId);
+        }
         int[] textures = this.pendingRawWrites.keySet().toIntArray();
         for (int i = 0; i < textures.length; i++) {
             PendingRawWrite pending = this.pendingRawWrites.get(textures[i]);
@@ -8428,6 +8433,10 @@ this.frameBufferOpen = false;
 
     /** {@return whether the mirror took the texture's current captured content}. */
     private boolean celtium$applyRawWrites(int texture, org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_WRITE,
+                    texture, this.frameId);
+        }
         // Draws queued before the write sampled the old content in GL: submit them before the mirror changes, or they
         // would be recorded later against the new image. Only when one of them does sample this texture: a write that
         // lands before its own draw has nothing queued to order against, and the flush that used to run anyway was
@@ -8982,8 +8991,8 @@ this.frameBufferOpen = false;
     private void flushImmediateWindow() {
         if (this.immediateWindowBusy) return;
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
-            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note("window target=0x"
-                    + Long.toHexString(this.targetRegistry.currentIdentity()) + " groups=" + this.immediateGroups.size());
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.WINDOW,
+                    this.targetRegistry.currentIdentity(), this.immediateGroups.size());
         }
         // Kept from the reverted drain (e87aa0ec1): how many of the bound target's groups are present at flush entry,
         // and how often that target was visited. The drain itself is reverted - a device-lost regression outranks it -
