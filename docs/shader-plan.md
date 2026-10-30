@@ -1,9 +1,9 @@
 # Shaderpack 対応計画（前向き計画・実装指示ではない）
 
-**位置づけ**: 優先順を変えない。現在の優先は modpack bring-up（SuperSymmetry → ATM3 → FTB / RLCraft）で、影と pack はその後
+**位置づけ**: 優先順を変えない。前提（利用者指示）の優先は modpack bring-up（SuperSymmetry → ATM3 → FTB / RLCraft）で、影と pack はその後
 （[plan.md:82-95](<plan.md#L82-L95>)）。影・pack の成果物は Celtium 本体ではなく **Demonica fork の別 jar**（[plan.md:72-80](<plan.md#L72-L80>)、
 [goal.md:60-62](<goal.md#L60-L62>)）。本稿は「既存の 1.12.2 OptiFine/ShadersMod 形式 pack が画面に出るまで」の最短経路・境界・受入・棄却条件を先に固定する。
-数値は書かない。未知は unknown と書く。
+推測値を書かない。未知は unknown と書く。
 
 ## 1. 現状の証拠（file:line）
 
@@ -19,21 +19,23 @@
 | Demonica は pack 意味論を既に持つ（最終 GLSL は明示 location / MRT out） | `demonica-src/.../ProgramBuilder.java:44-48`、`.../GlShader.java:32-37`、`.../AttributeTransformer.java:44-49`、`.../CommonTransformer.java:121-123` | 捕捉点は `GlShader`。lower の残りは version・binding・UBO・`gl_Position` 程度 |
 | 地形 vertex は 24B で normal / block id を持たない | [CompactChunkVertex.java:20-27](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/vertex/format/impl/CompactChunkVertex.java#L20-L27>)、[VulkanTerrainPipeline.java:156-173](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L156-L173>) | gbuffers には属性追加が要る。Demonica に設計例（`ExtendedChunkVertexType.java:1-90`、`TerrainVertexFormatRequirements.java:20-80`） |
 | target は GL FBO identity 単位。colortex / shadow 用 slot は無い | [RenderTargetRegistry.java:47-70](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/RenderTargetRegistry.java#L47-L70>)、[GllessFrameTarget.java:164](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java#L164>)、同 [:1294](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java#L1294>) | pack target は新設。既存 pair を流用しない |
-| dynamic rendering は pack 用に有効化済み、pipeline cache は永続化済み | [VulkanContext.java:2513](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2513>)、同 [:2844-2856](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2844-L2856>)、同 [:2100-2115](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2100-L2115>)、同 [:2219-2248](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2219-L2248>) | MRT pipeline と program 毎 pipeline の土台はある |
-| 行列・camera の源がある | [VulkanTerrainGpuBackend.java:884](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L884>)、同 [:12372-12386](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L12372-L12386>)、[ChunkRenderMatrices.java:8](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/ChunkRenderMatrices.java#L8>)、[CameraTransform.java:15-24](<../common/src/main/java/org/embeddedt/embeddium/impl/render/viewport/CameraTransform.java#L15-L24>) | `gbufferModelView/Projection`・`cameraPosition` はここから。core は Minecraft 非依存なので時刻・太陽は addon |
+| dynamic rendering は pack 用に advertised 時のみ有効化、pipeline cache は永続化済み | [VulkanContext.java:2513](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2513>)、同 [:2844-2856](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2844-L2856>)、同 [:2100-2115](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2100-L2115>)、同 [:2219-2248](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2219-L2248>) | MRT pipeline と program 毎 pipeline の土台はある（無い device は render pass cache へ） |
+| 行列・camera の源がある | [VulkanTerrainGpuBackend.java:884](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L884>)、同 [:12372-12386](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L12372-L12386>)、[ChunkRenderMatrices.java:8](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/ChunkRenderMatrices.java#L8>)、[CameraTransform.java:15-24](<../common/src/main/java/org/embeddedt/embeddium/impl/render/viewport/CameraTransform.java#L15-L24>) | `gbufferModelView/Projection`・`cameraPosition` はここから。core は Minecraft 非依存（[VulkanFogMirror.java:12-14](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanFogMirror.java#L12-L14>)）なので時刻・太陽は addon |
 | shadow は本体停止中。設計と数学の記録だけ残る | [plan.md:39-41](<plan.md#L39-L41>)、[development.md:3263-3317](<development.md#L3263-L3317>) | Phase C は新規。`ShadowMapTarget` の設計・`ShadowLightMatrix` の 6 test・dump 経路は再利用 |
 | 1 tag 16 行で log が切られる | [CeltiumLogLimiter.java:14](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L14>)、同 [:19-20](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L19-L20>) | 94 stage の列挙は 1 行 summary + `packCensusFile` へ |
 
 **手元の実 pack の反例**: `BSL_v10.1.8.zip`（sha256 は [s0-findings:25](<history/shaderpack-frontend-s0-findings.md#L25>)）は
-`gbuffers_terrain.glsl:424-442` で colortex0/3/6/7/8 を書き、`composite.glsl:254-256` が depthtex0/1 を無条件に読み、
-既定で `LIGHT_SHAFT`（`settings.glsl:205`）が colortex1/noisetex/shadowtex を読む。**BSL は Phase A の対象外**。
+`gbuffers_terrain.glsl:424-442` で既定では colortex0 を書き、`ADVANCED_MATERIALS` 有効時だけ 0/3/6/7/8 を書く。
+一方 `composite.glsl:254-256` は depthtex0/1 を**無条件に**読み、既定で `LIGHT_SHAFT`（`settings.glsl:205`）が
+colortex1 と noisetex も読む。さらに deferred pass が lighting を担うため、gbuffers を拒否した composite は pack の見た目にならない。
+**BSL は Phase A の対象外**。
 
 ## 2. 最短経路の結論
 
 1. **pack の意味論は addon、実行は core。** core に足すのは汎用の 4 機能だけ: program 登録（SPIR-V + layout）、
    pass 実行（MRT + depth、dynamic rendering）、target 所有（colortex / depthtex / shadowtex）、uniform block 書込み（std140 ring）。
 2. **捕捉は addon の `GlShader`**（最終 GLSL 文字列と program 名が同時にある）。stub の `glShaderSource` 引数を読む案は、
-   pointer/長さの marshalling と「文字列が消える」問題で machinery が増える。OptiFine は存在しないので捕捉点にならない。
+   複数 string の配列・長さ・寿命の marshalling が増える。OptiFine は存在しないので捕捉点にならない。
 3. **GLSL→SPIR-V は addon 内**。現状は build 時のみ（[celtium-vulkan/build.gradle:117-265](<../celtium-vulkan/build.gradle#L117-L265>)）、
    runtime の shaderc 依存は無い（同 [:32-75](<../celtium-vulkan/build.gradle#L32-L75>)）。ここが唯一の新規大型部品。
 4. **stub に GL program 実行器を足さない。** pack の draw は「program + target + uniform + pass 順」という意味で渡し、
@@ -63,14 +65,16 @@
 - 前提ゲート: 実 pack の composite/final が読む sampler ⊆ {colortex0, depthtex0, noisetex}、deferred / shadow 無し。
   scanner は addon の解析済み program から sampler 集合を出す（CPU のみ）。満たす pack が無ければ fixture pack で実行器だけ検証する。
 - データ: 既存 terrain は従来どおり frame image へ。chain 開始時に **frame → colortex0 を 1 回 copy**（alias しない。
-  colortex0 を sample しながら同じ image へ書く feedback を避ける）。pass は colortex0 / depthtex0 / noise を sample し main へ書く。
-  最後の pass が main を書かない pack は core が colortex0 → main を blit する（最終出力の規則を addon が宣言）。
+  colortex0 を sample しながら同じ image へ書く feedback を避ける）。frame の color/depth は既に `TRANSFER_SRC/DST` と
+  `SAMPLED` を持つ（[GllessFrameTarget.java:282-289](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java#L282-L289>)）ので、
+  copy と `depthtex0` の sampling に新しい frame image は要らない（depth は chain 中だけ SHADER_READ へ 1 回 transition する）。
+  pass は colortex0 / depthtex0 / noise を sample し main へ書く。最後の pass が main を書かない pack は core が
+  colortex0 → main を blit する（最終出力の規則を addon が宣言する）。この copy は Phase B で terrain が colortex0 へ直接書くとき消える。
 - uniform と源: `gbufferProjection/Inverse`・`gbufferModelView/Inverse`（`ChunkRenderMatrices` と mirror、backend:884 /
   :12372-12386）、`cameraPosition`（`CameraTransform.x/y/z`）、`viewWidth/Height`、`near/far`、`frameTimeCounter`・`worldTime`・
   `rainStrength`・`isEyeInWater`・`sunPosition`（addon の uniform supplier）、noise（addon の custom texture）。
 - 受入: (1) CPU: lower + block layout test。(2) 同一 leg で pack OFF → ON、同一 tick / camera / pose。colortex0 を `FF00FF`
-  （AARRGGBB、[verification-traps.md](<verification-traps.md#3-poison-の色は-aarrggbb-色指定を読み違えると無意味な測定になる>)）で
-  poison し、提示 frame にその色が出ること。(3) chain の pass が 1 つでも拒否なら全体を拒否し frame を保持（`CELTIUM_PACK_CHAIN_REFUSED`）。
+  （AARRGGBB、[verification-traps.md](<verification-traps.md>) の §3）で poison し、提示 frame にその色が出ること。(3) chain の pass が 1 つでも拒否なら全体を拒否し frame を保持（`CELTIUM_PACK_CHAIN_REFUSED`）。
   (4) VUID 0、AMD / Intel。(5) perf leg は `presentedDumpEvery=0` で OFF 比を記録（数値は未確定）。
 - 棄却: ゲートを通る実 pack が存在しない（A は fixture 実証に留める）、copy が frame 時間を支配する、all-or-nothing が成立しない。
 
@@ -95,7 +99,8 @@
 ### Phase C（shadow）
 - 変更 core: `ShadowTarget`（D32、compare sampler、depth-only pass。[development.md:3277-3290](<development.md#L3277-L3290>) の設計）、
   `ShadowLightMatrix`（[development.md:3310-3325](<development.md#L3310-L3325>) の 6 test を再作成）、shadow pass を
-  `ensureFrameTarget` 直後に記録（[development.md:3267-3272](<development.md#L3267-L3272>)）、`shadowtex0/1`、`shadowModelView/Projection`。
+  `ensureFrameTarget` 直後に記録（[development.md:3267-3272](<development.md#L3267-L3272>)）、`shadowtex0`（`shadowtex1` / `shadowcolor0` は後）、
+  `shadowModelView/Projection`。
 - 変更 addon: shadow → gbuffers → deferred → composite の順、`ShadowRenderer` の置換。`shadowcomp` compute は拒否。
 - コスト: terrain の 2 回目 draw（同じ indirect buffer、pipeline だけ差替え）+ D32 target + composite の PCF。歴史的に in-core PCF は
   +10% p50（[plan.md:39-41](<plan.md#L39-L41>)、**現在値ではない**）。measure。
@@ -106,6 +111,8 @@
 ### Phase D（残り）
 - `gbuffers_textured_lit` / `basic` / `entities` / `hand` / `weather` / `clouds` / `block` / `beacon` / `damagedblock`、
   translucent ordering、`blend.<program>`・`alphaTest.<program>`・`colortexNClearColor`、custom images、oldLighting、per-dimension。
+- `shaders.properties` の `program.*.enabled` 式・profile・dimension 上書きは addon が評価済み（[s0-findings:36-50](<history/shaderpack-frontend-s0-findings.md#L36-L50>)）。
+  iris 固有の DH/Voxy 等は 1.12.2 の対象 pack では任意なので、要求された program は拒否して名前を残す。
 - core: pipeline state key に blend / depth / clear、entity draw へ pack program、translucency の depth 取扱い。
 - 受入: program ごとの run/refuse 表、feature 別 leg、コスト。棄却: entity/hand の費用対効果、compute 必須 pack。
 
@@ -118,7 +125,7 @@
 | 変更 core | `VulkanTerrainGpuBackend.java`（`implements PackGpuBackend`、frame 順、program id → name、level、拒否会計） | A |
 | 変更 core | `TerrainRenderer.java`（level 分岐）、`VulkanTerrainPipeline.java` または新規 `VulkanPackTerrainPipeline.java`（MRT / pack vertex） | B |
 | 変更 core | `common/.../vertex/format/impl/CompactChunkVertex.java` または新規 `PackChunkVertex.java`、`ChunkVertexType` 選択 | B |
-| 変更 core | `RenderTargetRegistry.java`（`PACK` slot）、`GllessFrameTarget.java` は触らない（pair と混ぜない） | A |
+| 変更 core | `RenderTargetRegistry.java`（`PACK` slot）。`GllessFrameTarget.java` の pair とは混ぜない（layout 遷移は chain 側で記録する） | A |
 | 新規 core | `ShadowTarget.java`、`ShadowLightMatrix.java`、`PackShadowPass`（記録） | C |
 | 変更 addon | `GlShader.java`、`ProgramCreator.java`、新規 `PackCapture` / `VulkanGlslLowering` / `PackCompiler` / `PackUniformBlock` | 0 |
 | 変更 addon | `ShaderTransformer.java`（lower hook）、`CeleritasTransformer.java` → `CeltiumTransformer.java` + `celtium:include/chunk_vertex.glsl` | B |
@@ -138,8 +145,11 @@
 - **descriptor** は program × frame slot に 1 set。sampler は binding 番号で固定。pass 毎の layout 変更をしない。
 - **pass 結合**: post の全 pass を 1 回の acquire → record → release → submit にまとめる（[PostChainBridge.java:68-100](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java#L68-L100>)）。
   gbuffer の terrain draw は既存 terrain render pass の中（追加 pass を開けない）。readback しない（dump は diagnostic のみ）。
-- **OFF はゼロコスト**: level 0 では登録・target 生成・分岐をしない。既存 pipeline に触らない。level 変更は resource reload を要求する
-  （vertex format が変わるため）。
+- **OFF はゼロコスト**: level 0 では登録・target 生成・pipeline 作成をしない。hot path に足すのは level の単一読みだけ。
+  level 2 以上への変更は vertex format が変わるので resource reload を要求する（level 1 は reload 不要）。
+- **計測**: 各 Phase のコストは `FramePassTimings.begin/end("pack")`（[FramePassTimings.java:37-55](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramePassTimings.java#L37-L55>)）と
+  `-Dceltium.gpuPassTimings=true` の timestamp で測る。`GpuPassTimingReport` は pass 名で集計するので pack pass 用の key を足すか別 counter にする。
+  新しい計器名・property は `docs/instruments.md` の再生成と同じ差分に含める。
 - **拒否会計**: 全 program に pack 名を付ける。`CELTIUM_PACK_REFUSED name= stage= reason=` を理由 enum で出し、
   `PackStatistics` に数える。summary は `CELTIUM_PACK_SUMMARY level= programs= compiled= refused= passes= targets=` の 1 行。
   program が 1 つでも拒否なら、その chain は **記録しない**（既存の `supportsAll` / `run-refused` と同じ transactional 方式）。
@@ -167,13 +177,14 @@
 | `mc_Entity` / normal の属性追加コストが過大 | mesher 時間・vertex 帯域・frame 時間 | Phase B（level 2 を限定） |
 | depthtex1 が実装できない | BSL は無条件に読むため B の gate で判明 | Phase B の BSL 級 pack |
 | shadow のコスト / 座標系が合わない | 深度 PNG・影の追従・frame 時間 | Phase C（level 3 を出さない） |
-| license 境界を越える（AGPL の glsl-transformer / shaderc 周辺） | 依存と配置のレビュー | core への配置。addon 内に留める限り可 |
+| license 境界を越える（AGPL の glsl-transformer を core に置く / shaderc native の配布） | 依存と配置のレビュー | core への配置。glsl-transformer は addon 内、shaderc（Apache-2.0）も addon に留める限り可 |
 | reference arm（Demonica+Celeritas）が作れない | leg 設計時に確認 | 「正しい」の主張。coverage / 構造の受入に落とす |
 
 ## 8. 最初の 1 手（これ 1 つで経路の可否が決まる）
 
 **addon の `GlShader` に capture を 1 行入れ、実 pack の全 stage を offline で SPIR-V 化する。描画は変えない。**
-- 変更は addon の 1 file + 新規 3 class（`PackCapture` / `VulkanGlslLowering` / `PackCompiler`）。core は触らない。
+- in-game の変更は capture の 1 行だけ。lower は同じ addon の新規 3 class（`PackCapture` / `VulkanGlslLowering` / `PackCompiler`）を
+  JUnit / main から回す（GPU も Minecraft も起動しない）。core は触らない。
 - 受入: 実 pack（BSL 10.1.8）で stage 名・GLSL version・sampler 集合・attribute 使用・block 候補が出る。
   各 stage の lower 成否と理由が `CELTIUM_PACK_STAGE` 1 行 + census file に残る。`PackLoweringTest` が SPIR-V を検査する。
 - ここで落ちれば、Phase A 以降の議論を止めて結論を書き換える（addon 起動不能なら in-core 設計の再評価、lower 不能なら方式変更）。
