@@ -941,12 +941,6 @@ public final class VulkanGlState {
         return matrix;
     }
 
-    /** {@return the scratch reset to the identity}, for a caller that is about to overwrite parts of it. */
-    private float[] identityScratch() {
-        System.arraycopy(IDENTITY, 0, this.transformScratch, 0, MATRIX_FLOATS);
-        return this.transformScratch;
-    }
-
     private static float[] copy(float[] source) {
         float[] copy = new float[MATRIX_FLOATS];
         System.arraycopy(source, 0, copy, 0, MATRIX_FLOATS);
