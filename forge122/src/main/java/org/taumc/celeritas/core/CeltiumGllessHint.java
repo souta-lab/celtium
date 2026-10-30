@@ -419,6 +419,36 @@ public final class CeltiumGllessHint {
         return "names=" + entries.size() + " [" + line + "]";
     }
 
+    /** Counts per unrouted native id; sized to the transformer's tracking bound. */
+    private static final int[] UNROUTED_COUNTS = new int[4096];
+    private static final java.util.concurrent.atomic.AtomicInteger UNROUTED_TOTAL =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static volatile boolean surfaceReported;
+
+    /** Calls after which the surface report prints once during the run, so a log always carries it. */
+    static final int SURFACE_REPORT_CALLS = 20000;
+
+    /** {@return the per-id call counts of natives that no route answered}, for the surface report. */
+    public static int[] unroutedCounts() {
+        return UNROUTED_COUNTS;
+    }
+
+    /**
+     * Notes one call to a native the transformer's zero-writer answered, so the renderer's silent answers are counted
+     * per name rather than inferred from a picture that is missing something.
+     */
+    public static void noteUnrouted(int id) {
+        if (id < 0 || id >= UNROUTED_COUNTS.length) {
+            return;
+        }
+        UNROUTED_COUNTS[id]++;
+        UNROUTED_TOTAL.incrementAndGet();
+        if (!surfaceReported && UNROUTED_TOTAL.get() >= SURFACE_REPORT_CALLS) {
+            surfaceReported = true;
+            org.taumc.celeritas.core.CeltiumGllessNativeTransformer.printSurfaceReport("in-run");
+        }
+    }
+
     /** Registers the exit line once, on the first arrival. A run that never reaches these calls stays silent. */
     private static void noteDisplayListCall() {
         if (hooked) {

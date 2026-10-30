@@ -55,6 +55,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // consume more. Preserve existing frames, but calculate each replacement's actual stack bound.
             ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
             int[] rewritten = new int[1];
+            // One count per native the transformer replaced, for the surface report's denominator.
+
             reader.accept(new ClassVisitor(ASM_API, writer) {
                 @Override
                 public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
@@ -63,6 +65,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                         return super.visitMethod(access, methodName, descriptor, signature, exceptions);
                     }
                     rewritten[0]++;
+                    REWRITTEN_TOTAL.incrementAndGet();
                     MethodVisitor method = super.visitMethod(access & ~Opcodes.ACC_NATIVE, methodName, descriptor,
                             signature, exceptions);
                     method.visitCode();
@@ -241,6 +244,103 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 entry, descriptor, false);
         method.visitInsn(Opcodes.RETURN);
         return true;
+    }
+
+    /** One id per native that no route answered, so the surface report can name what the renderer silently zeroes. */
+    private static final java.util.Map<String, Integer> UNROUTED_IDS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.List<String> UNROUTED_NAMES =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<String>());
+    private static final int MAX_UNROUTED_TRACKED = 4096;
+    private static int untrackedUnroutedNames;
+    private static final java.util.concurrent.atomic.AtomicInteger REWRITTEN_TOTAL =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    static {
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(
+                    () -> printSurfaceReport("shutdown"), "celtium-gl-surface"));
+        } catch (Throwable ignored) {
+            // A census that cannot be printed must not take the process down.
+        }
+    }
+
+    private static int unroutedId(String key) {
+        Integer existing = UNROUTED_IDS.get(key);
+        if (existing != null) {
+            return existing.intValue();
+        }
+        synchronized (UNROUTED_NAMES) {
+            if (UNROUTED_NAMES.size() >= MAX_UNROUTED_TRACKED) {
+                untrackedUnroutedNames++;
+                return -1;
+            }
+            int id = UNROUTED_NAMES.size();
+            UNROUTED_NAMES.add(key);
+            UNROUTED_IDS.put(key, Integer.valueOf(id));
+            return id;
+        }
+    }
+
+    /**
+     * Prints the rewritten-native surface: how many natives the transformer replaced, how many a route answers, and
+     * which ones only the zero-writer answers - with call counts, so a silent no-op is named instead of inferred.
+     * <p>
+     * This is the invariant a draw-refusal census cannot see: a draw that never reaches the stub's decoder is not a
+     * refusal, it is a call answered with zero, and the picture loses whatever it was for. The same line prints once
+     * after the first {@link CeltiumGllessHint#SURFACE_REPORT_CALLS} zero-answered calls and again at shutdown.
+     */
+    public static void printSurfaceReport(String trigger) {
+        int[] counts = org.taumc.celeritas.core.CeltiumGllessHint.unroutedCounts();
+        java.util.List<Integer> order = new java.util.ArrayList<Integer>();
+        int calls = 0;
+        for (int i = 0; i < counts.length; i++) {
+            if (counts[i] > 0) {
+                order.add(Integer.valueOf(i));
+                calls += counts[i];
+            }
+        }
+        order.sort((a, b) -> Integer.compare(counts[b.intValue()], counts[a.intValue()]));
+        StringBuilder line = new StringBuilder();
+        String[] names;
+        synchronized (UNROUTED_NAMES) {
+            names = UNROUTED_NAMES.toArray(new String[0]);
+        }
+        // Twenty in the in-run line (bounded like every other diagnostic); the shutdown pass prints more, because the
+        // full distinct list is what says which call classes the renderer does not answer at all.
+        int limit = "shutdown".equals(trigger) ? 60 : 20;
+        for (int i = 0; i < order.size() && i < limit; i++) {
+            int id = order.get(i).intValue();
+            if (id < names.length) {
+                if (i > 0) {
+                    line.append(' ');
+                }
+                line.append(names[id]).append('=').append(counts[id]);
+            }
+        }
+        int unmapped = 0;
+        for (int i = 0; i < names.length; i++) {
+            if (i < counts.length && counts[i] > 0) {
+                unmapped++;
+            }
+        }
+        String report = "[Celtium] CELTIUM_GL_SURFACE trigger=" + trigger
+                + " rewritten=" + REWRITTEN_TOTAL.get()
+                + " trackedUnroutedNames=" + names.length
+                + " calledUnroutedNames=" + unmapped
+                + " untrackedNames=" + untrackedUnroutedNames
+                + " unroutedCalls=" + calls
+                + " [" + line + "]";
+        System.out.println(report);
+        // The log is the harness's file; a shutdown print can lose the race with Log4j's own hook, so the same line
+        // also goes to the process stdout descriptor when this is the shutdown pass.
+        if ("shutdown".equals(trigger)) {
+            try (java.io.PrintStream out = new java.io.PrintStream(
+                    new java.io.FileOutputStream(java.io.FileDescriptor.out), false)) {
+                out.println(report);
+            } catch (Throwable ignored) {
+                // Not fatal: the log line above is the primary record.
+            }
+        }
     }
 
     private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
@@ -872,6 +972,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+        }
+        // This native fell through every route: count it by name so the surface report says which calls the renderer
+        // answers with a zero instead of applying. Emitted before the switch so every return type is covered - the
+        // first version sat in the int branch only and the void natives, which are the majority, were never counted.
+        int unrouted = unroutedId(name + descriptor);
+        if (unrouted >= 0) {
+            method.visitLdcInsn(Integer.valueOf(unrouted));
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "noteUnrouted", "(I)V", false);
         }
         switch (returnType) {
             case "V":
