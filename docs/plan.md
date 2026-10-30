@@ -99,7 +99,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 - cool ABBA: Susy **1.48×**（2.77 vs 1.87ms）、ATM3 **~1.45×**。CPU律速（client thread 94.3% of wall、GPUは地形375us＋immediates 48usで待ち）。
 - 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier/submit各0.1）。30 windows・112 groups/frame。
 - 除去済み: raw-write flush -38%、published遷移 3.5→0.8%、epoch spin 3.0→0、nanoTime 1.2→0、window構造体再生成廃止。
-- 残差の主因はwindow固定費とper-batch呼び出し。parityにはmaterial順統合かnativeバッチ記録が必要（残るマイクロ余地~0.2-0.3ms）。
+- 残差の主因はwindow固定費とper-batch呼び出し。parityにはarray-records（下記）が必要。
 - 棄却: bind flush延期（2回SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate（singletonで悪化）、フレーム再利用（アニメ凍結）。
 
 - **次の実装単位: array-records（bindless即時描画）** — 設計と判明済みの土台は[新アーキテクチャ資料](<new_architecture.md>)の「array-records」節。
