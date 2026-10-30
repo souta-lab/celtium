@@ -180,3 +180,11 @@ KPI harness は計測用に次の3つを**明示的に切る**（`scripts/gv_kpi
 - ログで経路を確認するときは `CELTIUM_GLSTUB` 行（旧 `CELTIUM_GLLESS`）を見る。旧タグを grep しても 0 行になる。
 - 旧手順・旧レシピに残る `celtium.vulkan.glless=true` は無害だが、**フラグを渡したこと自体を「GL-lessで走った証拠」
   にしない**。証拠は `CELTIUM_GLSTUB` 行、window の `GLFW_NO_API`、present のカウンタで取る。
+
+## bind時のflush延期（2026-10-31 に2回試作し、2回ともドライバを落とした）
+
+前提: bindでターゲットが変わる時の「旧ターゲットのqueueをflush」を、サンプリング・削除・境界の3点だけで行えばwindow数が減る（flush源の実測: bind 11–14%、raw write 8–11%）。
+
+結果: どちらも `vkCmdBeginRenderPass` でSIGSEGV（`libvulkan_radeon.so`）。1回目は境界drainが削除済みpairへ描画。2回目は境界drainを生存pairのみに限定し、フレームバッファ削除時にもflushを足したが同じだった。したがって原因は「pairが既に無い」ことではなく、延期したwindowのrender pass/framebufferが、記録時点のpair generationと一致していないこと。
+
+再入条件: 延期groupをpair generationに固定して記録し、generationが変わったら**記録せずに破棄して計数する**設計を先に用意する。それが無い状態で再試行しない。計測用のflush源カウンタ（`CELTIUM_FLUSH_SITES`, `CELTIUM_FLUSH_SOURCES`）は残してある。

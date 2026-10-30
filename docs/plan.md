@@ -98,7 +98,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因・GLスタブ解消済み 等。再入条件つき）。
 
-- **bind時のflush延期**（2026-10-31に2回試作し2回ともRADVをSIGSEGVで落とした）: bind先変更で前targetのqueueを保持し、サンプリング/削除時/境界でdrawする案。境界drainは`vkCmdBeginRenderPass`でクラッシュし、pair生存確認と削除時flushを足しても同じ。再入条件は、延期したwindowを「そのframeのpair寿命とrender pass再生成の外」で記録できる設計（例: window記録をpairのgenerationに固定し、generationが変わったら未記録groupを破棄して計数する）を先に作れたときだけ。flush源の実測内訳は残っている（bind 11–14%、raw write 8–11%、[計器](<instruments.md>)）。
+- **bind時のflush延期**（2026-10-31、2回試作→2回ともRADV SIGSEGV）: 再入条件と詳細は[検証の罠](<verification-traps.md>)。
 
 ## 未確定（数値を前提にしない）
 
