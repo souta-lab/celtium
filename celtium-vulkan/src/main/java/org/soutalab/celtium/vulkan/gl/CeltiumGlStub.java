@@ -1072,10 +1072,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                     (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
             org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
             capabilitiesInstalled = true;
-            celtium$printAtExit("CELTIUM_GLLESS LWJGL3 capabilities installed first from the stub provider: extensions="
+            celtium$printAtExit("CELTIUM_GLSTUB LWJGL3 capabilities installed first from the stub provider: extensions="
                     + extensions.size() + " thread=" + Thread.currentThread().getName());
         } catch (Throwable error) {
-            celtium$printAtExit("CELTIUM_GLLESS first capabilities install failed: " + error);
+            celtium$printAtExit("CELTIUM_GLSTUB first capabilities install failed: " + error);
         }
     }
 
@@ -5683,8 +5683,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     /**
      * A named texture-level query against the GL-less record, without crossing an LWJGL GL45C
      * native entry point. The value is exactly what our DSA stub function would answer;
-     * a texture with no level record returns 0 instead of inventing dimensions.
-     * Call this only when {@link #isInstalled()} is true.
+     * a texture with no level record returns 0 instead of inventing dimensions, and a query
+     * before the stub is installed answers 0 as well.
      */
     public static int textureLevelParameter(int name, int level, int pname) {
         CeltiumGlStub stub = installed;

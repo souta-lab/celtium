@@ -4,7 +4,7 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 
 /**
  * The image a frame's content lands in and the synchronization its submissions take. Two implementations exist:
- * {@link VulkanFrameTarget}, which shares the images with OpenGL and synchronizes them through the GL↔Vulkan
+ * {@link GllessFrameTarget}, which owns the images outright and synchronizes them through Vulkan submissions
  * semaphore pair, and {@link GllessFrameTarget}, which owns the images outright when no GL context exists - its
  * semaphores are signaled and consumed by Vulkan submissions alone, so this contract stays identical either way.
  */
@@ -49,7 +49,7 @@ public interface FrameImageTarget {
      * is one of our own submissions on one queue, where submission order already gives the same ordering - so the
      * three queue packets the contract costs per stage (beginFrame's signal, the work submission's semaphore pair,
      * endFrame's consume) buy nothing. {@link GllessFrameTarget} reports false by default;
-     * {@code -Dceltium.vulkan.gllessFrameSemaphores=true} keeps the pair anyway.
+     * {@code -Dceltium.vulkan.frameSemaphores=true} keeps the pair anyway.
      */
     default boolean needsFrameSemaphores() {
         return true;

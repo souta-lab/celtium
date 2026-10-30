@@ -185,7 +185,6 @@ public final class VulkanTextureRegistry {
     /** Wrap answers that came from the GL default because the game never set that pname on that texture. */
     private static int wrapDefaultsUsed;
     /** The GL texture ids that reach the readback refresh, recorded once each. */
-    private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
     /**
      * Which source filled each mirror's content, by GL name, and the census of those fills.
      * <p>
@@ -495,7 +494,7 @@ public final class VulkanTextureRegistry {
         if (glTextureId != 0) {
             Entry entry = this.entries.get((int) (glTextureId));
             if (entry != null) {
-                if (CeltiumGlStub.isInstalled() && !entry.texture.hasFullContent()) {
+                if (!entry.texture.hasFullContent()) {
                     // Under the stub the only thing that could have filled this image is a GL readback, and a readback
                     // delivers no pixels here: the stub has none to give and copies memory GL never filled. The callers
                     // that reach this method - every one of them after uploadFromGlTexture - would otherwise advertise
@@ -553,23 +552,9 @@ public final class VulkanTextureRegistry {
             skipDecisionLog(glTextureId, "the mirror holds no whole content", false);
             return false;
         }
-        if (CeltiumGlStub.isInstalled()) {
-            // Without a context the captured surface is the only source, and it is already in the image.
-            skipDecisionLog(glTextureId, "stub mirror holds whole content", true);
-            return true;
-        }
-        Integer applied = announcedGenerationOf(id);
-        if (applied == null) {
-            // Whole content is present and nothing was announced: kept as it was. Skipping here would also skip the
-            // refresh of a texture the game writes without announcing (a rendered framebuffer), and that is a separate
-            // question from the one this method answers.
-            skipDecisionLog(glTextureId, "no announced application", false);
-            return false;
-        }
-        Integer consumed = consumedGenerationOf(id);
-        boolean skip = consumed == null || applied.intValue() > consumed.intValue();
-        skipDecisionLog(glTextureId, "applied=" + applied + " consumed=" + consumed, skip);
-        return skip;
+        // Without a context the captured surface is the only source, and it is already in the image.
+        skipDecisionLog(glTextureId, "stub mirror holds whole content", true);
+        return true;
     }
 
     /**
@@ -731,18 +716,12 @@ public final class VulkanTextureRegistry {
 
     /** Named texture size/format query: the GL-less recording owns it, so never call GL45C under the stub. */
     private static int textureLevelParameter(int glTextureId, int level, int pname) {
-        if (CeltiumGlStub.isInstalled()) {
-            return CeltiumGlStub.textureLevelParameter(glTextureId, level, pname);
-        }
-        return org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, level, pname);
+        return CeltiumGlStub.textureLevelParameter(glTextureId, level, pname);
     }
 
     /** Named texture sampler query: prefer the recorded GL-less state, not the missing native GL context. */
     private static int textureParameter(int glTextureId, int pname) {
-        if (CeltiumGlStub.isInstalled()) {
-            return CeltiumGlStub.textureParameter(glTextureId, pname);
-        }
-        return org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId, pname);
+        return CeltiumGlStub.textureParameter(glTextureId, pname);
     }
 
     /** {@return whether the texture's magnification filter is nearest}, asked of the texture itself, not of a binding. */
@@ -761,14 +740,10 @@ public final class VulkanTextureRegistry {
      * the bridge the texture's own answer is the real one and is asked exactly as before.
      */
     private static boolean nearestFilterFor(int glTextureId, int x, int y, int width, int height) {
-        if (CeltiumGlStub.isInstalled()
-                && CeltiumGlStub.textureParameterRecorded(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)) {
-            // The stub now records glTexParameteri, so the texture's own answer is real under the stub too. The
-            // record wins over the write-shape inference below: the inference is a guess about which writes are the
-            // dynamic ones, and it is kept only for a texture whose MAG_FILTER the game never set.
-            return nearestFilterOf(glTextureId);
-        }
-        if (!CeltiumGlStub.isInstalled()) {
+        if (CeltiumGlStub.textureParameterRecorded(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)) {
+            // The stub records glTexParameteri, so the texture's own answer is real. The record wins over the
+            // write-shape inference below: the inference is a guess about which writes are the dynamic ones, and it is
+            // kept only for a texture whose MAG_FILTER the game never set.
             return nearestFilterOf(glTextureId);
         }
         return !(x == 0 && y == 0 && width > 0 && height > 0);
@@ -1098,7 +1073,7 @@ public final class VulkanTextureRegistry {
             return false;
         }
         Entry entry = this.entries.get((int) (glTextureId));
-        if (entry == null && CeltiumGlStub.isInstalled()) {
+        if (entry == null) {
             // Under the stub nothing can read this texture back, so the pixels the registry already holds establish the
             // mirror before any size is asked of GL: the captured surface carries the pixels and their extent together.
             // This is what makes the block atlas work at all - it is uploaded one sprite at a time and never announced
@@ -1117,7 +1092,7 @@ public final class VulkanTextureRegistry {
                     org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
             int textureHeight = textureLevelParameter(glTextureId, 0,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
-            if ((textureWidth <= 0 || textureHeight <= 0) && CeltiumGlStub.isInstalled()
+            if ((textureWidth <= 0 || textureHeight <= 0)
                     && x == 0 && y == 0 && width > 0 && height > 0) {
                 // A whole-texture write anchored at the origin, which is how a dynamic texture reaches this method - the
                 // light map above all. Its dimensions ARE the texture's, so the announcement answers the size question
@@ -1130,13 +1105,11 @@ public final class VulkanTextureRegistry {
                 this.failureCount++;
                 this.lastFailure = "announced pixels for GL texture " + glTextureId + " whose size is "
                         + textureWidth + "x" + textureHeight;
-                if (CeltiumGlStub.isInstalled()) {
-                    // Nothing announced a size, nothing captured one, and the stub's record has none: there is nothing
-                    // left to build an image from, and the mirror stays absent rather than being guessed at.
-                    this.readbacksSkippedWithoutContent++;
-                    this.rejectPatch("GL-less mirror: announced " + width + "x" + height + " at " + x + "," + y
-                            + " for GL texture " + glTextureId + ", whose size no source answers");
-                }
+                // Nothing announced a size, nothing captured one, and the stub's record has none: there is nothing
+                // left to build an image from, and the mirror stays absent rather than being guessed at.
+                this.readbacksSkippedWithoutContent++;
+                this.rejectPatch("GL-less mirror: announced " + width + "x" + height + " at " + x + "," + y
+                        + " for GL texture " + glTextureId + ", whose size no source answers");
                 return false;
             }
             boolean wrapS = wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S);
@@ -1163,9 +1136,8 @@ public final class VulkanTextureRegistry {
             // nobody sized. Accepting it is also the only way the coverage rule above can ever reach "full" for an
             // atlas that is uploaded one sprite at a time and never announced whole: refusing here deadlocked the
             // 8192x8192 block atlas at 35,389 refused patches and a 43%-black frame.
-            boolean extentRecorded = CeltiumGlStub.isInstalled()
-                    && CeltiumGlStub.textureLevelParameter(glTextureId, 0,
-                            org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0;
+            boolean extentRecorded = CeltiumGlStub.textureLevelParameter(glTextureId, 0,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0;
             if (!extentRecorded) {
                 // A partial patch into an image that has never been filled whole would sit next to undefined texels. The draw
                 // path already refuses such a mirror (hasFullContent), so applying it would only make the state dishonest:
@@ -1175,9 +1147,7 @@ public final class VulkanTextureRegistry {
                 this.patchesBeforeInitialization++;
                 this.rejectPatch("partial patch " + width + "x" + height + " at " + x + "," + y
                         + " before the image for GL texture " + glTextureId + " was initialized");
-                if (CeltiumGlStub.isInstalled()) {
-                    this.readbacksSkippedWithoutContent++;
-                }
+                this.readbacksSkippedWithoutContent++;
                 return false;
             }
         }
@@ -1251,10 +1221,8 @@ public final class VulkanTextureRegistry {
             if (wholeTexture) {
                 celtium$noteMirrorSource(glTextureId, "announced-int[]", width, height, levelBytes[0]);
             }
-            if (CeltiumGlStub.isInstalled()) {
-                // Which source filled the mirror under the stub: the game's pixels, not a readback.
-                this.filledFromAnnouncement++;
-            }
+            // Which source filled the mirror: the game's pixels, not a readback.
+            this.filledFromAnnouncement++;
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
@@ -1347,9 +1315,7 @@ public final class VulkanTextureRegistry {
                 // Same contract as the int[][] producer: the pixels are in the image the descriptors sample, so the invalidation
                 // that follows does not need to read the texture back.
                 recordApplication(glTextureId, true);
-                if (CeltiumGlStub.isInstalled()) {
-                    this.filledFromAnnouncement++;
-                }
+                this.filledFromAnnouncement++;
                 return true;
             } catch (RuntimeException | LinkageError error) {
                 this.failureCount++;
@@ -1358,9 +1324,6 @@ public final class VulkanTextureRegistry {
             } finally {
                 org.lwjgl.system.MemoryUtil.memFree(rgba);
             }
-        }
-        if (!CeltiumGlStub.isInstalled()) {
-            return false;
         }
         // The capture branch only ever touches the registry's own image: a target that is not this texture's mirror is
         // left to its owner, because filling a foreign image from these pixels would need bookkeeping the entry does not
@@ -1478,7 +1441,7 @@ public final class VulkanTextureRegistry {
                 + (levels > 0 ? " levels=" + levels + " samplerMaxLod=" + filled.texture.samplerMaxLod() : "")
                 + (filled == null ? "" : " obj=" + Integer.toHexString(System.identityHashCode(filled.texture))
                         + " full=" + filled.texture.hasFullContent())
-                + " glLess=" + CeltiumGlStub.isInstalled());
+                + " glLess=true");
     }
 
     private static int countFor(java.util.Map<Integer, Integer> counts, Integer id) {
@@ -1726,7 +1689,7 @@ public final class VulkanTextureRegistry {
         // panorama: `forgetTexture id=8 hadEntry=true` fires, no announcement follows for id 8, and the mirror is
         // refilled by an int[] upload, so the stale label is precisely the case that matters here.
         this.mirrorSourceById.remove(id);
-        if (CeltiumGlStub.isInstalled() && announcementUnconsumed(id)) {
+        if (announcementUnconsumed(id)) {
             // The GL-less case, and the reason this is not the plain removal below: the game's own upload utility
             // deletes the id inside the very call that announced its image
             // ({@code TextureUtil.uploadTextureImageAllocate} -> {@code allocateTexture} -> {@code deleteTexture}),
@@ -1735,8 +1698,6 @@ public final class VulkanTextureRegistry {
             // announcement no mirror has consumed is the game's own pixels for this name and the newest statement
             // about its content, so it survives the delete-and-reallocate; a consumed one is dropped as before,
             // which is what keeps a name that was deleted and reused for something else from sampling old pixels.
-            // Bounded to the stub on purpose: with a GL context the readback below is the better source and the
-            // bridge leg's behaviour is left exactly as it was.
             this.retainedAnnouncements++;
         } else {
             clearGeneration(id);
@@ -1920,10 +1881,6 @@ public final class VulkanTextureRegistry {
         String costs = "patches=" + this.patchCount + "/" + this.patchBytes + "B/" + (this.patchNanos / 1000000L)
                 + "ms full=" + this.fullImageCount + "/" + this.fullImageBytes + "B/" + (this.fullImageNanos / 1000000L)
                 + "ms beforeInit=" + this.patchesBeforeInitialization + " forgotten=" + this.forgotten;
-        if (!CeltiumGlStub.isInstalled()) {
-            // The bridge's line stays exactly what it was: the split below only has a meaning where no readback exists.
-            return costs;
-        }
         // The GL-less split: which source filled a mirror when no readback could, how often a mirror was left without
         // content because neither was there, and how often a captured surface was refused because the level held no
         // game pixels at all (an allocation with a NULL data pointer - the stub's own answer, not a pixel guess).
@@ -2022,149 +1979,82 @@ public final class VulkanTextureRegistry {
                     HIT_CALLS++;
                     return existing.texture;
                 }
-                if (CeltiumGlStub.isInstalled()) {
-                    // No readback can refresh this mirror under the stub, so the pixels the game handed over are the
-                    // only source - and there is no announced image left here, because the block above returns for one.
-                    // The captured upload is what remains; when that is gone too the mirror keeps the content it already
-                    // has, which is nothing when it never received any, and the sampling side refuses that rather than
-                    // drawing texels no upload ever filled.
-                    if (fillFromCapture(glTextureId, nearestFilter, false)) {
-                        HIT_CALLS++;
-                        return existing.texture;
-                    }
-                    this.readbacksSkippedWithoutContent++;
-                    this.rejectPatch("GL-less mirror: stale GL texture " + glTextureId + " has no announced pixels and"
-                            + " no usable captured upload; the mirror keeps its " + existing.width + "x" + existing.height
-                            + " content (full=" + existing.texture.hasFullContent() + ")");
+                // No readback can refresh this mirror, so the pixels the game handed over are the only source - and
+                // there is no announced image left here, because the block above returns for one. The captured upload
+                // is what remains; when that is gone too the mirror keeps the content it already has, which is nothing
+                // when it never received any, and the sampling side refuses that rather than drawing texels no upload
+                // ever filled.
+                if (fillFromCapture(glTextureId, nearestFilter, false)) {
                     HIT_CALLS++;
                     return existing.texture;
                 }
-                // In place: same image, same view, same generation - so the descriptor keys built for this mirror stay
-                // valid and the cache keeps working (audit S13). Recreating it instead cost 545 sets for 546 batches.
-                try {
-                    long uploadStart = System.nanoTime();
-                    existing.texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
-                    STALE_NANOS += System.nanoTime() - uploadStart;
-                    STALE_CALLS++;
-                    this.inPlaceRefreshes++;
-                    celtium$noteMirrorSource(glTextureId, "stale-readback", existing.width, existing.height, null);
-                    // Which origin produced this refresh. The counters say most updates are served from announcements and a thousand
-                    // are not; this says which caller the thousand belong to, rather than another name being guessed at.
-                    this.readbackByOrigin.merge(this.currentOrigin, Integer.valueOf(1), Integer::sum);
-                    // Which textures still come through the readback, named once each. The image path takes every refresh that
-                    // arrives with an announced image pending; these are the ones that do not, and knowing their ids is the
-                    // difference between guessing why and knowing why.
-                    if (this.readbackIds.size() < 8 && this.readbackIds.add(id)) {
-                        System.out.println("[Celtium] CELTIUM_READBACK_REFRESH glTexture=" + glTextureId
-                                + " size=" + existing.width + "x" + existing.height
-                                + " view=" + Long.toHexString(existing.texture.view())
-                                + " (announced images pending: " + this.announcedImages.size() + ")");
-                    }
-                } catch (RuntimeException | LinkageError error) {
-                    this.failureCount++;
-                    this.lastFailure = "re-upload of GL texture " + glTextureId + ": " + error;
-                }
+                this.readbacksSkippedWithoutContent++;
+                this.rejectPatch("GL-less mirror: stale GL texture " + glTextureId + " has no announced pixels and"
+                        + " no usable captured upload; the mirror keeps its " + existing.width + "x" + existing.height
+                        + " content (full=" + existing.texture.hasFullContent() + ")");
+                HIT_CALLS++;
+                return existing.texture;
             }
             HIT_CALLS++;
             return existing.texture;
         }
-        if (CeltiumGlStub.isInstalled()) {
-            // Under the stub the readback below would copy memory GL never filled: the pixels of this process exist in
-            // the game's announcements - which the block above has already handled, so there is none here - and in the
-            // uploads the stub captured. The capture is asked first, and it carries the whole surface.
-            if (fillFromCapture(glTextureId, nearestFilter, false)) {
-                HIT_CALLS++;
-                return this.entries.get((int) (id)).texture;
-            }
-            // Nothing announced, nothing captured, and no readback either. The mirror is still created at the size the
-            // stub recorded - when even that is unknown there is no image to build, and no size may be invented - and it
-            // is left content-less: the sampling side refuses a mirror whose whole content never arrived instead of
-            // drawing texels nothing ever wrote.
-            this.readbacksSkippedWithoutContent++;
-            // A framebuffer's colour attachment stands for the image that framebuffer draws into. The prepare path
-            // publishes or adopts that image before this name is sampled (CELTIUM_EXTERNAL_IMAGE), so a content-less
-            // mirror built here is a second, empty image that the publication supersedes a moment later - and each one
-            // logged a PATCH_REJECTED (measured: seven per run, for 1280x720 render targets). Returning null leaves the
-            // decision to the path that owns the association; if that path cannot publish either, the draw refuses and
-            // says so, which is the honest outcome rather than drawing black.
-            if (CeltiumGlStub.isInstalled() && CeltiumGlStub.celtium$framebufferForColorTexture(glTextureId) != 0) {
-                return null;
-            }
-            // Asked by name, not of whatever happens to be bound: the stub records an extent per texture, and the
-            // binding the state manager believes in can be one bind ahead of the one the stub saw.
-            int width = textureLevelParameter(glTextureId, 0,
-                    org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-            int height = textureLevelParameter(glTextureId, 0,
-                    org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
-            if (width <= 0 || height <= 0) {
-                this.failureCount++;
-                this.lastFailure = "GL texture " + glTextureId + " has no pixels and no recorded size under the GL stub";
-                // A name with no extent at all is not a render target the stub can size; the draw path substitutes the
-                // 1x1 black mirror for it (CELTIUM_INCOMPLETE_TEXTURE_BLACK), so nothing is lost here and the notice is
-                // classification, not a refusal.
-                this.noteMirrorDeferred(glTextureId, 0, 0, "no recorded extent");
-                return null;
-            }
-            VulkanGlTexture empty = VulkanGlTexture.create(this.context, width, height, nearestFilter);
-            this.entries.put((int) (glTextureId), new Entry(glTextureId, width, height, empty));
-            this.mutations++;
-        celtium$dropMemo();
-            this.mirrorCount++;
-            celtium$noteMirrorSource(glTextureId, "none", width, height, null);
-            if (CeltiumGlStub.textureAllocatedWithoutData(glTextureId)
-                    || CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
-                // The level was allocated with NULL data, which is how GL reserves a render target: its content arrives
-                // when its framebuffer render is published, so an empty mirror now is the expected state, not a refusal.
-                if (this.mirrorDeferredLines < 4) {
-                    this.mirrorDeferredLines++;
-                    System.out.println("[Celtium] CELTIUM_MIRROR_DEFERRED glTexture=" + glTextureId + " size=" + width
-                            + "x" + height + " (level allocated with no data; filled when its render is published)");
-                }
-            } else {
-                this.rejectPatch("GL-less mirror: GL texture " + glTextureId + " has no announced pixels and no captured"
-                        + " upload; mirror created content-less at " + width + "x" + height);
-            }
+        // Under the stub the readback below would copy memory GL never filled: the pixels of this process exist in
+        // the game's announcements - which the block above has already handled, so there is none here - and in the
+        // uploads the stub captured. The capture is asked first, and it carries the whole surface.
+        if (fillFromCapture(glTextureId, nearestFilter, false)) {
             HIT_CALLS++;
-            return empty;
+            return this.entries.get((int) (id)).texture;
         }
-        try {
-            // LWJGL 3 returns the queried value directly rather than filling a buffer.
-            int width = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-            int height = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
-            if (width <= 0 || height <= 0) {
-                this.failureCount++;
-                this.lastFailure = "GL texture " + glTextureId + " reports size " + width + "x" + height;
-                return null;
-            }
-            // Nearest by default, because that is what Minecraft sets for its textures - block atlas, item atlas,
-            // particle sprites - and it is what the create() documentation has said all along while this call passed
-            // false for every texture. The lightmap is the exception and asks for the linear variant (audit S23).
-            VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
-            texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
-            this.entries.put((int) (glTextureId), new Entry(glTextureId, width, height, texture));
-            this.mutations++;
-        celtium$dropMemo();
-            if (width >= 512 || height >= 512) {
-                // Who asks for a screen-sized mirror: the stack is the evidence for whether the frame's own colour is
-                // being mirrored (and read back every frame) or something else is.
-                StringBuilder where = new StringBuilder("[Celtium] CELTIUM_BIG_MIRROR glTexture=" + glTextureId + " size="
-                        + width + "x" + height + " from");
-                StackTraceElement[] trace = new Throwable().getStackTrace();
-                for (int i = 0; i < Math.min(8, trace.length); i++) {
-                    String cls = trace[i].getClassName();
-                    where.append(" <- ").append(cls.substring(cls.lastIndexOf('.') + 1)).append('.')
-                            .append(trace[i].getMethodName());
-                }
-                System.out.println(where);
-            }
-            this.mirrorCount++;
-            celtium$noteMirrorSource(glTextureId, "readback", width, height, null);
-            return texture;
-        } catch (RuntimeException | LinkageError error) {
-            this.failureCount++;
-            this.lastFailure = "GL texture " + glTextureId + ": " + error;
+        // Nothing announced, nothing captured, and no readback either. The mirror is still created at the size the
+        // stub recorded - when even that is unknown there is no image to build, and no size may be invented - and it
+        // is left content-less: the sampling side refuses a mirror whose whole content never arrived instead of
+        // drawing texels nothing ever wrote.
+        this.readbacksSkippedWithoutContent++;
+        // A framebuffer's colour attachment stands for the image that framebuffer draws into. The prepare path
+        // publishes or adopts that image before this name is sampled (CELTIUM_EXTERNAL_IMAGE), so a content-less
+        // mirror built here is a second, empty image that the publication supersedes a moment later - and each one
+        // logged a PATCH_REJECTED (measured: seven per run, for 1280x720 render targets). Returning null leaves the
+        // decision to the path that owns the association; if that path cannot publish either, the draw refuses and
+        // says so, which is the honest outcome rather than drawing black.
+        if (CeltiumGlStub.celtium$framebufferForColorTexture(glTextureId) != 0) {
             return null;
         }
+        // Asked by name, not of whatever happens to be bound: the stub records an extent per texture, and the
+        // binding the state manager believes in can be one bind ahead of the one the stub saw.
+        int width = textureLevelParameter(glTextureId, 0,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+        int height = textureLevelParameter(glTextureId, 0,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
+        if (width <= 0 || height <= 0) {
+            this.failureCount++;
+            this.lastFailure = "GL texture " + glTextureId + " has no pixels and no recorded size under the GL stub";
+            // A name with no extent at all is not a render target the stub can size; the draw path substitutes the
+            // 1x1 black mirror for it (CELTIUM_INCOMPLETE_TEXTURE_BLACK), so nothing is lost here and the notice is
+            // classification, not a refusal.
+            this.noteMirrorDeferred(glTextureId, 0, 0, "no recorded extent");
+            return null;
+        }
+        VulkanGlTexture empty = VulkanGlTexture.create(this.context, width, height, nearestFilter);
+        this.entries.put((int) (glTextureId), new Entry(glTextureId, width, height, empty));
+        this.mutations++;
+    celtium$dropMemo();
+        this.mirrorCount++;
+        celtium$noteMirrorSource(glTextureId, "none", width, height, null);
+        if (CeltiumGlStub.textureAllocatedWithoutData(glTextureId)
+                || CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
+            // The level was allocated with NULL data, which is how GL reserves a render target: its content arrives
+            // when its framebuffer render is published, so an empty mirror now is the expected state, not a refusal.
+            if (this.mirrorDeferredLines < 4) {
+                this.mirrorDeferredLines++;
+                System.out.println("[Celtium] CELTIUM_MIRROR_DEFERRED glTexture=" + glTextureId + " size=" + width
+                        + "x" + height + " (level allocated with no data; filled when its render is published)");
+            }
+        } else {
+            this.rejectPatch("GL-less mirror: GL texture " + glTextureId + " has no announced pixels and no captured"
+                    + " upload; mirror created content-less at " + width + "x" + height);
+        }
+        HIT_CALLS++;
+        return empty;
     }
 
     /** Drops one mirror so the next use re-uploads it; used when a texture's contents are known to have changed. */
@@ -2264,7 +2154,7 @@ public final class VulkanTextureRegistry {
      */
     private static boolean wrapRepeats(int glTextureId, int pname) {
         try {
-            if (CeltiumGlStub.isInstalled() && !CeltiumGlStub.textureParameterRecorded(glTextureId, pname)) {
+            if (!CeltiumGlStub.textureParameterRecorded(glTextureId, pname)) {
                 // Nothing was recorded for this pname, so the answer is GL's context default - which for WRAP_S/T is
                 // GL_REPEAT (GlStateManager.Profile.DEFAULT re-asserts it), not the CLAMP the stub used to hardcode.
                 // Counted so a texture that relied on the default is distinguishable from one set to REPEAT.

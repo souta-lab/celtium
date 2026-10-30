@@ -505,13 +505,13 @@ public final class VulkanContext {
     }
 
     /**
-     * Creates the Vulkan instance, matches the GL device and creates the logical device, the queue and the command
-     * pool. Render thread only, with the OpenGL context current: the physical device is matched by the GL device
-     * UUID, so GL must be able to answer for the GPU it renders on.
+     * Creates the Vulkan instance, picks the physical device and creates the logical device, the queue and the command
+     * pool. Render thread only. There is no OpenGL context to match against, so the device is selected by the
+     * renderer's own requirements (device type, API version, queue families) rather than by a GL UUID.
      *
      * @param applicationName application name reported to the driver; must not be null or empty
-     * @throws IllegalStateException when Vulkan is unusable: no bindings or loader, a loader older than 1.2, no GL
-     *                               device UUIDs, no physical device matching the GL UUID, missing
+     * @throws IllegalStateException when Vulkan is unusable: no bindings or loader, a loader older than 1.2, no
+     *                               suitable physical device, missing
      *                               {@code VK_KHR_external_memory_fd}/{@code VK_KHR_external_semaphore_fd}, no
      *                               graphics+transfer queue family, or a failed object creation
      */
@@ -729,7 +729,7 @@ public final class VulkanContext {
      * bridge semaphore - the shared image is only complete once GL has signalled - and it must signal the bridge's done
      * semaphore as well as its own, because GL waits on that one inside {@code endFrame}. Signalling only the
      * render-finished semaphore leaves GL waiting for a submission that never signalled it, which is the deadlock
-     * {@code VulkanFrameTarget}'s contract warns about.
+     * the frame target's contract warns about.
      * <p>
      * Counts are set explicitly: LWJGL's {@code pWaitSemaphores} writes only the pointer, so a calloc'd struct waits on
      * nothing.
@@ -3796,30 +3796,16 @@ public final class VulkanContext {
     }
 
     /**
-     * Reads the OpenGL device's identity, or reports that there is none.
+     * Reports that there is no OpenGL device identity.
      * <p>
-     * Condition three is to start and draw without a GL context, and this is the first thing that has to change for it: the
-     * identity exists for one reason - to pick the Vulkan device that is the <em>same</em> device, so that textures can be
-     * shared between the two APIs - and with no bridge there is nothing to match. Failing the whole start-up because the
-     * identity cannot be read makes the renderer depend on GL for a decision that only the bridge needs. The property exists so
-     * the no-identity path can be exercised on a machine that does have a context.
+     * The identity existed for one reason - to pick the Vulkan device that is the <em>same</em> device, so that textures
+     * could be shared between the two APIs - and there is no GL surface to share with: the window is GLFW_NO_API and
+     * every GL query is answered by the stub, whose strings say "Celtium" rather than a driver. Device selection
+     * proceeds by requirements alone.
      */
     private static GlDeviceIdentity inspectOpenGl() {
-        if (Boolean.getBoolean("celtium.vulkan.withoutGlIdentity")
-                || org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // Either explicitly without an identity, or the GL surface is the Celtium stub: its strings say
-            // "Celtium", not a driver, so there is nothing to match against. Device selection proceeds by
-            // requirements alone.
-            System.out.println("[Celtium] starting without an OpenGL device identity: no device matching, no interop");
-            return null;
-        }
-        try {
-            return GlDeviceIdentity.inspect();
-        } catch (RuntimeException | LinkageError error) {
-            System.out.println("[Celtium] no OpenGL device identity available (" + describe(error)
-                    + "); continuing without device matching or interop");
-            return null;
-        }
+        System.out.println("[Celtium] starting without an OpenGL device identity: no device matching, no interop");
+        return null;
     }
 
     private static String versionString(int version) {

@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan;
 /**
  * One gate for the repeating diagnostic lines the renderer writes to stdout.
  * <p>
- * Measured on the operator's own session (2026-10-11): with nothing but {@code -Dceltium.vulkan.glless=true}, the
+ * Measured on the operator's own session (2026-10-11): the
  * renderer printed {@code CELTIUM_MODEL_MATRIX} for every model list of every frame, and the game's log passed
  * <b>100,000 lines</b> - Prism stopped displaying it and warned that the game was still writing to the file and wasting
  * storage. A repeating line on the render thread is also a synchronous write per line, which is a real cost in the

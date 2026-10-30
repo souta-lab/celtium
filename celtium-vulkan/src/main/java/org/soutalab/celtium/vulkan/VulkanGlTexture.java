@@ -105,7 +105,6 @@ public final class VulkanGlTexture {
      * does not.
      */
     private long generation;
-    private boolean levelZeroCompared;
     /** GL's row order is bottom-up and Vulkan's is top-down, so the mirror has to flip. */
     private static final boolean FLIP_ROWS = false;
     private static final boolean SAMPLER_DIAGNOSTICS =
@@ -1306,125 +1305,117 @@ public final class VulkanGlTexture {
         }
         try {
         requireOwned("an upload from a GL texture");
-        // Where the pixels come from. With an OpenGL context they come from the readback, exactly as they always have -
-        // this flag is false there and nothing below changes. Without one there is nothing to read back, so they come
-        // from the upload the game itself made, which the stub kept; the fallback is inside readGlLevel0 so that both
-        // sources return the same GlLevel and every line after this one is shared rather than duplicated.
-        final boolean fromCapture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
+        // Where the pixels come from: there is no context to read back, so they come from the upload the game itself
+        // made, which the stub kept. readGlLevel0 answers with exactly that captured level.
         this.poisonColour = poisonFor(glTextureId);
         this.flatPoisonColour = flatPoisonFor(glTextureId);
         this.encodeLabel = glTextureId;
-        // Under the stub every write the pixels came through was numbered, so "did the level change" answers in O(1):
-        // equal serial means identical bytes, and the read of the captured surface plus the FNV pass over it - which is
-        // what this method used to spend on every unchanged texture - are both skipped. The bridge keeps the hash: it
-        // has no write log to ask. A level with no record answers MIN_VALUE, which matches no lastUploadSerial, so the
-        // first ask always proceeds.
-        final long uploadSerial = fromCapture
-                ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(glTextureId, 0)
-                : Long.MIN_VALUE;
-        if (fromCapture && uploadSerial != Long.MIN_VALUE && uploadSerial == this.lastUploadSerial) {
+        // Every write the pixels came through was numbered, so "did the level change" answers in O(1): equal serial
+        // means identical bytes, and the read of the captured surface plus the FNV pass over it - which is what this
+        // method used to spend on every unchanged texture - are both skipped. A level with no record answers
+        // MIN_VALUE, which matches no lastUploadSerial, so the first ask always proceeds.
+        final long uploadSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(glTextureId, 0);
+        if (uploadSerial != Long.MIN_VALUE && uploadSerial == this.lastUploadSerial) {
             return;
         }
-        // Under the stub a level's writes may live in the backlog rather than in one level-sized capture - the
-        // over-budget case - so the "is there anything to read" question is the capture OR the backlog, and the
-        // capture-miss exception is only honest when neither answers.
+        // A level's writes may live in the backlog rather than in one level-sized capture - the over-budget case - so
+        // the "is there anything to read" question is the capture OR the backlog, and the capture-miss exception is
+        // only honest when neither answers.
         GlLevel level = null;
-        boolean stubCaptureMissing = fromCapture
-                && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, 0, null) == null;
+        boolean stubCaptureMissing =
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, 0, null) == null;
         java.util.List<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch> pendingPatches =
-                fromCapture && stubCaptureMissing
+                stubCaptureMissing
                         ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePendingPatches(glTextureId, 0)
                         : java.util.Collections.<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch>emptyList();
-        if (stubCaptureMissing && pendingPatches.isEmpty()) {
-            level = readGlLevel0(glTextureId, glTextureTarget); // throws the honest capture-miss
+        if (stubCaptureMissing && !pendingPatches.isEmpty()) {
+            level = null;
         } else {
-            level = stubCaptureMissing ? null : readGlLevel0(glTextureId, glTextureTarget);
+            level = readGlLevel0(glTextureId, glTextureTarget); // throws the honest capture-miss when there is none
         }
         try {
-            if (fromCapture) {
-                // A captured record may be a patch into a level the stub sized but could not hold at full extent
-                // (the capture budget): the image belongs at the recorded extent, and every record writes into it
-                // as a region - the case that built the E2E atlas's mirror at the first sprite's 1125x1125 and
-                // refused every later patch "outside the mirror", and the backlog case where 37,713 sprite
-                // uploads covered only the announced fraction of the level.
-                int extentW = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
-                        GL_TEXTURE_WIDTH);
-                int extentH = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
-                        GL_TEXTURE_HEIGHT);
-                if (extentW > 0 && extentH > 0
-                        && (level == null || level.width != extentW || level.height != extentH)) {
-                    if (extentW != this.width || extentH != this.height) {
-                        recreateImageResources(extentW, extentH);
-                    }
-                    long applied = this.lastAppliedPatchSerial;
-                    // One command buffer and one submission for the whole drain (see patchBatch).
-                    this.patchBatching = PATCH_BATCH;
-                    try {
-                    if (level != null) {
-                        int[] offset = new int[2];
-                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
-                        uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
-                                new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
-                    }
-                    java.util.List<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch> pending =
-                            pendingPatches.isEmpty()
-                                    ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePendingPatches(
-                                            glTextureId, 0)
-                                    : pendingPatches;
-                    for (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch patch : pending) {
-                        if (patch.serial <= applied) {
-                            continue;
-                        }
-                        uploadPatchedLevels(patch.width, patch.height, patch.x, patch.y,
-                                new java.nio.ByteBuffer[] { patch.pixels }, 1, glTextureId);
-                        applied = Math.max(applied, patch.serial);
-                    }
-                    } finally {
-                        this.patchBatching = false;
-                        submitPatchBatch();
-                    }
-                    if (applied != this.lastAppliedPatchSerial) {
-                        this.lastAppliedPatchSerial = applied;
-                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePatchesConsumed(glTextureId, 0,
-                                applied);
-                    }
-                    // The mip chain: the game's own per-level surfaces - the atlas's levels are uploaded level by
-                    // level and each fits the capture budget even when level 0 does not - but the level-0 backlog
-                    // path above is the only code that ever ran for this texture, so those captures never reached
-                    // the image. A mirror whose mips stay zero renders its far field black; the reload leg showed
-                    // exactly that band. Serial tracking keeps a burst of level-0 patches from re-uploading the
-                    // whole chain each time.
-                    if (this.appliedMipSerials == null) {
-                        this.appliedMipSerials = new long[32];
-                        java.util.Arrays.fill(this.appliedMipSerials, Long.MIN_VALUE);
-                    }
-                    for (int lvl = 1; lvl < this.appliedMipSerials.length
-                            && (extentW >> lvl) > 0 && (extentH >> lvl) > 0; lvl++) {
-                        long mipSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                                .textureUploadSerial(glTextureId, lvl);
-                        if (mipSerial == Long.MIN_VALUE || mipSerial == this.appliedMipSerials[lvl]) {
-                            continue;
-                        }
-                        int[] mipExtent = new int[2];
-                        java.nio.ByteBuffer mipSurface =
-                                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, lvl,
-                                        mipExtent);
-                        if (mipSurface == null
-                                || mipExtent[0] != Math.max(1, extentW >> lvl)
-                                || mipExtent[1] != Math.max(1, extentH >> lvl)
-                                || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                                        .textureLevelHasGamePixels(glTextureId, lvl)) {
-                            break;
-                        }
-                        copyToImage(mipSurface, mipExtent[0], mipExtent[1], lvl, 0, 0);
-                        this.appliedMipSerials[lvl] = mipSerial;
-                    }
-                    this.lastUploadSerial = uploadSerial;
-                    if (level != null && !level.owned) {
-                        recordCapturedFill(glTextureId, level);
-                    }
-                    return;
+            // A captured record may be a patch into a level the stub sized but could not hold at full extent
+            // (the capture budget): the image belongs at the recorded extent, and every record writes into it
+            // as a region - the case that built the E2E atlas's mirror at the first sprite's 1125x1125 and
+            // refused every later patch "outside the mirror", and the backlog case where 37,713 sprite
+            // uploads covered only the announced fraction of the level.
+            int extentW = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
+                    GL_TEXTURE_WIDTH);
+            int extentH = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureId, 0,
+                    GL_TEXTURE_HEIGHT);
+            if (extentW > 0 && extentH > 0
+                    && (level == null || level.width != extentW || level.height != extentH)) {
+                if (extentW != this.width || extentH != this.height) {
+                    recreateImageResources(extentW, extentH);
                 }
+                long applied = this.lastAppliedPatchSerial;
+                // One command buffer and one submission for the whole drain (see patchBatch).
+                this.patchBatching = PATCH_BATCH;
+                try {
+                if (level != null) {
+                    int[] offset = new int[2];
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
+                    uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
+                            new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
+                }
+                java.util.List<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch> pending =
+                        pendingPatches.isEmpty()
+                                ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePendingPatches(
+                                        glTextureId, 0)
+                                : pendingPatches;
+                for (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch patch : pending) {
+                    if (patch.serial <= applied) {
+                        continue;
+                    }
+                    uploadPatchedLevels(patch.width, patch.height, patch.x, patch.y,
+                            new java.nio.ByteBuffer[] { patch.pixels }, 1, glTextureId);
+                    applied = Math.max(applied, patch.serial);
+                }
+                } finally {
+                    this.patchBatching = false;
+                    submitPatchBatch();
+                }
+                if (applied != this.lastAppliedPatchSerial) {
+                    this.lastAppliedPatchSerial = applied;
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.texturePatchesConsumed(glTextureId, 0,
+                            applied);
+                }
+                // The mip chain: the game's own per-level surfaces - the atlas's levels are uploaded level by
+                // level and each fits the capture budget even when level 0 does not - but the level-0 backlog
+                // path above is the only code that ever ran for this texture, so those captures never reached
+                // the image. A mirror whose mips stay zero renders its far field black; the reload leg showed
+                // exactly that band. Serial tracking keeps a burst of level-0 patches from re-uploading the
+                // whole chain each time.
+                if (this.appliedMipSerials == null) {
+                    this.appliedMipSerials = new long[32];
+                    java.util.Arrays.fill(this.appliedMipSerials, Long.MIN_VALUE);
+                }
+                for (int lvl = 1; lvl < this.appliedMipSerials.length
+                        && (extentW >> lvl) > 0 && (extentH >> lvl) > 0; lvl++) {
+                    long mipSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                            .textureUploadSerial(glTextureId, lvl);
+                    if (mipSerial == Long.MIN_VALUE || mipSerial == this.appliedMipSerials[lvl]) {
+                        continue;
+                    }
+                    int[] mipExtent = new int[2];
+                    java.nio.ByteBuffer mipSurface =
+                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, lvl,
+                                    mipExtent);
+                    if (mipSurface == null
+                            || mipExtent[0] != Math.max(1, extentW >> lvl)
+                            || mipExtent[1] != Math.max(1, extentH >> lvl)
+                            || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                                    .textureLevelHasGamePixels(glTextureId, lvl)) {
+                        break;
+                    }
+                    copyToImage(mipSurface, mipExtent[0], mipExtent[1], lvl, 0, 0);
+                    this.appliedMipSerials[lvl] = mipSerial;
+                }
+                this.lastUploadSerial = uploadSerial;
+                if (level != null && !level.owned) {
+                    recordCapturedFill(glTextureId, level);
+                }
+                return;
             }
             if (level == null) {
                 // Backlog patches exist for a level whose extent the stub never recorded: without the extent the
@@ -1441,7 +1432,7 @@ public final class VulkanGlTexture {
                 // only changes when the sun moves or a torch flickers.
                 // The bytes are already present; remember a newer capture serial as well, so unchanged
                 // captures do not pay for the same full-image hash on every lookup.
-                if (fromCapture) this.lastUploadSerial = uploadSerial;
+                this.lastUploadSerial = uploadSerial;
                 return;
             }
             dumpForDebugging(glTextureId, level);
@@ -1468,17 +1459,6 @@ public final class VulkanGlTexture {
                 // A captured upload is the one source whose arrival is worth counting separately: it says the mirror
                 // holds the pixels the game uploaded rather than bytes nothing ever wrote.
                 recordCapturedFill(glTextureId, level);
-            }
-            // The comparison reads the same GL texture back and needs a context; the captured pixels are already the
-            // upload the mirror was built from, so comparing them with themselves would be an instrument that only
-            // prints its own input.
-            if (SAMPLER_DIAGNOSTICS && !fromCapture && level.width >= 128 && level.height >= 128 && !levelZeroCompared) {
-                levelZeroCompared = true;
-                try {
-                    compareLevelZeroWithGl(glTextureId);
-                } catch (RuntimeException | LinkageError error) {
-                    System.out.println("[Celtium] CELTIUM_LEVEL0 comparison failed: " + error);
-                }
             }
         } finally {
             // Only a buffer this class allocated may be freed: a captured upload belongs to the stub, and freeing it
@@ -2277,7 +2257,7 @@ public final class VulkanGlTexture {
     private int confirmedParameterVersion = -1;
 
     public void confirmSamplerStateFromRecord(int glTextureId) {
-        if (glTextureId <= 0 || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (glTextureId <= 0) {
             return;
         }
         // Nothing has changed in this texture's recorded parameters since the last confirmation, so the four to six
@@ -3599,82 +3579,6 @@ public final class VulkanGlTexture {
     }
 
     /**
-     * Diagnostic: read this mirror's level 0 back from the device and compare it, byte for byte, with the level 0 the
-     * OpenGL texture currently holds. Every other instrument in this area has compared frames or reasoned about
-     * coordinates; this compares the two images themselves.
-     */
-    public void compareLevelZeroWithGl(int glTextureId) {
-        requireOwned("a level-0 comparison");
-        int w = this.width;
-        int h = this.height;
-        if (w <= 0 || h <= 0) {
-            return;
-        }
-        long bytes = (long) w * h * BYTES_PER_PIXEL;
-        ensureStaging(bytes);
-        VkCommandBuffer commands = context.beginCommands();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default()
-                    .srcAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .image(this.image);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                    null, null, barrier);
-            VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
-            region.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0);
-            region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
-                    .layerCount(1);
-            region.get(0).imageOffset().set(0, 0, 0);
-            region.get(0).imageExtent().set(w, h, 1);
-            vkCmdCopyImageToBuffer(commands, this.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, this.stagingBuffer,
-                    region);
-            barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
-        }
-        context.endCommands(commands, "texture-upload");
-
-        GlLevel gl = readGlLevel0(glTextureId, GL_TEXTURE_2D);
-        try {
-            long differing = 0;
-            long total = 0;
-            int maxDiff = 0;
-            long sumDiff = 0;
-            for (int i = 0; i < w * h * BYTES_PER_PIXEL; i++) {
-                int ours = MemoryUtil.memGetByte(this.stagingAddress + i) & 0xFF;
-                int theirs = gl.pixels.get(i) & 0xFF;
-                int d = Math.abs(ours - theirs);
-                total++;
-                sumDiff += d;
-                if (d != 0) {
-                    differing++;
-                }
-                if (d > maxDiff) {
-                    maxDiff = d;
-                }
-            }
-            System.out.println("[Celtium] CELTIUM_LEVEL0 size=" + w + "x" + h
-                    + " bytes=" + total + " differing=" + differing
-                    + " fraction=" + String.format("%.4f", (double) differing / Math.max(1L, total))
-                    + " meanAbsDiff=" + String.format("%.2f", (double) sumDiff / Math.max(1L, total))
-                    + " maxAbsDiff=" + maxDiff);
-        } finally {
-            // Same rule as the upload path: only a buffer this class allocated is freed, a captured upload is the
-            // stub's. This diagnostic is gated off in a GL-less run, but the free must not depend on that gate.
-            if (gl.owned) {
-                MemoryUtil.memFree(gl.pixels);
-            }
-        }
-    }
-
-    /**
      * Makes the cached staging buffer at least {@code required} bytes, recreating it when it is too small.
      * <p>
      * The buffer, its memory and its mapping are the three things this can create, and a failure part-way through
@@ -3699,8 +3603,8 @@ public final class VulkanGlTexture {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo create = VkBufferCreateInfo.calloc(stack).sType$Default()
                     .size(required)
-                    // TRANSFER_DST as well as SRC: the pixels are written into the image from here, and
-                    // compareLevelZeroWithGl - and the mirror dump - copy the image back out into this same buffer.
+                    // TRANSFER_DST as well as SRC: the pixels are written into the image from here, and the mirror
+                    // dump copies the image back out into this same buffer.
                     // Without DST the readback copy is a validation error, and the buffer keeps whatever the last
                     // upload left in it, so the comparison reports a perfect match by comparing an upload with
                     // itself (VUID-vkCmdCopyImageToBuffer-dstBuffer-00191, measured: ten messages a run).
@@ -3937,64 +3841,9 @@ public final class VulkanGlTexture {
         if (glTextureId == 0) {
             throw new IllegalArgumentException("GL texture name 0 is not a texture");
         }
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // No context to read from: the only pixels that exist for this texture are the ones the game handed to GL,
-            // and the stub kept them. Taken before any of the GL state below is touched, because under the stub those
-            // queries answer recorded values and the binding they report is not a binding anything can be restored to.
-            return readCapturedLevel(glTextureId, level);
-        }
-        // The unit that is active on entry is reused instead of switching to unit 0, so the state that changes is
-        // as small as possible. Whatever unit it is, its binding and the pack alignment are restored below.
-        int previousUnit = glGetInteger(GL_ACTIVE_TEXTURE);
-        int previousBinding = glGetInteger(GL_TEXTURE_BINDING_2D);
-        int previousPackAlignment = glGetInteger(GL_PACK_ALIGNMENT);
-        // Discard errors left behind by earlier GL work so that the checks below can only report failures caused by
-        // this method. Nothing is lost: Minecraft does not read the GL error state.
-        while (glGetError() != GL_NO_ERROR) {
-            // Drain the error queue.
-        }
-        ByteBuffer pixels = null;
-        try {
-            // The classic bind-and-query path is used instead of GL 4.5's glGetTextureLevelParameteri /
-            // glGetTextureImage: direct state access needs ARB_direct_state_access, and Minecraft's context is only
-            // guaranteed to be a compatibility context, so the query that works everywhere wins over the shorter one.
-            glBindTexture(GL_TEXTURE_2D, glTextureId);
-            int textureWidth = glGetTexLevelParameteri(GL_TEXTURE_2D, level, GL_TEXTURE_WIDTH);
-            int textureHeight = glGetTexLevelParameteri(GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT);
-            int internalFormat = glGetTexLevelParameteri(GL_TEXTURE_2D, level, GL_TEXTURE_INTERNAL_FORMAT);
-            checkGl("querying GL texture " + glTextureId);
-            if (textureWidth <= 0 || textureHeight <= 0) {
-                throw new IllegalStateException("GL texture " + glTextureId + " has no level-0 storage ("
-                        + textureWidth + "x" + textureHeight + ", internal format 0x"
-                        + Integer.toHexString(internalFormat) + ")");
-            }
-            long bytes = (long) textureWidth * (long) textureHeight * BYTES_PER_PIXEL;
-            if (bytes > Integer.MAX_VALUE) {
-                throw new IllegalStateException("GL texture " + glTextureId + " is too large to mirror ("
-                        + bytes + " bytes)");
-            }
-            pixels = MemoryUtil.memAlloc((int) bytes);
-            // Rows of RGBA bytes are always a multiple of 4 bytes, but a pack alignment of 1 removes the last way
-            // a driver could pad the readback and is the value the tightly packed Vulkan copy assumes.
-            glPixelStorei(GL_PACK_ALIGNMENT, 1);
-            glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-            // The internal format is part of the message because GL only permits this conversion for colour
-            // formats; an integer or depth texture would be rejected here and the format identifies it.
-            checkGl("reading level " + level + " of GL texture " + glTextureId + " as RGBA bytes (internal format 0x"
-                    + Integer.toHexString(internalFormat) + ")");
-            return new GlLevel(pixels, textureWidth, textureHeight);
-        } catch (RuntimeException | Error error) {
-            if (pixels != null) {
-                MemoryUtil.memFree(pixels);
-            }
-            throw error;
-        } finally {
-            // GL state is per unit, so the binding of the unit we used has to be restored before the active unit
-            // itself is put back.
-            glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
-            glBindTexture(GL_TEXTURE_2D, previousBinding);
-            glActiveTexture(previousUnit);
-        }
+        // No context to read from: the only pixels that exist for this texture are the ones the game handed to GL,
+        // and the stub kept them.
+        return readCapturedLevel(glTextureId, level);
     }
 
     /**

@@ -208,7 +208,7 @@ final class ModelReplay {
             float[] projectionRemapped = b.modelReplayProjection;
             b.remapClipDepth(projectionNow, projectionRemapped);
             // Gated and bounded: this line is per model list per frame, and on the operator's own session it was the
-            // flood that pushed the game's log past 100,000 lines with nothing but -Dceltium.vulkan.glless set.
+            // flood that pushed the game's log past 100,000 lines.
             if (VulkanDiagnostics.withinLimit(b.modelMatrixLines, b.MODEL_MATRIX_LINES)) {
                 b.modelMatrixLines++;
                 System.out.println("[Celtium] CELTIUM_MODEL_MATRIX list=" + listId
@@ -227,7 +227,7 @@ final class ModelReplay {
             // "could not queue list 109 (prepareImmediate null (format=4 texture=108 (mirror has full content:
             // descriptor creation failed) pipeline=present))". The recovery is idempotent and does nothing once the
             // mirror exists, so this costs one null check per model draw in the steady state.
-            if (b.lightmapTexture == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            if (b.lightmapTexture == null) {
                 b.ensureLightmapMirror();
             }
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
@@ -453,9 +453,6 @@ final class ModelReplay {
             return false;
         }
         VulkanTerrainPipeline terrainPipeline = b.terrain.pipelineFor(b.lastUiPass);
-        if (terrainPipeline == null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            return false;
-        }
         long pass = terrainPipeline != null ? terrainPipeline.renderPass() : b.uiRenderPass();
         int[] viewport = b.currentGroupViewportValues;
         ImmediateGroup open = b.openModelRunGroup;
