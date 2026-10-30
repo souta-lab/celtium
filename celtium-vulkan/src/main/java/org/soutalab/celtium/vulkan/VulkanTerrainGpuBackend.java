@@ -10355,7 +10355,12 @@ this.frameBufferOpen = false;
                     // sampling transition leaves the pair image in SHADER_READ_ONLY_OPTIMAL, and this pass begins with
                     // initialLayout GENERAL - which is VUID-vkCmdBeginRenderPass-initialLayout-00900 unless the image is
                     // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
-                    this.postChainBridge.celtium$transitionPublishedFrameTextures(true);
+                    FramePassTimings.begin("winTransition");
+                    try {
+                        this.postChainBridge.celtium$transitionPublishedFrameTextures(true);
+                    } finally {
+                        FramePassTimings.end("winTransition");
+                    }
                     if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                             offTarget.chainPairAcquired(chainIdentityValue),
                             this.targetRegistry.chainPairClearContentIdentity(chainIdentityValue),
@@ -10549,7 +10554,9 @@ this.frameBufferOpen = false;
                     windowSlot * 2);
         }
         gpuMark(this.targetRegistry.currentIsMain() ? "win-begin" : "offwin-begin");
+        FramePassTimings.begin("winBeginPass");
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        FramePassTimings.end("winBeginPass");
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
