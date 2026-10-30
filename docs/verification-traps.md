@@ -188,3 +188,25 @@ KPI harness は計測用に次の3つを**明示的に切る**（`scripts/gv_kpi
 結果: どちらも `vkCmdBeginRenderPass` でSIGSEGV（`libvulkan_radeon.so`）。1回目は境界drainが削除済みpairへ描画。2回目は境界drainを生存pairのみに限定し、フレームバッファ削除時にもflushを足したが同じだった。したがって原因は「pairが既に無い」ことではなく、延期したwindowのrender pass/framebufferが、記録時点のpair generationと一致していないこと。
 
 再入条件: 延期groupをpair generationに固定して記録し、generationが変わったら**記録せずに破棄して計数する**設計を先に用意する。それが無い状態で再試行しない。計測用のflush源カウンタ（`CELTIUM_FLUSH_SITES`, `CELTIUM_FLUSH_SOURCES`）は残してある。
+
+## 較正キーは `guiScale` で落ちる（2026-10-31 に復旧）
+
+clone プロファイル（0.7.11/0.7.12・Supersymmetry）で `gv_leg.py plain` を回すと、床値は定義済みなのに
+`sceneGateFloorsEnforced=false`・`UNCALIBRATED` になることがある。原因はシーンではなく options で、参照は
+`guiScale=3` で測られ、clone の `options.txt` は `guiScale:2` だった（`sceneCalibrationKey` と
+`sceneReferenceCalibrationKey` を比べれば1行で分かる）。
+
+復旧: `guiScale:3` にした options を `CELTIUM_LEG_SEED_OPTIONS` で渡す。
+
+```bash
+cp <instance>/minecraft/options.txt .celtium-work/options/guiScale3.txt
+sed -i 's/^guiScale:.*/guiScale:3/' .celtium-work/options/guiScale3.txt
+CELTIUM_INSTANCE_COHORT=<0.7.11 instance> \
+CELTIUM_LEG_SEED_OPTIONS=$PWD/.celtium-work/options/guiScale3.txt \
+python3 scripts/gv_leg.py <leg> .gv-verify/jars/release-0.1.4-rc10 plain amd 200
+```
+
+実測（2026-10-31, rc.10, AMD RX 6400）: `verdict=PASSED`・`sceneCalibrationKeyMatches=true`・
+`sceneGateFloorsEnforced=true`・画像付き。`world` モードは引き続き `celtium-world-accept`（較正済み clone）が
+必要で、Supersymmetry を `CELTIUM_INSTANCE_WORLD` にしても world 段の画像要求は発火しない（world ステージの
+capture 条件が満たされない）。
