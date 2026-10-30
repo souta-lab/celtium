@@ -6424,17 +6424,29 @@ public final class ValidationClient {
                     fboAtInterop = target.framebufferObject;
                     colorAtInterop = target.framebufferTexture;
                     depthAtInterop = target.depthBuffer;
-                    Class<?> experiment = Class.forName("org.soutalab.celtium.probe.CurrentFramebufferInterop");
-                    String json = (String) experiment.getMethod("verify", int.class, int.class, int.class, int.class, int.class,
-                            String.class, boolean.class).invoke(null, fboAtInterop, colorAtInterop, depthAtInterop,
-                            target.framebufferWidth, target.framebufferHeight, mc.gameDir.toPath().resolve("logs").toString(),
-                            Boolean.getBoolean("celtium.validation.vulkanLayer"));
-                    JsonObject interop = JsonParser.parseString(json).getAsJsonObject();
-                    report.add("interop", interop);
-                    if (!"ROUNDTRIP_PASSED".equals(interop.get("status").getAsString()))
-                        throw new IllegalStateException("Current Minecraft FBO did not pass the interop experiment");
-                    interopRun = true;
-                    framesAtInterop = worldFrames;
+                    Class<?> experiment;
+                    try {
+                        experiment = Class.forName("org.soutalab.celtium.probe.CurrentFramebufferInterop");
+                    } catch (ClassNotFoundException removed) {
+                        // #417 removed the standalone interop prototype from the tree. The property is a validation
+                        // switch, not shipping behaviour, so asking for it on a build without the class reports that
+                        // it was removed instead of failing a leg whose real subject is the renderer.
+                        report.addProperty("interopSkipped", "the interop probe was removed from the tree (#417)");
+                        experiment = null;
+                    }
+                    if (experiment != null) {
+                        String json = (String) experiment.getMethod("verify", int.class, int.class, int.class, int.class,
+                                int.class, String.class, boolean.class).invoke(null, fboAtInterop, colorAtInterop,
+                                depthAtInterop, target.framebufferWidth, target.framebufferHeight,
+                                mc.gameDir.toPath().resolve("logs").toString(),
+                                Boolean.getBoolean("celtium.validation.vulkanLayer"));
+                        JsonObject interop = JsonParser.parseString(json).getAsJsonObject();
+                        report.add("interop", interop);
+                        if (!"ROUNDTRIP_PASSED".equals(interop.get("status").getAsString()))
+                            throw new IllegalStateException("Current Minecraft FBO did not pass the interop experiment");
+                        interopRun = true;
+                        framesAtInterop = worldFrames;
+                    }
                 }
                 // Was an absolute "worldTicks < 240", which can never be satisfied together with the capture's own
                 // threshold of 200: the interop branch was unreachable. It is now relative to the tick the interop run

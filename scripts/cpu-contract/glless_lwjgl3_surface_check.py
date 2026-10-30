@@ -115,47 +115,6 @@ def main():
     print(f'{len(checks)} contract checks passed (source shape; the runtime half moved to the native check)')
     return 0
 
-    javac = shutil.which('javac')
-    lwjgl = first(str(INTEROP_LIB / 'lwjgl-3.4.1.jar'))
-    lwjgl_natives = first(str(INTEROP_LIB / 'lwjgl-3.4.1-natives-linux.jar'))
-    opengl = first(str(INTEROP_LIB / 'lwjgl-opengl-3.4.1.jar'))
-    opengl_natives = first(str(INTEROP_LIB / 'lwjgl-opengl-3.4.1-natives-linux.jar'))
-    glfw = first(str(PRISM / 'org/lwjgl/lwjgl-glfw/3.4.1/lwjgl-glfw-3.4.1.jar'))
-    glfw_natives = first(str(PRISM / 'org/lwjgl/lwjgl-glfw/3.4.1/lwjgl-glfw-3.4.1-natives-linux.jar'))
-    fastutil = first(str(PRISM / 'it/unimi/dsi/fastutil/*/fastutil-*.jar'))
-    if not all((javac, JAR.exists(), lwjgl, lwjgl_natives, opengl, opengl_natives, glfw, glfw_natives, fastutil)):
-        print('skip: the built jar or the game\'s LWJGL jars are not on this machine '
-              '(the source-shape checks above still ran)')
-        return 0 if all(checks) else 1
-
-    cp = os.pathsep.join([str(JAR), lwjgl, lwjgl_natives, opengl, opengl_natives, glfw, glfw_natives, fastutil])
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp)
-        (work / 'Lwjgl3SurfaceCheck.java').write_text(HARNESS, encoding='utf-8')
-        subprocess.run([javac, '-cp', cp, 'Lwjgl3SurfaceCheck.java'], cwd=work, check=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        result = subprocess.run([shutil.which('java'), '-cp', cp + os.pathsep + str(work), 'Lwjgl3SurfaceCheck'],
-                                cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        out = result.stdout
-        print('\n'.join(line for line in out.splitlines() if not line.startswith('WARNING')))
-
-    require('the stub install succeeded', 'install true' in out)
-    require('capabilities are present for the thread', 'capabilities present' in out)
-    require('the ARB shader-object extension is reported available', 'arb_shader_objects true' in out)
-    require('the call that used to abort the JVM returns the stub answer',
-            'createShaderObjectARB 0' in out)
-    require('a second thread starts without capabilities, as the game did',
-            'other_before throws(IllegalStateException)' in out)
-    require('the per-thread entry point fixes that thread too', 'other_after present' in out)
-    require('and the ARB call works on that thread as well',
-            'other_createShaderObjectARB 0' in out)
-
-    if not all(checks):
-        print(f'{checks.count(False)} contract check(s) failed')
-        return 1
-    print(f'{len(checks)} contract checks passed')
-    return 0
-
 
 if __name__ == '__main__':
     sys.exit(main())
