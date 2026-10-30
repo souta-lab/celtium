@@ -283,6 +283,11 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /** {@return whether this is the texgen variant}, which the backend's push writer fills differently. */
+    /** {@return whether this is the multi-unit combine variant}, whose fragment stage the array shader pair does not have. */
+    public boolean celtium$combine4() {
+        return this.combine4;
+    }
+
     public boolean celtium$texGen() {
         return this.texGen;
     }
