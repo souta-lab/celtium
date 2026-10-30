@@ -5101,7 +5101,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * then reports as "the mirrored projection is the identity at draw time". Naming the site and the argument is what
      * tells that (correct, and vanilla's own behaviour) apart from the channel not arriving, which is the defect.
      */
-    private static final int GLU_PERSPECTIVE_CENSUS_CALLS = 4096;
+    private static final int GLU_PERSPECTIVE_CENSUS_CALLS = 256;
 
     private void reportSkippedGluPerspective(float fovDegrees, float aspect, float near, float far) {
         String reason = aspect == 0.0f ? "aspect=0 (LWJGL returns before touching GL)"
@@ -8263,6 +8263,13 @@ this.frameBufferOpen = false;
         this.rawWriteEpochChecked[texture] = epoch;
         long serial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(texture, 0);
         if (serial == Long.MIN_VALUE || serial == this.rawWriteSerialApplied[texture]) {
+            return;
+        }
+        if (mirror != null && !mirror.celtium$ownsImage()) {
+            // A wrapper published over an image the renderer owns shares it; its content is what its owner rendered,
+            // and asking the upload wrote an IllegalStateException per frame. Nothing to apply, so the serial is
+            // marked seen and the next raw write does not ask again.
+            this.rawWriteSerialApplied[texture] = serial;
             return;
         }
         if (celtium$applyRawWrites(texture, mirror)) {

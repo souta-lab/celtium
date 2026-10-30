@@ -3927,6 +3927,19 @@ public final class VulkanGlTexture {
      * transition it out of the layout the handshake promised. All three are refused with the reason rather than
      * silently doing the wrong thing to another owner's image.
      */
+    /**
+     * {@return whether this wrapper owns its image}, i.e. whether an upload may write it.
+     * <p>
+     * A wrapper published over an image the renderer owns - a framebuffer's colour attachment - shares that image, and
+     * its content is whatever its owner rendered. The raw-write refresh used to ask this question by calling the
+     * upload, which threw an IllegalStateException on every frame for such a wrapper (measured in a world profile:
+     * {@code requireOwned} was the only exception source on the client thread, one stack fill per raw write). The
+     * predicate answers it without the exception.
+     */
+    public boolean celtium$ownsImage() {
+        return this.ownsImage;
+    }
+
     private void requireOwned(String what) {
         requireAlive();
         if (!this.ownsImage) {
