@@ -4,7 +4,7 @@ import org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFacing;
 import org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFlags;
 
 /**
- * Provides a read-only view of a model quad. For mutable access to a model quad, see {@link ModelQuadViewMutable}.
+ * Provides a read-only view of a model quad.
  */
 public interface ModelQuadView {
     /**
