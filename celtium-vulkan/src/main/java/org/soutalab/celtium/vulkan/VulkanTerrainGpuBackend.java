@@ -8269,10 +8269,13 @@ this.frameBufferOpen = false;
         if (serial == Long.MIN_VALUE || serial == this.rawWriteSerialApplied[texture]) {
             return;
         }
-        if (mirror != null && !mirror.celtium$ownsImage()) {
-            // A wrapper published over an image the renderer owns shares it; its content is what its owner rendered,
-            // and asking the upload wrote an IllegalStateException per frame. Nothing to apply, so the serial is
-            // marked seen and the next raw write does not ask again.
+        if (mirror == null || mirror.image() == 0L || mirror.view() == 0L || mirror.sampler() == 0L
+                || !mirror.celtium$ownsImage()) {
+            // Nothing here can take content: either the wrapper shares an image the renderer owns, or it has already
+            // been released (a resource reload destroys the mirror; the GL name outlives it). Asking anyway reached
+            // the upload, which threw an IllegalStateException - and the version that let this through paid the
+            // ordering flush before the throw, per batch: measured 14.0% of client-thread CPU in a world profile, with
+            // 2.8% of it in the exception itself. The serial is marked seen so the next write does not ask again.
             this.rawWriteSerialApplied[texture] = serial;
             return;
         }
