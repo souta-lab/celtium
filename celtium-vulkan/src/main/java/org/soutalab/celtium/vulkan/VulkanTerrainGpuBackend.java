@@ -5459,6 +5459,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return identity == this.targetRegistry.mainIdentity() || identity == this.gameFramebufferIdentity;
     }
 
+    /** {@return whether GL's 2D texturing is enabled in the mirror}, for the legacy immediate-mode capture. */
+    public boolean celtium$texture2dEnabled() {
+        return this.immediateState.texture2dEnabled();
+    }
+
     public long celtium$gameFramebufferIdentity() {
         return this.gameFramebufferIdentity;
     }

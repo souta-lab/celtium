@@ -346,6 +346,44 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
         if (emitNativeRasterAdapter(method, name, descriptor)) return;
         if (emitRawColourRoute(method, name, descriptor)) return;
+        // Legacy immediate mode. The census measured these as the largest unmapped class in a menu run (82% of the
+        // zero-answered calls), and unlike the state classes each call is a draw the picture lost.
+        if ("glBegin".equals(name) && "(I)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyBegin", "(I)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glEnd".equals(name) && "()V".equals(descriptor)) {
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyEnd", "()V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glVertex3f".equals(name) && "(FFF)V".equals(descriptor)) {
+            for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyVertex3f", "(FFF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glTexCoord2f".equals(name) && "(FF)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.FLOAD, 0);
+            method.visitVarInsn(Opcodes.FLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyTexCoord2f", "(FF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("glTexCoord2d".equals(name) && "(DD)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.DLOAD, 0);
+            method.visitVarInsn(Opcodes.DLOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyTexCoord2d", "(DD)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         String returnType = descriptor.substring(descriptor.indexOf(')') + 1);
         // Both the public wrapper's native and the "ngl" form take the name differently ((int) versus a pointer to
         // the encoded name), and LWJGL3 generates the pointer form - so match on the name and the return type rather

@@ -1606,6 +1606,162 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * Legacy immediate-mode capture: {@code glBegin}/{@code glEnd} with {@code glVertex3f} and a current texture
+     * coordinate.
+     * <p>
+     * Measured on a SuperSymmetry menu leg with the GL surface census: glVertex3f 6767, glTexCoord2d 5315, glBegin
+     * 1692, glEnd 1691 and glTexCoord2f 968 calls were answered with a zero by the transformer - 82% of the unmapped
+     * calls in the run, and every one of them a draw the picture lost (Forge's SplashProgress draws its loading bar
+     * this way). The capture collects the vertices into the same POSITION_TEX_COLOR / POSITION_COLOR layouts the
+     * client-array path uses and submits them at glEnd, so the matrices, texture and colour come from the mirrors the
+     * other routes already maintain.
+     */
+    private ByteBuffer legacyBuffer;
+    private int legacyCount, legacyMode, legacyFormat = 2, legacyStride = 24;
+    private boolean legacyActive;
+    private float legacyTexU, legacyTexV;
+    private float legacyRed = 1.0f, legacyGreen = 1.0f, legacyBlue = 1.0f, legacyAlpha = 1.0f;
+    private long legacySubmissions, legacySubmittedVertices, legacyModeRefusals, legacyRefusals;
+
+    /** Ends the current {@code glBegin}/{@code glEnd} run without drawing it, counted under a named reason. */
+    private void celtium$legacyRefuse(String why) {
+        this.legacyRefusals++;
+        if (this.legacyRefusals == 1) {
+            System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + this.legacyMode + " reason=" + why);
+        }
+        this.legacyActive = false;
+        this.legacyCount = 0;
+    }
+
+    /** {@code glBegin(mode)}: starts collecting; a previous run that was never ended is refused by name. */
+    public static void celtium$legacyBegin(int mode) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        if (stub.legacyActive) {
+            stub.celtium$legacyRefuse("a second glBegin before glEnd");
+        }
+        stub.legacyMode = mode;
+        stub.legacyCount = 0;
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        boolean textured = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                && vulkan.celtium$texture2dEnabled();
+        stub.legacyFormat = textured ? 2 : 1;
+        stub.legacyStride = textured ? 24 : 16;
+        stub.legacyActive = true;
+    }
+
+    /** {@code glVertex3f}: appends one vertex with the current texture coordinate and colour. */
+    public static void celtium$legacyVertex3f(float x, float y, float z) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || !stub.legacyActive) {
+            return;
+        }
+        int stride = stub.legacyStride;
+        if (stub.legacyCount >= 65536) {
+            stub.celtium$legacyRefuse("more than 65536 vertices in one glBegin");
+            return;
+        }
+        int needed = (stub.legacyCount + 1) * stride;
+        if (stub.legacyBuffer == null || stub.legacyBuffer.capacity() < needed) {
+            if (stub.legacyBuffer != null) {
+                MemoryUtil.memFree(stub.legacyBuffer);
+            }
+            stub.legacyBuffer = MemoryUtil.memAlloc(Math.max(needed, 65536 * 24));
+        }
+        long base = MemoryUtil.memAddress(stub.legacyBuffer) + (long) stub.legacyCount * stride;
+        MemoryUtil.memPutFloat(base, x);
+        MemoryUtil.memPutFloat(base + 4L, y);
+        MemoryUtil.memPutFloat(base + 8L, z);
+        if (stub.legacyFormat == 2) {
+            MemoryUtil.memPutFloat(base + 12L, stub.legacyTexU);
+            MemoryUtil.memPutFloat(base + 16L, stub.legacyTexV);
+            stub.celtium$legacyColourAt(base + 20L);
+        } else {
+            stub.celtium$legacyColourAt(base + 12L);
+        }
+        stub.legacyCount++;
+    }
+
+    private void celtium$legacyColourAt(long address) {
+        MemoryUtil.memPutByte(address, celtium$toByte(this.legacyRed));
+        MemoryUtil.memPutByte(address + 1L, celtium$toByte(this.legacyGreen));
+        MemoryUtil.memPutByte(address + 2L, celtium$toByte(this.legacyBlue));
+        MemoryUtil.memPutByte(address + 3L, celtium$toByte(this.legacyAlpha));
+    }
+
+    private static byte celtium$toByte(float value) {
+        float clamped = value <= 0.0f ? 0.0f : value >= 1.0f ? 1.0f : value;
+        return (byte) (int) (clamped * 255.0f + 0.5f);
+    }
+
+    /** {@code glTexCoord2f}: the coordinate the following vertices carry. */
+    public static void celtium$legacyTexCoord2f(float u, float v) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyTexU = u;
+            stub.legacyTexV = v;
+        }
+    }
+
+    /** {@code glTexCoord2d}, narrowed to the float coordinate the capture stores. */
+    public static void celtium$legacyTexCoord2d(double u, double v) {
+        celtium$legacyTexCoord2f((float) u, (float) v);
+    }
+
+    /** The raw colour routes' current colour, captured for legacy vertices (GL keeps one current colour). */
+    public static void celtium$legacyColor(float red, float green, float blue, float alpha) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyRed = red;
+            stub.legacyGreen = green;
+            stub.legacyBlue = blue;
+            stub.legacyAlpha = alpha;
+        }
+    }
+
+    /** {@code glEnd}: submits the collected run through the immediate path, or refuses it with a named reason. */
+    public static void celtium$legacyEnd() {
+        CeltiumGlStub stub = installed;
+        if (stub == null || !stub.legacyActive) {
+            return;
+        }
+        stub.legacyActive = false;
+        int count = stub.legacyCount;
+        int mode = stub.legacyMode;
+        stub.legacyCount = 0;
+        if (count <= 0) {
+            return;
+        }
+        if (mode != 7 && mode != 4 && mode != 6) {
+            stub.legacyModeRefusals++;
+            if (stub.legacyModeRefusals <= 3 || (stub.legacyModeRefusals & (stub.legacyModeRefusals - 1)) == 0) {
+                System.out.println("[Celtium] CELTIUM_LEGACY_MODE_REFUSED mode=" + mode
+                        + " vertices=" + count + " (quads, triangles and fans are drawn)");
+            }
+            return;
+        }
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        boolean taken = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                && vulkan.submitImmediateBatch(null, stub.legacyStride, stub.legacyFormat,
+                        MemoryUtil.memAddress(stub.legacyBuffer), count, mode);
+        if (!taken) {
+            stub.celtium$legacyRefuse("the immediate path refused it"
+                    + (backend == null ? " (no backend)" : ": " + backend.lastRefusal()));
+            return;
+        }
+        stub.legacySubmissions++;
+        stub.legacySubmittedVertices += count;
+        if (stub.legacySubmissions == 1) {
+            System.out.println("[Celtium] CELTIUM_LEGACY_IMMEDIATE submitted=1 vertices=" + count + " mode=" + mode
+                    + " format=" + stub.legacyFormat + " (legacy glBegin geometry now reaches the immediate path)");
+        }
+    }
+
+    /**
      * Records the split texture-coordinate pointer, from the transformer's route.
      * <p>
      * These are the native calls the transformer used to drop: the pointer families it did not route reached

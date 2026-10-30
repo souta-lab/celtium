@@ -908,8 +908,32 @@ public final class CeltiumGllessHint {
      */
     public static void glColor4f(float red, float green, float blue, float alpha) {
         org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
+        // The legacy immediate capture keeps its own current colour: glBegin geometry carries the colour at vertex
+        // time, and the mirror's colour is state the batch path reads later.
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyColor(red, green, blue, alpha);
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.setColor(red, green, blue, alpha);
+    }
+
+    // ---- legacy immediate mode, routed by the transformer ----
+    public static void glLegacyBegin(int mode) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyBegin(mode);
+    }
+
+    public static void glLegacyEnd() {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyEnd();
+    }
+
+    public static void glLegacyVertex3f(float x, float y, float z) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3f(x, y, z);
+    }
+
+    public static void glLegacyTexCoord2f(float u, float v) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2f(u, v);
+    }
+
+    public static void glLegacyTexCoord2d(double u, double v) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2d(u, v);
     }
 
     /** {@code glColor4ub}: the bytes are unsigned and map to [0, 1], as GL does. */
