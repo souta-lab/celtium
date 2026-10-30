@@ -10,19 +10,8 @@ pluginManagement {
             filter { includeGroupAndSubgroups("net.fabricmc") }
         }
         exclusiveContent {
-            forRepository { maven("https://maven.neoforged.net/releases") }
-            filter { includeGroup("net.neoforged") }
-        }
-        exclusiveContent {
             forRepository { maven("https://nexus.gtnewhorizons.com/repository/public/") }
             filter { includeGroupAndSubgroups("com.gtnewhorizons") }
-        }
-        exclusiveContent {
-            forRepositories(
-                maven("https://maven.wagyourtail.xyz/releases"),
-                maven("https://maven.wagyourtail.xyz/snapshots")
-            )
-            filter { includeGroupAndSubgroups("xyz.wagyourtail") }
         }
     }
     plugins {
