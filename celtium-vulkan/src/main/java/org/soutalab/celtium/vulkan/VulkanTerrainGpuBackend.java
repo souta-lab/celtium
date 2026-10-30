@@ -8784,9 +8784,6 @@ this.frameBufferOpen = false;
     long flushBeforeGlDrawWithGroups;
 
     void flushPendingBeforeGlDraw() {
-        if (!this.immediateGroups.isEmpty()) {
-            celtium$noteFlushReason();
-        }
         this.flushBeforeGlDrawCalls++;
         if (this.immediateWindowBusy) return;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("flushCloseGroup");
@@ -8797,6 +8794,9 @@ this.frameBufferOpen = false;
         }
         if (this.immediateGroups.isEmpty()) return;
         this.flushBeforeGlDrawWithGroups++;
+        // Counted here, not at the entry: the open group is appended to the list by closeCurrentImmediateGroup above,
+        // so at the entry almost every call looked empty and the census attributed only the loading phase.
+        celtium$noteFlushReason();
         if (this.targetRegistry.replacementInProgress()) {
             // No ordering flush across a framebuffer replacement: the pending groups were offered for a framebuffer whose
             // size no longer exists, and drawing them now would need the very wait that stalls the device. They are counted
