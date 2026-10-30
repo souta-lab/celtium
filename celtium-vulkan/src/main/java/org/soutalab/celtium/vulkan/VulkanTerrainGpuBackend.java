@@ -1811,8 +1811,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new java.util.HashMap<Long, Integer>();
 
     /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
-    final java.util.Map<Long, Integer> flushEntryGroupsByTarget = new java.util.HashMap<Long, Integer>();
-    final java.util.Map<Long, Integer> flushEntryPassesByTarget = new java.util.HashMap<Long, Integer>();
     /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
 
     /** {@return one line per target whose groups were dropped at a frame boundary}, or "none". */
@@ -3436,6 +3434,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** CPU time of the same handoffs, so wall minus CPU says how much of it is blocking in a native call. */
     int frameDrawn;
     private int whiteTextureGlId;
+    /** Opt-in: the per-target flush-entry census, whose lines only the end-of-run diagnostics read. */
+    private static final boolean FLUSH_ENTRY_CENSUS = Boolean.getBoolean("celtium.vulkan.flushEntryCensus");
+    final java.util.Map<Long, Integer> flushEntryGroupsByTarget = new java.util.HashMap<Long, Integer>();
+    final java.util.Map<Long, Integer> flushEntryPassesByTarget = new java.util.HashMap<Long, Integer>();
     private int blackTextureGlId;
     private int blackTextureSubstitutions;
     private int immediatePresentedFrames;
@@ -8987,9 +8989,15 @@ this.frameBufferOpen = false;
         // and how often that target was visited. The drain itself is reverted - a device-lost regression outranks it -
         // but this counter is what said the one-shot identity's groups are not in the queue at a flush at all, and it
         // stays so the next attempt starts from that fact rather than rediscovering it.
-        this.flushEntryGroupsByTarget.merge(Long.valueOf(this.targetRegistry.currentIdentity()),
-                Integer.valueOf(countGroupsForTarget(this.targetRegistry.currentIdentity())), Integer::sum);
-        this.flushEntryPassesByTarget.merge(Long.valueOf(this.targetRegistry.currentIdentity()), Integer.valueOf(1), Integer::sum);
+        // The flush-entry census is opt-in: two HashMap merges with boxed keys plus a queue scan on every flush, in the
+        // hottest recording path, for a line the diagnostics print only at the end of a run. Off by default; the summary
+        // reads "none" when it stays off.
+        if (FLUSH_ENTRY_CENSUS) {
+            this.flushEntryGroupsByTarget.merge(Long.valueOf(this.targetRegistry.currentIdentity()),
+                    Integer.valueOf(countGroupsForTarget(this.targetRegistry.currentIdentity())), Integer::sum);
+            this.flushEntryPassesByTarget.merge(Long.valueOf(this.targetRegistry.currentIdentity()),
+                    Integer.valueOf(1), Integer::sum);
+        }
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
         if (this.gpuStalled) {
