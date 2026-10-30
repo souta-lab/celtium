@@ -8312,11 +8312,22 @@ this.frameBufferOpen = false;
             break;
         }
         this.flushReasons.merge(reason, Integer.valueOf(1), Integer::sum);
+        // Printed from the census call itself, every thousand flushes: the frame-id gate this used to sit behind
+        // never fired in the world phase (the report ran where frameId is still 0 during loading), so the world's own
+        // reasons were never printed even though the loading ones were.
+        if (++this.flushReasonCount % 1000 == 0) {
+            celtium$reportFlushReasons(true);
+        }
     }
 
+    private long flushReasonCount;
+
     /** Prints the flush-reason census, largest first, every {@link #FLUSH_REASON_FRAMES} frames. */
-    private void celtium$reportFlushReasons() {
-        if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty() || this.frameId % FLUSH_REASON_FRAMES != 0L) {
+    private void celtium$reportFlushReasons(boolean force) {
+        if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty()) {
+            return;
+        }
+        if (!force && this.frameId % FLUSH_REASON_FRAMES != 0L) {
             return;
         }
         java.util.List<java.util.Map.Entry<String, Integer>> rows =
@@ -8692,7 +8703,7 @@ this.frameBufferOpen = false;
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
-        celtium$reportFlushReasons();
+        celtium$reportFlushReasons(false);
         DrawCounters.reportIfDue(this.frameId);
         this.frameCoordinator.celtium$finishFrameBuffer(true);
     }
