@@ -1072,6 +1072,7 @@ public final class VulkanImmediateTexturePipeline {
                     : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(this.records && this.arrayRecords
                     ? SpirvShaders.IMMEDIATE_TEX_COLOR_ARRAY_FRAGMENT
+                    : this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_FRAGMENT
                     : this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_FRAGMENT
                 : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_FRAGMENT
                 : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT

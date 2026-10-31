@@ -40,6 +40,12 @@ layout(location = 2) in vec4 a_Color;
 layout(location = 0) out vec2 v_TexCoord;
 layout(location = 1) out vec4 v_Color;
 layout(location = 2) out float v_FogDistance;
+// Per record, not per run: the alpha reference, the current colour, the alpha-test selector and the fog block all vary
+// between the groups a run merges, so they travel with the record instead of the run's push constants.
+layout(location = 3) flat out vec4 v_AlphaColour;
+layout(location = 4) flat out vec4 v_Matte;
+layout(location = 5) flat out vec4 v_FogColour;
+layout(location = 6) flat out vec4 v_FogParams;
 
 /** The fog coordinate in eye space, the same computation the push-block variant performs. */
 float celtiumFogDistance(in DrawRecord record, vec3 position) {
@@ -59,6 +65,11 @@ void main() {
         v_TexCoord = a_TexCoord;
     }
     v_Color = a_Color;
+    v_AlphaColour = record.u_AlphaColour;
+    // u_TexPad holds the alpha-test selector in y (raw GL enum, 0 disabled) and the combine's displaced reference in z.
+    v_Matte = vec4(record.u_TexPad.y, record.u_TexPad.z, 0.0, 0.0);
+    v_FogColour = record.u_FogColor;
+    v_FogParams = record.u_FogParams;
     v_FogDistance = (int(record.u_FogParams.w + 0.5) & 7) == 0 ? 0.0 : celtiumFogDistance(record, a_Position);
     gl_Position = record.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

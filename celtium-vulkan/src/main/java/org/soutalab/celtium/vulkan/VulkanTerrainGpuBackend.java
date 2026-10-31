@@ -2486,10 +2486,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         for (int offset = 112; offset < 128; offset++) {
             alphaKey = 31L * alphaKey + push.get(offset);
         }
+        // The textured records fragment reads the alpha reference, the colour and the fog block from the record, so those
+        // sixteen push bytes no longer have to agree for a run; the lit item family's fragment still reads the run's push,
+        // which is why its key keeps them.
+        boolean perRecordMatte = texturedFamily;
         long key = (((long) System.identityHashCode(prepared.pipeline)) * 0x9E3779B97F4A7C15L)
                 ^ (prepared.descriptor * 0x94D049BB133111EBL)
                 ^ (((long) mesh.vertexBuffer()) * 31L) ^ ((long) mesh.indexBuffer())
-                ^ (alphaKey * 0xC2B2AE3D27D4EB4FL);
+                ^ (perRecordMatte ? 0L : (alphaKey * 0xC2B2AE3D27D4EB4FL));
         if (this.indirectRunActive && key != this.indirectRunKey) {
             celtium$flushIndirectRun();
         }
@@ -2786,12 +2790,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + this.drawKeyGroups
                     + " distinctKeys=" + this.drawKeyCounts.size()
                     + " switches=" + this.drawKeySwitches
-                    + " largestBucket=" + this.drawKeyLargest);
+                    + " largestBucket=" + this.drawKeyLargest
+                    + " arrayKeyRuns=" + (this.arrayKeyGroups - this.arrayKeySwitches)
+                    + " arrayKeySwitches=" + this.arrayKeySwitches
+                    + " arrayKeyDistinct=" + this.arrayKeyCounts.size()
+                    + " arrayKeyLargest=" + this.arrayKeyLargest);
             this.drawKeyGroups = 0L;
             this.drawKeySwitches = 0L;
             this.drawKeyPrevious = 0L;
             this.drawKeyLargest = 0;
             this.drawKeyCounts.clear();
+            this.arrayKeyGroups = 0L;
+            this.arrayKeySwitches = 0L;
+            this.arrayKeyPrevious = 0L;
+            this.arrayKeyLargest = 0;
+            this.arrayKeyCounts.clear();
         }
         if (RETAINED_CENSUS) {
             System.out.println("[Celtium] CELTIUM_RETAINED_CENSUS groups=" + this.retainedCensusGroups
@@ -13561,6 +13574,11 @@ this.frameBufferOpen = false;
     private final java.util.Map<Long, Integer> drawKeyCounts = new java.util.HashMap<Long, Integer>();
     private long drawKeyGroups;
     private long drawKeySwitches;
+    private long arrayKeyGroups;
+    private long arrayKeySwitches;
+    private long arrayKeyPrevious;
+    private int arrayKeyLargest;
+    private final java.util.Map<Long, Integer> arrayKeyCounts = new java.util.HashMap<Long, Integer>();
     private long drawKeyPrevious;
     private int drawKeyLargest;
     private final java.util.Map<Integer, Integer> retainedCensusByMesh = new java.util.HashMap<Integer, Integer>();
@@ -17032,6 +17050,24 @@ this.frameBufferOpen = false;
                         this.drawKeySwitches++;
                     }
                     this.drawKeyPrevious = key;
+                    // The same census with the texture and alpha out of the key: the bindless array plus per-record push
+                    // is what would let a run cross a texture change, so this key's switches are the run count array
+                    // records could reach while the material key's are the draws the per-group path pays now.
+                    this.arrayKeyGroups++;
+                    long arrayKey = ((long) System.identityHashCode(prepared.pipeline) << 21)
+                            ^ (mesh != null ? mesh.vertexBuffer() : 0L) * 31L
+                            ^ (mesh != null ? mesh.indexBuffer() : 0L)
+                            ^ group.viewportHash();
+                    Integer arraySeen = this.arrayKeyCounts.get(Long.valueOf(arrayKey));
+                    int arrayCount = arraySeen == null ? 1 : arraySeen.intValue() + 1;
+                    this.arrayKeyCounts.put(Long.valueOf(arrayKey), Integer.valueOf(arrayCount));
+                    if (arrayCount > this.arrayKeyLargest) {
+                        this.arrayKeyLargest = arrayCount;
+                    }
+                    if (arrayKey != this.arrayKeyPrevious && this.arrayKeyPrevious != 0L) {
+                        this.arrayKeySwitches++;
+                    }
+                    this.arrayKeyPrevious = arrayKey;
                 }
                 if (RETAINED_CENSUS) {
                     // How many of the frame's groups are retained geometry, and how many of them share one cached mesh:

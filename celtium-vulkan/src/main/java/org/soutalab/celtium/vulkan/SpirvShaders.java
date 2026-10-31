@@ -63,6 +63,11 @@ public final class SpirvShaders {
      * material cannot share a push block.
      */
     public static final String IMMEDIATE_TEX_COLOR_RECORDS_VERTEX = "immediate_tex_color_records.vert";
+    /**
+     * The record-reading fragment: the alpha reference, the current colour, the alpha-test selector and the fog block
+     * arrive per record through the vertex stage's flat outputs, so a run may merge groups that differ in them.
+     */
+    public static final String IMMEDIATE_TEX_COLOR_RECORDS_FRAGMENT = "immediate_tex_color_records.frag";
     /** The bindless form of {@link #IMMEDIATE_TEX_COLOR_RECORDS_VERTEX}: the texture index comes from the record. */
     public static final String IMMEDIATE_TEX_COLOR_ARRAY_VERTEX = "immediate_tex_color_array.vert";
     /** The bindless fragment: samples {@code u_Textures[v_TextureIndex]} instead of one bound texture. */
