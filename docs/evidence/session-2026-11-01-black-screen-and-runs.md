@@ -57,9 +57,11 @@ transitions - so only their launch can confirm the fix.
 | (3) fully working | same, on this machine; the tester's launch is the outstanding evidence for the black screen |
 | (1) FPS above Celeritas | not met: cool-idle Susy 1.27-1.48x (best 1.275), ATM3 ~1.45x; current machine state unmeasurable |
 
-Environment left for the tester: their instance carries rc.25 in `mods/`, `config/relauncher.json` `args` has
-`-Dceltium.vulkan.validation=true -Dceltium.vulkan.presentedDumpEvery=0`, and backups of the original jar,
-`instance.cfg` and `relauncher.json` are in `.celtium-work/prism-backup/`.
+Environment left for the tester: their instance carries **rc.25** in `mods/` (sha256 `469a0c83...`), and the
+launcher configuration is back to the user's own (`relauncher.json` args `-XX:+UseCompactObjectHeaders`,
+`instance.cfg` `JvmArgs=` empty) so the attempt runs at normal speed. Backups of the original rc.19 jar,
+`instance.cfg` and `relauncher.json` are in `.celtium-work/prism-backup/`. The validation flag and the pristine
+`relauncher.json` copies stay there for the next diagnostic launch if the screen is still black.
 
 ## Release certification at the end of the session
 
