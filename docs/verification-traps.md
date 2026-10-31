@@ -240,3 +240,10 @@ XDG_RUNTIME_DIR=/tmp/sway-celt WAYLAND_DISPLAY=wayland-1 SDL_VIDEODRIVER=wayland
 確認は `CELTIUM_SWAPCHAIN surface-offer` の `currentExtent=unspecified(0xFFFFFFFF)`（Wayland の署名）。
 `--headless` は `--run` と `--render-node` を要求する。`sway` は「Could not find config for output HEADLESS-1」を
 出しても動作しており、ソケット名は `wayland-1` を実ファイルで確認する。
+
+## bind flush の延期は3度目も失敗（2026-11-01）
+
+`-Dceltium.vulkan.deferBindFlushes=true` を、境界drainと「pairが消えたtargetのgroup破棄」を備えた v3 として再実装し、
+世界legで測った。結果: **windows/frame は 33（基準~30）で削減なし、P50 31ms（基準2.45ms）、破棄 966 groups**。
+理由は構造的で、1フレームに現れる target はほぼ毎回異なる（A→B→C…）ため、延期しても drain は target ごとに
+1 window ずつ必要で、window 数は変わらない。破棄は内容の欠落そのもの（FBOが消えたもの）。以後この方向は再入しない。
