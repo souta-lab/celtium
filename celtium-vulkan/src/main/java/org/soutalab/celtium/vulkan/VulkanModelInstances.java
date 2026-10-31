@@ -51,6 +51,9 @@ final class VulkanModelInstances {
     /** The push block the last model draw emitted in this segment, so an identical one is not sent again. */
     private final byte[] lastConstants = new byte[ModelRunConstants.BYTES];
     private boolean lastConstantsValid;
+    /** The buffer pair the last cached draw bound, so a run that shares it binds nothing. */
+    private long lastVertexBuffer = VK_NULL_HANDLE;
+    private long lastIndexBuffer = VK_NULL_HANDLE;
     static final int RECORD_BYTES = 256;
     static final int COMMAND_BYTES = 20;
     static final int SEGMENTS = FrameSubmissionScheduler.FRAME_SLOTS + 2;
@@ -412,6 +415,8 @@ final class VulkanModelInstances {
                     stack.longs(textureSet, this.recordsSet), null);
             vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
             vkCmdBindIndexBuffer(commandBuffer, run.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+            this.lastVertexBuffer = run.vertexBuffer;
+            this.lastIndexBuffer = run.indexBuffer;
             long offset = (long) run.firstCommand * COMMAND_BYTES;
             if (multiDraw) {
                 vkCmdDrawIndexedIndirect(commandBuffer, run.commandBuffer, offset, run.count, COMMAND_BYTES);
@@ -453,8 +458,14 @@ final class VulkanModelInstances {
                 }
             }
             this.lastConstantsValid = true;
-            vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
-            vkCmdBindIndexBuffer(commandBuffer, run.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+            if (this.lastVertexBuffer != run.vertexBuffer) {
+                vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
+                this.lastVertexBuffer = run.vertexBuffer;
+            }
+            if (this.lastIndexBuffer != run.indexBuffer) {
+                vkCmdBindIndexBuffer(commandBuffer, run.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+                this.lastIndexBuffer = run.indexBuffer;
+            }
             long offset = (long) run.firstCommand * COMMAND_BYTES;
             if (multiDraw) {
                 vkCmdDrawIndexedIndirect(commandBuffer, run.commandBuffer, offset, run.count, COMMAND_BYTES);
