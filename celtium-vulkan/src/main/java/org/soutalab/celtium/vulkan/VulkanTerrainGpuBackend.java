@@ -16198,6 +16198,29 @@ this.frameBufferOpen = false;
      * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
      * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
      */
+    /** The model run waiting to be drawn: consecutive compatible runs merge into its command range. */
+    VulkanModelInstances.Run pendingModelRun;
+    long pendingModelTextureSet;
+    float[] pendingModelProjection;
+    float[] pendingModelFog;
+    long pendingModelViewportHash = Long.MIN_VALUE;
+    boolean pendingModelActive;
+
+    /** Draws the model run held back for merging; called before anything else draws or the segment ends. */
+    void celtium$flushPendingModelRun() {
+        if (!this.pendingModelActive) {
+            return;
+        }
+        this.pendingModelActive = false;
+        VulkanModelInstances.Run run = this.pendingModelRun;
+        this.pendingModelRun = null;
+        if (run == null || run.count <= 0 || this.modelInstances == null || this.textureArray == null) {
+            return;
+        }
+        this.modelInstances.draw(this.commandBuffer, run, this.pendingModelTextureSet,
+                this.context.multiDrawIndirectEnabled(), this.pendingModelProjection, this.pendingModelFog);
+    }
+
     /** Whether the last group drawn in this segment was a model run with the pipeline and set recorded below. */
     boolean modelBindValid;
     long modelBoundPipeline = -1L;
@@ -16284,6 +16307,7 @@ this.frameBufferOpen = false;
                 }
                 ImmediateGroup group = groups.get(groupIndex);
                 if (group.target == target && group.modelRun == null) {
+                    this.celtium$flushPendingModelRun();
                     // Anything that is not a model run binds its own pipeline and set; the model bind cache may only be
                     // trusted while the immediately preceding draw was a model run.
                     this.modelBindValid = false;
@@ -16921,6 +16945,8 @@ this.frameBufferOpen = false;
                         + " censusMillis=" + ((System.nanoTime() - censusStartNanos) / 1_000_000L));
             }
 
+            // The last model run of the segment has no following draw to end its sequence.
+            this.celtium$flushPendingModelRun();
             // Rebuild immediateGroups as only the kept groups, in order. Drawn and retired groups were moved to their
             // own lists during the pass; what remains in keptImmediateGroups is exactly the other-target groups the
             // old iterator.remove() would have left behind, in the same order.

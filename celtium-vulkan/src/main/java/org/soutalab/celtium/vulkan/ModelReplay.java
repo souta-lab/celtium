@@ -534,16 +534,27 @@ final class ModelReplay {
         }
         if (b.modelInstances != null && b.textureArray != null) {
             long textureSet = b.textureArray.set();
-            long pipeline = group.modelRun.pipeline.handle;
-            if (b.modelBindValid && b.modelBoundPipeline == pipeline && b.modelBoundTextureSet == textureSet) {
-                b.modelInstances.drawCached(b.commandBuffer, group.modelRun, b.context.multiDrawIndirectEnabled(),
-                        group.projection, group.fog);
+            VulkanModelInstances.Run run = group.modelRun;
+            // Runs whose commands continue the previous run in the same buffer pair and whose state matches merge into
+            // one indirect range; the merged draw happens at the flush below, after the group that ends the sequence.
+            if (b.pendingModelActive && b.pendingModelTextureSet == textureSet
+                    && b.pendingModelRun.pipeline.handle == run.pipeline.handle
+                    && b.pendingModelRun.commandBuffer == run.commandBuffer
+                    && b.pendingModelRun.vertexBuffer == run.vertexBuffer
+                    && b.pendingModelRun.indexBuffer == run.indexBuffer
+                    && run.firstCommand == b.pendingModelRun.firstCommand + b.pendingModelRun.count
+                    && b.pendingModelViewportHash == group.viewportHash()
+                    && java.util.Arrays.equals(b.pendingModelProjection, group.projection)
+                    && java.util.Arrays.equals(b.pendingModelFog, group.fog)) {
+                b.pendingModelRun.count += run.count;
             } else {
-                b.modelInstances.draw(b.commandBuffer, group.modelRun, textureSet,
-                        b.context.multiDrawIndirectEnabled(), group.projection, group.fog);
-                b.modelBindValid = true;
-                b.modelBoundPipeline = pipeline;
-                b.modelBoundTextureSet = textureSet;
+                b.celtium$flushPendingModelRun();
+                b.pendingModelActive = true;
+                b.pendingModelRun = run;
+                b.pendingModelTextureSet = textureSet;
+                b.pendingModelProjection = group.projection;
+                b.pendingModelFog = group.fog;
+                b.pendingModelViewportHash = group.viewportHash();
             }
         }
         java.util.Arrays.fill(b.immediateBindCache, -1L);
