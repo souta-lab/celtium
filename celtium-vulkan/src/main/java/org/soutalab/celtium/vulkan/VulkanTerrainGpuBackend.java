@@ -4456,6 +4456,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         if (this.textureRegistry != null) {
+            // A queued group that samples this id would resolve whatever mirror replaces it at draw time, or sample a view
+            // whose image is about to be dropped. Drawing it first, against the state it was recorded with, keeps the
+            // delete's ordering (the same rule the announcement path already follows for the same reason).
+            if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
+                flushPendingBeforeGlDraw();
+            }
             this.textureRegistry.forgetTexture(glTextureId);
         }
         // Remembered so a later upload for a deleted id can be told from a re-creation (see announceDynamicTexture).
