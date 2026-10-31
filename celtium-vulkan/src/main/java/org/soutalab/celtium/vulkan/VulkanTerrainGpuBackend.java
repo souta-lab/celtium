@@ -10365,8 +10365,11 @@ this.frameBufferOpen = false;
      * buffer holds, which is the validation error VUID-vkEndCommandBuffer-commandBuffer-00059 and, once that submission
      * runs, the RADV GPUVM fault behind the tester's black screen.
      */
+    private static final boolean RETIRE_RECORDING_GUARD =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.retireRecordingGuard", "true"));
+
     private boolean celtium$recordingOpen() {
-        return this.frameBufferOpen || this.immediateWindowBusy;
+        return RETIRE_RECORDING_GUARD && (this.frameBufferOpen || this.immediateWindowBusy);
     }
 
     int countGroupsForTarget(long targetIdentity) {

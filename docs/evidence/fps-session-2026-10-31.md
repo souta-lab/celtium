@@ -58,3 +58,15 @@ cool machine too (94.3% of wall by /proc; GPU terrain 375us + immediate windows 
 2. **native batch recording**: per-batch Java + FFM downcall overhead is the rest of the gap
    (~112 groups x ~1.8 us plus 30 windows x ~22 us). This is the plan.md "native implementation"
    item, not a round-scale change.
+
+## Thermal state dominates every absolute number (reconfirmed 2026-11-01 03:00)
+
+The same release, the same flags, three hours apart: rc.23 measured warm P50 2.449 ms at 00:00 and 5.884 ms at
+03:00; rc.24 measured 5.79 ms beside it, and enabling or disabling the new retire-recording guard moved the
+number by 0.05 ms. Celeritas in the same window stayed at 1.72-1.75 ms. So the frame time is the machine's
+state, not a regression - and a ratio taken without stating the state is worthless. A "resource packs double
+Celtium" reading earlier this night was this same effect: with and without the packs the P50 differed by 0.02 ms,
+and the seed-options file differs from the instance's options only in guiScale.
+
+Practical rule: a Celtium A/B must alternate arms within minutes, and a ratio is only quotable with the pairs'
+absolute numbers beside it (as the table above does).
