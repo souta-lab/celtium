@@ -3499,6 +3499,15 @@ public final class VulkanGlTexture {
         // (audit N08). Refused by name, before ensureStaging allocates anything.
         long bytes = requiredUploadBytes("a whole-image upload of " + pixelWidth + "x" + pixelHeight, pixelWidth,
                 pixelHeight, pixels);
+        if (level == 0 && (pixelWidth > this.width || pixelHeight > this.height)) {
+            // The copy's destination is level 0 of an image that is this.width x this.height. A copy wider or taller than
+            // the image writes past its allocation, and on RADV that is a GPUVM fault (permission faults, RW=1) at a
+            // fixed address - the large font atlas upload the black-screen logs end on. Refused by name instead, so a
+            // run that would have lost the device reports which extent and image disagreed.
+            throw new IllegalStateException("level-0 upload of " + pixelWidth + "x" + pixelHeight
+                    + " does not fit the mirror image of " + this.width + "x" + this.height + " (texel id "
+                    + this.encodeLabel + "); refused rather than copying past the image allocation");
+        }
         ensureStaging(bytes);
         // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
         // buffer into device visible memory without an intermediate Java array. The row order is kept as GL

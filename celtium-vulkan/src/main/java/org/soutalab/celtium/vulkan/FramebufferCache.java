@@ -172,6 +172,14 @@ final class FramebufferCache {
 
     /** Builds one framebuffer over two views; {@code what} names it in a failure, null for the frame target's. */
     private long create(long renderPass, long colorView, long depthView, int width, int height, String what) {
+        if (colorView == 0L || depthView == 0L) {
+            // The pair behind these views is not ensured (it was retired or never created for this identity). Building the
+            // framebuffer anyway passed VK_NULL_HANDLE attachments to vkCreateFramebuffer - a VUID the validation layer
+            // named, and a RADV segfault when it went unchecked. Refused by name so the caller can drop the pass.
+            throw new IllegalStateException(what + " framebuffer would bind a null attachment (colour=0x"
+                    + Long.toHexString(colorView) + " depth=0x" + Long.toHexString(depthView)
+                    + "); its pair is not ensured");
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer attachments = stack.mallocLong(2);
             attachments.put(0, colorView);
