@@ -2841,7 +2841,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         : this.preflushGroupsDrained / this.preflushFrames) + "]"
                 + " framesNoClear=" + this.framesWithNoClearAtAll
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
-                + " sortOrder[segments=" + this.drawOrderSegments + " ordered=" + this.drawOrderOpaque + "]"
+                + " sortOrder[segments=" + this.drawOrderSegments + " ordered=" + this.drawOrderOpaque
+                + " reject[noPrepared=" + this.reorderRejectNoPrepared + " dw=" + this.reorderRejectDepthWrite
+                + " dt=" + this.reorderRejectDepthTest + " blend=" + this.reorderRejectBlend
+                + " other=" + this.reorderRejectOther + " accept=" + this.reorderAccept + "]]"
                 + " modelMerge[draws=" + this.modelRunsDrawn + " merged=" + this.modelRunsMerged + "]"
                 + " indirect[runs=" + this.indirectRunsIssued + " singletons=" + this.indirectSingletonRuns
                 + " groups=" + this.indirectGroupsIssued
@@ -13401,6 +13404,10 @@ this.frameBufferOpen = false;
      * asked about when the ordering was written, which left the lit item family - the bulk of a world frame - in arrival
      * order and the runs short.
      */
+    /** Why groups fail the reorderable predicate, by first failing condition, for the ordering census. */
+    private long reorderRejectNoPrepared, reorderRejectDepthWrite, reorderRejectDepthTest, reorderRejectBlend,
+            reorderAccept, reorderRejectOther;
+
     private static boolean celtium$reorderable(java.util.List<ImmediateGroup> groups, int index) {
         ImmediateGroup group = groups.get(index);
         PreparedImmediate prepared = group.prepared;
@@ -13451,8 +13458,35 @@ this.frameBufferOpen = false;
                 ImmediateGroup group = groups.get(i);
                 PreparedImmediate prepared = group.prepared;
                 if (!celtium$reorderable(groups, i)) {
+                    // The census answers "why so few": a null prepared, depth-write off, depth-test off or a blend each
+                    // remove a different population, and only one of them is what material ordering could ever fix.
+                    PreparedImmediate preparedForReject = group.prepared;
+                    if (preparedForReject == null) {
+                        this.reorderRejectNoPrepared++;
+                    } else {
+                        Object rejectPipeline = preparedForReject.pipeline;
+                        boolean dw = rejectPipeline instanceof VulkanImmediateTexturePipeline t ? t.celtium$depthWrites()
+                                : rejectPipeline instanceof VulkanImmediateItemPipeline it ? it.celtium$depthWrites()
+                                : rejectPipeline instanceof VulkanImmediatePipeline c && c.celtium$depthWrites();
+                        boolean dt = rejectPipeline instanceof VulkanImmediateTexturePipeline t2 ? t2.celtium$depthTests()
+                                : rejectPipeline instanceof VulkanImmediateItemPipeline it2 ? it2.celtium$depthTests()
+                                : rejectPipeline instanceof VulkanImmediatePipeline c2 && c2.celtium$depthTests();
+                        boolean bl = rejectPipeline instanceof VulkanImmediateTexturePipeline t3 ? t3.celtium$blends()
+                                : rejectPipeline instanceof VulkanImmediateItemPipeline it3 ? it3.celtium$blends()
+                                : rejectPipeline instanceof VulkanImmediatePipeline c3 && c3.celtium$blends();
+                        if (!dw) {
+                            this.reorderRejectDepthWrite++;
+                        } else if (!dt) {
+                            this.reorderRejectDepthTest++;
+                        } else if (bl) {
+                            this.reorderRejectBlend++;
+                        } else {
+                            this.reorderRejectOther++;
+                        }
+                    }
                     continue;
                 }
+                this.reorderAccept++;
                 keys[opaque] = (((long) System.identityHashCode(prepared.pipeline)) * 0x9E3779B97F4A7C15L)
                         ^ (prepared.descriptor * 0x94D049BB133111EBL);
                 indices[opaque] = i;
