@@ -13519,7 +13519,9 @@ this.frameBufferOpen = false;
             segmentStart = segmentEnd;
         }
         this.drawOrderSegments = segments;
-        this.drawOrderOpaque = reorderable;
+        // Cumulative, not per call: the report compared a last-segment value against a frame's group count and read as
+        // "only 8 groups are reorderable" when the per-frame population is about a fifth of the groups.
+        this.drawOrderOpaque += reorderable;
         return order;
     }
     private final java.util.Map<Long, Integer> drawKeyCounts = new java.util.HashMap<Long, Integer>();
