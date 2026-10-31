@@ -365,6 +365,23 @@ public final class VulkanDynamicMesh {
      * The indirect run form needs the buffers bound but the offsets in the commands: every command of a run carries its
      * own firstIndex and vertexOffset, so the binding is one pair per run instead of one pair per draw.
      */
+    /**
+     * Binds a pair of raw buffer handles at offset zero, for a run whose geometry lives in one shared arena rather than
+     * in any one mesh. The commands of such a run carry their own firstIndex and vertexOffset into that arena.
+     */
+    public static void bindRawAtZero(VkCommandBuffer commandBuffer, long[] bindCache, long vb, long ib) {
+        if (bindCache[0] != vb || bindCache[1] != ib || bindCache[2] != 0L || bindCache[3] != 0L) {
+            org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+            org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vb), stack.longs(0L));
+            org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, ib, 0L,
+                    org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+            bindCache[0] = vb;
+            bindCache[1] = ib;
+            bindCache[2] = 0L;
+            bindCache[3] = 0L;
+        }
+    }
+
     public void bindAtZero(VkCommandBuffer commandBuffer, long[] bindCache) {
         if (this.destroyed) {
             throw new IllegalStateException("a destroyed mesh cannot be drawn");

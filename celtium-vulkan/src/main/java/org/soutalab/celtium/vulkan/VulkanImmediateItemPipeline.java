@@ -295,6 +295,30 @@ public final class VulkanImmediateItemPipeline {
                 org.lwjgl.vulkan.VkDrawIndexedIndirectCommand.SIZEOF);
     }
 
+    public void drawIndirectRangeBuffers(VkCommandBuffer commandBuffer, long vertexBuffer, long indexBuffer, ByteBuffer pushConstants,
+                                  long textureSet, long recordsSet, long[] bindCache, long indirectBuffer,
+                                  long indirectOffset, int drawCount) {
+        if (this.pipeline == VK_NULL_HANDLE || vertexBuffer == 0L || indexBuffer == 0L || drawCount <= 0) {
+            return;
+        }
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
+        if (pushConstants != null) {
+            ByteBuffer clamped = this.clampedView.view(pushConstants, pushBytes());
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
+        }
+        if (textureSet != 0L && recordsSet != 0L) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    org.lwjgl.system.MemoryStack.stackGet().longs(textureSet, recordsSet), null);
+        }
+        VulkanDynamicMesh.bindRawAtZero(commandBuffer, bindCache, vertexBuffer, indexBuffer);
+        org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, drawCount,
+                org.lwjgl.vulkan.VkDrawIndexedIndirectCommand.SIZEOF);
+    }
+
     /** {@return the push range this pipeline's layout declares}, so the draw clamps a wider shared block. */
     public int pushBytes() {
         return this.lit ? PUSH_CONSTANT_BYTES_LIT : PUSH_CONSTANT_BYTES;
