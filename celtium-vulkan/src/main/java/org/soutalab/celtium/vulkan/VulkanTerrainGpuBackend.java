@@ -2765,6 +2765,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.bufferCensusVertexBuffers.clear();
             this.bufferCensusIndexBuffers.clear();
         }
+        if (GROUP_CENSUS) {
+            StringBuilder census = new StringBuilder();
+            String[] families = {"texture", "litItem", "unlitItem", "colour", "other"};
+            for (int i = 0; i < this.groupCensusCounts.length; i++) {
+                if (this.groupCensusCounts[i] == 0) {
+                    continue;
+                }
+                int family = i / 4;
+                int state = i % 4;
+                census.append(' ').append(families[family]).append((state & 2) != 0 ? "/blend" : "/opaque")
+                        .append((state & 1) != 0 ? "+dw" : "-dw").append('=').append(this.groupCensusCounts[i]);
+            }
+            System.out.println("[Celtium] CELTIUM_GROUP_COMPOSITION groups=" + this.groupCensusMain + census);
+            java.util.Arrays.fill(this.groupCensusCounts, 0L);
+            this.groupCensusMain = 0;
+        }
         if (DRAW_KEY_CENSUS) {
             System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + this.drawKeyGroups
                     + " distinctKeys=" + this.drawKeyCounts.size()
@@ -13342,6 +13358,11 @@ this.frameBufferOpen = false;
     private static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
     /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
     private static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
+    /** {@code -Dceltium.debug.groupCensus=true}: the drawn groups' families and depth/blend state, for the ordering scope. */
+    private static final boolean GROUP_CENSUS = Boolean.getBoolean("celtium.debug.groupCensus");
+    /** Draws per family and state: texture/litItem/unlitItem/colour/other x blend x depthWrite. */
+    private final long[] groupCensusCounts = new long[12];
+    private long groupCensusMain;
     /** {@code -Dceltium.debug.bufferCensus=true}: how many distinct buffers a frame's groups draw from. */
     private static final boolean BUFFER_CENSUS = Boolean.getBoolean("celtium.debug.bufferCensus");
     private final java.util.Set<Long> bufferCensusVertexBuffers = new java.util.HashSet<Long>();
@@ -16727,6 +16748,25 @@ this.frameBufferOpen = false;
                         }
                     }
                 }
+                if (GROUP_CENSUS) {
+                    // Which population the material ordering could ever move. Index: family (0 texture, 1 lit item,
+                    // 2 unlit item, 3 colour, 4 other) * 4 + (blends ? 2 : 0) + (depthWrites ? 1 : 0).
+                    Object censusPipeline = prepared.pipeline;
+                    int family = censusPipeline instanceof VulkanImmediateTexturePipeline ? 0
+                            : censusPipeline instanceof VulkanImmediateItemPipeline itemState2
+                                    ? (itemState2.lit() ? 1 : 2)
+                            : censusPipeline instanceof VulkanImmediatePipeline ? 3 : 4;
+                    boolean blends = censusPipeline instanceof VulkanImmediateTexturePipeline textureState2
+                            ? textureState2.celtium$blends()
+                            : censusPipeline instanceof VulkanImmediateItemPipeline itemState3 ? itemState3.celtium$blends()
+                            : censusPipeline instanceof VulkanImmediatePipeline colourState2 && colourState2.celtium$blends();
+                    boolean depthWrites = censusPipeline instanceof VulkanImmediateTexturePipeline textureState3
+                            ? textureState3.celtium$depthWrites()
+                            : censusPipeline instanceof VulkanImmediateItemPipeline itemState4 ? itemState4.celtium$depthWrites()
+                            : censusPipeline instanceof VulkanImmediatePipeline colourState3 && colourState3.celtium$depthWrites();
+                    this.groupCensusCounts[family * 4 + (blends ? 2 : 0) + (depthWrites ? 1 : 0)]++;
+                    this.groupCensusMain++;
+                }
                 if (DRAW_KEY_CENSUS) {
                     // How many distinct (pipeline, descriptor) pairs the frame's groups use, and how often the pair changes
                     // between consecutive groups. The distinct count is the floor on draws after sorting by material; the
@@ -16841,6 +16881,22 @@ this.frameBufferOpen = false;
             }
             // The last run of the window has no following group to close it.
             celtium$flushIndirectRun();
+            if (GROUP_CENSUS) {
+                StringBuilder census = new StringBuilder();
+                String[] families = {"texture", "litItem", "unlitItem", "colour", "other"};
+                for (int i = 0; i < this.groupCensusCounts.length; i++) {
+                    if (this.groupCensusCounts[i] == 0) {
+                        continue;
+                    }
+                    int family = i / 4;
+                    int state = i % 4;
+                    census.append(' ').append(families[family]).append((state & 2) != 0 ? "/blend" : "/opaque")
+                            .append((state & 1) != 0 ? "+dw" : "-dw").append('=').append(this.groupCensusCounts[i]);
+                }
+                System.out.println("[Celtium] CELTIUM_GROUP_COMPOSITION groups=" + this.groupCensusMain + census);
+                java.util.Arrays.fill(this.groupCensusCounts, 0L);
+                this.groupCensusMain = 0;
+            }
             if (MERGE_CENSUS) {
                 int largest = 0;
                 for (Integer count : censusRuns.values()) {
