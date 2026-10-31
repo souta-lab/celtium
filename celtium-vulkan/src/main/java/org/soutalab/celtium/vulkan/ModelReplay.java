@@ -547,6 +547,7 @@ final class ModelReplay {
                     && java.util.Arrays.equals(b.pendingModelProjection, group.projection)
                     && java.util.Arrays.equals(b.pendingModelFog, group.fog)) {
                 b.pendingModelRun.count += run.count;
+                b.modelRunsMerged++;
             } else {
                 b.celtium$flushPendingModelRun();
                 b.pendingModelActive = true;

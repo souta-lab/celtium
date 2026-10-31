@@ -2842,6 +2842,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " framesNoClear=" + this.framesWithNoClearAtAll
                 + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
                 + " sortOrder[segments=" + this.drawOrderSegments + " ordered=" + this.drawOrderOpaque + "]"
+                + " modelMerge[draws=" + this.modelRunsDrawn + " merged=" + this.modelRunsMerged + "]"
                 + " indirect[runs=" + this.indirectRunsIssued + " singletons=" + this.indirectSingletonRuns
                 + " groups=" + this.indirectGroupsIssued
                 + " runsPerFrameX100=" + this.celtium$indirectRunsPerFrameX100() + "]"
@@ -16205,6 +16206,9 @@ this.frameBufferOpen = false;
     float[] pendingModelFog;
     long pendingModelViewportHash = Long.MIN_VALUE;
     boolean pendingModelActive;
+    /** Model runs drawn and how many of those absorbed a following run; the ratio is the merge rate. */
+    long modelRunsDrawn;
+    long modelRunsMerged;
 
     /** Draws the model run held back for merging; called before anything else draws or the segment ends. */
     void celtium$flushPendingModelRun() {
@@ -16217,6 +16221,7 @@ this.frameBufferOpen = false;
         if (run == null || run.count <= 0 || this.modelInstances == null || this.textureArray == null) {
             return;
         }
+        this.modelRunsDrawn++;
         this.modelInstances.draw(this.commandBuffer, run, this.pendingModelTextureSet,
                 this.context.multiDrawIndirectEnabled(), this.pendingModelProjection, this.pendingModelFog);
     }
