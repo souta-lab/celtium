@@ -2436,7 +2436,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean celtium$tryEnqueueIndirect(ImmediateGroup group, VulkanDynamicMesh mesh,
                                                PreparedImmediate prepared, java.nio.ByteBuffer push) {
         if (!INDIRECT_IMMEDIATE || mesh == null || prepared == null || push == null || this.drawRecords == null) {
-            celtium$flushIndirectRun();
+            celtium$flushIndirectRun("not-ready");
             return false;
         }
         // The two families that carry the frame: the textured one (sky, clouds, HUD) and the lit item one, which is the
@@ -2445,14 +2445,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         boolean itemFamily = prepared.pipeline instanceof VulkanImmediateItemPipeline item && item.lit();
         boolean colourFamily = prepared.pipeline instanceof VulkanImmediatePipeline;
         if (!texturedFamily && !itemFamily && !colourFamily) {
-            celtium$flushIndirectRun();
+            celtium$flushIndirectRun("family");
             return false;
         }
         // The colourless position variants have no record-reading twin yet; asking here, before a run is started, keeps a
         // refused group from leaving a half-built run behind.
         if (texturedFamily && (((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$texGen()
                 || celtium$recordsPipeline((VulkanImmediateTexturePipeline) prepared.pipeline) == null)) {
-            celtium$flushIndirectRun();
+            celtium$flushIndirectRun("texture-twin");
             return false;
         }
         if (colourFamily) {
@@ -2469,7 +2469,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // arrival position, and the commands of a run are issued in the order they were recorded. A run therefore never
         // reorders blending; it only stops at a material change, which is where the per-group path took over anyway.
         if (group.postClears != null || mesh.layout() == null) {
-            celtium$flushIndirectRun();
+            celtium$flushIndirectRun("post-clears");
             return false;
         }
         int stride = mesh.layout().stride;
@@ -2477,7 +2477,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long indexOffsetBytes = mesh.indexBindOffset();
         if (stride <= 0 || vertexOffsetBytes % stride != 0L || indexOffsetBytes % 4L != 0L
                 || mesh.indexCount() <= 0 || mesh.vertexCount() <= 0) {
-            celtium$flushIndirectRun();
+            celtium$flushIndirectRun("stride");
             return false;
         }
         // The fragment stage still takes the alpha reference and the current colour from the push block, so a run has to
@@ -2495,7 +2495,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 ^ (((long) mesh.vertexBuffer()) * 31L) ^ ((long) mesh.indexBuffer())
                 ^ (perRecordMatte ? 0L : (alphaKey * 0xC2B2AE3D27D4EB4FL));
         if (this.indirectRunActive && key != this.indirectRunKey) {
-            celtium$flushIndirectRun();
+            celtium$flushIndirectRun("key-change");
         }
         int recordIndex = this.drawRecords.record(push, DRAW_RECORDS_ARRAY_INDEX ? group.textureArrayIndex : -1);
         if (recordIndex < 0) {
@@ -2553,9 +2553,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** Issues the open run as one vkCmdDrawIndexedIndirect. */
+    /** Where an indirect run was closed, by short reason, for the run-formation census. */
+    private final java.util.Map<String, Integer> indirectFlushReasons = new java.util.LinkedHashMap<String, Integer>();
+
     void celtium$flushIndirectRun() {
+        celtium$flushIndirectRun("unknown");
+    }
+
+    void celtium$flushIndirectRun(String reason) {
         if (!this.indirectRunActive) {
             return;
+        }
+        Integer seenReason = this.indirectFlushReasons.get(reason);
+        this.indirectFlushReasons.put(reason, Integer.valueOf(seenReason == null ? 1 : seenReason.intValue() + 1));
+        if (this.indirectRunCommands == 1) {
+            Integer single = this.indirectFlushReasons.get("singleton:" + reason);
+            this.indirectFlushReasons.put("singleton:" + reason,
+                    Integer.valueOf(single == null ? 1 : single.intValue() + 1));
         }
         this.indirectRunActive = false;
         // The colour family's twin lives in the object field, not in indirectRunPipeline, so testing that field here
@@ -2860,6 +2874,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " dt=" + this.reorderRejectDepthTest + " blend=" + this.reorderRejectBlend
                 + " other=" + this.reorderRejectOther + " accept=" + this.reorderAccept + "]]"
                 + " modelMerge[draws=" + this.modelRunsDrawn + " merged=" + this.modelRunsMerged + "]"
+                + " runFlush" + this.indirectFlushReasons
                 + " indirect[runs=" + this.indirectRunsIssued + " singletons=" + this.indirectSingletonRuns
                 + " groups=" + this.indirectGroupsIssued
                 + " runsPerFrameX100=" + this.celtium$indirectRunsPerFrameX100() + "]"
@@ -17175,7 +17190,7 @@ this.frameBufferOpen = false;
                 group.postClears = null;
             }
             // The last run of the window has no following group to close it.
-            celtium$flushIndirectRun();
+            celtium$flushIndirectRun("record-full");
             if (GROUP_CENSUS) {
                 StringBuilder census = new StringBuilder();
                 String[] families = {"texture", "litItem", "unlitItem", "colour", "other"};
