@@ -210,3 +210,7 @@ python3 scripts/gv_leg.py <leg> .gv-verify/jars/release-0.1.4-rc10 plain amd 200
 `sceneGateFloorsEnforced=true`・画像付き。`world` モードは引き続き `celtium-world-accept`（較正済み clone）が
 必要で、Supersymmetry を `CELTIUM_INSTANCE_WORLD` にしても world 段の画像要求は発火しない（world ステージの
 capture 条件が満たされない）。
+
+## material順ソートは効かなかった（2026-10-31 A/B）
+
+`-Dceltium.vulkan.sortOpaque=true` のABBA A/B（Susy world、同一JAR・交互2legずつ）: **ON 2.538ms / OFF 2.508ms** = ONが1.2%悪化。理由は構造的で、並べ替えてもgroupごとの**push定数（行列）が異なる**ためbind/pushの削減に繋がらず、ソート自体のコストだけ増える。reorderable母集団は約2割ある（depth-write OFFが最大の非対象）が、それでも効果なし。再入条件は「records方式でpushをレコード化し、array setでtextureを外した状態」で並べ替えること（その時点で初めて並べ替えがrun形成に効く）。
