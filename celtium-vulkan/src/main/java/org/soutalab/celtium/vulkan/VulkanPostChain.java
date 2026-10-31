@@ -1549,7 +1549,12 @@ public final class VulkanPostChain {
         if (image != this.mainFramebufferImage || width != this.mainFramebufferWidth
                 || height != this.mainFramebufferHeight) {
             if (this.mainFramebuffer != 0) {
-                vkDestroyFramebuffer(this.context.device(), this.mainFramebuffer, null);
+                // Retired, not destroyed: the frame's command buffer may already have recorded a pass into this
+                // framebuffer this frame, and a size change can arrive mid-recording. The validation layer named exactly
+                // this (VkFramebuffer bound to a command buffer that then failed vkEndCommandBuffer).
+                final long retiredMainFramebuffer = this.mainFramebuffer;
+                org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(
+                        () -> vkDestroyFramebuffer(this.context.device(), retiredMainFramebuffer, null));
                 this.mainFramebuffer = 0;
             }
             try (MemoryStack stack = stackPush()) {
