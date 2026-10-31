@@ -48,6 +48,9 @@ import static org.lwjgl.vulkan.VK10.*;
  * Threading: render thread only.
  */
 final class VulkanModelInstances {
+    /** The push block the last model draw emitted in this segment, so an identical one is not sent again. */
+    private final byte[] lastConstants = new byte[ModelRunConstants.BYTES];
+    private boolean lastConstantsValid;
     static final int RECORD_BYTES = 256;
     static final int COMMAND_BYTES = 20;
     static final int SEGMENTS = FrameSubmissionScheduler.FRAME_SLOTS + 2;
@@ -400,6 +403,11 @@ final class VulkanModelInstances {
             ModelRunConstants.write(constants, projection, fog);
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
+            // The full path always pushes; recording the block here lets the next cached run skip it when identical.
+            for (int i = 0; i < ModelRunConstants.BYTES; i++) {
+                this.lastConstants[i] = constants.get(i);
+            }
+            this.lastConstantsValid = true;
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     stack.longs(textureSet, this.recordsSet), null);
             vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
@@ -428,8 +436,23 @@ final class VulkanModelInstances {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ByteBuffer constants = stack.calloc(ModelRunConstants.BYTES);
             ModelRunConstants.write(constants, projection, fog);
-            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
+            boolean samePush = this.lastConstantsValid;
+            if (samePush) {
+                for (int i = 0; i < ModelRunConstants.BYTES; i++) {
+                    if (this.lastConstants[i] != constants.get(i)) {
+                        samePush = false;
+                        break;
+                    }
+                }
+            }
+            if (!samePush) {
+                vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
+                for (int i = 0; i < ModelRunConstants.BYTES; i++) {
+                    this.lastConstants[i] = constants.get(i);
+                }
+            }
+            this.lastConstantsValid = true;
             vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
             vkCmdBindIndexBuffer(commandBuffer, run.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
             long offset = (long) run.firstCommand * COMMAND_BYTES;
