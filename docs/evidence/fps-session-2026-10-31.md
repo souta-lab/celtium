@@ -70,3 +70,11 @@ and the seed-options file differs from the instance's options only in guiScale.
 
 Practical rule: a Celtium A/B must alternate arms within minutes, and a ratio is only quotable with the pairs'
 absolute numbers beside it (as the table above does).
+
+## The measuring session must be idle (2026-11-01 03:30)
+
+The 2.449 ms reading at midnight and the 5.7 ms readings at 03:00 are the same release, the same flags, and the
+CPU is at 3.9 GHz with the package at 63 C, so it is not thermal throttling. The difference tracks the desktop's
+screen-streaming host (swayrtc + cloudflared), which started around 01:00 and captures the session while the leg
+runs: a CPU-bound renderer loses several milliseconds to that capture, a GPU-bound one barely moves. Until the
+session is idle again, no ratio from this machine is quotable - pair the arms only in an idle window and state it.
