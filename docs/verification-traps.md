@@ -222,3 +222,21 @@ ATM3（約250 mods）は relauncher のステージング＋world load に 250-4
 （`endedBy=time-limit`, `elapsedSeconds≈300`）になる。検証では 400-500s の leg も同様に走り切らない
 ことがあった。ATM3 の計測は **`--duration >= 700`・harness timeout >= 1800s** で行い、ABBA を回すなら
 1.5-2 時間の枠を確保する。Susy（軽量）は `--duration 300` で足りる。
+
+## Wayland の leg を回す（sway headless、2026-10-31 確立）
+
+`prism_validation.py` の leg は既定でX11（`--force-x11`）だったが、テスターの事象がWayland固有かを切り分けるには
+Wayland の leg が要る。ヘッドレス環境でも **sway の headless backend** で実際の Wayland 経路を走らせられる:
+
+```
+mkdir -p /tmp/sway-celt
+WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
+  XDG_RUNTIME_DIR=/tmp/sway-celt nohup sway -c /dev/null > /tmp/sway-celt/sway.log 2>&1 &
+# ソケットは XDG_RUNTIME_DIR 配下に wayland-1 等で出る（WAYLAND_DISPLAY の指定名ではない）
+XDG_RUNTIME_DIR=/tmp/sway-celt WAYLAND_DISPLAY=wayland-1 SDL_VIDEODRIVER=wayland \
+  python3 scripts/prism_validation.py <instance> ... --headless --render-node <node> --window-size 1920x1080
+```
+
+確認は `CELTIUM_SWAPCHAIN surface-offer` の `currentExtent=unspecified(0xFFFFFFFF)`（Wayland の署名）。
+`--headless` は `--run` と `--render-node` を要求する。`sway` は「Could not find config for output HEADLESS-1」を
+出しても動作しており、ソケット名は `wayland-1` を実ファイルで確認する。
