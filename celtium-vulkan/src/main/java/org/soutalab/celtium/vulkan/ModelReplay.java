@@ -533,8 +533,18 @@ final class ModelReplay {
             b.passBiasS = 0.0F;
         }
         if (b.modelInstances != null && b.textureArray != null) {
-            b.modelInstances.draw(b.commandBuffer, group.modelRun, b.textureArray.set(),
-                    b.context.multiDrawIndirectEnabled(), group.projection, group.fog);
+            long textureSet = b.textureArray.set();
+            long pipeline = group.modelRun.pipeline.handle;
+            if (b.modelBindValid && b.modelBoundPipeline == pipeline && b.modelBoundTextureSet == textureSet) {
+                b.modelInstances.drawCached(b.commandBuffer, group.modelRun, b.context.multiDrawIndirectEnabled(),
+                        group.projection, group.fog);
+            } else {
+                b.modelInstances.draw(b.commandBuffer, group.modelRun, textureSet,
+                        b.context.multiDrawIndirectEnabled(), group.projection, group.fog);
+                b.modelBindValid = true;
+                b.modelBoundPipeline = pipeline;
+                b.modelBoundTextureSet = textureSet;
+            }
         }
         java.util.Arrays.fill(b.immediateBindCache, -1L);
         VulkanPushCache.SHARED.invalidate();

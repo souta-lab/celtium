@@ -416,6 +416,34 @@ final class VulkanModelInstances {
         }
     }
 
+    /**
+     * The same draw with the pipeline and set binds left out: the caller knows the preceding draw was a model run with
+     * exactly these, which is what {@code draw} records. The push block still goes out, because a run's projection and
+     * fog are its own.
+     */
+    void drawCached(VkCommandBuffer commandBuffer, Run run, boolean multiDraw, float[] projection, float[] fog) {
+        if (run.count <= 0) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            ByteBuffer constants = stack.calloc(ModelRunConstants.BYTES);
+            ModelRunConstants.write(constants, projection, fog);
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
+            vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
+            vkCmdBindIndexBuffer(commandBuffer, run.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+            long offset = (long) run.firstCommand * COMMAND_BYTES;
+            if (multiDraw) {
+                vkCmdDrawIndexedIndirect(commandBuffer, run.commandBuffer, offset, run.count, COMMAND_BYTES);
+            } else {
+                for (int i = 0; i < run.count; i++) {
+                    vkCmdDrawIndexedIndirect(commandBuffer, run.commandBuffer, offset + (long) i * COMMAND_BYTES, 1,
+                            COMMAND_BYTES);
+                }
+            }
+        }
+    }
+
     String describe() {
         return "modelInstances[appended=" + this.appended + " unlitAppended=" + this.unlitAppended + " runs=" + this.runs + " declinedFull=" + this.declinedFull
                 + " declinedMissing=" + this.declinedMissing + " poolBuilds=" + this.poolBuilds

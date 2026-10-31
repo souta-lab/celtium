@@ -16198,8 +16198,14 @@ this.frameBufferOpen = false;
      * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
      * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
      */
+    /** Whether the last group drawn in this segment was a model run with the pipeline and set recorded below. */
+    boolean modelBindValid;
+    long modelBoundPipeline = -1L;
+    long modelBoundTextureSet = -1L;
+
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
+        this.modelBindValid = false;
         // The window diagnostics live in their own method: with them inline this method was 8282 bytes of bytecode,
         // over HotSpot's 8000-byte HugeMethodLimit, so it was never JIT-compiled and ran interpreted - 29.9% of the
         // client thread in leg tickjfr-celtium-2 (JFR frame type "Interpreted").
@@ -16277,6 +16283,11 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.DrawCounters.noteImmediateGroup();
                 }
                 ImmediateGroup group = groups.get(groupIndex);
+                if (group.target == target && group.modelRun == null) {
+                    // Anything that is not a model run binds its own pipeline and set; the model bind cache may only be
+                    // trusted while the immediately preceding draw was a model run.
+                    this.modelBindValid = false;
+                }
                 if (group.target != target) {
                     // Kept for its own pass, and now counted: this is the site the counter's name describes, and
                     // without an increment here a "kept" group and a "dropped" one both read as zero. It counts
