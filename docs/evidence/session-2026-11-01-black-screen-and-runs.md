@@ -60,3 +60,10 @@ transitions - so only their launch can confirm the fix.
 Environment left for the tester: their instance carries rc.25 in `mods/`, `config/relauncher.json` `args` has
 `-Dceltium.vulkan.validation=true -Dceltium.vulkan.presentedDumpEvery=0`, and backups of the original jar,
 `instance.cfg` and `relauncher.json` are in `.celtium-work/prism-backup/`.
+
+## Release certification at the end of the session
+
+- rc.25, ATM3 (RD4 terrain leg, the second pack): VUID 0, device loss 0, draw-array refusals 0, patch rejections 0,
+  warm P50 4.39 ms in the loaded machine state (the same state that read 5.7 ms for Susy; not a cool number).
+- rc.25, Susy menu smoke: 3899/3899 presents, no device loss, no validation messages, no device-loss file.
+- rc.25, Susy world: canonical plain gate PASSED with floors enforced and the presented image judged.
