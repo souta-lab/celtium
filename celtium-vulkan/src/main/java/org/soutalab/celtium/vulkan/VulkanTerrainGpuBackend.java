@@ -10319,6 +10319,19 @@ this.frameBufferOpen = false;
     private long cachedCountMutation = -1L;
     private int cachedCountValue;
 
+    /**
+     * True while a command buffer this renderer is still recording can hold recorded work.
+     * <p>
+     * The retire queue may only run when nothing can reference what it destroys, and "every submission completed" is
+     * not that statement: a frame's command buffer is recorded - windows recorded into it name framebuffers and images -
+     * and still open long before it is submitted. Flushing retires in that window destroys objects the open command
+     * buffer holds, which is the validation error VUID-vkEndCommandBuffer-commandBuffer-00059 and, once that submission
+     * runs, the RADV GPUVM fault behind the tester's black screen.
+     */
+    private boolean celtium$recordingOpen() {
+        return this.frameBufferOpen || this.immediateWindowBusy;
+    }
+
     int countGroupsForTarget(long targetIdentity) {
         if (targetIdentity == this.cachedCountTarget && this.groupQueueMutation == this.cachedCountMutation) {
             return this.cachedCountValue;
@@ -16248,7 +16261,8 @@ this.frameBufferOpen = false;
             // wait that used to sit here is the stall this branch removes: it stopped the render thread on every
             // begin until the whole device was idle again.
             int confirmed = celtium$pollCompletedSlots();
-            if (confirmed > 0 && this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
+            if (confirmed > 0 && !celtium$recordingOpen()
+                    && this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
                 this.submissionPending = false;
                 // Nothing is in flight: the same "device genuinely idle" statement the drain used to establish, so
                 // the retire queue may flush here (audit S12) and any off-target copy recorded for the previous
@@ -17878,7 +17892,8 @@ this.frameBufferOpen = false;
             this.frameArena.completed(VulkanContext.completedEpoch(), this.scheduler.completedSubmitSequence());
         }
         releaseRetiredImmediateGroups();
-        if (this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()
+        if (!celtium$recordingOpen()
+                && this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()
                 && this.immediateGroups.isEmpty() && this.currentImmediateMesh == null) {
             // The retire queue has no per-submission tagging, so it may only flush when nothing is in flight at
             // all - the same statement the drain used to establish, reached here through the watermark.
