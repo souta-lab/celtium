@@ -14387,6 +14387,11 @@ this.frameBufferOpen = false;
         if (!this.splashCanvasIds.isEmpty() && !this.splashUploadsThisFrame) {
             for (Integer id : this.splashCanvasIds) {
                 if (this.textureRegistry != null) {
+                    // Same rule as the reallocated path: a queued group that samples the canvas is drawn before the
+                    // mirror it names is forgotten.
+                    if (!this.immediateWindowBusy && queuedGroupUsesTexture(id.intValue())) {
+                        flushPendingBeforeGlDraw();
+                    }
                     this.textureRegistry.forgetTexture(id.intValue());
                 }
                 this.targetStatistics.noteSplashCanvasInvalidations();
