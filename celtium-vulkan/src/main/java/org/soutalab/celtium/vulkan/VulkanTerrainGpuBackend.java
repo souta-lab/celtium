@@ -14140,6 +14140,8 @@ this.frameBufferOpen = false;
     private static volatile int DEBUG_MIRROR_GL_ID;
     private boolean debugAnnounceDone;
     private int debugGrowthStep;
+    private int debugRepeatDone;
+    private static java.awt.image.BufferedImage debugRepeatImage;
     private boolean debugAtlasQuadDone;
 
     public static void celtium$requestDebugMirror(int glTextureId) {
@@ -14147,6 +14149,33 @@ this.frameBufferOpen = false;
     }
 
     private void celtium$debugMirrorRequest() {
+        String repeat = System.getProperty("celtium.debug.announceRepeat");
+        if (repeat != null && !repeat.isEmpty()) {
+            // Memory pressure: announce one atlas-sized image a frame until N of them exist, so the mirror path runs
+            // while the device's memory is short. -Dceltium.debug.announceRepeat=32
+            int target;
+            try {
+                target = Integer.parseInt(repeat.trim());
+            } catch (NumberFormatException ignored) {
+                target = 0;
+            }
+            if (this.debugRepeatDone < target) {
+                this.debugRepeatDone++;
+                try {
+                    // One image, reused: a fresh 66 MiB BufferedImage a frame exhausted the Java heap before the device
+                    // saw any pressure (measured: heap space, exit 255), which would make this probe measure the JVM.
+                    if (debugRepeatImage == null) {
+                        debugRepeatImage = new java.awt.image.BufferedImage(4096, 4224,
+                                java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                    }
+                    java.awt.image.BufferedImage image = debugRepeatImage;
+                    System.out.println("[Celtium] CELTIUM_DEBUG_REPEAT n=" + this.debugRepeatDone);
+                    celtium$registry().announceImage(9000 + this.debugRepeatDone, image);
+                } catch (RuntimeException | LinkageError error) {
+                    System.out.println("[Celtium] CELTIUM_DEBUG_REPEAT refused n=" + this.debugRepeatDone + ": " + error);
+                }
+            }
+        }
         String growth = System.getProperty("celtium.debug.announceGrowth");
         if (growth != null && !growth.isEmpty()) {
             // The tester's atlas is announced once at its final size, but the mirror that loses the device may be the one
