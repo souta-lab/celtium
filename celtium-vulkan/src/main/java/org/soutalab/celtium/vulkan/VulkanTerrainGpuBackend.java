@@ -14140,6 +14140,7 @@ this.frameBufferOpen = false;
     private static volatile int DEBUG_MIRROR_GL_ID;
     private boolean debugAnnounceDone;
     private int debugGrowthStep;
+    private boolean debugAtlasQuadDone;
 
     public static void celtium$requestDebugMirror(int glTextureId) {
         DEBUG_MIRROR_GL_ID = glTextureId;
@@ -14194,6 +14195,28 @@ this.frameBufferOpen = false;
             return;
         }
         DEBUG_MIRROR_GL_ID = 0;
+        if (Boolean.getBoolean("celtium.debug.drawAtlasQuad") && !this.debugAtlasQuadDone) {
+            // The tester's crash needs a draw that samples the atlas through the guest path. This is that draw, once:
+            // the atlas name is bound and one screen-space quad is submitted through the stub, so the same group is
+            // captured, the same mirror resolved, and the same texture sampled. -Dceltium.debug.drawAtlasQuad=true
+            this.debugAtlasQuadDone = true;
+            try {
+                org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, id);
+                org.lwjgl.opengl.GL11.glBegin(org.lwjgl.opengl.GL11.GL_QUADS);
+                org.lwjgl.opengl.GL11.glTexCoord2f(0.0F, 0.0F);
+                org.lwjgl.opengl.GL11.glVertex2f(-1.0F, -1.0F);
+                org.lwjgl.opengl.GL11.glTexCoord2f(1.0F, 0.0F);
+                org.lwjgl.opengl.GL11.glVertex2f(1.0F, -1.0F);
+                org.lwjgl.opengl.GL11.glTexCoord2f(1.0F, 1.0F);
+                org.lwjgl.opengl.GL11.glVertex2f(1.0F, 1.0F);
+                org.lwjgl.opengl.GL11.glTexCoord2f(0.0F, 1.0F);
+                org.lwjgl.opengl.GL11.glVertex2f(-1.0F, 1.0F);
+                org.lwjgl.opengl.GL11.glEnd();
+                System.out.println("[Celtium] CELTIUM_DEBUG_ATLAS_QUAD drawn texture=" + id);
+            } catch (RuntimeException | LinkageError error) {
+                System.out.println("[Celtium] CELTIUM_DEBUG_ATLAS_QUAD refused: " + error);
+            }
+        }
         try {
             VulkanGlTexture texture = celtium$registry().get(id, false);
             if (texture == null) {
