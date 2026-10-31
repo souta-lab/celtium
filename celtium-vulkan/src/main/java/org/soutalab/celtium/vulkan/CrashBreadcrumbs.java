@@ -60,9 +60,26 @@ public final class CrashBreadcrumbs {
         int count = Math.min(cursor, CAPACITY);
         System.out.println("[Celtium] CELTIUM_CRASH_BREADCRUMBS trigger=" + trigger + " count=" + count
                 + " (renderer operations before the device loss, oldest first)");
+        StringBuilder report = new StringBuilder(2048);
+        report.append("Celtium device loss\n");
+        report.append("trigger: ").append(trigger).append('\n');
+        report.append("A device loss cannot be recovered in this process: the renderer stops issuing work and the\n");
+        report.append("window keeps showing whatever was last presented (the tester's black screen). These are the\n");
+        report.append("renderer operations recorded before the loss, oldest first.\n\n");
         for (int i = 0; i < count; i++) {
             int index = Math.floorMod(cursor - count + i, CAPACITY);
-            System.out.println("[Celtium] CELTIUM_CRUMB #" + i + " " + describe(CODES[index], FIRST[index], SECOND[index]));
+            String line = describe(CODES[index], FIRST[index], SECOND[index]);
+            System.out.println("[Celtium] CELTIUM_CRUMB #" + i + " " + line);
+            report.append('#').append(i).append(' ').append(line).append('\n');
+        }
+        // Written beside the game (the working directory is the instance's minecraft/) so a tester's black screen comes
+        // with a file to attach, instead of a log they have to search for the crumbs in.
+        try {
+            java.nio.file.Path path = java.nio.file.Paths.get("celtium-device-lost.log");
+            java.nio.file.Files.write(path, report.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            System.out.println("[Celtium] CELTIUM_CRASH_BREADCRUMBS wrote " + path.toAbsolutePath());
+        } catch (RuntimeException | java.io.IOException ignored) {
+            // A report that cannot be written must not change how the loss is handled.
         }
     }
 
