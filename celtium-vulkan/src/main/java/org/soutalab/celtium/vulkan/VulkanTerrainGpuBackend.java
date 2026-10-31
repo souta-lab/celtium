@@ -2413,13 +2413,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private VulkanImmediateTexturePipeline celtium$recordsPipeline(VulkanImmediateTexturePipeline state) {
         if (state.celtium$positionOnly() || state.celtium$positionNoTexture()) {
+            // Measured with twins for these variants: the refusals fell, but runs still closed every group - the indirect
+            // key names each group's own vertex and index buffer, and a group's mesh is its own buffer (key-change
+            // 26,950 and stride-alignment refusals 18,711 in one world leg), so a run could not span two groups and the
+            // run path only cost more (P50 2.66 -> 5.94 ms with the flag on). The twins stay behind this refusal until
+            // groups share a geometry arena.
+            return null;
+        }
+        if (state.celtium$texGen()) {
+            // The texgen variant computes texture coordinates in the vertex stage from state the record does not carry;
+            // the position variants do have record-reading twins now, so only this one is refused.
             return null;
         }
         VulkanImmediateTexturePipeline twin = this.recordsPipelines.get(state);
         if (twin == null) {
-            twin = VulkanImmediateTexturePipeline.createRecords(this.context, state.celtium$renderPass(),
-                    state.celtium$colorBlend(), state.celtium$depthTests(), state.celtium$depthWrites(),
-                    state.celtium$culls(), state.celtium$depthCompareOp(), this.drawRecords.descriptorSetLayout());
+            twin = VulkanImmediateTexturePipeline.createRecordsLike(this.context, state,
+                    this.drawRecords.descriptorSetLayout());
             this.recordsPipelines.put(state, twin);
         }
         return twin;
@@ -2445,6 +2454,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         boolean itemFamily = prepared.pipeline instanceof VulkanImmediateItemPipeline item && item.lit();
         boolean colourFamily = prepared.pipeline instanceof VulkanImmediatePipeline;
         if (!texturedFamily && !itemFamily && !colourFamily) {
+            celtium$noteIndirectRefusal("family:" + prepared.pipeline.getClass().getSimpleName());
             celtium$flushIndirectRun("family");
             return false;
         }
@@ -2452,6 +2462,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // refused group from leaving a half-built run behind.
         if (texturedFamily && (((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$texGen()
                 || celtium$recordsPipeline((VulkanImmediateTexturePipeline) prepared.pipeline) == null)) {
+            VulkanImmediateTexturePipeline refused = (VulkanImmediateTexturePipeline) prepared.pipeline;
+            celtium$noteIndirectRefusal(refused.celtium$texGen() ? "texGen"
+                    : refused.celtium$positionOnly() ? "positionOnly" : "positionNoTexture");
             celtium$flushIndirectRun("texture-twin");
             return false;
         }
@@ -2555,6 +2568,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Issues the open run as one vkCmdDrawIndexedIndirect. */
     /** Where an indirect run was closed, by short reason, for the run-formation census. */
     private final java.util.Map<String, Integer> indirectFlushReasons = new java.util.LinkedHashMap<String, Integer>();
+    /** Why groups were refused before a run could start, by short name. */
+    private final java.util.Map<String, Integer> indirectRefusalCounts = new java.util.LinkedHashMap<String, Integer>();
+
+    private void celtium$noteIndirectRefusal(String reason) {
+        Integer seen = this.indirectRefusalCounts.get(reason);
+        this.indirectRefusalCounts.put(reason, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+    }
+
 
     void celtium$flushIndirectRun() {
         celtium$flushIndirectRun("unknown");
@@ -2875,6 +2896,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " other=" + this.reorderRejectOther + " accept=" + this.reorderAccept + "]]"
                 + " modelMerge[draws=" + this.modelRunsDrawn + " merged=" + this.modelRunsMerged + "]"
                 + " runFlush" + this.indirectFlushReasons
+                + " refuse" + this.indirectRefusalCounts
                 + " indirect[runs=" + this.indirectRunsIssued + " singletons=" + this.indirectSingletonRuns
                 + " groups=" + this.indirectGroupsIssued
                 + " runsPerFrameX100=" + this.celtium$indirectRunsPerFrameX100() + "]"

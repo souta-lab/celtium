@@ -46,6 +46,10 @@ public final class SpirvShaders {
     public static final String IMMEDIATE_POSITION_RECORDS_VERTEX = "immediate_position_records.vert";
     /** The record-reading form of the position-plus-texture variant: sky, clouds and the water surface. */
     public static final String IMMEDIATE_POSITION_TEX_RECORDS_VERTEX = "immediate_position_tex_records.vert";
+    /** Record-reading fragment for the position-only variant, with the matte and fog taken from the record. */
+    public static final String IMMEDIATE_POSITION_RECORDS_FRAGMENT = "immediate_position_records.frag";
+    /** Record-reading fragment for the position-plus-texture variant. */
+    public static final String IMMEDIATE_POSITION_TEX_RECORDS_FRAGMENT = "immediate_position_tex_records.frag";
 
     public static final String UI_VERTEX = "ui_quad.vert";
 

@@ -1,44 +1,28 @@
 #version 450
+// Record-reading form of immediate_position.vert (no texture).
 
-// Celtium - immediate-mode geometry with no texture and no vertex colour: POSITION, twelve bytes, the layout
-// RenderGlobal builds its sky dome, its stars and its horizon plane in (DefaultVertexFormats.POSITION) and the one the
-// GL-less stub decodes out of glDrawArrays. The colour arrives in the push constant block, because the format has no
-// colour element.
-
-// Celtium - the record-reading form of immediate_position.vert: the same 208-byte block, taken from the draw-record storage buffer at
-// set 1 and indexed by gl_InstanceIndex. The array's stride is 224, which is what the trailing pad is for.
 struct DrawRecord {
-    mat4 u_ProjectionMatrix;   // 0
-    vec4 u_A;                  // 64: dead model-view column, or the texture matrix's a,b,c,d
-    vec4 u_B;                  // 80: the second dead column, or tx,ty and the enable flag
-    vec4 u_C;                  // 96: x is the current colour's alpha for the colourless layouts
-    vec4 u_AlphaColour;        // 112: x alpha reference, yzw the current glColor's rgb
-    vec4 u_FogColor;           // 128
-    vec4 u_FogParams;          // 144
-    vec4 u_FogRow0;            // 160
-    vec4 u_FogRow1;            // 176
-    vec4 u_FogRow2;            // 192
-    vec4 u_RecordPad;          // 208: pad to the 224-byte stride
+    mat4 u_ProjectionMatrix;
+    vec4 u_TexA;
+    vec4 u_TexB;
+    vec4 u_TexPad;
+    vec4 u_AlphaColour;
+    vec4 u_FogColor;
+    vec4 u_FogParams;
+    vec4 u_FogRow0;
+    vec4 u_FogRow1;
+    vec4 u_FogRow2;
+    vec4 u_RecordPad;
 };
-
-layout(std430, set = 1, binding = 0) readonly buffer DrawRecords {
-    DrawRecord records[];
-};
+layout(std430, set = 1, binding = 0) readonly buffer DrawRecords { DrawRecord records[]; };
 
 layout(location = 0) in vec3 a_Position;
-
 layout(location = 0) out vec4 v_Color;
 layout(location = 1) out float v_FogDistance;
+layout(location = 2) flat out vec4 v_Matte;
+layout(location = 3) flat out vec4 v_FogColour;
+layout(location = 4) flat out vec4 v_FogParams;
 
-/**
- * The fog coordinate, in eye space: {@code M * position} for this batch's own model view.
- * <p>
- * The three rows above are the affine model view the batch was offered under, so this is exact both for camera-space
- * geometry (the sky dome, whose model view is the camera rotation alone) and for object-space geometry (a TESR drawing
- * a model at its block's translation). The fixed pipeline computes its fog from the same transformed position.
- * Planar fog - the eye-space depth - is the OpenGL default; radial is what {@code EntityRenderer.setupFog} asks for
- * with {@code GL_NV_fog_distance}, and what the terrain path in this renderer already uses.
- */
 float celtiumFogDistance(in DrawRecord record, vec3 position) {
     vec3 eye = vec3(dot(position, record.u_FogRow0.xyz) + record.u_FogRow0.w,
                     dot(position, record.u_FogRow1.xyz) + record.u_FogRow1.w,
@@ -49,12 +33,10 @@ float celtiumFogDistance(in DrawRecord record, vec3 position) {
 
 void main() {
     DrawRecord record = records[gl_InstanceIndex];
-    // The combined projection-times-model-view arrives in u_ProjectionMatrix, so this shader multiplies once. It used to
-    // rebuild the model view from the three columns with a hardcoded fourth; when the writer started sending the product and
-    // zeroing the columns, that rebuild became a zero matrix and every position-only vertex collapsed to the translation point.
-    gl_Position = record.u_ProjectionMatrix * vec4(a_Position, 1.0);
-    v_Color = vec4(record.u_AlphaColour.y, record.u_AlphaColour.z, record.u_AlphaColour.w, record.u_C.x);
-    // Mode 0 means "no fog for this batch", and the rows above are then whatever the previous group left in the shared
-    // push block, so the coordinate is not computed at all in that case.
+    v_Color = vec4(record.u_AlphaColour.yzw, record.u_TexPad.x);
+    v_Matte = record.u_AlphaColour;
+    v_FogColour = record.u_FogColor;
+    v_FogParams = record.u_FogParams;
     v_FogDistance = (int(record.u_FogParams.w + 0.5) & 7) == 0 ? 0.0 : celtiumFogDistance(record, a_Position);
+    gl_Position = record.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

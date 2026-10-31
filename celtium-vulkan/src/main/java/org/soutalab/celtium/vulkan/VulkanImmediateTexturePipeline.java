@@ -220,6 +220,22 @@ public final class VulkanImmediateTexturePipeline {
      * Creates the record-reading variant: the same textured family, with the block taken from the records buffer at set 1
      * and drawn through {@link #drawIndirectRange}.
      */
+    /**
+     * The record-reading twin of an existing pipeline, keeping its variant flags (position-only, position-no-texture,
+     * combine) so the twin's vertex stride and shader pair match the groups it will draw.
+     */
+    public static VulkanImmediateTexturePipeline createRecordsLike(VulkanContext context,
+            VulkanImmediateTexturePipeline state, long recordsSetLayout) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, state.celtium$renderPass(),
+                state.celtium$colorBlend(), state.celtium$depthTests(), state.celtium$depthWrites(),
+                state.celtium$culls(), state.celtium$depthCompareOp());
+        pipeline.records = true;
+        pipeline.recordsLayout = recordsSetLayout;
+        pipeline.positionOnly = state.celtium$positionOnly();
+        pipeline.positionNoTexture = state.celtium$positionNoTexture();
+        return pipeline.build();
+    }
+
     public static VulkanImmediateTexturePipeline createRecords(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp,
             long recordsSetLayout) {
@@ -1067,11 +1083,15 @@ public final class VulkanImmediateTexturePipeline {
             ByteBuffer vertexCode = SpirvShaders.load(this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_VERTEX
                     : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_VERTEX
                     : this.records && this.arrayRecords ? SpirvShaders.IMMEDIATE_TEX_COLOR_ARRAY_VERTEX
+                    : this.records && this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_RECORDS_VERTEX
+                    : this.records && this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_RECORDS_VERTEX
                     : this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX
                     : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
                     : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(this.records && this.arrayRecords
                     ? SpirvShaders.IMMEDIATE_TEX_COLOR_ARRAY_FRAGMENT
+                    : this.records && this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_RECORDS_FRAGMENT
+                    : this.records && this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_RECORDS_FRAGMENT
                     : this.records ? SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_FRAGMENT
                     : this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_FRAGMENT
                 : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_FRAGMENT
