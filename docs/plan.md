@@ -96,7 +96,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 
 ## FPSの現状と残る道（2026-10-31実測）
 
-- cool ABBA: Susy **1.48×**（2.77 vs 1.87ms）、ATM3 **~1.45×**。CPU律速（client thread 94.3% of wall、GPUは地形375us＋immediates 48usで待ち）。
+- cool ABBA（rc.19）: Susy **1.42×**（2.47 vs 1.74ms）、ATM3 **~1.45×**。CPU律速（client thread 94.3% of wall、GPUは地形375us＋immediates 48usで待ち）。
 - 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier/submit各0.1）。30 windows・112 groups/frame。
 - 除去済み: raw-write flush -38%、published遷移 3.5→0.8%、epoch spin 3.0→0、nanoTime 1.2→0、window構造体再生成廃止。
 - 残差の主因はwindow固定費とper-batch呼び出し。parityにはarray-records（下記）が必要。
