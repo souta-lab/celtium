@@ -363,3 +363,9 @@ GPUに十分な候補が残った時のみ実行。
 
 **注意**: bindless setはrecorded bufferが名前を残したまま書き換わるためUPDATE_AFTER_BIND前提。array indexの寿命はwindow内で固定（arrayはresetされない）。
 
+
+### 主要描画は model multi-draw run（2026-10-31 判明）
+
+`drawn[perFrame]=112` の正体を追跡: それは即時groupではなく **`ModelReplay.celtium$drawModelRun`（1回で1 run）**。各runは`modelInstances.draw(cmd, run, textureArray.set(), multiDrawIndirect, projection, fog)`を発行し、**texture array + multi-draw indirect** で既にまとめて描かれている。つまりbindlessはモデル経路で稼働済みで、即時group経路(1 group/frame)とは別物。
+
+したがって残るper-batchコストの主因は **112 model run/frame × 1 multiDrawIndirect呼び出しのCPU**。削減は「(pipeline, projection, fog)が同じrunを1つのmultiDrawIndirectに合流させる」ことで、既存のrun buffer/indirect基盤をそのまま使える見込み。draw-key censusの54材料もこのrun集合の話として読み直す必要がある（即時pathの値ではない）。
