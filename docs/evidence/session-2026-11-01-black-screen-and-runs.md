@@ -67,3 +67,12 @@ Environment left for the tester: their instance carries rc.25 in `mods/`, `confi
   warm P50 4.39 ms in the loaded machine state (the same state that read 5.7 ms for Susy; not a cool number).
 - rc.25, Susy menu smoke: 3899/3899 presents, no device loss, no validation messages, no device-loss file.
 - rc.25, Susy world: canonical plain gate PASSED with floors enforced and the presented image judged.
+
+## The fatal transition itself, on rc.25
+
+The tester's startup goes windowed (854x480) then fullscreen (1920x1080) - the transition the earlier session
+already called the launcher's fatal one. On rc.25 the same transition is exercised deliberately in one world leg:
+`debugResizeAfterFrames=120 debugResizeTo=1280x720` reported `ok=true` and `debugFullscreenAfterFrames=240`
+reported `ok=true`, the swapchain rebuilt, and the leg finished with **device loss 0, GPUVM fault 0, VUID 0**, no
+device-loss file, and the world gate still judging the presented image. That is the mechanism the two rc.24 fixes
+target, exercised end to end on this machine; the tester's own launch of rc.25 remains the confirmation owed.
