@@ -93,6 +93,8 @@ public final class VulkanGlTexture {
      */
     /** How many CELTIUM_UPLOAD_EXTENT lines this process has printed; bounded so a run's log stays readable. */
     private static int UPLOAD_EXTENT_LOGS;
+    /** How many CELTIUM_MIRROR_RECREATE lines this process has printed. */
+    private static int RECREATE_LOGS;
 
     private static final int IMAGE_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -2740,6 +2742,11 @@ public final class VulkanGlTexture {
 
     private void recreateImageResources(int newWidth, int newHeight) {
         requireOwned("resizing the image");
+        if (RECREATE_LOGS < 32) {
+            RECREATE_LOGS++;
+            System.out.println("[Celtium] CELTIUM_MIRROR_RECREATE texel=" + this.encodeLabel + " from=" + this.width
+                    + "x" + this.height + " to=" + newWidth + "x" + newHeight + " levels=" + this.mipLevels);
+        }
         destroyImageResources();
         createImageResources(newWidth, newHeight);
         // The new image is in VK_IMAGE_LAYOUT_UNDEFINED for every level, and the next write may be a patch, which only

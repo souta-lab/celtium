@@ -203,6 +203,8 @@ public final class VulkanTextureRegistry {
     private final java.util.Map<Integer, Integer> droppedAnnouncementsById = new java.util.HashMap<Integer, Integer>();
     /** Lines printed, bounded like every other per-texture census in this class. */
     private static final int MIRROR_SOURCE_LOG_LIMIT = 16;
+    /** Bounded count of CELTIUM_ANNOUNCE_EXTENT lines, so an announcement-heavy run stays readable. */
+    private static int ANNOUNCE_EXTENT_LOGS;
     private int mirrorSourceLogs;
     /** Announcements an image-less delete kept alive, because no mirror had consumed them yet. */
     private int retainedAnnouncements;
@@ -968,6 +970,12 @@ public final class VulkanTextureRegistry {
                 this.mutations++;
         celtium$dropMemo();
                 this.mirrorCount++;
+            }
+            if (ANNOUNCE_EXTENT_LOGS < 32) {
+                ANNOUNCE_EXTENT_LOGS++;
+                System.out.println("[Celtium] CELTIUM_ANNOUNCE_EXTENT id=" + glTextureId + " announced=" + width + "x"
+                        + height + " image=" + texture.width() + "x" + texture.height()
+                        + " rebuild=" + (texture.width() != width || texture.height() != height));
             }
             if (texture.uploadFromNamedImage(glTextureId, width, height, rgba)) {
                 // Counted only when the pixels were transferred, and the metadata follows the image: a full upload may resize

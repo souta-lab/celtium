@@ -14139,12 +14139,37 @@ this.frameBufferOpen = false;
      */
     private static volatile int DEBUG_MIRROR_GL_ID;
     private boolean debugAnnounceDone;
+    private int debugGrowthStep;
 
     public static void celtium$requestDebugMirror(int glTextureId) {
         DEBUG_MIRROR_GL_ID = glTextureId;
     }
 
     private void celtium$debugMirrorRequest() {
+        String growth = System.getProperty("celtium.debug.announceGrowth");
+        if (growth != null && !growth.isEmpty()) {
+            // The tester's atlas is announced once at its final size, but the mirror that loses the device may be the one
+            // recreated from an earlier, smaller image. This grows one texture across frames (small first, then the
+            // atlas size) so the recreate-while-frames-are-queued window is exercised.
+            //   -Dceltium.debug.announceGrowth=512x512,4096x4224
+            String[] steps = growth.toLowerCase(java.util.Locale.ROOT).split(",");
+            if (this.debugGrowthStep < steps.length) {
+                String[] parts = steps[this.debugGrowthStep].trim().split("x");
+                this.debugGrowthStep++;
+                try {
+                    int width = Integer.parseInt(parts[0].trim());
+                    int height = Integer.parseInt(parts[1].trim());
+                    java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                            java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                    System.out.println("[Celtium] CELTIUM_DEBUG_GROWTH step=" + this.debugGrowthStep + " size=" + width
+                            + "x" + height);
+                    celtium$registry().announceImage(9998, image);
+                    System.out.println("[Celtium] CELTIUM_DEBUG_GROWTH step=" + this.debugGrowthStep + " done");
+                } catch (RuntimeException | LinkageError error) {
+                    System.out.println("[Celtium] CELTIUM_DEBUG_GROWTH refused: " + error);
+                }
+            }
+        }
         String large = System.getProperty("celtium.debug.announceLarge");
         if (large != null && !large.isEmpty() && !this.debugAnnounceDone) {
             // The tester's atlas arrives as an announced image; this is the same announcement, at the same 4096x4224 the
