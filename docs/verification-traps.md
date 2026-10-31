@@ -214,3 +214,11 @@ capture 条件が満たされない）。
 ## material順ソートは効かなかった（2026-10-31 A/B）
 
 `-Dceltium.vulkan.sortOpaque=true` のABBA A/B（Susy world、同一JAR・交互2legずつ）: **ON 2.538ms / OFF 2.508ms** = ONが1.2%悪化。理由は構造的で、並べ替えてもgroupごとの**push定数（行列）が異なる**ためbind/pushの削減に繋がらず、ソート自体のコストだけ増える。reorderable母集団は約2割ある（depth-write OFFが最大の非対象）が、それでも効果なし。再入条件は「records方式でpushをレコード化し、array setでtextureを外した状態」で並べ替えること（その時点で初めて並べ替えがrun形成に効く）。
+
+## ATM3 leg の `--duration` は起動込みの実時間上限（2026-10-31）
+
+ATM3（約250 mods）は relauncher のステージング＋world load に 250-400s かかる。`--duration 300` は
+**ゲーム起動から数えた実時間の上限**なので、world に入る前に打ち切られ `fixtureStatus=MISSING`
+（`endedBy=time-limit`, `elapsedSeconds≈300`）になる。検証では 400-500s の leg も同様に走り切らない
+ことがあった。ATM3 の計測は **`--duration >= 700`・harness timeout >= 1800s** で行い、ABBA を回すなら
+1.5-2 時間の枠を確保する。Susy（軽量）は `--duration 300` で足りる。
