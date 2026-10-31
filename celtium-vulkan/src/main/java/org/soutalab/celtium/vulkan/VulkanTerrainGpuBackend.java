@@ -1103,7 +1103,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // A mid-frame reset discards the frame buffer too: the unified flag must not
                 // describe a buffer whose next begin thinks it is still recording.
                 this.frameBufferOpen = false;
-                this.immediateGroups.addAll(0, this.recordedImmediateGroups);
+                this.groupQueueMutation++;
+                    this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                 this.recordedImmediateGroups.clear();
                 beginCommands();
                 gpuMark("pre-acq1");
@@ -7711,6 +7712,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         this.immediateStatistics.addImmediateRecordedBatches(-(batches));
                         if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
                     }
+                    this.groupQueueMutation++;
                     this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                     this.recordedImmediateGroups.clear();
                     int retainedBatches = 0;
@@ -7802,7 +7804,8 @@ this.frameBufferOpen = false;
         for (ImmediateGroup group : this.immediateGroups) {
             ImmediateGroup.recycle(group);
         }
-        this.immediateGroups.clear();
+        this.groupQueueMutation++;
+            this.immediateGroups.clear();
     }
 
     /**
@@ -9460,6 +9463,7 @@ this.frameBufferOpen = false;
                         this.immediateStatistics.addImmediateRecordedBatches(-(batches));
                         if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
                     }
+                    this.groupQueueMutation++;
                     this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                     this.recordedImmediateGroups.clear();
                     if (opened) {
@@ -10288,13 +10292,33 @@ this.frameBufferOpen = false;
         return count;
     }
 
+    /**
+     * The number of queued groups that would draw into {@code targetIdentity}.
+     * <p>
+     * The question is asked before every flush attempt - thousands of times a frame, because the game calls a GL draw or
+     * bind constantly - and the queue holds a frame's groups, so answering it with a scan spent the flush path's budget
+     * on counting. Membership changes only where the queue changes, so the answer is cached against a mutation stamp; a
+     * repeat ask for the same target costs a compare. Mesh state cannot change while a group sits in the queue, because a
+     * drawn group leaves it through the same mutations.
+     */
+    private long groupQueueMutation;
+    private long cachedCountTarget = Long.MIN_VALUE;
+    private long cachedCountMutation = -1L;
+    private int cachedCountValue;
+
     int countGroupsForTarget(long targetIdentity) {
+        if (targetIdentity == this.cachedCountTarget && this.groupQueueMutation == this.cachedCountMutation) {
+            return this.cachedCountValue;
+        }
         int count = 0;
         for (ImmediateGroup group : this.immediateGroups) {
             if (group.target == targetIdentity && !group.mesh.isEmpty()) {
                 count++;
             }
         }
+        this.cachedCountTarget = targetIdentity;
+        this.cachedCountMutation = this.groupQueueMutation;
+        this.cachedCountValue = count;
         return count;
     }
 
@@ -10882,7 +10906,8 @@ this.frameBufferOpen = false;
             this.currentGeometryLease = null;
             group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(),
                     group.geometryLease != null, this.worldEpoch);
-            this.immediateGroups.add(group);
+            this.groupQueueMutation++;
+                    this.immediateGroups.add(group);
             if (this.currentGroupTarget != this.targetRegistry.mainIdentity()
                     && this.groupCloseDebugLines < 12) {
                 this.groupCloseDebugLines++;
@@ -10928,7 +10953,8 @@ this.frameBufferOpen = false;
         for (ImmediateGroup group : this.immediateGroups) {
             this.retiredImmediateGroups.add(group);
         }
-        this.immediateGroups.clear();
+        this.groupQueueMutation++;
+            this.immediateGroups.clear();
         this.pendingImmediateIndices = 0;
         if (this.currentGeometryLease != null) {
             this.currentGeometryLease.close();
@@ -11692,6 +11718,7 @@ this.frameBufferOpen = false;
         int orphans = this.immediateGroups.size();
         if (orphans > 0) {
             this.retiredImmediateGroups.addAll(this.immediateGroups);
+            this.groupQueueMutation++;
             this.immediateGroups.clear();
             this.pendingImmediateIndices = 0;
             this.immediateStatistics.addGroupsDiscardedAtWorldTeardown(orphans);
