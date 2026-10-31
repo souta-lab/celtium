@@ -8853,6 +8853,7 @@ this.frameBufferOpen = false;
             // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
             // which is the only way to price the command itself without the rest of the frame in the way.
             celtium$runDrawBench();
+            celtium$debugMirrorRequest();
             // The last window's records just landed in the frame buffer; end and queue it before the batch flush
             // sends the frame's work to the driver in logical order.
             // The frame's wall clock split. A sampling profiler cannot see a thread that is waiting, and the gap to the
@@ -14129,6 +14130,39 @@ this.frameBufferOpen = false;
     private transient VulkanDynamicMesh lastDrawnMesh;
     private int drawBenchDone;
     private long drawBenchBestNanos = Long.MAX_VALUE;
+
+    /**
+     * Debug: mirror one GL texture exactly the way a group draw resolves it. The tester's black screen ends on the
+     * font atlas' 4096x4224 announcement upload, which needs a group that samples the atlas to happen - a leg whose
+     * menus draw the atlas through the renderer's own font path never reaches it. This request is the bridge: it asks
+     * the registry for that texture and uploads it, once, through the same code the group path uses.
+     */
+    private static volatile int DEBUG_MIRROR_GL_ID;
+
+    public static void celtium$requestDebugMirror(int glTextureId) {
+        DEBUG_MIRROR_GL_ID = glTextureId;
+    }
+
+    private void celtium$debugMirrorRequest() {
+        int id = DEBUG_MIRROR_GL_ID;
+        if (id <= 0) {
+            return;
+        }
+        DEBUG_MIRROR_GL_ID = 0;
+        try {
+            VulkanGlTexture texture = celtium$registry().get(id, false);
+            if (texture == null) {
+                System.out.println("[Celtium] CELTIUM_DEBUG_MIRROR id=" + id + " no wrapper");
+                return;
+            }
+            System.out.println("[Celtium] CELTIUM_DEBUG_MIRROR id=" + id + " size=" + texture.width() + "x"
+                    + texture.height() + " image=" + Long.toHexString(texture.image()));
+            texture.uploadFromGlTexture(id, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+            System.out.println("[Celtium] CELTIUM_DEBUG_MIRROR id=" + id + " uploaded");
+        } catch (RuntimeException | LinkageError error) {
+            System.out.println("[Celtium] CELTIUM_DEBUG_MIRROR id=" + id + " refused: " + error);
+        }
+    }
 
     private void celtium$runDrawBench() {
         if (DRAW_BENCH <= 0 || this.drawBenchDone >= 8 || this.lastDrawnMesh == null || this.commandBuffer == null) {
