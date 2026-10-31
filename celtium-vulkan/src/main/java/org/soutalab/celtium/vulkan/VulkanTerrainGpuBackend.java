@@ -14138,12 +14138,32 @@ this.frameBufferOpen = false;
      * the registry for that texture and uploads it, once, through the same code the group path uses.
      */
     private static volatile int DEBUG_MIRROR_GL_ID;
+    private boolean debugAnnounceDone;
 
     public static void celtium$requestDebugMirror(int glTextureId) {
         DEBUG_MIRROR_GL_ID = glTextureId;
     }
 
     private void celtium$debugMirrorRequest() {
+        String large = System.getProperty("celtium.debug.announceLarge");
+        if (large != null && !large.isEmpty() && !this.debugAnnounceDone) {
+            // The tester's atlas arrives as an announced image; this is the same announcement, at the same 4096x4224 the
+            // font atlas has, so the 66 MiB transfer and its image can be exercised on a leg whose menus never sample
+            // the atlas. -Dceltium.debug.announceLarge=4096x4224
+            this.debugAnnounceDone = true;
+            try {
+                String[] parts = large.toLowerCase(java.util.Locale.ROOT).split("x");
+                int width = Integer.parseInt(parts[0].trim());
+                int height = Integer.parseInt(parts[1].trim());
+                java.awt.image.BufferedImage image =
+                        new java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                System.out.println("[Celtium] CELTIUM_DEBUG_ANNOUNCE id=9999 size=" + width + "x" + height);
+                celtium$registry().announceImage(9999, image);
+                System.out.println("[Celtium] CELTIUM_DEBUG_ANNOUNCE done");
+            } catch (RuntimeException | LinkageError error) {
+                System.out.println("[Celtium] CELTIUM_DEBUG_ANNOUNCE refused: " + error);
+            }
+        }
         int id = DEBUG_MIRROR_GL_ID;
         if (id <= 0) {
             return;
