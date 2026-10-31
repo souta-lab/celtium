@@ -1651,7 +1651,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // frame; the values still come from GL every time, because a mod may change its clear colour.
                 if (this.clearRange == null) {
                     this.clearRange = VkImageSubresourceRange.malloc();
-                    this.clearRange.levelCount(1).layerCount(1);
+                    // All four fields, not two: malloc memory is not zeroed, and the clear read a garbage baseArrayLayer
+                    // (1163873110 in the validation message) because only the counts were set. The canonical gate caught
+                    // it as VUID-vkCmdClearColorImage-baseArrayLayer-01472 on a plain leg.
+                    this.clearRange.baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
                     this.clearColour = VkClearColorValue.malloc();
                     this.clearDepthValue = VkClearDepthStencilValue.malloc();
                     this.clearColourFloats = new float[4];
