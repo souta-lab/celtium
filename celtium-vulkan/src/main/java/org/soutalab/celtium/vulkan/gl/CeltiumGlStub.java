@@ -4732,6 +4732,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0D55: return 8; // GL_ALPHA_BITS
             case 0x0D56: return 24; // GL_DEPTH_BITS
             case 0x0D57: return 0; // GL_STENCIL_BITS - this renderer keeps no stencil
+            // Display/format probes: the window is double buffered, not stereo, and the delivered frame has no MSAA.
+            case 0x0C32: return 1; // GL_DOUBLEBUFFER
+            case 0x0C33: return 0; // GL_STEREO
+            case 0x80A8: return 0; // GL_SAMPLE_BUFFERS
+            case 0x80A9: return 0; // GL_SAMPLES
+            case 0x8D57: return 0; // GL_MAX_SAMPLES
             case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
                 return this.drawFbo == 0 ? 0x0405 : 0x8CE0;
             case 0x0C02: // GL_READ_BUFFER
