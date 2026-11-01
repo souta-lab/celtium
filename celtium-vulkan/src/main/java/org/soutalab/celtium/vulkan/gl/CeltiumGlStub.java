@@ -7895,7 +7895,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int stride = this.vertexPointerStride;
         if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT || this.vertexPointerOffset != 0L
-                || (stride != 12 && stride != 24)) {
+                || (stride != 12 && stride != 24 && stride != 32)) {
             return;
         }
         java.nio.ByteBuffer vertices;
@@ -7940,7 +7940,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         int vertexCount = vertices.capacity() / stride;
+        if (stride == 32 && formatId != 8 && formatId != 9) {
+            return;
+        }
         java.nio.ByteBuffer expanded = org.lwjgl.system.MemoryUtil.memAlloc(count * stride);
+        java.nio.ByteBuffer packed = null;
         try {
             for (int i = 0; i < count; i++) {
                 long at = indices + (long) i * indexSize;
@@ -7957,15 +7961,26 @@ public final class CeltiumGlStub implements FunctionProvider {
                         org.lwjgl.system.MemoryUtil.memAddress(vertices) + (long) index * stride,
                         org.lwjgl.system.MemoryUtil.memAddress(expanded) + (long) i * stride, stride);
             }
+            // The 32-byte forms carry a padded attribute the reference decoder repacks (to 28 or 24 bytes); the
+            // same helper runs on the expanded batch so the submit stride and layout match the format id.
+            int submitStride = stride;
+            if (stride == 32) {
+                packed = celtium$copyClientVerticesForDraw(org.lwjgl.system.MemoryUtil.memAddress(expanded), count,
+                        stride, formatId);
+                submitStride = formatId == 9 ? 24 : 28;
+            }
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend != null) {
-                backend.submitImmediateBatch(null, stride, formatId,
-                        org.lwjgl.system.MemoryUtil.memAddress(expanded), count, mode);
+                backend.submitImmediateBatch(null, submitStride, formatId,
+                        org.lwjgl.system.MemoryUtil.memAddress(packed != null ? packed : expanded), count, mode);
             }
         } catch (RuntimeException | LinkageError error) {
             // A malformed batch draws nothing; a half-built one must not reach the backend either.
         } finally {
+            if (packed != null) {
+                org.lwjgl.system.MemoryUtil.memFree(packed);
+            }
             org.lwjgl.system.MemoryUtil.memFree(expanded);
         }
     }
