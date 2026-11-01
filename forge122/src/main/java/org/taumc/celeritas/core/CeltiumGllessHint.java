@@ -168,6 +168,23 @@ public final class CeltiumGllessHint {
      * attribute counts a GL 3.0 profile guarantees - and anything unknown is written as 0 rather than left as
      * uninitialised memory.
      */
+    /** LWJGL3's tex-parameter query natives: the bind state the stub records answers them. */
+    public static void glGetTexParameteriv(int target, int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameteriv", target, pname, params);
+    }
+
+    public static void glGetTexParameterfv(int target, int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameterfv", target, pname, params);
+    }
+
+    public static void glGetTexParameterIiv(int target, int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameterIiv", target, pname, params);
+    }
+
+    public static void glGetTexParameterIuiv(int target, int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameterIuiv", target, pname, params);
+    }
+
     /** LWJGL3's {@code nglGetBooleanv}: the query family's boolean side. */
     public static void glGetBooleanv(int pname, long params) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBooleans(pname, params);

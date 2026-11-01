@@ -4631,6 +4631,31 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
+    /** The non-DSA tex-parameter query: (target, pname, out) on the texture bound to that target's active unit. */
+    private void getTexParameterQuery(String name, int target, int paramPname, long out) {
+        int textureName = 0;
+        if (!isProxyTarget(target)) {
+            int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
+            textureName = bound < 0 ? 0 : bound;
+        }
+        int value = textureParameterValue(textureName, paramPname);
+        celtium$noteTextureParameterQuery(name, textureName, paramPname, value,
+                textureParameterRecorded(textureName, paramPname));
+        if (name.endsWith("fv")) {
+            MemoryUtil.memPutFloat(out, value);
+        } else {
+            memPutInt(out, value);
+        }
+    }
+
+    /** LWJGL3's tex-parameter query natives, which bypass the dispatch path; see {@link #getTexParameterQuery}. */
+    public static void celtium$getTexParameter(String name, int target, int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && out != 0L) {
+            stub.getTexParameterQuery(name, target, pname, out);
+        }
+    }
+
     private int getIntegerValue(int pname) {
         switch (pname) {
             case 0x0BE1: // GL_BLEND_SRC
@@ -8045,22 +8070,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if (fn.name.startsWith("glGetTexParameter")) {
-            // The non-DSA form: (target, pname, out) applies to the texture bound to the target on the active unit.
-            int target = (int) c[0];
-            int paramPname = (int) c[1];
-            int textureName = 0;
-            if (!isProxyTarget(target)) {
-                int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
-                textureName = bound < 0 ? 0 : bound;
-            }
-            int value = textureParameterValue(textureName, paramPname);
-            celtium$noteTextureParameterQuery(fn.name, textureName, paramPname, value,
-                    textureParameterRecorded(textureName, paramPname));
-            if (fn.name.endsWith("fv")) {
-                MemoryUtil.memPutFloat(out, value);
-            } else {
-                memPutInt(out, value);
-            }
+            getTexParameterQuery(fn.name, (int) c[0], (int) c[1], out);
             return;
         }
         if (fn.name.startsWith("glGetNamedFramebufferAttachmentParameter")

@@ -613,6 +613,23 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // The tex-parameter queries: the stub records wrap/filter state and answers the dispatch path, but LWJGL3's
+        // own natives bypassed it, so a mod that saved and restored a filter read zero.
+        if (returnType.equals("V") && "(IIJ)".equals(descriptor)) {
+            String query = name.endsWith("nglGetTexParameteriv") ? "glGetTexParameteriv"
+                    : name.endsWith("nglGetTexParameterfv") ? "glGetTexParameterfv"
+                    : name.endsWith("nglGetTexParameterIiv") ? "glGetTexParameterIiv"
+                    : name.endsWith("nglGetTexParameterIuiv") ? "glGetTexParameterIuiv" : null;
+            if (query != null) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        query, "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            }
+        }
         // The boolean query family: nglGetIntegerv/nglGetFloatv were routed, nglGetBooleanv was not, so every
         // glGetBoolean/glGetBooleanv answered zero - the model state probe measured glGetBoolean(depth mask)=false
         // against a mirror that had writes enabled.
