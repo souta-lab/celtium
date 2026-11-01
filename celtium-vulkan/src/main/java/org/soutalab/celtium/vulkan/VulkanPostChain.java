@@ -1000,7 +1000,8 @@ public final class VulkanPostChain {
             // would let a reader believe it is a different one. The label is the reading aid; the pass index is what
             // makes a line attributable ("pass 0 wrote nothing" and "the last pass wrote nothing" are different
             // findings).
-            this.lastRecordedOutputs.add(new RecordedOutput(passIndex, pass.program,
+            RecordedOutput output = recordedOutput(this.lastRecordedOutputs.size());
+            output.fill(passIndex, pass.program,
                     pass.outIsMain ? "main" : (outTarget.owned ? "owned" : "adopted"),
                     pass.outIsMain ? 0L : outTarget.image,
                     pass.outIsMain ? 0L : outTarget.view,
@@ -1008,7 +1009,8 @@ public final class VulkanPostChain {
                     pass.inIsMain ? "main" : (inTarget.owned ? "owned" : "adopted"),
                     pass.inIsMain ? 0L : inImage,
                     pass.inIsMain ? 0L : inView,
-                    pass.inW, pass.inH));
+                    pass.inW, pass.inH);
+            this.lastRecordedOutputs.add(output);
 
             // A target that was just created is still UNDEFINED: bring it to GENERAL exactly once, before any use.
             // An adopted target is never in that state - its caller declares it live and already in GENERAL - so it
@@ -1362,17 +1364,17 @@ public final class VulkanPostChain {
      */
     public static final class RecordedOutput {
         /** Index of the pass in the recorded chain, from 0. */
-        public final int passIndex;
+        public int passIndex;
         /** The pass's program id, as the collector named it. */
-        public final String program;
+        public String program;
         /** {@code "main"}, {@code "owned"} or {@code "adopted"}: which kind of image this output is. */
-        public final String label;
+        public String label;
         /** The output image, or 0 for {@code main} - the caller already holds the frame image and its view. */
-        public final long image;
+        public long image;
         /** The output view, or 0 for {@code main}. */
-        public final long view;
-        public final int width;
-        public final int height;
+        public long view;
+        public int width;
+        public int height;
         /**
          * What this pass read, in the same shape as the output side.
          * <p>
@@ -1381,14 +1383,15 @@ public final class VulkanPostChain {
          * to something else). The auxiliary input is deliberately not here - it is a second sampler with its own
          * resolution rule, and the two-valued question this field exists for is about the primary read.
          */
-        public final String inLabel;
-        public final long inImage;
-        public final long inView;
-        public final int inWidth;
-        public final int inHeight;
+        public String inLabel;
+        public long inImage;
+        public long inView;
+        public int inWidth;
+        public int inHeight;
 
-        RecordedOutput(int passIndex, String program, String label, long image, long view, int width, int height,
-                String inLabel, long inImage, long inView, int inWidth, int inHeight) {
+        /** Refills a pooled instance; the readers of {@link #lastRecordedOutputs()} run before the next recording. */
+        void fill(int passIndex, String program, String label, long image, long view, int width, int height,
+                  String inLabel, long inImage, long inView, int inWidth, int inHeight) {
             this.passIndex = passIndex;
             this.program = program;
             this.label = label;
@@ -1424,6 +1427,15 @@ public final class VulkanPostChain {
 
     /** Outputs of the last {@link #recordPasses}; see {@link #lastRecordedOutputs()}. */
     private final List<RecordedOutput> lastRecordedOutputs = new ArrayList<>();
+    /** Instances reused across recordings, in pass order; the list above refers to them. */
+    private final List<RecordedOutput> recordedOutputPool = new ArrayList<>();
+
+    private RecordedOutput recordedOutput(int index) {
+        while (this.recordedOutputPool.size() <= index) {
+            this.recordedOutputPool.add(new RecordedOutput());
+        }
+        return this.recordedOutputPool.get(index);
+    }
 
     /** {@return a one-line status for the verification line}; adopted targets count separately from allocated ones. */
     public String status() {
