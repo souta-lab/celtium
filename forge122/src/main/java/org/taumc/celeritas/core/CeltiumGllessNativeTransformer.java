@@ -1836,6 +1836,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetUniformfv") || name.endsWith("glGetUniformiv")
+                            || name.endsWith("glGetUniformuiv"))) {
+                // One component, the width of every uniform type's first slot: the caller's array is at least that
+                // large, and a scalar uniform (the only case whose size this renderer knows) now reads a value.
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(Opcodes.ICONST_1);
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glZeroOut", "(JIZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetIntegeri_v")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
