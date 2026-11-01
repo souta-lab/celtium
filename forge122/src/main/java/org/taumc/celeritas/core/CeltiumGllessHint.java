@@ -187,6 +187,46 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * Raw {@code glLightfv}: the two pnames the GlStateManager mixin mirrors (position and diffuse), for a mod that
+     * sets its lights straight through GL. Absent, its light change never reached the group payload.
+     */
+    public static void glLightfv(int light, int pname, long address) {
+        int index = light - 0x4000; // GL_LIGHT0
+        if (index < 0 || index >= 2 || address == 0L) {
+            return;
+        }
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend == null) {
+            return;
+        }
+        if (pname == 0x1203) { // GL_POSITION
+            backend.setLightPosition(index,
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 4L),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 8L));
+        } else if (pname == 0x1201) { // GL_DIFFUSE
+            backend.setLightDiffuse(index,
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 4L),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 8L));
+        }
+    }
+
+    /** Raw {@code glLightModelfv}: the scene ambient term the lit evaluation multiplies the vertex colour by. */
+    public static void glLightModelfv(int pname, long address) {
+        if (pname != 0x0B53 || address == 0L) { // GL_LIGHT_MODEL_AMBIENT
+            return;
+        }
+        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) {
+            backend.setLightAmbient(
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 4L),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 8L));
+        }
+    }
+
+    /**
      * Raw fog parameter setters. Vanilla reaches fog through the GlStateManager mixin, but a mod that sets it straight
      * through GL leaves the mirror at whatever the last mirrored call wrote. The setters are absolute, so applying the
      * same value twice (mixin and route) is harmless.

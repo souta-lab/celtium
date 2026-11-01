@@ -39,7 +39,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
     /** State setters the stub answers with SEM_NOOP; see the direct-return branch for why the name is enough. */
     private static final java.util.Set<String> VOID_NOOPS = new java.util.HashSet<>(java.util.Arrays.asList(
-            "glLightf", "glLightfv", "glLighti", "glLightiv", "glLightModelf", "glLightModelfv", "glLightModeli",
+            // glLightfv and glLightModelfv are routed to the lighting mirror below, so they are not listed here: the
+            // no-op set is consulted before the routes, and listing them shadowed the route.
+            "glLightf", "glLighti", "glLightiv", "glLightModelf", "glLightModeli",
             "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
             "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
             "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
@@ -920,6 +922,24 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            // Raw light parameters: the same position/diffuse/ambient the GlStateManager mixin mirrors.
+            if (("glLightfv".equals(name) || "nglLightfv".equals(name)) && "(IIJ)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLightfv", "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glLightModelfv".equals(name) || "nglLightModelfv".equals(name)) && "(IJ)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLightModelfv", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // Raw fog parameters: absolute setters, routed to the same fog record the GlStateManager mixin feeds.
             if (("glFogf".equals(name) || "nglFogf".equals(name)) && "(IF)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
