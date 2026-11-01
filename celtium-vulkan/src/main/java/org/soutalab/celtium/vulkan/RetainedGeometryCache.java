@@ -1,13 +1,12 @@
 package org.soutalab.celtium.vulkan;
 
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
 /** Device-bound ownership of retained geometry. No per-frame vertex copy or GL buffer lookup. */
 final class RetainedGeometryCache implements AutoCloseable {
     private final VulkanContext context;
-    private final Map<NativeGeometryBuffer, Map<Integer, LeasedResource<VulkanDynamicMesh>>> entries =
+    private final Map<NativeGeometryBuffer, it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<LeasedResource<VulkanDynamicMesh>>> entries =
             new IdentityHashMap<>();
     private long builds;
     private long acquires;
@@ -22,7 +21,7 @@ final class RetainedGeometryCache implements AutoCloseable {
 
     LeasedResource.Lease<VulkanDynamicMesh> acquire(NativeGeometryBuffer source, int mode, int[] indices) {
         if (this.closed) throw new IllegalStateException("retained geometry device cache is closed");
-        Map<Integer, LeasedResource<VulkanDynamicMesh>> modes = this.entries.get(source);
+        it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<LeasedResource<VulkanDynamicMesh>> modes = this.entries.get(source);
         LeasedResource<VulkanDynamicMesh> resource = modes == null ? null : modes.get(mode);
         if (resource == null) {
             VulkanDynamicMesh mesh = new VulkanDynamicMesh(this.context);
@@ -36,7 +35,7 @@ final class RetainedGeometryCache implements AutoCloseable {
             }
             resource = new LeasedResource<>(mesh, VulkanDynamicMesh::delete);
             if (modes == null) {
-                modes = new HashMap<>();
+                modes = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
                 this.entries.put(source, modes);
                 source.onInvalidate(this, () -> invalidate(source));
             }
@@ -52,7 +51,8 @@ final class RetainedGeometryCache implements AutoCloseable {
     }
 
     private void invalidate(NativeGeometryBuffer source) {
-        Map<Integer, LeasedResource<VulkanDynamicMesh>> modes = this.entries.remove(source);
+        it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<LeasedResource<VulkanDynamicMesh>> modes =
+                this.entries.remove(source);
         source.detach(this);
         if (modes != null) {
             for (LeasedResource<VulkanDynamicMesh> resource : modes.values()) {
