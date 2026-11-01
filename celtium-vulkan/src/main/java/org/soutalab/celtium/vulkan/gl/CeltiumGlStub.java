@@ -5765,6 +5765,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B11: // GL_POINT_SIZE
                 putFloatOrDouble(out, 0, this.pointSize, asDouble);
                 return;
+            case 0x8005: // GL_BLEND_COLOR - the constant blend colour is never recorded; GL's initial value is black
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
+                putFloatOrDouble(out, 1, 0.0f, asDouble);
+                putFloatOrDouble(out, 2, 0.0f, asDouble);
+                putFloatOrDouble(out, 3, 0.0f, asDouble);
+                return;
             case 0x0B12: // GL_POINT_SIZE_RANGE - points are not rasterized, so the one supported size is one
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
                 putFloatOrDouble(out, 1, 1.0f, asDouble);
