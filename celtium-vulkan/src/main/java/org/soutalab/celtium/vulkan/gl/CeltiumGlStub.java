@@ -7876,6 +7876,34 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glMultiDrawArrays} from the transformer's route: each sub-draw is one decoded batch. */
+    public static void celtium$multiDrawArrays(int mode, long firsts, long counts, int drawcount) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || firsts == 0L || counts == 0L || drawcount <= 0) {
+            return;
+        }
+        int n = Math.min(drawcount, 1024);
+        for (int i = 0; i < n; i++) {
+            int first = org.lwjgl.system.MemoryUtil.memGetInt(firsts + (long) i * 4L);
+            int count = org.lwjgl.system.MemoryUtil.memGetInt(counts + (long) i * 4L);
+            stub.drawArrays(mode, first, count);
+        }
+    }
+
+    /** {@code glMultiDrawElements} from the transformer's route: an array of index pointers, each one batch. */
+    public static void celtium$multiDrawElements(int mode, long counts, int type, long indices, int drawcount) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || counts == 0L || indices == 0L || drawcount <= 0) {
+            return;
+        }
+        int n = Math.min(drawcount, 1024);
+        for (int i = 0; i < n; i++) {
+            int count = org.lwjgl.system.MemoryUtil.memGetInt(counts + (long) i * 4L);
+            long pointer = org.lwjgl.system.MemoryUtil.memGetLong(indices + (long) i * 8L);
+            stub.drawElementsNow(mode, count, type, pointer, 0);
+        }
+    }
+
     /** {@code glDrawElementsBaseVertex}: the same decode, with the base vertex added to every index. */
     public static void celtium$drawElementsBaseVertex(int mode, int count, int type, long indices, int baseVertex) {
         CeltiumGlStub stub = installed;

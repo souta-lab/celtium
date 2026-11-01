@@ -970,6 +970,14 @@ public final class CeltiumGllessHint {
         }
     }
 
+    public static void glMultiDrawArrays(int mode, long firsts, long counts, int drawcount) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$multiDrawArrays(mode, firsts, counts, drawcount);
+    }
+
+    public static void glMultiDrawElements(int mode, long counts, int type, long indices, int drawcount) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$multiDrawElements(mode, counts, type, indices, drawcount);
+    }
+
     public static void glDrawElementsInstanced(int mode, int count, int type, long indices, int instanceCount) {
         if (instanceCount == 1) {
             glDrawElements(mode, count, type, indices);

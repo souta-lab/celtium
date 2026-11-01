@@ -1207,6 +1207,27 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IJJI)V".equals(descriptor) && name.endsWith("glMultiDrawArrays")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.ILOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glMultiDrawArrays", "(IJJI)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IJIJI)V".equals(descriptor) && name.endsWith("glMultiDrawElements")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 4);
+                method.visitVarInsn(Opcodes.ILOAD, 6);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glMultiDrawElements", "(IJIJI)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIIII)V".equals(descriptor) && name.endsWith("glDrawArraysInstancedBaseInstance")) {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
