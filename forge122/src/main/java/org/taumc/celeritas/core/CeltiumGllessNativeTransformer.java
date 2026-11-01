@@ -648,7 +648,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 && ("nglGetShaderInfoLog".equals(name) || "nglGetProgramInfoLog".equals(name))) {
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
-            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitVarInsn(Opcodes.LLOAD, 4);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "nglGetProgramInfoLog".equals(name) ? "glGetProgramInfoLog" : "glGetShaderInfoLog",
                     "(IJJ)V", false);

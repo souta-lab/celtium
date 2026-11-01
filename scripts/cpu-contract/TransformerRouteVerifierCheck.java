@@ -150,6 +150,66 @@ public class TransformerRouteVerifierCheck {
             }
         }
         System.out.println("called=" + called + " failed=" + failed);
-        if (failed != 0) System.exit(1);
+        // Phase 2: every real GL class in the jar is transformed and loaded, so a route that emits invalid bytecode for a
+        // descriptor the probe does not declare still fails here - per class, at load time. The GLDebugMessage callback
+        // classes are skipped: they return their own nested class from a factory method, and defining the outer in a child
+        // loader while the nested class resolves from the parent makes the verifier's stack map disagree (an artifact of
+        // this check, not of the transform; the same class loads unchanged in its normal loader).
+        int classFailures = 0, classes = 0;
+        try (JarFile jar = new JarFile(args[0])) {
+            for (String entry : Collections.list(jar.entries()).stream().map(e -> e.getName())
+                    .filter(n -> n.startsWith("org/lwjgl/opengl/GL") && n.endsWith(".class") && !n.contains("$")
+                            && !n.contains("GLDebugMessage") && !n.equals("org/lwjgl/opengl/GL.class"))
+                    .sorted().collect(java.util.stream.Collectors.toList())) {
+                String cn = entry.substring(0, entry.length() - ".class".length()).replace('/', '.');
+                byte[] original;
+                try (InputStream stream = jar.getInputStream(jar.getJarEntry(entry))) {
+                    original = stream.readAllBytes();
+                }
+                byte[] transformed;
+                try {
+                    transformed = new CeltiumGllessNativeTransformer().transform(cn, cn, original);
+                } catch (RuntimeException | LinkageError error) {
+                    System.out.println("TRANSFORM-FAIL " + cn + " -> " + error);
+                    classFailures++;
+                    continue;
+                }
+                classes++;
+                try {
+                    Class<?> defined = new ClassLoader(TransformerRouteVerifierCheck.class.getClassLoader()) {
+                        Class<?> define() { return defineClass(cn, transformed, 0, transformed.length); }
+                    }.define();
+                    defined.getDeclaredMethods();
+                } catch (VerifyError | ClassFormatError error) {
+                    System.out.println("CLASS-FAIL " + cn);
+                    error.printStackTrace(System.out);
+                    classFailures++;
+                }
+            }
+        }
+        System.out.println("classes checked=" + classes + " failed=" + classFailures);
+        if (failed != 0 || classFailures != 0) System.exit(1);
+    }
+
+    static Class<?> defineWith(ClassLoader loader, String name, byte[] bytes) {
+        try {
+            java.lang.reflect.Method m = loader.getClass().getDeclaredMethod("define", String.class, byte[].class);
+            m.setAccessible(true);
+            return (Class<?>) m.invoke(loader, name, bytes);
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException(error);
+        }
+    }
+
+    static int countArgs(String descriptor) {
+        int n = 0;
+        for (int i = 1; i < descriptor.length(); i++) {
+            char c = descriptor.charAt(i);
+            if (c == ')') break;
+            if (c == '[') { while (descriptor.charAt(i) == '[') i++; }
+            if (c == 'L') { while (descriptor.charAt(i) != ';') i++; }
+            n++;
+        }
+        return n;
     }
 }
