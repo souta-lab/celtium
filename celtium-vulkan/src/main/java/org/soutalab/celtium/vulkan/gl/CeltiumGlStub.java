@@ -2202,6 +2202,12 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Bounded legacy client-attribute stack. */
     private final java.util.ArrayDeque<long[]> clientAttribStack = new java.util.ArrayDeque<long[]>();
 
+    /** {@return the name bound to a texture target on the active unit, or zero when unbound}. */
+    private int textureBindingOrZero(int target) {
+        int bound = target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target));
+        return bound < 0 ? 0 : bound;
+    }
+
     /** Bound renderbuffer name and its recorded extent. */
     private int boundRenderbuffer;
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> renderbufferDims =
@@ -5691,6 +5697,16 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B45: return this.raster.cullFace();
             case 0x0B46: return this.raster.frontFace();
 
+            case 0x8068: // GL_TEXTURE_BINDING_1D
+                return textureBindingOrZero(0x0DE0);
+            case 0x806A: // GL_TEXTURE_BINDING_3D
+                return textureBindingOrZero(0x806F);
+            case 0x8514: // GL_TEXTURE_BINDING_CUBE_MAP
+                return textureBindingOrZero(0x8513);
+            case 0x8CA7: // GL_RENDERBUFFER_BINDING
+                return this.boundRenderbuffer;
+            case 0x8919: // GL_SAMPLER_BINDING - sampler objects are not modelled
+                return 0;
             case 0x8895: // GL_ELEMENT_ARRAY_BUFFER_BINDING - the binding the indexed decode reads
                 return boundBuffer(0x8893);
             case 0x88ED: // GL_PIXEL_PACK_BUFFER_BINDING
