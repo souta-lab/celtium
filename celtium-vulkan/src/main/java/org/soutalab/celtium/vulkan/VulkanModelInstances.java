@@ -22,9 +22,7 @@ import org.lwjgl.vulkan.VkVertexInputBindingDescription;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -124,7 +122,8 @@ final class VulkanModelInstances {
     private long descriptorPool = VK_NULL_HANDLE;
     private long recordsSet = VK_NULL_HANDLE;
     private long pipelineLayout = VK_NULL_HANDLE;
-    private final Map<Long, Pipeline> pipelines = new HashMap<Long, Pipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<Pipeline> pipelines =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
 
     private int segment;
     private int used;
@@ -300,11 +299,11 @@ final class VulkanModelInstances {
     Pipeline pipelineFor(long renderPass, long stateKey, VulkanColorBlendState blend, boolean depthTest,
             boolean depthWrite, boolean cull, int depthCompareOp) {
         long key = stateKey * 31L + renderPass;
-        Pipeline pipeline = this.pipelines.get(Long.valueOf(key));
+        Pipeline pipeline = this.pipelines.get(key);
         if (pipeline == null) {
             pipeline = new Pipeline(createPipeline(renderPass, blend, depthTest, depthWrite, cull, depthCompareOp),
                     renderPass);
-            this.pipelines.put(Long.valueOf(key), pipeline);
+            this.pipelines.put(key, pipeline);
         }
         return pipeline;
     }
