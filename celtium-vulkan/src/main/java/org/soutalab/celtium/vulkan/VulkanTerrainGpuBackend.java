@@ -14244,6 +14244,14 @@ this.frameBufferOpen = false;
      * the registry for that texture and uploads it, once, through the same code the group path uses.
      */
     private static volatile int DEBUG_MIRROR_GL_ID;
+    // Read once: this hook runs on every frame boundary, and a System.getProperty per frame is a map lookup inside
+    // the frame cost for a property that cannot change after startup.
+    private static final String DEBUG_ANNOUNCE_REPEAT = System.getProperty("celtium.debug.announceRepeat", "");
+    private static final String DEBUG_ANNOUNCE_GROWTH = System.getProperty("celtium.debug.announceGrowth", "");
+    private static final String DEBUG_ANNOUNCE_LARGE = System.getProperty("celtium.debug.announceLarge", "");
+    private static final boolean DEBUG_ANNOUNCE_ANY = !DEBUG_ANNOUNCE_REPEAT.isEmpty()
+            || !DEBUG_ANNOUNCE_GROWTH.isEmpty() || !DEBUG_ANNOUNCE_LARGE.isEmpty();
+    private static final boolean DEBUG_ATLAS_QUAD = Boolean.getBoolean("celtium.debug.drawAtlasQuad");
     private boolean debugAnnounceDone;
     private int debugGrowthStep;
     private int debugRepeatDone;
@@ -14255,7 +14263,10 @@ this.frameBufferOpen = false;
     }
 
     private void celtium$debugMirrorRequest() {
-        String repeat = System.getProperty("celtium.debug.announceRepeat");
+        if (!DEBUG_ANNOUNCE_ANY && DEBUG_MIRROR_GL_ID <= 0) {
+            return;
+        }
+        String repeat = DEBUG_ANNOUNCE_REPEAT;
         if (repeat != null && !repeat.isEmpty()) {
             // Memory pressure: announce one atlas-sized image a frame until N of them exist, so the mirror path runs
             // while the device's memory is short. -Dceltium.debug.announceRepeat=32
@@ -14282,7 +14293,7 @@ this.frameBufferOpen = false;
                 }
             }
         }
-        String growth = System.getProperty("celtium.debug.announceGrowth");
+        String growth = DEBUG_ANNOUNCE_GROWTH;
         if (growth != null && !growth.isEmpty()) {
             // The tester's atlas is announced once at its final size, but the mirror that loses the device may be the one
             // recreated from an earlier, smaller image. This grows one texture across frames (small first, then the
@@ -14306,7 +14317,7 @@ this.frameBufferOpen = false;
                 }
             }
         }
-        String large = System.getProperty("celtium.debug.announceLarge");
+        String large = DEBUG_ANNOUNCE_LARGE;
         if (large != null && !large.isEmpty() && !this.debugAnnounceDone) {
             // The tester's atlas arrives as an announced image; this is the same announcement, at the same 4096x4224 the
             // font atlas has, so the 66 MiB transfer and its image can be exercised on a leg whose menus never sample
@@ -14330,7 +14341,7 @@ this.frameBufferOpen = false;
             return;
         }
         DEBUG_MIRROR_GL_ID = 0;
-        if (Boolean.getBoolean("celtium.debug.drawAtlasQuad") && !this.debugAtlasQuadDone) {
+        if (DEBUG_ATLAS_QUAD && !this.debugAtlasQuadDone) {
             // The tester's crash needs a draw that samples the atlas through the guest path. This is that draw, once:
             // the atlas name is bound and one screen-space quad is submitted through the stub, so the same group is
             // captured, the same mirror resolved, and the same texture sampled. -Dceltium.debug.drawAtlasQuad=true

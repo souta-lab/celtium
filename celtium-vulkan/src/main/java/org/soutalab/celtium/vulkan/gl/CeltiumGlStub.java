@@ -2741,7 +2741,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             // "unsupported" is a recorded boundary rather than a silent success.
             celtium$noteUnknownSymbol(name);
         }
-        if (Boolean.getBoolean("celtium.glstub.trace")
+        if (TRACE_GL_CALLS
                 && ("glGetError".equals(name) || "glGetIntegerv".equals(name) || "glGetString".equals(name))) {
             System.out.println("[GLSTUB] addressFor " + name + " id=" + id);
         }
@@ -3795,7 +3795,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
         }
         counter.incrementAndGet();
-        if (Boolean.getBoolean("celtium.vulkan.strictSymbols")
+        if (STRICT_SYMBOLS
                 && STRICT_SYMBOL_PRINTED.incrementAndGet() <= STRICT_SYMBOL_LINES) {
             // BH-35's acceptance asks which name was reached *and where from*: "a one-off probe by the game or a mod"
             // is a call-site claim, and a name without one cannot be told apart from a drawing path the renderer is
@@ -7291,6 +7291,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     private int readableMappingRefreshes;
     private long readableMappingLastRefreshNanos;
     private static final int READABLE_MAPPING_REFRESH_LIMIT = 64;
+    /** Read once: addressFor runs for every GL entry point, and a property lookup there is a per-call map lookup. */
+    private static final boolean TRACE_GL_CALLS = Boolean.getBoolean("celtium.glstub.trace");
+    /** Same reasoning: the strict-symbol check is consulted on the unresolved-symbol path of every dispatch. */
+    private static final boolean STRICT_SYMBOLS = Boolean.getBoolean("celtium.vulkan.strictSymbols");
     /** The mapping census reads /proc/self/maps, which only exists on Linux; elsewhere it answers "nothing readable". */
     private static final boolean PROC_SELF_MAPS_AVAILABLE = System.getProperty("os.name", "")
             .toLowerCase(java.util.Locale.ROOT).contains("linux");

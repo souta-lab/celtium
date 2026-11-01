@@ -25,6 +25,9 @@ public final class CeltiumFramePacing {
             System.getProperty("celtium.vulkan.paceToRefresh", "true"));
     private static long intervalNanos = 1_000_000_000L / 60L;
     private static long nextFrameNanos;
+    /** The last per-frame target and its interval, so a constant cap does not pay a division every frame. */
+    private static int cachedTargetFps = Integer.MIN_VALUE;
+    private static long cachedTargetIntervalNanos;
     private static boolean fifoPacing;
     private static boolean refreshQueried;
 
@@ -60,7 +63,16 @@ public final class CeltiumFramePacing {
                 // No SDL display query here: the 60 Hz default applies.
             }
         }
-        long interval = targetFps > 0 ? 1_000_000_000L / targetFps : intervalNanos;
+        long interval;
+        if (targetFps > 0) {
+            if (targetFps != cachedTargetFps) {
+                cachedTargetFps = targetFps;
+                cachedTargetIntervalNanos = 1_000_000_000L / targetFps;
+            }
+            interval = cachedTargetIntervalNanos;
+        } else {
+            interval = intervalNanos;
+        }
         long now = System.nanoTime();
         if (nextFrameNanos == 0L || now - nextFrameNanos > interval * 4L) {
             nextFrameNanos = now + interval;
@@ -70,6 +82,14 @@ public final class CeltiumFramePacing {
         if (wait > 0L) {
             java.util.concurrent.locks.LockSupport.parkNanos(wait);
         }
-        nextFrameNanos += interval;
+        // Catch up rather than carry the overshoot: a coarse timer (Windows sleeps in ticks) can return late, and
+        // adding the interval to a target that is already in the past leaves every later frame late too, which is what
+        // makes a capped run burst to recover the lag instead of holding the rate.
+        now = System.nanoTime();
+        if (now > nextFrameNanos) {
+            nextFrameNanos = now + interval;
+        } else {
+            nextFrameNanos += interval;
+        }
     }
 }

@@ -9,6 +9,10 @@ import static org.lwjgl.vulkan.VK10.*;
  * Moved out of {@link VulkanTerrainGpuBackend} unchanged; the state it reads stays there.
  */
 final class PostChainBridge {
+    /** Where a requested chain frame dump goes; a property cannot change after startup, so it is resolved once. */
+    private static final String CHAIN_FRAME_DUMP_PATH = System.getProperty("celtium.vulkan.chainFrameDumpPath",
+            System.getProperty("java.io.tmpdir", ".") + java.io.File.separator + "celtium-chain-frame.png");
+
     private final VulkanTerrainGpuBackend b;
 
     PostChainBridge(VulkanTerrainGpuBackend backend) {
@@ -913,8 +917,7 @@ b.frameBufferOpen = false;
             b.record("chain frame dump skipped: the GPU did not confirm the chain submission");
             return;
         }
-        String base = System.getProperty("celtium.vulkan.chainFrameDumpPath",
-                System.getProperty("java.io.tmpdir", ".") + java.io.File.separator + "celtium-chain-frame.png");
+        String base = CHAIN_FRAME_DUMP_PATH;
         if (b.frameTarget != null) {
             b.celtium$dumpOwnedImage("frame", b.frameTarget.colorImage(), base, identity,
                     b.targetWidth, b.targetHeight);
