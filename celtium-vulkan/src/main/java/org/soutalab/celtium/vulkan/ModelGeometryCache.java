@@ -3,7 +3,6 @@ package org.soutalab.celtium.vulkan;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -40,7 +39,7 @@ public final class ModelGeometryCache {
     /** Reusable destination for the model-geometry read: the rebuild loop allocates nothing per list with it. */
     private final VulkanModelQuadCapture.Scratch snapshotScratch = new VulkanModelQuadCapture.Scratch();
 
-    private LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
+    private it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<VulkanDynamicMesh> modelMeshes;
 
     /** One-entry memo over {@link #meshFor}: consecutive replays often ask for the same list again. */
     private int lastMeshListId = Integer.MIN_VALUE;
@@ -51,7 +50,7 @@ public final class ModelGeometryCache {
         if (listId == this.lastMeshListId) {
             return this.lastMesh;
         }
-        VulkanDynamicMesh mesh = this.modelMeshes == null ? null : this.modelMeshes.get(Integer.valueOf(listId));
+        VulkanDynamicMesh mesh = this.modelMeshes == null ? null : this.modelMeshes.get(listId);
         this.lastMeshListId = listId;
         this.lastMesh = mesh;
         return mesh;
@@ -174,16 +173,19 @@ public final class ModelGeometryCache {
             // meshes' lists are gone and are retired below.
             return false;
         }
-        LinkedHashMap<Integer, VulkanDynamicMesh> built = new LinkedHashMap<Integer, VulkanDynamicMesh>();
-        LinkedHashMap<Integer, Integer> builtGenerations = new LinkedHashMap<Integer, Integer>();
+        it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<VulkanDynamicMesh> built =
+                new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<>();
+        it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap builtGenerations =
+                new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
         List<VulkanDynamicMesh> superseded = new ArrayList<VulkanDynamicMesh>();
         if (this.modelMeshes != null) {
-            for (Map.Entry<Integer, VulkanDynamicMesh> entry : this.modelMeshes.entrySet()) {
-                int listId = entry.getKey().intValue();
+            for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<VulkanDynamicMesh> entry
+                    : this.modelMeshes.int2ObjectEntrySet()) {
+                int listId = entry.getIntKey();
                 VulkanDynamicMesh mesh = entry.getValue();
                 if (mesh.matches(listId, VulkanModelQuadCapture.generationOf(listId))) {
                     // Unchanged since it was built: reused as it is, which is the point of the generation identity.
-                    built.put(entry.getKey(), mesh);
+                    built.put(entry.getIntKey(), mesh);
                 } else {
                     // Recompiled, deleted or emptied: the mesh is stale from the moment its list's generation moved and
                     // must not be drawn again. The retire is queued rather than freed here, so the frames that already
@@ -200,7 +202,7 @@ public final class ModelGeometryCache {
                 // generation moved on - which allocated 1.3 GB of float[] per run when each snapshot was a fresh copy.
                 // Matched on the generation before anything is copied: taking the snapshot of every list on every
                 // build made each newly compiled list (593 in the user's four-minute session) copy all model geometry.
-                VulkanDynamicMesh existing = built.get(Integer.valueOf(id));
+                VulkanDynamicMesh existing = built.get(id);
                 if (existing != null && existing.matches(id, VulkanModelQuadCapture.generationOf(id))) {
                     continue;
                 }
@@ -271,9 +273,9 @@ public final class ModelGeometryCache {
                     mesh.discard();
                     continue;
                 }
-                built.put(Integer.valueOf(id), mesh);
+                built.put(id, mesh);
                 pending = null;
-                builtGenerations.put(Integer.valueOf(id), Integer.valueOf(snapshot.generation));
+                builtGenerations.put(id, snapshot.generation);
             }
         } catch (RuntimeException | LinkageError error) {
             if (pending != null) {
@@ -283,8 +285,10 @@ public final class ModelGeometryCache {
             // A failure this far out is not attributable to one list, so the previous table stays in place - nothing
             // above touched it - and the meshes this attempt created are released rather than leaked.
             this.modelMeshFailure = String.valueOf(error);
-            for (Map.Entry<Integer, VulkanDynamicMesh> entry : built.entrySet()) {
-                VulkanDynamicMesh previous = this.modelMeshes == null ? null : this.modelMeshes.get(entry.getKey());
+            for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<VulkanDynamicMesh> entry
+                    : built.int2ObjectEntrySet()) {
+                VulkanDynamicMesh previous = this.modelMeshes == null ? null
+                        : this.modelMeshes.get(entry.getIntKey());
                 if (previous != entry.getValue()) {
                     entry.getValue().discard();
                 }
@@ -302,8 +306,8 @@ public final class ModelGeometryCache {
         for (VulkanDynamicMesh mesh : superseded) {
             mesh.retire();
         }
-        for (Map.Entry<Integer, Integer> entry : builtGenerations.entrySet()) {
-            built.get(entry.getKey()).stamp(entry.getKey().intValue(), entry.getValue().intValue());
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry : builtGenerations.int2IntEntrySet()) {
+            built.get(entry.getIntKey()).stamp(entry.getIntKey(), entry.getIntValue());
         }
         int quads = 0;
         for (VulkanDynamicMesh mesh : built.values()) {
@@ -326,7 +330,7 @@ public final class ModelGeometryCache {
         if (this.modelMeshes == null) {
             return null;
         }
-        VulkanDynamicMesh mesh = this.modelMeshes.get(Integer.valueOf(listId));
+        VulkanDynamicMesh mesh = this.modelMeshes.get(listId);
         if (mesh == null || mesh.isEmpty()) {
             this.modelMissingMeshes++;
             if (this.modelMissingMeshLog < 8 && listId != this.modelLastMissingList) {
