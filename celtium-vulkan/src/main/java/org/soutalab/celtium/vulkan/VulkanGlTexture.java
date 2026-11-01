@@ -469,8 +469,8 @@ public final class VulkanGlTexture {
         }
     }
 
-    private static final java.util.Map<Long, ForeignLayoutState> FOREIGN_STATES =
-            new java.util.HashMap<Long, ForeignLayoutState>();
+    private static final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<ForeignLayoutState> FOREIGN_STATES =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<ForeignLayoutState>();
 
     /**
      * The transitions recorded into one command buffer and not yet accepted by the queue.
@@ -490,7 +490,8 @@ public final class VulkanGlTexture {
          * leaves it in. {@code newLayout} is what a later transition in the same recording must name as its
          * {@code oldLayout}.
          */
-        final java.util.LinkedHashMap<Long, int[]> pending = new java.util.LinkedHashMap<Long, int[]>();
+        final it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<int[]> pending =
+                new it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<int[]>();
         /** True for the fallback recording opened when the caller never declared one; see {@link #foreignLayoutUnbound}. */
         final boolean unbound;
 
@@ -501,8 +502,8 @@ public final class VulkanGlTexture {
         }
     }
 
-    private static final java.util.Map<Long, LayoutRecording> RECORDINGS =
-            new java.util.HashMap<Long, LayoutRecording>();
+    private static final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<LayoutRecording> RECORDINGS =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<LayoutRecording>();
     private static long layoutRecordingIds;
 
     /** {@return one line with the shared-image layout handshake counters}, for the run's report. */
@@ -546,7 +547,7 @@ public final class VulkanGlTexture {
      */
     static void beginLayoutRecording(long commandBuffer, String label) {
         synchronized (VulkanGlTexture.class) {
-            LayoutRecording previous = RECORDINGS.remove(Long.valueOf(commandBuffer));
+            LayoutRecording previous = RECORDINGS.remove(commandBuffer);
             if (previous != null && !previous.pending.isEmpty()) {
                 // The previous recording was never confirmed. Its barriers may never have executed, so its
                 // transitions are dropped and the layouts stay where the last accepted submission left them.
@@ -557,7 +558,7 @@ public final class VulkanGlTexture {
                         + " reason=[a new recording began before this one was confirmed: " + label + "]"
                         + " abandons=" + foreignLayoutAbandons);
             }
-            RECORDINGS.put(Long.valueOf(commandBuffer),
+            RECORDINGS.put(commandBuffer,
                     new LayoutRecording(commandBuffer, ++layoutRecordingIds, false));
         }
     }
@@ -581,13 +582,14 @@ public final class VulkanGlTexture {
             return;
         }
         synchronized (VulkanGlTexture.class) {
-            LayoutRecording recording = RECORDINGS.remove(Long.valueOf(address));
+            LayoutRecording recording = RECORDINGS.remove(address);
             if (recording == null) {
                 return;
             }
             int applied = 0;
-            for (java.util.Map.Entry<Long, int[]> entry : recording.pending.entrySet()) {
-                ForeignLayoutState state = FOREIGN_STATES.get(entry.getKey());
+            for (it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<int[]> entry
+                    : recording.pending.long2ObjectEntrySet()) {
+                ForeignLayoutState state = FOREIGN_STATES.get(entry.getLongKey());
                 if (state == null) {
                     // The last wrapper of this image was deleted between recording and commit; the image is retired,
                     // so there is no fact left to move.
@@ -623,7 +625,7 @@ public final class VulkanGlTexture {
             return;
         }
         synchronized (VulkanGlTexture.class) {
-            LayoutRecording recording = RECORDINGS.remove(Long.valueOf(address));
+            LayoutRecording recording = RECORDINGS.remove(address);
             if (recording == null) {
                 return;
             }
@@ -647,7 +649,7 @@ public final class VulkanGlTexture {
      */
     static ForeignLayoutState declareForeignImage(long image, int declaredLayout) {
         synchronized (VulkanGlTexture.class) {
-            Long key = Long.valueOf(image);
+            long key = image;
             ForeignLayoutState state = FOREIGN_STATES.get(key);
             if (state == null) {
                 state = new ForeignLayoutState(image, declaredLayout);
@@ -676,7 +678,7 @@ public final class VulkanGlTexture {
             this.foreignState = null;
             state.wrappers--;
             if (state.wrappers <= 0) {
-                FOREIGN_STATES.remove(Long.valueOf(state.image));
+                FOREIGN_STATES.remove(state.image);
             }
         }
     }
@@ -684,7 +686,7 @@ public final class VulkanGlTexture {
     /** {@return the confirmed layout of a foreign image, or {@code UNDEFINED} when nothing has declared it}. */
     static int foreignLayoutOf(long image) {
         synchronized (VulkanGlTexture.class) {
-            ForeignLayoutState state = FOREIGN_STATES.get(Long.valueOf(image));
+            ForeignLayoutState state = FOREIGN_STATES.get(image);
             return state == null ? VK_IMAGE_LAYOUT_UNDEFINED : state.confirmed;
         }
     }
@@ -695,14 +697,14 @@ public final class VulkanGlTexture {
      */
     static int recordingLayoutOf(long commandBuffer, long image) {
         synchronized (VulkanGlTexture.class) {
-            LayoutRecording recording = RECORDINGS.get(Long.valueOf(commandBuffer));
+            LayoutRecording recording = RECORDINGS.get(commandBuffer);
             if (recording != null) {
-                int[] pending = recording.pending.get(Long.valueOf(image));
+                int[] pending = recording.pending.get(image);
                 if (pending != null) {
                     return pending[1];
                 }
             }
-            ForeignLayoutState state = FOREIGN_STATES.get(Long.valueOf(image));
+            ForeignLayoutState state = FOREIGN_STATES.get(image);
             return state == null ? VK_IMAGE_LAYOUT_UNDEFINED : state.confirmed;
         }
     }
@@ -719,8 +721,8 @@ public final class VulkanGlTexture {
      */
     static int foreignTransitionFrom(long commandBuffer, long image, int wanted) {
         synchronized (VulkanGlTexture.class) {
-            Long key = Long.valueOf(image);
-            LayoutRecording recording = RECORDINGS.get(Long.valueOf(commandBuffer));
+            long key = image;
+            LayoutRecording recording = RECORDINGS.get(commandBuffer);
             int current = confirmedOf(key);
             if (recording != null) {
                 int[] pending = recording.pending.get(key);
@@ -746,8 +748,8 @@ public final class VulkanGlTexture {
      */
     static void noteForeignTransition(long commandBuffer, long image, int from, int to, boolean[] unboundOut) {
         synchronized (VulkanGlTexture.class) {
-            Long key = Long.valueOf(image);
-            Long address = Long.valueOf(commandBuffer);
+            long key = image;
+            long address = commandBuffer;
             LayoutRecording recording = RECORDINGS.get(address);
             if (recording == null) {
                 recording = new LayoutRecording(commandBuffer, ++layoutRecordingIds, true);
@@ -774,7 +776,7 @@ public final class VulkanGlTexture {
         }
     }
 
-    private static int confirmedOf(Long image) {
+    private static int confirmedOf(long image) {
         ForeignLayoutState state = FOREIGN_STATES.get(image);
         return state == null ? VK_IMAGE_LAYOUT_UNDEFINED : state.confirmed;
     }
