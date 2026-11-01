@@ -1130,7 +1130,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // Buffer storage and sub-data. Without these the mod's VBO never reached the buffer mirror the draw path
             // reads, so an unindexed draw sampled an empty or stale buffer.
             if ("(IJJJ)V".equals(descriptor)
-                    && ("glBufferSubData".equals(name) || "nglBufferSubData".equals(name))) {
+                    && (name.endsWith("glBufferSubData") || name.endsWith("glBufferSubDataARB"))) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
@@ -1381,7 +1381,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
-            if ("glBindBuffer".equals(name) || "nglBindBuffer".equals(name)) {
+            // The ARB spellings are what the lwjglx-era mods carry; the ARB entry points are their own natives.
+            if ("glBindBuffer".equals(name) || "nglBindBuffer".equals(name)
+                    || name.endsWith("glBindBufferARB")) {
                 // (II)V
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
@@ -1507,7 +1509,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
-            if ("nglBufferData".equals(name) || "glBufferData".equals(name)) {
+            if ("nglBufferData".equals(name) || "glBufferData".equals(name)
+                    || name.endsWith("glBufferDataARB")) {
                 // (IJJI)V - target, size, data address, usage.
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
@@ -1540,7 +1543,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
-            if ("glActiveTexture".equals(name) || "nglActiveTexture".equals(name)) {
+            if ("glActiveTexture".equals(name) || "nglActiveTexture".equals(name)
+                    || name.endsWith("glActiveTextureARB")) {
                 // (I)V - the unit enum; the stub records it so the unit-keyed binding map answers the right slot.
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
