@@ -5795,6 +5795,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 putFloatOrDouble(out, 1, dimension, asDouble);
                 return;
             }
+            case 0x846D: // GL_ALIASED_POINT_SIZE_RANGE - points are not rasterized; one supported size
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, 1.0f, asDouble);
+                return;
+            case 0x8129: // GL_POINT_DISTANCE_ATTENUATION - GL's initial value, in all three components
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, 0.0f, asDouble);
+                putFloatOrDouble(out, 2, 0.0f, asDouble);
+                return;
             case 0x846E: // GL_ALIASED_LINE_WIDTH_RANGE
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
                 putFloatOrDouble(out, 1, this.lineWidth, asDouble);
