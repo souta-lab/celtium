@@ -4421,9 +4421,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (name != 0) {
             Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                for (java.util.Map.Entry<Integer, Integer> entry : this.framebufferColorTextures.entrySet()) {
-                    if (entry.getValue().intValue() == name) {
-                        vulkan.celtium$rawAttachmentTextureDeleted(entry.getKey().intValue());
+                for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
+                        : this.framebufferColorTextures.int2IntEntrySet()) {
+                    if (entry.getIntValue() == name) {
+                        vulkan.celtium$rawAttachmentTextureDeleted(entry.getIntKey());
                     }
                 }
                 vulkan.celtium$rawTextureDeleted(name);
@@ -4949,31 +4950,34 @@ public final class CeltiumGlStub implements FunctionProvider {
      * association exist at all; the resolution itself stays where it already is
      * ({@code celtium$publishFramebufferColorTexture}).
      */
-    private final java.util.Map<Integer, Integer> framebufferColorTextures =
-            new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap framebufferColorTextures =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
 
     /** Reverse lookup for texture sampling: avoid a scan through every Mod FBO on each draw. */
-    private final java.util.Map<Integer, Integer> colorTextureFramebuffers =
-            new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap colorTextureFramebuffers =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
 
     /** OpenGL texture 0 detaches GL_COLOR_ATTACHMENT0, never leaves its previous image alive. */
-    static void updateColorAttachment(java.util.Map<Integer, Integer> forward,
-            java.util.Map<Integer, Integer> reverse, int framebuffer, int texture) {
+    static void updateColorAttachment(it.unimi.dsi.fastutil.ints.Int2IntMap forward,
+            it.unimi.dsi.fastutil.ints.Int2IntMap reverse, int framebuffer, int texture) {
         if (framebuffer == 0) return;
-        Integer previous = forward.remove(Integer.valueOf(framebuffer));
-        if (previous != null) reverse.remove(previous, Integer.valueOf(framebuffer));
+        // Zero is the maps' absent value: a colour attachment is never stored with texture 0.
+        int previous = forward.remove(framebuffer);
+        if (previous != 0 && reverse.get(previous) == framebuffer) {
+            reverse.remove(previous);
+        }
         if (texture != 0) {
-            forward.put(Integer.valueOf(framebuffer), Integer.valueOf(texture));
-            reverse.put(Integer.valueOf(texture), Integer.valueOf(framebuffer));
+            forward.put(framebuffer, texture);
+            reverse.put(texture, framebuffer);
         }
     }
 
     private void forgetFramebuffer(int name) {
         if (name == 0) return;
-        Integer color = this.framebufferColorTextures.get(Integer.valueOf(name));
+        int color = this.framebufferColorTextures.get(name);
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-            vulkan.celtium$rawFramebufferDeleted(name, color == null ? 0 : color.intValue());
+            vulkan.celtium$rawFramebufferDeleted(name, color);
         }
         updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, name, 0);
         if (this.drawFbo == name) {
@@ -5038,8 +5042,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glFramebufferName == 0) {
             return 0;
         }
-        Integer texture = stub.framebufferColorTextures.get(Integer.valueOf(glFramebufferName));
-        return texture == null ? 0 : texture.intValue();
+        return stub.framebufferColorTextures.get(glFramebufferName);
     }
 
     /** {@return the framebuffer a colour texture belongs to, or 0 when the texture is not a raw attachment}. */
@@ -5048,14 +5051,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glTextureName == 0) {
             return 0;
         }
-        Integer cached = stub.colorTextureFramebuffers.get(Integer.valueOf(glTextureName));
-        if (cached != null && Integer.valueOf(glTextureName).equals(
-                stub.framebufferColorTextures.get(cached))) return cached.intValue();
-        stub.colorTextureFramebuffers.remove(Integer.valueOf(glTextureName));
-        for (java.util.Map.Entry<Integer, Integer> entry : stub.framebufferColorTextures.entrySet()) {
-            if (entry.getValue().intValue() == glTextureName) {
-                stub.colorTextureFramebuffers.put(Integer.valueOf(glTextureName), entry.getKey());
-                return entry.getKey().intValue();
+        int cached = stub.colorTextureFramebuffers.get(glTextureName);
+        if (cached != 0 && stub.framebufferColorTextures.get(cached) == glTextureName) {
+            return cached;
+        }
+        stub.colorTextureFramebuffers.remove(glTextureName);
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
+                : stub.framebufferColorTextures.int2IntEntrySet()) {
+            if (entry.getIntValue() == glTextureName) {
+                stub.colorTextureFramebuffers.put(glTextureName, entry.getIntKey());
+                return entry.getIntKey();
             }
         }
         return 0;
