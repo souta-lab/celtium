@@ -80,7 +80,8 @@ public final class VulkanImmediateParticlePipeline {
     private long descriptorSetLayout = VK_NULL_HANDLE;
     private long descriptorPool = VK_NULL_HANDLE;
     private long descriptorSet = VK_NULL_HANDLE;
-    private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** How many descriptor sets this pipeline has had to build; a rise means keys stopped matching. */
     public long setsCreated;
 
@@ -202,9 +203,10 @@ public final class VulkanImmediateParticlePipeline {
         // view and generation change while the atlas's do not - keyed on the texture alone, a set built for an old
         // light map would be served for a new one.
         long descriptorKey = (texture.key() * 31L) + (lightmap != null ? lightmap.key() : 0L);
-        Long existing = this.setsByTextureView.get(Long.valueOf(descriptorKey));
-        if (existing != null) {
-            return existing.longValue();
+        // 0 is "absent": a successfully allocated set is never 0.
+        long existing = this.setsByTextureView.get(descriptorKey);
+        if (existing != 0L) {
+            return existing;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
@@ -241,7 +243,7 @@ public final class VulkanImmediateParticlePipeline {
             celtium$noteDescWrite(write);
             VulkanDescriptorWrites.note(write, "VulkanImmediateParticlePipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            this.setsByTextureView.put(Long.valueOf(descriptorKey), Long.valueOf(set));
+            this.setsByTextureView.put(descriptorKey, set);
             this.setsCreated++;
             return set;
         } catch (RuntimeException | LinkageError error) {

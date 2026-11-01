@@ -13765,7 +13765,8 @@ this.frameBufferOpen = false;
     /** The cap on memoised blocks; a world scene's working set is a few hundred. */
     private static final int PUSH_BLOCK_LIMIT = 8192;
     /** The memoised push blocks, keyed by the group inputs that produce them. */
-    final java.util.HashMap<Long, byte[]> pushBlocks = new java.util.HashMap<Long, byte[]>();
+    final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<byte[]> pushBlocks =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<byte[]>();
     long pushBlockHits;
     long pushBlockMisses;
     long pushBlockClears;
@@ -14226,7 +14227,7 @@ this.frameBufferOpen = false;
 
     /** Copies a memoised block into the push buffer; {@return false} when there is none for this key. */
     private boolean celtium$copyPushBlock(long key, java.nio.ByteBuffer push) {
-        byte[] cached = this.pushBlocks.get(Long.valueOf(key));
+        byte[] cached = this.pushBlocks.get(key);
         if (cached == null) {
             this.pushBlockMisses++;
             return false;
@@ -14255,7 +14256,7 @@ this.frameBufferOpen = false;
         push.position(0);
         push.get(copy);
         push.position(position);
-        this.pushBlocks.put(Long.valueOf(key), copy);
+        this.pushBlocks.put(key, copy);
     }
 
     /** Counts one drawn group against the site that recorded it, and the batches it carried. */
