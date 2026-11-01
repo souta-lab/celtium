@@ -947,6 +947,24 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if (("glTexStorage2D".equals(name) || "nglTexStorage2D".equals(name)) && "(IIIII)V".equals(descriptor)) {
+                for (int slot = 0; slot < 5; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexStorage2D", "(IIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glTexStorage3D".equals(name) || "nglTexStorage3D".equals(name)) && "(IIIIII)V".equals(descriptor)) {
+                for (int slot = 0; slot < 6; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexStorage3D", "(IIIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // Buffer storage and sub-data. Without these the mod's VBO never reached the buffer mirror the draw path
             // reads, so an unindexed draw sampled an empty or stale buffer.
             if ("(IJJJ)V".equals(descriptor)

@@ -1621,6 +1621,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glTexStorage2D/3D} from the transformer's route: immutable storage still defines the level-0 extent. */
+    public static void celtium$texStorage(int target, int levels, int internalFormat, int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && levels > 0 && width > 0 && height > 0) {
+            stub.recordExtent(target, 0, internalFormat, width, height);
+        }
+    }
+
     /** {@code glBufferData/glBufferStorage} from the transformer's route, against the bound buffer. */
     public static void celtium$bufferDataTarget(int target, long size, long data) {
         CeltiumGlStub stub = installed;

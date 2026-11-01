@@ -186,6 +186,15 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /** Raw immutable texture storage: records the level-0 extent the texture queries answer. */
+    public static void glTexStorage2D(int target, int levels, int internalFormat, int width, int height) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorage(target, levels, internalFormat, width, height);
+    }
+
+    public static void glTexStorage3D(int target, int levels, int internalFormat, int width, int height, int depth) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorage(target, levels, internalFormat, width, height);
+    }
+
     /** Raw buffer storage/sub-data and VAO binding: the stub's buffer mirrors are fed from here. */
     public static void glBufferStorage(int target, long size, long data, int flags) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferDataTarget(target, size, data);
