@@ -7291,9 +7291,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     private int readableMappingRefreshes;
     private long readableMappingLastRefreshNanos;
     private static final int READABLE_MAPPING_REFRESH_LIMIT = 64;
+    /** The mapping census reads /proc/self/maps, which only exists on Linux; elsewhere it answers "nothing readable". */
+    private static final boolean PROC_SELF_MAPS_AVAILABLE = System.getProperty("os.name", "")
+            .toLowerCase(java.util.Locale.ROOT).contains("linux");
     private static final long READABLE_MAPPING_REFRESH_INTERVAL_NANOS = 100L * 1000L * 1000L;
 
     private ReadableRange[] celtium$refreshReadableMappings() {
+        if (!PROC_SELF_MAPS_AVAILABLE) {
+            return new ReadableRange[0];
+        }
         long now = System.nanoTime();
         if (this.readableMappingRefreshes >= READABLE_MAPPING_REFRESH_LIMIT
                 || now - this.readableMappingLastRefreshNanos < READABLE_MAPPING_REFRESH_INTERVAL_NANOS) {
