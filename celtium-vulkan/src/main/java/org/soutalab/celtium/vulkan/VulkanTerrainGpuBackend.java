@@ -285,6 +285,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long frameIndex;
     /** The arena's own frame counter: advanced at every frame boundary, world pass or not. */
     private long arenaFrameId;
+    /** Whether a world snapshot ran since the last frame boundary, so the menu-only resets know to stay out. */
+    private boolean frameSnapshotSinceBoundary;
 
     /**
      * The OpenGL projection remapped from the OpenGL clip-depth range [-1, 1] to Vulkan's [0, 1]. Without it every
@@ -6150,6 +6152,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.frameArena != null) {
             this.frameArena.beginFrame(this.arenaFrameId, VulkanContext.completedEpoch());
         }
+        // Only a frame without a world snapshot needs these reset here: with one, captureWorldSnapshot performs the
+        // exact swap a few milliseconds later, and doing it twice would clear the previous frame's hashes before the
+        // census compares against them.
+        boolean snapshotSinceBoundary = this.frameSnapshotSinceBoundary;
+        this.frameSnapshotSinceBoundary = false;
+        if (!snapshotSinceBoundary) {
+            this.immediateOffersLastFrame = this.immediateOffersThisFrame;
+            this.immediateOffersThisFrame = 0;
+            celtium$swapBatchReuseFrames();
+        }
     }
 
     public void beginWorldPass() {
@@ -6271,6 +6283,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             gllessFrame.setFramesWithNoClear(this.framesWithNoClearAtAll);
             gllessFrame.setPresentLag(this.presentLagMax, this.presentLagOne, this.presentLagMore);
         }
+        this.frameSnapshotSinceBoundary = true;
         this.frameId++;
         // The frame that just ended is priced here, at the one place every per-frame counter is reset
         // (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
