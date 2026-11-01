@@ -283,6 +283,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     VkCommandBuffer commandBuffer;
     private long fence;
     private long frameIndex;
+    /** The arena's own frame counter: advanced at every frame boundary, world pass or not. */
+    private long arenaFrameId;
 
     /**
      * The OpenGL projection remapped from the OpenGL clip-depth range [-1, 1] to Vulkan's [0, 1]. Without it every
@@ -6141,6 +6143,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
         }
+        // OPT-05's arena frame: one slot per frame, reclaimed only where GPU completion allows. It has to advance here,
+        // because a menu-only frame never reaches captureWorldSnapshot - the main menu kept one slot in use forever and
+        // appended every frame's menu geometry to it.
+        this.arenaFrameId++;
+        if (this.frameArena != null) {
+            this.frameArena.beginFrame(this.arenaFrameId, VulkanContext.completedEpoch());
+        }
     }
 
     public void beginWorldPass() {
@@ -6275,12 +6284,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$printVerificationSummary("frame 120", true);
         }
         this.countersFrameId = this.frameId;
-        // OPT-05: hand the frame its arena slot, and reclaim one only where GPU completion allows it. Done here
-        // because this is the frame boundary (everything per frame is reset here and nowhere else), and done after
-        // the previous window's wait, so a slot whose groups are all released is normally free by now.
-        if (this.frameArena != null) {
-            this.frameArena.beginFrame(this.frameId, VulkanContext.completedEpoch());
-        }
+        // OPT-05's arena frame is opened at the true frame boundary (celtium$frameBoundary): a menu-only frame never
+        // reaches this method, and the arena slot then stayed in use for the whole session. modelInstances still keys
+        // off the diagnostic frameId below.
         if (this.modelInstances != null) {
             this.modelInstances.beginFrame(this.frameId);
         }
