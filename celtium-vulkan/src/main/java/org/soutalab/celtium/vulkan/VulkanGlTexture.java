@@ -265,6 +265,9 @@ public final class VulkanGlTexture {
 
     /** Scratch for the per-level staging offsets of one patch; refilled at the head of the call that uses it. */
     private long[] patchLevelOffsets = new long[4];
+    /** Two-int scratches for the patch drain: filled by the stub call that is handed them, read immediately. */
+    private final int[] patchOffsetScratch = new int[2];
+    private final int[] mipExtentScratch = new int[2];
     /**
      * Whether this image has defined storage and can be sampled.
      * <p>
@@ -1378,7 +1381,7 @@ public final class VulkanGlTexture {
                 this.patchBatching = PATCH_BATCH;
                 try {
                 if (level != null) {
-                    int[] offset = new int[2];
+                    int[] offset = this.patchOffsetScratch;
                     org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
                     uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
                             new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
@@ -1422,7 +1425,7 @@ public final class VulkanGlTexture {
                     if (mipSerial == Long.MIN_VALUE || mipSerial == this.appliedMipSerials[lvl]) {
                         continue;
                     }
-                    int[] mipExtent = new int[2];
+                    int[] mipExtent = this.mipExtentScratch;
                     java.nio.ByteBuffer mipSurface =
                             org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, lvl,
                                     mipExtent);
