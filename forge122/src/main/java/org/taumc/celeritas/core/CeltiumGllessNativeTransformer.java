@@ -43,7 +43,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
             "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
             "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
-            "glColor4ub", "glColor3ub", "glTexCoord2f", "glTexCoord2d", "glVertex3f",
+            "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glTexCoord2f", "glTexCoord2d", "glVertex3f",
             // The uniform setters are listed no-ops in the stub's table (the programs those values belong to are
             // GL-less stubs, so nothing reads them); the measured session called them 4.0e4 times. The three below
             // are absent from the table entirely and reach the generic unknown-symbol no-op, 5.9e3 calls together.
@@ -60,7 +60,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // The remaining vertex/texcoord/colour spellings a mod may use: none is in the stub's table, so each one
             // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
             "glVertex2f", "glVertex2d", "glVertex3d", "glVertex3i", "glTexCoord2i", "glTexCoord2s",
-            "glNormal3d", "glColor3b", "glColor4ui", "glRectf", "glRecti",
+            "glNormal3d", "glColor3b", "glColor3d", "glColor4ui", "glRectf", "glRecti",
             "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf",
             "glVertex4f", "glVertex4d", "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
             "glMultiTexCoord4f", "glNormal3i", "glColor4b", "glRectd", "glRasterPos2i", "glRasterPos4f",
