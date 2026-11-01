@@ -268,6 +268,13 @@ public final class VulkanGlTexture {
     /** Two-int scratches for the patch drain: filled by the stub call that is handed them, read immediately. */
     private final int[] patchOffsetScratch = new int[2];
     private final int[] mipExtentScratch = new int[2];
+    /** One-element level array for the single-level patch calls; the consumer copies the pixels before returning. */
+    private final java.nio.ByteBuffer[] singleSurfaceScratch = new java.nio.ByteBuffer[1];
+
+    private java.nio.ByteBuffer[] singleSurface(java.nio.ByteBuffer pixels) {
+        this.singleSurfaceScratch[0] = pixels;
+        return this.singleSurfaceScratch;
+    }
     /**
      * Whether this image has defined storage and can be sampled.
      * <p>
@@ -1384,7 +1391,7 @@ public final class VulkanGlTexture {
                     int[] offset = this.patchOffsetScratch;
                     org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadOffset(glTextureId, 0, offset);
                     uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
-                            new java.nio.ByteBuffer[] { level.pixels }, 1, glTextureId);
+                            singleSurface(level.pixels), 1, glTextureId);
                 }
                 java.util.List<org.soutalab.celtium.vulkan.gl.CeltiumGlStub.PendingPatch> pending =
                         pendingPatches.isEmpty()
@@ -1396,7 +1403,7 @@ public final class VulkanGlTexture {
                         continue;
                     }
                     uploadPatchedLevels(patch.width, patch.height, patch.x, patch.y,
-                            new java.nio.ByteBuffer[] { patch.pixels }, 1, glTextureId);
+                            singleSurface(patch.pixels), 1, glTextureId);
                     applied = Math.max(applied, patch.serial);
                 }
                 } finally {
@@ -1552,7 +1559,7 @@ public final class VulkanGlTexture {
      * a sampler can reach in step with level 0 (audit N07).
      */
     public boolean uploadPatchFromPixels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer rgba) {
-        return uploadPatchedLevels(pixelWidth, pixelHeight, x, y, new java.nio.ByteBuffer[] {rgba}, 1);
+        return uploadPatchedLevels(pixelWidth, pixelHeight, x, y, singleSurface(rgba), 1);
     }
 
     /**
