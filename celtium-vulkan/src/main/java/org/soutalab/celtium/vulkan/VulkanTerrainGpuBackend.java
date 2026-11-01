@@ -11338,17 +11338,23 @@ this.frameBufferOpen = false;
                 this.deferredUploads.pollFirst();
                 take = entry.outputs;
             } else {
-                take = new ArrayList<>(entry.outputs.subList(0, remaining));
+                take = obtainUploadList();
+                take.addAll(entry.outputs.subList(0, remaining));
                 entry.outputs.subList(0, remaining).clear();
             }
+            // The list can go back to the pool once the region has consumed it: uploadRegion builds its own pending
+            // list and retains nothing of this one. The size is read before the release clears it.
+            int taken = take.size();
             try {
                 this.terrain.uploadRegion(entry.region, take, entry.trigger);
             } catch (RuntimeException error) {
                 // The same rule the unbudgeted loop follows: one region's failure is counted, the rest still go.
                 this.regionUploadFailures++;
                 this.lastRegionUploadFailure = String.valueOf(error);
+            } finally {
+                releaseUploadList(take);
             }
-            remaining -= take.size();
+            remaining -= taken;
         }
     }
 
