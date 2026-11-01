@@ -374,6 +374,31 @@ public final class CeltiumGllessHint {
         }
     }
 
+    /** Indexed blend/colour-mask state: index 0 is the single target this renderer has. */
+    public static void glBlendFuncSeparateIndexed(int index, int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
+        if (index == 0) {
+            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glBlendFuncSeparate(srcRgb, dstRgb, srcAlpha, dstAlpha);
+        }
+    }
+
+    public static void glBlendEquationIndexed(int index, int mode) {
+        if (index == 0) {
+            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glBlendEquation(mode);
+        }
+    }
+
+    public static void glBlendEquationSeparateIndexed(int index, int modeRgb, int modeAlpha) {
+        if (index == 0) {
+            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glBlendEquationSeparate(modeRgb, modeAlpha);
+        }
+    }
+
+    public static void glColorMaskIndexed(int index, boolean red, boolean green, boolean blue, boolean alpha) {
+        if (index == 0) {
+            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glColorMask(red, green, blue, alpha);
+        }
+    }
+
     /** Indexed enables: this renderer has one target, so index 0 is the same as the unindexed call. */
     public static void glEnableIndexed(int capability, int index, boolean enabled) {
         if (index == 0) {

@@ -69,8 +69,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glIndexd", "glIndexs",
             // The rest of the raster/clear state that the table lists as a no-op on purpose (the Vulkan side mirrors
             // that state through the GlStateManager hooks, not through these raw setters).
-            "glDepthMask", "glDepthFunc", "glDepthRange", "glBlendColor", "glColorMaski",
-            "glBlendFuncSeparatei", "glBlendEquationi", "glBlendEquationSeparatei",
+            "glDepthMask", "glDepthFunc", "glDepthRange", "glBlendColor",
+            // glColorMaski and the indexed blend setters are routed to the single target's state below.
             // glClearBufferfv/iv/fi are routed to the clear record below; the no-op set is consulted first.
             "glStencilFuncSeparate", "glStencilOpSeparate", "glStencilMaskSeparate",
             "glPolygonMode", "glHint", "glPointSize", "glSampleCoverage", "glLogicOp", "glClampColor",
@@ -1061,6 +1061,47 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 9);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glGetActiveObject", "(IIIJJJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(II)V".equals(descriptor)
+                    && ((name.endsWith("glBlendEquationi") && !name.endsWith("glBlendEquationSeparatei"))
+                            || name.endsWith("glBlendEquationIndexedEXT"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBlendEquationIndexed", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(III)V".equals(descriptor)
+                    && (name.endsWith("glBlendEquationSeparatei") || name.endsWith("glBlendEquationSeparateIndexedEXT"))) {
+                for (int slot = 0; slot < 3; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBlendEquationSeparateIndexed", "(III)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIII)V".equals(descriptor)
+                    && (name.endsWith("glBlendFuncSeparatei") || name.endsWith("glBlendFuncSeparateIndexedEXT"))) {
+                for (int slot = 0; slot < 5; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBlendFuncSeparateIndexed", "(IIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IZZZZ)V".equals(descriptor)
+                    && (name.endsWith("glColorMaski") || name.endsWith("glColorMaskIndexedEXT"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                for (int slot = 1; slot < 5; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glColorMaskIndexed", "(IZZZZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
