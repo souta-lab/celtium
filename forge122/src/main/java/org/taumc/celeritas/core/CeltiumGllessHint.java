@@ -607,8 +607,8 @@ public final class CeltiumGllessHint {
             case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS
                 value = 16;
                 break;
-            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
-                value = 32;
+            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - at least the per-stage count, and the stub's own answer
+                value = 16;
                 break;
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 value = 16;
