@@ -1697,6 +1697,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribiv(index, pname, out);
     }
 
+    /** Raw {@code glGetBooleani_v}: one zeroed GLboolean byte. */
+    public static void glGetBooleanIndexed(long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBooleanIndexed(out);
+    }
+
     /** Raw {@code glGetIntegeri_v}: the scalar query, index ignored. */
     public static void glGetIntegerIndexed(int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getIntegerIndexed(pname, out);

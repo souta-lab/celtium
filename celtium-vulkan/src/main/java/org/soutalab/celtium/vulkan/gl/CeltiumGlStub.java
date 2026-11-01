@@ -3102,6 +3102,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         org.lwjgl.system.MemoryUtil.memPutInt(out, value);
     }
 
+    /** {@code glGetBooleani_v}: one GLboolean byte, the width GL writes for this query. */
+    public static void celtium$getBooleanIndexed(long out) {
+        if (out != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutByte(out, (byte) 0);
+        }
+    }
+
     /** {@code glGetIntegeri_v} from the transformer's route: the scalar answer, independent of the index. */
     public static void celtium$getIntegerIndexed(int pname, long out) {
         if (out != 0L) {
