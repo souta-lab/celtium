@@ -102,7 +102,7 @@ public final class ModelGeometryCache {
     private String modelMeshFailure = "none";
 
     /** {@return the built meshes, keyed by display-list id, or null when nothing has been built}. */
-    public Map<Integer, VulkanDynamicMesh> modelMeshes() {
+    public it.unimi.dsi.fastutil.ints.Int2ObjectMap<VulkanDynamicMesh> modelMeshes() {
         return this.modelMeshes;
     }
 

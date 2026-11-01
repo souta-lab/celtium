@@ -230,7 +230,7 @@ final class VulkanModelInstances {
      * Makes the pool hold the model cache's current table; a new table (identity) rebuilds the pool once. The copy is
      * the meshes' own mapped bytes, so the pool holds exactly what the per-group path would draw.
      */
-    void syncPool(Map<Integer, VulkanDynamicMesh> meshes) {
+    void syncPool(it.unimi.dsi.fastutil.ints.Int2ObjectMap<VulkanDynamicMesh> meshes) {
         if (meshes == null || meshes == this.poolSource) {
             return;
         }
@@ -242,13 +242,14 @@ final class VulkanModelInstances {
         // Primitive set: this walks every mesh of a rebuilt table (593 builds in one session), and the boxed set
         // allocated an Integer key for each entry.
         it.unimi.dsi.fastutil.ints.IntOpenHashSet live = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
-        for (Map.Entry<Integer, VulkanDynamicMesh> entry : meshes.entrySet()) {
+        for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<VulkanDynamicMesh> entry
+                : meshes.int2ObjectEntrySet()) {
             VulkanDynamicMesh mesh = entry.getValue();
             if (mesh == null || mesh.isEmpty() || mesh.layout() == null || mesh.layout().stride != VERTEX_BYTES) {
                 continue;
             }
-            live.add(entry.getKey().intValue());
-            if (this.poolMeshes.get(entry.getKey().intValue()) == mesh) {
+            live.add(entry.getIntKey());
+            if (this.poolMeshes.get(entry.getIntKey()) == mesh) {
                 continue;
             }
             long vBytes = (long) mesh.vertexCount() * VERTEX_BYTES;
@@ -256,9 +257,9 @@ final class VulkanModelInstances {
             ensurePoolCapacity(this.poolVertexUsed + vBytes, this.poolIndexUsed + iBytes);
             MemoryUtil.memCopy(mesh.vertexAddress(), this.poolVertices.mappedAddress() + this.poolVertexUsed, vBytes);
             MemoryUtil.memCopy(mesh.indexAddress(), this.poolIndices.mappedAddress() + this.poolIndexUsed, iBytes);
-            this.poolEntries.put(entry.getKey(), new int[] {(int) (this.poolIndexUsed / 4L),
+            this.poolEntries.put(entry.getIntKey(), new int[] {(int) (this.poolIndexUsed / 4L),
                     (int) (this.poolVertexUsed / VERTEX_BYTES), mesh.indexCount()});
-            this.poolMeshes.put(entry.getKey().intValue(), mesh);
+            this.poolMeshes.put(entry.getIntKey(), mesh);
             this.poolVertexUsed += vBytes;
             this.poolIndexUsed += iBytes;
             this.poolAppends++;
