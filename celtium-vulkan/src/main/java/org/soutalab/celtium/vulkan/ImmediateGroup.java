@@ -260,7 +260,8 @@ public final class ImmediateGroup {
         group.mesh = null;
         group.projection = null;
         group.modelView = null;
-        group.state = null;
+        // The state array stays: it is primitive data with no world reference in it, and reset() reuses it in place
+        // through copyState() instead of allocating one per obtain.
         group.formatId = 0;
         group.texture = 0;
         group.textureImage = null;
