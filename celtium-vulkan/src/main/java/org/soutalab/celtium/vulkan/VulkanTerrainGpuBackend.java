@@ -6183,6 +6183,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // frame boundary it was accepted in, and counted per identity, rather than left queued or silently re-routed
         // into another target's pass. The drain that would have drawn them per target was reverted (e30a23cd6)
         // because retargeting the same command buffer lost the device; drawing them needs a pass of its own.
+        // An open group is not in immediateGroups, so the drop below never sees it. Close it first: a group left open
+        // at the boundary carried its mesh into the next frame, whose first batch could then merge into last frame's
+        // vertices and draw them again (the ghost/flicker shape). A closed group joins the queue and is dropped with
+        // the rest of this frame's unfunded targets.
+        if (this.currentImmediateMesh != null) {
+            closeCurrentImmediateGroup();
+        }
         if (!this.immediateGroups.isEmpty()) {
             int dropped = 0;
             java.util.LinkedHashSet<Long> targets = new java.util.LinkedHashSet<Long>();
