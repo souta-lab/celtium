@@ -12624,6 +12624,9 @@ this.frameBufferOpen = false;
         return GAME_CLEAR_LATCH;
     }
 
+    /** Scratch for the clear colour a latch reads; copied out before anything can reuse it. */
+    private final float[] gameClearLatchRgba = new float[4];
+
     private void celtium$latchGameClearAtTargetChange() {
         if (!celtium$gameClearLatchEnabled()) {
             // Control leg: leave the request pending, exactly as it was before this latch existed, so the live read
@@ -12638,7 +12641,7 @@ this.frameBufferOpen = false;
         if (mask == 0) {
             return;
         }
-        float[] rgba = new float[4];
+        float[] rgba = this.gameClearLatchRgba;
         // The values the main clear was issued with, not the live ones: see CeltiumGlStub.mainClearValues.
         double depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(rgba);
         if (Double.isNaN(depth)) {
