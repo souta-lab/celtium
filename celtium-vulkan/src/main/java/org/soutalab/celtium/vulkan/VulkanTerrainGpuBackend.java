@@ -1538,6 +1538,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Live unit-0 texture affine, read without allocating: see {@code celtium$textureAffineMoved}. */
     private final float[] textureAffineScratch = new float[6];
+    /** The last array handed out by {@link #celtium$textureAffine()}; read-only after capture, like the others. */
+    private float[] lastTextureAffine;
 
     /** The submission domain's counters (refactoring plan R2). */
     final SubmissionStatistics submissionStatistics = new SubmissionStatistics();
@@ -4690,8 +4692,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return null;
         }
         // Copied here and nowhere else: a group keeps its own snapshot, and capturing is a few hundred times a frame
-        // rather than once per offer.
-        return this.textureAffineScratch.clone();
+        // rather than once per offer. Equal affines share the previous array - most model draws run with the same
+        // item transform - and a changed one gets a new array so groups already holding the old keep its values.
+        float[] last = this.lastTextureAffine;
+        if (last != null && java.util.Arrays.equals(last, this.textureAffineScratch)) {
+            return last;
+        }
+        float[] fresh = this.textureAffineScratch.clone();
+        this.lastTextureAffine = fresh;
+        return fresh;
     }
 
     /**
