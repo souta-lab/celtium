@@ -4714,8 +4714,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0x84C0 + this.textures.activeUnit();
             case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
                 return this.drawFbo;
-            case 0x8CA5: // GL_READ_FRAMEBUFFER_BINDING
+            case 0x8CAA: // GL_READ_FRAMEBUFFER_BINDING
                 return this.readFbo;
+            case 0x8CA5: // GL_STENCIL_BACK_WRITEMASK - no stencil state is kept; GL's default makes every bit writable
+                return 0xFF;
             case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
                 return this.compilingList;
             case 0x8B8D: // GL_CURRENT_PROGRAM
@@ -5032,8 +5034,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B21: // GL_LINE_WIDTH
                 putFloatOrDouble(out, 0, this.lineWidth, asDouble);
                 return;
-            case 0x0B22: // GL_POINT_SIZE
+            case 0x0B11: // GL_POINT_SIZE
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
+            case 0x0B22: // GL_LINE_WIDTH_RANGE - two values, not the point size
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, 1.0f, asDouble);
                 return;
             case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - 0x0D3A is the viewport limit, not the line-width range
                 int dimension = 16384;
@@ -6091,12 +6097,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return dims[2];
             case 0x1005: // GL_TEXTURE_BORDER
                 return 0;
-            case 0x803C: // GL_TEXTURE_RED_SIZE and friends report a plausible bit depth
-            case 0x803D:
-            case 0x803E:
-            case 0x803F:
-            case 0x8040:
-            case 0x8041:
+            // GL_TEXTURE_RED/GREEN/BLUE/ALPHA/LUMINANCE/INTENSITY_SIZE. The previous range (0x803C..0x8041) named
+            // internal formats - GL_ALPHA8 and friends - which are not query pnames, so a real channel-size query
+            // returned 0.
+            case 0x805C:
+            case 0x805D:
+            case 0x805E:
+            case 0x805F:
+            case 0x8060:
+            case 0x8061:
                 return 8;
             default:
                 return 0;
