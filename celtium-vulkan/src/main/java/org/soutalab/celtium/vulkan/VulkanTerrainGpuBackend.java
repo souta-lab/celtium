@@ -10995,6 +10995,55 @@ this.frameBufferOpen = false;
         return new VulkanDynamicMesh(this.context);
     }
 
+    /**
+     * Supplies a full mirror for a texture no upload hook announced, at most once per content change.
+     * <p>
+     * The immediate path has always done this before its refusal; the model replay, which samples skins and mod atlases
+     * bound around a display list, refused instead - and a model whose texture no hook saw was therefore invisible. The
+     * per-texture write serial is the change signal: an attempt that failed keeps failing until new content arrives.
+     *
+     * @return whether a mirror exists for the texture after the attempt
+     */
+    boolean celtium$supplyMirrorForModel(int glTextureId) {
+        if (glTextureId <= 0 || this.textureRegistry == null) {
+            return false;
+        }
+        VulkanGlTexture existing = this.textureRegistry.get(glTextureId);
+        if (existing != null && existing.hasFullContent()) {
+            return true;
+        }
+        long writeSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(glTextureId, 0);
+        if (glTextureId < this.lazySupplySerialByTexture.length && this.lazySupplySerialRecorded[glTextureId]
+                && this.lazySupplySerialByTexture[glTextureId] == writeSerial) {
+            this.lazyMirrorRetrySkips++;
+            return this.textureRegistry.get(glTextureId) != null;
+        }
+        if (glTextureId >= this.lazySupplySerialByTexture.length) {
+            int grown = Math.max(glTextureId + 1, this.lazySupplySerialByTexture.length * 2);
+            this.lazySupplySerialByTexture = java.util.Arrays.copyOf(this.lazySupplySerialByTexture, grown);
+            this.lazySupplySerialRecorded = java.util.Arrays.copyOf(this.lazySupplySerialRecorded, grown);
+        }
+        this.lazySupplySerialByTexture[glTextureId] = writeSerial;
+        this.lazySupplySerialRecorded[glTextureId] = true;
+        int[] size = textureSize(glTextureId);
+        if (size[0] > 0 && size[1] > 0) {
+            try {
+                VulkanGlTexture created = this.textureRegistry.imageFor(glTextureId, size[0], size[1], true);
+                created.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.textureRegistry.markFullyInitialized(glTextureId);
+                celtium$noteMirrorCurrent(glTextureId);
+                this.lazyMirrorSupplies++;
+                if (existing != null) {
+                    this.immediateStatistics.notePartialMirrorsCompleted();
+                }
+            } catch (RuntimeException | LinkageError error) {
+                this.lazyMirrorFailures++;
+                this.lastLazyMirrorFailure = glTextureId + ": " + error;
+            }
+        }
+        return this.textureRegistry.get(glTextureId) != null;
+    }
+
     /** Moves the open group into the flush list together with the matrices it was built with. */
 
     /** Group starts forced by a close (window/pass boundary), not by the merge predicate refusing. */

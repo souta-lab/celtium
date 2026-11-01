@@ -128,11 +128,20 @@ final class ModelReplay {
             // The texture the model is actually bound to, asked of GL at the moment of the replay: a player model samples
             // its own skin, not the block atlas the immediate path last used.
             int texture = boundTextureId != 0 ? boundTextureId : b.whiteTextureId();
-            if (boundTextureId != 0 && b.textureRegistry != null
-                    && b.textureRegistry.get(boundTextureId) == null) {
-                b.modelDrawRefusals++;
-                b.modelLastRefusal = "texture " + boundTextureId + " is not mirrored";
-                return false;
+            if (boundTextureId != 0 && b.textureRegistry != null) {
+                VulkanGlTexture modelTexture = b.textureRegistry.get(boundTextureId);
+                if (modelTexture == null || !modelTexture.hasFullContent()) {
+                    // The same one-attempt supply the immediate path makes before its refusal: a display list's texture
+                    // (a skin, a mod's machine atlas) is often bound around the replay without any upload the hooks saw,
+                    // and refusing here made the model invisible rather than merely untextured. One attempt per content
+                    // change, so a texture the stub holds no pixels for is not retried every frame.
+                    b.celtium$supplyMirrorForModel(boundTextureId);
+                }
+                if (b.textureRegistry.get(boundTextureId) == null) {
+                    b.modelDrawRefusals++;
+                    b.modelLastRefusal = "texture " + boundTextureId + " is not mirrored";
+                    return false;
+                }
             }
             int[] state = b.celtium$captureState();
             long key = b.celtium$stateKey(VulkanImmediateFormats.ITEM, state);
