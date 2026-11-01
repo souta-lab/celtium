@@ -947,6 +947,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("glNamedFramebufferTexture".equals(name) && "(IIII)V".equals(descriptor)) {
+                for (int slot = 0; slot < 4; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glNamedFramebufferTexture", "(IIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if (("glTextureParameteri".equals(name) || "nglTextureParameteri".equals(name)) && "(III)V".equals(descriptor)) {
                 for (int slot = 0; slot < 3; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);

@@ -208,6 +208,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterPointer(target, pname, values, floats);
     }
 
+    /** Raw {@code glNamedFramebufferTexture}: the DSA spelling of the colour-attachment record. */
+    public static void glNamedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
+    }
+
     /** Raw immutable texture storage: records the level-0 extent the texture queries answer. */
     public static void glTexStorage2D(int target, int levels, int internalFormat, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorage(target, levels, internalFormat, width, height);

@@ -1665,6 +1665,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glNamedFramebufferTexture} from the transformer's route: the attachment record for a named framebuffer. */
+    public static void celtium$namedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || framebuffer == 0 || level != 0 || (attachment & 0xFFFF) != 0x8CE0) {
+            return;
+        }
+        updateColorAttachment(stub.framebufferColorTextures, stub.colorTextureFramebuffers, framebuffer, texture);
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$rawAttachmentChanged(framebuffer);
+        }
+    }
+
     /** {@code glTexStorage2D/3D} from the transformer's route: immutable storage still defines the level-0 extent. */
     public static void celtium$texStorage(int target, int levels, int internalFormat, int width, int height) {
         CeltiumGlStub stub = installed;
