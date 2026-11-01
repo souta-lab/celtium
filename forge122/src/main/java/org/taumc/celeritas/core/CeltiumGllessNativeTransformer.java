@@ -563,6 +563,11 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.LRETURN);
             return;
         }
+        if (returnType.equals("I") && "(II)I".equals(descriptor) && name.endsWith("glCheckNamedFramebufferStatus")) {
+            method.visitLdcInsn(Integer.valueOf(0x8CD5)); // GL_FRAMEBUFFER_COMPLETE
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         if (returnType.equals("I") && name.endsWith("glClientWaitSync") && descriptor.startsWith("(JIJ)")) {
             method.visitVarInsn(Opcodes.LLOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 2);
@@ -873,6 +878,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+            if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetNamedFramebufferParameteriv")) {
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(Opcodes.ICONST_1);
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glZeroOut", "(JIZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIJ)V".equals(descriptor)
                     && (name.endsWith("glGetNamedBufferParameteriv") || name.endsWith("glGetNamedBufferParameteri64v"))) {
                 boolean wide = name.endsWith("i64v");
