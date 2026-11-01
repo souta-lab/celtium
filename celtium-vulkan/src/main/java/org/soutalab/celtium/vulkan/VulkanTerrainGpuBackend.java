@@ -3135,12 +3135,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> texGenPipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    private final java.util.Map<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateBlockPipeline>();
-    private final java.util.Map<Long, VulkanImmediateParticlePipeline> particlePipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateParticlePipeline>();
-    private final java.util.Map<Long, VulkanImmediateItemPipeline> itemPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateItemPipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateBlockPipeline> blockPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateParticlePipeline> particlePipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateItemPipeline> itemPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
     /**
@@ -10077,9 +10077,14 @@ this.frameBufferOpen = false;
             // the RGB *and* the alpha pair to that same pair - so the alpha pair the pipeline baked was the wrong one
             // for every particle batch in the scene. The depth and cull arguments are left as this family asserted
             // them: they are a different finding's subject and changing them here would move an accepted picture.
-            VulkanImmediateParticlePipeline value = this.particlePipelineCache.computeIfAbsent(particleKey,
-                    k -> VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
-                            true, false, false, celtium$vkCompareOp(state[7])));
+            VulkanImmediateParticlePipeline value = this.particlePipelineCache.get(particleKey);
+            if (value == null) {
+                value = VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
+                        true, false, false, celtium$vkCompareOp(state[7]));
+                if (value != null) {
+                    this.particlePipelineCache.put(particleKey, value);
+                }
+            }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == 4) {
             // Which variant each ITEM batch gets, split by stage. The GUI stage is where the hotbar and the inventory
@@ -10093,9 +10098,14 @@ this.frameBufferOpen = false;
                 this.immediateStatistics.noteItemUnlitGroups();
                 if (!this.worldPassActive) this.immediateStatistics.noteItemUnlitGuiGroups();
             }
-            VulkanImmediateItemPipeline value = this.itemPipelineCache.computeIfAbsent(key,
-                    k -> VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
-                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]), itemLit));
+            VulkanImmediateItemPipeline value = this.itemPipelineCache.get(key);
+            if (value == null) {
+                value = VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
+                        state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]), itemLit);
+                if (value != null) {
+                    this.itemPipelineCache.put(key, value);
+                }
+            }
             // The lit variant samples the light map on a second binding; the unlit one has only the model texture, so
             // the set is built for the layout this variant declares. A lit batch with no mirrored light map gets
             // descriptor 0 and is refused by name rather than drawn with a zero view (see the pipeline's guard).
@@ -10104,9 +10114,14 @@ this.frameBufferOpen = false;
                     : value.descriptorSetFor(texture), "prepare");
             pipeline = value;
         } else if (format == 3) {
-            VulkanImmediateBlockPipeline value = this.blockPipelineCache.computeIfAbsent(key,
-                    k -> VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
-                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
+            VulkanImmediateBlockPipeline value = this.blockPipelineCache.get(key);
+            if (value == null) {
+                value = VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
+                        state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]));
+                if (value != null) {
+                    this.blockPipelineCache.put(key, value);
+                }
+            }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == VulkanImmediateFormats.POSITION_COLOR_TEXGEN) {
             VulkanImmediateTexturePipeline value = this.texGenPipelineCache.get(key);
