@@ -223,4 +223,18 @@ public final class VulkanImmediateDrawer {
                 return "unknown draw mode " + glMode;
         }
     }
+
+    /**
+     * {@return the reason the renderer will not draw a mode, or null when it will}.
+     * <p>
+     * The acceptance rule of the offer path, for callers that only need accept/refuse: line modes are drawn (at the one
+     * pixel width the pipelines implement, which the offer path counts as a narrowing rather than a refusal), so the
+     * reason {@link #unsupportedReason} gives for them is not an answer to "will this be drawn". The route that offers a
+     * run before it is packed - the legacy {@code glBegin} capture - asks this rather than keeping its own list, which
+     * is how it had come to refuse the strips and lines the renderer draws.
+     */
+    public static String refusalReason(int glMode) {
+        String reason = unsupportedReason(glMode);
+        return reason != null && isLineMode(glMode) ? null : reason;
+    }
 }

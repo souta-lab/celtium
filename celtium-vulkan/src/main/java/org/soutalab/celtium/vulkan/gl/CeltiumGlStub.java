@@ -2277,32 +2277,33 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * Legacy immediate-mode capture: {@code glBegin}/{@code glEnd} with {@code glVertex3f} and a current texture
-     * coordinate.
+     * Legacy immediate-mode capture: {@code glBegin}/{@code glEnd} with the current texture coordinate and colour.
      * <p>
      * Measured on a SuperSymmetry menu leg with the GL surface census: glVertex3f 6767, glTexCoord2d 5315, glBegin
      * 1692, glEnd 1691 and glTexCoord2f 968 calls were answered with a zero by the transformer - 82% of the unmapped
      * calls in the run, and every one of them a draw the picture lost (Forge's SplashProgress draws its loading bar
      * this way). The capture collects the vertices into the same POSITION_TEX_COLOR / POSITION_COLOR layouts the
-     * client-array path uses and submits them at glEnd, so the matrices, texture and colour come from the mirrors the
+     * client-array path uses and offers them at glEnd, so the matrices, texture and colour come from the mirrors the
      * other routes already maintain.
+     * <p>
+     * The packing itself lives in {@link LegacyImmediateCapture}, which has no GL or Vulkan dependency and is pinned by
+     * a CPU test; this class owns the GL surface (which format the run gets, when a list compile owns the geometry) and
+     * the one line each kind of refusal prints.
      */
-    private ByteBuffer legacyBuffer;
-    private int legacyCount, legacyMode, legacyFormat = 2, legacyStride = 24;
-    private boolean legacyActive;
-    private float legacyTexU, legacyTexV;
-    private float legacyRed = 1.0f, legacyGreen = 1.0f, legacyBlue = 1.0f, legacyAlpha = 1.0f;
-    private long legacySubmissions, legacySubmittedVertices, legacyModeRefusals, legacyRefusals;
+    private final LegacyImmediateCapture legacyCapture = new LegacyImmediateCapture();
 
-    /** Ends the current {@code glBegin}/{@code glEnd} run without drawing it, counted under a named reason. */
-    private void celtium$legacyRefuse(String why) {
-        this.legacyRefusals++;
-        if (this.legacyRefusals == 1) {
-            System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + this.legacyMode + " reason=" + why);
-        }
-        this.legacyActive = false;
-        this.legacyCount = 0;
-    }
+    /**
+     * Whether the renderer can draw a primitive. Asked of the drawer rather than listed here so the capture and the
+     * flush accept the same modes - the list that used to live here (quads, triangles, fans) refused the strips and
+     * lines {@code VulkanImmediateDrawer} already draws.
+     */
+    private static final LegacyImmediateCapture.ModeGate LEGACY_MODE_GATE =
+            org.soutalab.celtium.vulkan.VulkanImmediateDrawer::refusalReason;
+
+    /** One bounded line per kind of legacy refusal, so a silent loss cannot read as "nothing to draw". */
+    private static final int LEGACY_REFUSAL_LOG_LIMIT = 4;
+    private int legacyRefusalLogs;
+    private int legacyModeRefusalsLogged;
 
     /** {@code glBegin(mode)}: starts collecting; a previous run that was never ended is refused by name. */
     public static void celtium$legacyBegin(int mode) {
@@ -2310,70 +2311,83 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        if (stub.legacyActive) {
-            stub.celtium$legacyRefuse("a second glBegin before glEnd");
-        }
-        stub.legacyMode = mode;
-        stub.legacyCount = 0;
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         boolean textured = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                 && vulkan.celtium$texture2dEnabled();
-        stub.legacyFormat = textured ? 2 : 1;
-        stub.legacyStride = textured ? 24 : 16;
-        stub.legacyActive = true;
+        long nested = stub.legacyCapture.nestedRefusals();
+        long lists = stub.legacyCapture.listRefusals();
+        long modes = stub.legacyCapture.modeRefusals();
+        stub.legacyCapture.begin(mode, textured, stub.compilingList != 0, LEGACY_MODE_GATE);
+        if (stub.legacyCapture.nestedRefusals() != nested && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
+            stub.legacyRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason=a second glBegin before glEnd");
+        }
+        if (stub.legacyCapture.listRefusals() != lists && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
+            stub.legacyRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode
+                    + " reason=a display list is being compiled (list " + stub.compilingList + ")");
+        }
+        if (stub.legacyCapture.modeRefusals() != modes && stub.legacyModeRefusalsLogged < LEGACY_REFUSAL_LOG_LIMIT) {
+            stub.legacyModeRefusalsLogged++;
+            System.out.println("[Celtium] CELTIUM_LEGACY_MODE_REFUSED mode=" + mode
+                    + " reason=" + stub.legacyCapture.lastRefusal());
+        }
+    }
+
+    /** {@code glVertex2f}: the two-component spelling a mod's flat geometry uses. */
+    public static void celtium$legacyVertex2f(float x, float y) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex2f(x, y);
+        }
+    }
+
+    /** {@code glVertex2d}, narrowed to the float layout. */
+    public static void celtium$legacyVertex2d(double x, double y) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex2d(x, y);
+        }
     }
 
     /** {@code glVertex3f}: appends one vertex with the current texture coordinate and colour. */
     public static void celtium$legacyVertex3f(float x, float y, float z) {
         CeltiumGlStub stub = installed;
-        if (stub == null || !stub.legacyActive) {
-            return;
+        if (stub != null) {
+            stub.legacyCapture.vertex3f(x, y, z);
         }
-        int stride = stub.legacyStride;
-        if (stub.legacyCount >= 65536) {
-            stub.celtium$legacyRefuse("more than 65536 vertices in one glBegin");
-            return;
-        }
-        int needed = (stub.legacyCount + 1) * stride;
-        if (stub.legacyBuffer == null || stub.legacyBuffer.capacity() < needed) {
-            if (stub.legacyBuffer != null) {
-                MemoryUtil.memFree(stub.legacyBuffer);
-            }
-            stub.legacyBuffer = MemoryUtil.memAlloc(Math.max(needed, 65536 * 24));
-        }
-        long base = MemoryUtil.memAddress(stub.legacyBuffer) + (long) stub.legacyCount * stride;
-        MemoryUtil.memPutFloat(base, x);
-        MemoryUtil.memPutFloat(base + 4L, y);
-        MemoryUtil.memPutFloat(base + 8L, z);
-        if (stub.legacyFormat == 2) {
-            MemoryUtil.memPutFloat(base + 12L, stub.legacyTexU);
-            MemoryUtil.memPutFloat(base + 16L, stub.legacyTexV);
-            stub.celtium$legacyColourAt(base + 20L);
-        } else {
-            stub.celtium$legacyColourAt(base + 12L);
-        }
-        stub.legacyCount++;
     }
 
-    private void celtium$legacyColourAt(long address) {
-        MemoryUtil.memPutByte(address, celtium$toByte(this.legacyRed));
-        MemoryUtil.memPutByte(address + 1L, celtium$toByte(this.legacyGreen));
-        MemoryUtil.memPutByte(address + 2L, celtium$toByte(this.legacyBlue));
-        MemoryUtil.memPutByte(address + 3L, celtium$toByte(this.legacyAlpha));
+    /** {@code glVertex3d}, narrowed to the float layout. */
+    public static void celtium$legacyVertex3d(double x, double y, double z) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex3d(x, y, z);
+        }
     }
 
-    private static byte celtium$toByte(float value) {
-        float clamped = value <= 0.0f ? 0.0f : value >= 1.0f ? 1.0f : value;
-        return (byte) (int) (clamped * 255.0f + 0.5f);
+    /** {@code glVertex4f}: the position is projected by {@code w}, as GL does. */
+    public static void celtium$legacyVertex4f(float x, float y, float z, float w) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex4f(x, y, z, w);
+        }
+    }
+
+    /** {@code glVertex4d}, narrowed before the projection. */
+    public static void celtium$legacyVertex4d(double x, double y, double z, double w) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex4d(x, y, z, w);
+        }
     }
 
     /** {@code glTexCoord2f}: the coordinate the following vertices carry. */
     public static void celtium$legacyTexCoord2f(float u, float v) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.legacyTexU = u;
-            stub.legacyTexV = v;
+            stub.legacyCapture.texCoord(u, v);
         }
     }
 
@@ -2382,7 +2396,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         celtium$legacyTexCoord2f((float) u, (float) v);
     }
 
-    /** The raw colour routes' current colour, captured for legacy vertices (GL keeps one current colour). */
     /** Records the colour for {@code glGetFloatv(GL_CURRENT_COLOR)}; fed by every path that sets the mirror. */
     public static void celtium$setCurrentColor(float red, float green, float blue, float alpha) {
         CeltiumGlStub stub = installed;
@@ -2394,52 +2407,43 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** The raw colour routes' current colour, captured for legacy vertices (GL keeps one current colour). */
     public static void celtium$legacyColor(float red, float green, float blue, float alpha) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.legacyRed = red;
-            stub.legacyGreen = green;
-            stub.legacyBlue = blue;
-            stub.legacyAlpha = alpha;
+            stub.legacyCapture.color(red, green, blue, alpha);
         }
     }
 
-    /** {@code glEnd}: submits the collected run through the immediate path, or refuses it with a named reason. */
+    /** {@code glEnd}: offers the collected run through the immediate path, or refuses it with a named reason. */
     public static void celtium$legacyEnd() {
         CeltiumGlStub stub = installed;
-        if (stub == null || !stub.legacyActive) {
+        if (stub == null) {
             return;
         }
-        stub.legacyActive = false;
-        int count = stub.legacyCount;
-        int mode = stub.legacyMode;
-        stub.legacyCount = 0;
-        if (count <= 0) {
-            return;
-        }
-        if (mode != 7 && mode != 4 && mode != 6) {
-            stub.legacyModeRefusals++;
-            if (stub.legacyModeRefusals <= 3 || (stub.legacyModeRefusals & (stub.legacyModeRefusals - 1)) == 0) {
-                System.out.println("[Celtium] CELTIUM_LEGACY_MODE_REFUSED mode=" + mode
-                        + " vertices=" + count + " (quads, triangles and fans are drawn)");
+        int vertices = stub.legacyCapture.vertexCount();
+        int mode = stub.legacyCapture.mode();
+        int format = stub.legacyCapture.format();
+        long sinkRefusals = stub.legacyCapture.sinkRefusals();
+        boolean taken = stub.legacyCapture.end((address, stride, layout, count, drawMode) -> {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            boolean accepted = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    && vulkan.submitImmediateBatch(null, stride, layout, address, count, drawMode);
+            if (!accepted) {
+                stub.legacyCapture.noteRefusal("the immediate path refused it"
+                        + (backend == null ? " (no backend)" : ": " + backend.lastRefusal()));
             }
-            return;
-        }
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        boolean taken = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                && vulkan.submitImmediateBatch(null, stub.legacyStride, stub.legacyFormat,
-                        MemoryUtil.memAddress(stub.legacyBuffer), count, mode);
-        if (!taken) {
-            stub.celtium$legacyRefuse("the immediate path refused it"
-                    + (backend == null ? " (no backend)" : ": " + backend.lastRefusal()));
-            return;
-        }
-        stub.legacySubmissions++;
-        stub.legacySubmittedVertices += count;
-        if (stub.legacySubmissions == 1) {
-            System.out.println("[Celtium] CELTIUM_LEGACY_IMMEDIATE submitted=1 vertices=" + count + " mode=" + mode
-                    + " format=" + stub.legacyFormat + " (legacy glBegin geometry now reaches the immediate path)");
+            return accepted;
+        });
+        if (taken && stub.legacyCapture.submittedRuns() == 1) {
+            System.out.println("[Celtium] CELTIUM_LEGACY_IMMEDIATE submitted=1 vertices=" + vertices + " mode=" + mode
+                    + " format=" + format + " (legacy glBegin geometry now reaches the immediate path)");
+        } else if (!taken && stub.legacyCapture.sinkRefusals() != sinkRefusals
+                && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
+            stub.legacyRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason="
+                    + stub.legacyCapture.lastRefusal());
         }
     }
 

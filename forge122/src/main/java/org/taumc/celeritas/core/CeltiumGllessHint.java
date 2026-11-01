@@ -1480,6 +1480,31 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3f(x, y, z);
     }
 
+    /** {@code glVertex2f}: the two-component spelling flat legacy geometry uses; z stays at GL's current zero. */
+    public static void glLegacyVertex2f(float x, float y) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2f(x, y);
+    }
+
+    /** {@code glVertex2d}, narrowed to the float layout. */
+    public static void glLegacyVertex2d(double x, double y) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2d(x, y);
+    }
+
+    /** {@code glVertex3d}: the double spelling a mod uses when it rounds its own positions. */
+    public static void glLegacyVertex3d(double x, double y, double z) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3d(x, y, z);
+    }
+
+    /** {@code glVertex4f}: the capture projects by {@code w}, as GL does. */
+    public static void glLegacyVertex4f(float x, float y, float z, float w) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex4f(x, y, z, w);
+    }
+
+    /** {@code glVertex4d}, narrowed before the projection. */
+    public static void glLegacyVertex4d(double x, double y, double z, double w) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex4d(x, y, z, w);
+    }
+
     public static void glLegacyTexCoord2f(float u, float v) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2f(u, v);
     }

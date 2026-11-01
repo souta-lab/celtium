@@ -34,3 +34,7 @@ classpath="$classes:$lwjgl_core:$lwjgl_opengl:$asm:$asm_tree:$fastutil:$launchwr
 rm -rf "$out/classes"
 javac -proc:none -cp "$classpath" -d "$out/classes" "$root/scripts/cpu-contract/TransformerRouteVerifierCheck.java"
 java -cp "$out/classes:$classpath" TransformerRouteVerifierCheck "$lwjgl_opengl"
+# The legacy immediate-mode routes are installed only when the switch is on, so the default run above never exercises
+# them. The second run transforms and loads the same surface with them enabled - the configuration a run that wants
+# glBegin geometry actually uses - and checks the same "no route fails the JVM verifier" property.
+java -Dceltium.gless.legacyImmediate=true -cp "$out/classes:$classpath" TransformerRouteVerifierCheck "$lwjgl_opengl"

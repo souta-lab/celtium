@@ -63,6 +63,11 @@ public class TransformerRouteVerifierCheck {
         "nglGetSamplerParameteriv", "nglGetSamplerParameterfv", "glGetMultisamplefv",
         "nglColor3fv", "nglColor4fv", "nglColor3bv", "nglColor4bv", "nglColor3ubv", "nglColor4ubv",
         "glColor4b", "glColor3b", "glAlphaFunc",
+        // The legacy immediate-mode surface, in every vertex spelling the transformer routes. These are only routed
+        // with -Dceltium.gless.legacyImmediate=true, so the script runs this check once per setting: a route that
+        // emits bad bytecode must fail in the configuration that installs it, not only in the one that does not.
+        "glBegin", "glEnd", "glTexCoord2f", "glTexCoord2d",
+        "glVertex2f", "glVertex2d", "glVertex3f", "glVertex3d", "glVertex4f", "glVertex4d",
         "glBindFramebufferEXT", "glBindFramebufferARB", "glFramebufferTexture2DEXT", "glFramebufferTexture2DARB",
         "glCheckFramebufferStatusEXT", "glCheckFramebufferStatusARB",
         "nglDeleteTextures", "nglDeleteBuffers", "nglDeleteFramebuffers", "nglGenTextures", "nglGenBuffers",

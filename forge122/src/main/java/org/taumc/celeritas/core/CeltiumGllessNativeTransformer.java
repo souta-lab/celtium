@@ -495,6 +495,50 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+
+        // The other vertex spellings GL has, and mods use: a legacy renderer that only understood
+        // glVertex3f lost the vertices of any mod that rounded its positions through glVertex3d or wrote flat
+        // geometry with glVertex2f. Each one appends through the same capture; the double forms narrow to the float
+        // layout and the four-component forms divide by w, which is the whole of GL's vertex semantics here.
+        if (LEGACY_IMMEDIATE && "glVertex2f".equals(name) && "(FF)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.FLOAD, 0);
+            method.visitVarInsn(Opcodes.FLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyVertex2f", "(FF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex2d".equals(name) && "(DD)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.DLOAD, 0);
+            method.visitVarInsn(Opcodes.DLOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyVertex2d", "(DD)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex3d".equals(name) && "(DDD)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.DLOAD, 0);
+            method.visitVarInsn(Opcodes.DLOAD, 2);
+            method.visitVarInsn(Opcodes.DLOAD, 4);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyVertex3d", "(DDD)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex4f".equals(name) && "(FFFF)V".equals(descriptor)) {
+            for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyVertex4f", "(FFFF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex4d".equals(name) && "(DDDD)V".equals(descriptor)) {
+            for (int slot = 0; slot < 8; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyVertex4d", "(DDDD)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         if (LEGACY_IMMEDIATE && "glTexCoord2f".equals(name) && "(FF)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.FLOAD, 0);
             method.visitVarInsn(Opcodes.FLOAD, 1);
