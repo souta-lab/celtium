@@ -1861,6 +1861,57 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * {@code glClearBufferData/SubData} and their named forms, for the zero fill only: a null clear value zeroes the
+     * bytes whatever the internal format's component layout is, which is the case worth implementing without decoding
+     * every format into a fill pattern. A non-zero value stays untouched.
+     */
+    public static void celtium$clearBuffer(int targetOrName, boolean named, long offset, long size, long data) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || data != 0L) {
+            return;
+        }
+        int name = named ? targetOrName : stub.boundBuffer(targetOrName);
+        if (name == 0) {
+            return;
+        }
+        long capacity;
+        try {
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+            if (nativeBuffer != null) {
+                capacity = nativeBuffer.byteSize();
+                if (size <= 0) {
+                    size = capacity;
+                }
+                if (offset < 0 || size < 0 || offset + size > capacity) {
+                    return;
+                }
+                byte[] zeros = new byte[(int) Math.min(size, 1 << 16)];
+                long written = 0L;
+                while (written < size) {
+                    int chunk = (int) Math.min(size - written, zeros.length);
+                    nativeBuffer.write(offset + written, java.nio.ByteBuffer.wrap(zeros, 0, chunk));
+                    written += chunk;
+                }
+                return;
+            }
+        } catch (RuntimeException error) {
+            return;
+        }
+        java.nio.ByteBuffer storage = stub.bufferStore.get(name);
+        if (storage == null) {
+            return;
+        }
+        capacity = storage.capacity();
+        if (size <= 0) {
+            size = capacity - offset;
+        }
+        if (offset < 0 || size < 0 || offset + size > capacity) {
+            return;
+        }
+        org.lwjgl.system.MemoryUtil.memSet(org.lwjgl.system.MemoryUtil.memAddress(storage) + offset, 0, size);
+    }
+
     /** {@code glLineWidth} from the transformer's route: the requested width the narrowing report compares against. */
     public static void celtium$lineWidth(float width) {
         CeltiumGlStub stub = installed;

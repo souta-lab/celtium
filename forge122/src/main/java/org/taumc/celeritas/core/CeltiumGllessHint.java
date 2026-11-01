@@ -1444,6 +1444,11 @@ public final class CeltiumGllessHint {
         return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapBuffer(target, range, offset, length, access);
     }
 
+    /** Raw {@code glClearBufferData/SubData} and named forms: the zero fill of a buffer range. */
+    public static void glClearBuffer(int targetOrName, boolean named, long offset, long size, long data) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBuffer(targetOrName, named, offset, size, data);
+    }
+
     /** The DSA mapping forms, where the buffer name is the first argument. */
     public static long glMapNamedBuffer(int name, boolean range, long offset, long length, int access) {
         return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapNamedBuffer(name, range, offset, length, access);

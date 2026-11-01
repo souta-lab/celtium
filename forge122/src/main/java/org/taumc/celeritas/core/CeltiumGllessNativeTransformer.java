@@ -873,6 +873,32 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        if ("(IIIIJ)V".equals(descriptor)
+                && (name.endsWith("glClearBufferData") || name.endsWith("glClearNamedBufferData"))) {
+            boolean named = name.contains("Named");
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitInsn(named ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+            method.visitInsn(Opcodes.LCONST_0);
+            method.visitInsn(Opcodes.LCONST_0);
+            method.visitVarInsn(Opcodes.LLOAD, 4);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClearBuffer", "(IZJJJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if ("(IIJJIIJ)V".equals(descriptor)
+                && (name.endsWith("glClearBufferSubData") || name.endsWith("glClearNamedBufferSubData"))) {
+            boolean named = name.contains("Named");
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitInsn(named ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitVarInsn(Opcodes.LLOAD, 7);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClearBuffer", "(IZJJJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         if ("(II)J".equals(descriptor) && name.endsWith("glMapNamedBuffer")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitInsn(Opcodes.ICONST_0);
