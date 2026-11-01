@@ -948,6 +948,28 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (returnType.equals("V")) {
             if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetSamplerParameteriv") || name.endsWith("glGetSamplerParameterIiv")
+                            || name.endsWith("glGetSamplerParameterIuiv") || name.endsWith("glGetSamplerParameterfv")
+                            || name.endsWith("glGetRenderbufferParameteriv")
+                            || name.endsWith("glGetRenderbufferParameterfv"))) {
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(Opcodes.ICONST_1);
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glZeroOut", "(JIZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetMultisamplefv")) {
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(Opcodes.ICONST_2);
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glZeroOut", "(JIZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor)
                     && (name.endsWith("glGetQueryObjectiv") || name.endsWith("glGetQueryObjectuiv")
                             || name.endsWith("glGetQueryObjecti64v") || name.endsWith("glGetQueryObjectui64v"))) {
                 boolean wide = name.endsWith("glGetQueryObjecti64v") || name.endsWith("glGetQueryObjectui64v");

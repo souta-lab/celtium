@@ -1377,6 +1377,11 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw unmodelled getters: a zeroed output is deterministic, unlike an untouched caller buffer. */
+    public static void glZeroOut(long out, int count, boolean wide) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroOut(out, count, wide);
+    }
+
     /** Raw {@code glGetQueryObject*}: result and availability answer 1 so culling does not hide everything. */
     public static void glGetQueryObject(int query, int pname, long out, boolean wide) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getQueryObject(query, pname, out, wide);
@@ -1641,28 +1646,21 @@ public final class CeltiumGllessHint {
             case "nglGetBufferParameteriv":
             case "nglGetBufferParameteri64v":
             // nglGetVertexAttribiv (attribute 0) is routed to the client-array record; this would shadow it.
-            case "nglGetVertexAttribIiv":
-            case "nglGetVertexAttribIuiv":
+            // nglGetVertexAttribIiv is routed to the client-array record; the zero-writer would shadow it.
+            // nglGetVertexAttribIuiv is routed to the client-array record; the zero-writer would shadow it.
             // nglGetSynciv is routed to the sync answer; the zero-writer would hide it.
             // nglGetFramebufferAttachmentParameteriv is routed to the attachment record; the zero-writer would shadow it.
-            case "nglGetRenderbufferParameteriv":
-            case "nglGetSamplerParameteriv":
-            case "nglGetSamplerParameterIiv":
-            case "nglGetSamplerParameterIuiv":
-            case "nglGetMultisamplefv":
                 return 4;
             case "nglGetBufferParameteri64v64":
                 return 8;
             case "nglGetFloatv":
             case "nglGetTexParameterfv":
             case "nglGetBufferParameterfv":
-            case "nglGetVertexAttribfv":
-            case "nglGetSamplerParameterfv":
+            // nglGetVertexAttribfv is routed to the client-array record; the zero-writer would shadow it.
             case "nglGetFramebufferAttachmentParameterfv":
-            case "nglGetRenderbufferParameterfv":
                 return 4;
             case "nglGetDoublev":
-            case "nglGetVertexAttribdv":
+            // nglGetVertexAttribdv is routed to the client-array record; the zero-writer would shadow it.
                 return 8;
             default:
                 return 0;

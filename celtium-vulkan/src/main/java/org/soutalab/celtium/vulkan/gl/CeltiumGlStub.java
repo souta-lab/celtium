@@ -2568,6 +2568,20 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** Deterministic zeros for an unmodelled getter's output, instead of leaving the caller's buffer uninitialised. */
+    public static void celtium$zeroOut(long out, int count, boolean wide) {
+        if (out == 0L || count <= 0) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            if (wide) {
+                org.lwjgl.system.MemoryUtil.memPutLong(out + (long) i * 8L, 0L);
+            } else {
+                org.lwjgl.system.MemoryUtil.memPutInt(out + (long) i * 4L, 0);
+            }
+        }
+    }
+
     /**
      * {@code glGetQueryObject*} from the transformer's route. A result of zero would tell an occlusion-culling mod that
      * everything is hidden, so result and availability answer 1; a query this stub never ran still passes nothing
