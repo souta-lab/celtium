@@ -7922,21 +7922,29 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         int elementName = boundBuffer(0x8893); // GL_ELEMENT_ARRAY_BUFFER
-        if (elementName == 0) {
-            return;
-        }
-        java.nio.ByteBuffer elementView;
-        try {
-            NativeGeometryBuffer elements = NativeGeometryBuffer.find(elementName);
-            elementView = elements != null ? elements.compatibilityView() : this.bufferStore.get(elementName);
-        } catch (RuntimeException error) {
-            return;
-        }
-        if (elementView == null) {
-            return;
+        java.nio.ByteBuffer elementView = null;
+        if (elementName > 0) {
+            try {
+                NativeGeometryBuffer elements = NativeGeometryBuffer.find(elementName);
+                elementView = elements != null ? elements.compatibilityView() : this.bufferStore.get(elementName);
+            } catch (RuntimeException error) {
+                return;
+            }
+            if (elementView == null) {
+                return;
+            }
         }
         int indexSize = type == 0x1401 ? 1 : type == 0x1403 ? 2 : type == 0x1405 ? 4 : 0;
-        if (indexSize == 0 || indices < 0 || indices + (long) count * indexSize > elementView.capacity()) {
+        if (indexSize == 0 || indices < 0) {
+            return;
+        }
+        if (elementView != null) {
+            if (indices + (long) count * indexSize > elementView.capacity()) {
+                return;
+            }
+        } else if (!celtium$readableMapping(indices, count * indexSize)) {
+            // No element buffer bound: the GL meaning of the pointer is client memory, read only when the range is
+            // mapped - the same guard the client vertex path uses.
             return;
         }
         int vertexCount = vertices.capacity() / stride;
@@ -7948,9 +7956,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         try {
             for (int i = 0; i < count; i++) {
                 long at = indices + (long) i * indexSize;
-                int index = indexSize == 1 ? elementView.get((int) at) & 0xFF
-                        : indexSize == 2 ? elementView.getShort((int) at) & 0xFFFF
-                        : elementView.getInt((int) at);
+                int index;
+                if (elementView != null) {
+                    index = indexSize == 1 ? elementView.get((int) at) & 0xFF
+                            : indexSize == 2 ? elementView.getShort((int) at) & 0xFFFF
+                            : elementView.getInt((int) at);
+                } else {
+                    index = indexSize == 1 ? org.lwjgl.system.MemoryUtil.memGetByte(at) & 0xFF
+                            : indexSize == 2 ? org.lwjgl.system.MemoryUtil.memGetShort(at) & 0xFFFF
+                            : org.lwjgl.system.MemoryUtil.memGetInt(at);
+                }
                 if (baseVertex != 0) {
                     index += baseVertex;
                 }
