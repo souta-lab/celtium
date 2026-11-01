@@ -11373,12 +11373,28 @@ this.frameBufferOpen = false;
     private final Reference2ReferenceOpenHashMap<RenderRegion, List<ChunkTaskOutput>> uploadDeferredGroupScratch =
             new Reference2ReferenceOpenHashMap<>();
 
-    private static void clearUploadScratch(Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues) {
+    /** Lists for the unbudgeted grouping; returned here so a burst of region uploads does not allocate one each. */
+    private final java.util.ArrayDeque<List<ChunkTaskOutput>> uploadListPool = new java.util.ArrayDeque<>();
+    private static final int UPLOAD_LIST_POOL_CAP = 64;
+
+    private List<ChunkTaskOutput> obtainUploadList() {
+        List<ChunkTaskOutput> pooled = this.uploadListPool.pollFirst();
+        return pooled != null ? pooled : new ArrayList<ChunkTaskOutput>();
+    }
+
+    private void releaseUploadList(List<ChunkTaskOutput> list) {
+        list.clear();
+        if (this.uploadListPool.size() < UPLOAD_LIST_POOL_CAP) {
+            this.uploadListPool.addLast(list);
+        }
+    }
+
+    private void clearUploadScratch(Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues) {
         if (queues.isEmpty()) {
             return;
         }
         for (List<ChunkTaskOutput> queue : queues.values()) {
-            queue.clear();
+            releaseUploadList(queue);
         }
         queues.clear();
     }
@@ -11416,7 +11432,7 @@ this.frameBufferOpen = false;
             ChunkTaskOutput output = holder.output();
             List<ChunkTaskOutput> queue = queues.get(output.render.getRegion());
             if (queue == null) {
-                queue = new ArrayList<>();
+                queue = obtainUploadList();
                 queues.put(output.render.getRegion(), queue);
             }
             queue.add(output);
