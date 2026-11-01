@@ -7944,7 +7944,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         int stride = this.vertexPointerStride;
-        if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT || this.vertexPointerOffset != 0L
+        if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
                 || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
             return;
         }
@@ -7966,8 +7966,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             vertexCapacity = 0;
         } else {
-            vertexBase = memAddress(vertices, 0);
-            vertexCapacity = vertices.capacity();
+            long offset = this.vertexPointerOffset;
+            if (offset < 0 || offset > vertices.capacity()) {
+                return;
+            }
+            // A VBO pointer offset is part of the description, not a client address: the batch starts at it.
+            vertexBase = memAddress(vertices, 0) + offset;
+            vertexCapacity = vertices.capacity() - (int) offset;
         }
         // The same layout decision the unindexed decoder makes: the format id and the refusal reason.
         String[] layoutRefusal = new String[1];
