@@ -2575,6 +2575,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glGetInternalformativ/i64v}: {@code bufSize} unsupported-format zeros, in the caller's width. */
+    public static void celtium$getInternalFormat(int bufSize, long params, boolean wide) {
+        if (params == 0L || bufSize <= 0) {
+            return;
+        }
+        int bounded = Math.min(bufSize, 1 << 12);
+        for (int i = 0; i < bounded; i++) {
+            if (wide) {
+                org.lwjgl.system.MemoryUtil.memPutLong(params + (long) i * 8L, 0L);
+            } else {
+                org.lwjgl.system.MemoryUtil.memPutInt(params + (long) i * 4L, 0);
+            }
+        }
+    }
+
     /** {@code glGetProgramResourceName}: an empty resource name, with the written length. */
     public static void celtium$getProgramResourceName(int program, int programInterface, int index, int bufSize,
             long length, long name) {
