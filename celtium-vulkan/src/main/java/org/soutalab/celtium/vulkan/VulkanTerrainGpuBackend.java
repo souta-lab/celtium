@@ -1541,19 +1541,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The last array handed out by {@link #celtium$textureAffine()}; read-only after capture, like the others. */
     private float[] lastTextureAffine;
 
-    private float[] lastSharedProjection;
+    /**
+     * The replay's own projection cache. Distinct from {@code lastSharedProjection}, which the close path feeds with a
+     * depth-remapped copy - sharing one field would hand a remapped array to a caller that already remapped and vice
+     * versa.
+     */
+    private float[] lastReplayProjection;
 
     /**
      * {@return a projection array a group may keep}: the previous one while every element matches, else a copy of
      * {@code source}. The projection is constant through a pass, and the model replay cloned its scratch per draw.
      */
     float[] celtium$shareProjection(float[] source) {
-        float[] last = this.lastSharedProjection;
+        float[] last = this.lastReplayProjection;
         if (last != null && last.length == source.length && java.util.Arrays.equals(last, source)) {
             return last;
         }
         float[] fresh = source.clone();
-        this.lastSharedProjection = fresh;
+        this.lastReplayProjection = fresh;
         return fresh;
     }
 
