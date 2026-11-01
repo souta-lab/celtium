@@ -6210,12 +6210,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
         }
-        // A world pass that ended by exception never reaches endWorldPass (the mixin's RETURN injection does not run on
-        // a throw), and from then on every GUI and HUD group is classified as "inside the world pass" - wrong routing,
-        // depth and ordering for the inventory and the menu. The frame boundary is the backstop: a pass cannot outlive
-        // the frame it was opened in.
-        this.worldPassActive = false;
-        this.derivedProjectionPending = false;
         // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
         // that is per frame - the window budget, these counters - is reset here and nowhere else.
         if (this.countersFrameId >= 0) {
