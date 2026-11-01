@@ -19,6 +19,7 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 python3 scripts/cpu-contract/shared_game_slot_check.py
 python3 scripts/check_agent_docs.py
 python3 scripts/instrument-index.py --check
+scripts/cpu-contract/transformer-route-verify.sh
 bash -n scripts/gv-leg.sh
 ```
 
