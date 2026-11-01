@@ -1762,7 +1762,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int dynamicAnnounceDiagnostics;
     private String lastInvalidationOrigin = "unknown";
     /** The texture ids whose invalidation origin has been printed. */
-    private final java.util.Set<Integer> invalidationOrigins = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet invalidationOrigins =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
@@ -1944,7 +1945,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
     private int lastAlphaSelector = -1;
     /** Distinct references written to the push block, bounded: the game uses a handful (0.1, 0.5, 1/255, 0). */
-    private final java.util.Set<Integer> alphaReferenceValues = new java.util.LinkedHashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet alphaReferenceValues =
+            new it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet();
     /**
      * Batches a failed window flush puts back on the queue instead of throwing away.
      * <p>
@@ -2035,7 +2037,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
     static final boolean TEXTURE_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
-    final java.util.Set<Integer> diagnosedTextures = new java.util.HashSet<Integer>();
+    final it.unimi.dsi.fastutil.ints.IntOpenHashSet diagnosedTextures =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     String blendOutlier;
     /**
      * How many 2-argument {@code glBlendFunc} calls reached the mirror, and the last pair they carried.
@@ -3704,9 +3707,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long lastDrawnEpoch = -1L;
 
     /** Ids a delete has forgotten, so a stale upload cannot silently recreate their mirror. */
-    private final java.util.Set<Integer> forgottenByDelete = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet forgottenByDelete =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /** Ids whose mirror was filled by the splash's own upload path, dropped when the splash stops uploading. */
-    private final java.util.Set<Integer> splashCanvasIds = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet splashCanvasIds =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /** Whether the splash uploaded anything in the current frame; the first frame without one ends the splash. */
     private boolean splashUploadsThisFrame;
     /** Splash canvases whose mirrors were dropped at the end of the splash. */
@@ -4264,11 +4269,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // for the panorama's texture. A later legitimate upload of the same id is unaffected: it is not from the
         // splash, so it clears the mark and fills the mirror again.
         if (fromSplash) {
-            this.splashCanvasIds.add(Integer.valueOf(glTextureId));
+            this.splashCanvasIds.add(glTextureId);
             this.splashUploadsThisFrame = true;
         } else {
-            this.splashCanvasIds.remove(Integer.valueOf(glTextureId));
-            this.forgottenByDelete.remove(Integer.valueOf(glTextureId));
+            this.splashCanvasIds.remove(glTextureId);
+            this.forgottenByDelete.remove(glTextureId);
         }
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
@@ -4360,7 +4365,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.lastInvalidationOrigin = "invalidateTexture";
         // Who invalidates what, named once per texture. Three hooks have failed to catch the light map's writes, and the
         // alternative to naming a fourth is asking the code that performs the invalidation to say where it came from.
-        if (this.invalidationOrigins.size() < 12 && this.invalidationOrigins.add(Integer.valueOf(glTextureId))) {
+        if (this.invalidationOrigins.size() < 12 && this.invalidationOrigins.add(glTextureId)) {
             StringBuilder stack = new StringBuilder();
             StackTraceElement[] frames = Thread.currentThread().getStackTrace();
             for (int i = 2; i < Math.min(frames.length, 9); i++) {
@@ -4548,7 +4553,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.textureRegistry.forgetTexture(glTextureId);
         }
         // Remembered so a later upload for a deleted id can be told from a re-creation (see announceDynamicTexture).
-        this.forgottenByDelete.add(Integer.valueOf(glTextureId));
+        this.forgottenByDelete.add(glTextureId);
         if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
             this.atlasTexture = null;
             this.atlasSourceGlId = 0;
@@ -11123,11 +11128,11 @@ this.frameBufferOpen = false;
         }
         StringBuilder text = new StringBuilder("[");
         boolean first = true;
-        for (Integer bits : this.alphaReferenceValues) {
+        for (int bits : this.alphaReferenceValues) {
             if (!first) {
                 text.append(' ');
             }
-            text.append(round3(Float.intBitsToFloat(bits.intValue())));
+            text.append(round3(Float.intBitsToFloat(bits)));
             first = false;
         }
         return text.append(']').toString();
@@ -14532,14 +14537,14 @@ this.frameBufferOpen = false;
 
     private void celtium$dropSplashCanvasesAtSplashEnd() {
         if (!this.splashCanvasIds.isEmpty() && !this.splashUploadsThisFrame) {
-            for (Integer id : this.splashCanvasIds) {
+            for (int id : this.splashCanvasIds) {
                 if (this.textureRegistry != null) {
                     // Same rule as the reallocated path: a queued group that samples the canvas is drawn before the
                     // mirror it names is forgotten.
-                    if (!this.immediateWindowBusy && queuedGroupUsesTexture(id.intValue())) {
+                    if (!this.immediateWindowBusy && queuedGroupUsesTexture(id)) {
                         flushPendingBeforeGlDraw();
                     }
-                    this.textureRegistry.forgetTexture(id.intValue());
+                    this.textureRegistry.forgetTexture(id);
                 }
                 this.targetStatistics.noteSplashCanvasInvalidations();
             }
@@ -16035,7 +16040,7 @@ this.frameBufferOpen = false;
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
         // nothing the game is drawing can be disturbed.
-        if (TEXTURE_DIAGNOSTICS && atlasId != 0 && this.diagnosedTextures.add(Integer.valueOf(atlasId))) {
+        if (TEXTURE_DIAGNOSTICS && atlasId != 0 && this.diagnosedTextures.add(atlasId)) {
             int levels = 0;
             while (levels < 16 && org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
                     org.lwjgl.opengl.GL11.GL_TEXTURE_2D, levels, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0) {
@@ -16976,7 +16981,7 @@ this.frameBufferOpen = false;
                 // A boxed set add per draw for a 12-value report: consecutive draws repeat the value, so only a change
                 // reaches the set.
                 if (alphaReferenceBits != this.lastAlphaReferenceBits && this.alphaReferenceValues.size() < 12) {
-                    this.alphaReferenceValues.add(Integer.valueOf(alphaReferenceBits));
+                    this.alphaReferenceValues.add(alphaReferenceBits);
                     this.lastAlphaReferenceBits = alphaReferenceBits;
                 }
                 // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every

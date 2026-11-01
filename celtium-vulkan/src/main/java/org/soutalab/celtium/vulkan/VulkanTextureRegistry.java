@@ -199,8 +199,10 @@ public final class VulkanTextureRegistry {
     private final java.util.Map<Integer, String> mirrorSourceById = new java.util.HashMap<Integer, String>();
     private final java.util.Map<String, Integer> mirrorFillsBySource = new java.util.LinkedHashMap<String, Integer>();
     /** Announcements made per GL name, and the ones a {@code forgetTexture} dropped before a mirror consumed them. */
-    private final java.util.Map<Integer, Integer> announcementsById = new java.util.HashMap<Integer, Integer>();
-    private final java.util.Map<Integer, Integer> droppedAnnouncementsById = new java.util.HashMap<Integer, Integer>();
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap announcementsById =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap droppedAnnouncementsById =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
     /** Lines printed, bounded like every other per-texture census in this class. */
     private static final int MIRROR_SOURCE_LOG_LIMIT = 16;
     /** Bounded count of CELTIUM_ANNOUNCE_EXTENT lines, so an announcement-heavy run stays readable. */
@@ -653,7 +655,7 @@ public final class VulkanTextureRegistry {
             return;
         }
         this.announcedImages.put(glTextureId, image);
-        this.announcementsById.merge(Integer.valueOf(glTextureId), Integer.valueOf(1), Integer::sum);
+        this.announcementsById.put(glTextureId, this.announcementsById.get(glTextureId) + 1);
         // A generation, not the image identity: Minecraft updates a DynamicTexture in place, so the same BufferedImage
         // object arrives with different pixels. The generation changes on every announcement and is consumed when the
         // mirror is built from it, which is what makes "already converted this one" safe to skip.
@@ -1453,9 +1455,8 @@ public final class VulkanTextureRegistry {
                 + " glLess=true");
     }
 
-    private static int countFor(java.util.Map<Integer, Integer> counts, Integer id) {
-        Integer value = counts.get(id);
-        return value == null ? 0 : value.intValue();
+    private static int countFor(it.unimi.dsi.fastutil.ints.Int2IntMap counts, int id) {
+        return counts.get(id);
     }
 
     /**
@@ -1560,8 +1561,9 @@ public final class VulkanTextureRegistry {
             sources.append(entry.getKey()).append('=').append(entry.getValue());
         }
         int dropped = 0;
-        for (Integer count : this.droppedAnnouncementsById.values()) {
-            dropped += count.intValue();
+        for (it.unimi.dsi.fastutil.ints.IntIterator counts = this.droppedAnnouncementsById.values().iterator();
+                counts.hasNext(); ) {
+            dropped += counts.nextInt();
         }
         return (sources.length() == 0 ? "none" : sources.toString()) + " announcedDropped=" + dropped;
     }
@@ -1715,7 +1717,7 @@ public final class VulkanTextureRegistry {
                 // A pending announcement dropped with the mirror. Counted per name because the GUI defect turns on it:
                 // an announcement that has not been turned into a mirror yet is pixels the game handed over and this
                 // method threw away - and the texture is then left to the captured upload, or to nothing.
-                this.droppedAnnouncementsById.merge(id, Integer.valueOf(1), Integer::sum);
+                this.droppedAnnouncementsById.put(id.intValue(), this.droppedAnnouncementsById.get(id.intValue()) + 1);
             }
         }
         if (entry != null) {
