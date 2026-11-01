@@ -168,6 +168,16 @@ public final class CeltiumGllessHint {
      * attribute counts a GL 3.0 profile guarantees - and anything unknown is written as 0 rather than left as
      * uninitialised memory.
      */
+    /** LWJGL3's {@code nglGetBooleanv}: the query family's boolean side. */
+    public static void glGetBooleanv(int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBooleans(pname, params);
+    }
+
+    /** A raw {@code glIsEnabled}: answered by the same capability record the stub's queries use. */
+    public static boolean glIsEnabled(int capability) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isEnabled(capability);
+    }
+
     public static void glGetIntegerv(int pname, long params) {
         if (params == 0L) {
             return;

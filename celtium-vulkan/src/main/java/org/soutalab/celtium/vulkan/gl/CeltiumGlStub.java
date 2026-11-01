@@ -4799,6 +4799,22 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** The same state-query implementation for callback dispatch and LWJGL3's replaced native entry points. */
+    /** {@return whether the boolean query was answered}; the caller's buffer receives one byte per component. */
+    public static boolean celtium$getBooleans(int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return false;
+        }
+        stub.getBooleans(pname, out, null);
+        return true;
+    }
+
+    /** {@return whether the capability is enabled}, answered from the same record {@code glIsEnabled} reads. */
+    public static boolean celtium$isEnabled(int capability) {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.enabledCap(capability);
+    }
+
     public static void celtium$getFloats(int pname, long out, boolean asDouble) {
         if (out == 0L) {
             return;

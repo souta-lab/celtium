@@ -613,6 +613,25 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // The boolean query family: nglGetIntegerv/nglGetFloatv were routed, nglGetBooleanv was not, so every
+        // glGetBoolean/glGetBooleanv answered zero - the model state probe measured glGetBoolean(depth mask)=false
+        // against a mirror that had writes enabled.
+        if (returnType.equals("V") && "nglGetBooleanv".equals(name) && "(IJ)".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glGetBooleanv", "(IJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        // glIsEnabled is a native returning a boolean: unhandled, it answered false for every capability.
+        if ("glIsEnabled".equals(name) && "(I)Z".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glIsEnabled", "(I)Z", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return true;
+        }
         // These typed natives otherwise return without ever reaching the existing pending-clear producer.
         if ("glClear".equals(name) && "(I)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
