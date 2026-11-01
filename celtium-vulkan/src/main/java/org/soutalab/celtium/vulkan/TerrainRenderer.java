@@ -991,8 +991,14 @@ public final class TerrainRenderer {
         return created;
     }
 
+    /** Scratch lists for {@link #uploadRegion}: rebuilt at the head of each call and never retained. */
+    private final java.util.ArrayList<TerrainRenderer.PendingMesh> uploadPendingScratch = new java.util.ArrayList<>();
+    private final java.util.HashMap<TerrainRenderPass, SectionRenderDataStorage> uploadStorageScratch =
+            new java.util.HashMap<>();
+
     void uploadRegion(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable graphUpdateTrigger) {
-        List<TerrainRenderer.PendingMesh> pending = new ArrayList<>();
+        List<TerrainRenderer.PendingMesh> pending = this.uploadPendingScratch;
+        pending.clear();
         boolean needIndexBuffer = false;
         // Resolved once for the whole upload: it used to be looked up again for every mesh.
         TerrainRenderer.RegionResources meshResources = resourcesFor(this.context, region, vertexStride());
@@ -1037,7 +1043,8 @@ public final class TerrainRenderer {
         TerrainRenderer.RegionResources resources = meshResources;
         // One map lookup per render pass rather than one per mesh: a build output carries several meshes per section
         // and every one of them asked the region for the same storage.
-        java.util.Map<TerrainRenderPass, SectionRenderDataStorage> storageByPass = new java.util.HashMap<>();
+        java.util.Map<TerrainRenderPass, SectionRenderDataStorage> storageByPass = this.uploadStorageScratch;
+        storageByPass.clear();
         long uploaded = 0;
 
         for (TerrainRenderer.PendingMesh mesh : pending) {
