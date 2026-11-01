@@ -600,6 +600,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if (returnType.equals("I")
                 && (name.endsWith("glGetUniformBlockIndex") || name.endsWith("glGetProgramResourceIndex")
                         || name.endsWith("glGetProgramResourceLocation") || name.endsWith("glGetFragDataLocation")
+                        || name.endsWith("glGetProgramResourceLocationIndex")
                         || name.endsWith("glGetSubroutineUniformLocation") || name.endsWith("glGetSubroutineIndex"))) {
             method.visitLdcInsn(Integer.valueOf(-1));
             method.visitInsn(Opcodes.IRETURN);
