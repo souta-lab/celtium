@@ -61,7 +61,10 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
             "glVertex2f", "glVertex2d", "glVertex3d", "glVertex3i", "glTexCoord2i", "glTexCoord2s",
             "glNormal3d", "glColor3b", "glColor3d", "glColor4ui", "glRectf", "glRecti",
-            "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf"));
+            "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf",
+            "glVertex4f", "glVertex4d", "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
+            "glMultiTexCoord4f", "glNormal3i", "glColor4b", "glRectd", "glRasterPos2i", "glRasterPos4f",
+            "glIndexd", "glIndexs"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
