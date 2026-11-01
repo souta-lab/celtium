@@ -1683,6 +1683,40 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glGetBufferSubData} from the transformer's route, against the bound buffer. */
+    public static void celtium$getBufferSubData(int target, long offset, long size, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.readBuffer(stub.boundBuffer(target), offset, size, out);
+        }
+    }
+
+    /** The DSA spelling, where the first argument is the buffer name. */
+    public static void celtium$getNamedBufferSubData(int name, long offset, long size, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.readBuffer(name, offset, size, out);
+        }
+    }
+
+    /** Reads a byte range out of a buffer mirror into the caller's address. */
+    private void readBuffer(int name, long offset, long size, long out) {
+        if (name == 0 || out == 0L || offset < 0 || size <= 0 || offset > Integer.MAX_VALUE) {
+            return;
+        }
+        ByteBuffer view;
+        try {
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+            view = nativeBuffer != null ? nativeBuffer.compatibilityView() : this.bufferStore.get(name);
+        } catch (RuntimeException error) {
+            return;
+        }
+        if (view == null || offset + size > view.capacity()) {
+            return;
+        }
+        MemoryUtil.memCopy(MemoryUtil.memAddress(view) + offset, out, size);
+    }
+
     /** Copies a byte range between two buffer mirrors; the native and heap forms use their own writes. */
     private void copyBuffer(int readName, int writeName, long readOffset, long writeOffset, long size) {
         if (readName == 0 || writeName == 0 || readOffset < 0 || writeOffset < 0 || size <= 0

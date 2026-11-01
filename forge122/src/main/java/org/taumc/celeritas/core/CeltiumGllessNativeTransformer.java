@@ -947,6 +947,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IJJJ)V".equals(descriptor)
+                    && (name.endsWith("glGetBufferSubData") || name.endsWith("glGetNamedBufferSubData"))) {
+                boolean named = name.endsWith("glGetNamedBufferSubData");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                for (int slot = 1; slot <= 5; slot += 2) {
+                    method.visitVarInsn(Opcodes.LLOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        named ? "glGetNamedBufferSubData" : "glGetBufferSubData", "(IJJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIJJJ)V".equals(descriptor)
                     && (name.endsWith("glCopyBufferSubData") || name.endsWith("glCopyNamedBufferSubData"))) {
                 boolean named = name.endsWith("glCopyNamedBufferSubData");

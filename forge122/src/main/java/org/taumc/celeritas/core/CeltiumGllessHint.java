@@ -208,6 +208,15 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterPointer(target, pname, values, floats);
     }
 
+    /** Raw buffer readback into the caller's address. */
+    public static void glGetBufferSubData(int target, long offset, long size, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferSubData(target, offset, size, out);
+    }
+
+    public static void glGetNamedBufferSubData(int name, long offset, long size, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getNamedBufferSubData(name, offset, size, out);
+    }
+
     /** Raw buffer-to-buffer copies. */
     public static void glCopyBufferSubData(int readTarget, int writeTarget, long readOffset, long writeOffset,
             long size) {
