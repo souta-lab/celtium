@@ -7417,6 +7417,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (count <= 0 || address == 0L) {
             return;
         }
+        if (type == 0x1407 || type == 0x1408 || type == 0x1409) {
+            // GL_2_BYTES/3/4: the element is a group of that many bytes, and *each byte* is one list offset - the
+            // legacy font-list shape, where a 4-byte element names four lists.
+            int group = type - 0x1405;
+            for (int index = 0; index < count; index++) {
+                for (int byteIndex = 0; byteIndex < group; byteIndex++) {
+                    int offset = org.lwjgl.system.MemoryUtil.memGetByte(
+                            address + (long) index * group + byteIndex) & 0xFF;
+                    replayDisplayList(this.listBase + offset);
+                }
+            }
+            return;
+        }
         for (int i = 0; i < count; i++) {
             int offset;
             switch (type) {
