@@ -4644,14 +4644,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x8B8D: // GL_CURRENT_PROGRAM
                 return this.currentProgram;
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-                return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                        ? vulkan.celtium$alphaTestFuncGl() : 0x0207; // GL_ALWAYS
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : 0x0207; // GL_ALWAYS
             }
             case 0x0BC2: { // GL_ALPHA_TEST_REF
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-                float reference = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                        ? vulkan.celtium$alphaTestReference() : 0.0f;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : 0.0f;
                 return reference >= 0.5f ? 1 : 0;
             }
             case 0x0B71: return enabledCap(GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
@@ -4662,9 +4660,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B74: { // GL_DEPTH_FUNC
                 // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
                 // touches this stub's own enable record.
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-                return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                        ? vulkan.celtium$depthFuncGl() : 0x0201; // GL_LESS
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$depthFuncGl() : 0x0201; // GL_LESS
             }
             case 0x0D05: // GL_PACK_ALIGNMENT
                 return 4;
@@ -4859,16 +4856,14 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             }
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC, as a float as glGetFloatv reports enums
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-                float func = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                        ? vulkan.celtium$alphaTestFuncGl() : (float) 0x0207;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float func = vulkan != null ? vulkan.celtium$alphaTestFuncGl() : (float) 0x0207;
                 putFloatOrDouble(out, 0, func, asDouble);
                 return;
             }
             case 0x0BC2: { // GL_ALPHA_TEST_REF
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-                float reference = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                        ? vulkan.celtium$alphaTestReference() : 0.0f;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : 0.0f;
                 putFloatOrDouble(out, 0, reference, asDouble);
                 return;
             }
@@ -4965,9 +4960,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B72: { // GL_DEPTH_WRITEMASK
                 // GL's default is enabled. The mirror is the authority: glDepthMask goes through the hint to the backend
                 // and never reaches this stub's enable record.
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-                boolean mask = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                        ? vulkan.celtium$depthWritesLive() : enabledCap(GL_DEPTH_WRITEMASK_CAP);
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                boolean mask = vulkan != null ? vulkan.celtium$depthWritesLive()
+                        : enabledCap(GL_DEPTH_WRITEMASK_CAP);
                 MemoryUtil.memPutByte(out, (byte) (mask ? 1 : 0));
                 return;
             }
@@ -5022,6 +5017,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The index the stub uses in {@link #enables} for {@code glDepthMask}, which GL has no capability for. */
     private static final int GL_DEPTH_WRITEMASK_CAP = 0x0B72;
+
+    /** {@return the live Vulkan backend, or null when another renderer (or none) is installed. */
+    private static org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend() {
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
+    }
 
     /** {@return whether a capability this stub records is enabled}. */
     private boolean enabledCap(int cap) {
