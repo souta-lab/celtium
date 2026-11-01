@@ -4588,6 +4588,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub.getIntegerValue(pname);
     }
 
+    /**
+     * {@return the program the stub last bound}, or {@link Integer#MIN_VALUE} when no stub is installed.
+     * <p>
+     * The batch preflight asks this once per offered batch, and it was going through the general pname switch a few
+     * hundred times a frame.
+     */
+    public static int celtium$currentProgram() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? Integer.MIN_VALUE : stub.currentProgram;
+    }
+
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
     private int getIntegerValue(int pname) {
         switch (pname) {
