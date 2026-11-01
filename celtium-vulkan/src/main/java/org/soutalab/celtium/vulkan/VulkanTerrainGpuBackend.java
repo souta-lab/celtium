@@ -2698,6 +2698,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final String FRAME_DUMP_DIR = System.getProperty("celtium.vulkan.frameDumpDir");
     private static final boolean DUMP_LOADING_PROGRESS =
             Boolean.getBoolean("celtium.validation.dumpLoadingProgress");
+    /** On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather than per frame. */
+    private static final boolean MIRROR_DUMP_ON = System.getProperty("celtium.vulkan.mirrorDump") != null;
+    private static final int FRAME_DUMP_EVERY = Integer.getInteger("celtium.vulkan.frameDumpEvery", 60).intValue();
+    private static final int FRAME_DUMP_COUNT = Integer.getInteger("celtium.vulkan.frameDumpCount", 0).intValue();
+    private static final String MIRROR_DUMP_SPEC = System.getProperty("celtium.mirrorDump");
+    private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
     private final long[] frameIntervals = new long[120];
     /** How many frame-statistic lines this run has printed, so per-frame means can be reported. */
     private long debugFrameReports;
@@ -9271,7 +9277,7 @@ this.frameBufferOpen = false;
                     // logo quad never reached the image" from "the image is right and the present serves white".
                     if (this.splashProbeCount < 3 && this.celtium$presentCount >= 1
                             && this.frameTarget.colorImage() != 0L
-                            && System.getProperty("celtium.vulkan.mirrorDump") != null) {
+                            && MIRROR_DUMP_ON) {
                         this.splashProbeCount++;
                         int[] whole = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
                                 this.targetWidth, this.targetHeight);
@@ -9396,7 +9402,7 @@ this.frameBufferOpen = false;
                     }
                     if (!this.boxPreProbeDone && this.frameId == 0L && this.targetRegistry.currentIdentity() == 0L
                             && this.frameTarget.colorImage() != 0L
-                            && System.getProperty("celtium.vulkan.mirrorDump") != null
+                            && MIRROR_DUMP_ON
                             && this.celtium$presentCount >= 100) {
                         this.boxPreProbeDone = true;
                         // Both ends of the picture's vertical axis: the panorama's own NDC y is positive in the
@@ -14972,15 +14978,14 @@ this.frameBufferOpen = false;
         if (this.presentedDumpPath != null && dumpEvery > 0 && presented % dumpEvery == 0) {
             this.swapchain.requestPresentedImageDump(this.presentedDumpPath);
         }
-        String directory = System.getProperty("celtium.vulkan.frameDumpDir");
+        String directory = FRAME_DUMP_DIR;
         if (directory == null) {
             return;
         }
-        int every = Integer.getInteger("celtium.vulkan.frameDumpEvery", 60).intValue();
-        if (every <= 0 || presented % every != 0) {
+        if (FRAME_DUMP_EVERY <= 0 || presented % FRAME_DUMP_EVERY != 0) {
             return;
         }
-        if (this.frameDumpsWritten >= Integer.getInteger("celtium.vulkan.frameDumpCount", 0).intValue()) {
+        if (this.frameDumpsWritten >= FRAME_DUMP_COUNT) {
             return;
         }
         this.frameDumpsWritten++;
@@ -15750,7 +15755,7 @@ this.frameBufferOpen = false;
         if (!(backend instanceof VulkanTerrainGpuBackend vulkan)) {
             return "nobackend";
         }
-        String spec = System.getProperty("celtium.mirrorDump");
+        String spec = MIRROR_DUMP_SPEC;
         String dumpPath = null;
         if (spec != null) {
             // Comma-separated <name>:<path> pairs so one leg can dump several mirrors; a path prefix without a
@@ -16265,7 +16270,7 @@ this.frameBufferOpen = false;
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(this);
             }
 
-            if (Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)) {
+            if (SWAPCHAIN_PROBE) {
                 runSwapchainProbe();
             }
         }

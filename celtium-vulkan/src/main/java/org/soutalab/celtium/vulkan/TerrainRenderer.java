@@ -343,6 +343,8 @@ public final class TerrainRenderer {
     // ---------------------------------------------------------------- indirect batch (R4)
 
     private static final int INDIRECT_COMMAND_BYTES = 20;
+    /** A/B constant-colour control, read once: this block is written per vertex page in the upload path. */
+    private static final boolean SOLID_TERRAIN = Boolean.getBoolean("celtium.vulkan.solidTerrain");
     private static final boolean TERRAIN_INDIRECT_COMPARE =
             Boolean.getBoolean("celtium.vulkan.indirectCompare");
 
@@ -767,7 +769,7 @@ public final class TerrainRenderer {
         block.putInt(base + 48, fogMode());
         // A/B only: a constant fragment colour that reaches the frame image says the geometry is rasterised and the
         // loss is in the fragment maths; a frame that stays black says nothing is being rasterised at all.
-        block.putInt(base + 80, Boolean.getBoolean("celtium.vulkan.solidTerrain") ? 1 : 0);
+        block.putInt(base + 80, SOLID_TERRAIN ? 1 : 0);
         block.putInt(base + 52, this.fogService != null ? this.fogService.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL);
         block.putInt(base + 56, pass.supportsFragmentDiscard() ? 1 : 0);
         // Chunk fade is a separate feature that the Vulkan path does not port yet; 0 keeps the GL default look.

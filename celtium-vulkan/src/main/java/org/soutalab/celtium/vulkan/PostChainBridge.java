@@ -12,6 +12,8 @@ final class PostChainBridge {
     /** Where a requested chain frame dump goes; a property cannot change after startup, so it is resolved once. */
     private static final String CHAIN_FRAME_DUMP_PATH = System.getProperty("celtium.vulkan.chainFrameDumpPath",
             System.getProperty("java.io.tmpdir", ".") + java.io.File.separator + "celtium-chain-frame.png");
+    /** Off unless asked for; consulted once per window, never per pass. */
+    private static final boolean CHAIN_DUMP_PASSES = Boolean.getBoolean("celtium.vulkan.chainDumpPasses");
 
     private final VulkanTerrainGpuBackend b;
 
@@ -949,7 +951,7 @@ b.frameBufferOpen = false;
         // "main" entries are skipped - the frame image above is that image - and each line names its pass, program and
         // label so a chain of several passes is attributable pass by pass. Off unless
         // -Dceltium.vulkan.chainDumpPasses=true, so a normal leg pays nothing for it.
-        if (Boolean.getBoolean("celtium.vulkan.chainDumpPasses") && b.postChain != null) {
+        if (CHAIN_DUMP_PASSES && b.postChain != null) {
             for (VulkanPostChain.RecordedOutput out : b.postChain.lastRecordedOutputs()) {
                 if (out.image == 0L || "main".equals(out.label)) {
                     continue;

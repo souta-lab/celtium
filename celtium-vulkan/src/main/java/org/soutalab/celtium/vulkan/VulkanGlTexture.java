@@ -123,6 +123,9 @@ public final class VulkanGlTexture {
      * whether the readback was empty and whether the image that received it was empty too.
      */
     private static final String MIRROR_DUMP_DIR = System.getProperty("celtium.vulkan.mirrorDump");
+    /** The upload-time texture dump, read per upload before this change; both answer the same on every call. */
+    private static final String TEXTURE_DUMP_DIR = System.getProperty("celtium.vulkan.dumpTextures");
+    private static final boolean TEXTURE_DUMP_EVERY = Boolean.getBoolean("celtium.vulkan.dumpTexturesEvery");
     /** GL names to dump; empty means every texture, which a per-frame light map would flood. */
     private static final String MIRROR_DUMP_IDS = System.getProperty("celtium.vulkan.mirrorDumpIds", "");
     /** Dumps written so far, so a long run cannot fill the disk with the same 16x16 light map. */
@@ -3294,7 +3297,7 @@ public final class VulkanGlTexture {
      * from a sampling problem. One file per texture per run.
      */
     private void dumpForDebugging(int glTextureId, GlLevel level) {
-        String directory = System.getProperty("celtium.vulkan.dumpTextures");
+        String directory = TEXTURE_DUMP_DIR;
         if (directory == null || directory.isEmpty()) {
             return;
         }
@@ -3306,7 +3309,7 @@ public final class VulkanGlTexture {
                     + level.height + "-obj" + Integer.toHexString(System.identityHashCode(this)) + ".png");
             // One file per texture is enough when the question is "what shape does the mirror have". When the question is
             // "is the mirror stale right now", the last upload is the one that matters, so the overwrite mode keeps it.
-            if (target.isFile() && !Boolean.getBoolean("celtium.vulkan.dumpTexturesEvery")) {
+            if (target.isFile() && !TEXTURE_DUMP_EVERY) {
                 return;
             }
             target.getParentFile().mkdirs();
