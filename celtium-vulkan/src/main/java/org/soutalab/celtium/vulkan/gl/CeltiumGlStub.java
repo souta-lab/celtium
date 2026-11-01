@@ -2026,6 +2026,59 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** The server-side capabilities a legacy push/pop is expected to restore. */
+    private static final int[] ATTRIB_CAPABILITIES = {
+            0x0BE2, // GL_BLEND
+            0x0B44, // GL_CULL_FACE
+            0x0B71, // GL_DEPTH_TEST
+            0x0BD0, // GL_DITHER
+            0x0B60, // GL_FOG
+            0x0B50, // GL_LIGHTING
+            0x0BC0, // GL_ALPHA_TEST
+            0x0C11, // GL_SCISSOR_TEST
+            0x8037, // GL_POLYGON_OFFSET_FILL
+            0x0DE1, // GL_TEXTURE_2D
+            0x0B57, // GL_COLOR_MATERIAL
+            0x0B90, // GL_STENCIL_TEST
+            0x0B41, // GL_POLYGON_SMOOTH
+            0x809D, // GL_MULTISAMPLE
+    };
+
+    /**
+     * {@code glPushAttrib/glPopAttrib} from the transformer's route. The mask is not interpreted: this renderer's
+     * server-side state is small enough that restoring every capability it tracks is cheaper than tracking masks, and a
+     * mod that pushed before disabling depth test then expected the pop to restore it - which the no-op did not do, so
+     * the raw disable leaked into the next vanilla pass.
+     */
+    public static void celtium$pushAttrib(int mask) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        byte[] snapshot = new byte[ATTRIB_CAPABILITIES.length];
+        for (int i = 0; i < ATTRIB_CAPABILITIES.length; i++) {
+            snapshot[i] = stub.enables[ATTRIB_CAPABILITIES[i]];
+        }
+        stub.attribStack.addLast(snapshot);
+    }
+
+    public static void celtium$popAttrib() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        byte[] snapshot = stub.attribStack.pollLast();
+        if (snapshot == null) {
+            return;
+        }
+        for (int i = 0; i < ATTRIB_CAPABILITIES.length; i++) {
+            stub.setCapability(ATTRIB_CAPABILITIES[i], snapshot[i] != 0);
+        }
+    }
+
+    /** Bounded legacy server-attribute stack. */
+    private final java.util.ArrayDeque<byte[]> attribStack = new java.util.ArrayDeque<byte[]>();
+
     /**
      * {@code glPushClientAttrib/glPopClientAttrib} from the transformer's route. Legacy mods save the client vertex-array
      * pointer and the GL_VERTEX_ARRAY enable around their own draws; a no-op push made the pop restore nothing, so the
