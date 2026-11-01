@@ -947,6 +947,35 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            // The EXT/ARB framebuffer spelling older mods carry. Without these a mod's offscreen pass was invisible to
+            // the renderer: its framebuffer bind never changed the current target and its attachment was never recorded.
+            if (("(II)V".equals(descriptor))
+                    && (name.endsWith("glBindFramebufferEXT") || name.endsWith("glBindFramebufferARB"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindFramebuffer", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIII)V".equals(descriptor)
+                    && (name.endsWith("glFramebufferTexture2DEXT") || name.endsWith("glFramebufferTexture2DARB"))) {
+                for (int slot = 0; slot < 5; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glFramebufferTexture2D", "(IIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (returnType.equals("I") && "(I)I".equals(descriptor)
+                    && (name.endsWith("glCheckFramebufferStatusEXT") || name.endsWith("glCheckFramebufferStatusARB"))) {
+                // Same answer as the core spelling above: GL_FRAMEBUFFER_COMPLETE, the only status that lets the
+                // caller use the framebuffer.
+                method.visitLdcInsn(Integer.valueOf(0x8CD5));
+                method.visitInsn(Opcodes.IRETURN);
+                return;
+            }
             if ("glNamedFramebufferTexture".equals(name) && "(IIII)V".equals(descriptor)) {
                 for (int slot = 0; slot < 4; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
