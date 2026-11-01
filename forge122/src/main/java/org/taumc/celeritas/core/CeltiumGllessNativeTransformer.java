@@ -889,6 +889,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+            if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetNamedRenderbufferParameteriv")) {
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(Opcodes.ICONST_1);
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glZeroOut", "(JIZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetNamedFramebufferParameteriv")) {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
