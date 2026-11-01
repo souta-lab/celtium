@@ -5246,9 +5246,16 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             boolean buffers = "glDeleteBuffers".equals(fn.name);
             boolean framebuffers = "glDeleteFramebuffers".equals(fn.name);
+            boolean vertexArrays = "glDeleteVertexArrays".equals(fn.name);
             for (int i = 0; i < count; i++) {
                 int name = memGetInt(names + (long) i * 4L);
                 this.liveNames.remove(name);
+                if (vertexArrays) {
+                    this.vaoRecords.remove(name);
+                    if (this.boundVertexArray == name) {
+                        this.boundVertexArray = 0;
+                    }
+                }
                 if (textures) {
                     deleteTexture(name);
                 }
