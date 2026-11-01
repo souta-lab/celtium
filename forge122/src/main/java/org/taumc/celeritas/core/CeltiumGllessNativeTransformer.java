@@ -947,6 +947,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IIJJJ)V".equals(descriptor)
+                    && (name.endsWith("glCopyBufferSubData") || name.endsWith("glCopyNamedBufferSubData"))) {
+                boolean named = name.endsWith("glCopyNamedBufferSubData");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 4);
+                method.visitVarInsn(Opcodes.LLOAD, 6);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        named ? "glCopyNamedBufferSubData" : "glCopyBufferSubData", "(IIJJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // The array delete spellings. glDeleteTextures already has its own route below; the rest had none, so a
             // deleted framebuffer kept its attachment record and a deleted buffer kept its storage under a name the
             // driver was free to reuse.

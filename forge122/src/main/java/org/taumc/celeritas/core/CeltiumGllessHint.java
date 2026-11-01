@@ -208,6 +208,19 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterPointer(target, pname, values, floats);
     }
 
+    /** Raw buffer-to-buffer copies. */
+    public static void glCopyBufferSubData(int readTarget, int writeTarget, long readOffset, long writeOffset,
+            long size) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyBufferSubData(readTarget, writeTarget, readOffset,
+                writeOffset, size);
+    }
+
+    public static void glCopyNamedBufferSubData(int readBuffer, int writeBuffer, long readOffset, long writeOffset,
+            long size) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyNamedBufferSubData(readBuffer, writeBuffer, readOffset,
+                writeOffset, size);
+    }
+
     /** Raw {@code glDelete*}: the object-name and array spellings, forwarded to the stub's delete families. */
     public static void glDeleteObjects(String name, int count, long names) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteObjects(name, count, names);

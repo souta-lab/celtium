@@ -1665,6 +1665,63 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glCopyBufferSubData} from the transformer's route, resolving both targets' bindings. */
+    public static void celtium$copyBufferSubData(int readTarget, int writeTarget, long readOffset, long writeOffset,
+            long size) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.copyBuffer(stub.boundBuffer(readTarget), stub.boundBuffer(writeTarget), readOffset, writeOffset, size);
+        }
+    }
+
+    /** The DSA spelling, where both arguments are buffer names. */
+    public static void celtium$copyNamedBufferSubData(int readBuffer, int writeBuffer, long readOffset,
+            long writeOffset, long size) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.copyBuffer(readBuffer, writeBuffer, readOffset, writeOffset, size);
+        }
+    }
+
+    /** Copies a byte range between two buffer mirrors; the native and heap forms use their own writes. */
+    private void copyBuffer(int readName, int writeName, long readOffset, long writeOffset, long size) {
+        if (readName == 0 || writeName == 0 || readOffset < 0 || writeOffset < 0 || size <= 0
+                || readOffset > Integer.MAX_VALUE || writeOffset > Integer.MAX_VALUE) {
+            return;
+        }
+        ByteBuffer source;
+        try {
+            NativeGeometryBuffer nativeRead = NativeGeometryBuffer.find(readName);
+            source = nativeRead != null ? nativeRead.compatibilityView() : this.bufferStore.get(readName);
+        } catch (RuntimeException error) {
+            return;
+        }
+        if (source == null || readOffset + size > source.capacity()) {
+            return;
+        }
+        ByteBuffer slice = source.duplicate();
+        slice.position((int) readOffset);
+        slice.limit((int) (readOffset + size));
+        slice = slice.slice();
+        try {
+            NativeGeometryBuffer nativeWrite = NativeGeometryBuffer.find(writeName);
+            if (nativeWrite != null) {
+                if (writeOffset + size <= nativeWrite.byteSize()) {
+                    nativeWrite.write(writeOffset, slice);
+                }
+                return;
+            }
+            ByteBuffer destination = this.bufferStore.get(writeName);
+            if (destination != null && writeOffset + size <= destination.capacity()) {
+                ByteBuffer out = destination.duplicate();
+                out.position((int) writeOffset);
+                out.put(slice);
+            }
+        } catch (RuntimeException ignored) {
+            // A closed or mapped destination keeps its previous content, as the GL copy would have refused.
+        }
+    }
+
     /**
      * {@code glDelete*} array names from the transformer's route. The dispatcher's delete path already knows each
      * family (texture payloads, buffer storage, framebuffer attachment records); it only had no caller, because a
