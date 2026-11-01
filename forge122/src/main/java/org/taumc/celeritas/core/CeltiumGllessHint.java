@@ -374,6 +374,11 @@ public final class CeltiumGllessHint {
         }
     }
 
+    /** Raw {@code glPointSize}: recorded for the point-size query. */
+    public static void glPointSize(float size) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pointSize(size);
+    }
+
     /** Raw {@code glLineWidth}: recorded so the narrowing report knows what the caller asked for. */
     public static void glLineWidth(float width) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$lineWidth(width);

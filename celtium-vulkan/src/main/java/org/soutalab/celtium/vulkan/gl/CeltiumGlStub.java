@@ -674,6 +674,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** GL's initial light-model ambient, answered when no backend mirror exists. */
     private final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
     private volatile float lineWidth = 1.0f;
+    /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
+    private volatile float pointSize = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
     /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
@@ -1848,6 +1850,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.boundVertexArray = array;
+        }
+    }
+
+    /** {@code glPointSize} from the transformer's route: recorded for the query, since points are not rasterized. */
+    public static void celtium$pointSize(float size) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && size > 0.0f) {
+            stub.pointSize = size;
         }
     }
 
@@ -5596,7 +5606,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 putFloatOrDouble(out, 0, this.lineWidth, asDouble);
                 return;
             case 0x0B11: // GL_POINT_SIZE
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 0, this.pointSize, asDouble);
                 return;
             case 0x0B22: // GL_LINE_WIDTH_RANGE - two values, not the point size
                 putFloatOrDouble(out, 0, 1.0f, asDouble);

@@ -73,7 +73,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // glColorMaski and the indexed blend setters are routed to the single target's state below.
             // glClearBufferfv/iv/fi are routed to the clear record below; the no-op set is consulted first.
             "glStencilFuncSeparate", "glStencilOpSeparate", "glStencilMaskSeparate",
-            "glPolygonMode", "glHint", "glPointSize", "glSampleCoverage", "glLogicOp", "glClampColor",
+            "glPolygonMode", "glHint", "glSampleCoverage", "glLogicOp", "glClampColor",
             "glReadBuffer", "glDrawBuffer", "glDrawBuffers",
             "glPrimitiveRestartIndex", "glSampleMaski", "glProvokingVertex",
             "glBindSampler", "glBindBufferBase", "glBindBufferRange",
@@ -1102,6 +1102,13 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 }
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glColorMaskIndexed", "(IZZZZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(F)V".equals(descriptor) && name.endsWith("glPointSize")) {
+                method.visitVarInsn(Opcodes.FLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glPointSize", "(F)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
