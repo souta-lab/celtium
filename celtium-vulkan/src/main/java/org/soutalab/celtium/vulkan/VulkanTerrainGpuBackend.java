@@ -11271,6 +11271,20 @@ this.frameBufferOpen = false;
         }
     }
 
+    /** Scratch grouping for the unbudgeted upload path; cleared at both ends of the call that fills it. */
+    private final Reference2ReferenceOpenHashMap<RenderRegion, List<ChunkTaskOutput>> uploadQueueScratch =
+            new Reference2ReferenceOpenHashMap<>();
+
+    private static void clearUploadScratch(Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues) {
+        if (queues.isEmpty()) {
+            return;
+        }
+        for (List<ChunkTaskOutput> queue : queues.values()) {
+            queue.clear();
+        }
+        queues.clear();
+    }
+
     private void celtium$uploadMeshesPass(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
             Runnable graphUpdateTrigger) {
         // Only a burst is budgeted. A batch smaller than the threshold - the steady-state trickle, and the batch the
@@ -11295,7 +11309,8 @@ this.frameBufferOpen = false;
             }
             return;
         }
-        Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = new Reference2ReferenceOpenHashMap<>();
+        Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = this.uploadQueueScratch;
+        clearUploadScratch(queues);
         for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
             ChunkTaskOutput output = holder.output();
             List<ChunkTaskOutput> queue = queues.get(output.render.getRegion());
@@ -11342,6 +11357,7 @@ this.frameBufferOpen = false;
                         + entry.getValue().size() + ", regionUploadFailures=" + this.regionUploadFailures + ")");
             }
         }
+        clearUploadScratch(queues);
     }
 
     /**
