@@ -1503,6 +1503,16 @@ public final class CeltiumGllessHint {
                 precision);
     }
 
+    /** Raw ARB {@code glGetInfoLogARB}: an empty log, with the written length. */
+    public static void glGetInfoLogARB(int object, int maxLength, long length, long infoLog) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+        if (infoLog != 0L && maxLength > 0) {
+            org.lwjgl.system.MemoryUtil.memPutByte(infoLog, (byte) 0);
+        }
+    }
+
     /** Raw {@code glGetShaderSource/glGetAttachedShaders}: written empty answers. */
     public static void glGetShaderSource(int shader, int bufSize, long length, long source) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getShaderSource(shader, bufSize, length, source);
