@@ -932,7 +932,6 @@ public final class VulkanGlState {
      * Scratch for building one transform. Only ever filled, mutated and handed straight to
      * {@link #multiplyMatrix}, which reads it - nothing retains it, which is why it can be reused across calls.
      */
-    private final float[] transformScratch = new float[MATRIX_FLOATS];
 
     /** {@return a fresh identity matrix}, for the stack entries, which are written to and so cannot share one. */
     private static float[] newIdentity() {

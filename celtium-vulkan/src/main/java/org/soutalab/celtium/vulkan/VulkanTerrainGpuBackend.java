@@ -1562,7 +1562,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final float[] lastModelViewMatrix = new float[16];
     int lastModelTexture;
     long lastModelStateKey;
-    private int lastModelFormat;
     boolean lastModelSeen;
 
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
@@ -1759,7 +1758,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Bounded report counter for the light map mirror's decision. */
     private int celtium$lightmapReports;
     private int animatedAnnounceDiagnostics;
-    private int dynamicAnnounceDiagnostics;
     private String lastInvalidationOrigin = "unknown";
     /** The texture ids whose invalidation origin has been printed. */
     private final it.unimi.dsi.fastutil.ints.IntOpenHashSet invalidationOrigins =
@@ -2648,7 +2646,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         this.indirectRunsIssued++;
     }
-    private int textureArrayLogs;
     /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
     private static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
@@ -3545,7 +3542,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private int blackTextureGlId;
     private int blackTextureSubstitutions;
-    private int immediatePresentedFrames;
     private int immediateTextureInvalidations;
     private int directMirrorRefreshes;
     private int atlasSourceGlId = -1;
@@ -3602,22 +3598,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean frameSubmitReachedQueue;
     /** Times a present skipped the bridge semaphore pair because its done signal was still outstanding. */
     /** Times the frame-close submission (the second producer of the done semaphore) ran. */
-    private int emptyFrameReleases;
 
-    /**
-     * How many submissions to refuse, for exercising the fail-closed paths:
-     * {@code -Dceltium.vulkan.failSubmits=2}.
-     */
-    private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();
-    /**
-     * Whether the mid-frame window samples the game framebuffer around itself.
-     * <p>
-     * Each sample is a {@code glReadPixels} of a centre patch plus a state snapshot of roughly twenty {@code glGet}
-     * calls, and they were running on every window of every frame. Off by default, as the audit's item G asks; set
-     * {@code -Dceltium.vulkan.immediateWindowSamples=true} when a frame is being diagnosed.
-     */
-    private static final boolean DIAGNOSTIC_WINDOW_SAMPLES =
-            Boolean.getBoolean("celtium.vulkan.immediateWindowSamples");
     /**
      * Batches drawn, by format id - the counter that pairs with {@code acceptedByFormat}.
      * <p>
@@ -11213,8 +11194,6 @@ this.frameBufferOpen = false;
      * a per-frame cap made the fixture's capture deadline find zero of its sixty-four pinned sections (measured with
      * budget 8). Past the warm-up only the steady-state trickle is budgeted, which is where the p95 spikes are.
      */
-    private static final int UPLOAD_BUDGET_WARMUP =
-            Integer.getInteger("celtium.vulkan.uploadBudgetWarmupFrames", 240).intValue();
     /**
      * The queue size above which an arriving batch is budgeted instead of uploaded at once.
      * <p>
@@ -16276,7 +16255,6 @@ this.frameBufferOpen = false;
     /** Highest submission sequence confirmed complete; retirement is gated on it. */
     private long completedSubmitSequence;
     /** Waits spent on a slot whose previous submission had not completed when it was reused. */
-    private long slotReuseWaits;
 
     private void createCommandResources() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -18075,10 +18053,7 @@ this.frameBufferOpen = false;
     }
 
     /** Fence-status polls of the pending slots and how many submissions they confirmed, for the run report. */
-    private long slotPolls;
-    private long slotPollConfirms;
     /** Slots confirmed by the bounded wait on the reuse path, counted separately from the polls. */
-    private long slotWaitConfirms;
 
     boolean waitForIdle() {
         // A documented injection for the timeout path, which no ordinary run reaches: the audit asks for a safe fake

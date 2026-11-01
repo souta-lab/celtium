@@ -351,7 +351,6 @@ public final class FramePassTimings {
 
     /** The GUI bracket's name: {@link #end} compares it directly so the disabled path pays no map lookup. */
     private static final String GUI_PASS = "gui";
-    private static final int GUI_INDEX = indexOf("gui");
 
     /**
      * Whether per-bracket call counts are kept while the timings are disabled.

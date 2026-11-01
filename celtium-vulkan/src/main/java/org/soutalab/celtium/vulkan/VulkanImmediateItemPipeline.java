@@ -122,7 +122,6 @@ public final class VulkanImmediateItemPipeline {
      * buffers, so they are released by the same completion-gated path that serves eviction rather than destroyed here.
      */
     private final java.util.List<Long> retiredSets = new java.util.ArrayList<Long>();
-    private int retiredSetsCount;
 
     /** The key and set of the last lookup, so a run of batches on one texture skips the map. */
     private long lastDescriptorKey = -1L;

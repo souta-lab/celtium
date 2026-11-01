@@ -123,7 +123,7 @@ public final class ImmediateStatistics {
     private String lastUniformPreparationFailure = "none";
     private float mirroredProjectionDelta = -1.0f;
     private String particleDescriptorFailureReason;    private long actualFlushWorstNanos;
-    private long blendPairs;    private int drawsWithoutCommandBuffer;
+    private int drawsWithoutCommandBuffer;
     private int frameAccepted;
     private int immediateBatchesOffered;
     private int immediateDeferredNextFrame;
