@@ -4732,6 +4732,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0D55: return 8; // GL_ALPHA_BITS
             case 0x0D56: return 24; // GL_DEPTH_BITS
             case 0x0D57: return 0; // GL_STENCIL_BITS - this renderer keeps no stencil
+            case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
+                return this.drawFbo == 0 ? 0x0405 : 0x8CE0;
+            case 0x0C02: // GL_READ_BUFFER
+                return this.readFbo == 0 ? 0x0405 : 0x8CE0;
             case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
                 return this.matrixMode;
             case 0x0B74: { // GL_DEPTH_FUNC
