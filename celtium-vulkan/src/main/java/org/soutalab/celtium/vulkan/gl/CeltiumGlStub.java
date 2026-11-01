@@ -5506,6 +5506,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             case 0x0D05: // GL_PACK_ALIGNMENT
                 return 4;
+            case 0x0CF5: // GL_UNPACK_ALIGNMENT - the recorded value the upload conversion reads rows with
+                return this.unpackAlignment;
+            case 0x0CF2: // GL_UNPACK_ROW_LENGTH
+                return this.unpackRowLength;
+            case 0x0CF3: // GL_UNPACK_SKIP_PIXELS
+                return this.unpackSkipPixels;
+            case 0x0CF4: // GL_UNPACK_SKIP_ROWS
+                return this.unpackSkipRows;
+            case 0x0D02: // GL_PACK_ROW_LENGTH - the readback paths write tightly packed rows
+            case 0x0D03: // GL_PACK_SKIP_PIXELS
+            case 0x0D04: // GL_PACK_SKIP_ROWS
+                return 0;
             case 0x0B65: // GL_FOG_MODE
                 return org.soutalab.celtium.vulkan.ImmediateFogState.current().glMode();
             case 0x85B5: // GL_VERTEX_ARRAY_BINDING
