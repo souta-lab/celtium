@@ -1377,6 +1377,11 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw shader/program object parameters: compile, link and validate status answer true. */
+    public static void glShaderObjectParameter(int object, int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$shaderObjectParameter(object, pname, out);
+    }
+
     /** Raw {@code glClearBufferfv/fi}: the value-carrying clear forms, routed to the same clear record. */
     public static void glClearBufferfv(int buffer, int drawBuffer, long value) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBufferfv(buffer, drawBuffer, value);
@@ -1607,8 +1612,6 @@ public final class CeltiumGllessHint {
             case "nglGetSamplerParameterIiv":
             case "nglGetSamplerParameterIuiv":
             case "nglGetMultisamplefv":
-            case "nglGetShaderiv":
-            case "nglGetProgramiv":
                 return 4;
             case "nglGetInteger64v":
             case "nglGetInteger64i_v":

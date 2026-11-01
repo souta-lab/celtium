@@ -948,6 +948,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (returnType.equals("V")) {
             if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetShaderiv") || name.endsWith("glGetProgramiv")
+                            || name.endsWith("glGetObjectParameterivARB"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glShaderObjectParameter", "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor)
                     && (name.endsWith("glClearBufferfv") || name.endsWith("glClearBufferiv")
                             || name.endsWith("glClearBufferuiv"))) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);

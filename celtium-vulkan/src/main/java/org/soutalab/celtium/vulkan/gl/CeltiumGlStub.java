@@ -2616,6 +2616,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * {@code glGetShaderiv/glGetProgramiv/glGetObjectParameterivARB} from the transformer's route. The stubbed shader
+     * surface compiles nothing, but a zero compile/link status is a "failed" answer every caller checks; the status
+     * pnames answer true (the object exists), everything else (log length, uniform counts) answers zero.
+     */
+    public static void celtium$shaderObjectParameter(int object, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int value = pname == 0x8B81 || pname == 0x8B82 || pname == 0x8B83 ? 1 : 0;
+        org.lwjgl.system.MemoryUtil.memPutInt(out, value);
+    }
+
     public static void celtium$clear(int mask) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
