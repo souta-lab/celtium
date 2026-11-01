@@ -41,6 +41,26 @@ public final class ModelGeometryCache {
     private final VulkanModelQuadCapture.Scratch snapshotScratch = new VulkanModelQuadCapture.Scratch();
 
     private LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
+
+    /** One-entry memo over {@link #meshFor}: consecutive replays often ask for the same list again. */
+    private int lastMeshListId = Integer.MIN_VALUE;
+    private VulkanDynamicMesh lastMesh;
+
+    /** {@return the mesh for a list, or null when the table has none}; a hit keeps the boxed key path out. */
+    VulkanDynamicMesh meshFor(int listId) {
+        if (listId == this.lastMeshListId) {
+            return this.lastMesh;
+        }
+        VulkanDynamicMesh mesh = this.modelMeshes == null ? null : this.modelMeshes.get(Integer.valueOf(listId));
+        this.lastMeshListId = listId;
+        this.lastMesh = mesh;
+        return mesh;
+    }
+
+    private void invalidateMeshMemo() {
+        this.lastMeshListId = Integer.MIN_VALUE;
+        this.lastMesh = null;
+    }
     /** The capture stamp the table was built from; {@link Long#MIN_VALUE} forces a build. */
     private long builtStamp = Long.MIN_VALUE;
 
@@ -275,6 +295,7 @@ public final class ModelGeometryCache {
         // generation it was built from, and only then are the superseded meshes retired. Stamping after the commit is
         // what keeps a failed build from leaving a stamped mesh in a table that was never installed.
         this.modelMeshes = built;
+        invalidateMeshMemo();
         this.builtStamp = stamp;
         // Retired first: a list never has two meshes registered at once, so the registry's replacement counter means
         // what it says instead of counting this commit's own window.
@@ -374,6 +395,7 @@ public final class ModelGeometryCache {
             mesh.retire();
         }
         this.modelMeshes = null;
+        invalidateMeshMemo();
     }
 
     /** The bounded build summary, the same line the backend printed from the builder's tail. */

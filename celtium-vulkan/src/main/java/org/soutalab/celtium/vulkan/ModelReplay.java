@@ -86,7 +86,7 @@ final class ModelReplay {
             return false;
         }
         java.util.Map<Integer, VulkanDynamicMesh> meshes = b.modelGeometry.modelMeshes();
-        VulkanDynamicMesh mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
+        VulkanDynamicMesh mesh = b.modelGeometry.meshFor(listId);
         if ((mesh == null || mesh.isEmpty()) && b.context != null
                 && VulkanModelQuadCapture.quadsForList(listId) > 0
                 && (b.modelMeshBuiltCaptureVersion != VulkanModelQuadCapture.captureVersion()
@@ -104,7 +104,7 @@ final class ModelReplay {
             // for that list and version rather than silently losing its first draws.
             b.celtium$buildModelMeshes();
             meshes = b.modelGeometry.modelMeshes();
-            mesh = meshes == null ? null : meshes.get(Integer.valueOf(listId));
+            mesh = b.modelGeometry.meshFor(listId);
         }
         if (mesh == null || mesh.isEmpty()) {
             // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
