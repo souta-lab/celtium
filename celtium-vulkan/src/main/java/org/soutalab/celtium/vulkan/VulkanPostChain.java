@@ -183,7 +183,8 @@ public final class VulkanPostChain {
     private final long sampler;
     private final int maxPushConstants;
     /** Every chain target, allocated here or adopted from the caller, keyed by the identity the passes carry. */
-    private final Map<Integer, Target> targets = new HashMap<>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<Target> targets =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     /**
      * Targets that an adoption or a release replaced. They are freed only in {@link #delete()}, after the device
      * wait: a command buffer that already recorded one may still be in flight.
@@ -805,7 +806,7 @@ public final class VulkanPostChain {
      * passes carry - so a value outside the int range can never match a pass and is rejected here.
      */
     public void adoptTarget(long identity, long image, long view, int width, int height) {
-        Integer key = adoptedKey(identity);
+        int key = adoptedKey(identity);
         if (image == VK_NULL_HANDLE || view == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("adopted post chain target " + identity
                     + " needs an image and a view");
@@ -819,7 +820,7 @@ public final class VulkanPostChain {
                 && existing.width == width && existing.height == height) {
             return;
         }
-        Target adopted = Target.adopt(key.intValue(), width, height, image, view);
+        Target adopted = Target.adopt(key, width, height, image, view);
         Target previous = this.targets.put(key, adopted);
         if (previous != null) {
             // Whatever this identity resolved to before may already be recorded in a buffer still in flight.
@@ -838,7 +839,7 @@ public final class VulkanPostChain {
      * Stops resolving {@code identity} to an adopted image; the image itself stays the caller's. Releasing an identity
      * this chain allocated, or one it never adopted, does nothing.
      */    public void releaseAdoptedTarget(long identity) {
-        Integer key = adoptedKey(identity);
+        int key = adoptedKey(identity);
         Target target = this.targets.get(key);
         if (target == null || target.owned) {
             return;
@@ -848,12 +849,12 @@ public final class VulkanPostChain {
     }
 
     /** {@return the chain's key for an adopted identity}; the passes carry int keys and a wider one cannot match. */
-    private static Integer adoptedKey(long identity) {
+    private static int adoptedKey(long identity) {
         if ((long) (int) identity != identity) {
             throw new IllegalArgumentException("adopted post chain target identity is outside the chain's key range: "
                     + identity);
         }
-        return Integer.valueOf((int) identity);
+        return (int) identity;
     }
 
     /**
@@ -1309,7 +1310,7 @@ public final class VulkanPostChain {
         if (produced.contains(Integer.valueOf(identity))) {
             return null;
         }
-        Target target = this.targets.get(Integer.valueOf(identity));
+        Target target = this.targets.get(identity);
         if (target != null && !target.owned) {
             return null;
         }
@@ -1339,7 +1340,7 @@ public final class VulkanPostChain {
         if (passes.isEmpty() || passes.get(0).groupMainFbId == 0) {
             return;
         }
-        Target adopted = this.targets.get(Integer.valueOf(passes.get(0).groupMainFbId));
+        Target adopted = this.targets.get(passes.get(0).groupMainFbId);
         if (adopted != null && !adopted.owned) {
             return;
         }
@@ -1441,7 +1442,7 @@ public final class VulkanPostChain {
     public String status() {
         int adopted = 0;
         StringBuilder adoptedIds = new StringBuilder();
-        for (Map.Entry<Integer, Target> entry : this.targets.entrySet()) {
+        for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<Target> entry : this.targets.int2ObjectEntrySet()) {
             if (!entry.getValue().owned) {
                 adopted++;
                 // Which identities were adopted, not just how many: an adoption the caller aimed at the wrong
@@ -1449,7 +1450,7 @@ public final class VulkanPostChain {
                 if (adoptedIds.length() > 0) {
                     adoptedIds.append(',');
                 }
-                adoptedIds.append(Integer.toHexString(entry.getKey().intValue()));
+                adoptedIds.append(Integer.toHexString(entry.getIntKey()));
             }
         }
         return "postChains=" + this.chainsRun + ", postPasses=" + this.passesRecorded
@@ -1527,7 +1528,7 @@ public final class VulkanPostChain {
      * silently is exactly what the refusal is for.
      */
     private Target target(int fbId, int width, int height) {
-        Integer key = Integer.valueOf(fbId);
+        int key = fbId;
         Target target = this.targets.get(key);
         if (target != null && (target.width != width || target.height != height)) {
             if (!target.owned) {
@@ -1545,7 +1546,7 @@ public final class VulkanPostChain {
             target = null;
         }
         if (target == null) {
-            target = Target.create(key.intValue(), this.context, this.renderPass, width, height);
+            target = Target.create(key, this.context, this.renderPass, width, height);
             this.targets.put(key, target);
             trace("created identity=" + target.identity + " image=0x" + hex(target.image) + " view=0x"
                     + hex(target.view) + " framebuffer=0x" + hex(target.fb) + " " + width + "x" + height
