@@ -5660,13 +5660,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return this.unpackAlignment;
             case 0x0CF2: // GL_UNPACK_ROW_LENGTH
                 return this.unpackRowLength;
-            case 0x0CF3: // GL_UNPACK_SKIP_PIXELS
-                return this.unpackSkipPixels;
-            case 0x0CF4: // GL_UNPACK_SKIP_ROWS
+            case 0x0CF3: // GL_UNPACK_SKIP_ROWS - the same pnames the pixelStore setter uses
                 return this.unpackSkipRows;
+            case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
+                return this.unpackSkipPixels;
             case 0x0D02: // GL_PACK_ROW_LENGTH - the readback paths write tightly packed rows
-            case 0x0D03: // GL_PACK_SKIP_PIXELS
-            case 0x0D04: // GL_PACK_SKIP_ROWS
+            case 0x0D03: // GL_PACK_SKIP_ROWS
+            case 0x0D04: // GL_PACK_SKIP_PIXELS
                 return 0;
             case 0x0B65: // GL_FOG_MODE
                 return org.soutalab.celtium.vulkan.ImmediateFogState.current().glMode();
