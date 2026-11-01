@@ -1766,8 +1766,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || count <= 0 || names == 0L) {
             return;
         }
+        // The count is caller data and the loop reads the name array with it; a bogus one walks past the block. The
+        // cap matches glCallLists': far above any legitimate delete batch, small enough to bound a corrupt one.
+        int bounded = Math.min(count, 1 << 16);
         stub.delete(new Fn(coreDeleteName(name), R_VOID, new byte[] {A_INT, A_PTR}, SEM_DELETE),
-                new long[] {count, names});
+                new long[] {bounded, names});
     }
 
     /** {@code glDeleteProgram/glDeleteShader} from the transformer's route. */
