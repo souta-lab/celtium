@@ -3704,6 +3704,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.compilingList = (int) c[0];
                 this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
                 this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
+                // The model capture takes a new generation per compile. The GlStateManager path notifies it; a mod
+                // that calls GL11.glNewList directly did not, so recompiling a name kept the mesh built from its
+                // previous contents and the new geometry was never drawn.
+                if (this.compilingList > 0) {
+                    org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(this.compilingList);
+                }
                 return 0L;
             case SEM_END_LIST:
                 // The spec replaces a name's contents only at glEndList, so the previous list stays callable until
