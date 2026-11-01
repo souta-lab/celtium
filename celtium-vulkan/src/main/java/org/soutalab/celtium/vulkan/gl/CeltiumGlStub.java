@@ -4777,11 +4777,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0;
             case 0x821D: // GL_NUM_EXTENSIONS
                 return 0;
-            case 0x8513: // GL_TEXTURE_MAX_ANISOTROPY samples? actually MAX_TEXTURE_MAX_ANISOTROPY is 0x84FF
-                return 16;
             case 0x84FF:
                 return 16;
-            case 0x8B4D: // GL_MAX_TEXTURE_IMAGE_UNITS
+            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS (>= the per-stage count above)
                 return 16;
             default:
                 return Integer.MIN_VALUE;
@@ -4829,8 +4827,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 memPutInt(out + 8, this.raster.scissorWidth());
                 memPutInt(out + 12, this.raster.scissorHeight());
                 return;
-            case 0x8872: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
-                value = 32;
+            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - at most as many as the combined count below
+                value = 16;
                 break;
             case 0x0B33: // GL_LIST_INDEX - the list glNewList opened, 0 when none is open
                 // This is the answer the model capture reads to decide whether a quad belongs to a list. It asked the
