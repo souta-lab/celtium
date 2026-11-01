@@ -5826,6 +5826,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 return 16;
+            case 0x8DFB: // GL_MAX_VERTEX_UNIFORM_VECTORS - a quarter of the component count
+                return 1024;
+            case 0x8DFD: // GL_MAX_FRAGMENT_UNIFORM_VECTORS
+                return 1024;
             case 0x821B: // GL_MAJOR_VERSION
                 // Kept consistent with the version string this stub advertises ("3.0.0 Celtium", see the
                 // GL_VERSION case below). The two used to disagree - the string said 3.0 while these said 4.6 -

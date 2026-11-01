@@ -664,6 +664,12 @@ public final class CeltiumGllessHint {
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 value = 16;
                 break;
+            case 0x8DFB: // GL_MAX_VERTEX_UNIFORM_VECTORS
+                value = 1024;
+                break;
+            case 0x8DFD: // GL_MAX_FRAGMENT_UNIFORM_VECTORS
+                value = 1024;
+                break;
             case 0x80E9: // GL_MAX_ELEMENTS_INDICES - the indexed decode's own bound is far above this
                 value = 4096;
                 break;
