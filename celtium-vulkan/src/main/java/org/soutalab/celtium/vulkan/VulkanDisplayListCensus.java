@@ -52,9 +52,12 @@ public final class VulkanDisplayListCensus {
     private static final Map<String, Integer> UNKNOWN_ORIGIN_REASONS = new LinkedHashMap<String, Integer>();
 
     /** The texture bound when a list was compiled and when it was replayed, plus the lists whose read found none. */
-    private static final Map<Integer, Integer> COMPILE_TEXTURES = new LinkedHashMap<Integer, Integer>();
-    private static final Map<Integer, Integer> REPLAY_TEXTURES = new LinkedHashMap<Integer, Integer>();
-    private static final Map<Integer, Integer> REPLAY_TEXTURE_UNITS = new LinkedHashMap<Integer, Integer>();
+    private static final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap COMPILE_TEXTURES =
+            new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
+    private static final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap REPLAY_TEXTURES =
+            new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
+    private static final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap REPLAY_TEXTURE_UNITS =
+            new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
     private static final java.util.Set<Integer> UNKNOWN_TEXTURE_LISTS = new java.util.HashSet<Integer>();
 
     private static final Map<Integer, String> ORIGINS = new LinkedHashMap<Integer, String>();
@@ -112,7 +115,7 @@ public final class VulkanDisplayListCensus {
 
     /** {@return whether this list's compile-time texture has been recorded already}. */
     public static synchronized boolean compileTextureKnown(int list) {
-        return COMPILE_TEXTURES.containsKey(Integer.valueOf(list));
+        return COMPILE_TEXTURES.containsKey(list);
     }
 
     /**
@@ -125,10 +128,10 @@ public final class VulkanDisplayListCensus {
      * as a plausible name.
      */
     public static synchronized void compileTexture(int list, int texture, int unit) {
-        if (list <= 0 || COMPILE_TEXTURES.get(Integer.valueOf(list)) != null || COMPILE_TEXTURES.size() >= 32) {
+        if (list <= 0 || COMPILE_TEXTURES.containsKey(list) || COMPILE_TEXTURES.size() >= 32) {
             return;
         }
-        COMPILE_TEXTURES.put(Integer.valueOf(list), Integer.valueOf(texture));
+        COMPILE_TEXTURES.put(list, texture);
         if (COMPILE_TEXTURES.size() <= 4) {
             System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_COMPILE_TEXTURE list=" + list + " texture="
                     + value(texture) + " unit=" + value(unit));
@@ -137,8 +140,8 @@ public final class VulkanDisplayListCensus {
 
     /** {@return the texture recorded while this list was compiled, or 0 when it is unknown}. */
     public static synchronized int compileTextureOf(int list) {
-        Integer texture = COMPILE_TEXTURES.get(Integer.valueOf(list));
-        return texture == null || texture.intValue() <= 0 ? 0 : texture.intValue();
+        int texture = COMPILE_TEXTURES.get(list);
+        return texture <= 0 ? 0 : texture;
     }
 
     /** {@return the textures recorded per list and the lists whose texture could not be read}. */
@@ -157,19 +160,17 @@ public final class VulkanDisplayListCensus {
         return text.length() == 0 ? "none" : text.toString();
     }
 
-    private static void appendTextures(StringBuilder text, String phase, Map<Integer, Integer> textures,
-            Map<Integer, Integer> units) {
-        for (Map.Entry<Integer, Integer> entry : textures.entrySet()) {
+    private static void appendTextures(StringBuilder text, String phase,
+            it.unimi.dsi.fastutil.ints.Int2IntMap textures,
+            it.unimi.dsi.fastutil.ints.Int2IntMap units) {
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry : textures.int2IntEntrySet()) {
             if (text.length() > 0) {
                 text.append(' ');
             }
-            text.append(phase).append(':').append(entry.getKey()).append('=')
-                    .append(value(entry.getValue().intValue()));
-            if (units != null) {
-                Integer unit = units.get(entry.getKey());
-                if (unit != null) {
-                    text.append("@unit").append(unit);
-                }
+            text.append(phase).append(':').append(entry.getIntKey()).append('=')
+                    .append(value(entry.getIntValue()));
+            if (units != null && units.containsKey(entry.getIntKey())) {
+                text.append("@unit").append(units.get(entry.getIntKey()));
             }
         }
     }
@@ -386,13 +387,13 @@ public final class VulkanDisplayListCensus {
         // The matrix in effect at replay, next to the one captured while the list was compiled. Whether a display list
         // bakes the transform or is replayed under the current matrix decides how a native replacement has to combine
         // them, and this pair is what answers it instead of an argument about the specification.
-        if (MATRICES.get(Integer.valueOf(list)) == null && matricesTaken < 24) {
+        if (!MATRICES.containsKey(list) && matricesTaken < 24) {
             try {
                 java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
                 org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
                 float[] values = new float[16];
                 matrix.get(values);
-                MATRICES.put(Integer.valueOf(list), values);
+                MATRICES.put(list, values);
                 matricesTaken++;
             } catch (RuntimeException | LinkageError ignored) {
                 // Measurement only.
@@ -420,14 +421,14 @@ public final class VulkanDisplayListCensus {
      * that finds nothing is counted and named instead of being recorded as a name of 0.
      */
     private static void noteReplayTexture(int list) {
-        if (REPLAY_TEXTURES.get(Integer.valueOf(list)) != null || REPLAY_TEXTURES.size() >= 32) {
+        if (REPLAY_TEXTURES.containsKey(list) || REPLAY_TEXTURES.size() >= 32) {
             return;
         }
         int unit = glInt(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
         int texture = modelTexture();
         if (texture > 0) {
-            REPLAY_TEXTURES.put(Integer.valueOf(list), Integer.valueOf(texture));
-            REPLAY_TEXTURE_UNITS.put(Integer.valueOf(list), Integer.valueOf(unit));
+            REPLAY_TEXTURES.put(list, texture);
+            REPLAY_TEXTURE_UNITS.put(list, unit);
             return;
         }
         if (UNKNOWN_TEXTURE_LISTS.add(Integer.valueOf(list))) {
@@ -439,7 +440,8 @@ public final class VulkanDisplayListCensus {
         }
     }
 
-    private static final Map<Integer, float[]> MATRICES = new LinkedHashMap<Integer, float[]>();
+    private static final it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<float[]> MATRICES =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<float[]>();
     private static int matricesTaken;
 
     /**
@@ -509,7 +511,7 @@ public final class VulkanDisplayListCensus {
 
     /** {@return the replay-time modelview matrix of a list, or null when it has not been replayed yet}. */
     public static synchronized float[] replayMatrix(int list) {
-        return MATRICES.get(Integer.valueOf(list));
+        return MATRICES.get(list);
     }
 
     /** {@return the number of replays seen so far}. */
