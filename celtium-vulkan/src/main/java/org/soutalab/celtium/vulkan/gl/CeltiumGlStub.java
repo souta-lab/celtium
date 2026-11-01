@@ -2568,6 +2568,27 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /**
+     * {@code glGetActiveUniform/glGetActiveAttrib} (and the ARB spellings): the stubbed shader surface has no active
+     * objects, so the answer is an empty name with zero length/size/type - written, because an untouched caller buffer
+     * is what the previous no-op left behind.
+     */
+    public static void celtium$getActiveObject(int program, int index, int bufSize, long length, long size, long type,
+            long name) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+        if (size != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(size, 0);
+        }
+        if (type != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(type, 0);
+        }
+        if (name != 0L && bufSize > 0) {
+            org.lwjgl.system.MemoryUtil.memPutByte(name, (byte) 0);
+        }
+    }
+
     /** Deterministic zeros for an unmodelled getter's output, instead of leaving the caller's buffer uninitialised. */
     public static void celtium$zeroOut(long out, int count, boolean wide) {
         if (out == 0L || count <= 0) {

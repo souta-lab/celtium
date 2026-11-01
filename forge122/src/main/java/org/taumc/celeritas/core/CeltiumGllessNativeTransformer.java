@@ -947,6 +947,21 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IIIJJJJ)V".equals(descriptor)
+                    && (name.endsWith("glGetActiveUniform") || name.endsWith("glGetActiveAttrib")
+                            || name.endsWith("glGetActiveUniformARB") || name.endsWith("glGetActiveAttribARB"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitVarInsn(Opcodes.LLOAD, 7);
+                method.visitVarInsn(Opcodes.LLOAD, 9);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetActiveObject", "(IIIJJJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIJ)V".equals(descriptor)
                     && (name.endsWith("glGetSamplerParameteriv") || name.endsWith("glGetSamplerParameterIiv")
                             || name.endsWith("glGetSamplerParameterIuiv") || name.endsWith("glGetSamplerParameterfv")

@@ -1377,6 +1377,13 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetActiveUniform/Attrib}: no active objects, written rather than left untouched. */
+    public static void glGetActiveObject(int program, int index, int bufSize, long length, long size, long type,
+            long name) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveObject(program, index, bufSize, length, size,
+                type, name);
+    }
+
     /** Raw unmodelled getters: a zeroed output is deterministic, unlike an untouched caller buffer. */
     public static void glZeroOut(long out, int count, boolean wide) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroOut(out, count, wide);
