@@ -3334,7 +3334,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final int REFUSE_IMMEDIATE_FORMAT =
             Integer.getInteger("celtium.vulkan.refuseImmediateFormat", -1).intValue();
-    private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
     private static final boolean REFUSE_TERRAIN_PASS = Boolean.getBoolean("celtium.vulkan.refuseTerrainPass");
     private static final boolean GAME_CLEAR_LATCH =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.gameClearLatch", "true"));
