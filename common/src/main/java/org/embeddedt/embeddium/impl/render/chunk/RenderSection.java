@@ -91,6 +91,19 @@ public class RenderSection extends AbstractSection {
 
     private int lastBuiltFrame = -1;
     private int lastSubmittedFrame = -1;
+    /**
+     * Nanoseconds the last mesh build took. Written by {@code RenderSectionMetricsTracker}, read by its comparator and
+     * its slowest-section heap - the tracker's two call sites are the only users.
+     */
+    private volatile long lastBuildDurationNanos;
+
+    public long getLastBuildDurationNanos() {
+        return this.lastBuildDurationNanos;
+    }
+
+    public void setLastBuildDurationNanos(long nanos) {
+        this.lastBuildDurationNanos = nanos;
+    }
 
     // Lifetime state
     private boolean disposed;
