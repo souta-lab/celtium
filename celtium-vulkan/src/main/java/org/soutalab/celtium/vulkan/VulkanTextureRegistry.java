@@ -219,7 +219,8 @@ public final class VulkanTextureRegistry {
      */
     private final java.util.Map<Integer, java.awt.image.BufferedImage> announcedImages =
             new java.util.HashMap<Integer, java.awt.image.BufferedImage>();
-    private final java.util.Set<Integer> staleIds = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet staleIds =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     private int inPlaceRefreshes;
     private int failureCount;
     private String lastFailure = "none";
@@ -627,7 +628,7 @@ public final class VulkanTextureRegistry {
     /** FBO rendering invalidates the old CPU announcement; future sampling must read the returned game texture. */
     public void invalidateRenderedTexture(int id) {
         this.announcedImages.remove(Integer.valueOf(id));
-        this.staleIds.add(Integer.valueOf(id));
+        this.staleIds.add(id);
     }
 
     public void announceImage(int glTextureId, java.awt.image.BufferedImage image) {
@@ -997,7 +998,7 @@ public final class VulkanTextureRegistry {
             // still marked stale, so the very next lookup refreshes it - from the readback - and the announcement's work is
             // thrown away. That was the whole of the remaining stream: all nine hundred and eighty refreshes came from this
             // origin, which is the one origin whose writes are announced.
-            this.staleIds.remove(Integer.valueOf(glTextureId));
+            this.staleIds.remove(glTextureId);
             return texture;
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
@@ -1224,7 +1225,7 @@ public final class VulkanTextureRegistry {
                         entry.texture.mipLevels());
             }
             this.imageUploads++;
-            this.staleIds.remove(Integer.valueOf(glTextureId));
+            this.staleIds.remove(glTextureId);
             recordApplication(glTextureId, wholeTexture);
             if (wholeTexture) {
                 celtium$noteMirrorSource(glTextureId, "announced-int[]", width, height, levelBytes[0]);

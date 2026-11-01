@@ -128,6 +128,8 @@ public final class VulkanGlTexture {
     private static final boolean TEXTURE_DUMP_EVERY = Boolean.getBoolean("celtium.vulkan.dumpTexturesEvery");
     /** GL names to dump; empty means every texture, which a per-frame light map would flood. */
     private static final String MIRROR_DUMP_IDS = System.getProperty("celtium.vulkan.mirrorDumpIds", "");
+    /** Parsed once: it was split on every dumped upload because the property is a comma list. */
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet MIRROR_DUMP_ID_SET = parseIds(MIRROR_DUMP_IDS);
     /** Dumps written so far, so a long run cannot fill the disk with the same 16x16 light map. */
     private static long mirrorDumpsWritten;
     /** Distinct images dumped; the dump runs inside the frame, so its cost has to stay out of the fixture's timing. */
@@ -165,17 +167,22 @@ public final class VulkanGlTexture {
 
     /** {@return the one colour to fill this texture's mirror with, or 0 to write the real pixels}. */
     private static int flatPoisonFor(int glTextureId) {
-        return parseColourFor(MIRROR_POISON_FLAT, glTextureId);
+        return FLAT_POISONS.get(glTextureId);
     }
 
     /** {@return the flat colour to write instead of this texture's pixels, or 0 to write the real ones}. */
     private static int poisonFor(int glTextureId) {
-        return parseColourFor(MIRROR_POISON, glTextureId);
+        return POISONS.get(glTextureId);
     }
 
-    private static int parseColourFor(String spec, int glTextureId) {
+    private static final it.unimi.dsi.fastutil.ints.Int2IntMap POISONS = parseColours(MIRROR_POISON);
+    private static final it.unimi.dsi.fastutil.ints.Int2IntMap FLAT_POISONS = parseColours(MIRROR_POISON_FLAT);
+
+    /** Parses {@code id=RRGGBB,id=...} once; this used to split the property on every upload. */
+    private static it.unimi.dsi.fastutil.ints.Int2IntMap parseColours(String spec) {
+        it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap colours = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
         if (spec == null || spec.isEmpty()) {
-            return 0;
+            return colours;
         }
         for (String part : spec.split(",")) {
             int equals = part.indexOf('=');
@@ -183,14 +190,13 @@ public final class VulkanGlTexture {
                 continue;
             }
             try {
-                if (Integer.parseInt(part.substring(0, equals).trim()) == glTextureId) {
-                    return (int) Long.parseLong(part.substring(equals + 1).trim(), 16);
-                }
+                colours.put(Integer.parseInt(part.substring(0, equals).trim()),
+                        (int) Long.parseLong(part.substring(equals + 1).trim(), 16));
             } catch (NumberFormatException ignored) {
                 // A malformed entry names no texture; the real pixels are written.
             }
         }
-        return 0;
+        return colours;
     }
 
     /** The flat colour the last upload of this object was told to write, or 0 for the real pixels. */
@@ -200,7 +206,8 @@ public final class VulkanGlTexture {
     private int flatPoisonColour;
 
     /** GL names whose mirror is filled with an x/y coordinate ramp instead of their pixels; see copyToImage. */
-    private static final java.util.Set<Integer> encodeIds = parseIds(System.getProperty("celtium.vulkan.mirrorEncode"));
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet encodeIds =
+            parseIds(System.getProperty("celtium.vulkan.mirrorEncode"));
     /** The GL name of this object's last upload, so the encoding rule can be applied to it. */
     private int encodeLabel = -1;
 
@@ -225,19 +232,19 @@ public final class VulkanGlTexture {
      * already carries. It is not a way to run the renderer - while the directly held textures are supplied through the
      * readback the same condition is reached by re-pointing that supply, and once it is gone this switch has no work left.
      */
-    private static final java.util.Set<Integer> suppressedReadbackIds =
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet suppressedReadbackIds =
             parseIds(System.getProperty("celtium.vulkan.suppressReadbackIds"));
     /** Uploads whose readback was suppressed, so a run says whether the property took effect. */
     private static long suppressedReadbacks;
 
-    private static java.util.Set<Integer> parseIds(String spec) {
-        java.util.Set<Integer> ids = new java.util.HashSet<Integer>();
+    private static it.unimi.dsi.fastutil.ints.IntOpenHashSet parseIds(String spec) {
+        it.unimi.dsi.fastutil.ints.IntOpenHashSet ids = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
         if (spec == null || spec.isEmpty()) {
             return ids;
         }
         for (String part : spec.split(",")) {
             try {
-                ids.add(Integer.valueOf(Integer.parseInt(part.trim())));
+                ids.add(Integer.parseInt(part.trim()));
             } catch (NumberFormatException ignored) {
                 // A malformed entry names no texture.
             }
@@ -1306,7 +1313,7 @@ public final class VulkanGlTexture {
         }
         long celtium$uploadStart = System.nanoTime();
         final int celtium$uploadGlId = glTextureId;
-        if (suppressedReadbackIds.contains(Integer.valueOf(glTextureId))) {
+        if (suppressedReadbackIds.contains(glTextureId)) {
             // Diagnostic only; see suppressedReadbackIds. Counted before the upload counters so a suppressed call is not
             // reported as a transfer that happened, and named once so a run's log says the property took effect.
             suppressedReadbacks++;
@@ -3059,12 +3066,7 @@ public final class VulkanGlTexture {
             // directly held textures, which is exactly where a black light map would come from.
             return true;
         }
-        for (String part : MIRROR_DUMP_IDS.split(",")) {
-            if (part.trim().equals(Integer.toString(glTextureId))) {
-                return true;
-            }
-        }
-        return false;
+        return MIRROR_DUMP_ID_SET.contains(glTextureId);
     }
 
     /**
@@ -3447,7 +3449,7 @@ public final class VulkanGlTexture {
                 MemoryUtil.memPutByte(destination + offset + 2, (byte) colour);
                 MemoryUtil.memPutByte(destination + offset + 3, (byte) (colour >>> 24));
             }
-        } else if (encodeIds.contains(Integer.valueOf(this.encodeLabel))) {
+        } else if (encodeIds.contains(this.encodeLabel)) {
             // Coordinate encoding: R and G carry the sampled texel's position in the atlas, so the frame reads back the
             // texture coordinates the shader used. A single flat colour cannot say whether a UV is degenerate or merely
             // landing on an empty texel, and that is the difference between a broken vertex attribute and an empty atlas.

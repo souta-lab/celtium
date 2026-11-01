@@ -565,7 +565,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * for this GL id" refusal reports. Bounded so a mod that churns names cannot grow it; texture name 506 in the
      * E2E pack was bound and never uploaded, and without this there was nothing to name the caller.
      */
-    private final java.util.Map<Integer, String> firstBindSites = new java.util.HashMap<Integer, String>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<String> firstBindSites =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<String>();
     /**
      * {@code -Dceltium.debug.bindSites=true}: remember who first bound each texture name.
      * <p>
@@ -1417,10 +1418,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         // cost bounded - a bind is one of the most frequent GL calls in the frame, and this is a diagnostic, not
         // state the draw reads.
         if (!BIND_SITE_DIAGNOSTICS || texture == 0 || this.firstBindSites.size() >= MAX_BIND_SITES
-                || this.firstBindSites.get(Integer.valueOf(texture)) != null) {
+                || this.firstBindSites.get(texture) != null) {
             return;
         }
-        this.firstBindSites.put(Integer.valueOf(texture), celtium$callSite() + " unit=" + this.textures.activeUnit());
+        this.firstBindSites.put(texture, celtium$callSite() + " unit=" + this.textures.activeUnit());
     }
 
     /**
@@ -1429,7 +1430,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static String firstBindSite(int textureName) {
         CeltiumGlStub stub = installed;
-        String site = stub == null ? null : stub.firstBindSites.get(Integer.valueOf(textureName));
+        String site = stub == null ? null : stub.firstBindSites.get(textureName);
         return site == null ? "none" : site;
     }
 

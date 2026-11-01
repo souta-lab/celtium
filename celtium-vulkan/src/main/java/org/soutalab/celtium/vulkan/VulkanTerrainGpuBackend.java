@@ -3327,19 +3327,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     static final int VERTEX_DUMP_TEXTURE = Integer.getInteger("celtium.debug.vertexDumpTexture", -1).intValue();
 
     /** {@code -Dceltium.debug.dumpTextureIds=23}: write those textures' images to the temp directory once. */
-    static final java.util.Set<Integer> DUMP_TEXTURE_IDS = dumpTextureIds();
+    static final it.unimi.dsi.fastutil.ints.IntOpenHashSet DUMP_TEXTURE_IDS = dumpTextureIds();
     int dumpedTextureImages;
-    final java.util.Set<Integer> dumpedTextureIds = new java.util.HashSet<Integer>();
+    final it.unimi.dsi.fastutil.ints.IntOpenHashSet dumpedTextureIds = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
 
-    private static java.util.Set<Integer> dumpTextureIds() {
+    private static it.unimi.dsi.fastutil.ints.IntOpenHashSet dumpTextureIds() {
         String spec = System.getProperty("celtium.debug.dumpTextureIds");
         if (spec == null || spec.trim().isEmpty()) {
             return null;
         }
-        java.util.Set<Integer> ids = new java.util.LinkedHashSet<Integer>();
+        it.unimi.dsi.fastutil.ints.IntOpenHashSet ids = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
         for (String part : spec.split(",")) {
             try {
-                ids.add(Integer.valueOf(part.trim()));
+                ids.add(Integer.parseInt(part.trim()));
             } catch (NumberFormatException ignored) {
                 // A malformed entry selects nothing.
             }
@@ -3352,23 +3352,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * descriptor, keeping the draw and its state. A replacement rather than a skip, because a skip changes what the
      * frame has drawn and therefore the copy chain's cache keys, which is a confound a replacement does not have.
      */
-    private static final java.util.Map<Integer, Integer> REPLACE_TEXTURE_IDS = replaceTextureIds();
+    private static final it.unimi.dsi.fastutil.ints.Int2IntMap REPLACE_TEXTURE_IDS = replaceTextureIds();
     private long replacedTextureDraws;
 
-    private static java.util.Map<Integer, Integer> replaceTextureIds() {
+    private static it.unimi.dsi.fastutil.ints.Int2IntMap replaceTextureIds() {
         String spec = System.getProperty("celtium.debug.replaceTextures");
         if (spec == null || spec.trim().isEmpty()) {
             return null;
         }
-        java.util.Map<Integer, Integer> pairs = new java.util.HashMap<Integer, Integer>();
+        it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap pairs = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+        // -1 means "not named": an id is a GL name, and 0 is the valid "no texture" replacement.
+        pairs.defaultReturnValue(-1);
         for (String part : spec.split(",")) {
             int colon = part.indexOf(':');
             if (colon <= 0) {
                 continue;
             }
             try {
-                pairs.put(Integer.valueOf(part.substring(0, colon).trim()),
-                        Integer.valueOf(part.substring(colon + 1).trim()));
+                pairs.put(Integer.parseInt(part.substring(0, colon).trim()),
+                        Integer.parseInt(part.substring(colon + 1).trim()));
             } catch (NumberFormatException ignored) {
                 // A malformed pair selects nothing.
             }
@@ -3381,18 +3383,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     int windowCensusLines;
 
     /** {@code -Dceltium.debug.skipTextures=3,4}: drop the draws that sample these GL texture names, for a probe. */
-    private static final java.util.Set<Integer> SKIP_TEXTURE_IDS = skipTextureIds();
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet SKIP_TEXTURE_IDS = skipTextureIds();
     private long skippedTextureDraws;
 
-    private static java.util.Set<Integer> skipTextureIds() {
+    private static it.unimi.dsi.fastutil.ints.IntOpenHashSet skipTextureIds() {
         String spec = System.getProperty("celtium.debug.skipTextures");
         if (spec == null || spec.trim().isEmpty()) {
             return null;
         }
-        java.util.Set<Integer> ids = new java.util.LinkedHashSet<Integer>();
+        it.unimi.dsi.fastutil.ints.IntOpenHashSet ids = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
         for (String part : spec.split(",")) {
             try {
-                ids.add(Integer.valueOf(part.trim()));
+                ids.add(Integer.parseInt(part.trim()));
             } catch (NumberFormatException ignored) {
                 // A malformed entry simply does not select a texture.
             }
@@ -16635,8 +16637,7 @@ this.frameBufferOpen = false;
             // opaque fragments arrived in. Blended groups and anything from another target keep their arrival order.
             int[] drawOrder = SORT_OPAQUE ? celtium$buildDrawOrder(groups) : null;
             for (int orderIndex = 0; orderIndex < groups.size(); orderIndex++) {
-                if (SKIP_TEXTURE_IDS != null && SKIP_TEXTURE_IDS.contains(
-                        Integer.valueOf(groups.get(orderIndex).texture))) {
+                if (SKIP_TEXTURE_IDS != null && SKIP_TEXTURE_IDS.contains(groups.get(orderIndex).texture)) {
                     // Measurement switch: drop only the draws that sample the named textures, so a picture that loses
                     // one element names the draws that put it there. Nothing else about the batch changes.
                     this.skippedTextureDraws++;
@@ -17073,9 +17074,9 @@ this.frameBufferOpen = false;
                     long bindDescriptor = prepared.descriptor;
                     if (REPLACE_TEXTURE_IDS != null && prepared.pipeline instanceof VulkanImmediateTexturePipeline
                             && this.textureRegistry != null) {
-                        Integer replacement = REPLACE_TEXTURE_IDS.get(Integer.valueOf(group.texture));
-                        if (replacement != null) {
-                            VulkanGlTexture repTexture = this.textureRegistry.get(replacement.intValue());
+                        int replacement = REPLACE_TEXTURE_IDS.get(group.texture);
+                        if (replacement != -1) {
+                            VulkanGlTexture repTexture = this.textureRegistry.get(replacement);
                             if (repTexture != null) {
                                 long repSet = ((VulkanImmediateTexturePipeline) prepared.pipeline)
                                         .descriptorSetFor(repTexture);
