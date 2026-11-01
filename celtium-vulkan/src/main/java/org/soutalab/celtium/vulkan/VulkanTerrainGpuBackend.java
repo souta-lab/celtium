@@ -6184,6 +6184,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
         }
+        // The run the replay appends to may be in the dropped set; the replay's extend check already rejects a group
+        // that is not the last live one, but dropping the reference keeps the field from pinning a recycled object.
+        this.openModelRunGroup = null;
         // OPT-05's arena frame: one slot per frame, reclaimed only where GPU completion allows. It has to advance here,
         // because a menu-only frame never reaches captureWorldSnapshot - the main menu kept one slot in use forever and
         // appended every frame's menu geometry to it.
