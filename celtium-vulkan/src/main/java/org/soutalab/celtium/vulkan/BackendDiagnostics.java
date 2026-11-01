@@ -1010,10 +1010,10 @@ final class BackendDiagnostics {
             return "none";
         }
         StringBuilder text = new StringBuilder();
-        for (java.util.Map.Entry<Long, Integer> entry : b.flushEntryPassesByTarget.entrySet()) {
-            text.append(Long.toHexString(entry.getKey().longValue())).append(":entries=").append(entry.getValue())
+        for (it.unimi.dsi.fastutil.longs.Long2IntMap.Entry entry : b.flushEntryPassesByTarget.long2IntEntrySet()) {
+            text.append(Long.toHexString(entry.getLongKey())).append(":entries=").append(entry.getIntValue())
                     .append(",groupsAtEntry=")
-                    .append(b.flushEntryGroupsByTarget.getOrDefault(entry.getKey(), Integer.valueOf(0)))
+                    .append(b.flushEntryGroupsByTarget.get(entry.getLongKey()))
                     .append(' ');
         }
         return text.toString().trim();

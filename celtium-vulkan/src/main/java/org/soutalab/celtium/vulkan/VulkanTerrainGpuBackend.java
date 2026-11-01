@@ -1770,8 +1770,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Set while an off-target pass records, so the shared draw path binds that pass's pipeline. */
     /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
 
-    private final java.util.Map<Long, java.util.concurrent.atomic.AtomicInteger> offTargetBatchesByTarget =
-            new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap offTargetBatchesByTarget =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
     /** Announces that carried the size from the game instead of asking OpenGL for it. */
     /** Whether the game has set a colour yet, i.e. whether the state mirror's colour can be trusted. */
@@ -3538,8 +3538,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int whiteTextureGlId;
     /** Opt-in: the per-target flush-entry census, whose lines only the end-of-run diagnostics read. */
     private static final boolean FLUSH_ENTRY_CENSUS = Boolean.getBoolean("celtium.vulkan.flushEntryCensus");
-    final java.util.Map<Long, Integer> flushEntryGroupsByTarget = new java.util.HashMap<Long, Integer>();
-    final java.util.Map<Long, Integer> flushEntryPassesByTarget = new java.util.HashMap<Long, Integer>();
+    final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap flushEntryGroupsByTarget =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap flushEntryPassesByTarget =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private int blackTextureGlId;
     private int blackTextureSubstitutions;
     private int immediatePresentedFrames;
@@ -5383,9 +5385,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@return one line per off-target render target that received batches}, for the per-target work's sizing. */
     public String offTargetSummary() {
         StringBuilder text = new StringBuilder();
-        for (java.util.Map.Entry<Long, java.util.concurrent.atomic.AtomicInteger> entry : this.offTargetBatchesByTarget.entrySet()) {
-            text.append(entry.getKey()).append(':').append(entry.getValue().get())
-                    .append('(').append(pairOfOffTargetIdentity(entry.getKey().longValue())).append(") ");
+        for (it.unimi.dsi.fastutil.longs.Long2IntMap.Entry entry : this.offTargetBatchesByTarget.long2IntEntrySet()) {
+            text.append(entry.getLongKey()).append(':').append(entry.getIntValue())
+                    .append('(').append(pairOfOffTargetIdentity(entry.getLongKey())).append(") ");
         }
         return text.length() == 0 ? "none" : text.toString().trim();
     }
@@ -6661,8 +6663,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         if (!this.targetRegistry.currentIsMain()) {
             this.targetStatistics.noteOffTargetOffered();
-            this.offTargetBatchesByTarget.computeIfAbsent(this.targetRegistry.currentIdentity(),
-                    ignored -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+            long offerIdentity = this.targetRegistry.currentIdentity();
+            this.offTargetBatchesByTarget.put(offerIdentity,
+                    this.offTargetBatchesByTarget.get(offerIdentity) + 1);
         }
         this.immediateStatistics.noteImmediateBatchesOffered();
         if (formatId >= 0 && formatId < this.immediateOfferedByFormat.length) {
@@ -9163,10 +9166,11 @@ this.frameBufferOpen = false;
         // hottest recording path, for a line the diagnostics print only at the end of a run. Off by default; the summary
         // reads "none" when it stays off.
         if (FLUSH_ENTRY_CENSUS) {
-            this.flushEntryGroupsByTarget.merge(Long.valueOf(this.targetRegistry.currentIdentity()),
-                    Integer.valueOf(countGroupsForTarget(this.targetRegistry.currentIdentity())), Integer::sum);
-            this.flushEntryPassesByTarget.merge(Long.valueOf(this.targetRegistry.currentIdentity()),
-                    Integer.valueOf(1), Integer::sum);
+            long flushIdentity = this.targetRegistry.currentIdentity();
+            this.flushEntryGroupsByTarget.put(flushIdentity,
+                    this.flushEntryGroupsByTarget.get(flushIdentity) + countGroupsForTarget(flushIdentity));
+            this.flushEntryPassesByTarget.put(flushIdentity,
+                    this.flushEntryPassesByTarget.get(flushIdentity) + 1);
         }
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
@@ -10480,13 +10484,13 @@ this.frameBufferOpen = false;
         ids.addAll(this.offTargetDrawnByTarget.keySet());
         StringBuilder summary = new StringBuilder();
         for (Long idBoxed : ids) {
-            java.util.concurrent.atomic.AtomicInteger offered = this.offTargetBatchesByTarget.get(idBoxed);
+            int offered = this.offTargetBatchesByTarget.get(idBoxed.longValue());
             // The units are named in the columns because they are not the same and reading them as if they were
             // produced a false mechanism: `offered` counts batches (one increment per accepted batch) while the pass
             // column counts groups, so "677 offered, 32 atPass" is not 645 lost groups - it is 677 batches in 32
             // groups that reached a pass. The row is evidence only when the two are read in their own units.
             summary.append(Long.toHexString(idBoxed.longValue()))
-                    .append(":batchesOffered=").append(offered == null ? 0 : offered.get())
+                    .append(":batchesOffered=").append(offered)
                     .append(",groupsAtPass=").append(this.offTargetPassGroupsByTarget.get(idBoxed.longValue()))
                     .append(",drawnPasses=").append(this.offTargetDrawnByTarget.get(idBoxed.longValue()))
                     .append(",pair=").append(pairOfOffTargetIdentity(idBoxed.longValue()))
