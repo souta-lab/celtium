@@ -948,9 +948,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             boolean named = name.contains("Named");
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitInsn(named ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-            method.visitVarInsn(Opcodes.LLOAD, 2);
-            method.visitVarInsn(Opcodes.LLOAD, 3);
-            method.visitVarInsn(Opcodes.LLOAD, 7);
+            method.visitVarInsn(Opcodes.LLOAD, 2);  // offset
+            method.visitVarInsn(Opcodes.LLOAD, 4);  // size
+            method.visitVarInsn(Opcodes.LLOAD, 8);  // data
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glClearBuffer", "(IZJJJ)V", false);
             method.visitInsn(Opcodes.RETURN);
@@ -1397,6 +1397,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 return;
             }
             if ("(I)V".equals(descriptor) && name.endsWith("glPushClientAttrib")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glPushClientAttrib", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
