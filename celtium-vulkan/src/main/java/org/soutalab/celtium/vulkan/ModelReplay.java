@@ -311,8 +311,9 @@ final class ModelReplay {
             System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
                     + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
         }
-        // Cloned: the replay hands in its scratch matrices, and a queued group keeps what it is given.
-        projection = projection.clone();
+        // Cloned: the replay hands in its scratch matrices, and a queued group keeps what it is given. The projection
+        // is constant through a pass, so equal ones share the cached array; the model view changes per draw.
+        projection = b.celtium$shareProjection(projection);
         modelView = modelView.clone();
         ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView,
                 VulkanImmediateFormats.ITEM, texture, key, state, target);
@@ -477,7 +478,8 @@ final class ModelReplay {
             }
             // Whatever the immediate path holds open is older than this replay and must be queued before it.
             b.closeCurrentImmediateGroup();
-            ImmediateGroup group = ImmediateGroup.obtain(mesh, projection.clone(), modelView.clone(), VulkanImmediateFormats.ITEM,
+            ImmediateGroup group = ImmediateGroup.obtain(mesh, b.celtium$shareProjection(projection),
+                    modelView.clone(), VulkanImmediateFormats.ITEM,
                     texture, key, state, target);
             group.modelRun = instances.openRun(pipeline);
             group.fog = b.fog.snapshot();
