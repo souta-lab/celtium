@@ -3911,6 +3911,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
+    /** {@return the game's current depth-write state}, for the clear latch's GL mask rule. */
+    public boolean celtium$depthWritesLive() {
+        return this.immediateState.depthMask();
+    }
+
     @Override
     public void setDepthMask(boolean mask) {
         if (this.immediateState.depthMask() != mask) {
