@@ -391,10 +391,10 @@ public final class CeltiumGllessHint {
     /** How many floats a {@code glGetLightfv} pname writes; a pname this stub does not model answers one zero. */
     private static int lightComponents(int pname) {
         switch (pname) {
-            case 0x1200: // GL_SPECULAR
-            case 0x1202: // GL_AMBIENT
+            case 0x1200: // GL_AMBIENT
+            case 0x1202: // GL_SPECULAR
                 return 4;
-            case 0x1206: // GL_SPOT_DIRECTION
+            case 0x1204: // GL_SPOT_DIRECTION
                 return 3;
             default: // SPOT_CUTOFF, SPOT_EXPONENT, CONSTANT/LINEAR/QUADRATIC_ATTENUATION and unknowns
                 return 1;
@@ -613,14 +613,20 @@ public final class CeltiumGllessHint {
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 value = 16;
                 break;
-            case 0x80E9: // GL_MAX_VERTEX_UNIFORM_COMPONENTS
-            case 0x8B4A: // GL_MAX_FRAGMENT_UNIFORM_COMPONENTS
+            case 0x80E9: // GL_MAX_ELEMENTS_INDICES - the indexed decode's own bound is far above this
                 value = 4096;
                 break;
-            case 0x0D3B: // GL_MAX_VIEWPORT_DIMS
+            case 0x8B4A: // GL_MAX_VERTEX_UNIFORM_COMPONENTS
+            case 0x8B49: // GL_MAX_FRAGMENT_UNIFORM_COMPONENTS
+                value = 4096;
+                break;
+            case 0x0D3A: // GL_MAX_VIEWPORT_DIMS - two limits
                 org.lwjgl.system.MemoryUtil.memPutInt(params, 16384);
                 org.lwjgl.system.MemoryUtil.memPutInt(params + 4L, 16384);
                 return;
+            case 0x0D3B: // GL_MAX_CLIENT_ATTRIB_STACK_DEPTH - single value, matching the bounded stack
+                value = 16;
+                break;
             case 0x821D: // GL_NUM_EXTENSIONS
                 value = 0;
                 break;
