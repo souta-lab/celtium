@@ -15,7 +15,7 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
     private static final boolean LIGHT_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.lightDiagnostics");
     private static int lightSamplesPrinted;
-    private static long colorCount, colorR, colorG, colorB, colorA;
+    private static long colorCount;
     private static int colorPrints;
     /** Per material-pass totals: [count, r, g, b, a]. */
     private static final java.util.Map<Integer, long[]> COLOR_TOTALS = new java.util.concurrent.ConcurrentHashMap<>();

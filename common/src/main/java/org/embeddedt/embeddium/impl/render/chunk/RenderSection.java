@@ -97,7 +97,6 @@ public class RenderSection extends AbstractSection {
 
     @Getter
     @Setter
-    private long lastBuildDurationNanos;
 
     // Used by the translucency sorter, to determine when a section needs sorting again
     public double lastCameraX, lastCameraY, lastCameraZ;

@@ -37,7 +37,6 @@ public class CeleritasVideoOptionsController implements Renderable {
     @Getter
     private boolean hasPendingChanges;
 
-    private boolean firstInit = true;
 
     private int width, height;
 
