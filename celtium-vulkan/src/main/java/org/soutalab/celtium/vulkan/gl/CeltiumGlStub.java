@@ -5969,6 +5969,27 @@ public final class CeltiumGlStub implements FunctionProvider {
         byte next = (byte) (enabled ? 1 : 0);
         switch (capability) {
             case GL_FOG: org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled(enabled); break;
+            // The capabilities whose state the immediate pipeline reads from the backend's mirror. Vanilla reaches them
+            // through GlStateManager and its mixin; a mod's raw glEnable/glDisable reached only the enables array, so
+            // the pipeline kept the previous state - a raw glDisable(GL_DEPTH_TEST) overlay was still depth-tested.
+            case GL_DEPTH_TEST: {
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (backend != null) backend.setDepthTest(enabled);
+                break;
+            }
+            case GL_ALPHA_TEST: {
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (backend != null) backend.setAlphaTestEnabled(enabled);
+                break;
+            }
+            case 0x0B50: { // GL_LIGHTING
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (backend != null) backend.setLightingEnabled(enabled);
+                break;
+            }
             case GL_BLEND: this.raster.blendEnabled(enabled); break;
             case GL_CULL_FACE: this.raster.cullEnabled(enabled); break;
             case GL_SCISSOR_TEST: this.raster.scissorTest(enabled); break;
