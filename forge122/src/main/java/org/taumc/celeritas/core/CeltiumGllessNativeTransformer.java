@@ -35,8 +35,6 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     /** The LWJGL2-compatible Display is Java and must not be touched; only native methods are rewritten anyway. */
     private static final String DONT_TOUCH = "org.lwjgl.opengl.Display";
     private static final int ASM_API = 9 << 16;
-    private static final String GET_STRING_DESC = "(I)Ljava/lang/String;";
-    private static final String GET_STRING_I_DESC = "(II)Ljava/lang/String;";
     private static final String GET_ERROR_DESC = "()I";
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
 

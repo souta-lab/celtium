@@ -31,7 +31,6 @@ public class ClonedChunkSection {
 
     private final Biome[] biomeData;
 
-    private byte[][] lightData;
 
     private long lastUsedTimestamp = Long.MAX_VALUE;
 

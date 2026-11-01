@@ -13370,7 +13370,8 @@ this.frameBufferOpen = false;
      * numbers drifted apart on exactly those two scenes (measured: cancelled 1022 against draws 526), which reads like a
      * defect but was only the counters having different lifetimes.
      */
-    static int modelDraws;
+    /** Long like the batch counter: one measured session draws models in the same six-figure volume. */
+    static long modelDraws;
     int modelDrawRefusals;
     /** Model draws asked for with no display list current: immediate geometry, not a missing list. */
     int modelNoListCalls;

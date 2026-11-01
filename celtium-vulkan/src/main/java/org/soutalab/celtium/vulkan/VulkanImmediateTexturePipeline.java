@@ -1253,13 +1253,5 @@ public final class VulkanImmediateTexturePipeline {
             throw new IllegalStateException(what + " failed with VkResult " + result);
         }
     }
-    private void retireCachedSets() {
-        for (it.unimi.dsi.fastutil.longs.Long2LongMap.Entry entry : this.setsByTextureView.long2LongEntrySet()) {
-            this.descriptorSetsRetired++;
-            this.retiredSets.add(Long.valueOf(entry.getLongValue()));
-        }
-        this.setsByTextureView.clear();
-        this.insertionOrder.clear();
-    }
 
 }

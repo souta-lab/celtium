@@ -3948,13 +3948,6 @@ public final class VulkanGlTexture {
         return new GlLevel(captured, capturedWidth, capturedHeight, false);
     }
 
-    private static void checkGl(String operation) {
-        int error = glGetError();
-        if (error != GL_NO_ERROR) {
-            throw new IllegalStateException(operation + " failed with GL error 0x" + Integer.toHexString(error));
-        }
-    }
-
     private void requireAlive() {
         if (deleted) {
             throw new IllegalStateException("The mirrored texture was deleted");
