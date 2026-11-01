@@ -1735,6 +1735,17 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** The raw colour routes' current colour, captured for legacy vertices (GL keeps one current colour). */
+    /** Records the colour for {@code glGetFloatv(GL_CURRENT_COLOR)}; fed by every path that sets the mirror. */
+    public static void celtium$setCurrentColor(float red, float green, float blue, float alpha) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.currentRed = red;
+            stub.currentGreen = green;
+            stub.currentBlue = blue;
+            stub.currentAlpha = alpha;
+        }
+    }
+
     public static void celtium$legacyColor(float red, float green, float blue, float alpha) {
         CeltiumGlStub stub = installed;
         if (stub != null) {

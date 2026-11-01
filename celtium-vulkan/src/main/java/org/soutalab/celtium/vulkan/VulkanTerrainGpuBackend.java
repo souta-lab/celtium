@@ -4979,6 +4979,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // set one, which is what decides between the mirror and the GL read on the position-only path.
         this.colorMirrorHasValue = true;
         this.immediateState.color(red, green, blue, alpha);
+        // The stub answers glGetFloatv(GL_CURRENT_COLOR) from its own record; without this a mod that set a colour and
+        // queried it back got the stub's default white.
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$setCurrentColor(red, green, blue, alpha);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
