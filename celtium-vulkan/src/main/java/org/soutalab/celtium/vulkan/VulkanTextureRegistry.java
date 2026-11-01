@@ -1622,6 +1622,14 @@ public final class VulkanTextureRegistry {
     }
 
     /** {@return the consumed generation for a GL name, or {@code null} when none was recorded}. */
+    /** {@return the consumed generation, 0 when none - the array's own sentinel, so no box is allocated. */
+    private int consumedGenerationOfInt(int id) {
+        if (id < 0 || id >= this.consumedGenerationByTexture.length) {
+            return 0;
+        }
+        return this.consumedGenerationByTexture[id];
+    }
+
     private Integer consumedGenerationOf(int id) {
         if (id < 0 || id >= this.consumedGenerationByTexture.length) {
             return null;
@@ -1750,13 +1758,13 @@ public final class VulkanTextureRegistry {
      * announcement that arrived and was never used is the newer statement, and that is exactly the one the game's
      * delete-and-reallocate sequence would otherwise destroy.
      */
-    private boolean announcementUnconsumed(Integer id) {
-        Integer announced = announcedGenerationOf(id);
-        if (announced == null || this.announcedImages.get(id.intValue()) == null) {
+    private boolean announcementUnconsumed(int id) {
+        int announced = announcedGenerationOfInt(id);
+        if (announced == 0 || this.announcedImages.get(id) == null) {
             return false;
         }
-        Integer consumed = consumedGenerationOf(id);
-        return consumed == null || announced.intValue() > consumed.intValue();
+        int consumed = consumedGenerationOfInt(id);
+        return consumed == 0 || announced > consumed;
     }
 
     /** {@return announcements an image-less delete kept alive, for the census and the summary line} */
@@ -1960,9 +1968,9 @@ public final class VulkanTextureRegistry {
             // The conversion is 1.17 ms per call and it ran on almost every batch: the announcement stayed pending, so the
             // same image was turned into RGBA again and again. A consumed generation means the mirror already holds these
             // pixels, and this lookup is then a plain hit.
-            Integer current = announcedGenerationOf(id);
-            Integer consumed = consumedGenerationOf(id);
-            if (current != null && current.equals(consumed) && this.entries.get((int) (id)) != null) {
+            int current = announcedGenerationOfInt(id);
+            int consumed = consumedGenerationOfInt(id);
+            if (current != 0 && current == consumed && this.entries.get((int) (id)) != null) {
                 ANNOUNCED_SKIPS++;
                 HIT_CALLS++;
                 return this.entries.get((int) (id)).texture;
@@ -1971,7 +1979,9 @@ public final class VulkanTextureRegistry {
             try {
                 VulkanGlTexture converted = this.fromImage(glTextureId, announced, nearestFilter);
                 if (converted != null) {
-                    setConsumedGeneration(id.intValue(), current.intValue());
+                    if (current != 0) {
+                        setConsumedGeneration(id, current);
+                    }
                     return converted;
                 }
                 // The announcement could not become an image - an unreadable size, a buffer that would not fit, a
