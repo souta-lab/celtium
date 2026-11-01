@@ -1929,12 +1929,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Name 0 is the default VAO and keeps its own record too: skipping it lost the pointer a caller had set on
         // VAO 0 when it bound another VAO and came back.
         stub.vaoRecords.put(stub.boundVertexArray, new long[] {stub.vertexPointerSize, stub.vertexPointerType,
-                stub.vertexPointerStride, stub.vertexPointerOffset});
+                stub.vertexPointerStride, stub.vertexPointerOffset, stub.vertexPointerNormalized ? 1L : 0L});
         stub.boundVertexArray = array;
         long[] record = stub.vaoRecords.get(array);
         if (record == null) {
-            // A fresh VAO starts with GL's default attribute: size 4, float, no stride, null pointer.
-            record = new long[] {4L, 0x1406L, 0L, 0L};
+            // A fresh VAO starts with GL's default attribute: size 4, float, no stride, null pointer, unnormalized.
+            record = new long[] {4L, 0x1406L, 0L, 0L, 0L};
             stub.vaoRecords.put(array, record);
         }
         if (record != null) {
@@ -1942,6 +1942,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             stub.vertexPointerType = (int) record[1];
             stub.vertexPointerStride = (int) record[2];
             stub.vertexPointerOffset = record[3];
+            stub.vertexPointerNormalized = record[4] != 0L;
         }
     }
 
@@ -2213,6 +2214,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             stub.vertexPointerType = type;
             stub.vertexPointerStride = stride;
             stub.vertexPointerOffset = pointer;
+            stub.vertexPointerNormalized = false;
         }
     }
 
@@ -2225,8 +2227,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             stub.vertexPointerType = type;
             stub.vertexPointerStride = stride;
             stub.vertexPointerOffset = pointer;
+            stub.vertexPointerNormalized = normalized;
         }
     }
+
+    /** Whether the generic attribute pointer asked for normalization. */
+    private boolean vertexPointerNormalized;
 
     /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
     public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
@@ -3110,6 +3116,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 case 0x8624: value = stub.vertexPointerStride; break;
                 case 0x8625: value = stub.vertexPointerType; break;
                 case 0x889F: value = NativeGeometryBuffer.boundId(); break;
+                case 0x886A: value = stub.vertexPointerNormalized ? 1 : 0; break;
                 default: break;
             }
         }
@@ -3153,6 +3160,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                     break;
                 case 0x889F: // GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING - the array buffer the pointer is an offset into
                     value = NativeGeometryBuffer.boundId();
+                    break;
+                case 0x886A: // GL_VERTEX_ATTRIB_ARRAY_NORMALIZED
+                    value = stub.vertexPointerNormalized ? 1 : 0;
                     break;
                 default:
                     break;
