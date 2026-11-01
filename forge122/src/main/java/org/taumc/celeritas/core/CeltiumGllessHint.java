@@ -447,6 +447,48 @@ public final class CeltiumGllessHint {
         return index == 0 && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isEnabled(capability);
     }
 
+    /** Raw {@code glGetLightiv}: the light record in integer components, the shape GL's int query writes. */
+    public static void glGetLightiv(int light, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int index = light - 0x4000;
+        var state = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current()
+                instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
+        if (state != null && index >= 0 && index < 2 && pname == 0x1203) {
+            float[] directions = state.celtium$lightDirections();
+            for (int i = 0; i < 3; i++) {
+                org.lwjgl.system.MemoryUtil.memPutInt(out + (long) i * 4L,
+                        Math.round(directions[index * 3 + i]));
+            }
+            org.lwjgl.system.MemoryUtil.memPutInt(out + 12L, 0);
+            return;
+        }
+        if (state != null && index >= 0 && index < 2 && pname == 0x1201) {
+            float[] diffuse = state.celtium$lightDiffuse();
+            for (int i = 0; i < 3; i++) {
+                org.lwjgl.system.MemoryUtil.memPutInt(out + (long) i * 4L, Math.round(diffuse[index * 3 + i]));
+            }
+            org.lwjgl.system.MemoryUtil.memPutInt(out + 12L, 1);
+            return;
+        }
+        int components = pname == 0x1200 || pname == 0x1202 ? 4 : pname == 0x1204 ? 3 : 1;
+        for (int i = 0; i < components; i++) {
+            org.lwjgl.system.MemoryUtil.memPutInt(out + (long) i * 4L, 0);
+        }
+    }
+
+    /** Raw {@code glGetMaterialiv}: the same zero components as the float form, in integer width. */
+    public static void glGetMaterialiv(int face, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int components = pname == 0x1601 ? 1 : pname == 0x1603 ? 3 : 4;
+        for (int i = 0; i < components; i++) {
+            org.lwjgl.system.MemoryUtil.memPutInt(out + (long) i * 4L, 0);
+        }
+    }
+
     /** Raw {@code glGetMaterialfv}: the material face this lighting model does not carry answers black/zero. */
     public static void glGetMaterialfv(int face, int pname, long out) {
         if (out == 0L) {
