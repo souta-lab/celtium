@@ -61,6 +61,11 @@ public class TransformerRouteVerifierCheck {
         "glTexSubImage2D", "nglTexSubImage2D", "nglTexImage2D", "glBindTexture",
         "nglGetTextureParameterfv", "nglGetTextureParameterIuiv",
         "nglGetSamplerParameteriv", "nglGetSamplerParameterfv", "glGetMultisamplefv",
+        "nglColor3fv", "nglColor4fv", "nglColor3bv", "nglColor4bv", "nglColor3ubv", "nglColor4ubv",
+        "glColor4b", "glColor3b", "glAlphaFunc",
+        "glBindFramebufferEXT", "glBindFramebufferARB", "glFramebufferTexture2DEXT", "glFramebufferTexture2DARB",
+        "glCheckFramebufferStatusEXT", "glCheckFramebufferStatusARB",
+        "nglDeleteTextures", "nglDeleteBuffers", "nglDeleteFramebuffers", "nglGenTextures", "nglGenBuffers",
         "nglTextureParameteri", "nglTextureParameterf", "nglTextureParameteriv", "nglTextureParameterfv",
         "nglTextureParameterIiv", "nglTextureParameterIuiv", "glTextureParameteri", "glTextureParameterf",
         "nglGetTextureParameteriv", "nglGetTextureParameterIiv", "nglGetTextureParameterIuiv",
@@ -82,7 +87,7 @@ public class TransformerRouteVerifierCheck {
             // Every core class in the jar, not a chosen subset: the same native can live in a C class or a version
             // class depending on how LWJGL generated it, and a missed declaration would silently shrink the check.
             for (String entry : Collections.list(jar.entries()).stream().map(e -> e.getName())
-                    .filter(n -> n.startsWith("org/lwjgl/opengl/GL") && n.endsWith(".class"))
+                    .filter(n -> n.startsWith("org/lwjgl/opengl/") && n.endsWith(".class"))
                     .sorted().collect(java.util.stream.Collectors.toList())) {
                 String cls = entry.substring("org/lwjgl/opengl/".length(), entry.length() - ".class".length());
                 if (jar.getJarEntry(entry) == null) continue;
