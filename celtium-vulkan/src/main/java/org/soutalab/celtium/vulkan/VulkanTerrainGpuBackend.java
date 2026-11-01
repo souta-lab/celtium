@@ -3085,11 +3085,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
-    private final java.util.Map<Long, VulkanImmediatePipeline> immediatePipelineCache =
-            new java.util.HashMap<Long, VulkanImmediatePipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> immediatePipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** The same states, but with a line-list topology: the selection outline and other line batches. */
-    private final java.util.Map<Long, VulkanImmediatePipeline> linePipelineCache =
-            new java.util.HashMap<Long, VulkanImmediatePipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> linePipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
     /** One pipeline per state for the entity/TESR layout, whose stride the textured pipeline cannot serve. */
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexColorNormalPipelineCache =
@@ -8902,7 +8902,7 @@ this.frameBufferOpen = false;
      * walking it is a leak of one object set per distinct state key. The map is cleared whatever happens to an entry,
      * so a second teardown sees an empty cache and releases nothing again.
      */
-    private int releaseImmediatePipelineCache(java.util.Map<Long, VulkanImmediatePipeline> cache) {
+    private int releaseImmediatePipelineCache(it.unimi.dsi.fastutil.longs.Long2ObjectMap<VulkanImmediatePipeline> cache) {
         int count = 0;
         for (VulkanImmediatePipeline pipeline : cache.values()) {
             count += releaseDirect(pipeline == null ? null : () -> pipeline.delete());
@@ -10153,12 +10153,21 @@ this.frameBufferOpen = false;
         } else {
             boolean lineBatch = (key & (1L << 61)) != 0;
             VulkanColorBlendState colorBlend = celtium$blendState(state);
-            pipeline = (lineBatch ? this.linePipelineCache : this.immediatePipelineCache).computeIfAbsent(key,
-                    k -> lineBatch
-                            ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
-                                    state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]))
-                            : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
-                                    state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
+            // No computeIfAbsent: it boxed the state key and allocated a capturing lambda per batch. The two caches
+            // hold the same kind of pipeline, so one lookup and one creation branch have the same shape as before.
+            it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> pipelineCache =
+                    lineBatch ? this.linePipelineCache : this.immediatePipelineCache;
+            pipeline = pipelineCache.get(key);
+            if (pipeline == null) {
+                pipeline = lineBatch
+                        ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
+                                state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]))
+                        : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
+                                state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]));
+                if (pipeline != null) {
+                    pipelineCache.put(key, pipeline);
+                }
+            }
             if (lineBatch) {
                 this.lineBatchesNative++;
             }
