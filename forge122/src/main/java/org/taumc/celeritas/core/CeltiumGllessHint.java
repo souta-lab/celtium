@@ -326,7 +326,10 @@ public final class CeltiumGllessHint {
         var state = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current()
                 instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
         if (state == null || index < 0 || index >= 2) {
-            for (int i = 0; i < 4; i++) {
+            // Only as many components as this pname has: GL_SPOT_CUTOFF and the attenuation terms are single floats,
+            // and writing four into a one-float buffer is an overwrite the driver would never do.
+            int components = lightComponents(pname);
+            for (int i = 0; i < components; i++) {
                 org.lwjgl.system.MemoryUtil.memPutFloat(out + (long) i * 4L, 0.0f);
             }
             return;
@@ -347,11 +350,50 @@ public final class CeltiumGllessHint {
             org.lwjgl.system.MemoryUtil.memPutFloat(out + 12L, 1.0f);
             return;
         }
-        // GL_AMBIENT/SPECULAR per light are not carried by the payload; GL's initial value is black, alpha 1.
-        org.lwjgl.system.MemoryUtil.memPutFloat(out, 0.0f);
-        org.lwjgl.system.MemoryUtil.memPutFloat(out + 4L, 0.0f);
-        org.lwjgl.system.MemoryUtil.memPutFloat(out + 8L, 0.0f);
-        org.lwjgl.system.MemoryUtil.memPutFloat(out + 12L, 1.0f);
+        // GL_AMBIENT/SPECULAR per light are not carried by the payload; GL's initial value is black, alpha 1. The
+        // scalar spot/attenuation terms keep their single-component width.
+        int components = lightComponents(pname);
+        for (int i = 0; i < components; i++) {
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + (long) i * 4L, 0.0f);
+        }
+        if (components == 4) {
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + 12L, 1.0f);
+        }
+    }
+
+    /** How many floats a {@code glGetLightfv} pname writes; a pname this stub does not model answers one zero. */
+    private static int lightComponents(int pname) {
+        switch (pname) {
+            case 0x1200: // GL_SPECULAR
+            case 0x1202: // GL_AMBIENT
+                return 4;
+            case 0x1206: // GL_SPOT_DIRECTION
+                return 3;
+            default: // SPOT_CUTOFF, SPOT_EXPONENT, CONSTANT/LINEAR/QUADRATIC_ATTENUATION and unknowns
+                return 1;
+        }
+    }
+
+    /** Raw {@code glGetMaterialfv}: the material face this lighting model does not carry answers black/zero. */
+    public static void glGetMaterialfv(int face, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int components;
+        switch (pname) {
+            case 0x1601: // GL_SHININESS
+                components = 1;
+                break;
+            case 0x1603: // GL_COLOR_INDEXES
+                components = 3;
+                break;
+            default: // AMBIENT, DIFFUSE, SPECULAR, EMISSION, AMBIENT_AND_DIFFUSE
+                components = 4;
+                break;
+        }
+        for (int i = 0; i < components; i++) {
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + (long) i * 4L, 0.0f);
+        }
     }
 
     /**
