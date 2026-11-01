@@ -7507,8 +7507,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
         } else if (!(this.enables[GL_VERTEX_ARRAY] != 0)) {
             reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
-        } else if (mode != GL_QUADS && mode != 4 && mode != 6) {
-            reason = "draw mode " + mode + " is not handled (quads/triangles/fans only)";
+        } else if (mode != GL_QUADS && mode != 4 && mode != 6
+                && mode != 1 && mode != 2 && mode != 3) {
+            reason = "draw mode " + mode + " is not handled (quads/triangles/fans/lines only)";
         } else if (mode == 6 && count < 3) {
             // A fan with fewer than three vertices has no triangles to present.
             DRAWARRAY_EMPTY.incrementAndGet();
