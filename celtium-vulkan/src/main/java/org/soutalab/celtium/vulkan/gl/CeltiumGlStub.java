@@ -1473,6 +1473,25 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.celtium$setTextureParameterBound(target, pname, value, "transformer");
     }
 
+    /** {@code glTexParameterf} from the transformer's route. */
+    public static void celtium$texParameterf(int target, int pname, float value) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.celtium$setTextureParameterBound(target, pname, Math.round(value), "transformer");
+        }
+    }
+
+    /** The pointer forms of the texture-parameter setter; {@code floats} selects how the first value is read. */
+    public static void celtium$texParameterPointer(int target, int pname, long values, boolean floats) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || values == 0L) {
+            return;
+        }
+        int value = floats ? Math.round(org.lwjgl.system.MemoryUtil.memGetFloat(values))
+                : org.lwjgl.system.MemoryUtil.memGetInt(values);
+        stub.celtium$setTextureParameterBound(target, pname, value, "transformer");
+    }
+
     /**
      * Serves a {@code glCopyTexSubImage2D}, from the transformer's route.
      *

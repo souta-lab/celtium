@@ -947,6 +947,28 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if (("glTexParameterf".equals(name) || "nglTexParameterf".equals(name)) && "(IIF)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.FLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexParameterf", "(IIF)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glTexParameteriv") || name.endsWith("glTexParameterfv")
+                            || name.endsWith("glTexParameterIiv") || name.endsWith("glTexParameterIuiv"))) {
+                boolean floats = name.endsWith("glTexParameterfv");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(floats ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexParameterPointer", "(IIJZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if (("glTexStorage2D".equals(name) || "nglTexStorage2D".equals(name)) && "(IIIII)V".equals(descriptor)) {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);

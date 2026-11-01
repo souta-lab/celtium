@@ -186,6 +186,15 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /** The float and pointer spellings of the texture-parameter setter, as glTexParameterf/iv/fv/Iiv/Iuiv. */
+    public static void glTexParameterf(int target, int pname, float value) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterf(target, pname, value);
+    }
+
+    public static void glTexParameterPointer(int target, int pname, long values, boolean floats) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterPointer(target, pname, values, floats);
+    }
+
     /** Raw immutable texture storage: records the level-0 extent the texture queries answer. */
     public static void glTexStorage2D(int target, int levels, int internalFormat, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorage(target, levels, internalFormat, width, height);
