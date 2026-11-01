@@ -947,6 +947,52 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            // Buffer storage and sub-data. Without these the mod's VBO never reached the buffer mirror the draw path
+            // reads, so an unindexed draw sampled an empty or stale buffer.
+            if ("(IJJJ)V".equals(descriptor)
+                    && ("glBufferSubData".equals(name) || "nglBufferSubData".equals(name))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBufferSubData", "(IJJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IJJJ)V".equals(descriptor)
+                    && ("glNamedBufferSubData".equals(name) || "nglNamedBufferSubData".equals(name))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glNamedBufferSubData", "(IJJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IJJI)V".equals(descriptor)
+                    && ("glBufferStorage".equals(name) || "nglBufferStorage".equals(name)
+                            || "glNamedBufferData".equals(name) || "nglNamedBufferData".equals(name)
+                            || "glNamedBufferStorage".equals(name) || "nglNamedBufferStorage".equals(name))) {
+                boolean named = name.endsWith("NamedBufferData") || name.endsWith("NamedBufferStorage");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.ILOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        named ? "glNamedBufferData" : "glBufferStorage", "(IJJI)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glBindVertexArray".equals(name) || "nglBindVertexArray".equals(name))
+                    && "(I)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindVertexArray", "(I)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // The rest of the display-list surface. These were only in the stub's dispatch table, which a transformed
             // native never reaches: a mod's call was a bare return, so the delete notification and the glCallLists
             // replay written there could not run.

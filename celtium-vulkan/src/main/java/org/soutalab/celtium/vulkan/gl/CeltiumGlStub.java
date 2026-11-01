@@ -1621,6 +1621,45 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glBufferData/glBufferStorage} from the transformer's route, against the bound buffer. */
+    public static void celtium$bufferDataTarget(int target, long size, long data) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.bufferDataFor(stub.boundBuffer(target), size, data);
+        }
+    }
+
+    /** The DSA form, where the first argument is the buffer name. */
+    public static void celtium$bufferDataNamed(int name, long size, long data) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.bufferDataFor(name, size, data);
+        }
+    }
+
+    /** {@code glBufferSubData} from the transformer's route, against the bound buffer. */
+    public static void celtium$bufferSubDataTarget(int target, long offset, long size, long data) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.bufferSubDataFor(stub.boundBuffer(target), offset, size, data);
+        }
+    }
+
+    public static void celtium$bufferSubDataNamed(int name, long offset, long size, long data) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.bufferSubDataFor(name, offset, size, data);
+        }
+    }
+
+    /** {@code glBindVertexArray}: the VAO name the query answers. */
+    public static void celtium$bindVertexArray(int array) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.boundVertexArray = array;
+        }
+    }
+
     /** {@code glPixelStorei} from the transformer's route: the unpack state a captured upload is read with. */
     public static void celtium$pixelStorei(int pname, int value) {
         CeltiumGlStub stub = installed;
@@ -5495,10 +5534,11 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Writes into the storage {@code glBufferData} allocated, which is what the mirrored meshes are read from. */
     private void bufferSubData(Fn fn, long[] c) {
-        int name = bufferFor(fn, c);
-        long offset = c[1];
-        long size = c[2];
-        long data = c[3];
+        bufferSubDataFor(bufferFor(fn, c), c[1], c[2], c[3]);
+    }
+
+    /** The one sub-data producer: the dispatch case, the DSA form and the transformer's routes land here. */
+    private void bufferSubDataFor(int name, long offset, long size, long data) {
         NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
         if (nativeBuffer != null) {
             if (data != 0L && size > 0 && offset >= 0 && size <= nativeBuffer.byteSize()

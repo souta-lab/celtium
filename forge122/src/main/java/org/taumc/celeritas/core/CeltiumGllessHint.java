@@ -186,6 +186,31 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /** Raw buffer storage/sub-data and VAO binding: the stub's buffer mirrors are fed from here. */
+    public static void glBufferStorage(int target, long size, long data, int flags) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferDataTarget(target, size, data);
+    }
+
+    public static void glNamedBufferData(int name, long size, long data, int usage) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferDataNamed(name, size, data);
+    }
+
+    public static void glNamedBufferStorage(int name, long size, long data, int flags) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferDataNamed(name, size, data);
+    }
+
+    public static void glBufferSubData(int target, long offset, long size, long data) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferSubDataTarget(target, offset, size, data);
+    }
+
+    public static void glNamedBufferSubData(int name, long offset, long size, long data) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferSubDataNamed(name, offset, size, data);
+    }
+
+    public static void glBindVertexArray(int array) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindVertexArray(array);
+    }
+
     /** Raw display-list surface: list base, batched call, delete range and the compiled-name test. */
     public static void glListBase(int base) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$listBase(base);
