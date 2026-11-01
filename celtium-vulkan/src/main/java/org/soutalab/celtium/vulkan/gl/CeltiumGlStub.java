@@ -5775,6 +5775,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0;
             case 0x0B65: // GL_FOG_MODE
                 return org.soutalab.celtium.vulkan.ImmediateFogState.current().glMode();
+            case 0x0D3B: // GL_MAX_CLIENT_ATTRIB_STACK_DEPTH - the bounded stack the push/pop routes use
+                return 16;
             case 0x85B5: // GL_VERTEX_ARRAY_BINDING
                 return this.boundVertexArray;
             case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - one colour attachment is what the chain targets provide
