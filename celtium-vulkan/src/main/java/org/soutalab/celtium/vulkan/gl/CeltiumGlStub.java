@@ -1920,8 +1920,28 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code glBindVertexArray}: the VAO name the query answers. */
     public static void celtium$bindVertexArray(int array) {
         CeltiumGlStub stub = installed;
-        if (stub != null) {
-            stub.boundVertexArray = array;
+        if (stub == null) {
+            return;
+        }
+        // Attribute pointers belong to the VAO: save the current record under the outgoing name and load the incoming
+        // one, so a mod that sets its pointer once and rebinds its VAO draws from that pointer and not from whatever
+        // the last unbind-free draw left behind.
+        if (stub.boundVertexArray > 0) {
+            stub.vaoRecords.put(stub.boundVertexArray, new long[] {stub.vertexPointerSize, stub.vertexPointerType,
+                    stub.vertexPointerStride, stub.vertexPointerOffset});
+        }
+        stub.boundVertexArray = array;
+        long[] record = array > 0 ? stub.vaoRecords.get(array) : null;
+        if (array > 0 && record == null) {
+            // A fresh VAO starts with GL's default attribute: size 4, float, no stride, null pointer.
+            record = new long[] {4L, 0x1406L, 0L, 0L};
+            stub.vaoRecords.put(array, record);
+        }
+        if (record != null) {
+            stub.vertexPointerSize = (int) record[0];
+            stub.vertexPointerType = (int) record[1];
+            stub.vertexPointerStride = (int) record[2];
+            stub.vertexPointerOffset = record[3];
         }
     }
 
@@ -2132,6 +2152,10 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Bounded legacy client-attribute stack. */
     private final java.util.ArrayDeque<long[]> clientAttribStack = new java.util.ArrayDeque<long[]>();
+
+    /** Per-VAO attribute records, keyed by the VAO name; the client pointer fields hold the bound one. */
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> vaoRecords =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
 
     /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
     public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
