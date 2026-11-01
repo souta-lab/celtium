@@ -415,8 +415,8 @@ b.frameBufferOpen = false;
             return;
         }
         VulkanGlTexture current = b.publishedTextures.published(glTextureName);
-        if (current != null && b.publishedFrameImages.get(Integer.valueOf(glTextureName)) != null
-                && b.publishedFrameImages.get(Integer.valueOf(glTextureName)).longValue() == image) {
+        // One lookup: image is non-zero here (the guard above), so 0 is the absent sentinel.
+        if (current != null && b.publishedFrameImages.get(glTextureName) == image) {
             return;
         }
         if (current != null) {
@@ -427,7 +427,7 @@ b.frameBufferOpen = false;
             return;
         }
         b.publishedTextures.putPublished(glTextureName, published);
-        b.publishedFrameImages.put(Integer.valueOf(glTextureName), Long.valueOf(image));
+        b.publishedFrameImages.put(glTextureName, image);
         b.publishedTextures.noteCreated();
         // Which image this name stands for decides the layout a descriptor from it declares: a pair image is attached
         // by a pass that declares GENERAL, so with -Dceltium.vulkan.pairStayGeneral it must declare GENERAL too.

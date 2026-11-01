@@ -191,7 +191,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the plan's R8 item "the duplicated publication display". It is removed here, and the image-handle map below
      * stays because it is read at :10453/:10492/:10539.
      */
-    final java.util.Map<Integer, Long> publishedFrameImages = new java.util.HashMap<Integer, Long>();
+    final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameImages =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+
+    /** The published GL names, formatted like the boxed key set it replaced so log readers see the same text. */
+    private String publishedFrameNames() {
+        return java.util.Arrays.toString(this.publishedFrameImages.keySet().toIntArray());
+    }
     /**
      * The colour image the render pass being begun attaches, recorded when the framebuffer is chosen.
      * <p>
@@ -7644,7 +7650,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // A framebuffer's colour attachment is published over the framebuffer's image before the capture:
                 // get() would otherwise create (or keep) an empty mirror for the name, and the group would draw from
                 // it even after the prepare published the real image (Xaero's Minimap's see-through rotation pass).
-                if (boundTexture != 0 && this.publishedFrameImages.get(Integer.valueOf(boundTexture)) == null
+                if (boundTexture != 0 && this.publishedFrameImages.get(boundTexture) == 0L
                         && celtium$framebufferIdentityForColorTexture(boundTexture) != Long.MIN_VALUE) {
                     celtium$publishFramebufferColorTexture(boundTexture);
                 }
@@ -9323,9 +9329,9 @@ this.frameBufferOpen = false;
                                 // the pair the splash actually drew into. If they differ, the sample is stale by number
                                 // rather than by symptom, and that is the round-232 suspicion stated as a fact.
                                 GllessFrameTarget handles = offTargetTarget();
-                                Long publishedSix = this.publishedFrameImages.get(Integer.valueOf(6));
-                                boolean publishedIsLivePair = publishedSix != null && handles != null
-                                        && handles.isChainPairColorImage(publishedSix.longValue());
+                                long publishedSix = this.publishedFrameImages.get(6);
+                                boolean publishedIsLivePair = publishedSix != 0L && handles != null
+                                        && handles.isChainPairColorImage(publishedSix);
                                 StringBuilder chainHandles = new StringBuilder();
                                 if (handles != null) {
                                     for (Long chainId : handles.chainPairIdentities()) {
@@ -9339,17 +9345,17 @@ this.frameBufferOpen = false;
                                 }
                                 System.out.println("[Celtium] CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
                                         + " publishedName6=" + (publishedSix == null ? "none"
-                                                : "0x" + Long.toHexString(publishedSix.longValue()))
+                                                : "0x" + Long.toHexString(publishedSix))
                                         + " chainPairs=[" + chainHandles + "]"
                                         + " publishedIsLivePair=" + publishedIsLivePair);
                                 record("CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
                                         + " publishedName6=" + (publishedSix == null ? "none"
-                                                : "0x" + Long.toHexString(publishedSix.longValue()))
+                                                : "0x" + Long.toHexString(publishedSix))
                                         + " chainPairs=[" + chainHandles + "]"
                                         + " defaultPair=" + (handles == null ? "none"
                                                 : "0x" + Long.toHexString(handles.offTargetColorImage()))
                                         + " frameImage=0x" + Long.toHexString(this.frameTarget.colorImage())
-                                        + " publishedNames=" + this.publishedFrameImages.keySet());
+                                        + " publishedNames=" + publishedFrameNames());
                                 GllessFrameTarget defaultPairTarget = offTargetTarget();
                                 long defaultPairImage = defaultPairTarget == null ? 0L
                                         : defaultPairTarget.offTargetColorImage();
@@ -9911,7 +9917,7 @@ this.frameBufferOpen = false;
         // and that mirror used to win. Xaero's Minimap's rotation pass then sampled black from texture 124 while its
         // scaling framebuffer held the map (pair dump, leg pairdump2-amd) - the minimap was see-through.
         boolean unpublishedAttachment = textureId != 0 && texture != null
-                && this.publishedFrameImages.get(Integer.valueOf(textureId)) == null
+                && this.publishedFrameImages.get(textureId) == 0L
                 && celtium$framebufferIdentityForColorTexture(textureId) != Long.MIN_VALUE;
         if (textureId != 0 && (texture == null || !texture.hasFullContent() || unpublishedAttachment)) {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
@@ -10235,12 +10241,12 @@ this.frameBufferOpen = false;
         if (boundTexture == 0 || this.publishedFrameImages.isEmpty()) {
             return;
         }
-        Long publishedImage = this.publishedFrameImages.get(Integer.valueOf(boundTexture));
-        if (publishedImage == null) {
+        long publishedImage = this.publishedFrameImages.get(boundTexture);
+        if (publishedImage == 0L) {
             return;
         }
         GllessFrameTarget offTarget = offTargetTarget();
-        if (offTarget == null || !offTarget.isChainPairColorImage(publishedImage.longValue())) {
+        if (offTarget == null || !offTarget.isChainPairColorImage(publishedImage)) {
             return;
         }
         this.pairNameSamplingDraws++;

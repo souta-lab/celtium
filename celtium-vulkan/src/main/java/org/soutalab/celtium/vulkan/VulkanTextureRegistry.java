@@ -217,8 +217,8 @@ public final class VulkanTextureRegistry {
      * whose announcements had already been used once. The cost of keeping them is one image per mirrored texture, and the
      * count of those has been measured at eight to eleven all along.
      */
-    private final java.util.Map<Integer, java.awt.image.BufferedImage> announcedImages =
-            new java.util.HashMap<Integer, java.awt.image.BufferedImage>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<java.awt.image.BufferedImage> announcedImages =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<java.awt.image.BufferedImage>();
     private final it.unimi.dsi.fastutil.ints.IntOpenHashSet staleIds =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     private int inPlaceRefreshes;
@@ -627,7 +627,7 @@ public final class VulkanTextureRegistry {
      */
     /** FBO rendering invalidates the old CPU announcement; future sampling must read the returned game texture. */
     public void invalidateRenderedTexture(int id) {
-        this.announcedImages.remove(Integer.valueOf(id));
+        this.announcedImages.remove(id);
         this.staleIds.add(id);
     }
 
@@ -652,7 +652,7 @@ public final class VulkanTextureRegistry {
             this.externalInvalidatesIgnored++;
             return;
         }
-        this.announcedImages.put(Integer.valueOf(glTextureId), image);
+        this.announcedImages.put(glTextureId, image);
         this.announcementsById.merge(Integer.valueOf(glTextureId), Integer.valueOf(1), Integer::sum);
         // A generation, not the image identity: Minecraft updates a DynamicTexture in place, so the same BufferedImage
         // object arrives with different pixels. The generation changes on every announcement and is consumed when the
@@ -1311,7 +1311,7 @@ public final class VulkanTextureRegistry {
         if (target == null) {
             return false;
         }
-        java.awt.image.BufferedImage image = this.announcedImages.get(Integer.valueOf(glTextureId));
+        java.awt.image.BufferedImage image = this.announcedImages.get(glTextureId);
         if (image != null) {
             java.nio.ByteBuffer rgba = rgbaOf(image);
             try {
@@ -1740,7 +1740,7 @@ public final class VulkanTextureRegistry {
      */
     private boolean announcementUnconsumed(Integer id) {
         Integer announced = announcedGenerationOf(id);
-        if (announced == null || !this.announcedImages.containsKey(id)) {
+        if (announced == null || this.announcedImages.get(id.intValue()) == null) {
             return false;
         }
         Integer consumed = consumedGenerationOf(id);
