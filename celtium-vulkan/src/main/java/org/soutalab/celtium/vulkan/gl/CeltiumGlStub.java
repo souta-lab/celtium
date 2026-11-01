@@ -5658,6 +5658,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         celtium$noteTextureParameterQuery(name, textureName, paramPname, value,
                 textureParameterRecorded(textureName, paramPname));
         if (name.endsWith("fv")) {
+            if (paramPname == 0x1004) { // GL_TEXTURE_BORDER_COLOR - four components, GL's initial zero
+                for (int i = 0; i < 4; i++) {
+                    MemoryUtil.memPutFloat(out + (long) i * 4L, 0.0f);
+                }
+                return;
+            }
             MemoryUtil.memPutFloat(out, value);
         } else {
             memPutInt(out, value);
