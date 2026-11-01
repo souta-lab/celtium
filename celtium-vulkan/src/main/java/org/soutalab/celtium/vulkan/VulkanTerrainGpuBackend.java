@@ -6129,6 +6129,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // captureWorldSnapshot does not. Only the retained deque is dropped here - the open run keeps its existing
         // flush points (window and world boundaries), because offering it here would use the previous frame's target.
         this.fontBatch.celtium$dropRetainedAtFrameBoundary();
+        // The same rule for accepted groups. updateCameraAndRender opens the frame before any draw of it, so whatever is
+        // still open or queued belongs to the frame that just ended - a menu-only session never reaches
+        // captureWorldSnapshot, where these drops live, and a target that never returned would keep its groups for the
+        // whole session. The open group is closed first so the next frame's first batch cannot merge into it.
+        if (this.currentImmediateMesh != null) {
+            closeCurrentImmediateGroup();
+        }
+        if (!this.immediateGroups.isEmpty()) {
+            this.targetStatistics.addUnflushedTargetGroupsDropped(this.immediateGroups.size());
+            celtium$discardImmediateGroups();
+            this.pendingImmediateIndices = 0;
+        }
     }
 
     public void beginWorldPass() {
