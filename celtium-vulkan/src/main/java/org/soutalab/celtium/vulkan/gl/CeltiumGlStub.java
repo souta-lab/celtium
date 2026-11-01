@@ -4719,6 +4719,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : 0.0f;
                 return reference >= 0.5f ? 1 : 0;
             }
+            case 0x0B50: return enabledCap(0x0B50) ? 1 : 0; // GL_LIGHTING
+            case 0x0B60: return enabledCap(GL_FOG) ? 1 : 0; // GL_FOG
             case 0x0B71: return enabledCap(GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
             case 0x0BC0: return enabledCap(GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
             case 0x0C11: return enabledCap(GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
@@ -5089,6 +5091,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             case 0x0B44: { // GL_CULL_FACE
                 MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_CULL_FACE) ? 1 : 0));
+                return;
+            }
+            case 0x0B50: { // GL_LIGHTING
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(0x0B50) ? 1 : 0));
+                return;
+            }
+            case 0x0B60: { // GL_FOG
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_FOG) ? 1 : 0));
                 return;
             }
             case 0x0BC0: { // GL_ALPHA_TEST
