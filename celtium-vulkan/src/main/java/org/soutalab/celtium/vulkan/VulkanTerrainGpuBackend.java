@@ -6173,6 +6173,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.fontBatch.celtium$hasPendingWork()) {
             celtium$flushPendingFontBatch("boundary");
         }
+        // Nothing retained survives the boundary either: a run whose target did not come back this frame would
+        // otherwise be drawn at the previous frame's positions when that target appears again.
+        this.fontBatch.celtium$dropRetainedAtFrameBoundary();
         // BH-15, the safe half of BH-14/15/16. The flush draws the groups of whichever target is bound when it runs
         // (`flushImmediateWindow`'s binding-driven filter), so a group accepted for a target that is never bound again
         // would sit in this queue for the rest of the session and the image it was meant for would stay empty - which

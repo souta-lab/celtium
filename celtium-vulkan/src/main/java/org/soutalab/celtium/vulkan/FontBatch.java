@@ -316,6 +316,8 @@ public final class FontBatch {
     private long retainedDroppedQuads;
     /** Runs dropped because the retention control is off: the old behaviour, counted so a leg can say it happened. */
     private long retainedControlDrops;
+    /** Bounded log for retained runs dropped at a frame boundary; see celtium$dropRetainedAtFrameBoundary. */
+    private int retainedBoundaryLogs;
 
     private FontRunState state;
     private RunSink sink;
@@ -687,6 +689,31 @@ public final class FontBatch {
         this.retainedBytes += bytes;
         this.retainedRuns++;
         this.retainedQuads += run.vertexCount / 4;
+    }
+
+    /**
+     * Drops every run still retained at a frame boundary. A run is retained because its target was not current when it
+     * was written; if that target did not come back inside the same frame, offering the run in a later frame draws
+     * glyphs at the previous frame's positions over the new picture - the ghosted tooltip shape. The boundary that
+     * flushes the open run is the only place this can be decided, so it is called there.
+     */
+    public void celtium$dropRetainedAtFrameBoundary() {
+        if (this.retained.isEmpty()) {
+            return;
+        }
+        int dropped = 0;
+        while (!this.retained.isEmpty()) {
+            RetainedRun run = this.retained.removeFirst();
+            this.retainedBytes -= run.vertexCount * run.stride;
+            org.lwjgl.system.MemoryUtil.memFree(run.vertices);
+            this.retainedDroppedRuns++;
+            this.retainedDroppedQuads += run.vertexCount / 4;
+            dropped++;
+        }
+        if (this.retainedBoundaryLogs < 4) {
+            this.retainedBoundaryLogs++;
+            System.out.println("[Celtium] CELTIUM_FONT_RETAINED_DROPPED count=" + dropped + " at=frame-boundary");
+        }
     }
 
     /** Re-offers the retained runs whose target is current, oldest first, stopping at the first that is refused. */
