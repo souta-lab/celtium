@@ -7046,7 +7046,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // on ATM3: warm P50 20.3 ms against 4.3 ms with the same flags and the previous jar.
                 int width = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1000);
                 int height = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1001);
-                if (width <= 0 && height <= 0) {
+                // Either dimension missing is "no extent": a valid upload records both, so a record with one zero
+                // cannot describe a surface. The test used to require both to be zero, which would let a half-record
+                // through to the sampler.
+                if (width <= 0 || height <= 0) {
                     this.blackTextureSubstitutions++;
                     boundTexture = blackTextureId();
                     if (this.blackTextureSubstitutions == 1) {
