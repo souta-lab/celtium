@@ -1806,6 +1806,30 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glGetTextureLevelParameteriv/i64v}: the DSA spelling of the recorded level extent. */
+    public static void celtium$getTexLevelParameterNamed(int texture, int level, int pname, long out, boolean wide) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return;
+        }
+        long value = 0L;
+        int[] extent = texture > 0 ? stub.texLevels.get(texLevelKey(texture, level)) : null;
+        if (extent != null) {
+            if (pname == 0x1000) {
+                value = extent[0]; // GL_TEXTURE_WIDTH
+            } else if (pname == 0x1001) {
+                value = extent[1]; // GL_TEXTURE_HEIGHT
+            } else if (pname == 0x1003) {
+                value = extent[2]; // GL_TEXTURE_INTERNAL_FORMAT
+            }
+        }
+        if (wide) {
+            org.lwjgl.system.MemoryUtil.memPutLong(out, value);
+        } else {
+            org.lwjgl.system.MemoryUtil.memPutInt(out, (int) value);
+        }
+    }
+
     /** {@code glTextureSubImage2D} from the transformer's route: a named patch into the mirror. */
     public static void celtium$texSubImageNamed(int texture, int level, int x, int y, int width, int height, int format,
             int type, long pixels) {

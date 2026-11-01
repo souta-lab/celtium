@@ -244,6 +244,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
     }
 
+    /** Raw {@code glGetTextureLevelParameteriv/i64v}: the named level extent. */
+    public static void glGetTexLevelParameterNamed(int texture, int level, int pname, long out, boolean wide) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexLevelParameterNamed(texture, level, pname, out, wide);
+    }
+
     /** The DSA sub-image form: a patch into the named texture's mirror. */
     public static void glTexSubImageNamed(int texture, int level, int x, int y, int width, int height, int format, int type,
             long pixels) {
