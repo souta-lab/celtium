@@ -3038,6 +3038,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private float[] currentGroupFog;
     /** The clip rectangle captured with the open group, or null when glScissor had not been called. */
     private int[] currentGroupScissor;
+    /** The previous group's clip rectangle; equal rectangles share it, as the colour and matrix captures do. */
+    private int[] lastGroupScissorBox;
     /** Whether the clip was enabled when the open group was created. */
     private boolean currentGroupScissorEnabled;
     /** GL's polygon offset captured with the open group (BH-11: the live state is disabled around the overlay). */
@@ -7730,7 +7732,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // flush time. Reading it live applied the last rectangle of a scissor change to every batch in the
                 // group, which is the same "state must reach the group" rule the fog and the state follow.
                 int[] liveScissor = this.rasterState.scissorBoxScratch();
-                this.currentGroupScissor = liveScissor == null ? null : liveScissor.clone();
+                this.currentGroupScissor = liveScissor == null ? null : celtium$shareScissor(liveScissor);
                 this.currentGroupScissorEnabled = liveScissor != null
                         && this.rasterState.scissorTest();
                 // BH-11: the polygon offset the batch was offered under, captured here for the same reason - vanilla
@@ -11116,6 +11118,17 @@ this.frameBufferOpen = false;
     private float[] lastSharedModelView;
 
     /** {@return the last queued group's array when {@code values} equals it, else a new copy that becomes the last}. */
+    /** {@return the previous clip rectangle when {@code values} equals it, else a new copy that becomes the previous}. */
+    private int[] celtium$shareScissor(int[] values) {
+        int[] last = this.lastGroupScissorBox;
+        if (last != null && java.util.Arrays.equals(last, values)) {
+            return last;
+        }
+        int[] copy = values.clone();
+        this.lastGroupScissorBox = copy;
+        return copy;
+    }
+
     private float[] celtium$shareMatrix(float[] values, boolean projection) {
         float[] last = projection ? this.lastSharedProjection : this.lastSharedModelView;
         if (last != null && java.util.Arrays.equals(last, values)) {
