@@ -61,16 +61,32 @@ public class TransformerRouteVerifierCheck {
         "glTexSubImage2D", "nglTexSubImage2D", "nglTexImage2D", "glBindTexture",
         "nglGetTextureParameterfv", "nglGetTextureParameterIuiv",
         "nglGetSamplerParameteriv", "nglGetSamplerParameterfv", "glGetMultisamplefv",
+        "nglTextureParameteri", "nglTextureParameterf", "nglTextureParameteriv", "nglTextureParameterfv",
+        "nglTextureParameterIiv", "nglTextureParameterIuiv", "glTextureParameteri", "glTextureParameterf",
+        "nglGetTextureParameteriv", "nglGetTextureParameterIiv", "nglGetTextureParameterIuiv",
+        "nglGetTexParameterIiv", "nglGetTexParameterIuiv", "nglGetTexParameterfv",
+        "nglGetTexLevelParameteriv", "nglGetTexLevelParameteri", "nglGetBufferParameteriv",
+        "nglGetBufferParameteri64v", "nglGetVertexAttribPointerv", "nglGetVertexAttribIiv",
+        "nglGetVertexAttribIuiv", "nglGetVertexAttribfv", "nglGetVertexAttribdv",
+        "nglGetMaterialiv", "nglGetMaterialfv", "nglGetLightfv", "nglGetLightiv",
+        "nglBlendEquationSeparatei", "nglBlendFuncSeparatei", "nglColorMaski",
+        "glNamedRenderbufferStorage", "glNamedRenderbufferStorageMultisample",
+        "glNamedFramebufferRenderbuffer", "nglGetNamedFramebufferAttachmentParameteriv",
+        "nglGetFramebufferAttachmentParameteriv", "nglGetRenderbufferParameteriv",
+        "nglClearTexImage", "nglClearTexSubImage",
     };
 
     public static void main(String[] args) throws Exception {
         Map<String, String> found = new LinkedHashMap<>();
         try (JarFile jar = new JarFile(args[0])) {
-            for (String cls : new String[]{"GL11", "GL11C", "GL13", "GL13C", "GL14", "GL14C", "GL15", "GL15C",
-                    "GL20", "GL20C", "GL21", "GL21C", "GL30", "GL30C", "GL31", "GL31C", "GL32", "GL32C", "GL33",
-                    "GL33C", "GL40", "GL41", "GL42", "GL43", "GL43C", "GL44", "GL45", "GL45C"}) {
-                if (jar.getJarEntry("org/lwjgl/opengl/" + cls + ".class") == null) continue;
-                try (InputStream stream = jar.getInputStream(jar.getJarEntry("org/lwjgl/opengl/" + cls + ".class"))) {
+            // Every core class in the jar, not a chosen subset: the same native can live in a C class or a version
+            // class depending on how LWJGL generated it, and a missed declaration would silently shrink the check.
+            for (String entry : Collections.list(jar.entries()).stream().map(e -> e.getName())
+                    .filter(n -> n.startsWith("org/lwjgl/opengl/GL") && n.endsWith(".class"))
+                    .sorted().collect(java.util.stream.Collectors.toList())) {
+                String cls = entry.substring("org/lwjgl/opengl/".length(), entry.length() - ".class".length());
+                if (jar.getJarEntry(entry) == null) continue;
+                try (InputStream stream = jar.getInputStream(jar.getJarEntry(entry))) {
                     new ClassReader(stream).accept(new ClassVisitor(Opcodes.ASM9) {
                         @Override public MethodVisitor visitMethod(int access, String name, String descriptor,
                                 String signature, String[] exceptions) {

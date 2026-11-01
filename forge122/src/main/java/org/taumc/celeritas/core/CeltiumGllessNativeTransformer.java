@@ -1269,7 +1269,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
-                method.visitVarInsn(Opcodes.ILOAD, 4);
+                method.visitVarInsn(Opcodes.ILOAD, 5);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glDrawElementsInstanced", "(IIIJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
