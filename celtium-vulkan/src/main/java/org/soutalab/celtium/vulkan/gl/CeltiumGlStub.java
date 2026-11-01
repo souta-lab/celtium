@@ -933,7 +933,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     private long listPayloadsReleased;
 
     /** Display-list names retired by glDeleteLists. */
-    private long displayListsDeleted;
 
     /** A payload larger than this is left alone: it is not a constant or an upload this class is meant to own. */
     private static final long MAX_LIST_PAYLOAD_BYTES = 64L * 1024L * 1024L;
@@ -4338,7 +4337,6 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.liveNames.remove(name.intValue());
                 releaseListPayloads(name);
             }
-            this.displayListsDeleted += range;
             return;
         }
         if (fn.args.length == 1) {

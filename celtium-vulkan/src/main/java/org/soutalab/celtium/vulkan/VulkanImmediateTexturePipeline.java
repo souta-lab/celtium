@@ -692,11 +692,9 @@ public final class VulkanImmediateTexturePipeline {
     private static final int[] CENSUS_IDENTITY = new int[CENSUS_LIMIT];
     private static int censusCount;
     private static int censusLines;
-    private static long censusCalls;
 
     /** Records one distinct image the registry supplied, and prints the first few with their full identity. */
     private static void censusTexture(VulkanGlTexture texture) {
-        censusCalls++;
         long key = texture.key();
         for (int i = 0; i < censusCount; i++) {
             if (CENSUS[i][0] == key) {

@@ -112,7 +112,6 @@ public final class VulkanSwapchain {
     /** Present-support refusals, synthetic or real (BH-19): the count that says the branch is reachable. */
     private static final java.util.concurrent.atomic.AtomicLong PRESENT_SUPPORT_REFUSALS =
             new java.util.concurrent.atomic.AtomicLong();
-    private static long presentSupportRefusals;
 
     // ---- the present-mode contract (task-56) ---------------------------------------------------------------------
     //
@@ -299,7 +298,6 @@ public final class VulkanSwapchain {
     private static long presentSubmitNanos;
     private static long presentDumpWriteNanos;
     private static long presentWholeNanos;
-    private static long presentWholeCalls;
 
     /** {@return the accumulated per-stage present costs, as {@code acquire/readback/queue} milliseconds} */
     public static String presentStageSummary() {
@@ -900,7 +898,6 @@ public final class VulkanSwapchain {
                     context.queueFamilyIndex(), surface, supported);
             if (forcedUnsupported) {
                 supported.put(0, VK_FALSE);
-                presentSupportRefusals++;
             }
             if (result != VK_SUCCESS || supported.get(0) != VK_TRUE) {
                 if (forcedUnsupported) {
@@ -1134,14 +1131,12 @@ public final class VulkanSwapchain {
         long presentSpent = System.nanoTime() - presentStarted;
         celtium$notePresentTime(presentSpent);
         presentWholeNanos += presentSpent;
-        presentWholeCalls++;
         return presentResult;
     }
 
     private long presentCalls;
     private long presentNanos;
     private long presentWorstNanos;
-    private long presentFrames;
     /**
      * The present blit, recorded once per (swapchain image, source, size, layout) key instead of per frame.
      * <p>
@@ -1188,7 +1183,6 @@ public final class VulkanSwapchain {
         if (this.presentCalls % 300 == 0) {
             System.out.println("[Celtium] CELTIUM_PRESENT_TIMING " + presentTimingSummary()
                     + " " + presentStageSummary());
-            this.presentFrames++;
         }
     }
 

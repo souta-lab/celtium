@@ -177,7 +177,6 @@ public final class VulkanPostChain {
     /** The generation of {@link #frameTarget}; a recording refuses when it changes underneath it (B10). */
     private long frameTargetGeneration;
     /** Recordings refused because the frame target moved while they were being made. */
-    private int targetMovesRefused;
     private final long renderPass;
     private final long setLayout;
     private final long descriptorPool;
@@ -1149,7 +1148,6 @@ public final class VulkanPostChain {
      */
     private void requireTargetGeneration(long recordedUnder) {
         if (recordedUnder != this.frameTargetGeneration) {
-            this.targetMovesRefused++;
             throw new IllegalStateException("the post chain's frame target moved while this recording was being made"
                     + " (recorded under generation " + recordedUnder + ", now " + this.frameTargetGeneration
                     + "); refusing to submit commands that name the replaced image");

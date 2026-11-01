@@ -157,8 +157,6 @@ public final class CeltiumFontGlyphCapture {
     private static int bufferedQuadCount;
     private static int bufferedColour = -1;
     private static boolean bufferedOpen;
-    private static long bufferedFlushes;
-    private static long bufferedFlushQuads;
     /** The window's family: unicode glyphs always take the per-glyph path, since their texture differs from the
      * default page's and the buffer must not fold them into the ASCII segment. */
     private static boolean windowUnicode;
@@ -864,8 +862,6 @@ public final class CeltiumFontGlyphCapture {
         } catch (Throwable error) {
             refuse("flush-threw", String.valueOf(error));
         } finally {
-            bufferedFlushes++;
-            bufferedFlushQuads += bufferedQuadCount;
             bufferedVertexCount = 0;
             bufferedQuadCount = 0;
             bufferedColour = -1;

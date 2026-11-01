@@ -277,7 +277,6 @@ public final class VulkanContext {
     /** Cleared when a submission times out: a device that stopped making progress gets no further work. */
     private volatile boolean usable = true;
     public static int submitWithSemaphoresCalls;
-    public static int submitWithSemaphoresWaits;
     /**
      * Every {@code vkQueueSubmit} the process issues, from every path: the per-stage semaphore packets (the owned
      * target's beginFrame signal and endFrame consume), the work submissions, the deferred submissions and the
@@ -748,7 +747,6 @@ public final class VulkanContext {
         }
         requireUsable();
         submitWithSemaphoresCalls++;
-        submitWithSemaphoresWaits += waitSemaphores.length;
         // Deferred (batched) submissions logically precede this direct one; flushing first keeps logical and queue
         // order identical - without it a vkQueueSubmit here would jump ahead of entries the frame already submitted.
         celtium$flushBatchedSubmits();

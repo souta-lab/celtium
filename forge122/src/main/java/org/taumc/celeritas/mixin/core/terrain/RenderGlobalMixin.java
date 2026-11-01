@@ -51,7 +51,6 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
     @Final
     private RenderManager renderManager;
     @Shadow
-    private int countEntitiesRendered;
 
     @Shadow
     protected abstract boolean isOutlineActive(Entity entityIn, Entity viewer, ICamera camera);
@@ -474,7 +473,6 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             if ((entity != renderViewEntity || this.mc.gameSettings.thirdPersonView != 0 || isSleeping)
                     && (entity.posY < 0.0D || entity.posY >= 256.0D || this.world.isBlockLoaded(entityBlockPos.setPos(entity))))
             {
-                ++this.countEntitiesRendered;
                 this.renderManager.renderEntityStatic(entity, partialTicks, false);
 
                 if (this.isOutlineActive(entity, renderViewEntity, camera))

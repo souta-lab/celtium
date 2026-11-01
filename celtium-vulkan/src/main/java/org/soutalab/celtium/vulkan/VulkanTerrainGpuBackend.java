@@ -270,7 +270,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int gameClearLatchLog;
     private static final int GAME_CLEAR_LATCH_LINES =
             Integer.getInteger("celtium.clearlatch.lines", 6).intValue();
-    private int offTargetPassFailures;
     private String lastOffTargetFailure = "none";
 
     private VulkanGlTexture atlasTexture;
@@ -304,8 +303,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Whether the copy for each slot was actually issued; a refused slot's block is stale, not sampled data. */
     private final boolean[] readbackValid = new boolean[READBACK_SLOTS];
     private final TerrainRenderer.RegionResources[] readbackRegions = new TerrainRenderer.RegionResources[READBACK_SLOTS];
-    private int readbackRefusals;
-    private int readbackRegionsUsed;
 
     private long readbackMemory;
     private long readbackMapped;
@@ -1517,7 +1514,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** How many lightmap identity lines have been recorded; bounded. */
     private int lightmapIdentityLogs;
     /** How often the camera seed was skipped because there is no context to read it from. */
-    private int cameraSetupSeedsSkipped;
     /** identity -> {colour texture name, texture width, texture height}, reported at each framebuffer bind. */
     /**
      * The publication census, whose ownership moved to {@link PublishedFrameTextures} in refactoring plan R1b: the
@@ -1974,7 +1970,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * window is what both have in common.
      */
     /** Ordering flushes skipped at a framebuffer replacement, and the batches the first of them had to drop. */
-    private int replaceBoundaryDrops;
     private int replaceBoundaryDropBatches;
 
     /**
@@ -2649,10 +2644,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
     private static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
-    private long pumpedBeforePresent;
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
     private static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
-    private long skippedPresents;
     /** Frame-target recreations refused because a recording was open; each is retried on the next recording. */
     private long frameTargetRecreationDeferred;
     /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
@@ -3146,7 +3139,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new java.util.HashMap<Long, VulkanImmediateItemPipeline>();
     int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
-    private int immediateIsolationDraws;
     /**
      * Which immediate layouts this backend accepts, as a comma-separated list.
      * <p>
@@ -3361,7 +3353,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * frame has drawn and therefore the copy chain's cache keys, which is a confound a replacement does not have.
      */
     private static final it.unimi.dsi.fastutil.ints.Int2IntMap REPLACE_TEXTURE_IDS = replaceTextureIds();
-    private long replacedTextureDraws;
 
     private static it.unimi.dsi.fastutil.ints.Int2IntMap replaceTextureIds() {
         String spec = System.getProperty("celtium.debug.replaceTextures");
@@ -3392,7 +3383,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** {@code -Dceltium.debug.skipTextures=3,4}: drop the draws that sample these GL texture names, for a probe. */
     private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet SKIP_TEXTURE_IDS = skipTextureIds();
-    private long skippedTextureDraws;
 
     private static it.unimi.dsi.fastutil.ints.IntOpenHashSet skipTextureIds() {
         String spec = System.getProperty("celtium.debug.skipTextures");
@@ -5361,7 +5351,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // observe with the identity - measured, the world then draws from the origin as a wedge instead of a plane.
         // The mirror already holds what the hooked GlStateManager calls produced, and the projection comes from
         // applyDerivedProjection, so the honest answer is to leave it alone.
-        this.cameraSetupSeedsSkipped++;
     }
 
     /** {@return one line per off-target render target that received batches}, for the per-target work's sizing. */
@@ -9074,7 +9063,6 @@ this.frameBufferOpen = false;
             }
             this.immediateStatistics.addPostAcceptDroppedGroups(dropped);
             celtium$discardImmediateGroups();
-            this.replaceBoundaryDrops++;
             if (this.replaceBoundaryDropBatches == 0) {
                 this.replaceBoundaryDropBatches = dropped;
                 System.out.println("[Celtium] CELTIUM_REPLACE_DROP batches=" + dropped + " target=" + this.targetWidth
@@ -10657,7 +10645,6 @@ this.frameBufferOpen = false;
                     // recorded against either the retained pair or the main frame image.
                     throw error;
                 }
-                this.offTargetPassFailures++;
                 this.lastOffTargetFailure = describe(error);
                 record("off-target pass refused, drawing into the frame image instead: " + describe(error));
                 framebuffer = ensureFramebuffer(renderPass);
@@ -11201,8 +11188,6 @@ this.frameBufferOpen = false;
      */
     private static final int UPLOAD_BURST = Integer.getInteger("celtium.vulkan.uploadBurstThreshold", 32).intValue();
     private final java.util.ArrayDeque<DeferredUpload> deferredUploads = new java.util.ArrayDeque<>();
-    private long deferredUploadsQueued;
-    private long deferredUploadsDropped;
 
     /** One region's remaining outputs, with the graph trigger that arrives with the batch. */
     private static final class DeferredUpload {
@@ -11282,7 +11267,6 @@ this.frameBufferOpen = false;
             for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry
                     : queued.reference2ReferenceEntrySet()) {
                 this.deferredUploads.addLast(new DeferredUpload(entry.getKey(), entry.getValue(), graphUpdateTrigger));
-                this.deferredUploadsQueued += entry.getValue().size();
             }
             return;
         }
@@ -11840,7 +11824,6 @@ this.frameBufferOpen = false;
         // Chunk outputs are per-world job results; keeping them across a world change would upload a section into the
         // wrong world's region storage.
         if (!this.deferredUploads.isEmpty()) {
-            this.deferredUploadsDropped += this.deferredUploads.size();
             this.deferredUploads.clear();
         }
         // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
@@ -12490,14 +12473,12 @@ this.frameBufferOpen = false;
                     // produce (VUID-vkCmdCopyBuffer-srcOffset-00113). The check is the size the copy actually asks for
                     // - a whole diagnostic block - not one vertex stride: a slot that has a stride's worth of bytes
                     // left but not a block's passed the old check and then read past the allocation.
-                    this.readbackRefusals++;
                     this.readbackValid[slot] = false;
                     continue;
                 }
                 this.readbackValid[slot] = true;
                 recordReadback(region, this.readbackOffsets[slot], slot);
             }
-            this.readbackRegionsUsed += this.readbackSlots;
             this.readbackDone = true;
         }
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
@@ -14769,7 +14750,6 @@ this.frameBufferOpen = false;
         // submitted but never presented, which separates "the swapchain's own wl_display use is the fault" from
         // "something else in the present path is". Off by default; a leg that sets it draws nothing to the window.
         if (SKIP_PRESENT) {
-            this.skippedPresents++;
             return true;
         }
         if (PUMP_BEFORE_PRESENT) {
@@ -14782,7 +14762,6 @@ this.frameBufferOpen = false;
                 // bridge answers it on the SDL line.
                 Class<?> display = Class.forName("org.lwjgl.opengl.Display");
                 display.getMethod("processMessages").invoke(null);
-                this.pumpedBeforePresent++;
             } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
                 // A pump that fails must not stop the frame from being presented.
             }
@@ -16572,7 +16551,6 @@ this.frameBufferOpen = false;
             push.putFloat(156, 0.0f);
             this.immediatePipeline.draw(this.commandBuffer, this.isolationMesh, push,
                     this.immediateBindCache);
-            this.immediateIsolationDraws++;
         } finally {
             MemoryUtil.memFree(push);
         }
@@ -16685,7 +16663,6 @@ this.frameBufferOpen = false;
                 if (SKIP_TEXTURE_IDS != null && SKIP_TEXTURE_IDS.contains(groups.get(orderIndex).texture)) {
                     // Measurement switch: drop only the draws that sample the named textures, so a picture that loses
                     // one element names the draws that put it there. Nothing else about the batch changes.
-                    this.skippedTextureDraws++;
                     continue;
                 }
                 int groupIndex = drawOrder == null ? orderIndex : drawOrder[orderIndex];
@@ -17127,7 +17104,6 @@ this.frameBufferOpen = false;
                                         .descriptorSetFor(repTexture);
                                 if (repSet != 0L) {
                                     bindDescriptor = repSet;
-                                    this.replacedTextureDraws++;
                                 }
                             }
                         }
