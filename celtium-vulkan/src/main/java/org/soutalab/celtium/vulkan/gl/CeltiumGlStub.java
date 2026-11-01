@@ -617,9 +617,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * it accepted a mapping of bytes 8..12 that the 4-byte buffer does not have (#387). Everything that asks "how big is
      * this buffer" reads this map; the capacity only decides when the allocation grows.
      */
-    private final java.util.Map<Integer, Integer> bufferLogicalSize = new java.util.HashMap<Integer, Integer>();
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap bufferLogicalSize =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
 
-    private final java.util.Map<Integer, ByteBuffer> bufferStore =
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> bufferStore =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private final java.util.List<Callback> ownedTrampolines = new ArrayList<>();
     private long getStringAddress;
@@ -3358,7 +3359,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private static final boolean FN_CENSUS = Boolean.getBoolean("celtium.debug.fnCensus");
     /** Per-pname arrival counts for {@code glGetIntegerv}, under {@link #FN_CENSUS}; see its call site. */
-    private final java.util.Map<Integer, Long> getIntegervPnames = new java.util.HashMap<>();
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap getIntegervPnames =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
 
     private long[] dispatchArgsScratch() {
         Thread calling = Thread.currentThread();
@@ -3516,7 +3518,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // pname, not the function: "glGetIntegerv" is the top arrival on every leg, and which parameter
                     // it asks for names the producer (GL_CURRENT_PROGRAM is this project's own batch preflight,
                     // GL_VIEWPORT the game's ActiveRenderInfo, a texture binding a mod's save/restore habit).
-                    this.getIntegervPnames.merge((int) a0, 1L, Long::sum);
+                    this.getIntegervPnames.put((int) a0, this.getIntegervPnames.get((int) a0) + 1L);
                 }
                 getInts((int) a0, a1, fn);
                 return 0L;
@@ -4404,8 +4406,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
         if (nativeBuffer != null) nativeBuffer.close();
         if (NativeGeometryBuffer.boundId() == name) NativeGeometryBuffer.unbind();
-        this.bufferStore.remove(Integer.valueOf(name));
-        this.bufferLogicalSize.remove(Integer.valueOf(name));
+        this.bufferStore.remove(name);
+        this.bufferLogicalSize.remove(name);
         for (int target = 0; target < this.bufferBindings.length; target++) {
             if (this.bufferBindings[target] == name) {
                 this.bufferBindings[target] = 0;
@@ -5817,11 +5819,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (size == 0) {
             // glBufferData(size=0) is a legal redefinition that leaves the buffer empty; the old code returned early and
             // kept the previous storage and size, so the buffer still mapped and still answered the old extent (#387).
-            this.bufferStore.remove(Integer.valueOf(name));
-            this.bufferLogicalSize.put(Integer.valueOf(name), Integer.valueOf(0));
+            this.bufferStore.remove(name);
+            this.bufferLogicalSize.put(name, 0);
             return;
         }
-        this.bufferLogicalSize.put(Integer.valueOf(name), Integer.valueOf((int) size));
+        this.bufferLogicalSize.put(name, (int) size);
         // The storage is reused whenever it is already large enough, rather than replaced. The game's staging buffers
         // are mapped persistently - the mirror this renderer reads its meshes from is one - and a new allocation moves
         // the address the caller is still writing to, which shows up as geometry built from whatever the old storage
@@ -5858,8 +5860,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * @param capacity the backing storage's size
      */
     private int logicalSizeOf(int name, int capacity) {
-        Integer recorded = this.bufferLogicalSize.get(Integer.valueOf(name));
-        return recorded == null ? capacity : recorded.intValue();
+        // containsKey, not get: a buffer redefined to zero is a recorded size, not an absent one.
+        return this.bufferLogicalSize.containsKey(name) ? this.bufferLogicalSize.get(name) : capacity;
     }
 
     static long mapRangeOffset(long offset, long length, long capacity) {
@@ -6327,16 +6329,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         CeltiumGlStub stub = installed;
         if (stub != null && !stub.getIntegervPnames.isEmpty()) {
-            List<Map.Entry<Integer, Long>> pnames = new ArrayList<>(stub.getIntegervPnames.entrySet());
-            pnames.sort((a, b) -> Long.compare(b.getValue().longValue(), a.getValue().longValue()));
+            List<it.unimi.dsi.fastutil.ints.Int2LongMap.Entry> pnames =
+                    new ArrayList<>(stub.getIntegervPnames.int2LongEntrySet());
+            pnames.sort((a, b) -> Long.compare(b.getLongValue(), a.getLongValue()));
             text.append(" | getIntegervByPname:");
             int pnameShown = 0;
-            for (Map.Entry<Integer, Long> entry : pnames) {
+            for (it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry : pnames) {
                 if (pnameShown++ >= 12) {
                     break;
                 }
-                text.append(' ').append(Integer.toHexString(entry.getKey().intValue()))
-                        .append('=').append(entry.getValue().longValue());
+                text.append(' ').append(Integer.toHexString(entry.getIntKey()))
+                        .append('=').append(entry.getLongValue());
             }
         }
         return text.toString();
