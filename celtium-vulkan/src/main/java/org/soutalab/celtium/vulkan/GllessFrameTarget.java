@@ -718,10 +718,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /** {@return the owner state as it is now}, to be handed to {@link #rollbackRecording} if the record is discarded. */
-    public RecordingSnapshot snapshotRecording() {
-        return snapshotRecording(null);
-    }
-
     /**
      * Fills {@code snapshot} (or a new one when null) and returns it. The window flush takes one snapshot per window
      * (~10 a frame); reusing the object keeps its chain arrays too - they are grown only when more pairs appear.
