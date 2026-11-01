@@ -63,8 +63,7 @@ final class ModelReplay {
             if (b.modelOffTargetLogged.add(listId + "@" + callTarget)
                     && b.modelOffTargetLogs < b.MODEL_OFFTARGET_LOG_LIMIT) {
                 b.modelOffTargetLogs++;
-                VulkanDynamicMesh looked = b.modelGeometry.modelMeshes() == null
-                        ? null : b.modelGeometry.modelMeshes().get(Integer.valueOf(listId));
+                VulkanDynamicMesh looked = b.modelGeometry.meshFor(listId);
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId
                         + " target=" + callTarget + " main=" + b.targetRegistry.mainIdentity()
                         + " modelDraw=" + b.MODEL_DRAW + " frameTargetKnown=" + b.targetRegistry.targetKnown()
