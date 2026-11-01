@@ -7905,16 +7905,26 @@ public final class CeltiumGlStub implements FunctionProvider {
         } catch (RuntimeException error) {
             return;
         }
-        if (vertices == null) {
-            return;
+        boolean clientVertices = vertices == null;
+        long vertexBase;
+        int vertexCapacity;
+        if (clientVertices) {
+            // No array buffer bound: the pointer glVertexPointer was given is a client address, the legacy spelling.
+            vertexBase = this.vertexPointerOffset;
+            if (vertexBase == 0L) {
+                return;
+            }
+            vertexCapacity = 0;
+        } else {
+            vertexBase = memAddress(vertices, 0);
+            vertexCapacity = vertices.capacity();
         }
-        // The same layout decision the unindexed decoder makes: the format id and the refusal reason. Strides that
-        // need a repack (the 32-byte forms) are not taken here, because this path copies whole vertices unchanged.
+        // The same layout decision the unindexed decoder makes: the format id and the refusal reason.
         String[] layoutRefusal = new String[1];
         int formatId;
         try {
-            formatId = celtium$drawArrayFormat(stride, celtium$otherArrayMask(), count, 0, false,
-                    memAddress(vertices, 0), vertices.capacity(), layoutRefusal);
+            formatId = celtium$drawArrayFormat(stride, celtium$otherArrayMask(), count, 0, clientVertices,
+                    clientVertices ? 0L : vertexBase, vertexCapacity, layoutRefusal);
         } catch (RuntimeException error) {
             return;
         }
@@ -7947,13 +7957,15 @@ public final class CeltiumGlStub implements FunctionProvider {
             // mapped - the same guard the client vertex path uses.
             return;
         }
-        int vertexCount = vertices.capacity() / stride;
+        int vertexCount = clientVertices ? Integer.MAX_VALUE : vertexCapacity / stride;
         if (stride == 32 && formatId != 8 && formatId != 9) {
             return;
         }
         java.nio.ByteBuffer expanded = org.lwjgl.system.MemoryUtil.memAlloc(count * stride);
         java.nio.ByteBuffer packed = null;
         try {
+            int[] selected = new int[count];
+            int maxIndex = -1;
             for (int i = 0; i < count; i++) {
                 long at = indices + (long) i * indexSize;
                 int index;
@@ -7972,8 +7984,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (index < 0 || index >= vertexCount) {
                     return;
                 }
-                org.lwjgl.system.MemoryUtil.memCopy(
-                        org.lwjgl.system.MemoryUtil.memAddress(vertices) + (long) index * stride,
+                selected[i] = index;
+                if (index > maxIndex) {
+                    maxIndex = index;
+                }
+            }
+            if (clientVertices && maxIndex >= 0
+                    && !celtium$readableMapping(vertexBase, (long) (maxIndex + 1) * stride)) {
+                return;
+            }
+            for (int i = 0; i < count; i++) {
+                org.lwjgl.system.MemoryUtil.memCopy(vertexBase + (long) selected[i] * stride,
                         org.lwjgl.system.MemoryUtil.memAddress(expanded) + (long) i * stride, stride);
             }
             // The 32-byte forms carry a padded attribute the reference decoder repacks (to 28 or 24 bytes); the
