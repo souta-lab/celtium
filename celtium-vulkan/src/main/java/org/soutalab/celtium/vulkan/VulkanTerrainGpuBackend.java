@@ -11291,6 +11291,10 @@ this.frameBufferOpen = false;
     private final Reference2ReferenceOpenHashMap<RenderRegion, List<ChunkTaskOutput>> uploadQueueScratch =
             new Reference2ReferenceOpenHashMap<>();
 
+    /** The budgeted path's grouping map: its lists move to the deferred queue, so only the map is reused. */
+    private final Reference2ReferenceOpenHashMap<RenderRegion, List<ChunkTaskOutput>> uploadDeferredGroupScratch =
+            new Reference2ReferenceOpenHashMap<>();
+
     private static void clearUploadScratch(Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues) {
         if (queues.isEmpty()) {
             return;
@@ -11309,7 +11313,8 @@ this.frameBufferOpen = false;
         if (UPLOAD_BUDGET > 0 && results.size() > UPLOAD_BURST) {
             // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
             // Before the warm-up the outputs go straight through - the startup build is what a capture deadline needs.
-            Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = new Reference2ReferenceOpenHashMap<>();
+            Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = this.uploadDeferredGroupScratch;
+            queued.clear();
             for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
                 ChunkTaskOutput output = holder.output();
                 List<ChunkTaskOutput> queue = queued.get(output.render.getRegion());
@@ -11323,6 +11328,8 @@ this.frameBufferOpen = false;
                     : queued.reference2ReferenceEntrySet()) {
                 this.deferredUploads.addLast(new DeferredUpload(entry.getKey(), entry.getValue(), graphUpdateTrigger));
             }
+            // The lists moved to the queue; the map itself is done with.
+            queued.clear();
             return;
         }
         Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = this.uploadQueueScratch;
