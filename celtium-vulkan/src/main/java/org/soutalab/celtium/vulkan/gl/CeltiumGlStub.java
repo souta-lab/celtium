@@ -4380,6 +4380,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             // (#395).
             int first = (int) c[0];
             int range = (int) c[1];
+            // The model geometry capture keys its quads by list name: a name handed out again must not inherit the
+            // deleted list's geometry. The GlStateManager delete path already told it; a raw glDeleteLists from a mod
+            // did not, and its recompiled list could be drawn with the old mesh.
+            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listsDeleted(first, range);
             for (int i = 0; i < range; i++) {
                 Integer name = Integer.valueOf(first + i);
                 this.displayLists.remove(name.intValue());
