@@ -3445,7 +3445,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * that path the game calls.
      */
     public static long batchCallNanos;
-    public static int batchCallCount;
+    /** Long because one measured session uploaded 1.35e8 batches: an int overflows inside a day of play. */
+    public static long batchCallCount;
     /**
      * The single most expensive batch call, and the total of the first 200.
      * <p>
