@@ -4726,6 +4726,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 memPutInt(out + 8, this.viewportW);
                 memPutInt(out + 12, this.viewportH);
                 return;
+            case 0x0C23: { // GL_COLOR_WRITEMASK - four integers, R,G,B,A
+                int mask = this.raster.colorMask();
+                for (int i = 0; i < 4; i++) {
+                    memPutInt(out + (long) i * 4L, (mask >>> i) & 1);
+                }
+                return;
+            }
             case 0x0C10: // GL_SCISSOR_BOX - independent of the viewport, even when scissor is disabled
                 memPutInt(out, this.raster.scissorX());
                 memPutInt(out + 4, this.raster.scissorY());
