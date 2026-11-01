@@ -152,6 +152,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
     private static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
     private static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
+    private static final int SEM_RAW_COLOR = 68; // (r,g,b[,a]) -> the colour mirror the group capture reads
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -445,6 +446,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         // cached and calls GL11.glColorMask only when the mask changes - so the stub is the one place that sees the
         // change that matters (false,false,false,false at RenderGlobal:1655).
         fn("glColorMask", R_VOID, SEM_COLOR_MASK, A_INT, A_INT, A_INT, A_INT);
+        // Raw fixed-function colour, which mod code calls outside GlStateManager: recorded into the same mirror the
+        // group capture reads, so the last colour set wins whichever wrapper the caller used. The byte variants keep
+        // their no-op entry below (the stub's argument table has no byte width for them).
+        fn("glColor3f", R_VOID, SEM_RAW_COLOR, A_FLOAT, A_FLOAT, A_FLOAT);
+        fn("glColor4f", R_VOID, SEM_RAW_COLOR, A_FLOAT, A_FLOAT, A_FLOAT, A_FLOAT);
+        fn("glColor3d", R_VOID, SEM_RAW_COLOR, A_DOUBLE, A_DOUBLE, A_DOUBLE);
+        fn("glColor4d", R_VOID, SEM_RAW_COLOR, A_DOUBLE, A_DOUBLE, A_DOUBLE, A_DOUBLE);
         // ---- DSA create-functions: same out-array shape as the glGen* family
         fn("glCreateTextures", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
         fn("glCreateBuffers", R_VOID, SEM_GEN, A_INT, A_PTR);
@@ -470,7 +478,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glLighti", "glLightiv", "glLightModelf", "glLightModelfv", "glLightModeli", "glLightModeliv",
                 "glShadeModel", "glFogf", "glFogfv", "glFogi", "glFogiv", "glTexEnvi", "glTexEnvf", "glTexEnviv",
                 "glTexEnvfv", "glTexGeni", "glTexGenf", "glTexGeniv", "glTexGenfv", "glAlphaFunc", "glNormal3f",
-                "glNormal3b", "glNormal3fv", "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glSecondaryColor3f",
+                "glNormal3b", "glNormal3fv", "glColor4ub", "glColor3ub", "glSecondaryColor3f",
                 "glTexCoord2f", "glMultiTexCoord2f", "glVertex3f",
                 "glLoadIdentity", "glLoadMatrixf", "glLoadMatrixd", "glPushMatrix",
                 "glPopMatrix", "glOrtho", "glFrustum", "glTranslatef", "glTranslated", "glRotatef", "glRotated",
@@ -3501,6 +3509,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.raster.blendEquation((int) a0, (int) a1);
                 this.blendEquationCalled = true;
                 return 0L;
+            case SEM_RAW_COLOR:
+                rawColor(fn, c);
+                return 0L;
             case SEM_COLOR_MASK:
                 this.colorMaskCalls.incrementAndGet();
                 this.raster.colorMask(((int) c[0] != 0 ? 0x1 : 0) | ((int) c[1] != 0 ? 0x2 : 0)
@@ -4600,6 +4611,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
+    /** Applies a raw glColor to the state mirror, exactly where {@code GlStateManager.color}'s hook puts one. */
+    private static void rawColor(Fn fn, long[] c) {
+        boolean doubles = fn.name.endsWith("d");
+        float red = doubles ? (float) Double.longBitsToDouble(c[0]) : Float.intBitsToFloat((int) c[0]);
+        float green = doubles ? (float) Double.longBitsToDouble(c[1]) : Float.intBitsToFloat((int) c[1]);
+        float blue = doubles ? (float) Double.longBitsToDouble(c[2]) : Float.intBitsToFloat((int) c[2]);
+        float alpha = c.length > 3
+                ? (doubles ? (float) Double.longBitsToDouble(c[3]) : Float.intBitsToFloat((int) c[3]))
+                : 1.0f;
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.setColor(red, green, blue, alpha);
+        }
+    }
+
     private int getIntegerValue(int pname) {
         switch (pname) {
             case 0x0BE1: // GL_BLEND_SRC
