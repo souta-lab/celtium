@@ -2988,7 +2988,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private float[] lastGroupColorArray;
 
     /** {@return the captured colour, reusing the previous array while every component matches}. */
-    private float[] groupColor(float red, float green, float blue, float alpha) {
+    float groupColor(float red, float green, float blue, float alpha) {
         float[] last = this.lastGroupColorArray;
         if (last != null && last[0] == red && last[1] == green && last[2] == blue && last[3] == alpha) {
             return last;

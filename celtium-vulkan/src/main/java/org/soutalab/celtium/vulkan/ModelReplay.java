@@ -324,8 +324,8 @@ final class ModelReplay {
         // vertices either. The lit vertex shader multiplies this into v_Color (skipped while a combine owns the
         // colour slots, so the red flash constant cannot tint twice).
         group.color = b.colorMirrorHasValue
-                ? new float[] {b.immediateState.colorRed(), b.immediateState.colorGreen(),
-                        b.immediateState.colorBlue(), b.immediateState.colorAlpha()}
+                ? b.groupColor(b.immediateState.colorRed(), b.immediateState.colorGreen(),
+                        b.immediateState.colorBlue(), b.immediateState.colorAlpha())
                 : null;
         group.texMatrix = b.celtium$textureAffine();
         group.lightParams = b.celtium$lightParams(state, modelView);
