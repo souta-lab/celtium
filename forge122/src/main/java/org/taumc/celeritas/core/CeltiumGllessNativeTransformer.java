@@ -920,6 +920,39 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            // Raw fog parameters: absolute setters, routed to the same fog record the GlStateManager mixin feeds.
+            if (("glFogf".equals(name) || "nglFogf".equals(name)) && "(IF)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.FLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glFogf", "(IF)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glFogi".equals(name) || "nglFogi".equals(name)) && "(II)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glFogi", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glFogfv".equals(name) || "nglFogfv".equals(name)) && "(IJ)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glFogfv", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glFogiv".equals(name) || "nglFogiv".equals(name)) && "(IJ)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glFogiv", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("glNewList".equals(name) || "nglNewList".equals(name)) {
                 // (II)V - the natives are static, so the arguments are at slots 0 and 1.
                 method.visitVarInsn(Opcodes.ILOAD, 0);

@@ -186,6 +186,49 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /**
+     * Raw fog parameter setters. Vanilla reaches fog through the GlStateManager mixin, but a mod that sets it straight
+     * through GL leaves the mirror at whatever the last mirrored call wrote. The setters are absolute, so applying the
+     * same value twice (mixin and route) is harmless.
+     */
+    public static void glFogf(int pname, float value) {
+        org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter(pname, value);
+    }
+
+    public static void glFogi(int pname, int value) {
+        glFogf(pname, value);
+    }
+
+    public static void glFogfv(int pname, long address) {
+        if (address == 0L) {
+            return;
+        }
+        if (pname == 0x0B66) { // GL_FOG_COLOR
+            org.soutalab.celtium.vulkan.ImmediateFogState.current().color(
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 4L),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 8L),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(address + 12L));
+            return;
+        }
+        glFogf(pname, org.lwjgl.system.MemoryUtil.memGetFloat(address));
+    }
+
+    public static void glFogiv(int pname, long address) {
+        if (address == 0L) {
+            return;
+        }
+        if (pname == 0x0B66) {
+            org.soutalab.celtium.vulkan.ImmediateFogState.current().color(
+                    (float) org.lwjgl.system.MemoryUtil.memGetInt(address),
+                    (float) org.lwjgl.system.MemoryUtil.memGetInt(address + 4L),
+                    (float) org.lwjgl.system.MemoryUtil.memGetInt(address + 8L),
+                    (float) org.lwjgl.system.MemoryUtil.memGetInt(address + 12L));
+            return;
+        }
+        glFogf(pname, org.lwjgl.system.MemoryUtil.memGetInt(address));
+    }
+
     /** LWJGL3's buffer-parameter query natives: GL_BUFFER_SIZE comes from the recorded or native buffer. */
     public static void glGetBufferParameteriv(int target, int pname, long params) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferParameter("glGetBufferParameteriv",
