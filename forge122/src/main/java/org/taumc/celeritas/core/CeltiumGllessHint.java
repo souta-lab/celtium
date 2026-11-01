@@ -1444,6 +1444,11 @@ public final class CeltiumGllessHint {
         return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapBuffer(target, range, offset, length, access);
     }
 
+    /** Raw {@code glGetNamedBufferParameteriv/i64v}: the named size query. */
+    public static void glGetNamedBufferParameter(int name, int pname, long out, boolean wide) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getNamedBufferParameter(name, pname, out, wide);
+    }
+
     /** Raw {@code glClearBufferData/SubData} and named forms: the zero fill of a buffer range. */
     public static void glClearBuffer(int targetOrName, boolean named, long offset, long size, long data) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBuffer(targetOrName, named, offset, size, data);

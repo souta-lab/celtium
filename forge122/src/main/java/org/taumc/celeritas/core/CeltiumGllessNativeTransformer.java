@@ -873,6 +873,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+            if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetNamedBufferParameteriv") || name.endsWith("glGetNamedBufferParameteri64v"))) {
+                boolean wide = name.endsWith("i64v");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(wide ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetNamedBufferParameter", "(IIJZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
         if ("(IIIIJ)V".equals(descriptor)
                 && (name.endsWith("glClearBufferData") || name.endsWith("glClearNamedBufferData"))) {
             boolean named = name.contains("Named");

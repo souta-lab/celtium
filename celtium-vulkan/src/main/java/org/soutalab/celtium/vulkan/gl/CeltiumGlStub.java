@@ -1861,6 +1861,32 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glGetNamedBufferParameteriv/i64v}: the DSA spelling of the size query. */
+    public static void celtium$getNamedBufferParameter(int name, int pname, long out, boolean wide) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return;
+        }
+        long size = 0L;
+        try {
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+            if (nativeBuffer != null) {
+                size = nativeBuffer.byteSize();
+            } else {
+                java.nio.ByteBuffer storage = stub.bufferStore.get(name);
+                size = storage == null ? 0L : stub.logicalSizeOf(name, storage.capacity());
+            }
+        } catch (RuntimeException error) {
+            size = 0L;
+        }
+        long value = pname == 0x8764 ? size : 0L; // GL_BUFFER_SIZE
+        if (wide) {
+            org.lwjgl.system.MemoryUtil.memPutLong(out, value);
+        } else {
+            org.lwjgl.system.MemoryUtil.memPutInt(out, (int) value);
+        }
+    }
+
     /**
      * {@code glClearBufferData/SubData} and their named forms, for the zero fill only: a null clear value zeroes the
      * bytes whatever the internal format's component layout is, which is the case worth implementing without decoding
