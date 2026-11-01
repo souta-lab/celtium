@@ -2566,6 +2566,19 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records a clear through the same producer used by callback dispatch. */
     /**
+     * {@code glGetSynciv} from the transformer's route. The sync object glClientWaitSync already answers as signalled;
+     * a zero here is not a sync status at all, and a caller polling GL_SYNC_STATUS would read it forever.
+     */
+    public static void celtium$getSynciv(long sync, int pname, int bufSize, long length, long values) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 1);
+        }
+        if (values != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(values, pname == 0x9114 ? 0x9119 : 0); // GL_SYNC_STATUS -> GL_SIGNALED
+        }
+    }
+
+    /**
      * {@code glGetFramebufferAttachmentParameteriv} (and its named form) from the transformer's route: the stub's
      * query path already answers the recorded colour attachment, and only the table's copy of it was unreachable.
      */

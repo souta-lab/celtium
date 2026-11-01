@@ -1377,6 +1377,11 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetSynciv}: the sync objects this stub hands out are always signalled. */
+    public static void glGetSynciv(long sync, int pname, int bufSize, long length, long values) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getSynciv(sync, pname, bufSize, length, values);
+    }
+
     /** Raw framebuffer attachment queries, forwarded to the stub's attachment record. */
     public static void glGetFramebufferAttachmentParameteriv(int target, int attachment, int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferAttachmentParameter(false, target, attachment,
@@ -1617,7 +1622,7 @@ public final class CeltiumGllessHint {
             case "nglGetQueryObjectuiv":
             case "nglGetQueryObjecti64v":
             case "nglGetQueryObjectui64v":
-            case "nglGetSynciv":
+            // nglGetSynciv is routed to the sync answer; the zero-writer would hide it.
             // nglGetFramebufferAttachmentParameteriv is routed to the attachment record; the zero-writer would shadow it.
             case "nglGetRenderbufferParameteriv":
             case "nglGetSamplerParameteriv":
