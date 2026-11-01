@@ -4748,6 +4748,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x80A8: return 0; // GL_SAMPLE_BUFFERS
             case 0x80A9: return 0; // GL_SAMPLES
             case 0x8D57: return 0; // GL_MAX_SAMPLES
+            case 0x0D50: // GL_SUBPIXEL_BITS - the 8-bit subpixel precision Vulkan rasterization reports
+                return 8;
             case 0x0B54: // GL_SHADE_MODEL - the shaders interpolate the vertex colour, which is GL_SMOOTH
                 return 0x1D01;
             case 0x0B52: // GL_LIGHT_MODEL_TWO_SIDE - the shader lights one side of every face
@@ -4830,6 +4832,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int value;
         switch (pname) {
+            case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - two limits
+                int dimension = 16384;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                if (vulkan != null) {
+                    dimension = vulkan.celtium$maxTextureSize();
+                }
+                memPutInt(out, dimension);
+                memPutInt(out + 4, dimension);
+                return;
+            }
             case 0x0BA2: // GL_VIEWPORT
                 memPutInt(out, this.viewportX);
                 memPutInt(out + 4, this.viewportY);
