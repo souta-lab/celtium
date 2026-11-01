@@ -613,6 +613,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // The info-log natives: the stub reports shader and program success, so the log is empty. Left unrouted, the
+        // caller's buffer was never written and LWJGL built a String out of uninitialised memory.
+        if (returnType.equals("V") && "(IIJJ)V".equals(descriptor)
+                && ("nglGetShaderInfoLog".equals(name) || "nglGetProgramInfoLog".equals(name))) {
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "nglGetProgramInfoLog".equals(name) ? "glGetProgramInfoLog" : "glGetShaderInfoLog",
+                    "(IJJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
         // The buffer-object queries: LWJGL's own natives bypassed the dispatch path, so glGetBufferParameteri answered
         // zero and anything sizing a mapped buffer from it read an empty range.
         if (returnType.equals("V") && "(IIJ)V".equals(descriptor)

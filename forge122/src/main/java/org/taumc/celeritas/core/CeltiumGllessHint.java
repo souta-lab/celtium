@@ -168,6 +168,24 @@ public final class CeltiumGllessHint {
      * attribute counts a GL 3.0 profile guarantees - and anything unknown is written as 0 rather than left as
      * uninitialised memory.
      */
+    /**
+     * LWJGL3's info-log natives: the shader/program stand-ins report success and carry no log. Writing the empty
+     * answer matters because the caller allocates a buffer of {@code maxLength} and LWJGL turns it into a String -
+     * an untouched buffer would be read as whatever the allocation held.
+     */
+    public static void glGetShaderInfoLog(int maxLength, long lengthPtr, long logPtr) {
+        if (lengthPtr != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(lengthPtr, 0);
+        }
+        if (logPtr != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutByte(logPtr, (byte) 0);
+        }
+    }
+
+    public static void glGetProgramInfoLog(int maxLength, long lengthPtr, long logPtr) {
+        glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
+    }
+
     /** LWJGL3's buffer-parameter query natives: GL_BUFFER_SIZE comes from the recorded or native buffer. */
     public static void glGetBufferParameteriv(int target, int pname, long params) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferParameter("glGetBufferParameteriv",
