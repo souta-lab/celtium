@@ -1898,6 +1898,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * GL_DEPTH_TEST: one of the capabilities a deferred draw can outlive. See the native state boundary.
      */
     private static final int GL_DEPTH_TEST = 0x0B71;
+    /** GL_ALPHA_TEST: the capability glAlphaFunc's comparison only applies while it is enabled. */
+    private static final int GL_ALPHA_TEST = 0x0BC0;
 
     /**
      * A hook the backend registers so a draw it defers - the coalesced font run - is submitted <em>before</em> a state
@@ -4639,6 +4641,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return this.compilingList;
             case 0x8B8D: // GL_CURRENT_PROGRAM
                 return this.currentProgram;
+            case 0x0B71: return enabledCap(GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
+            case 0x0BC0: return enabledCap(GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
+            case 0x0C11: return enabledCap(GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
             case 0x0B74: { // GL_DEPTH_FUNC
                 // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
                 // touches this stub's own enable record.
@@ -4886,8 +4891,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 MemoryUtil.memPutByte(out, (byte) (mask ? 1 : 0));
                 return;
             }
-            case 0x0BD0: { // GL_DEPTH_TEST
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_DEPTH_TEST) ? 1 : 0));
+            case 0x0BD0: { // GL_DITHER
+                // GL's default is enabled and dithering has no effect in this renderer, so the answer stays true; the
+                // case used to carry GL_DEPTH_TEST's label and return the depth test's state.
+                MemoryUtil.memPutByte(out, (byte) 1);
                 return;
             }
             case 0x0BE2: { // GL_BLEND
@@ -4898,7 +4905,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 MemoryUtil.memPutByte(out, (byte) (enabledCap(0x0B90) ? 1 : 0));
                 return;
             }
-            case 0x0B71: { // GL_DEPTH_WRITEMASK's sibling for the whole depth test is above; this is GL_SCISSOR_TEST
+            case 0x0B71: { // GL_DEPTH_TEST
+                // The label here used to name the scissor test while the case answered 0x0B71 (the depth test), so a
+                // save/restore of the GL state read the depth test as whatever the scissor test was.
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_DEPTH_TEST) ? 1 : 0));
+                return;
+            }
+            case 0x0C11: { // GL_SCISSOR_TEST
                 MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_SCISSOR_TEST) ? 1 : 0));
                 return;
             }
@@ -4907,7 +4920,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             }
             case 0x0BC0: { // GL_ALPHA_TEST
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(0x3000) ? 1 : 0));
+                // 0x3000 is GL_CLIP_PLANE0, not the alpha test: the query answered "disabled" every time alpha testing
+                // was on, and a mod restoring the state it read turned the test off.
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_ALPHA_TEST) ? 1 : 0));
                 return;
             }
             case 0x0DE1: { // GL_TEXTURE_2D
