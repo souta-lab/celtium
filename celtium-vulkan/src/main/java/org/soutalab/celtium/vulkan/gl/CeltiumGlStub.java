@@ -2026,6 +2026,39 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * {@code glPushClientAttrib/glPopClientAttrib} from the transformer's route. Legacy mods save the client vertex-array
+     * pointer and the GL_VERTEX_ARRAY enable around their own draws; a no-op push made the pop restore nothing, so the
+     * next vanilla draw decoded with the mod's pointer.
+     */
+    public static void celtium$pushClientAttrib() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.clientAttribStack.addLast(new long[] {stub.vertexPointerSize, stub.vertexPointerType,
+                stub.vertexPointerStride, stub.vertexPointerOffset, stub.enables[0x8074]});
+    }
+
+    public static void celtium$popClientAttrib() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        long[] saved = stub.clientAttribStack.pollLast();
+        if (saved == null) {
+            return;
+        }
+        stub.vertexPointerSize = (int) saved[0];
+        stub.vertexPointerType = (int) saved[1];
+        stub.vertexPointerStride = (int) saved[2];
+        stub.vertexPointerOffset = saved[3];
+        stub.enables[0x8074] = (byte) saved[4];
+    }
+
+    /** Bounded legacy client-attribute stack. */
+    private final java.util.ArrayDeque<long[]> clientAttribStack = new java.util.ArrayDeque<long[]>();
+
     /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
     public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
         CeltiumGlStub stub = installed;

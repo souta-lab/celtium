@@ -57,7 +57,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // The attribute stacks and the mod-shader entry points are listed no-ops as well: GL-less has no attribute
             // stack to push, and a mod's GL program is a stub whose uniforms nothing reads. Their combined call volume
             // in the measured session was 3.4e3.
-            "glPushAttrib", "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib",
+            // glPushClientAttrib/glPopClientAttrib are routed to the client-vertex record below.
+            "glPushAttrib", "glPopAttrib",
             "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram",
             // The remaining vertex/texcoord/colour spellings a mod may use: none is in the stub's table, so each one
             // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
@@ -1204,6 +1205,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 }
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glColorMaskIndexed", "(IZZZZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(I)V".equals(descriptor) && name.endsWith("glPushClientAttrib")) {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glPushClientAttrib", "(I)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("()V".equals(descriptor) && name.endsWith("glPopClientAttrib")) {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glPopClientAttrib", "()V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }

@@ -1595,6 +1595,15 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribFloats(index, pname, out, asDouble);
     }
 
+    /** Raw {@code glPushClientAttrib/glPopClientAttrib}: the client vertex-array record. */
+    public static void glPushClientAttrib(int mask) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pushClientAttrib();
+    }
+
+    public static void glPopClientAttrib() {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$popClientAttrib();
+    }
+
     /** Raw {@code glGetVertexAttribPointerv}: attribute 0 answers the recorded pointer. */
     public static void glGetVertexAttribPointer(int index, int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribPointer(index, pname, out);
