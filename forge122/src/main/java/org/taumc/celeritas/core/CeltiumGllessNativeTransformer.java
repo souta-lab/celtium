@@ -56,7 +56,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // stack to push, and a mod's GL program is a stub whose uniforms nothing reads. Their combined call volume
             // in the measured session was 3.4e3.
             "glPushAttrib", "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib",
-            "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram"));
+            "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram",
+            // The remaining vertex/texcoord/colour spellings a mod may use: none is in the stub's table, so each one
+            // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
+            "glVertex2f", "glVertex2d", "glVertex3d", "glVertex3i", "glTexCoord2i", "glTexCoord2s",
+            "glNormal3d", "glColor3b", "glColor3d", "glColor4ui", "glRectf", "glRecti",
+            "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
