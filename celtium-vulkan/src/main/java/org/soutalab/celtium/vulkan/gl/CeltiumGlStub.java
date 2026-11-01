@@ -5047,6 +5047,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         return TEXTURE_EXTENT_SCRATCH;
     }
 
+    /** {@return the draw framebuffer the stub last bound}, or -1 when no stub is installed. */
+    public static int celtium$drawFramebuffer() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? -1 : stub.drawFbo;
+    }
+
     /** {@return the colour texture of a raw framebuffer, or 0 when none was recorded}. */
     public static int celtium$framebufferColorTexture(int glFramebufferName) {
         CeltiumGlStub stub = installed;

@@ -9888,6 +9888,12 @@ this.frameBufferOpen = false;
             // No stub installed: the bridge owns a real GL context and there is nothing to cache against.
             return org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         }
+        // With a stub, the answer is its own field: the query would travel the GL entry path only to read the same
+        // value. The real-GL shape below stays for a renderer without the stub.
+        int direct = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawFramebuffer();
+        if (direct >= 0) {
+            return direct;
+        }
         if (serial != this.cachedDrawFramebufferSerial) {
             this.cachedDrawFramebuffer = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
             this.cachedDrawFramebufferSerial = serial;
