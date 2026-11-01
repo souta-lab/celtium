@@ -945,6 +945,65 @@ public final class CeltiumGllessHint {
         glColor4f((red & 0xFF) / 255.0F, (green & 0xFF) / 255.0F, (blue & 0xFF) / 255.0F, (alpha & 0xFF) / 255.0F);
     }
 
+    /** {@code glColor3fv/glColor4fv}: the float-buffer spellings LWJGL's array overloads call natively. */
+    public static void glColor3fv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4f(org.lwjgl.system.MemoryUtil.memGetFloat(address),
+                org.lwjgl.system.MemoryUtil.memGetFloat(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetFloat(address + 8L), 1.0F);
+    }
+
+    public static void glColor4fv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4f(org.lwjgl.system.MemoryUtil.memGetFloat(address),
+                org.lwjgl.system.MemoryUtil.memGetFloat(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetFloat(address + 8L),
+                org.lwjgl.system.MemoryUtil.memGetFloat(address + 12L));
+    }
+
+    /** {@code glColor3bv/glColor4bv/3ubv/4ubv}: the byte-buffer spellings, scaled like glColor4ub. */
+    public static void glColor3bv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4b(org.lwjgl.system.MemoryUtil.memGetByte(address),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 1L),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 2L), (byte) -1);
+    }
+
+    public static void glColor4bv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4b(org.lwjgl.system.MemoryUtil.memGetByte(address),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 1L),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 2L),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 3L));
+    }
+
+    public static void glColor3ubv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4ub(org.lwjgl.system.MemoryUtil.memGetByte(address),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 1L),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 2L), (byte) -1);
+    }
+
+    public static void glColor4ubv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4ub(org.lwjgl.system.MemoryUtil.memGetByte(address),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 1L),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 2L),
+                org.lwjgl.system.MemoryUtil.memGetByte(address + 3L));
+    }
+
     /**
      * {@code glColor4b/glColor3b}: the same scaling the callers of glColor4ub expect. GL's signed normalization maps
      * -128..127 onto the same 0..255 byte range, and the game-side colour writers fill these bytes as unsigned values,

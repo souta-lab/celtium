@@ -229,6 +229,38 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4b", "(BBBB)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return true;
+            case "nglColor3fv(J)V":
+                // LWJGL's FloatBuffer/ByteBuffer overloads land here; the array spellings had no route, so a mod that
+                // set its colour through glColor4fv kept the previous one.
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3fv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4fv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4fv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor3bv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3bv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4bv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4bv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor3ubv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3ubv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4ubv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4ubv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
             case "glColor3b(BBB)V":
                 for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
                 method.visitInsn(Opcodes.ICONST_M1);
