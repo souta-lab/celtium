@@ -1377,6 +1377,17 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetProgramBinary} and {@code glGetShaderPrecisionFormat}: written answers. */
+    public static void glGetProgramBinary(int program, int bufSize, long length, long binaryFormat, long binary) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getProgramBinary(program, bufSize, length, binaryFormat,
+                binary);
+    }
+
+    public static void glGetShaderPrecisionFormat(int shaderType, int precisionType, long range, long precision) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getShaderPrecisionFormat(shaderType, precisionType, range,
+                precision);
+    }
+
     /** Raw {@code glGetShaderSource/glGetAttachedShaders}: written empty answers. */
     public static void glGetShaderSource(int shader, int bufSize, long length, long source) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getShaderSource(shader, bufSize, length, source);

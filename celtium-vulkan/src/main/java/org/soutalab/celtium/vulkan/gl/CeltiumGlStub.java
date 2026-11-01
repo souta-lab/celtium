@@ -2568,6 +2568,27 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** {@code glGetProgramBinary}: no binary is produced, so the length and format say exactly that. */
+    public static void celtium$getProgramBinary(int program, int bufSize, long length, long binaryFormat, long binary) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+        if (binaryFormat != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(binaryFormat, 0);
+        }
+    }
+
+    /** {@code glGetShaderPrecisionFormat}: desktop float precision, which is what the pipelines carry. */
+    public static void celtium$getShaderPrecisionFormat(int shaderType, int precisionType, long range, long precision) {
+        if (range != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(range, 127);
+            org.lwjgl.system.MemoryUtil.memPutInt(range + 4L, 127);
+        }
+        if (precision != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(precision, 23);
+        }
+    }
+
     /** {@code glGetShaderSource}: an empty source, written instead of leaving the caller's buffer untouched. */
     public static void celtium$getShaderSource(int shader, int bufSize, long length, long source) {
         if (length != 0L) {
