@@ -183,6 +183,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** Shared by every unresolved name: the dispatch path must not allocate an empty array per unknown symbol. */
+    private static final byte[] EMPTY_ARGS = new byte[0];
     private static final List<Fn> TABLE = new ArrayList<>();
     private static final Map<String, Integer> IDS = new HashMap<>();
 
@@ -1415,7 +1417,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // cost bounded - a bind is one of the most frequent GL calls in the frame, and this is a diagnostic, not
         // state the draw reads.
         if (!BIND_SITE_DIAGNOSTICS || texture == 0 || this.firstBindSites.size() >= MAX_BIND_SITES
-                || this.firstBindSites.containsKey(Integer.valueOf(texture))) {
+                || this.firstBindSites.get(Integer.valueOf(texture)) != null) {
             return;
         }
         this.firstBindSites.put(Integer.valueOf(texture), celtium$callSite() + " unit=" + this.textures.activeUnit());
@@ -2733,7 +2735,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Every name gets a trampoline - the names the table knows get their semantics, the rest get a generic
         // no-op. Returning 0 would tell LWJGL capability detection the whole version or extension block is absent,
         // leaving the corresponding function pointers empty.
-        int id = IDS.containsKey(name) ? IDS.get(name).intValue() : -1;
+        Integer idValue = IDS.get(name);
+        int id = idValue == null ? -1 : idValue.intValue();
         if (id < 0) {
             // BH-35: a name outside the table gets a generic no-op trampoline, and until now nothing recorded which
             // name it was - so a mod calling a GL entry point this stub does not model was swallowed with no trace at
@@ -2745,35 +2748,50 @@ public final class CeltiumGlStub implements FunctionProvider {
                 && ("glGetError".equals(name) || "glGetIntegerv".equals(name) || "glGetString".equals(name))) {
             System.out.println("[GLSTUB] addressFor " + name + " id=" + id);
         }
-        byte[] args = id >= 0 ? TABLE.get(id).args : new byte[0];
+        byte[] args = id >= 0 ? TABLE.get(id).args : EMPTY_ARGS;
         if (celtium$ffmCompatible(args)) {
-            Long stub = this.ffmAddresses.computeIfAbsent(name, n -> {
-                long address = celtium$ffmStub(id >= 0 ? id : -1, args);
-                return address != 0 ? Long.valueOf(address) : null;
-            });
+            // Explicit get/put: computeIfAbsent with a lambda that captures id/args allocates that lambda on every
+            // call, and this is the per-name resolution path of the GL surface.
+            Long stub = this.ffmAddresses.get(name);
+            if (stub == null) {
+                long address = celtium$ffmStub(id, args);
+                if (address != 0L) {
+                    stub = Long.valueOf(address);
+                    this.ffmAddresses.put(name, stub);
+                }
+            }
             if (stub != null) {
                 return stub.longValue();
             }
         }
         if (args.length > 0 && args[0] == A_DOUBLE) {
-            return this.trampolines.computeIfAbsent(name, n -> {
-                CeltiumGlDoubleTrampoline trampoline = new CeltiumGlDoubleTrampoline(id, this);
-                this.ownedTrampolines.add(trampoline);
-                return trampoline;
-            }).address();
+            Callback trampoline = this.trampolines.get(name);
+            if (trampoline == null) {
+                CeltiumGlDoubleTrampoline created = new CeltiumGlDoubleTrampoline(id, this);
+                this.ownedTrampolines.add(created);
+                this.trampolines.put(name, created);
+                trampoline = created;
+            }
+            return trampoline.address();
         }
         if (args.length > 0 && args[0] == A_FLOAT) {
-            return this.trampolines.computeIfAbsent(name, n -> {
-                CeltiumGlFloatTrampoline trampoline = new CeltiumGlFloatTrampoline(id, this);
-                this.ownedTrampolines.add(trampoline);
-                return trampoline;
-            }).address();
+            Callback trampoline = this.trampolines.get(name);
+            if (trampoline == null) {
+                CeltiumGlFloatTrampoline created = new CeltiumGlFloatTrampoline(id, this);
+                this.ownedTrampolines.add(created);
+                this.trampolines.put(name, created);
+                trampoline = created;
+            }
+            return trampoline.address();
         }
-        return this.trampolines.computeIfAbsent(name, n -> {
-            CeltiumGlTrampoline trampoline = new CeltiumGlTrampoline(id, this, args);
-            this.ownedTrampolines.add(trampoline);
-            return trampoline;
-        }).address();
+        Callback generic = this.trampolines.get(name);
+        if (generic == null) {
+            CeltiumGlTrampoline created = new CeltiumGlTrampoline(id, this, args);
+            this.ownedTrampolines.add(created);
+            this.trampolines.put(name, created);
+            generic = created;
+        }
+        return generic.address();
     }
 
     // ---- FFM upcalls -----------------------------------------------------------------
@@ -6095,7 +6113,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         long key = texParamKey(textureName, pname);
-        if (!this.texParams.containsKey(key)
+        if (this.texParams.get(key) == null
                 && this.texParams.size() >= TEX_PARAM_RECORD_LIMIT) {
             this.texParamOverflow.incrementAndGet();
             return;

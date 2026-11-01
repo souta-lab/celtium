@@ -18090,7 +18090,7 @@ this.frameBufferOpen = false;
         }
         int primitives = (maxVertices / primitiveType.getVerticesPerPrimitive()) + 1;
         Integer existing = this.sharedIndexPrimitives.get(primitiveType);
-        if (this.sharedIndexBuffers.containsKey(primitiveType) && existing != null && existing >= primitives) {
+        if (existing != null && existing >= primitives) {
             return;
         }
         int capacity = Math.max(primitives, 1024);

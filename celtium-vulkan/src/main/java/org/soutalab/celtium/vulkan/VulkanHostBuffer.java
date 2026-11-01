@@ -121,9 +121,15 @@ public final class VulkanHostBuffer {
         if (requiredBytes <= this.size) {
             return;
         }
-        VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, requiredBytes, this.usageFlags,
+        // Grow geometrically: appending in small steps otherwise reallocates and copies the whole buffer each time,
+        // and the copy is what a growing mesh pays per step. The visible size is still the buffer's capacity.
+        long grown = this.size <= 0L || this.size > (Long.MAX_VALUE / 2L)
+                ? requiredBytes : Math.max(requiredBytes, this.size * 2L);
+        VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, grown, this.usageFlags,
                 this.arenaOwned);
-        MemoryUtil.memCopy(this.mapped, replacement.mapped, this.size);
+        if (this.size > 0L) {
+            MemoryUtil.memCopy(this.mapped, replacement.mapped, this.size);
+        }
         // Growth keeps the old handles alive until no recording can name them, instead of deleting into a possibly
         // open recording (same lifetime rule as the arena and the uniform buffer).
         long oldHandle = this.handle;
