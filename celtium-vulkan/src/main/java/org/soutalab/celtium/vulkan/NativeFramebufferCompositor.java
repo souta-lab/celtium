@@ -15,6 +15,19 @@ final class NativeFramebufferCompositor {
     private float uMax, vMax;
     private long queued, selfCopiesSkipped;
 
+    /** Rebuilt per composite; the group copies or shares the state, so the scratch itself is never retained. */
+    private int[] stateScratch = new int[16];
+    /** Groups hold their viewport read-only, so composites of one size share a single array. */
+    private int[] viewportCache;
+    private int viewportCacheWidth = -1;
+    private int viewportCacheHeight = -1;
+    /** The same for the scissor box, which changes far less often than once per composite. */
+    private int[] scissorCache;
+    private int scissorCacheX;
+    private int scissorCacheY;
+    private int scissorCacheWidth = -1;
+    private int scissorCacheHeight = -1;
+
     NativeFramebufferCompositor(VulkanTerrainGpuBackend backend) { this.b = backend; }
 
     void submit(long sourceIdentity, boolean sourceIsMain, int texture, int sourceWidth, int sourceHeight,
@@ -51,7 +64,12 @@ final class NativeFramebufferCompositor {
             this.uMax = u;
             this.vMax = v;
         }
-        int[] state = b.celtium$captureState().clone();
+        int[] liveState = b.celtium$captureState();
+        if (this.stateScratch.length != liveState.length) {
+            this.stateScratch = new int[liveState.length];
+        }
+        System.arraycopy(liveState, 0, this.stateScratch, 0, liveState.length);
+        int[] state = this.stateScratch;
         state[3] = 0; // depth test
         state[4] = 0; // depth write
         state[5] = 0; // a full-surface operation has no face-culling dependency
@@ -75,9 +93,28 @@ final class NativeFramebufferCompositor {
         group.prepared = material;
         group.textureImage = b.celtium$registry().get(texture);
         group.textureMutations = b.textureRegistry.mutations();
-        group.viewportValues = new int[] {0, 0, width, height};
+        if (this.viewportCache == null || this.viewportCacheWidth != width || this.viewportCacheHeight != height) {
+            this.viewportCache = new int[] {0, 0, width, height};
+            this.viewportCacheWidth = width;
+            this.viewportCacheHeight = height;
+        }
+        group.viewportValues = this.viewportCache;
         group.scissorEnabled = b.rasterState.scissorTest();
-        group.scissorBox = b.rasterState.scissorBox();
+        if (b.rasterState.scissorCalled()) {
+            int sx = b.rasterState.scissorX(), sy = b.rasterState.scissorY();
+            int sw = b.rasterState.scissorWidth(), sh = b.rasterState.scissorHeight();
+            if (this.scissorCache == null || this.scissorCacheX != sx || this.scissorCacheY != sy
+                    || this.scissorCacheWidth != sw || this.scissorCacheHeight != sh) {
+                this.scissorCache = new int[] {sx, sy, sw, sh};
+                this.scissorCacheX = sx;
+                this.scissorCacheY = sy;
+                this.scissorCacheWidth = sw;
+                this.scissorCacheHeight = sh;
+            }
+            group.scissorBox = this.scissorCache;
+        } else {
+            group.scissorBox = null;
+        }
         group.stamp = GroupStamp.obtain(b.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
         group.batches = 1;
         b.immediateGroups.add(group);
