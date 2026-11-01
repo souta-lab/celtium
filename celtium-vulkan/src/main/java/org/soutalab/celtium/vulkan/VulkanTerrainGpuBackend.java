@@ -3011,7 +3011,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private float[] lastGroupColorArray;
 
     /** {@return the captured colour, reusing the previous array while every component matches}. */
-    float groupColor(float red, float green, float blue, float alpha) {
+    float[] groupColor(float red, float green, float blue, float alpha) {
         float[] last = this.lastGroupColorArray;
         if (last != null && last[0] == red && last[1] == green && last[2] == blue && last[3] == alpha) {
             return last;
@@ -6375,8 +6375,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             this.targetStatistics.addUnflushedTargetGroupsDropped(dropped);
             for (Long target : targets) {
-                this.unflushedTargetDroppedByTarget.put(target,
-                        this.unflushedTargetDroppedByTarget.get(target) + 1);
+                this.unflushedTargetDroppedByTarget.put(target.longValue(),
+                        this.unflushedTargetDroppedByTarget.get(target.longValue()) + 1);
             }
             if (this.targetStatistics.unflushedTargetGroupsDropped() <= this.unflushedTargetGroupsDroppedLogged + 3) {
                 this.unflushedTargetGroupsDroppedLogged++;
@@ -9530,12 +9530,12 @@ this.frameBufferOpen = false;
                                     }
                                 }
                                 System.out.println("[Celtium] CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
-                                        + " publishedName6=" + (publishedSix == null ? "none"
+                                        + " publishedName6=" + (publishedSix == 0L ? "none"
                                                 : "0x" + Long.toHexString(publishedSix))
                                         + " chainPairs=[" + chainHandles + "]"
                                         + " publishedIsLivePair=" + publishedIsLivePair);
                                 record("CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
-                                        + " publishedName6=" + (publishedSix == null ? "none"
+                                        + " publishedName6=" + (publishedSix == 0L ? "none"
                                                 : "0x" + Long.toHexString(publishedSix))
                                         + " chainPairs=[" + chainHandles + "]"
                                         + " defaultPair=" + (handles == null ? "none"
@@ -10269,14 +10269,15 @@ this.frameBufferOpen = false;
                     lineBatch ? this.linePipelineCache : this.immediatePipelineCache;
             pipeline = pipelineCache.get(key);
             if (pipeline == null) {
-                pipeline = lineBatch
+                VulkanImmediatePipeline created = lineBatch
                         ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
                                 state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]))
                         : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
                                 state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]));
-                if (pipeline != null) {
-                    pipelineCache.put(key, pipeline);
+                if (created != null) {
+                    pipelineCache.put(key, created);
                 }
+                pipeline = created;
             }
             if (lineBatch) {
                 this.lineBatchesNative++;

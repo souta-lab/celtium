@@ -317,10 +317,10 @@ public class MinecraftMixin {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");
     }
 
-    @Inject(method = "drawSplashScreen", at = @At("HEAD"), require = 0)
     /** Read once: this hook runs per splash frame, and the fixture switch cannot change mid-run. */
     private static final boolean celtium$VALIDATION = Boolean.getBoolean("celtium.validation");
 
+    @Inject(method = "drawSplashScreen", at = @At("HEAD"), require = 0)
     private void celtium$dumpLoadingFrame(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK drawSplashScreen=true");
         // The validation fixture is omitted from production jars. Avoid a ClassNotFoundException

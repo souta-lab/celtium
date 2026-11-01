@@ -40,11 +40,12 @@ public abstract class LoadingScreenRendererMixin implements LoadingProgressState
         this.loadingSuccess = previous.celtium$loadingSuccess();
     }
 
-    @Inject(method = "setLoadingProgress(I)V", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/Minecraft;updateDisplay()V"), require = 0)
     /** Read once: this runs on every loading-progress update. */
     private static final boolean celtium$DUMP_LOADING_PROGRESS =
             Boolean.getBoolean("celtium.validation.dumpLoadingProgress");
+
+    @Inject(method = "setLoadingProgress(I)V", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/Minecraft;updateDisplay()V"), require = 0)
 
     private void celtium$captureProgressFrame(int progress, CallbackInfo ci) {
         if (!celtium$DUMP_LOADING_PROGRESS) {

@@ -642,7 +642,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     "nglGetProgramInfoLog".equals(name) ? "glGetProgramInfoLog" : "glGetShaderInfoLog",
                     "(IJJ)V", false);
             method.visitInsn(Opcodes.RETURN);
-            return true;
+            return;
         }
         // The buffer-object queries: LWJGL's own natives bypassed the dispatch path, so glGetBufferParameteri answered
         // zero and anything sizing a mapped buffer from it read an empty range.
@@ -655,7 +655,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     "nglGetBufferParameteri64v".equals(name) ? "glGetBufferParameteri64v"
                             : "glGetBufferParameteriv", "(IIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
-            return true;
+            return;
         }
         // The tex-parameter queries: the stub records wrap/filter state and answers the dispatch path, but LWJGL3's
         // own natives bypassed it, so a mod that saved and restored a filter read zero.
@@ -671,7 +671,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         query, "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
-                return true;
+                return;
             }
         }
         // The boolean query family: nglGetIntegerv/nglGetFloatv were routed, nglGetBooleanv was not, so every
@@ -683,7 +683,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glGetBooleanv", "(IJ)V", false);
             method.visitInsn(Opcodes.RETURN);
-            return true;
+            return;
         }
         // glIsEnabled is a native returning a boolean: unhandled, it answered false for every capability.
         if ("glIsEnabled".equals(name) && "(I)Z".equals(descriptor)) {
@@ -691,7 +691,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glIsEnabled", "(I)Z", false);
             method.visitInsn(Opcodes.IRETURN);
-            return true;
+            return;
         }
         // These typed natives otherwise return without ever reaching the existing pending-clear producer.
         if ("glClear".equals(name) && "(I)V".equals(descriptor)) {

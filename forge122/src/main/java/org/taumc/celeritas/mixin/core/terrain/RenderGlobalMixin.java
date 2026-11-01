@@ -50,7 +50,6 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
     @Shadow
     @Final
     private RenderManager renderManager;
-    @Shadow
 
     @Shadow
     protected abstract boolean isOutlineActive(Entity entityIn, Entity viewer, ICamera camera);

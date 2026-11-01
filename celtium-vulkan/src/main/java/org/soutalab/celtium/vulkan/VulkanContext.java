@@ -91,7 +91,8 @@ public final class VulkanContext {
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
-    private static final boolean HIDE_FD_EXTENSIONS = Boolean.getBoolean(HIDE_FD_EXTENSIONS_PROPERTY);
+    private static final boolean HIDE_FD_EXTENSIONS =
+            Boolean.getBoolean(VulkanContext.HIDE_FD_EXTENSIONS_PROPERTY);
     private static final boolean PIPELINE_CACHE_DISABLED =
             "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pipelineCache"));
 

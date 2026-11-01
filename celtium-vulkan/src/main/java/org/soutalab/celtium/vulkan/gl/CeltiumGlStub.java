@@ -152,8 +152,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
     private static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
     private static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
-    private static final int SEM_LIST_BASE = 68;      // (base) -> the offset glCallLists adds to every name
-    private static final int SEM_CALL_LISTS = 69;     // (count, type, address) -> execute a run of display lists
+    private static final int SEM_LIST_BASE = 75;      // (base) -> the offset glCallLists adds to every name
+    private static final int SEM_CALL_LISTS = 76;     // (count, type, address) -> execute a run of display lists
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -3371,7 +3371,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.lastForeignClearGreen = this.clearGreen;
             this.lastForeignClearBlue = this.clearBlue;
         }
-        this.pendingClears.getAndUpdate(previous -> previous | mask);
+        int pendingMask = mask;
+        this.pendingClears.getAndUpdate(previous -> previous | pendingMask);
         if (!this.drawFramebufferIsMain) {
             // A non-main framebuffer's clear has no other carrier: the latch only runs on the next vanilla
             // bindFramebuffer, and a readback that binds by raw GL name never trips it - measured as a
@@ -5739,14 +5740,6 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0x1D01;
             case 0x0B52: // GL_LIGHT_MODEL_TWO_SIDE - the shader lights one side of every face
                 return 0;
-            case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                float[] ambient = vulkan == null ? this.lightAmbientDefault : vulkan.celtium$lightAmbient();
-                for (int i = 0; i < 4; i++) {
-                    putFloatOrDouble(out, i, ambient != null && i < ambient.length ? ambient[i] : 0.0f, asDouble);
-                }
-                return;
-            }
             case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
                 return this.drawFbo == 0 ? 0x0405 : 0x8CE0;
             case 0x0C02: // GL_READ_BUFFER
@@ -6048,6 +6041,14 @@ public final class CeltiumGlStub implements FunctionProvider {
                 putFloatOrDouble(out, 2, 0.0f, asDouble);
                 putFloatOrDouble(out, 3, 0.0f, asDouble);
                 return;
+            case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT - the ambient the shader lighting uses
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float[] ambient = vulkan == null ? this.lightAmbientDefault : vulkan.celtium$lightAmbient();
+                for (int i = 0; i < 4; i++) {
+                    putFloatOrDouble(out, i, ambient != null && i < ambient.length ? ambient[i] : 0.0f, asDouble);
+                }
+                return;
+            }
             case 0x0B12: // GL_POINT_SIZE_RANGE - points are not rasterized, so the one supported size is one
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
                 putFloatOrDouble(out, 1, 1.0f, asDouble);
