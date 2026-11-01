@@ -3954,6 +3954,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** {@return the game's current depth-write state}, for the clear latch's GL mask rule. */
+    /** {@return the alpha comparison the game last set}, as a GL enum. */
+    public int celtium$alphaTestFuncGl() {
+        return this.immediateState.alphaFunc();
+    }
+
+    /** {@return the alpha comparison's reference value}. */
+    public float celtium$alphaTestReference() {
+        return this.immediateState.alphaFuncReference();
+    }
+
     /** {@return the depth comparison the game last set}, as a GL enum; the stub answers its query from here. */
     public int celtium$depthFuncGl() {
         return this.immediateState.depthFunc();

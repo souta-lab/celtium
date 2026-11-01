@@ -4641,6 +4641,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return this.compilingList;
             case 0x8B8D: // GL_CURRENT_PROGRAM
                 return this.currentProgram;
+            case 0x0BC1: { // GL_ALPHA_TEST_FUNC
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$alphaTestFuncGl() : 0x0207; // GL_ALWAYS
+            }
+            case 0x0BC2: { // GL_ALPHA_TEST_REF
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                float reference = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$alphaTestReference() : 0.0f;
+                return reference >= 0.5f ? 1 : 0;
+            }
             case 0x0B71: return enabledCap(GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
             case 0x0BC0: return enabledCap(GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
             case 0x0C11: return enabledCap(GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
@@ -4792,6 +4803,20 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         switch (pname) {
+            case 0x0BC1: { // GL_ALPHA_TEST_FUNC, as a float as glGetFloatv reports enums
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                float func = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$alphaTestFuncGl() : (float) 0x0207;
+                putFloatOrDouble(out, 0, func, asDouble);
+                return;
+            }
+            case 0x0BC2: { // GL_ALPHA_TEST_REF
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                float reference = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$alphaTestReference() : 0.0f;
+                putFloatOrDouble(out, 0, reference, asDouble);
+                return;
+            }
             case 0x0BA6: // GL_MODELVIEW_MATRIX
             case 0x0BA7: // GL_PROJECTION_MATRIX
             case 0x0BA8: // GL_TEXTURE_MATRIX
