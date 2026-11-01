@@ -64,7 +64,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf",
             "glVertex4f", "glVertex4d", "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
             "glMultiTexCoord4f", "glNormal3i", "glColor4b", "glRectd", "glRasterPos2i", "glRasterPos4f",
-            "glIndexd", "glIndexs"));
+            "glIndexd", "glIndexs",
+            // The rest of the raster/clear state that the table lists as a no-op on purpose (the Vulkan side mirrors
+            // that state through the GlStateManager hooks, not through these raw setters).
+            "glDepthMask", "glDepthFunc", "glDepthRange", "glBlendColor", "glColorMaski",
+            "glBlendFuncSeparatei", "glBlendEquationi", "glBlendEquationSeparatei",
+            "glClearBufferfv", "glClearBufferiv", "glClearBufferuiv",
+            "glStencilFuncSeparate", "glStencilOpSeparate", "glStencilMaskSeparate",
+            "glPolygonMode", "glHint", "glPointSize", "glSampleCoverage", "glLogicOp", "glClampColor",
+            "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
