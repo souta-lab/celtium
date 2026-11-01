@@ -1547,6 +1547,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetTextureParameteriv") || name.endsWith("glGetTextureParameterfv")
+                            || name.endsWith("glGetTextureParameterIiv") || name.endsWith("glGetTextureParameterIuiv"))) {
+                boolean floats = name.endsWith("glGetTextureParameterfv");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(floats ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetTextureParameterNamed", "(IIJZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIIJ)V".equals(descriptor)
                     && (name.endsWith("glGetTextureLevelParameteriv")
                             || name.endsWith("glGetTextureLevelParameteri64v"))) {

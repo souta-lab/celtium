@@ -1806,6 +1806,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glGetTextureParameteriv/fv/Iiv/Iuiv}: the DSA spelling of the per-texture parameter record. */
+    public static void celtium$getTextureParameterNamed(int texture, int pname, long out, boolean floats) {
+        if (out == 0L) {
+            return;
+        }
+        int value = textureParameterValue(texture, pname);
+        if (floats) {
+            org.lwjgl.system.MemoryUtil.memPutFloat(out, value);
+        } else {
+            org.lwjgl.system.MemoryUtil.memPutInt(out, value);
+        }
+    }
+
     /** {@code glGetTextureLevelParameteriv/i64v}: the DSA spelling of the recorded level extent. */
     public static void celtium$getTexLevelParameterNamed(int texture, int level, int pname, long out, boolean wide) {
         CeltiumGlStub stub = installed;

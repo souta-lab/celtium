@@ -244,6 +244,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
     }
 
+    /** Raw {@code glGetTextureParameter*}: the named texture-parameter record. */
+    public static void glGetTextureParameterNamed(int texture, int pname, long out, boolean floats) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTextureParameterNamed(texture, pname, out, floats);
+    }
+
     /** Raw {@code glGetTextureLevelParameteriv/i64v}: the named level extent. */
     public static void glGetTexLevelParameterNamed(int texture, int level, int pname, long out, boolean wide) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexLevelParameterNamed(texture, level, pname, out, wide);
