@@ -4799,10 +4799,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * A disabled light's diffuse is zeroed rather than the direction skipped - the shader's dot stays a constant.
      */
     float[] celtium$lightParams(int[] state, float[] modelView) {
-        return celtium$lightParams(state, modelView, null);
+        // Equal payloads share the previous array: the directions depend on the modelview's rotation only, and most
+        // lit groups in a frame carry the same axis-aligned orientation - the per-group twenty-float allocation was
+        // pure garbage for them. A changed payload gets a new array so groups already holding one keep its values.
+        float[] computed = celtium$lightParams(state, modelView, this.lightParamsScratch);
+        if (computed == null) {
+            return null;
+        }
+        float[] last = this.lastLightParams;
+        if (last != null && java.util.Arrays.equals(last, computed)) {
+            return last;
+        }
+        float[] fresh = computed.clone();
+        this.lastLightParams = fresh;
+        return fresh;
     }
 
     /** As {@link #celtium$lightParams(int[], float[])}, written into {@code into} when the caller copies it out at once. */
+    /** Filled by the two-arg form before it decides whether a group needs its own array. */
+    private final float[] lightParamsScratch = new float[20];
+    private float[] lastLightParams;
+
     float[] celtium$lightParams(int[] state, float[] modelView, float[] into) {
         if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
             return null;
