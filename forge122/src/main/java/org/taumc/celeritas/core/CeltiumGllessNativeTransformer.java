@@ -222,6 +222,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4ub", "(BBBB)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return true;
+            case "glColor4b(BBBB)V":
+                // The signed spellings had no route at all: a mod that sets its colour through glColor4b/3b kept the
+                // previous colour in the mirror. The bytes widen through the same entry point glColor4ub uses.
+                for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4b", "(BBBB)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "glColor3b(BBB)V":
+                for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitInsn(Opcodes.ICONST_M1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4b", "(BBBB)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
             case "glColor3ub(BBB)V":
                 for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
                 method.visitInsn(Opcodes.ICONST_M1);

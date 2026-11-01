@@ -946,6 +946,15 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * {@code glColor4b/glColor3b}: the same scaling the callers of glColor4ub expect. GL's signed normalization maps
+     * -128..127 onto the same 0..255 byte range, and the game-side colour writers fill these bytes as unsigned values,
+     * so the unsigned interpretation is what keeps a mod's colour matching its own glColor4ub spelling.
+     */
+    public static void glColor4b(byte red, byte green, byte blue, byte alpha) {
+        glColor4f((red & 0xFF) / 255.0F, (green & 0xFF) / 255.0F, (blue & 0xFF) / 255.0F, (alpha & 0xFF) / 255.0F);
+    }
+
+    /**
      * A raw {@code GL11.glAlphaFunc}: cutout rendering reads the comparison, and a mod that sets it straight through
      * GL11 (the ATM3 pack's mods do - 2583 calls in one world leg) had it answered with a zero, so the mirror kept
      * whichever comparison the last GlStateManager call left.
