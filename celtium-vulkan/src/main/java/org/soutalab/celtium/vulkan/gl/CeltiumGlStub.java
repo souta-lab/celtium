@@ -4980,6 +4980,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x80A8: return 0; // GL_SAMPLE_BUFFERS
             case 0x80A9: return 0; // GL_SAMPLES
             case 0x8D57: return 0; // GL_MAX_SAMPLES
+            case 0x0B40: // GL_POLYGON_MODE - the rasterizer only fills, and glPolygonMode is a recorded no-op
+                return 0x1B02; // GL_FILL
+            case 0x0C40: // GL_RENDER_MODE - no feedback or selection mode is ever entered
+                return 0x1C00; // GL_RENDER
             case 0x0D50: // GL_SUBPIXEL_BITS - the 8-bit subpixel precision Vulkan rasterization reports
                 return 8;
             case 0x0B54: // GL_SHADE_MODEL - the shaders interpolate the vertex colour, which is GL_SMOOTH
