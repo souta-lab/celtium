@@ -2568,6 +2568,23 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** {@code glGetShaderSource}: an empty source, written instead of leaving the caller's buffer untouched. */
+    public static void celtium$getShaderSource(int shader, int bufSize, long length, long source) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+        if (source != 0L && bufSize > 0) {
+            org.lwjgl.system.MemoryUtil.memPutByte(source, (byte) 0);
+        }
+    }
+
+    /** {@code glGetAttachedShaders}: no shader is attached, which is also what the count pointer reports. */
+    public static void celtium$getAttachedShaders(int program, int maxCount, long count, long shaders) {
+        if (count != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(count, 0);
+        }
+    }
+
     /**
      * {@code glGetActiveUniform/glGetActiveAttrib} (and the ARB spellings): the stubbed shader surface has no active
      * objects, so the answer is an empty name with zero length/size/type - written, because an untouched caller buffer

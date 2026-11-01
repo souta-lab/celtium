@@ -947,6 +947,26 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IIJJ)V".equals(descriptor) && name.endsWith("glGetShaderSource")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 4);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetShaderSource", "(IIJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJJ)V".equals(descriptor) && name.endsWith("glGetAttachedShaders")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 4);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetAttachedShaders", "(IIJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIIJJJJ)V".equals(descriptor)
                     && (name.endsWith("glGetActiveUniform") || name.endsWith("glGetActiveAttrib")
                             || name.endsWith("glGetActiveUniformARB") || name.endsWith("glGetActiveAttribARB"))) {

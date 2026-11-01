@@ -1377,6 +1377,15 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetShaderSource/glGetAttachedShaders}: written empty answers. */
+    public static void glGetShaderSource(int shader, int bufSize, long length, long source) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getShaderSource(shader, bufSize, length, source);
+    }
+
+    public static void glGetAttachedShaders(int program, int maxCount, long count, long shaders) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getAttachedShaders(program, maxCount, count, shaders);
+    }
+
     /** Raw {@code glGetActiveUniform/Attrib}: no active objects, written rather than left untouched. */
     public static void glGetActiveObject(int program, int index, int bufSize, long length, long size, long type,
             long name) {
