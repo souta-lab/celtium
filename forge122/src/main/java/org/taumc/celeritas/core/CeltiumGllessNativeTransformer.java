@@ -947,6 +947,36 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IIIJ)V".equals(descriptor) && name.endsWith("glGetActiveUniformBlockiv")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetActiveUniformInt", "(IIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIJJ)V".equals(descriptor)
+                    && (name.endsWith("glGetActiveUniformBlockName") || name.endsWith("glGetActiveUniformName"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetActiveUniformName", "(IIJJI)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJIJ)V".equals(descriptor) && name.endsWith("glGetActiveUniformsiv")) {
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetActiveUniforms", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIJJJ)V".equals(descriptor) && name.endsWith("glGetProgramBinary")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);

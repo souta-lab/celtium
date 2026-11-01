@@ -2568,6 +2568,34 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** Uniform-block introspection: no block or active uniform exists, so the integer answer is zero. */
+    public static void celtium$getActiveUniformInt(int program, int index, int pname, long out) {
+        if (out != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(out, 0);
+        }
+    }
+
+    /** {@code glGetActiveUniformsiv}: {@code count} integers, all zero (no active uniform exists). */
+    public static void celtium$getActiveUniforms(int count, long out) {
+        if (out == 0L || count <= 0) {
+            return;
+        }
+        int bounded = Math.min(count, 1 << 16);
+        for (int i = 0; i < bounded; i++) {
+            org.lwjgl.system.MemoryUtil.memPutInt(out + (long) i * 4L, 0);
+        }
+    }
+
+    /** Uniform-block/active-uniform names: an empty name, with the written length that says so. */
+    public static void celtium$getActiveUniformName(int program, int index, long length, long name, int bufSize) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+        if (name != 0L && bufSize > 0) {
+            org.lwjgl.system.MemoryUtil.memPutByte(name, (byte) 0);
+        }
+    }
+
     /** {@code glGetProgramBinary}: no binary is produced, so the length and format say exactly that. */
     public static void celtium$getProgramBinary(int program, int bufSize, long length, long binaryFormat, long binary) {
         if (length != 0L) {

@@ -1377,6 +1377,19 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw uniform-block introspection: zeroed integer and empty-name answers. */
+    public static void glGetActiveUniformInt(int program, int index, int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniformInt(program, index, pname, out);
+    }
+
+    public static void glGetActiveUniforms(int count, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniforms(count, out);
+    }
+
+    public static void glGetActiveUniformName(int program, int index, long length, long name, int bufSize) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniformName(program, index, length, name, bufSize);
+    }
+
     /** Raw {@code glGetProgramBinary} and {@code glGetShaderPrecisionFormat}: written answers. */
     public static void glGetProgramBinary(int program, int bufSize, long length, long binaryFormat, long binary) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getProgramBinary(program, bufSize, length, binaryFormat,
