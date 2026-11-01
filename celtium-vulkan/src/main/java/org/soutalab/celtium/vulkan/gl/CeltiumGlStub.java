@@ -2568,6 +2568,30 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** {@code glGetVertexAttribfv/dv}: the same attribute-0 answer in the caller's numeric width. */
+    public static void celtium$getVertexAttribFloats(int index, int pname, long out, boolean asDouble) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return;
+        }
+        int value = 0;
+        if (index == 0) {
+            switch (pname) {
+                case 0x8622: value = stub.enables[0x8074] != 0 ? 1 : 0; break;
+                case 0x8623: value = stub.vertexPointerSize; break;
+                case 0x8624: value = stub.vertexPointerStride; break;
+                case 0x8625: value = stub.vertexPointerType; break;
+                case 0x889F: value = NativeGeometryBuffer.boundId(); break;
+                default: break;
+            }
+        }
+        if (asDouble) {
+            org.lwjgl.system.MemoryUtil.memPutDouble(out, value);
+        } else {
+            org.lwjgl.system.MemoryUtil.memPutFloat(out, value);
+        }
+    }
+
     /** {@code glGetVertexAttribPointerv} for attribute 0: the recorded pointer or buffer offset. */
     public static void celtium$getVertexAttribPointer(int index, int pname, long out) {
         CeltiumGlStub stub = installed;
