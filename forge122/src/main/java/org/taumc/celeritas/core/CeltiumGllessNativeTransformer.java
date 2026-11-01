@@ -51,7 +51,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glUniform1iv", "glUniform2iv", "glUniform3iv", "glUniform4iv",
             "glUniform1fv", "glUniform2fv", "glUniform3fv", "glUniform4fv",
             "glUniformMatrix2fv", "glUniformMatrix3fv", "glUniformMatrix4fv",
-            "glClearStencil", "glVertex2i", "glLineStipple"));
+            "glClearStencil", "glVertex2i", "glLineStipple",
+            // The attribute stacks and the mod-shader entry points are listed no-ops as well: GL-less has no attribute
+            // stack to push, and a mod's GL program is a stub whose uniforms nothing reads. Their combined call volume
+            // in the measured session was 3.4e3.
+            "glPushAttrib", "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib",
+            "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
