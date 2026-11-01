@@ -36,7 +36,8 @@ public final class VulkanModelQuadCapture {
     private static final String[] REFUSAL_NAMES = { "unknown-list", "unknown-texture", "degenerate-quad" };
     private static final long[] REFUSALS = new long[REFUSAL_NAMES.length];
     /** One print per reason is the whole story; the counters carry the rest. */
-    private static final java.util.Set<Integer> REFUSAL_REPORTED = new java.util.HashSet<Integer>();
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet REFUSAL_REPORTED =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
 
     /** The call site the vertices arrive from, named from the stack when the first quad appears. */
     private static String source = "not seen yet";
@@ -55,8 +56,8 @@ public final class VulkanModelQuadCapture {
      * two look identical in the geometry table - which holds only what was kept. The submitted count is what makes
      * them distinguishable, and {@code {submitted, captured, refused, texture}} is all the close line needs.
      */
-    private static final java.util.LinkedHashMap<Integer, int[]> LIST_TOTALS =
-            new java.util.LinkedHashMap<Integer, int[]>();
+    private static final it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<int[]> LIST_TOTALS =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<int[]>();
     /** How many lists print an open and a close line, so a scene with forty model parts cannot flood the log. */
     private static final int TRACE_LISTS = 24;
     private static int tracedLists;
@@ -336,10 +337,10 @@ public final class VulkanModelQuadCapture {
         if (listId <= 0) {
             return;
         }
-        int[] totals = LIST_TOTALS.get(Integer.valueOf(listId));
+        int[] totals = LIST_TOTALS.get(listId);
         if (totals == null) {
             totals = new int[] { 0, 0, 0, texture };
-            LIST_TOTALS.put(Integer.valueOf(listId), totals);
+            LIST_TOTALS.put(listId, totals);
             if (tracedLists < TRACE_LISTS) {
                 tracedLists++;
                 System.out.println("[Celtium] CELTIUM_MODEL_LIST_OPEN list=" + listId + " texture=" + celtium$value(texture)
@@ -359,7 +360,7 @@ public final class VulkanModelQuadCapture {
         if (lastTracedList <= 0 || closedLists >= TRACE_LISTS) {
             return;
         }
-        int[] totals = LIST_TOTALS.get(Integer.valueOf(lastTracedList));
+        int[] totals = LIST_TOTALS.get(lastTracedList);
         if (totals == null) {
             return;
         }
@@ -396,7 +397,7 @@ public final class VulkanModelQuadCapture {
 
     /** {@return how many quads were submitted for this list, captured or refused, or 0 when it never received one}. */
     public static synchronized int submittedForList(int listId) {
-        int[] totals = LIST_TOTALS.get(Integer.valueOf(listId));
+        int[] totals = LIST_TOTALS.get(listId);
         return totals == null ? 0 : totals[0];
     }
 
@@ -469,7 +470,7 @@ public final class VulkanModelQuadCapture {
     /** Records one refused quad, with the reason, the first call site of each reason and a periodic count. */
     private static void celtium$refuse(int reason, String detail, int count) {
         REFUSALS[reason]++;
-        if (REFUSAL_REPORTED.add(Integer.valueOf(reason))) {
+        if (REFUSAL_REPORTED.add(reason)) {
             System.out.println("[Celtium] CELTIUM_MODEL_QUAD_REFUSED reason=" + REFUSAL_NAMES[reason] + " " + detail
                     + " vertices=" + count + " callSite=" + celtium$callSite(4)
                     + " (kept out of the census: " + refusals() + ")");
@@ -578,7 +579,7 @@ public final class VulkanModelQuadCapture {
         geometry.beginCompile(++generations);
         // The accounting of the compile that just ended is superseded with it, so the trace prints this compile's own
         // open and close lines rather than merging two compiles of one id into one set of totals.
-        LIST_TOTALS.remove(Integer.valueOf(listId));
+        LIST_TOTALS.remove(listId);
     }
 
     /**
@@ -939,7 +940,7 @@ public final class VulkanModelQuadCapture {
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < Math.min(all.size(), 8); i++) {
             ListGeometry geometry = all.get(i);
-            int[] totals = LIST_TOTALS.get(Integer.valueOf(geometry.listId));
+            int[] totals = LIST_TOTALS.get(geometry.listId);
             if (i > 0) {
                 text.append(" | ");
             }

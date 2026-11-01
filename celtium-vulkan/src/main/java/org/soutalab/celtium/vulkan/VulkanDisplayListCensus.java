@@ -58,9 +58,11 @@ public final class VulkanDisplayListCensus {
             new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
     private static final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap REPLAY_TEXTURE_UNITS =
             new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
-    private static final java.util.Set<Integer> UNKNOWN_TEXTURE_LISTS = new java.util.HashSet<Integer>();
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet UNKNOWN_TEXTURE_LISTS =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
 
-    private static final Map<Integer, String> ORIGINS = new LinkedHashMap<Integer, String>();
+    private static final it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<String> ORIGINS =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<String>();
 
     /**
      * Records where a display list's geometry came from, the first time that list is compiled into.
@@ -78,7 +80,7 @@ public final class VulkanDisplayListCensus {
             originUnknown(list, "no-list-identity");
             return;
         }
-        if (ORIGINS.putIfAbsent(Integer.valueOf(list), origin) != null) {
+        if (ORIGINS.putIfAbsent(list, origin) != null) {
             return;
         }
         // The cancellation rule's predicate, decided where the origin arrives rather than re-searched on every cancel.
@@ -203,17 +205,17 @@ public final class VulkanDisplayListCensus {
 
     /** {@return the recorded origin of a list, or null}. */
     public static synchronized String originOf(int list) {
-        return ORIGINS.get(Integer.valueOf(list));
+        return ORIGINS.get(list);
     }
 
     /** {@return the recorded origins, for the run summary}. */
     public static synchronized String origins() {
         StringBuilder text = new StringBuilder();
-        for (Map.Entry<Integer, String> entry : ORIGINS.entrySet()) {
+        for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<String> entry : ORIGINS.int2ObjectEntrySet()) {
             if (text.length() > 0) {
                 text.append(' ');
             }
-            text.append(entry.getKey()).append('=').append(entry.getValue());
+            text.append(entry.getIntKey()).append('=').append(entry.getValue());
         }
         if (originsWithUnknownList > 0) {
             if (text.length() > 0) {
@@ -278,18 +280,20 @@ public final class VulkanDisplayListCensus {
 
 
 
-    private static final java.util.Set<Integer> TEXTURE_LOGGED = new java.util.HashSet<Integer>();
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet TEXTURE_LOGGED =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
 
-    private static final java.util.Set<Integer> MATRIX_LOGGED = new java.util.HashSet<Integer>();
+    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet MATRIX_LOGGED =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
 
     /** {@return whether the model matrix of this list has been logged already}. */
     public static synchronized boolean matrixLogged(int list) {
-        return MATRIX_LOGGED.add(Integer.valueOf(list));
+        return MATRIX_LOGGED.add(list);
     }
 
     /** {@return the bound texture of this list has been logged already}. */
     public static synchronized boolean textureLogged(int list) {
-        return !TEXTURE_LOGGED.add(Integer.valueOf(list));
+        return !TEXTURE_LOGGED.add(list);
     }
     private static long cancelled;
     /** Cancelled replays per list, paired with {@link #REPLAYS} so the lists nothing drew can be named. */
@@ -332,7 +336,7 @@ public final class VulkanDisplayListCensus {
             // Per list as well as in total: whether a list's replay was taken over by the native path is the difference
             // between a draw that happened and one that reached a GL body with no context, and only the pair
             // (replays, cancels) says which lists those are.
-            CANCELLED_PER_LIST.addTo(Integer.valueOf(list).intValue(), 1);
+            CANCELLED_PER_LIST.addTo(list, 1);
         }
         if (ITEM_LIKE.contains(list)) {
             originCancels++;
@@ -431,7 +435,7 @@ public final class VulkanDisplayListCensus {
             REPLAY_TEXTURE_UNITS.put(list, unit);
             return;
         }
-        if (UNKNOWN_TEXTURE_LISTS.add(Integer.valueOf(list))) {
+        if (UNKNOWN_TEXTURE_LISTS.add(list)) {
             if (UNKNOWN_TEXTURE_LISTS.size() == 1) {
                 System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_TEXTURE_UNKNOWN list=" + list + " unit=" + value(unit)
                         + " texture=" + value(texture)

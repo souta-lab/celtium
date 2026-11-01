@@ -5578,7 +5578,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** Raw FBO deletion does not delete its colour texture: keep its image until the texture is also deleted. */
-    private final java.util.Map<Integer, java.util.Set<Long>> rawOrphanedTargets = new java.util.HashMap<>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<java.util.Set<Long>> rawOrphanedTargets =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<java.util.Set<Long>>();
     private final java.util.Set<Long> rawDeletedAttachmentTargets = new java.util.HashSet<>();
 
     public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
@@ -5605,12 +5606,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (colorTexture == 0) colorTexture = this.publishedTextures.colorTextureName(identity);
         // No recorded name is not proof that the old texture was deleted; keep the image until teardown.
         if (colorTexture == 0) return;
-        this.rawOrphanedTargets.computeIfAbsent(Integer.valueOf(colorTexture),
-                key -> new java.util.HashSet<Long>()).add(Long.valueOf(identity));
+        java.util.Set<Long> orphans = this.rawOrphanedTargets.get(colorTexture);
+        if (orphans == null) {
+            orphans = new java.util.HashSet<Long>();
+            this.rawOrphanedTargets.put(colorTexture, orphans);
+        }
+        orphans.add(Long.valueOf(identity));
     }
 
     public void celtium$rawTextureDeleted(int texture) {
-        java.util.Set<Long> orphans = this.rawOrphanedTargets.remove(Integer.valueOf(texture));
+        java.util.Set<Long> orphans = this.rawOrphanedTargets.remove(texture);
         if (orphans != null) {
             for (Long identity : orphans) celtium$forgetDeletedFramebuffer(identity.longValue());
         }
