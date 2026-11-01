@@ -7868,6 +7868,83 @@ public final class CeltiumGlStub implements FunctionProvider {
      * {@code glCallList(-1)} there, because {@code generateSky2} only assigns {@code glSkyList2} when {@code vboEnabled}
      * is false: a no-op in real GL and recorded as such here.
      */
+    /** {@code glDrawElements} from the transformer's route: the one guarded indexed case this decoder can serve. */
+    public static void celtium$drawElements(int mode, int count, int type, long indices) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.drawElementsNow(mode, count, type, indices);
+        }
+    }
+
+    /**
+     * Indexed draws, decoded like {@link #drawArrays}: float3 positions with stride 12 and no pointer offset from the
+     * bound array buffer, indices in a mirrored element buffer. Anything else is left alone rather than guessed - the
+     * same rule the unindexed decoder follows, and the reason a refused draw stays blank instead of drawing garbage.
+     */
+    private void drawElementsNow(int mode, int count, int type, long indices) {
+        if (count <= 0 || count > (1 << 20) || (mode != 4 && mode != 5 && mode != 7)) {
+            return;
+        }
+        if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
+                || this.vertexPointerStride != 12 || this.vertexPointerOffset != 0L) {
+            return;
+        }
+        java.nio.ByteBuffer vertices;
+        try {
+            NativeGeometryBuffer bound = NativeGeometryBuffer.bound();
+            vertices = bound == null ? null : bound.compatibilityView();
+        } catch (RuntimeException error) {
+            return;
+        }
+        if (vertices == null) {
+            return;
+        }
+        int elementName = boundBuffer(0x8893); // GL_ELEMENT_ARRAY_BUFFER
+        if (elementName == 0) {
+            return;
+        }
+        java.nio.ByteBuffer elementView;
+        try {
+            NativeGeometryBuffer elements = NativeGeometryBuffer.find(elementName);
+            elementView = elements != null ? elements.compatibilityView() : this.bufferStore.get(elementName);
+        } catch (RuntimeException error) {
+            return;
+        }
+        if (elementView == null) {
+            return;
+        }
+        int indexSize = type == 0x1401 ? 1 : type == 0x1403 ? 2 : type == 0x1405 ? 4 : 0;
+        if (indexSize == 0 || indices < 0 || indices + (long) count * indexSize > elementView.capacity()) {
+            return;
+        }
+        int vertexCount = vertices.capacity() / 12;
+        java.nio.ByteBuffer expanded = org.lwjgl.system.MemoryUtil.memAlloc(count * 12);
+        try {
+            for (int i = 0; i < count; i++) {
+                long at = indices + (long) i * indexSize;
+                int index = indexSize == 1 ? elementView.get((int) at) & 0xFF
+                        : indexSize == 2 ? elementView.getShort((int) at) & 0xFFFF
+                        : elementView.getInt((int) at);
+                if (index < 0 || index >= vertexCount) {
+                    return;
+                }
+                org.lwjgl.system.MemoryUtil.memCopy(
+                        org.lwjgl.system.MemoryUtil.memAddress(vertices) + (long) index * 12L,
+                        org.lwjgl.system.MemoryUtil.memAddress(expanded) + (long) i * 12L, 12L);
+            }
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.submitImmediateBatch(null, 12, 7 /* POSITION */,
+                        org.lwjgl.system.MemoryUtil.memAddress(expanded), count, mode);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            // A malformed batch draws nothing; a half-built one must not reach the backend either.
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(expanded);
+        }
+    }
+
     private void drawArrays(int mode, int first, int count) { drawArrays(mode, first, count, false); }
 
     private void drawArrays(int mode, int first, int count, boolean compile) {

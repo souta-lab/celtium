@@ -1626,6 +1626,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$popClientAttrib();
     }
 
+    /** Raw indexed draws, in the one guarded layout the decoder can serve. */
+    public static void glDrawElements(int mode, int count, int type, long indices) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawElements(mode, count, type, indices);
+    }
+
     /** Raw {@code glGetVertexAttribPointerv}: attribute 0 answers the recorded pointer. */
     public static void glGetVertexAttribPointer(int index, int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribPointer(index, pname, out);
