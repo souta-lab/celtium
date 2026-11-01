@@ -6081,6 +6081,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 putFloatOrDouble(out, 2, 0.0f, asDouble);
                 putFloatOrDouble(out, 3, 0.0f, asDouble);
                 return;
+            case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the float spelling of the int answer
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
             case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT - the ambient the shader lighting uses
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
                 float[] ambient = vulkan == null ? this.lightAmbientDefault : vulkan.celtium$lightAmbient();
