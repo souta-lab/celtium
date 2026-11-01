@@ -2177,7 +2177,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         stub.clientAttribStack.addLast(new long[] {stub.vertexPointerSize, stub.vertexPointerType,
-                stub.vertexPointerStride, stub.vertexPointerOffset, stub.enables[0x8074]});
+                stub.vertexPointerStride, stub.vertexPointerOffset, stub.enables[0x8074],
+                stub.vertexPointerNormalized ? 1L : 0L, stub.vertexPointerInteger ? 1L : 0L});
     }
 
     public static void celtium$popClientAttrib() {
@@ -2194,6 +2195,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.vertexPointerStride = (int) saved[2];
         stub.vertexPointerOffset = saved[3];
         stub.enables[0x8074] = (byte) saved[4];
+        stub.vertexPointerNormalized = saved.length > 5 && saved[5] != 0L;
+        stub.vertexPointerInteger = saved.length > 6 && saved[6] != 0L;
     }
 
     /** Bounded legacy client-attribute stack. */
