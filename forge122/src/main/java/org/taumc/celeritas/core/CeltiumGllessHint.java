@@ -186,6 +186,23 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /** Raw display-list surface: list base, batched call, delete range and the compiled-name test. */
+    public static void glListBase(int base) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$listBase(base);
+    }
+
+    public static void glCallLists(int count, int type, long lists) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$callLists(count, type, lists);
+    }
+
+    public static void glDeleteLists(int list, int range) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteLists(list, range);
+    }
+
+    public static boolean glIsList(int list) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isList(list);
+    }
+
     /** Raw {@code glPixelStorei/glPixelStoref}: the unpack state the texture capture reads rows with. */
     public static void glPixelStorei(int pname, int value) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pixelStorei(pname, value);

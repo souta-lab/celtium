@@ -1264,6 +1264,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         stub.compilingList = list;
         stub.compilingListMode = mode;
+        // The model capture takes a generation per compile. The vanilla path notifies it from its own mixin before
+        // this call (a harmless second reset, since no quad arrives between them); a mod's raw glNewList reaches only
+        // this point, and without the notification its recompiled list kept the mesh built from the old contents.
+        if (list > 0) {
+            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(list);
+        }
     }
 
     /** Direct Mod GL entry points share the compatibility compiler, including transformed LWJGL calls. */
@@ -4408,18 +4414,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             // that this stub compiled owns payload buffers that go with it (#394). The name is retired too, so glIsList
             // answers false afterwards - the audit measured glIsList(L)==1 and displayLists.size()==1 after the delete
             // (#395).
-            int first = (int) c[0];
-            int range = (int) c[1];
-            // The model geometry capture keys its quads by list name: a name handed out again must not inherit the
-            // deleted list's geometry. The GlStateManager delete path already told it; a raw glDeleteLists from a mod
-            // did not, and its recompiled list could be drawn with the old mesh.
-            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listsDeleted(first, range);
-            for (int i = 0; i < range; i++) {
-                Integer name = Integer.valueOf(first + i);
-                this.displayLists.remove(name.intValue());
-                this.liveNames.remove(name.intValue());
-                releaseListPayloads(name);
-            }
+            deleteListsRange((int) c[0], (int) c[1]);
             return;
         }
         if (fn.args.length == 1) {
@@ -7573,6 +7568,47 @@ public final class CeltiumGlStub implements FunctionProvider {
                 MemoryUtil.memCopy(address + (long) i * stride, target + (long) i * targetStride, targetStride);
         } else MemoryUtil.memCopy(address, target, (long) count * stride);
         return copy;
+    }
+
+    /** Retires a range of display-list names: payloads, live-name record and the model capture's geometry. */
+    private void deleteListsRange(int first, int range) {
+        org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listsDeleted(first, range);
+        for (int i = 0; i < range; i++) {
+            Integer name = Integer.valueOf(first + i);
+            this.displayLists.remove(name.intValue());
+            this.liveNames.remove(name.intValue());
+            releaseListPayloads(name);
+        }
+    }
+
+    /** {@code glListBase} from the transformer's route. */
+    public static void celtium$listBase(int base) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.listBase = base;
+        }
+    }
+
+    /** {@code glCallLists} from the transformer's route. */
+    public static void celtium$callLists(int count, int type, long address) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.callLists(count, type, address);
+        }
+    }
+
+    /** {@code glDeleteLists} from the transformer's route. */
+    public static void celtium$deleteLists(int first, int range) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && first > 0 && range > 0) {
+            stub.deleteListsRange(first, range);
+        }
+    }
+
+    /** {@code glIsList} from the transformer's route: whether this stub compiled the name. */
+    public static boolean celtium$isList(int list) {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.liveNames.contains(list);
     }
 
     /**

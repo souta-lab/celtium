@@ -921,7 +921,41 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if (emitRawMatrixRoute(method, matrixEntry, descriptor)) {
             return;
         }
+        if (("glIsList".equals(name) || "nglIsList".equals(name)) && "(I)Z".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glIsList", "(I)Z", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         if (returnType.equals("V")) {
+            // The rest of the display-list surface. These were only in the stub's dispatch table, which a transformed
+            // native never reaches: a mod's call was a bare return, so the delete notification and the glCallLists
+            // replay written there could not run.
+            if (("glListBase".equals(name) || "nglListBase".equals(name)) && "(I)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glListBase", "(I)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glCallLists".equals(name) || "nglCallLists".equals(name)) && "(IIJ)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glCallLists", "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glDeleteLists".equals(name) || "nglDeleteLists".equals(name)) && "(II)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDeleteLists", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // Pixel-store state: the upload conversion reads the captured rows with the alignment/skip the caller set.
             // Without this route none of it was ever recorded - the stub's handler sat behind a dispatch path a
             // transformed native never takes.
