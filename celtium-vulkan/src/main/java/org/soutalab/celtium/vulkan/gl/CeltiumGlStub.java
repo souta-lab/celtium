@@ -2205,6 +2205,17 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> vaoRecords =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
 
+    /** {@code glVertexAttribIPointer} for index 0: recorded like the float form; the decode refuses integer types. */
+    public static void celtium$vertexAttribIPointer(int index, int size, int type, int stride, long pointer) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && index == 0) {
+            stub.vertexPointerSize = size;
+            stub.vertexPointerType = type;
+            stub.vertexPointerStride = stride;
+            stub.vertexPointerOffset = pointer;
+        }
+    }
+
     /** @code glVertexAttribPointer} for index 0: the generic spelling of the position pointer. */
     public static void celtium$vertexAttribPointer(int index, int size, int type, boolean normalized, int stride,
             long pointer) {

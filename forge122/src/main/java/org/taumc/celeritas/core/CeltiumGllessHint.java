@@ -1065,6 +1065,11 @@ public final class CeltiumGllessHint {
                 pointer);
     }
 
+    /** The integer attribute pointer, recorded for index 0 so the state queries answer it. */
+    public static void glVertexAttribIPointer(int index, int size, int type, int stride, long pointer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexAttribIPointer(index, size, type, stride, pointer);
+    }
+
     /** Attribute-array enables for index 0, recorded as the position attribute's enable. */
     public static void glEnableVertexAttribArray(int index, boolean enabled) {
         if (index == 0) {
