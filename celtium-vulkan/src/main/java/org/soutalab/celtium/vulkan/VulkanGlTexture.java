@@ -1212,10 +1212,12 @@ public final class VulkanGlTexture {
     private static long fullUploads;
     private static long fullUploadBytes;
     private static long fullUploadNanos;
-    private static final java.util.Map<Integer, Integer> fullUploadsByGlId =
-            new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
-    private static final java.util.Map<Integer, Long> fullUploadBytesByGlId =
-            new java.util.concurrent.ConcurrentHashMap<Integer, Long>();
+    // Int-keyed: this is written once per full upload and read by the census summary. Writes already happen under the
+    // class lock, so the maps need no concurrency of their own.
+    private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap fullUploadsByGlId =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    private static final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap fullUploadBytesByGlId =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
 
     /**
      * GL-less fills, split so a run can tell a mirror that was filled from the upload the game itself made apart from
@@ -1250,14 +1252,13 @@ public final class VulkanGlTexture {
                 .append(" millis=").append(fullUploadNanos / 1000000L)
                 .append(" byGlId=[");
         boolean first = true;
-        for (java.util.Map.Entry<Integer, Integer> entry : fullUploadsByGlId.entrySet()) {
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry : fullUploadsByGlId.int2IntEntrySet()) {
             if (!first) {
                 text.append(' ');
             }
             first = false;
-            Long bytes = fullUploadBytesByGlId.get(entry.getKey());
-            text.append(entry.getKey()).append(':').append(entry.getValue())
-                    .append('/').append(bytes == null ? 0L : bytes.longValue());
+            text.append(entry.getIntKey()).append(':').append(entry.getIntValue())
+                    .append('/').append(fullUploadBytesByGlId.get(entry.getIntKey()));
         }
         return text.append(']').toString();
     }
@@ -1512,10 +1513,9 @@ public final class VulkanGlTexture {
             synchronized (VulkanGlTexture.class) {
                 fullUploads++;
                 fullUploadNanos += celtium$elapsed;
-                fullUploadsByGlId.merge(Integer.valueOf(celtium$uploadGlId), Integer.valueOf(1), (a, b) ->
-                        Integer.valueOf(a.intValue() + b.intValue()));
-                fullUploadBytesByGlId.merge(Integer.valueOf(celtium$uploadGlId), Long.valueOf(fullUploadBytes),
-                        (a, b) -> Long.valueOf(a.longValue() + b.longValue()));
+                fullUploadsByGlId.put(celtium$uploadGlId, fullUploadsByGlId.get(celtium$uploadGlId) + 1);
+                fullUploadBytesByGlId.put(celtium$uploadGlId,
+                        fullUploadBytesByGlId.get(celtium$uploadGlId) + fullUploadBytes);
             }
         }
     }
