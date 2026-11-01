@@ -402,6 +402,9 @@ public final class VulkanContext {
      * full drain had, expressed per entry instead of per device.
      */
     private final java.util.ArrayDeque<DeferredSubmit> deferredSubmits = new java.util.ArrayDeque<DeferredSubmit>();
+    /** Reclaimed entries wait here for the next submission; the fields are cleared before an entry returns. */
+    private final java.util.ArrayDeque<DeferredSubmit> deferredEntryPool = new java.util.ArrayDeque<DeferredSubmit>();
+    private static final int DEFERRED_ENTRY_POOL_CAP = 256;
     /** Reset fences ready to arm the next deferred submission; bounded so an idle run does not hoard them. */
     private final java.util.ArrayDeque<Long> idleDeferredFences = new java.util.ArrayDeque<Long>();
     private static final int IDLE_DEFERRED_FENCE_CAP = 16;
@@ -1057,7 +1060,7 @@ public final class VulkanContext {
         requireUsable();
         check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer (deferred)");
         if (BATCHED_SUBMITS) {
-            DeferredSubmit entry = new DeferredSubmit();
+            DeferredSubmit entry = takeDeferredEntry();
             entry.commandBuffer = commandBuffer;
             entry.uploadSlotMask = uploadSlotMask;
             entry.batch = celtium$currentBatch();
@@ -1093,7 +1096,7 @@ public final class VulkanContext {
                 }
                 throw submitError;
             }
-            DeferredSubmit entry = new DeferredSubmit();
+            DeferredSubmit entry = takeDeferredEntry();
             entry.commandBuffer = commandBuffer;
             entry.fence = fence;
             entry.uploadSlotMask = uploadSlotMask;
@@ -1131,7 +1134,7 @@ public final class VulkanContext {
             throw new IllegalArgumentException("deferred frame submit needs a buffer, a slot and a reclaim callback");
         }
         requireUsable();
-        DeferredSubmit entry = new DeferredSubmit();
+        DeferredSubmit entry = takeDeferredEntry();
         entry.commandBuffer = commandBuffer;
         entry.batch = celtium$currentBatch();
         entry.batch.pending++;
@@ -1210,6 +1213,24 @@ public final class VulkanContext {
         this.deferredSubmitsOutstanding--;
         this.deferredReclaims++;
         noteCompletionConfirmed(lostDevice);
+        // The entry is done with: clear what it held so a pooled instance cannot pin a command buffer, a batch or a
+        // semaphore array, then hand it back. The handles themselves were released above.
+        entry.commandBuffer = null;
+        entry.waitSemaphores = null;
+        entry.waitStages = null;
+        entry.signalSemaphores = null;
+        entry.batch = null;
+        entry.slotReclaim = null;
+        entry.frameSlot = -1;
+        if (this.deferredEntryPool.size() < DEFERRED_ENTRY_POOL_CAP) {
+            this.deferredEntryPool.addLast(entry);
+        }
+    }
+
+    /** {@return an entry from the pool, or a new one when it is empty}. */
+    private DeferredSubmit takeDeferredEntry() {
+        DeferredSubmit pooled = this.deferredEntryPool.pollFirst();
+        return pooled != null ? pooled : new DeferredSubmit();
     }
 
     /** {@return the batch the next deferred submit joins, borrowing a fence on first use}. */
