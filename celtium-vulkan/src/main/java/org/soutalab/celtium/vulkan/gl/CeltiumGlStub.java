@@ -2855,6 +2855,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** A deterministic zero fill for an image readback this renderer cannot produce; bounded to a sane request. */
+    public static void celtium$zeroBytes(long out, long bytes) {
+        if (out == 0L || bytes <= 0L) {
+            return;
+        }
+        org.lwjgl.system.MemoryUtil.memSet(out, 0, Math.min(bytes, 64L * 1024L * 1024L));
+    }
+
     /** Deterministic zeros for an unmodelled getter's output, instead of leaving the caller's buffer uninitialised. */
     public static void celtium$zeroOut(long out, int count, boolean wide) {
         if (out == 0L || count <= 0) {

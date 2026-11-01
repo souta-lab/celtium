@@ -1575,6 +1575,11 @@ public final class CeltiumGllessHint {
                 type, name);
     }
 
+    /** Raw {@code glGetTextureImage}: an image readback the renderer cannot produce, zeroed deterministically. */
+    public static void glGetTextureImageZero(long pixels, long bytes) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroBytes(pixels, bytes);
+    }
+
     /** Raw unmodelled getters: a zeroed output is deterministic, unlike an untouched caller buffer. */
     public static void glZeroOut(long out, int count, boolean wide) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroOut(out, count, wide);
