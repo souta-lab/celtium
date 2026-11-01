@@ -687,7 +687,7 @@ public final class VulkanModelQuadCapture {
 
     /** {@return whether this list's geometry has been captured}. */
     public static synchronized boolean hasList(int listId) {
-        return LISTS.containsKey(listId);
+        return LISTS.get(listId) != null;
     }
 
     /**

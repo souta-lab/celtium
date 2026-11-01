@@ -644,7 +644,7 @@ public final class VulkanTextureRegistry {
         if (glTextureId == 0 || image == null) {
             return;
         }
-        if (this.externalImages.containsKey((int) (glTextureId))) {
+        if (this.externalImages.get((int) (glTextureId)) != null) {
             // The renderer owns this name's image; a CPU-side upload of the same GL texture (the game allocating a
             // framebuffer texture, say) does not describe its content, and storing it would let a later path build a
             // mirror from pixels the image is not made of.

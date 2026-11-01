@@ -125,7 +125,7 @@ public final class VulkanDisplayListCensus {
      * as a plausible name.
      */
     public static synchronized void compileTexture(int list, int texture, int unit) {
-        if (list <= 0 || COMPILE_TEXTURES.containsKey(Integer.valueOf(list)) || COMPILE_TEXTURES.size() >= 32) {
+        if (list <= 0 || COMPILE_TEXTURES.get(Integer.valueOf(list)) != null || COMPILE_TEXTURES.size() >= 32) {
             return;
         }
         COMPILE_TEXTURES.put(Integer.valueOf(list), Integer.valueOf(texture));
@@ -386,7 +386,7 @@ public final class VulkanDisplayListCensus {
         // The matrix in effect at replay, next to the one captured while the list was compiled. Whether a display list
         // bakes the transform or is replayed under the current matrix decides how a native replacement has to combine
         // them, and this pair is what answers it instead of an argument about the specification.
-        if (!MATRICES.containsKey(Integer.valueOf(list)) && matricesTaken < 24) {
+        if (MATRICES.get(Integer.valueOf(list)) == null && matricesTaken < 24) {
             try {
                 java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
                 org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);

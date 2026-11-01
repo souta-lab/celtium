@@ -7628,7 +7628,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // A framebuffer's colour attachment is published over the framebuffer's image before the capture:
                 // get() would otherwise create (or keep) an empty mirror for the name, and the group would draw from
                 // it even after the prepare published the real image (Xaero's Minimap's see-through rotation pass).
-                if (boundTexture != 0 && !this.publishedFrameImages.containsKey(Integer.valueOf(boundTexture))
+                if (boundTexture != 0 && this.publishedFrameImages.get(Integer.valueOf(boundTexture)) == null
                         && celtium$framebufferIdentityForColorTexture(boundTexture) != Long.MIN_VALUE) {
                     celtium$publishFramebufferColorTexture(boundTexture);
                 }
@@ -9895,7 +9895,7 @@ this.frameBufferOpen = false;
         // and that mirror used to win. Xaero's Minimap's rotation pass then sampled black from texture 124 while its
         // scaling framebuffer held the map (pair dump, leg pairdump2-amd) - the minimap was see-through.
         boolean unpublishedAttachment = textureId != 0 && texture != null
-                && !this.publishedFrameImages.containsKey(Integer.valueOf(textureId))
+                && this.publishedFrameImages.get(Integer.valueOf(textureId)) == null
                 && celtium$framebufferIdentityForColorTexture(textureId) != Long.MIN_VALUE;
         if (textureId != 0 && (texture == null || !texture.hasFullContent() || unpublishedAttachment)) {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws

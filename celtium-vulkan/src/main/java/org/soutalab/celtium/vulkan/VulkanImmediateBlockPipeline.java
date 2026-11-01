@@ -224,8 +224,9 @@ public final class VulkanImmediateBlockPipeline {
             this.descriptorSlotHits++;
             return this.lastDescriptorSet;
         }
-        if (this.setsByTextureView.containsKey(descriptorKey)) {
-            long cached = this.setsByTextureView.get(descriptorKey);
+        // Long2LongOpenHashMap answers 0 for an absent key and no real set is 0: one lookup, not two.
+        long cached = this.setsByTextureView.get(descriptorKey);
+        if (cached != 0L) {
             this.lastDescriptorKey = descriptorKey;
             this.lastDescriptorSet = cached;
             return cached;

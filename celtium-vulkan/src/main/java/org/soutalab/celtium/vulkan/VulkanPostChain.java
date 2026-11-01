@@ -633,14 +633,14 @@ public final class VulkanPostChain {
      * chain lifetime rather than once per frame.
      */
     private Program programFor(Pass pass) {
-        if (pass == null || pass.program == null || !PROGRAMS.containsKey(pass.program) || pass.pushBytes <= 0) {
+        if (pass == null || pass.program == null || PROGRAMS.get(pass.program) == null || pass.pushBytes <= 0) {
             return null;
         }
         Program cached = this.programs.get(pass.program);
         if (cached != null) {
             return cached;
         }
-        if (this.programRefusals.containsKey(pass.program)) {
+        if (this.programRefusals.get(pass.program) != null) {
             return null;
         }
         boolean uniformBlock = pass.pushBytes > this.maxPushConstants;

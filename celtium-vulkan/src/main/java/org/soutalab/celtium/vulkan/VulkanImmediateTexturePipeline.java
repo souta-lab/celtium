@@ -780,11 +780,12 @@ public final class VulkanImmediateTexturePipeline {
             this.descriptorSlotHits++;
             return this.lastDescriptorSet;
         }
-        if (this.setsByTextureView.containsKey(key)) {
+        long cachedSet = this.setsByTextureView.get(key);
+        if (cachedSet != 0L) {
             DESCRIPTOR_HITS++;
             this.lastDescriptorKey = key;
-            this.lastDescriptorSet = this.setsByTextureView.get(key);
-            return this.lastDescriptorSet;
+            this.lastDescriptorSet = cachedSet;
+            return cachedSet;
         }
         // A miss retires the eldest entries once the cache is at its limit. The key is view ^ generation, so a
         // generation bump (a mirror refresh, a sampler rebuild, a reallocation) always misses and, before this, always
@@ -794,9 +795,10 @@ public final class VulkanImmediateTexturePipeline {
         // on the retired list, counted, for a completion-gated reset.
         while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && !this.insertionOrder.isEmpty()) {
             Long eldest = this.insertionOrder.remove(0);
-            if (this.setsByTextureView.containsKey(eldest.longValue())) {
+            long removed = this.setsByTextureView.remove(eldest.longValue());
+            if (removed != 0L) {
                 this.descriptorSetsRetired++;
-                this.retiredSets.add(Long.valueOf(this.setsByTextureView.remove(eldest.longValue())));
+                this.retiredSets.add(Long.valueOf(removed));
             }
         }
         // A miss allocates and writes a descriptor set. If this fires on almost every batch, the key (the texture's view)
