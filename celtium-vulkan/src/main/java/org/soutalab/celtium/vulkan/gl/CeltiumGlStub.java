@@ -949,7 +949,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_LUMINANCE_VALUE = 0x1909;
     private static final int GL_LUMINANCE_ALPHA_VALUE = 0x190A;
     private static final int GL_BGR_VALUE = 0x80E0;
-    private final Map<Integer, List<Object[]>> displayLists = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * Compiled lists by name. Single render thread, like every other GL object here: the concurrent map this used to be
+     * never had a second caller, and the replay path (one glCallList per compiled model draw) paid a boxing key per
+     * lookup for it.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<Object[]>> displayLists =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     /** Replays and recorded calls per display-list id, for the sky lists' census (RenderGlobal's two of them). */
     private final int[] listReplayCounts = new int[512];
     private final long[] listReplayTotals = new long[512];
@@ -3688,7 +3694,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // The spec replaces a name's contents at glEndList, so the payloads of the list this one displaces
                     // are unreachable from here on and are released now rather than held for the life of the process.
                     releaseListPayloads(Integer.valueOf(this.compilingList));
-                    this.displayLists.put(Integer.valueOf(this.compilingList), compiled);
+                    this.displayLists.put(this.compilingList, compiled);
                     if (this.openListGeometry != null) this.displayListGeometry.put(this.compilingList, this.openListGeometry);
                     if (this.openListPayloads != null) {
                         this.displayListPayloads.put(Integer.valueOf(this.compilingList), this.openListPayloads);
@@ -4357,7 +4363,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             int range = (int) c[1];
             for (int i = 0; i < range; i++) {
                 Integer name = Integer.valueOf(first + i);
-                this.displayLists.remove(name);
+                this.displayLists.remove(name.intValue());
                 this.liveNames.remove(name.intValue());
                 releaseListPayloads(name);
             }
@@ -7231,7 +7237,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
         // player, held items, the sky, the stars and the horizon plane all arrive here.
         this.lastCalledList = listId;
-        List<Object[]> list = this.displayLists.get(Integer.valueOf(this.lastCalledList));
+        List<Object[]> list = this.displayLists.get(this.lastCalledList);
         if (list == null) {
             // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible.
             this.displayListsUnresolved++;
