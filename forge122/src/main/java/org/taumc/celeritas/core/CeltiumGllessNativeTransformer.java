@@ -1207,6 +1207,40 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IIIII)V".equals(descriptor) && name.endsWith("glDrawArraysInstancedBaseInstance")) {
+                for (int slot = 0; slot < 5; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDrawArraysInstancedBaseInstance", "(IIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIJII)V".equals(descriptor) && name.endsWith("glDrawElementsInstancedBaseVertex")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.ILOAD, 5);
+                method.visitVarInsn(Opcodes.ILOAD, 6);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDrawElementsInstancedBaseVertex", "(IIIJII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIJIII)V".equals(descriptor) && name.endsWith("glDrawElementsInstancedBaseVertexBaseInstance")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.ILOAD, 5);
+                method.visitVarInsn(Opcodes.ILOAD, 6);
+                method.visitVarInsn(Opcodes.ILOAD, 7);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDrawElementsInstancedBaseVertexBaseInstance", "(IIIJIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIII)V".equals(descriptor) && name.endsWith("glDrawArraysInstanced")) {
                 for (int slot = 0; slot < 4; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);

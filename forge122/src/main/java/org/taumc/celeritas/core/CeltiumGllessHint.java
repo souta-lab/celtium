@@ -976,6 +976,27 @@ public final class CeltiumGllessHint {
         }
     }
 
+    public static void glDrawArraysInstancedBaseInstance(int mode, int first, int count, int instanceCount,
+            int baseInstance) {
+        if (instanceCount == 1) {
+            glDrawArrays(mode, first, count);
+        }
+    }
+
+    public static void glDrawElementsInstancedBaseVertex(int mode, int count, int type, long indices,
+            int instanceCount, int baseVertex) {
+        if (instanceCount == 1) {
+            glDrawElementsBaseVertex(mode, count, type, indices, baseVertex);
+        }
+    }
+
+    public static void glDrawElementsInstancedBaseVertexBaseInstance(int mode, int count, int type, long indices,
+            int instanceCount, int baseVertex, int baseInstance) {
+        if (instanceCount == 1) {
+            glDrawElementsBaseVertex(mode, count, type, indices, baseVertex);
+        }
+    }
+
     /** Binds an array buffer, as {@code glBindBuffer(target, name)} does. */
     public static void glBindBuffer(int target, int name) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBuffer(target, name);
