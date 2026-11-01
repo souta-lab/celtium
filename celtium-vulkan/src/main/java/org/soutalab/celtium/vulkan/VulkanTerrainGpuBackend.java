@@ -2645,6 +2645,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
     private static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
     private long skippedPresents;
+    /** Frame-target recreations refused because a recording was open; each is retried on the next recording. */
+    private long frameTargetRecreationDeferred;
     /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
     private static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
             Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
@@ -15801,6 +15803,21 @@ this.frameBufferOpen = false;
         if (this.frameTarget != null && this.frameTarget.matches(width, height)) {
             return true;
         }
+        if (this.frameTarget != null && celtium$recordingOpen()) {
+            // A size change can arrive while the frame's unified command buffer is still recording - the real launch
+            // does exactly this once, when the window it opened at 854x480 goes fullscreen at the monitor size, and the
+            // first attempt released the old pair's images and its framebuffer under the open recording. The validation
+            // layer named it (VUID-vkEndCommandBuffer-commandBuffer-00059: two images and a framebuffer destroyed while
+            // bound) and the next submission took the device down, which was the black screen. A target whose size has
+            // to change is therefore refused for this recording and rebuilt on the next one, when nothing is open.
+            this.frameTargetRecreationDeferred++;
+            if (this.frameTargetRecreationDeferred <= 8) {
+                System.out.println("[Celtium] CELTIUM_FRAME_TARGET_DEFERRED from=" + this.targetWidth + "x"
+                        + this.targetHeight + " to=" + width + "x" + height
+                        + " count=" + this.frameTargetRecreationDeferred + " (a recording is open)");
+            }
+            return false;
+        }
         // The GPU must be finished with the old target before any of it is released: a resize recreates the game's
         // framebuffer, and the validation layer caught the first attempt doing exactly this -
         // "vkDestroyFramebuffer(): can't be called on VkFramebuffer ... that is currently in use by VkCommandBuffer".
@@ -16323,6 +16340,12 @@ this.frameBufferOpen = false;
                     .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
             check(vkBeginCommandBuffer(this.commandBuffer, begin), "vkBeginCommandBuffer");
             this.commandState.begin();
+            // The flag the retire drain guard reads. It was declared ("set at its begin") and only ever cleared, so
+            // celtium$recordingOpen() was blind to the frame's own recording and rc.24's guard never fired - which is
+            // why the tester's black screen came back after that fix with the same VUID (objects bound to an open
+            // command buffer destroyed under it). Set here, at the one place the frame's unified buffer begins; the
+            // coordinator clears it at submit and on every fallback path.
+            this.frameBufferOpen = true;
             // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
