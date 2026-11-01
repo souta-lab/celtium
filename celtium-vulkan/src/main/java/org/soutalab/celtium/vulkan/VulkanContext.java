@@ -1300,10 +1300,6 @@ public final class VulkanContext {
     /** About 14 KiB of MemoryStack per chunk, leaving room for frames the callers already hold. */
     private static final int SUBMIT_CHUNK = 128;
 
-    static int[] planSubmitGroups(boolean[] barriers) {
-        return planSubmitGroups(barriers, barriers.length, new int[barriers.length]);
-    }
-
     /** {@return the filled prefix count}, writing group sizes into {@code sizes} instead of allocating one. */
     /** Writes group sizes into {@code sizes} and {@return how many were written}. */
     static int planSubmitGroupsInto(boolean[] barriers, int length, int[] sizes) {
@@ -1317,10 +1313,6 @@ public final class VulkanContext {
             i = end;
         }
         return n;
-    }
-
-    static int[] planSubmitGroups(boolean[] barriers, int length, int[] sizes) {
-        return java.util.Arrays.copyOf(sizes, planSubmitGroupsInto(barriers, length, sizes));
     }
 
     static long coalescedCommandBuffers;
