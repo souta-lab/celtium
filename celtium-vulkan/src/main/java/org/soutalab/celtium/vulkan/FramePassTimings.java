@@ -274,9 +274,12 @@ public final class FramePassTimings {
         // opened at all, or opened and empty?") is only asked while diagnosing, so they are opt-in now.
         // Resolved when anything needs it: the timings themselves when they are enabled, or the counts when asked for.
         // Skipping it when both are off is the point - it is the hash lookup that cost 1.1% of the render thread.
-        int counted = enabled() || COUNT_CALLS ? indexOf(pass) : -1;
+        // enabled() is a static-field read plus a property OR; asking it once here rather than twice keeps the bracket
+        // that runs per group and per window to one question.
+        boolean timingsOn = enabled();
+        int counted = timingsOn || COUNT_CALLS ? indexOf(pass) : -1;
         if (counted >= 0) BEGIN_CALLS[counted]++;
-        if (!enabled() || frameStart == 0L || counted < 0) return;
+        if (!timingsOn || frameStart == 0L || counted < 0) return;
         int i = counted;
         long now = clockNanos();
         boolean outermost = i < TOP_LEVEL.length ? coverage.begin(i, now)
