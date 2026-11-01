@@ -3008,6 +3008,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
 
     /** The last colour array handed to a group; read-only after capture, so equal colours may share it. */
+    /** Scratch for the font run's save of the two matrices: the save is method-local, so two arrays serve every flush. */
+    private final float[] fontRunProjectionScratch = new float[16];
+    private final float[] fontRunModelViewScratch = new float[16];
+
     private float[] lastGroupColorArray;
 
     /** {@return the captured colour, reusing the previous array while every component matches}. */
@@ -6622,8 +6626,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         boolean savedTexture2d = this.immediateState.texture2dEnabled();
         boolean savedAlphaTest = this.immediateState.alphaTestEnabled();
         float savedAlphaRef = this.immediateState.alphaFuncReference();
-        float[] savedProjection = this.glProjection.clone();
-        float[] savedModelView = this.glModelView.clone();
+        System.arraycopy(this.glProjection, 0, this.fontRunProjectionScratch, 0, 16);
+        System.arraycopy(this.glModelView, 0, this.fontRunModelViewScratch, 0, 16);
+        float[] savedProjection = this.fontRunProjectionScratch;
+        float[] savedModelView = this.fontRunModelViewScratch;
         int savedUnit = this.immediateState.activeTextureUnit();
         try {
             // The run's texture must land on unit 0 - the sampler the group's shader reads and the unit
