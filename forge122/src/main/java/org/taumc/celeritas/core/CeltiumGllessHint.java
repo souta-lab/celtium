@@ -244,6 +244,13 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
     }
 
+    /** The DSA sub-image form: a patch into the named texture's mirror. */
+    public static void glTexSubImageNamed(int texture, int level, int x, int y, int width, int height, int format, int type,
+            long pixels) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texSubImageNamed(texture, level, x, y, width, height, format,
+                type, pixels);
+    }
+
     /** The DSA immutable-storage form: the texture is named instead of bound. */
     public static void glTexStorageNamed(int texture, int levels, int internalFormat, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorageNamed(texture, levels, internalFormat, width, height);

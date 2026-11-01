@@ -1547,6 +1547,16 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IIIIIIIIJ)V".equals(descriptor) && name.endsWith("glTextureSubImage2D")) {
+                for (int slot = 0; slot < 8; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.LLOAD, 8);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTexSubImageNamed", "(IIIIIIIIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIIII)V".equals(descriptor) && name.endsWith("glTextureStorage2D")) {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);

@@ -1806,6 +1806,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glTextureSubImage2D} from the transformer's route: a named patch into the mirror. */
+    public static void celtium$texSubImageNamed(int texture, int level, int x, int y, int width, int height, int format,
+            int type, long pixels) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && texture > 0) {
+            stub.texSubImageForName(texture, level, x, y, width, height, format, type, pixels);
+        }
+    }
+
     /** {@code glTextureStorage2D/3D} from the transformer's route: the named form of the extent record. */
     public static void celtium$texStorageNamed(int texture, int levels, int internalFormat, int width, int height) {
         CeltiumGlStub stub = installed;
@@ -6437,9 +6446,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (isProxyTarget(target)) {
             return;
         }
+        texSubImageForName(uploadTargetName(target), level, xOffset, yOffset, width, height, format, type, pixels);
+    }
+
+    /** The DSA spelling's producer: the same patch rules, with the texture named by the caller. */
+    private void texSubImageForName(int name, int level, int xOffset, int yOffset, int width, int height, int format,
+            int type, long pixels) {
         int x = xOffset;
         int y = yOffset;
-        int name = uploadTargetName(target);
         if (this.pixelUnpackBuffer > 0 && this.pboUploadLogs < 8) {
             this.pboUploadLogs++;
             ByteBuffer storage = this.bufferStore.get(this.pixelUnpackBuffer);
