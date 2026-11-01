@@ -71,7 +71,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // that state through the GlStateManager hooks, not through these raw setters).
             "glDepthMask", "glDepthFunc", "glDepthRange", "glBlendColor", "glColorMaski",
             "glBlendFuncSeparatei", "glBlendEquationi", "glBlendEquationSeparatei",
-            "glClearBufferfv", "glClearBufferiv", "glClearBufferuiv",
+            // glClearBufferfv/iv/fi are routed to the clear record below; the no-op set is consulted first.
             "glStencilFuncSeparate", "glStencilOpSeparate", "glStencilMaskSeparate",
             "glPolygonMode", "glHint", "glPointSize", "glSampleCoverage", "glLogicOp", "glClampColor",
             "glReadBuffer", "glDrawBuffer", "glDrawBuffers",
@@ -947,6 +947,28 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glClearBufferfv") || name.endsWith("glClearBufferiv")
+                            || name.endsWith("glClearBufferuiv"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glClearBufferfv", "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIFI)V".equals(descriptor)
+                    && (name.endsWith("glClearBufferfi"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.FLOAD, 2);
+                method.visitVarInsn(Opcodes.ILOAD, 3);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glClearBufferfi", "(IIFI)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IJJJ)V".equals(descriptor)
                     && (name.endsWith("glGetBufferSubData") || name.endsWith("glGetNamedBufferSubData"))) {
                 boolean named = name.endsWith("glGetNamedBufferSubData");

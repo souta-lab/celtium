@@ -2565,6 +2565,57 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** {@code glClearBufferfv} from the transformer's route: colour or depth, with the caller's value. */
+    public static void celtium$clearBufferfv(int buffer, int drawBuffer, long value) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || value == 0L) {
+            return;
+        }
+        if (buffer == 0x1800) { // GL_COLOR
+            float red = org.lwjgl.system.MemoryUtil.memGetFloat(value);
+            float green = org.lwjgl.system.MemoryUtil.memGetFloat(value + 4L);
+            float blue = org.lwjgl.system.MemoryUtil.memGetFloat(value + 8L);
+            float alpha = org.lwjgl.system.MemoryUtil.memGetFloat(value + 12L);
+            float oldRed = stub.clearRed, oldGreen = stub.clearGreen, oldBlue = stub.clearBlue, oldAlpha = stub.clearAlpha;
+            try {
+                stub.clearRed = red;
+                stub.clearGreen = green;
+                stub.clearBlue = blue;
+                stub.clearAlpha = alpha;
+                stub.recordClear(0x4000);
+            } finally {
+                stub.clearRed = oldRed;
+                stub.clearGreen = oldGreen;
+                stub.clearBlue = oldBlue;
+                stub.clearAlpha = oldAlpha;
+            }
+        } else if (buffer == 0x1801) { // GL_DEPTH
+            double depth = org.lwjgl.system.MemoryUtil.memGetFloat(value);
+            double old = stub.clearDepth;
+            try {
+                stub.clearDepth = depth;
+                stub.recordClear(0x0100);
+            } finally {
+                stub.clearDepth = old;
+            }
+        }
+    }
+
+    /** {@code glClearBufferfi} from the transformer's route: the depth/stencil pair clear. */
+    public static void celtium$clearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || buffer != 0x84F9) { // GL_DEPTH_STENCIL
+            return;
+        }
+        double old = stub.clearDepth;
+        try {
+            stub.clearDepth = depth;
+            stub.recordClear(0x4100);
+        } finally {
+            stub.clearDepth = old;
+        }
+    }
+
     public static void celtium$clear(int mask) {
         CeltiumGlStub stub = installed;
         if (stub != null) {

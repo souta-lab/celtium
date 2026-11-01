@@ -1377,6 +1377,15 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glClearBufferfv/fi}: the value-carrying clear forms, routed to the same clear record. */
+    public static void glClearBufferfv(int buffer, int drawBuffer, long value) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBufferfv(buffer, drawBuffer, value);
+    }
+
+    public static void glClearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBufferfi(buffer, drawBuffer, depth, stencil);
+    }
+
     public static void glClear(int mask) {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
