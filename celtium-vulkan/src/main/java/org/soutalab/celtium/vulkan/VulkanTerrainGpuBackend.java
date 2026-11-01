@@ -3964,6 +3964,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.immediateState.alphaTestEnabled();
     }
 
+    /** {@return the two light directions as the fixed pipeline keeps them}. */
+    public float[] celtium$lightDirections() {
+        return this.immediateState.lightDirections();
+    }
+
+    /** {@return the two lights' diffuse colours}. */
+    public float[] celtium$lightDiffuse() {
+        return this.immediateState.lightDiffuse();
+    }
+
     /** {@return the light-model ambient the shader lighting uses}. */
     public float[] celtium$lightAmbient() {
         return this.immediateState.lightAmbient();

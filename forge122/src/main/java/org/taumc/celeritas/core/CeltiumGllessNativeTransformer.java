@@ -922,6 +922,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if (("glGetLightfv".equals(name) || "nglGetLightfv".equals(name)) && "(IIJ)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetLightfv", "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // Raw light parameters: the same position/diffuse/ambient the GlStateManager mixin mirrors.
             if (("glLightfv".equals(name) || "nglLightfv".equals(name)) && "(IIJ)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);

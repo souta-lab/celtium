@@ -187,6 +187,46 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * LWJGL3's {@code glGetLightfv}: answered from the lighting mirror the payload is built from. GL reports the
+     * position the driver stored - already transformed by the modelview at set time - which is what the mirror holds.
+     */
+    public static void glGetLightfv(int light, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int index = light - 0x4000; // GL_LIGHT0
+        var state = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current()
+                instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
+        if (state == null || index < 0 || index >= 2) {
+            for (int i = 0; i < 4; i++) {
+                org.lwjgl.system.MemoryUtil.memPutFloat(out + (long) i * 4L, 0.0f);
+            }
+            return;
+        }
+        if (pname == 0x1203) { // GL_POSITION - a directional light's w is 0
+            float[] directions = state.celtium$lightDirections();
+            org.lwjgl.system.MemoryUtil.memPutFloat(out, directions[index * 3]);
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + 4L, directions[index * 3 + 1]);
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + 8L, directions[index * 3 + 2]);
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + 12L, 0.0f);
+            return;
+        }
+        if (pname == 0x1201) { // GL_DIFFUSE
+            float[] diffuse = state.celtium$lightDiffuse();
+            org.lwjgl.system.MemoryUtil.memPutFloat(out, diffuse[index * 3]);
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + 4L, diffuse[index * 3 + 1]);
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + 8L, diffuse[index * 3 + 2]);
+            org.lwjgl.system.MemoryUtil.memPutFloat(out + 12L, 1.0f);
+            return;
+        }
+        // GL_AMBIENT/SPECULAR per light are not carried by the payload; GL's initial value is black, alpha 1.
+        org.lwjgl.system.MemoryUtil.memPutFloat(out, 0.0f);
+        org.lwjgl.system.MemoryUtil.memPutFloat(out + 4L, 0.0f);
+        org.lwjgl.system.MemoryUtil.memPutFloat(out + 8L, 0.0f);
+        org.lwjgl.system.MemoryUtil.memPutFloat(out + 12L, 1.0f);
+    }
+
+    /**
      * Raw {@code glLightfv}: the two pnames the GlStateManager mixin mirrors (position and diffuse), for a mod that
      * sets its lights straight through GL. Absent, its light change never reached the group payload.
      */
