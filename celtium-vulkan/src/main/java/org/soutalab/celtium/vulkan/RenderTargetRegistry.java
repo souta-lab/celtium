@@ -2,10 +2,8 @@ package org.soutalab.celtium.vulkan;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Which real image each framebuffer identity is drawn into, at which generation, in which layout - and who clears it.
@@ -84,9 +82,11 @@ public final class RenderTargetRegistry {
     /** The frame-target generation: bumped whenever the frame image is replaced. */
     private long generation;
     /** identity -> the slot it was routed to, with the generation that routing was recorded under. */
-    private final Map<Long, Alias> aliases = new HashMap<Long, Alias>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<Alias> aliases =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** The distinct identities the game has bound, bounded; the census the routing rule is read against. */
-    private final Set<Long> bindCensus = new HashSet<Long>();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet bindCensus =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
     private int bindCensusOverflow;
     private String censusSummary = "none";
 
@@ -117,14 +117,14 @@ public final class RenderTargetRegistry {
             this.mainIdentity = identity;
         }
         ImageSlot slot = isMain ? ImageSlot.MAIN : ImageSlot.forNonMainIdentity(identity);
-        this.aliases.put(Long.valueOf(identity), new Alias(slot, isMain, this.generation));
+        this.aliases.put(identity, new Alias(slot, isMain, this.generation));
         if (this.bindCensus.size() < CENSUS_LIMIT) {
-            if (this.bindCensus.add(Long.valueOf(identity)) && this.bindCensus.size() == CENSUS_LIMIT) {
+            if (this.bindCensus.add(identity) && this.bindCensus.size() == CENSUS_LIMIT) {
                 // The summary is built once, at the point the census stops growing, so the per-bind path stays cheap.
                 this.censusSummary = "distinct=" + this.bindCensus.size() + " overflow=" + this.bindCensusOverflow
                         + " main=" + hex(this.mainIdentity) + " lastRoute=" + routeLabel;
             }
-        } else if (!this.bindCensus.contains(Long.valueOf(identity))) {
+        } else if (!this.bindCensus.contains(identity)) {
             this.bindCensusOverflow++;
         }
         return slot;
@@ -152,7 +152,7 @@ public final class RenderTargetRegistry {
      * that asks about an identity it has not seen is asking a question about the rule, not about history.
      */
     public ImageSlot slotFor(long identity) {
-        Alias alias = this.aliases.get(Long.valueOf(identity));
+        Alias alias = this.aliases.get(identity);
         return alias != null ? alias.slot : ImageSlot.forNonMainIdentity(identity);
     }
 
@@ -165,7 +165,8 @@ public final class RenderTargetRegistry {
      * into" resolves through this map. A name reused by a new framebuffer overwrites, which is the answer the new
      * reader wants.
      */
-    private final Map<Integer, Long> framebufferNames = new HashMap<Integer, Long>();
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap framebufferNames =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
 
     /**
      * Records that the framebuffer with GL name {@code framebufferObject} is the object whose identity is
@@ -175,13 +176,14 @@ public final class RenderTargetRegistry {
         if (identity == 0L || framebufferObject == 0) {
             return;
         }
-        this.framebufferNames.put(Integer.valueOf(framebufferObject), Long.valueOf(identity));
+        this.framebufferNames.put(framebufferObject, identity);
     }
 
     /** {@return the identity reported for a GL framebuffer name}, or {@link Long#MIN_VALUE} when none was recorded. */
     public long identityForFramebufferName(int framebufferObject) {
-        Long identity = this.framebufferNames.get(Integer.valueOf(framebufferObject));
-        return identity == null ? Long.MIN_VALUE : identity.longValue();
+        // Identities are never zero, so the primitive map's absent value (0) is unambiguous here.
+        long identity = this.framebufferNames.get(framebufferObject);
+        return identity == 0L ? Long.MIN_VALUE : identity;
     }
 
     /**
@@ -192,13 +194,13 @@ public final class RenderTargetRegistry {
      */
     public String sharedSlots() {
         Map<ImageSlot, List<Long>> bySlot = new HashMap<ImageSlot, List<Long>>();
-        for (Map.Entry<Long, Alias> entry : this.aliases.entrySet()) {
+        for (it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<Alias> entry : this.aliases.long2ObjectEntrySet()) {
             List<Long> ids = bySlot.get(entry.getValue().slot);
             if (ids == null) {
                 ids = new ArrayList<Long>();
                 bySlot.put(entry.getValue().slot, ids);
             }
-            ids.add(entry.getKey());
+            ids.add(Long.valueOf(entry.getLongKey()));
         }
         StringBuilder text = new StringBuilder();
         for (Map.Entry<ImageSlot, List<Long>> entry : bySlot.entrySet()) {
@@ -404,8 +406,8 @@ public final class RenderTargetRegistry {
         this.chainPairClears.remove(key);
         this.chainPairLayouts.remove(key);
         this.chainPairFramebufferCreationCounts.remove(key);
-        this.aliases.remove(key);
-        this.framebufferNames.values().removeIf(key::equals);
+        this.aliases.remove(identity);
+        this.framebufferNames.int2LongEntrySet().removeIf(entry -> entry.getLongValue() == identity);
     }
 
     /** Forgets every chain-pair framebuffer, after they have been destroyed. */
