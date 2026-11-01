@@ -168,6 +168,17 @@ public final class CeltiumGllessHint {
      * attribute counts a GL 3.0 profile guarantees - and anything unknown is written as 0 rather than left as
      * uninitialised memory.
      */
+    /** LWJGL3's buffer-parameter query natives: GL_BUFFER_SIZE comes from the recorded or native buffer. */
+    public static void glGetBufferParameteriv(int target, int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferParameter("glGetBufferParameteriv",
+                target, pname, params);
+    }
+
+    public static void glGetBufferParameteri64v(int target, int pname, long params) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferParameter("glGetBufferParameteri64v",
+                target, pname, params);
+    }
+
     /** LWJGL3's tex-parameter query natives: the bind state the stub records answers them. */
     public static void glGetTexParameteriv(int target, int pname, long params) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameteriv", target, pname, params);

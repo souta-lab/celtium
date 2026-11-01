@@ -4631,6 +4631,32 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
+    /** The buffer-object query: GL_BUFFER_SIZE answers the recorded or native size, everything else 0. */
+    private void getBufferParameterQuery(String name, int target, int pname, long out) {
+        if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
+            int bound = boundBuffer(target);
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(bound);
+            ByteBuffer storage = bound == 0 ? null : this.bufferStore.get(bound);
+            int size = nativeBuffer != null ? nativeBuffer.byteSize()
+                    : logicalSizeOf(bound, storage == null ? 0 : storage.capacity());
+            if ("glGetBufferParameteri64v".equals(name)) {
+                memPutLong(out, size);
+            } else {
+                memPutInt(out, size);
+            }
+            return;
+        }
+        memPutInt(out, 0);
+    }
+
+    /** LWJGL3's buffer-parameter query natives; see {@link #getBufferParameterQuery}. */
+    public static void celtium$getBufferParameter(String name, int target, int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && out != 0L) {
+            stub.getBufferParameterQuery(name, target, pname, out);
+        }
+    }
+
     /** The non-DSA tex-parameter query: (target, pname, out) on the texture bound to that target's active unit. */
     private void getTexParameterQuery(String name, int target, int paramPname, long out) {
         int textureName = 0;
@@ -8090,20 +8116,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if (fn.name.startsWith("glGetBufferParameter")) {
-            if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
-                int bound = boundBuffer((int) c[0]);
-                NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(bound);
-                ByteBuffer storage = bound == 0 ? null : this.bufferStore.get(bound);
-                int size = nativeBuffer != null ? nativeBuffer.byteSize()
-                        : logicalSizeOf(bound, storage == null ? 0 : storage.capacity());
-                if ("glGetBufferParameteri64v".equals(fn.name)) {
-                    memPutLong(out, size);
-                } else {
-                    memPutInt(out, size);
-                }
-                return;
-            }
-            memPutInt(out, 0);
+            getBufferParameterQuery(fn.name, (int) c[0], (int) c[1], out);
             return;
         }
         if ("glGetShaderiv".equals(fn.name) || "glGetProgramiv".equals(fn.name)) {

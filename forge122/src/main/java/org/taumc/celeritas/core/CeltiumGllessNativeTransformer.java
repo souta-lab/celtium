@@ -613,6 +613,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        // The buffer-object queries: LWJGL's own natives bypassed the dispatch path, so glGetBufferParameteri answered
+        // zero and anything sizing a mapped buffer from it read an empty range.
+        if (returnType.equals("V") && "(IIJ)V".equals(descriptor)
+                && ("nglGetBufferParameteriv".equals(name) || "nglGetBufferParameteri64v".equals(name))) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "nglGetBufferParameteri64v".equals(name) ? "glGetBufferParameteri64v"
+                            : "glGetBufferParameteriv", "(IIJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
         // The tex-parameter queries: the stub records wrap/filter state and answers the dispatch path, but LWJGL3's
         // own natives bypassed it, so a mod that saved and restored a filter read zero.
         if (returnType.equals("V") && "(IIJ)".equals(descriptor)) {
