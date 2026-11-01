@@ -1072,9 +1072,16 @@ public final class CeltiumGlStub implements FunctionProvider {
             // set built from GL_* alone leaves core functions gated on a version at zero. Measured offline before any
             // leg: glGetString came out 0x0 with only the GL_* names and non-zero with both.
             java.util.Set<String> extensions = new java.util.HashSet<>();
+            // The version pseudo-extensions are cut off at the version this stub actually advertises (3.0). Adding
+            // every OpenGL* field made capabilities.OpenGL44 true while glGetString(GL_VERSION) said 3.0 - the same
+            // inconsistency the version integers had, and the same 4.4 gate (MappedStagingBuffer) that stalled the
+            // client on the persistent-mapping path. The GL_* extension flags stay as they were.
+            java.util.Set<String> advertisedVersions = new java.util.HashSet<>(java.util.Arrays.asList(
+                    "OpenGL11", "OpenGL12", "OpenGL13", "OpenGL14", "OpenGL15",
+                    "OpenGL20", "OpenGL21", "OpenGL30"));
             for (java.lang.reflect.Field field : capabilitiesClass.getFields()) {
                 String name = field.getName();
-                if (name.startsWith("GL_") || name.startsWith("OpenGL")) {
+                if (name.startsWith("GL_") || advertisedVersions.contains(name)) {
                     extensions.add(name);
                 }
             }
