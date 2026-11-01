@@ -374,6 +374,11 @@ public final class CeltiumGllessHint {
         }
     }
 
+    /** Raw {@code glLineWidth}: recorded so the narrowing report knows what the caller asked for. */
+    public static void glLineWidth(float width) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$lineWidth(width);
+    }
+
     /** Indexed blend/colour-mask state: index 0 is the single target this renderer has. */
     public static void glBlendFuncSeparateIndexed(int index, int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
         if (index == 0) {

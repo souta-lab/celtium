@@ -1105,6 +1105,13 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(F)V".equals(descriptor) && name.endsWith("glLineWidth")) {
+                method.visitVarInsn(Opcodes.FLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLineWidth", "(F)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(II)V".equals(descriptor)
                     && (name.endsWith("glEnablei") || name.endsWith("glDisablei")
                             || name.endsWith("glEnableIndexedEXT") || name.endsWith("glDisableIndexedEXT"))) {

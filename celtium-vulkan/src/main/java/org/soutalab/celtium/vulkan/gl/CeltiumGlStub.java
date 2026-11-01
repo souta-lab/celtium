@@ -1851,6 +1851,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glLineWidth} from the transformer's route: the requested width the narrowing report compares against. */
+    public static void celtium$lineWidth(float width) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && width > 0.0f) {
+            stub.lineWidth = width;
+        }
+    }
+
     /** {@code glPixelStorei} from the transformer's route: the unpack state a captured upload is read with. */
     public static void celtium$pixelStorei(int pname, int value) {
         CeltiumGlStub stub = installed;
