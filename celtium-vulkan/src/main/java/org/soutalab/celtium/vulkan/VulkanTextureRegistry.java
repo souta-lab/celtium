@@ -328,7 +328,7 @@ public final class VulkanTextureRegistry {
         this.mutations++;
         celtium$dropMemo();
         this.fullyInitialized.add(id);
-        this.staleIds.remove(id);
+        this.staleIds.remove(glTextureId);
         this.externalPublished++;
         if (this.externalLogged.size() < 8 && this.externalLogged.add(id)) {
             System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE published glTexture=" + glTextureId
@@ -585,10 +585,11 @@ public final class VulkanTextureRegistry {
 
     /** Consumes the CPU application that made a readback unnecessary, so the next write is judged on its own. */
     public void consumeReadback(int glTextureId) {
-        Integer id = Integer.valueOf(glTextureId);
-        Integer applied = announcedGenerationOf(id);
-        if (applied != null) {
-            setConsumedGeneration(id.intValue(), applied.intValue());
+        // Primitive lookup: a generation of 0 is the array's "none" sentinel, so no boxed null test is needed. This
+        // runs once per animated-sprite invalidation (about eleven hundred a run).
+        int applied = announcedGenerationOfInt(glTextureId);
+        if (applied != 0) {
+            setConsumedGeneration(glTextureId, applied);
         }
         this.readbacksSkippedAfterAnnouncement++;
         // The generation being consumed means the pixels the invalidation reported are already in this image, so the
@@ -596,7 +597,7 @@ public final class VulkanTextureRegistry {
         // readback path. Before this was removed, the directly held refresh skipped its readback while the registry's
         // get() still re-uploaded the same texture on the next bind, which is the readback stream that was supposed
         // to be gone: it ran once per animated-sprite invalidation for every texture the immediate path samples.
-        this.staleIds.remove(id);
+        this.staleIds.remove(glTextureId);
     }
 
     /** {@return how many readbacks were skipped because the announced pixels were already in the image}. */
@@ -1604,6 +1605,14 @@ public final class VulkanTextureRegistry {
     private int[] consumedGenerationByTexture = new int[4096];
 
     /** {@return the announced generation for a GL name, or {@code null} when none was recorded}. */
+    /** {@return the announced generation, 0 when none - the array's own sentinel, so no box is allocated. */
+    private int announcedGenerationOfInt(int id) {
+        if (id < 0 || id >= this.announcedGenerationByTexture.length) {
+            return 0;
+        }
+        return this.announcedGenerationByTexture[id];
+    }
+
     private Integer announcedGenerationOf(int id) {
         if (id < 0 || id >= this.announcedGenerationByTexture.length) {
             return null;
