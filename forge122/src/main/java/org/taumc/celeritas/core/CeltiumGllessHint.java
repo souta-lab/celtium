@@ -1008,6 +1008,19 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, false);
     }
 
+    /** The generic attribute pointer, recorded for index 0 (the position attribute the decoder reads). */
+    public static void glVertexAttribPointer(int index, int size, int type, boolean normalized, int stride, long pointer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexAttribPointer(index, size, type, normalized, stride,
+                pointer);
+    }
+
+    /** Attribute-array enables for index 0, recorded as the position attribute's enable. */
+    public static void glEnableVertexAttribArray(int index, boolean enabled) {
+        if (index == 0) {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(0x8622, enabled);
+        }
+    }
+
     /** Sets the client vertex-array pointer, as {@code glVertexPointer(size, type, stride, pointer)} does. */
     public static void glVertexPointer(int size, int type, int stride, long pointer) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexPointer(size, type, stride, pointer);

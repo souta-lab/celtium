@@ -2157,6 +2157,18 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> vaoRecords =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
 
+    /** @code glVertexAttribPointer} for index 0: the generic spelling of the position pointer. */
+    public static void celtium$vertexAttribPointer(int index, int size, int type, boolean normalized, int stride,
+            long pointer) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && index == 0) {
+            stub.vertexPointerSize = size;
+            stub.vertexPointerType = type;
+            stub.vertexPointerStride = stride;
+            stub.vertexPointerOffset = pointer;
+        }
+    }
+
     /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
     public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
         CeltiumGlStub stub = installed;
@@ -7897,8 +7909,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         String reason = null;
         if (storage == null && !clientMemory) {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
-        } else if (!(this.enables[GL_VERTEX_ARRAY] != 0)) {
-            reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
+        } else if (this.enables[GL_VERTEX_ARRAY] == 0 && this.enables[0x8622] == 0) {
+            // Core code enables attribute 0 instead of the legacy GL_VERTEX_ARRAY bit; both describe the same position
+            // attribute the decode reads, so either enable makes this draw describable.
+            reason = "GL_VERTEX_ARRAY / attribute 0 is not enabled, so no vertex pointer describes this draw";
         } else if (mode != GL_QUADS && mode != 4 && mode != 6 && mode != 5 && mode != 8 && mode != 9
                 && mode != 1 && mode != 2 && mode != 3) {
             reason = "draw mode " + mode + " is not handled (quads/triangles/fans/strips/polygons/lines only)";

@@ -1207,6 +1207,27 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IIIZIJ)V".equals(descriptor) && name.endsWith("glVertexAttribPointer")) {
+                for (int slot = 0; slot < 4; slot++) {
+                    method.visitVarInsn(slot == 3 ? Opcodes.ILOAD : Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.ILOAD, 4);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glVertexAttribPointer", "(IIIZIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(I)V".equals(descriptor)
+                    && (name.endsWith("glEnableVertexAttribArray") || name.endsWith("glDisableVertexAttribArray"))) {
+                boolean enabled = name.contains("Enable");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitInsn(enabled ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glEnableVertexAttribArray", "(IZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(I)V".equals(descriptor) && name.endsWith("glPushAttrib")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
