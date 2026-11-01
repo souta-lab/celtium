@@ -814,7 +814,9 @@ public final class TerrainRenderer {
     // ---------------------------------------------------------------- region upload (R4)
 
     /** Per-colour counts of the first vertices, for the diagnostics that print them. */
-    private final java.util.HashMap<Integer, Integer> colourCounts = new java.util.HashMap<Integer, Integer>();
+    // Int-keyed: the census counts one entry per rebuilt mesh, and the boxed map allocated two Integers per mesh.
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap colourCounts =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
     private int colourBatches;
     private int verticesLogged;
 
@@ -824,7 +826,7 @@ public final class TerrainRenderer {
     }
 
     /** {@return the per-colour counts}. */
-    java.util.Map<Integer, Integer> colourCounts() {
+    it.unimi.dsi.fastutil.ints.Int2IntMap colourCounts() {
         return this.colourCounts;
     }
 
@@ -862,19 +864,18 @@ public final class TerrainRenderer {
         for (TerrainRenderer.PendingMesh mesh : pending) {
             if (mesh.parts != null && mesh.sectionFirstColor != null) {
                 int colour = mesh.sectionFirstColor[mesh.sectionIndex];
-                Integer previous = colourCounts.get(colour);
-                colourCounts.put(colour, previous == null ? 1 : previous + 1);
+                colourCounts.put(colour, colourCounts.get(colour) + 1);
             }
         }
         this.colourBatches++;
         if ((this.colourBatches == 1 || this.colourBatches % 20 == 0) && VulkanDiagnostics.enabled()) {
-            java.util.List<java.util.Map.Entry<Integer, Integer>> entries =
-                    new java.util.ArrayList<>(colourCounts.entrySet());
-            java.util.Collections.sort(entries, (a, b) -> b.getValue() - a.getValue());
+            java.util.List<it.unimi.dsi.fastutil.ints.Int2IntMap.Entry> entries =
+                    new java.util.ArrayList<>(colourCounts.int2IntEntrySet());
+            java.util.Collections.sort(entries, (a, b) -> b.getIntValue() - a.getIntValue());
             StringBuilder line = new StringBuilder("mesh colour census (batches=" + this.colourBatches + "):");
             for (int i = 0; i < Math.min(5, entries.size()); i++) {
-                line.append(" 0x").append(Integer.toHexString(entries.get(i).getKey()))
-                        .append(" x").append(entries.get(i).getValue());
+                line.append(" 0x").append(Integer.toHexString(entries.get(i).getIntKey()))
+                        .append(" x").append(entries.get(i).getIntValue());
             }
             record(line.toString());
         }
