@@ -719,7 +719,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     /** {@return the owner state as it is now}, to be handed to {@link #rollbackRecording} if the record is discarded. */
     public RecordingSnapshot snapshotRecording() {
-        RecordingSnapshot snapshot = new RecordingSnapshot();
+        return snapshotRecording(null);
+    }
+
+    /**
+     * Fills {@code snapshot} (or a new one when null) and returns it. The window flush takes one snapshot per window
+     * (~10 a frame); reusing the object keeps its chain arrays too - they are grown only when more pairs appear.
+     */
+    public RecordingSnapshot snapshotRecording(RecordingSnapshot snapshot) {
+        if (snapshot == null) {
+            snapshot = new RecordingSnapshot();
+        }
         snapshot.firstAcquire = this.firstAcquire;
         snapshot.neverCleared = this.neverCleared;
         snapshot.colorImageLayout = this.colorImageLayout;
@@ -733,9 +743,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
         snapshot.latchedDepth = this.gameClearLatchedDepth;
         snapshot.defaultAcquired = this.defaultPair.acquired;
         int size = this.chainPairs.size();
-        snapshot.chainKeys = new long[size];
-        snapshot.chainAcquired = new boolean[size];
-        snapshot.chainColorLayouts = new int[size];
+        if (snapshot.chainKeys == null || snapshot.chainKeys.length < size) {
+            snapshot.chainKeys = new long[size];
+            snapshot.chainAcquired = new boolean[size];
+            snapshot.chainColorLayouts = new int[size];
+        }
         int n = 0;
         for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
             snapshot.chainKeys[n] = entry.getKey().longValue();

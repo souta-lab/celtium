@@ -3409,6 +3409,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
     private long framesWithNoClearAtAll;
     private int frameClearsAtLastBoundary = -1;
+    /** Reused by the window flush for its recording snapshot; see GllessFrameTarget.snapshotRecording(reuse). */
+    private org.soutalab.celtium.vulkan.GllessFrameTarget.RecordingSnapshot windowRecordingSnapshot;
     boolean immediateWindowBusy;
     /**
      * A real frame identity (audit S11).
@@ -9236,10 +9238,13 @@ this.frameBufferOpen = false;
         // is no owner state to put back.
         GllessFrameTarget gllessTarget = this.frameTarget instanceof GllessFrameTarget
                 ? (GllessFrameTarget) this.frameTarget : null;
+        // One snapshot instance serves every window flush; its chain arrays grow only when more pairs appear.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("windowSetup");
         GllessFrameTarget.RecordingSnapshot recordingSnapshot;
         try {
-            recordingSnapshot = gllessTarget == null ? null : gllessTarget.snapshotRecording();
+            recordingSnapshot = gllessTarget == null ? null
+                    : gllessTarget.snapshotRecording(this.windowRecordingSnapshot);
+            this.windowRecordingSnapshot = recordingSnapshot;
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("windowSetup");
         }
