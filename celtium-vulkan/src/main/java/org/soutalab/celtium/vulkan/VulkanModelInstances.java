@@ -238,13 +238,15 @@ final class VulkanModelInstances {
         // whole pool into fresh buffers each time was a frame spike per new model. A list whose mesh object is the one
         // already copied keeps its slice; a new or rebuilt list is appended; only a full pool grows (doubling), and the
         // grown buffers take the used bytes in one copy.
-        java.util.Set<Integer> live = new java.util.HashSet<Integer>();
+        // Primitive set: this walks every mesh of a rebuilt table (593 builds in one session), and the boxed set
+        // allocated an Integer key for each entry.
+        it.unimi.dsi.fastutil.ints.IntOpenHashSet live = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
         for (Map.Entry<Integer, VulkanDynamicMesh> entry : meshes.entrySet()) {
             VulkanDynamicMesh mesh = entry.getValue();
             if (mesh == null || mesh.isEmpty() || mesh.layout() == null || mesh.layout().stride != VERTEX_BYTES) {
                 continue;
             }
-            live.add(entry.getKey());
+            live.add(entry.getKey().intValue());
             if (this.poolMeshes.get(entry.getKey()) == mesh) {
                 continue;
             }
