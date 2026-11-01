@@ -1377,6 +1377,18 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw framebuffer attachment queries, forwarded to the stub's attachment record. */
+    public static void glGetFramebufferAttachmentParameteriv(int target, int attachment, int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferAttachmentParameter(false, target, attachment,
+                pname, out);
+    }
+
+    public static void glGetNamedFramebufferAttachmentParameteriv(int framebuffer, int attachment, int pname,
+            long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferAttachmentParameter(true, framebuffer, attachment,
+                pname, out);
+    }
+
     /** Raw shader/program object parameters: compile, link and validate status answer true. */
     public static void glShaderObjectParameter(int object, int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$shaderObjectParameter(object, pname, out);
@@ -1606,7 +1618,7 @@ public final class CeltiumGllessHint {
             case "nglGetQueryObjecti64v":
             case "nglGetQueryObjectui64v":
             case "nglGetSynciv":
-            case "nglGetFramebufferAttachmentParameteriv":
+            // nglGetFramebufferAttachmentParameteriv is routed to the attachment record; the zero-writer would shadow it.
             case "nglGetRenderbufferParameteriv":
             case "nglGetSamplerParameteriv":
             case "nglGetSamplerParameterIiv":

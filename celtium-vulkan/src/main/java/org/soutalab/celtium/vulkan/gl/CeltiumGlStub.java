@@ -2565,6 +2565,22 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /**
+     * {@code glGetFramebufferAttachmentParameteriv} (and its named form) from the transformer's route: the stub's
+     * query path already answers the recorded colour attachment, and only the table's copy of it was unreachable.
+     */
+    public static void celtium$framebufferAttachmentParameter(boolean named, int framebufferOrTarget, int attachment,
+            int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return;
+        }
+        stub.status(new Fn(named ? "glGetNamedFramebufferAttachmentParameteriv"
+                        : "glGetFramebufferAttachmentParameteriv", R_VOID,
+                        new byte[] {A_INT, A_INT, A_INT, A_PTR}, SEM_STATUS),
+                new long[] {framebufferOrTarget, attachment, pname, out});
+    }
+
     /** {@code glClearBufferfv} from the transformer's route: colour or depth, with the caller's value. */
     public static void celtium$clearBufferfv(int buffer, int drawBuffer, long value) {
         CeltiumGlStub stub = installed;
