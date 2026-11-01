@@ -5088,8 +5088,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0;
             case 0x821D: // GL_NUM_EXTENSIONS
                 return 0;
-            case 0x84FF:
-                return 16;
+            case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the sampler path does not filter anisotropically
+                return 1;
             case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS (>= the per-stage count above)
                 return 16;
             default:
