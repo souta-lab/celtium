@@ -4814,6 +4814,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         switch (pname) {
+            case 0x8038: { // GL_POLYGON_OFFSET_FACTOR
+                putFloatOrDouble(out, 0, this.raster.polygonOffsetFactor(), asDouble);
+                return;
+            }
+            case 0x2A00: { // GL_POLYGON_OFFSET_UNITS
+                putFloatOrDouble(out, 0, this.raster.polygonOffsetUnits(), asDouble);
+                return;
+            }
             case 0x0C22: { // GL_COLOR_CLEAR_VALUE
                 mainClearValues(this.clearValueScratch);
                 for (int i = 0; i < 4; i++) {
@@ -4964,6 +4972,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             case 0x0C11: { // GL_SCISSOR_TEST
                 MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_SCISSOR_TEST) ? 1 : 0));
+                return;
+            }
+            case 0x8037: { // GL_POLYGON_OFFSET_FILL
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_POLYGON_OFFSET_FILL) ? 1 : 0));
                 return;
             }
             case 0x0B44: { // GL_CULL_FACE
