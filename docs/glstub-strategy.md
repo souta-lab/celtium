@@ -100,6 +100,21 @@ native 経路と共有する（同一 batch・同一 cache・同一 submit 最�
 5. 受入: Forge Splash（`glBegin(GL_QUADS)` 3 箇所）と Cyberware radial menu を実機で描画し、
    validation error 0・フレーム時間の悪化なしを確認してから次段（FBO/表示リスト）へ進む。
 
+### 現在地（2026-11-02、既定OFF）
+
+上の 1–3 は `-Dceltium.gless.legacyImmediate=true` の下で実装済み。捕捉の詰め方は
+`LegacyImmediateCapture`（GL/Vulkan 非依存）に分離し、`LegacyImmediateCaptureTest` が
+layout・stride・UV/色のバイト・`w` 除算・拒否理由を CPU で固定する。トランスフォーマの経路は
+`glVertex2f/2d/3f/3d/4f/4d` と `glTexCoord2f/2d`、受理する primitive は `VulkanImmediateDrawer.refusalReason`
+（quads/triangles/fan/strip/quad strip/polygon/lines/line strip/line loop）で、ここにあった独自リストは削除した。
+`scripts/cpu-contract/transformer-route-verify.sh` は legacy 経路を **ON にした構成でも** 同じ検査を行う。
+
+**既定OFFの理由と再開条件**: 利用者報告の black screen は rc.24 で retire キューが記録中のコマンドバッファを
+破棄する競合（`VUID-vkEndCommandBuffer-00059` → RADV GPUVM fault）と判明し、修正済み。legacy 経路の
+「描画時点が早いだけ」という差分はその修正に覆われる可能性が高いが、**この環境に GPU leg が無い**ため
+既定ONにはしていない。再開は、`-Dceltium.gless.legacyImmediate=true` で AMD/Intel の world とメニューを
+1 leg ずつ回し、validation 0・device lost 0・`CELTIUM_LEGACY_REFUSED` の理由が説明可能であることを確認できた時点。
+
 ## 未決・リスク
 
 - **頂点形式の互換**: 固定機能の頂点属性（法線・複数テクスチャ座標・color material）をどこまで format に載せるか。
