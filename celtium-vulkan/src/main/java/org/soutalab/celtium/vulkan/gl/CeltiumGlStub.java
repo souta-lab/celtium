@@ -5051,6 +5051,21 @@ public final class CeltiumGlStub implements FunctionProvider {
             case GL_SCISSOR_TEST: return this.raster.scissorTest();
             case GL_POLYGON_OFFSET_FILL: return this.raster.polygonOffsetFillEnabled();
             case GL_TEXTURE_2D: return this.textures.enabled2d(this.textures.activeUnit());
+            // The mirror is the authority for these three: vanilla's GlStateManager cache can skip the native
+            // glEnable/glDisable entirely, so this stub's own enable record never sees the change - the model state
+            // probe measured glIsEnabled(GL_DEPTH_TEST)=false against a captured depthTest=1.
+            case GL_DEPTH_TEST: {
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$depthTestEnabled() : this.enables[GL_DEPTH_TEST] != 0;
+            }
+            case GL_ALPHA_TEST: {
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$alphaTestEnabled() : this.enables[GL_ALPHA_TEST] != 0;
+            }
+            case 0x0B50: { // GL_LIGHTING
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$lightingEnabled() : this.enables[0x0B50] != 0;
+            }
             default: break;
         }
         return cap >= 0 && cap < this.enables.length && this.enables[cap] != 0;
