@@ -1665,6 +1665,38 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * {@code glDelete*} array names from the transformer's route. The dispatcher's delete path already knows each
+     * family (texture payloads, buffer storage, framebuffer attachment records); it only had no caller, because a
+     * transformed native never reaches the table. The name is normalised to the core spelling the dispatcher matches.
+     */
+    public static void celtium$deleteObjects(String name, int count, long names) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || count <= 0 || names == 0L) {
+            return;
+        }
+        stub.delete(new Fn(coreDeleteName(name), R_VOID, new byte[] {A_INT, A_PTR}, SEM_DELETE),
+                new long[] {count, names});
+    }
+
+    /** {@code glDeleteProgram/glDeleteShader} from the transformer's route. */
+    public static void celtium$deleteObject(String name, int object) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.delete(new Fn(coreDeleteName(name), R_VOID, new byte[] {A_INT}, SEM_DELETE),
+                new long[] {object});
+    }
+
+    private static String coreDeleteName(String name) {
+        String core = name.startsWith("ngl") ? name.substring(1) : name;
+        if (core.endsWith("EXT") || core.endsWith("ARB")) {
+            core = core.substring(0, core.length() - 3);
+        }
+        return core;
+    }
+
     /** {@code glNamedFramebufferTexture} from the transformer's route: the attachment record for a named framebuffer. */
     public static void celtium$namedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
         CeltiumGlStub stub = installed;

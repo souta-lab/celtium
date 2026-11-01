@@ -208,6 +208,15 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterPointer(target, pname, values, floats);
     }
 
+    /** Raw {@code glDelete*}: the object-name and array spellings, forwarded to the stub's delete families. */
+    public static void glDeleteObjects(String name, int count, long names) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteObjects(name, count, names);
+    }
+
+    public static void glDeleteObject(String name, int object) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteObject(name, object);
+    }
+
     /** Raw {@code glNamedFramebufferTexture}: the DSA spelling of the colour-attachment record. */
     public static void glNamedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);

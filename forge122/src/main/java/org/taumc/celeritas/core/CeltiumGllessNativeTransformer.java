@@ -947,6 +947,30 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            // The array delete spellings. glDeleteTextures already has its own route below; the rest had none, so a
+            // deleted framebuffer kept its attachment record and a deleted buffer kept its storage under a name the
+            // driver was free to reuse.
+            if (returnType.equals("V") && "(IJ)V".equals(descriptor)
+                    && (name.startsWith("glDelete") || name.startsWith("nglDelete"))
+                    && !name.endsWith("glDeleteTextures") && !name.endsWith("glDeleteLists")) {
+                method.visitLdcInsn(name);
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDeleteObjects", "(Ljava/lang/String;IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (returnType.equals("V") && "(I)V".equals(descriptor)
+                    && (name.startsWith("glDelete") || name.startsWith("nglDelete"))
+                    && !name.endsWith("glDeleteLists") && !name.endsWith("glDeleteSync")) {
+                method.visitLdcInsn(name);
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glDeleteObject", "(Ljava/lang/String;I)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // The EXT/ARB framebuffer spelling older mods carry. Without these a mod's offscreen pass was invisible to
             // the renderer: its framebuffer bind never changed the current target and its attachment was never recorded.
             if (("(II)V".equals(descriptor))
