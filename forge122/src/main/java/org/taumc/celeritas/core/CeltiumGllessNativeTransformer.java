@@ -873,6 +873,35 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        if ("(II)J".equals(descriptor) && name.endsWith("glMapNamedBuffer")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitInsn(Opcodes.ICONST_0);
+            method.visitInsn(Opcodes.LCONST_0);
+            method.visitInsn(Opcodes.LCONST_0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glMapNamedBuffer", "(IZJJI)J", false);
+            method.visitInsn(Opcodes.LRETURN);
+            return;
+        }
+        if ("(IJJI)J".equals(descriptor) && name.endsWith("glMapNamedBufferRange")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitInsn(Opcodes.ICONST_1);
+            method.visitVarInsn(Opcodes.LLOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitVarInsn(Opcodes.ILOAD, 5);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glMapNamedBuffer", "(IZJJI)J", false);
+            method.visitInsn(Opcodes.LRETURN);
+            return;
+        }
+        if ("(I)Z".equals(descriptor) && name.endsWith("glUnmapNamedBuffer")) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glUnmapNamedBuffer", "(I)Z", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         if ("(II)J".equals(descriptor) && (name.endsWith("nglMapBuffer") || name.endsWith("nglMapBufferARB"))) {
             // target, access -> address. The default zero became a null ByteBuffer in LWJGL's wrapper, which is
             // where Xaero's Minimap crashed (its PBO tile upload); the stub's buffer storage answers instead.

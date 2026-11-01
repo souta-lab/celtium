@@ -1444,6 +1444,15 @@ public final class CeltiumGllessHint {
         return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapBuffer(target, range, offset, length, access);
     }
 
+    /** The DSA mapping forms, where the buffer name is the first argument. */
+    public static long glMapNamedBuffer(int name, boolean range, long offset, long length, int access) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapNamedBuffer(name, range, offset, length, access);
+    }
+
+    public static boolean glUnmapNamedBuffer(int name) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$unmapNamedBuffer(name);
+    }
+
     /** Unmaps the bound buffer, as {@code glUnmapBuffer} does. */
     public static boolean glUnmapBuffer(int target) {
         return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$unmapBuffer(target);

@@ -6840,6 +6840,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         return mapped == null || mapped.unmap();
     }
 
+    /** The DSA mapping forms: the buffer is named, not the bound target. */
+    public static long celtium$mapNamedBuffer(int name, boolean range, long offset, long length, int access) {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0L : stub.mapBufferFor(name, range, offset, length, access);
+    }
+
+    public static boolean celtium$unmapNamedBuffer(int name) {
+        NativeGeometryBuffer mapped = NativeGeometryBuffer.find(name);
+        return mapped == null || mapped.unmap();
+    }
+
     private long mapBufferFor(int name, boolean range, long rangeOffset, long rangeLength, long access) {
         NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
         if (nativeBuffer != null) {
