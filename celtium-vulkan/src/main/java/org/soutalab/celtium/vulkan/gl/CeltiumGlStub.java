@@ -4822,6 +4822,27 @@ public final class CeltiumGlStub implements FunctionProvider {
                 putFloatOrDouble(out, 0, this.raster.polygonOffsetUnits(), asDouble);
                 return;
             }
+            case 0x0BA2: { // GL_VIEWPORT
+                putFloatOrDouble(out, 0, this.viewportX, asDouble);
+                putFloatOrDouble(out, 1, this.viewportY, asDouble);
+                putFloatOrDouble(out, 2, this.viewportW, asDouble);
+                putFloatOrDouble(out, 3, this.viewportH, asDouble);
+                return;
+            }
+            case 0x0C10: { // GL_SCISSOR_BOX
+                putFloatOrDouble(out, 0, this.raster.scissorX(), asDouble);
+                putFloatOrDouble(out, 1, this.raster.scissorY(), asDouble);
+                putFloatOrDouble(out, 2, this.raster.scissorWidth(), asDouble);
+                putFloatOrDouble(out, 3, this.raster.scissorHeight(), asDouble);
+                return;
+            }
+            case 0x0C23: { // GL_COLOR_WRITEMASK, as glGetFloatv reports the four channels
+                int mask = this.raster.colorMask();
+                for (int i = 0; i < 4; i++) {
+                    putFloatOrDouble(out, i, ((mask >>> i) & 1), asDouble);
+                }
+                return;
+            }
             case 0x0C22: { // GL_COLOR_CLEAR_VALUE
                 mainClearValues(this.clearValueScratch);
                 for (int i = 0; i < 4; i++) {
