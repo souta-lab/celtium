@@ -947,7 +947,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
-            if ("(IIIJ)V".equals(descriptor) && name.endsWith("glGetActiveUniformBlockiv")) {
+            if ("(IIIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetActiveUniformBlockiv") || name.endsWith("glGetProgramInterfaceiv"))) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
@@ -966,6 +967,25 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glGetActiveUniformName", "(IIJJI)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIIJJ)V".equals(descriptor) && name.endsWith("glGetProgramResourceName")) {
+                for (int slot = 0; slot < 4; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitVarInsn(Opcodes.LLOAD, 4);
+                method.visitVarInsn(Opcodes.LLOAD, 6);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetProgramResourceName", "(IIIIJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIIJIJJ)V".equals(descriptor) && name.endsWith("glGetProgramResourceiv")) {
+                method.visitVarInsn(Opcodes.ILOAD, 6);
+                method.visitVarInsn(Opcodes.LLOAD, 7);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetProgramResourceLength", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }

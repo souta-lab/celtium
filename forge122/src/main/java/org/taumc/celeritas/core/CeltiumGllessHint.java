@@ -1382,6 +1382,16 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniformInt(program, index, pname, out);
     }
 
+    public static void glGetProgramResourceName(int program, int programInterface, int index, int bufSize, long length,
+            long name) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getProgramResourceName(program, programInterface, index,
+                bufSize, length, name);
+    }
+
+    public static void glGetProgramResourceLength(int bufSize, long length) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getProgramResourceLength(bufSize, length);
+    }
+
     public static void glGetActiveUniforms(int count, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniforms(count, out);
     }

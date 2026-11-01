@@ -2575,6 +2575,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glGetProgramResourceName}: an empty resource name, with the written length. */
+    public static void celtium$getProgramResourceName(int program, int programInterface, int index, int bufSize,
+            long length, long name) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+        if (name != 0L && bufSize > 0) {
+            org.lwjgl.system.MemoryUtil.memPutByte(name, (byte) 0);
+        }
+    }
+
+    /** {@code glGetProgramResourceiv}: no property values were produced, so the length says zero. */
+    public static void celtium$getProgramResourceLength(int bufSize, long length) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+    }
+
     /** {@code glGetActiveUniformsiv}: {@code count} integers, all zero (no active uniform exists). */
     public static void celtium$getActiveUniforms(int count, long out) {
         if (out == 0L || count <= 0) {
