@@ -1,7 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 import org.junit.jupiter.api.Test;
-import java.util.Map;
-import java.util.HashMap;
+import it.unimi.dsi.fastutil.ints.Int2IntMap;
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import static org.junit.jupiter.api.Assertions.*;
 class FramebufferColorAttachmentTest {
   @Test void deletingBoundDrawFramebufferInvalidatesCachedBinding() throws Exception {
@@ -55,8 +55,10 @@ class FramebufferColorAttachmentTest {
     }
   }
   @Test void detachesAndReattaches() {
-    Map<Integer,Integer> m = new HashMap<>();
-    Map<Integer,Integer> inverse = new HashMap<>();
+    // The stub keeps the attachment maps in the primitive form it queries on the render path, so the test uses the
+    // same type; a boxed HashMap stopped compiling when the maps became Int2IntMap and took the whole suite with it.
+    Int2IntMap m = new Int2IntOpenHashMap();
+    Int2IntMap inverse = new Int2IntOpenHashMap();
     CeltiumGlStub.updateColorAttachment(m, inverse, 10, 200);
     assertEquals(200, m.get(10));
     assertEquals(10, inverse.get(200));
