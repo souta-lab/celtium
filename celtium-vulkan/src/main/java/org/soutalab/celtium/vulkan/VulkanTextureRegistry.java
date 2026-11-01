@@ -1613,29 +1613,12 @@ public final class VulkanTextureRegistry {
         return this.announcedGenerationByTexture[id];
     }
 
-    private Integer announcedGenerationOf(int id) {
-        if (id < 0 || id >= this.announcedGenerationByTexture.length) {
-            return null;
-        }
-        int value = this.announcedGenerationByTexture[id];
-        return value == 0 ? null : Integer.valueOf(value);
-    }
-
-    /** {@return the consumed generation for a GL name, or {@code null} when none was recorded}. */
     /** {@return the consumed generation, 0 when none - the array's own sentinel, so no box is allocated. */
     private int consumedGenerationOfInt(int id) {
         if (id < 0 || id >= this.consumedGenerationByTexture.length) {
             return 0;
         }
         return this.consumedGenerationByTexture[id];
-    }
-
-    private Integer consumedGenerationOf(int id) {
-        if (id < 0 || id >= this.consumedGenerationByTexture.length) {
-            return null;
-        }
-        int value = this.consumedGenerationByTexture[id];
-        return value == 0 ? null : Integer.valueOf(value);
     }
 
     /** Records the announced generation, growing the table for large names. */
