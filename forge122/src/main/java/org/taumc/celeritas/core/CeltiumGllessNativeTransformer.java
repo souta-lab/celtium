@@ -43,7 +43,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
             "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
             "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
-            "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glTexCoord2f", "glTexCoord2d", "glVertex3f"));
+            "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glTexCoord2f", "glTexCoord2d", "glVertex3f",
+            // The uniform setters are listed no-ops in the stub's table (the programs those values belong to are
+            // GL-less stubs, so nothing reads them); the measured session called them 4.0e4 times. The three below
+            // are absent from the table entirely and reach the generic unknown-symbol no-op, 5.9e3 calls together.
+            "glUniform1i", "glUniform1f", "glUniform2f", "glUniform3f", "glUniform4f",
+            "glUniform1iv", "glUniform2iv", "glUniform3iv", "glUniform4iv",
+            "glUniform1fv", "glUniform2fv", "glUniform3fv", "glUniform4fv",
+            "glUniformMatrix2fv", "glUniformMatrix3fv", "glUniformMatrix4fv",
+            "glClearStencil", "glVertex2i", "glLineStipple"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
