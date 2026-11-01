@@ -1697,6 +1697,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribiv(index, pname, out);
     }
 
+    /** Raw {@code glGetIntegeri_v}: the scalar query, index ignored. */
+    public static void glGetIntegerIndexed(int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getIntegerIndexed(pname, out);
+    }
+
     /** Raw {@code glGetInteger64v/i_v}: the scalar query widened to the 64-bit output. */
     public static void glGetInteger64(int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger64(pname, out);
@@ -1933,7 +1938,7 @@ public final class CeltiumGllessHint {
             case "nglGetBooleanIndexedv":
                 return 1;
             case "nglGetIntegerv":
-            case "nglGetIntegeri_v":
+            // nglGetIntegeri_v is routed to the scalar answer; the zero-writer would hide it.
             case "nglGetTexLevelParameteriv":
             case "nglGetTexParameteriv":
             case "nglGetTexParameterIiv":

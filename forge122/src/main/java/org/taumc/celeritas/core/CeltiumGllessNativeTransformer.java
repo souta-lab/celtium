@@ -1743,6 +1743,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetIntegeri_v")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetIntegerIndexed", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIIJ)V".equals(descriptor)
                     && (name.endsWith("glGetTextureLevelParameteriv")
                             || name.endsWith("glGetTextureLevelParameteri64v"))) {

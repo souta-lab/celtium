@@ -3102,6 +3102,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         org.lwjgl.system.MemoryUtil.memPutInt(out, value);
     }
 
+    /** {@code glGetIntegeri_v} from the transformer's route: the scalar answer, independent of the index. */
+    public static void celtium$getIntegerIndexed(int pname, long out) {
+        if (out != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(out, celtium$getInteger(pname));
+        }
+    }
+
     /** {@code glGetInteger64v/i_v} from the transformer's route: the scalar mirror widened to 64 bits. */
     public static void celtium$getInteger64(int pname, long out) {
         if (out != 0L) {
