@@ -5707,6 +5707,18 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return this.boundRenderbuffer;
             case 0x8919: // GL_SAMPLER_BINDING - sampler objects are not modelled
                 return 0;
+            case 0x8A28: { // GL_UNIFORM_BUFFER_BINDING - the generic binding record
+                int bound = boundBuffer(0x8A11);
+                return bound < 0 ? 0 : bound;
+            }
+            case 0x8F36: { // GL_COPY_READ_BUFFER_BINDING
+                int bound = boundBuffer(0x8F36);
+                return bound < 0 ? 0 : bound;
+            }
+            case 0x8F37: { // GL_COPY_WRITE_BUFFER_BINDING
+                int bound = boundBuffer(0x8F37);
+                return bound < 0 ? 0 : bound;
+            }
             case 0x8895: // GL_ELEMENT_ARRAY_BUFFER_BINDING - the binding the indexed decode reads
                 return boundBuffer(0x8893);
             case 0x88ED: // GL_PIXEL_PACK_BUFFER_BINDING
