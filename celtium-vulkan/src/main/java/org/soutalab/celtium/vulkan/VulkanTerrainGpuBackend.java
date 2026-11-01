@@ -6191,6 +6191,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The run the replay appends to may be in the dropped set; the replay's extend check already rejects a group
         // that is not the last live one, but dropping the reference keeps the field from pinning a recycled object.
         this.openModelRunGroup = null;
+        // No open group survived the boundary, so the "this group has batches" flag cannot still be true. It is a
+        // one-line invariant, and a stale true would make the next accept believe it is extending a group that is gone.
+        if (this.currentImmediateMesh == null) {
+            this.currentGroupUsed = false;
+        }
         // OPT-05's arena frame: one slot per frame, reclaimed only where GPU completion allows. It has to advance here,
         // because a menu-only frame never reaches captureWorldSnapshot - the main menu kept one slot in use forever and
         // appended every frame's menu geometry to it.
