@@ -3903,7 +3903,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (!this.fontBatch.celtium$hasWork()) {
             return;
         }
-        celtium$flushPendingFontBatch("state-change");
+        if (this.fontBatch.celtium$hasPendingWork()) {
+            celtium$flushPendingFontBatch("state-change");
+        }
     }
 
     @Override
@@ -6147,7 +6149,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void endWorldPass() {
         // Pass boundary for the font batching (task-59): a held glyph run belongs to the pass it was started in, so it
         // goes out here rather than being appended to whatever the next pass submits.
-        celtium$flushPendingFontBatch("boundary");
+        if (this.fontBatch.celtium$hasPendingWork()) {
+            celtium$flushPendingFontBatch("boundary");
+        }
         this.worldPassActive = false;
         // The world-to-GUI ordering rule (task-14/37). A group offered inside the world pass tests against the depth
         // the terrain pass wrote, and that depth is only valid until the GUI stage draws. One of the GUI stage's quads
@@ -6198,7 +6202,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     public void captureWorldSnapshot() {
         // Frame boundary for the font batching (task-59): a held run must not survive into the next frame.
-        celtium$flushPendingFontBatch("boundary");
+        if (this.fontBatch.celtium$hasPendingWork()) {
+            celtium$flushPendingFontBatch("boundary");
+        }
         // BH-15, the safe half of BH-14/15/16. The flush draws the groups of whichever target is bound when it runs
         // (`flushImmediateWindow`'s binding-driven filter), so a group accepted for a target that is never bound again
         // would sit in this queue for the rest of the session and the image it was meant for would stay empty - which
@@ -6617,7 +6623,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The entry flush of the font batching (task-59): anything submitted while a glyph run is held means the run
         // came before this batch, so it goes out now - before this one is appended. This is the whole ordering
         // argument; without it a held quad would land after content that vanilla drew before it.
-        celtium$flushPendingFontBatch("intervening");
+        if (this.fontBatch.celtium$hasPendingWork()) {
+            celtium$flushPendingFontBatch("intervening");
+        }
         int refusedFormat = REFUSE_IMMEDIATE_FORMAT;
         if (refusedFormat >= 0 && formatId == refusedFormat) {
             // Isolation switch: which family a wrong part of the picture belongs to, asked by removing one family at
@@ -10901,7 +10909,9 @@ this.frameBufferOpen = false;
     private void closeCurrentImmediateGroupBody() {
         // Group boundary for the font batching (task-59): a held run is closed out through the normal path here, so it
         // cannot be appended to a group that opens after it.
-        celtium$flushPendingFontBatch("boundary");
+        if (this.fontBatch.celtium$hasPendingWork()) {
+            celtium$flushPendingFontBatch("boundary");
+        }
         if (this.currentImmediateMesh != null && this.currentGroupUsed) {
             // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
             remapClipDepth(this.currentGroupProjection, this.closeProjectionScratch);

@@ -781,6 +781,15 @@ public final class FontBatch {
                 + " scissor=" + Long.toHexString(this.pendingScissorKey);
     }
 
+    /**
+     * Whether a flush would find anything to do: an open run, or runs retained for a target that has not come back.
+     * The owner's per-batch entry flush asks this first; with nothing open the call only counted itself, and that entry
+     * runs on every uploaded batch (1.35e8 in one measured session).
+     */
+    public boolean celtium$hasPendingWork() {
+        return this.pendingActive || !this.retained.isEmpty();
+    }
+
     /** Whether a run is open. Read by the owner's entry flush, which must close it before any other draw is recorded. */
     public boolean celtium$fontRunOpen() {
         return this.pendingActive;
