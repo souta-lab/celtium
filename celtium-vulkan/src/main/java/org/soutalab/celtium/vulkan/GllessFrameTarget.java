@@ -845,6 +845,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.lastDroppedClearOwner;
     }
 
+    /** Scratch for the clear colour a replay reads; refilled before every use. */
+    private final float[] clearColourScratch = new float[4];
+
     private void applyGameClears(VkCommandBuffer command) {
         boolean first = this.neverCleared;
         boolean latched = this.gameClearLatched;
@@ -906,7 +909,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             org.lwjgl.vulkan.VkImageSubresourceRange range =
                     org.lwjgl.vulkan.VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
             if (color) {
-                float[] rgba = new float[4];
+                float[] rgba = this.clearColourScratch;
                 if (latched || initializeOnly) {
                     rgba[0] = latchedRed;
                     rgba[1] = latchedGreen;
@@ -938,7 +941,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         COLOR_CLEAR_TRANSFER ? DEPTH_TRANSFER_LAYOUT : COLOR_RENDER_LAYOUT, value, range);
             }
             if (depth) {
-                double mainDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(new float[4]);
+                double mainDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(this.clearColourScratch);
                 double depthValue = latched || initializeOnly ? latchedDepth
                         : Double.isNaN(mainDepth) ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth() : mainDepth;
                 org.lwjgl.vulkan.VkClearDepthStencilValue value =
