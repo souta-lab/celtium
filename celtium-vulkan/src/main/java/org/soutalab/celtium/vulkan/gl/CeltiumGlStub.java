@@ -7893,8 +7893,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (count <= 0 || count > (1 << 20) || (mode != 4 && mode != 5 && mode != 7)) {
             return;
         }
-        if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
-                || this.vertexPointerStride != 12 || this.vertexPointerOffset != 0L) {
+        int stride = this.vertexPointerStride;
+        if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT || this.vertexPointerOffset != 0L
+                || (stride != 12 && stride != 24)) {
             return;
         }
         java.nio.ByteBuffer vertices;
@@ -7905,6 +7906,19 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if (vertices == null) {
+            return;
+        }
+        // The same layout decision the unindexed decoder makes: the format id and the refusal reason. Strides that
+        // need a repack (the 32-byte forms) are not taken here, because this path copies whole vertices unchanged.
+        String[] layoutRefusal = new String[1];
+        int formatId;
+        try {
+            formatId = celtium$drawArrayFormat(stride, celtium$otherArrayMask(), count, 0, false,
+                    memAddress(vertices, 0), vertices.capacity(), layoutRefusal);
+        } catch (RuntimeException error) {
+            return;
+        }
+        if (layoutRefusal[0] != null) {
             return;
         }
         int elementName = boundBuffer(0x8893); // GL_ELEMENT_ARRAY_BUFFER
@@ -7925,8 +7939,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (indexSize == 0 || indices < 0 || indices + (long) count * indexSize > elementView.capacity()) {
             return;
         }
-        int vertexCount = vertices.capacity() / 12;
-        java.nio.ByteBuffer expanded = org.lwjgl.system.MemoryUtil.memAlloc(count * 12);
+        int vertexCount = vertices.capacity() / stride;
+        java.nio.ByteBuffer expanded = org.lwjgl.system.MemoryUtil.memAlloc(count * stride);
         try {
             for (int i = 0; i < count; i++) {
                 long at = indices + (long) i * indexSize;
@@ -7940,13 +7954,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                     return;
                 }
                 org.lwjgl.system.MemoryUtil.memCopy(
-                        org.lwjgl.system.MemoryUtil.memAddress(vertices) + (long) index * 12L,
-                        org.lwjgl.system.MemoryUtil.memAddress(expanded) + (long) i * 12L, 12L);
+                        org.lwjgl.system.MemoryUtil.memAddress(vertices) + (long) index * stride,
+                        org.lwjgl.system.MemoryUtil.memAddress(expanded) + (long) i * stride, stride);
             }
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend != null) {
-                backend.submitImmediateBatch(null, 12, 7 /* POSITION */,
+                backend.submitImmediateBatch(null, stride, formatId,
                         org.lwjgl.system.MemoryUtil.memAddress(expanded), count, mode);
             }
         } catch (RuntimeException | LinkageError error) {
