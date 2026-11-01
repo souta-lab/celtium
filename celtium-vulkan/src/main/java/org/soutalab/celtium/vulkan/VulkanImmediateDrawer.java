@@ -66,6 +66,12 @@ public final class VulkanImmediateDrawer {
                         || glMode == GL11.GL_TRIANGLE_STRIP || glMode == GL11.GL_TRIANGLE_FAN) && vertexCount < 2)) {
             return null;
         }
+        if (glMode == GL11.GL_QUAD_STRIP && vertexCount < 4) {
+            return null;
+        }
+        if (glMode == GL11.GL_POLYGON && vertexCount < 3) {
+            return null;
+        }
         long key = ((long) glMode << 32) | (vertexCount & 0xffffffffL);
         // Fibonacci hashing: the top bits of key * 2^64/phi. An xor of the count with an odd multiple of itself (the
         // first version) always cleared the low bit and thrashed - 125k misses against 20 live shapes in a warm minute.
@@ -142,6 +148,35 @@ public final class VulkanImmediateDrawer {
                 }
                 return indices;
             }
+            case GL11.GL_QUAD_STRIP: {
+                // Each pair of vertices with the next pair forms a quad: (2i, 2i+1, 2i+3, 2i+2).
+                int quads = (vertexCount - 2) / 2;
+                int[] indices = new int[quads * 6];
+                for (int i = 0; i < quads; i++) {
+                    int a = i * 2;
+                    int b = a + 1;
+                    int c = a + 3;
+                    int d = a + 2;
+                    indices[i * 6] = a;
+                    indices[i * 6 + 1] = b;
+                    indices[i * 6 + 2] = c;
+                    indices[i * 6 + 3] = a;
+                    indices[i * 6 + 4] = c;
+                    indices[i * 6 + 5] = d;
+                }
+                return indices;
+            }
+            case GL11.GL_POLYGON: {
+                // A convex polygon is the fan of its vertices, which is what GL's polygon rasterizer produces there.
+                int triangles = vertexCount - 2;
+                int[] indices = new int[triangles * 3];
+                for (int i = 0; i < triangles; i++) {
+                    indices[i * 3] = 0;
+                    indices[i * 3 + 1] = i + 1;
+                    indices[i * 3 + 2] = i + 2;
+                }
+                return indices;
+            }
             case GL11.GL_TRIANGLE_STRIP: {
                 int[] indices = new int[(vertexCount - 2) * 3];
                 for (int i = 0; i < vertexCount - 2; i++) {
@@ -175,6 +210,8 @@ public final class VulkanImmediateDrawer {
             case GL11.GL_TRIANGLES:
             case GL11.GL_TRIANGLE_FAN:
             case GL11.GL_TRIANGLE_STRIP:
+            case GL11.GL_QUAD_STRIP:
+            case GL11.GL_POLYGON:
                 return null;
             case GL11.GL_LINES:
             case GL11.GL_LINE_STRIP:
