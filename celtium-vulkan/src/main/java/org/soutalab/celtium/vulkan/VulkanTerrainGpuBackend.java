@@ -1815,8 +1815,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap shaderProgramRefusedPrograms =
             new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
     /** Per target: batches dropped at a frame boundary because no pass ran for that identity (BH-15). */
-    private final java.util.Map<Long, Integer> unflushedTargetDroppedByTarget =
-            new java.util.HashMap<Long, Integer>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap unflushedTargetDroppedByTarget =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
 
     /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
     /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
@@ -1827,8 +1827,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return "none";
         }
         StringBuilder text = new StringBuilder();
-        for (java.util.Map.Entry<Long, Integer> entry : this.unflushedTargetDroppedByTarget.entrySet()) {
-            text.append(Long.toHexString(entry.getKey().longValue())).append(":frames=").append(entry.getValue())
+        for (it.unimi.dsi.fastutil.longs.Long2IntMap.Entry entry
+                : this.unflushedTargetDroppedByTarget.long2IntEntrySet()) {
+            text.append(Long.toHexString(entry.getLongKey())).append(":frames=").append(entry.getIntValue())
                     .append(' ');
         }
         return text.toString().trim();
@@ -3782,8 +3783,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     int otherTargetGroupsDiscarded;
     int otherTargetGroupsFlushedByWindow;
     /** Groups seen at pass time and drawing passes, per target; the offers come from offTargetBatchesByTarget. */
-    private final java.util.Map<Long, Integer> offTargetPassGroupsByTarget = new java.util.HashMap<Long, Integer>();
-    private final java.util.Map<Long, Integer> offTargetDrawnByTarget = new java.util.HashMap<Long, Integer>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap offTargetPassGroupsByTarget =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap offTargetDrawnByTarget =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private int immediateFlushNoPipeline;
     private String immediateLastFlushError = "none";
     /**
@@ -6209,7 +6212,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             this.targetStatistics.addUnflushedTargetGroupsDropped(dropped);
             for (Long target : targets) {
-                this.unflushedTargetDroppedByTarget.merge(target, Integer.valueOf(1), Integer::sum);
+                this.unflushedTargetDroppedByTarget.put(target,
+                        this.unflushedTargetDroppedByTarget.get(target) + 1);
             }
             if (this.targetStatistics.unflushedTargetGroupsDropped() <= this.unflushedTargetGroupsDroppedLogged + 3) {
                 this.unflushedTargetGroupsDroppedLogged++;
@@ -9554,7 +9558,7 @@ this.frameBufferOpen = false;
                         this.targetStatistics.noteWindowFramesMarkedPresentable();
                     }
                     if (offTarget) {
-                        this.offTargetDrawnByTarget.merge(identity, 1, Integer::sum);
+                        this.offTargetDrawnByTarget.put(identity, this.offTargetDrawnByTarget.get(identity) + 1);
                         this.targetStatistics.noteOffTargetCopiedBack(); // completed bridge return, not an empty offscreen copy
                         if (this.textureRegistry != null) {
                             this.textureRegistry.invalidateRenderedTexture(
@@ -10483,8 +10487,8 @@ this.frameBufferOpen = false;
             // groups that reached a pass. The row is evidence only when the two are read in their own units.
             summary.append(Long.toHexString(idBoxed.longValue()))
                     .append(":batchesOffered=").append(offered == null ? 0 : offered.get())
-                    .append(",groupsAtPass=").append(this.offTargetPassGroupsByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
-                    .append(",drawnPasses=").append(this.offTargetDrawnByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
+                    .append(",groupsAtPass=").append(this.offTargetPassGroupsByTarget.get(idBoxed.longValue()))
+                    .append(",drawnPasses=").append(this.offTargetDrawnByTarget.get(idBoxed.longValue()))
                     .append(",pair=").append(pairOfOffTargetIdentity(idBoxed.longValue()))
                     .append(' ');
         }
@@ -10782,8 +10786,9 @@ this.frameBufferOpen = false;
             vkCmdClearAttachments(this.commandBuffer, markAttachment, markRect);
         }
         if (!this.targetRegistry.currentIsMain()) {
-            this.offTargetPassGroupsByTarget.merge(this.targetRegistry.currentIdentity(), countGroupsForTarget(this.targetRegistry.currentIdentity()),
-                    Integer::sum);
+            long passIdentity = this.targetRegistry.currentIdentity();
+            this.offTargetPassGroupsByTarget.put(passIdentity,
+                    this.offTargetPassGroupsByTarget.get(passIdentity) + countGroupsForTarget(passIdentity));
         }
         // A window of its own: its own render pass over the frame target, so the depth it tests against is whatever
         // that pass loads or the game's last clear left there.
@@ -18285,7 +18290,7 @@ this.frameBufferOpen = false;
         view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
         StringBuilder line = new StringBuilder("gpu draws:");
         int colourCounts = 0;
-        java.util.Map<Integer, Integer> histogram = new java.util.TreeMap<>();
+        it.unimi.dsi.fastutil.ints.Int2IntRBTreeMap histogram = new it.unimi.dsi.fastutil.ints.Int2IntRBTreeMap();
         for (int slot = 0; slot < this.readbackSlots; slot++) {
             if (!this.readbackValid[slot]) {
                 // The copy for this slot was refused, so the block holds whatever was there before it. Decoding it
@@ -18294,7 +18299,7 @@ this.frameBufferOpen = false;
             }
             int base = slot * READBACK_COPY_BYTES;
             int colour = view.getInt(base + 12);
-            histogram.merge(Integer.valueOf(colour), Integer.valueOf(1), Integer::sum);
+            histogram.put(colour, histogram.get(colour) + 1);
             if (slot < 10) {
                 line.append(" [").append(slot).append("] colour=0x").append(Integer.toHexString(colour))
                         .append(" light=0x").append(Integer.toHexString(view.getInt(base + 24)))
@@ -18306,9 +18311,9 @@ this.frameBufferOpen = false;
         colourCounts = histogram.size();
         line.append(" distinctColours=").append(colourCounts).append(" histogram=");
         int shown = 0;
-        for (var e : histogram.entrySet()) {
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry e : histogram.int2IntEntrySet()) {
             if (shown++ >= 8) break;
-            line.append('0').append(Integer.toHexString(e.getKey().intValue())).append('x').append(e.getValue()).append(' ');
+            line.append('0').append(Integer.toHexString(e.getIntKey())).append('x').append(e.getIntValue()).append(' ');
         }
         record(line.toString());
         // stdout as well as the list: this is the only place that shows what the GPU holds rather than what the CPU
