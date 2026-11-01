@@ -2983,6 +2983,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     long textureIndexHits;
     long textureIndexMisses;
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
+
+    /** The last colour array handed to a group; read-only after capture, so equal colours may share it. */
+    private float[] lastGroupColorArray;
+
+    /** {@return the captured colour, reusing the previous array while every component matches}. */
+    private float[] groupColor(float red, float green, float blue, float alpha) {
+        float[] last = this.lastGroupColorArray;
+        if (last != null && last[0] == red && last[1] == green && last[2] == blue && last[3] == alpha) {
+            return last;
+        }
+        float[] fresh = new float[] {red, green, blue, alpha};
+        this.lastGroupColorArray = fresh;
+        return fresh;
+    }
     /**
      * The fog state at the moment the group was opened, beside {@code currentGroupState} and
      * {@code currentGroupModelView} and for the same reason.
@@ -7691,9 +7705,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 if ((formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4) && this.colorMirrorHasValue) {
                     // No GL query: the colour the game last set, from the same state mirror everything else uses.
                     this.textureStats.noteColorMirrorUse();
-                    this.currentGroupColor = new float[] {this.immediateState.colorRed(),
+                    this.currentGroupColor = this.groupColor(this.immediateState.colorRed(),
                             this.immediateState.colorGreen(), this.immediateState.colorBlue(),
-                            this.immediateState.colorAlpha()};
+                            this.immediateState.colorAlpha());
                 } else if (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4) {
                     // The colour read needs only a four-float scratch: one native buffer reused across groups rather
                     // than an alloc/free pair per group.
@@ -7701,8 +7715,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     colour.clear();
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, colour);
-                        this.currentGroupColor = new float[] {colour.get(0), colour.get(1), colour.get(2),
-                                colour.get(3)};
+                        this.currentGroupColor = this.groupColor(colour.get(0), colour.get(1), colour.get(2),
+                                colour.get(3));
                     } catch (RuntimeException | LinkageError error) {
                         // Read-only after the group holds it, so the shared white cannot be corrupted by a later
                         // group that draws it.
