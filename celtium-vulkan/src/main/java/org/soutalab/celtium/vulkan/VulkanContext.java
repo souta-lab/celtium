@@ -1280,34 +1280,53 @@ public final class VulkanContext {
     private static final int SUBMIT_CHUNK = 128;
 
     static int[] planSubmitGroups(boolean[] barriers) {
-        int[] sizes = new int[barriers.length];
+        return planSubmitGroups(barriers, barriers.length, new int[barriers.length]);
+    }
+
+    /** {@return the filled prefix count}, writing group sizes into {@code sizes} instead of allocating one. */
+    /** Writes group sizes into {@code sizes} and {@return how many were written}. */
+    static int planSubmitGroupsInto(boolean[] barriers, int length, int[] sizes) {
         int n = 0;
-        for (int i = 0; i < barriers.length;) {
+        for (int i = 0; i < length;) {
             int end = i + 1;
             if (!barriers[i]) {
-                while (end < barriers.length && !barriers[end]) end++;
+                while (end < length && !barriers[end]) end++;
             }
             sizes[n++] = end - i;
             i = end;
         }
-        return java.util.Arrays.copyOf(sizes, n);
+        return n;
+    }
+
+    static int[] planSubmitGroups(boolean[] barriers, int length, int[] sizes) {
+        return java.util.Arrays.copyOf(sizes, planSubmitGroupsInto(barriers, length, sizes));
     }
 
     static long coalescedCommandBuffers;
     static long savedSubmitInfos;
 
+    /** Scratch for {@link #submitChunk}: rebuilt at the head of each call, never retained. */
+    private boolean[] submitChunkBarriers = new boolean[SUBMIT_CHUNK];
+    private int[] submitChunkGroups = new int[SUBMIT_CHUNK];
+
     private Throwable submitChunk(java.util.ArrayList<DeferredSubmit> entries, int from, int to, long fence) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            boolean[] barriers = new boolean[to - from];
+            int chunkSize = to - from;
+            if (this.submitChunkBarriers.length < chunkSize) {
+                this.submitChunkBarriers = new boolean[chunkSize];
+                this.submitChunkGroups = new int[chunkSize];
+            }
+            boolean[] barriers = this.submitChunkBarriers;
             for (int i = from; i < to; i++) {
                 DeferredSubmit e = entries.get(i);
                 barriers[i - from] = (e.waitSemaphores != null && e.waitSemaphores.length > 0)
                         || (e.signalSemaphores != null && e.signalSemaphores.length > 0);
             }
-            int[] groups = planSubmitGroups(barriers);
-            VkSubmitInfo.Buffer submits = VkSubmitInfo.calloc(groups.length, stack);
+            int groupCount = planSubmitGroupsInto(barriers, chunkSize, this.submitChunkGroups);
+            int[] groups = this.submitChunkGroups;
+            VkSubmitInfo.Buffer submits = VkSubmitInfo.calloc(groupCount, stack);
             int position = from;
-            for (int i = 0; i < groups.length; i++) {
+            for (int i = 0; i < groupCount; i++) {
                 int count = groups[i];
                 DeferredSubmit entry = entries.get(position);
                 VkSubmitInfo submit = submits.get(i).sType$Default();
@@ -1338,7 +1357,7 @@ public final class VulkanContext {
                 batchedSubmitNanos += System.nanoTime() - batchedSubmitStarted;
                 batchedSubmitCalls++;
                 coalescedCommandBuffers += to - from;
-                savedSubmitInfos += (to - from) - groups.length;
+                savedSubmitInfos += (to - from) - groupCount;
             } catch (RuntimeException | LinkageError submitError) {
                 return submitError;
             }
