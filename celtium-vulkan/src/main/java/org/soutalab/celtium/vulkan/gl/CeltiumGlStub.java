@@ -2568,6 +2568,37 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** {@code glGetVertexAttribiv} for attribute 0, answered from the client-array record. */
+    public static void celtium$getVertexAttribiv(int index, int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return;
+        }
+        int value = 0;
+        if (index == 0) {
+            switch (pname) {
+                case 0x8622: // GL_VERTEX_ATTRIB_ARRAY_ENABLED - the client vertex-array enable
+                    value = stub.enables[0x8074] != 0 ? 1 : 0; // GL_VERTEX_ARRAY
+                    break;
+                case 0x8623: // GL_VERTEX_ATTRIB_ARRAY_SIZE
+                    value = stub.vertexPointerSize;
+                    break;
+                case 0x8624: // GL_VERTEX_ATTRIB_ARRAY_STRIDE
+                    value = stub.vertexPointerStride;
+                    break;
+                case 0x8625: // GL_VERTEX_ATTRIB_ARRAY_TYPE
+                    value = stub.vertexPointerType;
+                    break;
+                case 0x889F: // GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING - the array buffer the pointer is an offset into
+                    value = NativeGeometryBuffer.boundId();
+                    break;
+                default:
+                    break;
+            }
+        }
+        org.lwjgl.system.MemoryUtil.memPutInt(out, value);
+    }
+
     /** {@code glGetInteger64v/i_v} from the transformer's route: the scalar mirror widened to 64 bits. */
     public static void celtium$getInteger64(int pname, long out) {
         if (out != 0L) {

@@ -1377,6 +1377,11 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetVertexAttribiv}: attribute 0 answers the recorded client-array state. */
+    public static void glGetVertexAttribiv(int index, int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribiv(index, pname, out);
+    }
+
     /** Raw {@code glGetInteger64v/i_v}: the scalar query widened to the 64-bit output. */
     public static void glGetInteger64(int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger64(pname, out);
@@ -1620,7 +1625,7 @@ public final class CeltiumGllessHint {
             case "nglGetTexParameterIuiv":
             case "nglGetBufferParameteriv":
             case "nglGetBufferParameteri64v":
-            case "nglGetVertexAttribiv":
+            // nglGetVertexAttribiv (attribute 0) is routed to the client-array record; this would shadow it.
             case "nglGetVertexAttribIiv":
             case "nglGetVertexAttribIuiv":
             case "nglGetQueryObjectiv":
