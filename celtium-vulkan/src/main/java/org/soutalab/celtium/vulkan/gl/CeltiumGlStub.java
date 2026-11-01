@@ -8101,9 +8101,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (fn.name.startsWith("glGetNamedFramebufferAttachmentParameter")
                 || fn.name.startsWith("glGetFramebufferAttachmentParameter")) {
-            // (target-or-fbo, attachment, pname, out). No framebuffer objects exist under the stub, so the honest
-            // answer is "no attachment" rather than a zero that reads as attachment 0.
-            memPutInt(out, 0); // GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE = GL_NONE: there is no attachment
+            // (target-or-fbo, attachment, pname, out). A colour attachment the game itself reported is answered with
+            // its texture: a mod that created a framebuffer and asks whether it is complete otherwise reads "no
+            // attachment" for an attachment this renderer is drawing into.
+            boolean named = fn.name.startsWith("glGetNamed");
+            int framebuffer = named ? (int) c[0] : ((int) c[0] == 0x8CA8 ? this.readFbo : this.drawFbo);
+            int attachment = (int) c[1];
+            int paramPname = (int) c[2];
+            int colorTexture = framebuffer == 0 ? 0 : this.framebufferColorTextures.get(framebuffer);
+            boolean colorAttached = (attachment & 0xFFFF) == 0x8CE0 && colorTexture != 0;
+            int value;
+            if (paramPname == 0x8CD0) { // GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE
+                value = colorAttached ? 0x1702 : 0; // GL_TEXTURE / GL_NONE
+            } else if (paramPname == 0x8CD1) { // GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME
+                value = colorAttached ? colorTexture : 0;
+            } else {
+                value = 0;
+            }
+            memPutInt(out, value);
             return;
         }
         if (fn.name.startsWith("glGetTexLevelParameter")) {
