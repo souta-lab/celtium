@@ -379,6 +379,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        if ("glMultiTexCoord2f".equals(name) && "(IFF)V".equals(descriptor)) {
+            // A no-op by design: the light map's coordinate pair reaches the renderer through LightmapCoordsMixin
+            // (OpenGlHelper.setLightmapTextureCoords), not through this call. It was still crossing a native trampoline
+            // to do nothing - measured at 3.3e6 calls in one session, the hottest entry point in the log - so the call
+            // answers with a bare return instead.
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         // Legacy immediate mode. The census measured these as the largest unmapped class in a menu run (82% of the
         // zero-answered calls), and unlike the state classes each call is a draw the picture lost.
         if (LEGACY_IMMEDIATE && "glBegin".equals(name) && "(I)V".equals(descriptor)) {
