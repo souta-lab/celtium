@@ -5009,6 +5009,12 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Bounded, so a mod that rebuilds its framebuffer every frame cannot flood the log. */
     private static int framebufferAttachmentLogs;
 
+    /**
+     * One shared pair for every extent answer. The only caller reads width and height immediately and keeps neither;
+     * this runs on each raw framebuffer bind, where a fresh int[2] per bind was pure garbage.
+     */
+    private static final int[] TEXTURE_EXTENT_SCRATCH = new int[2];
+
     /** {@return a texture's level-0 width and height as GL last defined them}, or null when nothing was recorded. */
     public static int[] celtium$textureExtent(int glTextureName) {
         CeltiumGlStub stub = installed;
@@ -5016,7 +5022,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             return null;
         }
         int[] level = stub.texLevels.get(texLevelKey(glTextureName, 0));
-        return level == null ? null : new int[] {level[0], level[1]};
+        if (level == null) {
+            return null;
+        }
+        TEXTURE_EXTENT_SCRATCH[0] = level[0];
+        TEXTURE_EXTENT_SCRATCH[1] = level[1];
+        return TEXTURE_EXTENT_SCRATCH;
     }
 
     /** {@return the colour texture of a raw framebuffer, or 0 when none was recorded}. */
