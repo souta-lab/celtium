@@ -7359,44 +7359,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // measured as 801 format-5 refusals per run, all reading "the mirror for texture N has never received its
             // full content" - while the fix was the same full upload that was already written here.
             if (boundTexture != 0 && (existing == null || !existing.hasFullContent())) {
-                // One attempt per content change, not one per bind: a texture that failed because the stub holds no
-                // pixels for it fails identically on every subsequent bind, and one such texture cost 1,183 retries
-                // in a 400-tick leg (each attempt also paying textureSize's bind + two parameter queries). The stub's
-                // level-0 write serial is the change signal: it moves on every upload or sub-image write, so a retry
-                // is due exactly when new content actually arrived.
-                long writeSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                        .textureUploadSerial(boundTexture, 0);
-                boolean recorded = boundTexture >= 0 && boundTexture < this.lazySupplySerialByTexture.length
-                        && this.lazySupplySerialRecorded[boundTexture]
-                        && this.lazySupplySerialByTexture[boundTexture] == writeSerial;
-                if (recorded) {
-                    this.lazyMirrorRetrySkips++;
-                } else {
-                if (boundTexture >= this.lazySupplySerialByTexture.length) {
-                    int grown = Math.max(boundTexture + 1, this.lazySupplySerialByTexture.length * 2);
-                    this.lazySupplySerialByTexture = java.util.Arrays.copyOf(this.lazySupplySerialByTexture, grown);
-                    this.lazySupplySerialRecorded = java.util.Arrays.copyOf(this.lazySupplySerialRecorded, grown);
-                }
-                this.lazySupplySerialByTexture[boundTexture] = writeSerial;
-                this.lazySupplySerialRecorded[boundTexture] = true;
-                int[] size = textureSize(boundTexture);
-                if (size[0] > 0 && size[1] > 0) {
-                    try {
-                        org.soutalab.celtium.vulkan.VulkanGlTexture created =
-                                celtium$registry().imageFor(boundTexture, size[0], size[1], true);
-                        created.uploadFromGlTexture(boundTexture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
-                        celtium$registry().markFullyInitialized(boundTexture);
-                        celtium$noteMirrorCurrent(boundTexture);
-                        this.lazyMirrorSupplies++;
-                        if (existing != null) {
-                            this.immediateStatistics.notePartialMirrorsCompleted();
-                        }
-                    } catch (RuntimeException | LinkageError error) {
-                        this.lazyMirrorFailures++;
-                        this.lastLazyMirrorFailure = boundTexture + ": " + error;
-                    }
-                }
-                }
+                celtium$supplyMirror(boundTexture, existing);
             }
             else if (boundTexture > 0 && boundTexture != this.atlasGlId && boundTexture != this.lightmapGlId) {
                 celtium$refreshRawWrites(boundTexture, existing);
@@ -11008,7 +10971,14 @@ this.frameBufferOpen = false;
         if (glTextureId <= 0 || this.textureRegistry == null) {
             return false;
         }
-        VulkanGlTexture existing = this.textureRegistry.get(glTextureId);
+        return celtium$supplyMirror(glTextureId, this.textureRegistry.get(glTextureId));
+    }
+
+    /**
+     * The supply itself, for callers that already resolved {@code existing}. {@return whether a mirror exists for the
+     * texture afterwards}.
+     */
+    boolean celtium$supplyMirror(int glTextureId, VulkanGlTexture existing) {
         if (existing != null && existing.hasFullContent()) {
             return true;
         }
