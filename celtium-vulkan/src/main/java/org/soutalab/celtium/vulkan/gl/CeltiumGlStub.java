@@ -5765,6 +5765,16 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B11: // GL_POINT_SIZE
                 putFloatOrDouble(out, 0, this.pointSize, asDouble);
                 return;
+            case 0x0B12: // GL_POINT_SIZE_RANGE - points are not rasterized, so the one supported size is one
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, 1.0f, asDouble);
+                return;
+            case 0x0B13: // GL_POINT_SIZE_GRANULARITY
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
+            case 0x0B23: // GL_LINE_WIDTH_GRANULARITY
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
             case 0x0B22: // GL_LINE_WIDTH_RANGE - two values, not the point size
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
                 putFloatOrDouble(out, 1, 1.0f, asDouble);
