@@ -6125,6 +6125,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void celtium$frameBoundary() {
         this.worldPassActive = false;
         this.derivedProjectionPending = false;
+        // Retained glyph runs must not survive into this frame: updateCameraAndRender runs in menus too, where
+        // captureWorldSnapshot does not. Only the retained deque is dropped here - the open run keeps its existing
+        // flush points (window and world boundaries), because offering it here would use the previous frame's target.
+        this.fontBatch.celtium$dropRetainedAtFrameBoundary();
     }
 
     public void beginWorldPass() {
