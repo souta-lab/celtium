@@ -2565,6 +2565,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /** {@code glGetInteger64v/i_v} from the transformer's route: the scalar mirror widened to 64 bits. */
+    public static void celtium$getInteger64(int pname, long out) {
+        if (out != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutLong(out, celtium$getInteger(pname));
+        }
+    }
+
     /**
      * {@code glGetSynciv} from the transformer's route. The sync object glClientWaitSync already answers as signalled;
      * a zero here is not a sync status at all, and a caller polling GL_SYNC_STATUS would read it forever.

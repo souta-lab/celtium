@@ -1377,6 +1377,11 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetInteger64v/i_v}: the scalar query widened to the 64-bit output. */
+    public static void glGetInteger64(int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger64(pname, out);
+    }
+
     /** Raw {@code glGetSynciv}: the sync objects this stub hands out are always signalled. */
     public static void glGetSynciv(long sync, int pname, int bufSize, long length, long values) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getSynciv(sync, pname, bufSize, length, values);
@@ -1630,8 +1635,6 @@ public final class CeltiumGllessHint {
             case "nglGetSamplerParameterIuiv":
             case "nglGetMultisamplefv":
                 return 4;
-            case "nglGetInteger64v":
-            case "nglGetInteger64i_v":
             case "nglGetBufferParameteri64v64":
                 return 8;
             case "nglGetFloatv":

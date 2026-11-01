@@ -947,6 +947,22 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IJ)V".equals(descriptor) && name.endsWith("glGetInteger64v")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetInteger64", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetInteger64i_v")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetInteger64", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(JIIJJ)V".equals(descriptor) && name.endsWith("glGetSynciv")) {
                 method.visitVarInsn(Opcodes.LLOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
