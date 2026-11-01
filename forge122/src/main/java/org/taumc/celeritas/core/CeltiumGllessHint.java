@@ -244,6 +244,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
     }
 
+    /** The DSA immutable-storage form: the texture is named instead of bound. */
+    public static void glTexStorageNamed(int texture, int levels, int internalFormat, int width, int height) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorageNamed(texture, levels, internalFormat, width, height);
+    }
+
     /** Raw immutable texture storage: records the level-0 extent the texture queries answer. */
     public static void glTexStorage2D(int target, int levels, int internalFormat, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorage(target, levels, internalFormat, width, height);

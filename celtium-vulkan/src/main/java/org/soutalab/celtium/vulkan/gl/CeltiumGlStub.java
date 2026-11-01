@@ -1806,6 +1806,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glTextureStorage2D/3D} from the transformer's route: the named form of the extent record. */
+    public static void celtium$texStorageNamed(int texture, int levels, int internalFormat, int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && texture > 0 && levels > 0 && width > 0 && height > 0) {
+            stub.recordExtentForName(texture, 0, internalFormat, width, height);
+        }
+    }
+
     /** {@code glTexStorage2D/3D} from the transformer's route: immutable storage still defines the level-0 extent. */
     public static void celtium$texStorage(int target, int levels, int internalFormat, int width, int height) {
         CeltiumGlStub stub = installed;
@@ -6130,6 +6138,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (name == 0) {
             return;
         }
+        recordExtentForName(name, level, internal, width, height);
+    }
+
+    /** The extent record for a texture already named, as the DSA storage forms carry it. */
+    private void recordExtentForName(int name, int level, int internal, int width, int height) {
         int[] previous = this.texLevels.put(texLevelKey(name, level), new int[] { width, height, internal });
         if (level == 0 && previous != null && (previous[0] != width || previous[1] != height)
                 && previous[0] * previous[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
