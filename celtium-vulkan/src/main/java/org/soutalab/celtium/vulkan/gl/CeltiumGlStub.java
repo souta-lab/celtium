@@ -7615,9 +7615,17 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Executes a {@code glCallLists} run: every name is the list base plus the value read at that index. Vanilla does
      * not call this, but font and model batching mods do, and the call was a no-op - their lists produced no picture.
      */
+    /** Upper bound on one glCallLists run: a malformed count must not stall the render thread. */
+    private static final int MAX_CALL_LIST_NAMES = 1 << 16;
+
     private void callLists(int count, int type, long address) {
         if (count <= 0 || address == 0L) {
             return;
+        }
+        // The count is caller data; a bogus one loops for as long as it says. Replaying the first 64 Ki names is
+        // bounded work and still draws what a legitimate batch of that size would.
+        if (count > MAX_CALL_LIST_NAMES) {
+            count = MAX_CALL_LIST_NAMES;
         }
         if (type == 0x1407 || type == 0x1408 || type == 0x1409) {
             // GL_2_BYTES/3/4: the element is a group of that many bytes, and *each byte* is one list offset - the
