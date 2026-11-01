@@ -1806,6 +1806,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** The int-returning texture-parameter query, bound or named. */
+    public static int celtium$getTextureParameterInt(int targetOrName, int pname, boolean named) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return 0;
+        }
+        if (named) {
+            return textureParameterValue(targetOrName, pname);
+        }
+        int textureName = 0;
+        if (!isProxyTarget(targetOrName)) {
+            int bound = targetOrName == GL_TEXTURE_2D ? stub.textures.texture2d()
+                    : stub.textureBindings.get(stub.texBindKey(targetOrName));
+            textureName = bound < 0 ? 0 : bound;
+        }
+        return textureParameterValue(textureName, pname);
+    }
+
     /** {@code glGetTextureParameteriv/fv/Iiv/Iuiv}: the DSA spelling of the per-texture parameter record. */
     public static void celtium$getTextureParameterNamed(int texture, int pname, long out, boolean floats) {
         if (out == 0L) {

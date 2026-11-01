@@ -244,6 +244,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
     }
 
+    /** The int-returning texture-parameter query (bound or named). */
+    public static int glGetTextureParameterInt(int targetOrName, int pname, boolean named) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTextureParameterInt(targetOrName, pname, named);
+    }
+
     /** Raw {@code glGetTextureParameter*}: the named texture-parameter record. */
     public static void glGetTextureParameterNamed(int texture, int pname, long out, boolean floats) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTextureParameterNamed(texture, pname, out, floats);
