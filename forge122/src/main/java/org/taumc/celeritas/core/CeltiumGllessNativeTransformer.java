@@ -72,7 +72,10 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glClearBufferfv", "glClearBufferiv", "glClearBufferuiv",
             "glStencilFuncSeparate", "glStencilOpSeparate", "glStencilMaskSeparate",
             "glPolygonMode", "glHint", "glPointSize", "glSampleCoverage", "glLogicOp", "glClampColor",
-            "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers"));
+            "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers",
+            "glPrimitiveRestartIndex", "glSampleMaski", "glProvokingVertex",
+            "glBindSampler", "glBindBufferBase", "glBindBufferRange",
+            "glAlphaFunc", "glSecondaryColor3f"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
