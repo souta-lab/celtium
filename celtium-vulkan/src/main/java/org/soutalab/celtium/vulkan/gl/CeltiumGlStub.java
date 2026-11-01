@@ -4639,8 +4639,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return this.compilingList;
             case 0x8B8D: // GL_CURRENT_PROGRAM
                 return this.currentProgram;
-            case 0x0B74: // GL_DEPTH_FUNC
-                return 0x0201; // GL_LESS
+            case 0x0B74: { // GL_DEPTH_FUNC
+                // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
+                // touches this stub's own enable record.
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$depthFuncGl() : 0x0201; // GL_LESS
+            }
             case 0x0D05: // GL_PACK_ALIGNMENT
                 return 4;
             case 0x0B65: // GL_FOG_MODE
@@ -4873,8 +4878,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             }
             case 0x0B72: { // GL_DEPTH_WRITEMASK
-                // GL's default is enabled and glDepthMask sets the same value the pipeline reads from the enable record.
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_DEPTH_WRITEMASK_CAP) ? 1 : 0));
+                // GL's default is enabled. The mirror is the authority: glDepthMask goes through the hint to the backend
+                // and never reaches this stub's enable record.
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                boolean mask = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$depthWritesLive() : enabledCap(GL_DEPTH_WRITEMASK_CAP);
+                MemoryUtil.memPutByte(out, (byte) (mask ? 1 : 0));
                 return;
             }
             case 0x0BD0: { // GL_DEPTH_TEST
