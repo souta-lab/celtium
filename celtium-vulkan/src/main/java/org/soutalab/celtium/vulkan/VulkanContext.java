@@ -118,6 +118,9 @@ public final class VulkanContext {
     /** Extensions actually enabled on this instance (not merely advertised by the loader). */
     private java.util.Set<String> enabledInstanceExtensions = java.util.Collections.emptySet();
     private VkPhysicalDevice physicalDevice;
+
+    /** The device's 2D image dimension limit, or 0 when the contract has not been reported yet. */
+    private int maxImageDimension2D;
     /**
      * Whether this context is the OpenGL-interop (bridge) configuration, i.e. whether a GL device identity was
      * available to match against. It is the one thing that decides whether the fd-sharing extensions are part of the
@@ -607,6 +610,11 @@ public final class VulkanContext {
     }
 
     /** Driver-reported name of the matched device, for diagnostics. */
+    /** {@return the device's 2D image dimension limit (16384 when it has not been queried)}. */
+    public int maxImageDimension2D() {
+        return this.maxImageDimension2D > 0 ? this.maxImageDimension2D : 16384;
+    }
+
     public String deviceName() {
         return this.deviceName;
     }
@@ -2637,6 +2645,9 @@ public final class VulkanContext {
                 + "(0x" + Integer.toHexString(depthFormat) + ")"
                 + " samples=" + REQUIRED_SAMPLES);
         int pushConstantLimit = properties.limits().maxPushConstantsSize();
+        // Kept for glGetIntegerv(GL_MAX_TEXTURE_SIZE): the stub answered a fixed 16384, which is wrong on a device whose
+        // limit is lower - a mod sizing a texture from that answer asked for an image this device cannot create.
+        this.maxImageDimension2D = properties.limits().maxImageDimension2D();
         // The requirement is named, not assumed: the number comes from the same constant the pipeline layouts
         // spend, so the contract line and the code cannot drift apart.
         required.add("pushConstants>=" + PUSH_CONSTANT_BYTES_USED);

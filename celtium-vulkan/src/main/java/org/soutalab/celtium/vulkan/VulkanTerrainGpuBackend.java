@@ -3954,6 +3954,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /** {@return the game's current depth-write state}, for the clear latch's GL mask rule. */
+    /** {@return the device's 2D texture size limit}, which glGetIntegerv(GL_MAX_TEXTURE_SIZE) answers. */
+    public int celtium$maxTextureSize() {
+        return this.context.maxImageDimension2D();
+    }
+
     /** {@return the alpha comparison the game last set}, as a GL enum. */
     public int celtium$alphaTestFuncGl() {
         return this.immediateState.alphaFunc();
