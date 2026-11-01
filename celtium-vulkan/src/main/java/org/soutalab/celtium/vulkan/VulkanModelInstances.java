@@ -138,7 +138,8 @@ final class VulkanModelInstances {
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> poolEntries =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]>();
     /** The mesh object each pooled list was copied from, so an unchanged list is not copied again. */
-    private final Map<Integer, VulkanDynamicMesh> poolMeshes = new HashMap<Integer, VulkanDynamicMesh>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<VulkanDynamicMesh> poolMeshes =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private long poolVertexUsed;
     private long poolIndexUsed;
     private long poolAppends;
@@ -247,7 +248,7 @@ final class VulkanModelInstances {
                 continue;
             }
             live.add(entry.getKey().intValue());
-            if (this.poolMeshes.get(entry.getKey()) == mesh) {
+            if (this.poolMeshes.get(entry.getKey().intValue()) == mesh) {
                 continue;
             }
             long vBytes = (long) mesh.vertexCount() * VERTEX_BYTES;
@@ -257,7 +258,7 @@ final class VulkanModelInstances {
             MemoryUtil.memCopy(mesh.indexAddress(), this.poolIndices.mappedAddress() + this.poolIndexUsed, iBytes);
             this.poolEntries.put(entry.getKey(), new int[] {(int) (this.poolIndexUsed / 4L),
                     (int) (this.poolVertexUsed / VERTEX_BYTES), mesh.indexCount()});
-            this.poolMeshes.put(entry.getKey(), mesh);
+            this.poolMeshes.put(entry.getKey().intValue(), mesh);
             this.poolVertexUsed += vBytes;
             this.poolIndexUsed += iBytes;
             this.poolAppends++;
