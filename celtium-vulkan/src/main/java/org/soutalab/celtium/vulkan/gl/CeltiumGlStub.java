@@ -4738,6 +4738,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x80A8: return 0; // GL_SAMPLE_BUFFERS
             case 0x80A9: return 0; // GL_SAMPLES
             case 0x8D57: return 0; // GL_MAX_SAMPLES
+            case 0x0B52: // GL_SHADE_MODEL - the shaders interpolate the vertex colour, which is GL_SMOOTH
+                return 0x1D01;
             case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
                 return this.drawFbo == 0 ? 0x0405 : 0x8CE0;
             case 0x0C02: // GL_READ_BUFFER
