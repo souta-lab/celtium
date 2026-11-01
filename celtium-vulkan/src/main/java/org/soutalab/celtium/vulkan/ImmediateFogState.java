@@ -77,7 +77,8 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
      * fog (sodium's {@code getFragDistance} is the camera distance) and that path is accepted against the GL bridge.
      */
     static final String DISTANCE =
-            System.getProperty("celtium.vulkan.immediateFogDistance", "radial").trim().toLowerCase();
+            System.getProperty("celtium.vulkan.immediateFogDistance", "radial").trim()
+                    .toLowerCase(java.util.Locale.ROOT);
     /** {@link #DISTANCE} resolved once: the selector ran two String equals per fog-enabled group. */
     private static final boolean DISTANCE_PLANAR = "planar".equals(DISTANCE);
     private static final boolean DISTANCE_AUTO = "auto".equals(DISTANCE);

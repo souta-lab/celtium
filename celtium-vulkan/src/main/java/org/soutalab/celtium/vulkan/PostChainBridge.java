@@ -913,7 +913,8 @@ b.frameBufferOpen = false;
             b.record("chain frame dump skipped: the GPU did not confirm the chain submission");
             return;
         }
-        String base = System.getProperty("celtium.vulkan.chainFrameDumpPath", "/tmp/celtium-chain-frame.png");
+        String base = System.getProperty("celtium.vulkan.chainFrameDumpPath",
+                System.getProperty("java.io.tmpdir", ".") + java.io.File.separator + "celtium-chain-frame.png");
         if (b.frameTarget != null) {
             b.celtium$dumpOwnedImage("frame", b.frameTarget.colorImage(), base, identity,
                     b.targetWidth, b.targetHeight);

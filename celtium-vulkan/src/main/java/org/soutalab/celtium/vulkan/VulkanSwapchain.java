@@ -672,7 +672,7 @@ public final class VulkanSwapchain {
         }
         if (CeltiumWindow.sdl()) {
             String compositor = CeltiumWindow.sdlCompositor();
-            String where = compositor == null ? "sdl" : compositor.toLowerCase();
+            String where = compositor == null ? "sdl" : compositor.toLowerCase(java.util.Locale.ROOT);
             // X11 goes through vkCreateXlibSurfaceKHR with the window id, exactly as the GLFW line does: the ids are what
             // Vulkan needs, and a Display opened here is a second connection to the same server. The alternative,
             // SDL_Vulkan_CreateSurface on Cleanroom's window, was measured to bring the process down - SIGSEGV inside
@@ -771,7 +771,7 @@ public final class VulkanSwapchain {
                 // two pointers from the window properties leaves the surface to Vulkan alone.
                 long waylandDisplay = 0L;
                 long waylandSurface = 0L;
-                if (compositor != null && compositor.toLowerCase().contains("wayland")) {
+                if (compositor != null && compositor.toLowerCase(java.util.Locale.ROOT).contains("wayland")) {
                     int properties = org.lwjgl.sdl.SDLVideo.SDL_GetWindowProperties(sdlWindow);
                     if (properties != 0) {
                         waylandDisplay = org.lwjgl.sdl.SDLProperties.SDL_GetPointerProperty(properties,
