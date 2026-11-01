@@ -4657,6 +4657,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B71: return enabledCap(GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
             case 0x0BC0: return enabledCap(GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
             case 0x0C11: return enabledCap(GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
+            case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
+                return this.matrixMode;
             case 0x0B74: { // GL_DEPTH_FUNC
                 // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
                 // touches this stub's own enable record.
