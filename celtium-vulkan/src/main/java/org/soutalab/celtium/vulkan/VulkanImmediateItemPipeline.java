@@ -404,8 +404,10 @@ public final class VulkanImmediateItemPipeline {
             this.descriptorSlotHits++;
             return this.lastDescriptorSet;
         }
-        if (this.setsByTextureView.containsKey(texture.key())) {
-            long cached = this.setsByTextureView.get(texture.key());
+        // Long2LongOpenHashMap answers 0 for an absent key and no real set is 0, so one lookup replaces the
+        // containsKey-then-get pair this used to pay for every textured group.
+        long cached = this.setsByTextureView.get(texture.key());
+        if (cached != 0L) {
             this.lastDescriptorKey = texture.key();
             this.lastDescriptorSet = cached;
             return cached;
@@ -477,8 +479,9 @@ public final class VulkanImmediateItemPipeline {
             return 0L;
         }
         long descriptorKey = (texture.key() * 31L) + lightmap.key();
-        if (this.setsByTextureView.containsKey(descriptorKey)) {
-            return this.setsByTextureView.get(descriptorKey);
+        long cachedSet = this.setsByTextureView.get(descriptorKey);
+        if (cachedSet != 0L) {
+            return cachedSet;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);

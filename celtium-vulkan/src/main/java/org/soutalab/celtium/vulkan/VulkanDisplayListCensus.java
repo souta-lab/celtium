@@ -75,10 +75,9 @@ public final class VulkanDisplayListCensus {
             originUnknown(list, "no-list-identity");
             return;
         }
-        if (ORIGINS.containsKey(Integer.valueOf(list))) {
+        if (ORIGINS.putIfAbsent(Integer.valueOf(list), origin) != null) {
             return;
         }
-        ORIGINS.put(Integer.valueOf(list), origin);
         // The cancellation rule's predicate, decided where the origin arrives rather than re-searched on every cancel.
         if (origin != null && (origin.contains("ItemRenderer") || origin.contains("ModelPlayer")
                 || origin.contains("ModelBiped"))) {
@@ -421,7 +420,7 @@ public final class VulkanDisplayListCensus {
      * that finds nothing is counted and named instead of being recorded as a name of 0.
      */
     private static void noteReplayTexture(int list) {
-        if (REPLAY_TEXTURES.containsKey(Integer.valueOf(list)) || REPLAY_TEXTURES.size() >= 32) {
+        if (REPLAY_TEXTURES.get(Integer.valueOf(list)) != null || REPLAY_TEXTURES.size() >= 32) {
             return;
         }
         int unit = glInt(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);

@@ -10,12 +10,14 @@ package org.soutalab.celtium.vulkan;
  */
 final class CeltiumSdlEventTrace {
     private static org.lwjgl.sdl.SDL_EventFilter filter;
+    /** Read once: installOnce is cheap, but the trace switch is a property map lookup and this is the only reader. */
+    private static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.eventTrace");
 
     private CeltiumSdlEventTrace() {
     }
 
     static void installOnce() {
-        if (!Boolean.getBoolean("celtium.vulkan.eventTrace") || filter != null) {
+        if (!ENABLED || filter != null) {
             return;
         }
         filter = org.lwjgl.sdl.SDL_EventFilter.create((userdata, event) -> {

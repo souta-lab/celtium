@@ -615,9 +615,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             bars[i] = new NativeLoadingScreen.Bar(titles[i], messages[i], steps[i], totals[i]);
         }
         VulkanGlTexture image = this.loadingScreen.update(width, height, style, logo, forge, font, bars, angle);
-        String directory = System.getProperty("celtium.vulkan.frameDumpDir");
+        String directory = FRAME_DUMP_DIR;
         if (!this.loadingProgressDumped && directory != null
-                && Boolean.getBoolean("celtium.validation.dumpLoadingProgress") && steps.length > 0 && steps[0] > 0) {
+                && DUMP_LOADING_PROGRESS && steps.length > 0 && steps[0] > 0) {
             this.swapchain.requestPresentedImageDump(java.nio.file.Paths.get(directory, "forge-loading-progress.png"));
             this.loadingProgressDumped = true;
         }
@@ -768,7 +768,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
         this.diagnostics.add("stateMirror: stubTransformCalls="
                 + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary());
-        if (Boolean.getBoolean("celtium.vulkan.handoffTimings")) {
+        if (HANDOFF_TIMINGS) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             // How many transform calls reached the stub. Not a hook-failure count on its own - the mirror hooks at
@@ -2470,7 +2470,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         if (colourFamily) {
             VulkanImmediatePipeline colourState = (VulkanImmediatePipeline) prepared.pipeline;
-            if (!this.recordsColourPipelines.containsKey(colourState)) {
+            if (this.recordsColourPipelines.get(colourState) == null) {
                 this.recordsColourPipelines.put(colourState, VulkanImmediatePipeline.createRecords(this.context,
                         colourState.celtium$renderPass(), colourState.celtium$colorBlend(),
                         colourState.celtium$depthTests(), colourState.celtium$depthWrites(),
@@ -2693,6 +2693,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * low FPS, so it is measured on the frame boundary instead of inferred from the sections.
      */
     private static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
+    /** Read once: these are consulted on frame and loading paths, not at startup only. */
+    private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
+    private static final String FRAME_DUMP_DIR = System.getProperty("celtium.vulkan.frameDumpDir");
+    private static final boolean DUMP_LOADING_PROGRESS =
+            Boolean.getBoolean("celtium.validation.dumpLoadingProgress");
     private final long[] frameIntervals = new long[120];
     /** How many frame-statistic lines this run has printed, so per-frame means can be reported. */
     private long debugFrameReports;
@@ -4281,6 +4286,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private boolean queuedGroupUsesTexture(int glTextureId) {
+        if (this.immediateGroups.isEmpty()) {
+            return false;
+        }
         for (ImmediateGroup group : this.immediateGroups) {
             if (group.texture == glTextureId || (group.modelRun != null && group.modelRun.usesTexture(glTextureId))) {
                 return true;
@@ -10375,6 +10383,9 @@ this.frameBufferOpen = false;
     }
 
     int countGroupsForTarget(long targetIdentity) {
+        if (this.immediateGroups.isEmpty()) {
+            return 0;
+        }
         if (targetIdentity == this.cachedCountTarget && this.groupQueueMutation == this.cachedCountMutation) {
             return this.cachedCountValue;
         }
