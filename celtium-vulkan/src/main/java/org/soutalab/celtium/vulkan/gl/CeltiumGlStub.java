@@ -2055,10 +2055,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        byte[] snapshot = new byte[ATTRIB_CAPABILITIES.length];
-        for (int i = 0; i < ATTRIB_CAPABILITIES.length; i++) {
-            snapshot[i] = stub.enables[ATTRIB_CAPABILITIES[i]];
+        int caps = ATTRIB_CAPABILITIES.length;
+        long[] snapshot = new long[caps + 6];
+        for (int i = 0; i < caps; i++) {
+            snapshot[i] = stub.enables[ATTRIB_CAPABILITIES[i]] != 0 ? 1L : 0L;
         }
+        snapshot[caps] = Float.floatToRawIntBits(stub.currentRed);
+        snapshot[caps + 1] = Float.floatToRawIntBits(stub.currentGreen);
+        snapshot[caps + 2] = Float.floatToRawIntBits(stub.currentBlue);
+        snapshot[caps + 3] = Float.floatToRawIntBits(stub.currentAlpha);
+        snapshot[caps + 4] = Float.floatToRawIntBits(stub.lineWidth);
+        snapshot[caps + 5] = Float.floatToRawIntBits(stub.pointSize);
         stub.attribStack.addLast(snapshot);
     }
 
@@ -2067,17 +2074,31 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        byte[] snapshot = stub.attribStack.pollLast();
+        long[] snapshot = stub.attribStack.pollLast();
         if (snapshot == null) {
             return;
         }
-        for (int i = 0; i < ATTRIB_CAPABILITIES.length; i++) {
-            stub.setCapability(ATTRIB_CAPABILITIES[i], snapshot[i] != 0);
+        int caps = ATTRIB_CAPABILITIES.length;
+        for (int i = 0; i < caps; i++) {
+            stub.setCapability(ATTRIB_CAPABILITIES[i], snapshot[i] != 0L);
+        }
+        stub.currentRed = Float.intBitsToFloat((int) snapshot[caps]);
+        stub.currentGreen = Float.intBitsToFloat((int) snapshot[caps + 1]);
+        stub.currentBlue = Float.intBitsToFloat((int) snapshot[caps + 2]);
+        stub.currentAlpha = Float.intBitsToFloat((int) snapshot[caps + 3]);
+        stub.lineWidth = Float.intBitsToFloat((int) snapshot[caps + 4]);
+        stub.pointSize = Float.intBitsToFloat((int) snapshot[caps + 5]);
+        // The group payload reads its colour from the backend mirror, not from these fields: restoring only the stub
+        // would leave the popped draw's tint as the next vanilla group's colour.
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) {
+            backend.setColor(stub.currentRed, stub.currentGreen, stub.currentBlue, stub.currentAlpha);
         }
     }
 
     /** Bounded legacy server-attribute stack. */
-    private final java.util.ArrayDeque<byte[]> attribStack = new java.util.ArrayDeque<byte[]>();
+    private final java.util.ArrayDeque<long[]> attribStack = new java.util.ArrayDeque<long[]>();
 
     /**
      * {@code glPushClientAttrib/glPopClientAttrib} from the transformer's route. Legacy mods save the client vertex-array
