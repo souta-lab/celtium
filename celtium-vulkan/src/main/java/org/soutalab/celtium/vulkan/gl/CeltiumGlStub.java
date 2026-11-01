@@ -5691,6 +5691,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B45: return this.raster.cullFace();
             case 0x0B46: return this.raster.frontFace();
 
+            case 0x8895: // GL_ELEMENT_ARRAY_BUFFER_BINDING - the binding the indexed decode reads
+                return boundBuffer(0x8893);
+            case 0x88ED: // GL_PIXEL_PACK_BUFFER_BINDING
+                return this.pixelPackBuffer;
+            case 0x88EF: // GL_PIXEL_UNPACK_BUFFER_BINDING
+                return this.pixelUnpackBuffer;
             case 0x8894: // GL_ARRAY_BUFFER_BINDING, including a native API resource's opaque identity
                 return NativeGeometryBuffer.boundId();
             case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
