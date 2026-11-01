@@ -2312,6 +2312,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void recordClear(int mask) {
+        // GL's clear obeys the colour write mask: a pass that clears depth with every colour channel masked off - the
+        // fancy-cloud depth-only pass does exactly that through GlStateManager.colorMask - must not erase the image's
+        // colour. The latch, the pending mask and every replay read this value, so the masking belongs at this one
+        // choke point. A partial mask cannot be expressed by an attachment clear and still clears the colour.
+        if (this.raster.colorMask() == 0) {
+            mask &= ~0x4000;
+        }
         // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
         this.pendingClearDrawFbo = this.drawFbo;
         this.pendingClearIsMain = this.drawFramebufferIsMain;
