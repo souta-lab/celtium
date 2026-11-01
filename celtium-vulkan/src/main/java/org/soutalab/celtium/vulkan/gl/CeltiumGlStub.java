@@ -1953,6 +1953,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glGetObjectLabel/glGetObjectPtrLabel}: an empty label, written with its length. */
+    public static void celtium$getObjectLabel(int bufSize, long length, long label) {
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
+        }
+        if (label != 0L && bufSize > 0) {
+            org.lwjgl.system.MemoryUtil.memPutByte(label, (byte) 0);
+        }
+    }
+
     /** Renderbuffer storage, recorded so its size queries answer the extent the caller asked for. */
     public static void celtium$bindRenderbuffer(int target, int renderbuffer) {
         CeltiumGlStub stub = installed;

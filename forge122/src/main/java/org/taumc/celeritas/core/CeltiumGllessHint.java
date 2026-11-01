@@ -1644,6 +1644,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroBytes(pixels, bytes);
     }
 
+    /** Raw debug-label queries: no label exists, so the answer is an empty one. */
+    public static void glGetObjectLabel(int bufSize, long length, long label) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getObjectLabel(bufSize, length, label);
+    }
+
     /** Renderbuffer storage and its size query. */
     public static void glBindRenderbuffer(int target, int renderbuffer) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindRenderbuffer(target, renderbuffer);

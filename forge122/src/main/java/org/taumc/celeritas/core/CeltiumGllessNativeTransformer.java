@@ -1379,6 +1379,24 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(IIIJJ)V".equals(descriptor) && name.endsWith("glGetObjectLabel")) {
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetObjectLabel", "(IJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(JIJJ)V".equals(descriptor) && name.endsWith("glGetObjectPtrLabel")) {
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetObjectLabel", "(IJJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(II)V".equals(descriptor) && name.endsWith("glBindRenderbuffer")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
