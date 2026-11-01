@@ -180,8 +180,12 @@ public final class VulkanTerrainPipeline {
      * change the frame, and if it does not, the attribute description is being ignored rather than reading data that
      * happens to be wrong.
      */
+    private static final boolean NO_TERRAIN_DEPTH = Boolean.getBoolean("celtium.vulkan.noTerrainDepth");
+    private static final int COLOUR_ATTR_OFFSET =
+            Integer.getInteger("celtium.vulkan.colourAttrOffset", 12).intValue();
+
     private static int colourAttributeOffset() {
-        return Integer.getInteger("celtium.vulkan.colourAttrOffset", 12).intValue();
+        return COLOUR_ATTR_OFFSET;
     }
 
     /**
@@ -1335,7 +1339,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             // loss is in depth (the values, the compare, or the buffer's contents) and a picture that stays black
             // says it is not. Every statically readable candidate had already been excluded by measurement, so the
             // next step has to separate the remaining explanations rather than read more source.
-            boolean depth = !Boolean.getBoolean("celtium.vulkan.noTerrainDepth");
+            boolean depth = !NO_TERRAIN_DEPTH;
             VkPipelineDepthStencilStateCreateInfo depthStencil = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
                     .sType$Default()
                     .depthTestEnable(depth)

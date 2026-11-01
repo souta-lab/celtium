@@ -3834,15 +3834,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * hotbar, the crosshair and the HUD text over the world (distinct 11932, was 2440 before the HUD and 1 with the
      * ortho repair alone).
      */
+    /** The builders whose scratch matrix is zeroed before the write, resolved once from the property. */
+    private static final java.util.Set<String> SCRATCH_ZERO_BUILDERS = scratchZeroBuilders();
+
     private static boolean scratchZeroWanted(String builder) {
-        String list = System.getProperty("celtium.vulkan.scratchZero", "perspective,ortho");
-        for (String part : list.split(",")) {
-            if (part.trim().equalsIgnoreCase(builder)) {
-                return true;
+        return SCRATCH_ZERO_BUILDERS.contains(builder.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    private static java.util.Set<String> scratchZeroBuilders() {
+        java.util.Set<String> wanted = new java.util.HashSet<String>();
+        for (String part : System.getProperty("celtium.vulkan.scratchZero", "perspective,ortho").split(",")) {
+            if (!part.trim().isEmpty()) {
+                wanted.add(part.trim().toLowerCase(java.util.Locale.ROOT));
             }
         }
-        return false;
+        return wanted;
     }
+
     private final float[] glProjection = new float[16];
     private final float[] glModelView = new float[16];
 
@@ -11530,7 +11538,8 @@ this.frameBufferOpen = false;
      * terrain, so the whole path - dynamic vertex stream, second pipeline, second texture binding, blending and
      * push constants - is exercised inside the frame that the validation harness already checks.
      */
-    private final boolean uiTestEnabled = Boolean.getBoolean("celtium.vulkan.uiTest");
+    private static final boolean UI_TEST = Boolean.getBoolean("celtium.vulkan.uiTest");
+    private final boolean uiTestEnabled = UI_TEST;
 
     /**
      * Whether the frame image is marked with a green field at the head of the frame's own pass, so "a draw that wrote
@@ -13767,8 +13776,10 @@ this.frameBufferOpen = false;
     private final boolean windowSiteCensusWanted = DRAW_SITE_CENSUS;
 
     /** The GL name whose uploads {@code CELTIUM_UPLOAD_CALLER} reports without the sixteen-line bound, or -1. */
+    private static final int UPLOAD_CALLER_ID = Integer.getInteger("celtium.vulkan.uploadCallerId", -1).intValue();
+
     public static int uploadCallerId() {
-        return Integer.getInteger("celtium.vulkan.uploadCallerId", -1).intValue();
+        return UPLOAD_CALLER_ID;
     }
 
     /** How many of the splash's first presents have had their frame image (and the pair) dumped. */

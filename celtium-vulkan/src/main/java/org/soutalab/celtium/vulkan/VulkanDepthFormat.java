@@ -125,8 +125,11 @@ public final class VulkanDepthFormat {
         return summary == null ? "not decided yet" : summary;
     }
 
+    /** Read once: the override names one format for the process and never changes mid-run. */
+    private static final String OVERRIDE = System.getProperty(OVERRIDE_PROPERTY);
+
     private static int choose(VkPhysicalDevice device) {
-        String override = System.getProperty(OVERRIDE_PROPERTY);
+        String override = OVERRIDE;
         if (override != null && !override.isEmpty()) {
             int wanted = formatNamed(override.trim());
             if (wanted == VK_FORMAT_UNDEFINED) {

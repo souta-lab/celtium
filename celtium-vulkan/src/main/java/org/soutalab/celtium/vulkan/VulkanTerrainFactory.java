@@ -35,11 +35,14 @@ public final class VulkanTerrainFactory {
      * @param reasons receives one line per reason the Vulkan backend was not created
      * @return the backend, or {@code null} when OpenGL must stay active
      */
+    /** Resolved once: both factory entry points ask the same startup question. */
+    private static final String ENABLE_SETTING = System.getProperty(ENABLE_PROPERTY, "auto");
+
     public static TerrainGpuBackend create(RenderPassConfiguration<?> configuration,
                                            ChunkRenderer renderer,
                                            RenderRegionManager regions,
                                            List<String> reasons) {
-        String setting = System.getProperty(ENABLE_PROPERTY, "auto");
+        String setting = ENABLE_SETTING;
         if ("false".equalsIgnoreCase(setting)) {
             reasons.add("Vulkan terrain is disabled by -D" + ENABLE_PROPERTY + "=false");
             return null;
@@ -122,7 +125,7 @@ public final class VulkanTerrainFactory {
      * Fail-closed like the world path: a stated reason and {@code null} rather than a half-created renderer.
      */
     public static TerrainGpuBackend createForWindow(List<String> reasons) {
-        String setting = System.getProperty(ENABLE_PROPERTY, "auto");
+        String setting = ENABLE_SETTING;
         if ("false".equalsIgnoreCase(setting)) {
             reasons.add("Vulkan terrain is disabled by -D" + ENABLE_PROPERTY + "=false");
             return null;

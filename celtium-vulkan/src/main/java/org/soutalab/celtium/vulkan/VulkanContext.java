@@ -86,6 +86,13 @@ public final class VulkanContext {
      * presents the window in the hybrid build.
      */
     public static final String SWAPCHAIN_PROPERTY = "celtium.vulkan.swapchainProbe";
+    /** Startup constants read from the property map once: every use site then pays no lookup. */
+    private static final boolean VALIDATION_REQUESTED = Boolean.getBoolean(VALIDATION_PROPERTY);
+    private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
+    private static final boolean PRESENT_FROM_COMPOSITE =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
+    private static final boolean PIPELINE_CACHE_DISABLED =
+            "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pipelineCache"));
 
     private static final int REQUIRED_API_MAJOR = 1;
     private static final int REQUIRED_API_MINOR = 2;
@@ -2202,14 +2209,20 @@ public final class VulkanContext {
     private static long pipelineCreationWorstNanos;
     private long pipelineCache = VK_NULL_HANDLE;
 
-    private static java.nio.file.Path pipelineCacheFile() {
+    private static final java.nio.file.Path PIPELINE_CACHE_FILE = resolvePipelineCacheFile();
+
+    private static java.nio.file.Path resolvePipelineCacheFile() {
         String configured = System.getProperty("celtium.vulkan.pipelineCacheFile");
         return configured != null ? java.nio.file.Paths.get(configured)
                 : java.nio.file.Paths.get(System.getProperty("user.dir"), "celtium", "pipeline-cache.bin");
     }
 
+    private static java.nio.file.Path pipelineCacheFile() {
+        return PIPELINE_CACHE_FILE;
+    }
+
     private void createPipelineCache() {
-        if ("false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pipelineCache"))) {
+        if (PIPELINE_CACHE_DISABLED) {
             return;
         }
         byte[] seed = null;
@@ -2309,7 +2322,7 @@ public final class VulkanContext {
     }
 
     private void createInstance(String applicationName) {
-        boolean validation = Boolean.getBoolean(VALIDATION_PROPERTY);
+        boolean validation = VALIDATION_REQUESTED;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkApplicationInfo application = VkApplicationInfo.calloc(stack).sType$Default()
                     .pApplicationName(stack.UTF8(applicationName))
@@ -2324,8 +2337,7 @@ public final class VulkanContext {
             // Enabled when anything wants to present: the diagnostic probe, or the frame present itself. Gating it on the probe
             // alone is what made a run with the probe off create no swapchain at all and look validation-clean for the
             // trivial reason that it presented nothing. It is still capability-checked below.
-            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
-                    || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
+            if (SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE) {
                 java.util.Set<String> available = instanceExtensionNames(stack);
                 enabledInstanceExtensions.addAll(presentationInstanceExtensions(available));
             }
@@ -2573,8 +2585,7 @@ public final class VulkanContext {
             required.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
             required.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
         }
-        if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
-                || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
+        if (SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE) {
             required.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         }
         // Choosing it here is the same device the renderer will use, and it makes the contract line name the format
