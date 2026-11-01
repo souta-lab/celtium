@@ -42,6 +42,9 @@ public final class CeltiumFontAtlas {
     private static final ResourceLocation ATLAS_LOCATION = new ResourceLocation("celtium", "textures/font/atlas");
 
     /** Property switch: the atlas is the default path; {@code =false} restores the per-page path for A/B work. */
+    /** Read once: the mirror request runs on every atlas rebuild and the dump path on every dump decision. */
+    private static final boolean MIRROR_FONT_ATLAS = Boolean.getBoolean("celtium.debug.mirrorFontAtlas");
+    private static final String ATLAS_DUMP = System.getProperty("celtium.fontAtlas.dump");
     private static final boolean ENABLED = Boolean
             .parseBoolean(System.getProperty("celtium.fontAtlas", "true"));
 
@@ -154,7 +157,7 @@ public final class CeltiumFontAtlas {
         atlasName = atlasTexture.getGlTextureId();
         System.out.println("[Celtium] font atlas built: " + atlasW + "x" + atlasH
                 + " unicodeDim=" + unicodeDim + " asciiDim=" + asciiDim + " texture=" + atlasName);
-        if (Boolean.getBoolean("celtium.debug.mirrorFontAtlas")) {
+        if (MIRROR_FONT_ATLAS) {
             // Reproducing the tester's black screen needs a group that samples this atlas; menus that draw text through
             // the renderer's own font path have none. This hands the exact GL name to the renderer, which mirrors it the
             // way the group path would - including the whole-content upload the crash ends on.
@@ -207,7 +210,7 @@ public final class CeltiumFontAtlas {
         atlasImage = image;
         // Diagnostics: write the rasterised sheet where a probe asks for it, so "the atlas cell a glyph samples
         // holds what the resource manager served" is a picture and not an assumption.
-        String dump = System.getProperty("celtium.fontAtlas.dump");
+        String dump = ATLAS_DUMP;
         if (dump != null && !dump.isEmpty()) {
             try {
                 ImageIO.write(image, "png", new java.io.File(dump));

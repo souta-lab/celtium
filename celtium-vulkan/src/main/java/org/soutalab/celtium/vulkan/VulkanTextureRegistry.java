@@ -196,7 +196,8 @@ public final class VulkanTextureRegistry {
      * is filled from, with the source's own pixels summarised, so the mirror a missing batch samples is a fact in the
      * log rather than an inference.
      */
-    private final java.util.Map<Integer, String> mirrorSourceById = new java.util.HashMap<Integer, String>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<String> mirrorSourceById =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<String>();
     private final java.util.Map<String, Integer> mirrorFillsBySource = new java.util.LinkedHashMap<String, Integer>();
     /** Announcements made per GL name, and the ones a {@code forgetTexture} dropped before a mirror consumed them. */
     private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap announcementsById =
@@ -1508,7 +1509,7 @@ public final class VulkanTextureRegistry {
      */
     public String celtium$mirrorSourceFor(int glTextureId) {
         Entry entry = this.entries.get((int) (glTextureId));
-        String source = this.mirrorSourceById.get(Integer.valueOf(glTextureId));
+        String source = this.mirrorSourceById.get(glTextureId);
         if (entry == null) {
             if (source != null) {
                 return source + "@no-entry";
@@ -1536,7 +1537,7 @@ public final class VulkanTextureRegistry {
      */
     public int celtium$mirrorSourceFlags(int glTextureId) {
         int flags = 0;
-        String source = this.mirrorSourceById.get(Integer.valueOf(glTextureId));
+        String source = this.mirrorSourceById.get(glTextureId);
         if (source != null) {
             if (source.startsWith("announced-int[]")) {
                 flags |= 1;

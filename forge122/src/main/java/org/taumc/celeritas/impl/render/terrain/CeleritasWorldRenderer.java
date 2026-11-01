@@ -244,11 +244,13 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
         return this.isBoxVisible(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
     }
 
+    private static final boolean FORCE_COMPACT_FORMAT = Boolean.getBoolean("celtium.terrain.forceCompactFormat");
+
     private ChunkVertexType chooseVertexType() {
         // Diagnostic: the compact path builds its colours in VintageBlockRenderer, the vanilla-like path copies the
         // game's own vertex data. Forcing one or the other separates "the brightness term is missing from one path"
         // from "the sampler is wrong", which the frame cannot distinguish on its own.
-        if (Boolean.getBoolean("celtium.terrain.forceCompactFormat")) {
+        if (FORCE_COMPACT_FORMAT) {
             return ChunkMeshFormats.COMPACT;
         }
         if (!CeleritasVintage.options().performance.useCompactVertexFormat) {

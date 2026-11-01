@@ -49,11 +49,14 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         return new VintageRenderSectionManager(VintageRenderPassConfigurationBuilder.build(vertexType), world, renderDistance, commandList, 0, 16);
     }
 
+    /** Read once: the section manager is asked for this mode on start-up paths, never with a changing property. */
+    private static final String FORCED_ASYNC_OCCLUSION = System.getProperty("celtium.terrain.asyncOcclusion");
+
     @Override
     protected AsyncOcclusionMode getAsyncOcclusionMode() {
         // -Dceltium.terrain.asyncOcclusion=NONE|ONLY_SHADOW|EVERYTHING overrides the options file, so a leg can A/B the
         // search thread against the same copied instance.
-        String forced = System.getProperty("celtium.terrain.asyncOcclusion");
+        String forced = FORCED_ASYNC_OCCLUSION;
         if (forced != null) {
             return AsyncOcclusionMode.valueOf(forced.trim().toUpperCase(java.util.Locale.ROOT));
         }

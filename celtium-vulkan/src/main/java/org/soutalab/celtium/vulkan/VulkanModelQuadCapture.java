@@ -379,17 +379,19 @@ public final class VulkanModelQuadCapture {
      * ({@code TileEntityEnchantmentTableRenderer.render} / {@code ModelBook.func_78088_a}) rather than an id.
      */
     private static String celtium$owner(String callSite) {
-        String[] frames = callSite.split(" <- ");
-        int last = -1;
-        for (int i = 0; i < frames.length; i++) {
-            if (frames[i].contains(".ModelRenderer.")) {
-                last = i;
-            }
-        }
-        if (last < 0 || last + 1 >= frames.length) {
+        // Index scan instead of split: this runs once per captured list, and split allocated a String[] and a
+        // substring per frame for an answer that is two indexOf calls.
+        int modelFrame = callSite.lastIndexOf(".ModelRenderer.");
+        if (modelFrame < 0) {
             return "unknown";
         }
-        String owner = frames[last + 1];
+        int separator = callSite.indexOf(" <- ", modelFrame);
+        if (separator < 0) {
+            return "unknown";
+        }
+        int start = separator + 4;
+        int end = callSite.indexOf(" <- ", start);
+        String owner = end < 0 ? callSite.substring(start) : callSite.substring(start, end);
         int dot = owner.lastIndexOf('.');
         int previous = dot < 0 ? -1 : owner.lastIndexOf('.', dot - 1);
         return previous < 0 ? owner : owner.substring(previous + 1);

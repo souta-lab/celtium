@@ -30,8 +30,10 @@ final class CeltiumCompetitors {
     private CeltiumCompetitors() {
     }
 
+    private static final boolean ALLOW_COMPETITORS = Boolean.getBoolean("celtium.allowCompetitors");
+
     static void check(ClassLoader loader) {
-        if (Boolean.getBoolean("celtium.allowCompetitors") || loader == null) {
+        if (ALLOW_COMPETITORS || loader == null) {
             return;
         }
         StringBuilder found = new StringBuilder();

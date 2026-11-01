@@ -318,11 +318,14 @@ public class MinecraftMixin {
     }
 
     @Inject(method = "drawSplashScreen", at = @At("HEAD"), require = 0)
+    /** Read once: this hook runs per splash frame, and the fixture switch cannot change mid-run. */
+    private static final boolean celtium$VALIDATION = Boolean.getBoolean("celtium.validation");
+
     private void celtium$dumpLoadingFrame(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK drawSplashScreen=true");
         // The validation fixture is omitted from production jars. Avoid a ClassNotFoundException
         // and reflective lookup every splash frame outside the explicitly opt-in validation runs.
-        if (!Boolean.getBoolean("celtium.validation")) {
+        if (!celtium$VALIDATION) {
             return;
         }
         try {
