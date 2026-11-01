@@ -1626,6 +1626,11 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$popClientAttrib();
     }
 
+    /** Raw {@code glDrawElementsBaseVertex}: the indexed decode with an index bias. */
+    public static void glDrawElementsBaseVertex(int mode, int count, int type, long indices, int baseVertex) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawElementsBaseVertex(mode, count, type, indices, baseVertex);
+    }
+
     /** Raw indexed draws, in the one guarded layout the decoder can serve. */
     public static void glDrawElements(int mode, int count, int type, long indices) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawElements(mode, count, type, indices);

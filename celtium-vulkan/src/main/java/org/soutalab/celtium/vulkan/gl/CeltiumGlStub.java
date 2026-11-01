@@ -7872,7 +7872,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$drawElements(int mode, int count, int type, long indices) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.drawElementsNow(mode, count, type, indices);
+            stub.drawElementsNow(mode, count, type, indices, 0);
+        }
+    }
+
+    /** {@code glDrawElementsBaseVertex}: the same decode, with the base vertex added to every index. */
+    public static void celtium$drawElementsBaseVertex(int mode, int count, int type, long indices, int baseVertex) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.drawElementsNow(mode, count, type, indices, baseVertex);
         }
     }
 
@@ -7881,7 +7889,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * bound array buffer, indices in a mirrored element buffer. Anything else is left alone rather than guessed - the
      * same rule the unindexed decoder follows, and the reason a refused draw stays blank instead of drawing garbage.
      */
-    private void drawElementsNow(int mode, int count, int type, long indices) {
+    private void drawElementsNow(int mode, int count, int type, long indices, int baseVertex) {
         if (count <= 0 || count > (1 << 20) || (mode != 4 && mode != 5 && mode != 7)) {
             return;
         }
@@ -7925,6 +7933,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 int index = indexSize == 1 ? elementView.get((int) at) & 0xFF
                         : indexSize == 2 ? elementView.getShort((int) at) & 0xFFFF
                         : elementView.getInt((int) at);
+                if (baseVertex != 0) {
+                    index += baseVertex;
+                }
                 if (index < 0 || index >= vertexCount) {
                     return;
                 }
