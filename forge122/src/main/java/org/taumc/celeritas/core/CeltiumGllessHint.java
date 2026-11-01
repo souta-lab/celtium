@@ -601,8 +601,8 @@ public final class CeltiumGllessHint {
         }
         int value;
         switch (pname) {
-            case 0x0D33: // GL_MAX_TEXTURE_SIZE
-                value = 16384;
+            case 0x0D33: // GL_MAX_TEXTURE_SIZE - the device limit, from the scalar the stub answers
+                value = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(pname);
                 break;
             case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS
                 value = 16;
