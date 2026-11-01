@@ -152,6 +152,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
     private static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
     private static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
+    private static final int SEM_LIST_BASE = 68;      // (base) -> the offset glCallLists adds to every name
+    private static final int SEM_CALL_LISTS = 69;     // (count, type, address) -> execute a run of display lists
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -412,6 +414,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glNewList", R_VOID, SEM_NEW_LIST, A_INT, A_INT);
         fn("glEndList", R_VOID, SEM_END_LIST);
         fn("glCallList", R_VOID, SEM_CALL_LIST, A_INT);
+        fn("glListBase", R_VOID, SEM_LIST_BASE, A_INT);
+        fn("glCallLists", R_VOID, SEM_CALL_LISTS, A_INT, A_INT, A_PTR);
         fn("glBindVertexArray", R_VOID, SEM_BIND_VERTEX_ARRAY, A_INT);
         fn("glBufferSubData", R_VOID, SEM_BUFFER_SUBDATA, A_INT, A_LONG, A_LONG, A_PTR);
         // ---- client-array drawing: the pointer state that says how to read the bound array buffer's bytes, and the
@@ -487,8 +491,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glDrawRangeElements", "glDrawElementsInstanced", "glDrawArraysInstanced", "glMultiDrawArrays",
                 "glMultiDrawElements", "glDrawElementsBaseVertex", "glBeginQuery", "glEndQuery", "glBeginQueryIndexed",
                 "glEndQueryIndexed", "glClientWaitSync", "glWaitSync", "glFlush", "glFinish", "glPushAttrib",
-                "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glCallLists",
-                "glListBase", "glRenderMode", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
+                "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glRenderMode", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
                 "glPushName", "glPopName", "glLoadName", "glRasterPos2f", "glRasterPos3f", "glBitmap",
                 "glCopyPixels", "glDrawPixels",
                 "glBlitFramebuffer", "glFramebufferTexture2D", "glFramebufferTexture", "glFramebufferTexture1D",
@@ -672,7 +675,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final float[] clearValueScratch = new float[4];
     private volatile float lineWidth = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
-    private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
+    private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
     /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
     private volatile int lastBoundTexture = -1;
     /** {@code GL_COMPILE_AND_EXECUTE}: the commands are recorded and also executed as they arrive}. */
@@ -3739,6 +3742,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_CALL_LIST:
                 replayDisplayList((int) c[0]);
+                return 0L;
+            case SEM_LIST_BASE:
+                this.listBase = (int) c[0];
+                return 0L;
+            case SEM_CALL_LISTS:
+                callLists((int) c[0], (int) c[1], c[2]);
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
                 this.boundVertexArray = (int) c[0];
@@ -7398,6 +7407,30 @@ public final class CeltiumGlStub implements FunctionProvider {
                 MemoryUtil.memCopy(address + (long) i * stride, target + (long) i * targetStride, targetStride);
         } else MemoryUtil.memCopy(address, target, (long) count * stride);
         return copy;
+    }
+
+    /**
+     * Executes a {@code glCallLists} run: every name is the list base plus the value read at that index. Vanilla does
+     * not call this, but font and model batching mods do, and the call was a no-op - their lists produced no picture.
+     */
+    private void callLists(int count, int type, long address) {
+        if (count <= 0 || address == 0L) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            int offset;
+            switch (type) {
+                case 0x1400: offset = org.lwjgl.system.MemoryUtil.memGetByte(address + i); break; // GL_BYTE
+                case 0x1401: offset = org.lwjgl.system.MemoryUtil.memGetByte(address + i) & 0xFF; break; // GL_UNSIGNED_BYTE
+                case 0x1402: offset = org.lwjgl.system.MemoryUtil.memGetShort(address + (long) i * 2L); break; // GL_SHORT
+                case 0x1403: offset = org.lwjgl.system.MemoryUtil.memGetShort(address + (long) i * 2L) & 0xFFFF; break;
+                case 0x1404: // GL_INT
+                case 0x1405: offset = org.lwjgl.system.MemoryUtil.memGetInt(address + (long) i * 4L); break; // GL_UNSIGNED_INT
+                case 0x1406: offset = (int) org.lwjgl.system.MemoryUtil.memGetFloat(address + (long) i * 4L); break;
+                default: return;
+            }
+            replayDisplayList(this.listBase + offset);
+        }
     }
 
     private void replayDisplayList(int listId) {
