@@ -91,6 +91,7 @@ public final class VulkanContext {
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
+    private static final boolean HIDE_FD_EXTENSIONS = Boolean.getBoolean(HIDE_FD_EXTENSIONS_PROPERTY);
     private static final boolean PIPELINE_CACHE_DISABLED =
             "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pipelineCache"));
 
@@ -2837,8 +2838,7 @@ public final class VulkanContext {
             // enabled the loader table has no vkCreateSwapchainKHR and LWJGL's own capability check reports a
             // NullPointerException on the missing function pointer, which is exactly what the first probes hit.
             // Enabled only for the probe, and only when the device advertises it.
-            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
-                    || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
+            if (SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE) {
                 Set<String> available = deviceExtensionNames(stack, this.physicalDevice);
                 if (available.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                     deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -3025,7 +3025,7 @@ public final class VulkanContext {
                 names.add(properties.get(i).extensionNameString());
             }
         }
-        if (Boolean.getBoolean(HIDE_FD_EXTENSIONS_PROPERTY)) {
+        if (HIDE_FD_EXTENSIONS) {
             names.remove(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
             names.remove(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
         }

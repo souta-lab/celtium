@@ -43,6 +43,12 @@ import static org.lwjgl.vulkan.VK10.*;
  * stages that replace Minecraft's framebuffers land. Threading: render thread only.
  */
 public final class VulkanSwapchain {
+    /** Startup constants: create() runs once per window, but the properties cannot change mid-run. */
+    private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
+    private static final boolean PRESENT_FROM_COMPOSITE =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
+    private static final boolean ASSUME_NO_PRESENT_SUPPORT =
+            Boolean.getBoolean("celtium.vulkan.assumeNoPresentSupport");
     private final VulkanContext context;
     private long surface;
     private final String platform;
@@ -656,8 +662,7 @@ public final class VulkanSwapchain {
             return null;
         }
         if (!context.hasDeviceExtension("VK_KHR_swapchain")
-                || !(Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)
-                || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true")))) {
+                || !(SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE)) {
             reasons.add("the device was not created with VK_KHR_swapchain enabled (the swapchain probe enables it)");
             return null;
         }
@@ -890,7 +895,7 @@ public final class VulkanSwapchain {
         // otherwise unreachable, because the chosen family presents on every enumerated device.
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer supported = stack.mallocInt(1);
-            boolean forcedUnsupported = Boolean.getBoolean("celtium.vulkan.assumeNoPresentSupport");
+            boolean forcedUnsupported = ASSUME_NO_PRESENT_SUPPORT;
             int result = forcedUnsupported ? VK_SUCCESS : vkGetPhysicalDeviceSurfaceSupportKHR(context.physicalDevice(),
                     context.queueFamilyIndex(), surface, supported);
             if (forcedUnsupported) {
