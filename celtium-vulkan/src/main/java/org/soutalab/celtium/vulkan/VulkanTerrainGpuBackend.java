@@ -7639,7 +7639,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // BH-09/OPT-10: the clip rectangle the batch was offered under, captured here rather than read at
                 // flush time. Reading it live applied the last rectangle of a scissor change to every batch in the
                 // group, which is the same "state must reach the group" rule the fog and the state follow.
-                int[] liveScissor = this.rasterState.scissorBox();
+                int[] liveScissor = this.rasterState.scissorBoxScratch();
                 this.currentGroupScissor = liveScissor == null ? null : liveScissor.clone();
                 this.currentGroupScissorEnabled = liveScissor != null
                         && this.rasterState.scissorTest();
@@ -11123,7 +11123,7 @@ this.frameBufferOpen = false;
             if (!clipEnabled && GROUP_SCISSOR
                     && this.rasterState.scissorTest()
                     && this.rasterState.scissorCalled()) {
-                int[] lateClip = this.rasterState.scissorBox();
+                int[] lateClip = this.rasterState.scissorBoxScratch();
                 if (lateClip != null) {
                     clipBox = lateClip.clone();
                     clipEnabled = true;

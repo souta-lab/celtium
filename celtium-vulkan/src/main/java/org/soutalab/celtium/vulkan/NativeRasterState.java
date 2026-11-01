@@ -106,6 +106,25 @@ public final class NativeRasterState {
     public int[] scissorBox() {
         return this.scissorCalled ? new int[] {this.scissorX, this.scissorY, this.scissorWidth, this.scissorHeight} : null;
     }
+
+    /** Scratch the fill-in variant returns; callers that keep the values must copy it before the next ask. */
+    private final int[] scissorBoxScratch = new int[4];
+
+    /**
+     * {@return the live scissor box in a shared array}, or null when none was set. The group capture reads it and
+     * copies it immediately; going through {@link #scissorBox()} there allocated the box once for the getter and again
+     * for the defensive copy, on every accepted group.
+     */
+    public int[] scissorBoxScratch() {
+        if (!this.scissorCalled) {
+            return null;
+        }
+        this.scissorBoxScratch[0] = this.scissorX;
+        this.scissorBoxScratch[1] = this.scissorY;
+        this.scissorBoxScratch[2] = this.scissorWidth;
+        this.scissorBoxScratch[3] = this.scissorHeight;
+        return this.scissorBoxScratch;
+    }
     public void initializeScissor(int width, int height) {
         if (this.scissorCalled) return;
         this.scissorWidth = width; this.scissorHeight = height;
