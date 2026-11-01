@@ -154,17 +154,29 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
      * The per-batch fog payload: eight floats {@code {selector, density, start, end, r, g, b, weight}}, or {@code null}
      * when fog is off for this batch.
      */
+    /** The last array handed out; never mutated, so a group holding it keeps the values it was captured with. */
+    private float[] lastSnapshot;
+
     float[] snapshot() {
         int selector = selector();
         if (selector == 0) {
             return null;
         }
-        return new float[] {
+        float[] last = this.lastSnapshot;
+        if (last != null && last[0] == selector && last[1] == this.density && last[2] == this.start
+                && last[3] == this.end && last[4] == this.red && last[5] == this.green && last[6] == this.blue) {
+            // Most groups in a frame are accepted under the same fog record; returning the identical array keeps the
+            // per-group capture from allocating a fresh eight-float copy for each of them.
+            return last;
+        }
+        float[] fresh = new float[] {
                 selector, this.density, this.start, this.end, this.red, this.green, this.blue,
                 // The GL fog blend uses the fog colour's RGB only. The weight is 1.0 in vanilla and is kept as its own
                 // field so a mod's non-opaque fog colour cannot silently change the blend here.
                 1.0f,
         };
+        this.lastSnapshot = fresh;
+        return fresh;
     }
 
     /** {@return whether the live state differs from a group's captured {@link #snapshot()}}, without allocating. */
