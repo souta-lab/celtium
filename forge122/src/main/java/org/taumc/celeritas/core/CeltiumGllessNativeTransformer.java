@@ -1379,6 +1379,30 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(II)V".equals(descriptor) && name.endsWith("glBindRenderbuffer")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindRenderbuffer", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIII)V".equals(descriptor) && name.endsWith("glRenderbufferStorage")) {
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.ILOAD, 3);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glRenderbufferStorage", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIIII)V".equals(descriptor) && name.endsWith("glRenderbufferStorageMultisample")) {
+                method.visitVarInsn(Opcodes.ILOAD, 3);
+                method.visitVarInsn(Opcodes.ILOAD, 4);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glRenderbufferStorage", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(F)V".equals(descriptor) && name.endsWith("glPointSize")) {
                 method.visitVarInsn(Opcodes.FLOAD, 0);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
@@ -1442,10 +1466,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 return;
             }
             if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetRenderbufferParameteriv") || name.endsWith("glGetRenderbufferParameterfv"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetRenderbufferParameter", "(IJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor)
                     && (name.endsWith("glGetSamplerParameteriv") || name.endsWith("glGetSamplerParameterIiv")
-                            || name.endsWith("glGetSamplerParameterIuiv") || name.endsWith("glGetSamplerParameterfv")
-                            || name.endsWith("glGetRenderbufferParameteriv")
-                            || name.endsWith("glGetRenderbufferParameterfv"))) {
+                            || name.endsWith("glGetSamplerParameterIuiv") || name.endsWith("glGetSamplerParameterfv"))) {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(Opcodes.ICONST_0);

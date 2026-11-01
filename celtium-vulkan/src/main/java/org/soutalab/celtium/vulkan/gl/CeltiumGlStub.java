@@ -1953,6 +1953,39 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** Renderbuffer storage, recorded so its size queries answer the extent the caller asked for. */
+    public static void celtium$bindRenderbuffer(int target, int renderbuffer) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.boundRenderbuffer = renderbuffer;
+        }
+    }
+
+    public static void celtium$renderbufferStorage(int width, int height) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && stub.boundRenderbuffer > 0 && width > 0 && height > 0) {
+            stub.renderbufferDims.put(stub.boundRenderbuffer, new int[] {width, height});
+        }
+    }
+
+    /** {@code glGetRenderbufferParameteriv}: width/height of the bound renderbuffer, zero otherwise. */
+    public static void celtium$getRenderbufferParameter(int pname, long out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || out == 0L) {
+            return;
+        }
+        int[] dims = stub.renderbufferDims.get(stub.boundRenderbuffer);
+        int value = 0;
+        if (dims != null) {
+            if (pname == 0x8D42) {
+                value = dims[0]; // GL_RENDERBUFFER_WIDTH
+            } else if (pname == 0x8D43) {
+                value = dims[1]; // GL_RENDERBUFFER_HEIGHT
+            }
+        }
+        org.lwjgl.system.MemoryUtil.memPutInt(out, value);
+    }
+
     /** {@code glGetNamedBufferParameteriv/i64v}: the DSA spelling of the size query. */
     public static void celtium$getNamedBufferParameter(int name, int pname, long out, boolean wide) {
         CeltiumGlStub stub = installed;
@@ -2152,6 +2185,11 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Bounded legacy client-attribute stack. */
     private final java.util.ArrayDeque<long[]> clientAttribStack = new java.util.ArrayDeque<long[]>();
+
+    /** Bound renderbuffer name and its recorded extent. */
+    private int boundRenderbuffer;
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> renderbufferDims =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]>();
 
     /** Per-VAO attribute records, keyed by the VAO name; the client pointer fields hold the bound one. */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> vaoRecords =

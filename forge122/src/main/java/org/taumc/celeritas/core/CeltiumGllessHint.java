@@ -1644,6 +1644,19 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroBytes(pixels, bytes);
     }
 
+    /** Renderbuffer storage and its size query. */
+    public static void glBindRenderbuffer(int target, int renderbuffer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindRenderbuffer(target, renderbuffer);
+    }
+
+    public static void glRenderbufferStorage(int width, int height) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$renderbufferStorage(width, height);
+    }
+
+    public static void glGetRenderbufferParameter(int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getRenderbufferParameter(pname, out);
+    }
+
     /** Raw unmodelled getters: a zeroed output is deterministic, unlike an untouched caller buffer. */
     public static void glZeroOut(long out, int count, boolean wide) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroOut(out, count, wide);
