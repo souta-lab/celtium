@@ -262,6 +262,9 @@ public final class VulkanGlTexture {
      * earlier attempts changed the tail barrier's range and broke exactly that agreement.
      */
     private int[] levelLayouts = new int[0];
+
+    /** Scratch for the per-level staging offsets of one patch; refilled at the head of the call that uses it. */
+    private long[] patchLevelOffsets = new long[4];
     /**
      * Whether this image has defined storage and can be sampled.
      * <p>
@@ -1631,7 +1634,10 @@ public final class VulkanGlTexture {
         final int depth = Math.min(producerDepth, mirrorLevels);
         // Every region and every buffer is checked before anything is copied, so a patch that would write past a
         // level or read past a buffer leaves the image untouched instead of half-written (audit N08).
-        long[] offsets = new long[depth];
+        if (this.patchLevelOffsets.length < depth) {
+            this.patchLevelOffsets = new long[depth];
+        }
+        long[] offsets = this.patchLevelOffsets;
         long packed = 0L;
         for (int level = 0; level < depth; level++) {
             int levelWidth = Math.max(1, width >> level);
