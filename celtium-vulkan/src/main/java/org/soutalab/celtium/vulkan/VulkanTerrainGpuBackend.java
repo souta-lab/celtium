@@ -13681,14 +13681,16 @@ this.frameBufferOpen = false;
         this.drawOrderOpaque += reorderable;
         return order;
     }
-    private final java.util.Map<Long, Integer> drawKeyCounts = new java.util.HashMap<Long, Integer>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap drawKeyCounts =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private long drawKeyGroups;
     private long drawKeySwitches;
     private long arrayKeyGroups;
     private long arrayKeySwitches;
     private long arrayKeyPrevious;
     private int arrayKeyLargest;
-    private final java.util.Map<Long, Integer> arrayKeyCounts = new java.util.HashMap<Long, Integer>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap arrayKeyCounts =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private long drawKeyPrevious;
     private int drawKeyLargest;
     private final java.util.Map<Integer, Integer> retainedCensusByMesh = new java.util.HashMap<Integer, Integer>();
@@ -16652,7 +16654,8 @@ this.frameBufferOpen = false;
             // owning a buffer. That pair is the go/no-go for folding the group loop into one indirect draw, and it costs
             // a hash lookup per group while the switch is on.
             long censusStartNanos = MERGE_CENSUS ? System.nanoTime() : 0L;
-            java.util.Map<Long, Integer> censusRuns = MERGE_CENSUS ? new java.util.HashMap<Long, Integer>() : null;
+            it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap censusRuns =
+                    MERGE_CENSUS ? new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap() : null;
             java.util.Set<Integer> censusPipelines = MERGE_CENSUS ? new java.util.HashSet<Integer>() : null;
             int censusArenaBacked = 0;
             // The frame's groups use about 62 distinct (pipeline, descriptor) pairs and switch almost every group, so
@@ -16747,8 +16750,7 @@ this.frameBufferOpen = false;
                         // however few pipelines they come from).
                         censusPipelines.add(Integer.valueOf(System.identityHashCode(group.prepared.pipeline)));
                     }
-                    Integer seen = censusRuns.get(Long.valueOf(runKey));
-                    censusRuns.put(Long.valueOf(runKey), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+                    censusRuns.put(runKey, censusRuns.get(runKey) + 1);
                     if (mesh != null && mesh.isArenaBorrow()) {
                         censusArenaBacked++;
                     }
@@ -17178,9 +17180,8 @@ this.frameBufferOpen = false;
                     // and the first run of this census said nothing at all.
                     long key = ((long) System.identityHashCode(prepared.pipeline) << 21)
                             ^ (prepared.descriptor * 0x9E3779B97F4A7C15L);
-                    Integer seen = this.drawKeyCounts.get(Long.valueOf(key));
-                    int count = seen == null ? 1 : seen.intValue() + 1;
-                    this.drawKeyCounts.put(Long.valueOf(key), Integer.valueOf(count));
+                    int count = this.drawKeyCounts.get(key) + 1;
+                    this.drawKeyCounts.put(key, count);
                     if (count > this.drawKeyLargest) {
                         this.drawKeyLargest = count;
                     }
@@ -17196,9 +17197,8 @@ this.frameBufferOpen = false;
                             ^ (mesh != null ? mesh.vertexBuffer() : 0L) * 31L
                             ^ (mesh != null ? mesh.indexBuffer() : 0L)
                             ^ group.viewportHash();
-                    Integer arraySeen = this.arrayKeyCounts.get(Long.valueOf(arrayKey));
-                    int arrayCount = arraySeen == null ? 1 : arraySeen.intValue() + 1;
-                    this.arrayKeyCounts.put(Long.valueOf(arrayKey), Integer.valueOf(arrayCount));
+                    int arrayCount = this.arrayKeyCounts.get(arrayKey) + 1;
+                    this.arrayKeyCounts.put(arrayKey, arrayCount);
                     if (arrayCount > this.arrayKeyLargest) {
                         this.arrayKeyLargest = arrayCount;
                     }
@@ -17318,8 +17318,9 @@ this.frameBufferOpen = false;
             }
             if (MERGE_CENSUS) {
                 int largest = 0;
-                for (Integer count : censusRuns.values()) {
-                    largest = Math.max(largest, count.intValue());
+                for (it.unimi.dsi.fastutil.ints.IntIterator counts = censusRuns.values().iterator();
+                        counts.hasNext(); ) {
+                    largest = Math.max(largest, counts.nextInt());
                 }
                 System.out.println("[Celtium] CELTIUM_MERGE_CENSUS frame=" + this.frameId
                         + " groups=" + groups.size() + " distinctPipelines="
