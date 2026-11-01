@@ -3964,6 +3964,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.immediateState.alphaTestEnabled();
     }
 
+    /** {@return the light-model ambient the shader lighting uses}. */
+    public float[] celtium$lightAmbient() {
+        return this.immediateState.lightAmbient();
+    }
+
     /** {@return whether fixed-function lighting is enabled in the state mirror}. */
     public boolean celtium$lightingEnabled() {
         return this.immediateState.lightingEnabled();

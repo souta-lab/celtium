@@ -670,6 +670,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
     /** Scratch the clear-value query fills through {@link #mainClearValues(float[])}. */
     private final float[] clearValueScratch = new float[4];
+
+    /** GL's initial light-model ambient, answered when no backend mirror exists. */
+    private final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
     private volatile float lineWidth = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
@@ -4738,8 +4741,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x80A8: return 0; // GL_SAMPLE_BUFFERS
             case 0x80A9: return 0; // GL_SAMPLES
             case 0x8D57: return 0; // GL_MAX_SAMPLES
-            case 0x0B52: // GL_SHADE_MODEL - the shaders interpolate the vertex colour, which is GL_SMOOTH
+            case 0x0B54: // GL_SHADE_MODEL - the shaders interpolate the vertex colour, which is GL_SMOOTH
                 return 0x1D01;
+            case 0x0B52: // GL_LIGHT_MODEL_TWO_SIDE - the shader lights one side of every face
+                return 0;
+            case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float[] ambient = vulkan == null ? this.lightAmbientDefault : vulkan.celtium$lightAmbient();
+                for (int i = 0; i < 4; i++) {
+                    putFloatOrDouble(out, i, ambient != null && i < ambient.length ? ambient[i] : 0.0f, asDouble);
+                }
+                return;
+            }
             case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
                 return this.drawFbo == 0 ? 0x0405 : 0x8CE0;
             case 0x0C02: // GL_READ_BUFFER
