@@ -948,6 +948,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (returnType.equals("V")) {
             if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glGetQueryObjectiv") || name.endsWith("glGetQueryObjectuiv")
+                            || name.endsWith("glGetQueryObjecti64v") || name.endsWith("glGetQueryObjectui64v"))) {
+                boolean wide = name.endsWith("glGetQueryObjecti64v") || name.endsWith("glGetQueryObjectui64v");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(wide ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetQueryObject", "(IIJZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor)
                     && (name.endsWith("glGetVertexAttribfv") || name.endsWith("glGetVertexAttribdv"))) {
                 boolean asDouble = name.endsWith("glGetVertexAttribdv");
                 method.visitVarInsn(Opcodes.ILOAD, 0);

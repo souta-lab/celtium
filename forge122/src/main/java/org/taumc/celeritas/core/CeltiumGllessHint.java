@@ -1377,6 +1377,11 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetQueryObject*}: result and availability answer 1 so culling does not hide everything. */
+    public static void glGetQueryObject(int query, int pname, long out, boolean wide) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getQueryObject(query, pname, out, wide);
+    }
+
     /** Raw {@code glGetVertexAttribfv/dv}: the attribute-0 state in the caller's numeric width. */
     public static void glGetVertexAttribFloats(int index, int pname, long out, boolean asDouble) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribFloats(index, pname, out, asDouble);
@@ -1638,10 +1643,6 @@ public final class CeltiumGllessHint {
             // nglGetVertexAttribiv (attribute 0) is routed to the client-array record; this would shadow it.
             case "nglGetVertexAttribIiv":
             case "nglGetVertexAttribIuiv":
-            case "nglGetQueryObjectiv":
-            case "nglGetQueryObjectuiv":
-            case "nglGetQueryObjecti64v":
-            case "nglGetQueryObjectui64v":
             // nglGetSynciv is routed to the sync answer; the zero-writer would hide it.
             // nglGetFramebufferAttachmentParameteriv is routed to the attachment record; the zero-writer would shadow it.
             case "nglGetRenderbufferParameteriv":

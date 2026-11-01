@@ -2568,6 +2568,23 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
+    /**
+     * {@code glGetQueryObject*} from the transformer's route. A result of zero would tell an occlusion-culling mod that
+     * everything is hidden, so result and availability answer 1; a query this stub never ran still passes nothing
+     * through the stencil, which is the visible outcome.
+     */
+    public static void celtium$getQueryObject(int query, int pname, long out, boolean wide) {
+        if (out == 0L) {
+            return;
+        }
+        long value = pname == 0x8866 || pname == 0x8867 ? 1L : 0L; // GL_QUERY_RESULT / GL_QUERY_RESULT_AVAILABLE
+        if (wide) {
+            org.lwjgl.system.MemoryUtil.memPutLong(out, value);
+        } else {
+            org.lwjgl.system.MemoryUtil.memPutInt(out, (int) value);
+        }
+    }
+
     /** {@code glGetVertexAttribfv/dv}: the same attribute-0 answer in the caller's numeric width. */
     public static void celtium$getVertexAttribFloats(int index, int pname, long out, boolean asDouble) {
         CeltiumGlStub stub = installed;
