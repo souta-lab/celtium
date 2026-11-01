@@ -3092,13 +3092,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
     /** One pipeline per state for the entity/TESR layout, whose stride the textured pipeline cannot serve. */
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexColorNormalPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexColorNormalPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** One pipeline per state for the composite batch's layout, likewise wider than the colourless pipeline's. */
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexNormalPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexNormalPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /**
      * One pipeline per state for {@code POSITION_NORMAL}: sixteen-byte vertices.
      * <p>
@@ -3106,15 +3106,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * pipeline, and 16 is not a width any other layout has. Its one user is the white box {@code Render.renderOffsetAABB}
      * draws for a renderer-less entity, so an empty cache here means that box is not drawn.
      */
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionNormalPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionNormalPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** {@link VulkanImmediateFormats#COMBINE4}: the multi-unit combine Xaero's World Map draws its tiles with. */
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> combine4PipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> combine4PipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> texturedPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /**
      * Lit model display lists drawn as instance runs ({@link VulkanModelInstances}); on unless
      * {@code -Dceltium.native.modelInstances=false}, and only on a device with the shared texture array.
@@ -3133,8 +3133,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final float[] modelReplayView = new float[16];
     final float[] modelReplayProjection = new float[16];
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
-    private final java.util.Map<Long, VulkanImmediateTexturePipeline> texGenPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> texGenPipelineCache =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     private final java.util.Map<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateBlockPipeline>();
     private final java.util.Map<Long, VulkanImmediateParticlePipeline> particlePipelineCache =
@@ -8912,7 +8912,7 @@ this.frameBufferOpen = false;
     }
 
     /** Releases one keyed cache of textured immediate pipelines; see {@link #releaseImmediatePipelineCache}. */
-    private int releaseTexturePipelineCache(java.util.Map<Long, VulkanImmediateTexturePipeline> cache) {
+    private int releaseTexturePipelineCache(it.unimi.dsi.fastutil.longs.Long2ObjectMap<VulkanImmediateTexturePipeline> cache) {
         int count = 0;
         for (VulkanImmediateTexturePipeline pipeline : cache.values()) {
             count += releaseDirect(pipeline == null ? null : () -> pipeline.delete());
@@ -10109,13 +10109,18 @@ this.frameBufferOpen = false;
                             state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == VulkanImmediateFormats.POSITION_COLOR_TEXGEN) {
-            VulkanImmediateTexturePipeline value = this.texGenPipelineCache.computeIfAbsent(key,
-                    k -> VulkanImmediateTexturePipeline.createForTexGen(this.context, pass, celtium$blendState(state),
-                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
+            VulkanImmediateTexturePipeline value = this.texGenPipelineCache.get(key);
+            if (value == null) {
+                value = VulkanImmediateTexturePipeline.createForTexGen(this.context, pass, celtium$blendState(state),
+                        state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]));
+                if (value != null) {
+                    this.texGenPipelineCache.put(key, value);
+                }
+            }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare");
             pipeline = value;
         } else if (format >= 2) {
-            java.util.Map<Long, VulkanImmediateTexturePipeline> cache =
+            it.unimi.dsi.fastutil.longs.Long2ObjectMap<VulkanImmediateTexturePipeline> cache =
                     format == VulkanImmediateFormats.COMBINE4 ? this.combine4PipelineCache
                     : format == 10 ? this.positionNormalPipelineCache
                     : format == 9 ? this.positionTexNormalPipelineCache
