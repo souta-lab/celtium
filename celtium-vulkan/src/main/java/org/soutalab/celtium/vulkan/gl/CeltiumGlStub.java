@@ -5035,7 +5035,17 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B22: // GL_POINT_SIZE
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
                 return;
-            case 0x0D3A: // GL_ALIASED_LINE_WIDTH_RANGE
+            case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - 0x0D3A is the viewport limit, not the line-width range
+                int dimension = 16384;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                if (vulkan != null) {
+                    dimension = vulkan.celtium$maxTextureSize();
+                }
+                putFloatOrDouble(out, 0, dimension, asDouble);
+                putFloatOrDouble(out, 1, dimension, asDouble);
+                return;
+            }
+            case 0x846E: // GL_ALIASED_LINE_WIDTH_RANGE
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
                 putFloatOrDouble(out, 1, this.lineWidth, asDouble);
                 return;
