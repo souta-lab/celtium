@@ -39,6 +39,16 @@ public abstract class EntityRendererMixin {
     private void celtium$frameBegin(float partialTicks, long finishTimeNano,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.beginFrame();
+        try {
+            // Outside every pass by construction: renderWorld opens the frame, renderWorldPass runs inside it.
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.celtium$frameBoundary();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A hint must never break the frame.
+        }
     }
 
     @Inject(method = "func_181560_a", at = @At("RETURN"), require = 0)

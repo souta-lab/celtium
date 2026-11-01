@@ -6114,6 +6114,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.liveViewportHeight = height;
     }
 
+    /**
+     * The frame boundary, called before this frame's render pass starts. A world pass that was cancelled or threw
+     * before its RETURN bracket leaves {@code worldPassActive} true, and every GUI/HUD batch after it would then be
+     * classified as inside the pass - wrong routing, depth and ordering for the menu and the inventory. Clearing here
+     * is a no-op when the bracket was balanced.
+     */
+    public void celtium$frameBoundary() {
+        this.worldPassActive = false;
+        this.derivedProjectionPending = false;
+    }
+
     public void beginWorldPass() {
         this.worldSnapshotValid = false;
         this.worldPassActive = true;
