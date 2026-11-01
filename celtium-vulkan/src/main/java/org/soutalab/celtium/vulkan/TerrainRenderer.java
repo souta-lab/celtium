@@ -71,24 +71,51 @@ public final class TerrainRenderer {
     }
 
     /** One mesh an upload produced and has not committed yet. */
+    /**
+     * One mesh of an upload batch. Pooled: a burst creates one per pass per rebuilt section, and the fields are
+     * cleared on release so a pooled instance cannot pin a section's buffers or a world.
+     */
     static final class PendingMesh {
-        final int sectionIndex;
-        final TerrainRenderPass pass;
-        final BuiltSectionMeshParts parts;
-        final ChunkSortOutput.SortedMesh sorted;
-        final int[] sectionFirstColor;
-        /** The region resources the diagnostic head belongs to, so logFirstVertex can fill it without a lookup. */
-        final TerrainRenderer.RegionResources firstVertexOwner;
+        private static final java.util.ArrayDeque<PendingMesh> POOL = new java.util.ArrayDeque<>();
+        private static final int POOL_CAP = 512;
 
-        PendingMesh(int sectionIndex, TerrainRenderPass pass, BuiltSectionMeshParts parts,
-                    ChunkSortOutput.SortedMesh sorted, int[] sectionFirstColor,
-                    TerrainRenderer.RegionResources firstVertexOwner) {
-            this.sectionIndex = sectionIndex;
-            this.pass = pass;
-            this.parts = parts;
-            this.sorted = sorted;
-            this.sectionFirstColor = sectionFirstColor;
-            this.firstVertexOwner = firstVertexOwner;
+        int sectionIndex;
+        TerrainRenderPass pass;
+        BuiltSectionMeshParts parts;
+        ChunkSortOutput.SortedMesh sorted;
+        int[] sectionFirstColor;
+        /** The region resources the diagnostic head belongs to, so logFirstVertex can fill it without a lookup. */
+        TerrainRenderer.RegionResources firstVertexOwner;
+
+        private PendingMesh() {
+        }
+
+        static PendingMesh obtain(int sectionIndex, TerrainRenderPass pass, BuiltSectionMeshParts parts,
+                                  ChunkSortOutput.SortedMesh sorted, int[] sectionFirstColor,
+                                  TerrainRenderer.RegionResources firstVertexOwner) {
+            PendingMesh mesh = POOL.poll();
+            if (mesh == null) {
+                mesh = new PendingMesh();
+            }
+            mesh.sectionIndex = sectionIndex;
+            mesh.pass = pass;
+            mesh.parts = parts;
+            mesh.sorted = sorted;
+            mesh.sectionFirstColor = sectionFirstColor;
+            mesh.firstVertexOwner = firstVertexOwner;
+            return mesh;
+        }
+
+        /** Clears every reference before the instance goes back to the pool. */
+        void release() {
+            this.parts = null;
+            this.sorted = null;
+            this.sectionFirstColor = null;
+            this.firstVertexOwner = null;
+            this.pass = null;
+            if (POOL.size() < POOL_CAP) {
+                POOL.add(this);
+            }
         }
     }
 
@@ -1015,7 +1042,7 @@ public final class TerrainRenderer {
                         continue;
                     }
                     needIndexBuffer |= mesh.indexBuffer() != null;
-                    pending.add(new TerrainRenderer.PendingMesh(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
+                    pending.add(TerrainRenderer.PendingMesh.obtain(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
                             meshResources.sectionFirstColor, meshResources));
                 }
             } else if (output instanceof ChunkSortOutput) {
@@ -1028,7 +1055,7 @@ public final class TerrainRenderer {
                     if (storage != null) {
                         storage.removeIndexBuffer(sort.render.getSectionIndex());
                     }
-                    pending.add(new TerrainRenderer.PendingMesh(sort.render.getSectionIndex(), meshEntry.getKey(), null,
+                    pending.add(TerrainRenderer.PendingMesh.obtain(sort.render.getSectionIndex(), meshEntry.getKey(), null,
                             meshEntry.getValue(), null, null));
                 }
             } else {
@@ -1185,6 +1212,10 @@ public final class TerrainRenderer {
 
         this.lastUploadedBytes = uploaded;
         logFirstVertex(pending);
+        for (TerrainRenderer.PendingMesh mesh : pending) {
+            mesh.release();
+        }
+        pending.clear();
 
     }
 
