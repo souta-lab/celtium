@@ -861,7 +861,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
                 + " shaderProgramRefusals=" + this.immediateStatistics.shaderProgramRefusals()
                 + " shaderProgramRefusedIds=" + this.shaderProgramRefusedIds
-                + " shaderProgramRefusedPrograms=" + this.shaderProgramRefusedPrograms
+                + " shaderProgramRefusedPrograms=" + programRefusalsText()
                     + " textureRefusals=" + this.textureStats.textureRefusalsBeforeAccept()
                     + " accepted=" + this.immediateStatistics.frameAccepted());
         }
@@ -1812,7 +1812,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
     private final java.util.LinkedHashMap<String, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
     /** The same refusals grouped by program alone. */
-    private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedPrograms = new java.util.LinkedHashMap<>();
+    private final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap shaderProgramRefusedPrograms =
+            new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
     /** Per target: batches dropped at a frame boundary because no pass ran for that identity (BH-15). */
     private final java.util.Map<Long, Integer> unflushedTargetDroppedByTarget =
             new java.util.HashMap<Long, Integer>();
@@ -5757,37 +5758,69 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.targetStageTextures.size() >= 16) {
             return;
         }
-        java.util.Set<Integer> seenTextures = this.targetStageTextures.get(Long.valueOf(identity));
+        it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet seenTextures = this.targetStageTextures.get(identity);
         if (seenTextures == null) {
-            seenTextures = new java.util.LinkedHashSet<Integer>();
-            this.targetStageTextures.put(Long.valueOf(identity), seenTextures);
+            seenTextures = new it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet();
+            this.targetStageTextures.put(identity, seenTextures);
         }
         if (seenTextures.size() < 24) {
-            seenTextures.add(Integer.valueOf(texture));
+            seenTextures.add(texture);
         }
-        java.util.Set<Integer> seenFormats = this.targetStageFormats.get(Long.valueOf(identity));
+        it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet seenFormats = this.targetStageFormats.get(identity);
         if (seenFormats == null) {
-            seenFormats = new java.util.LinkedHashSet<Integer>();
-            this.targetStageFormats.put(Long.valueOf(identity), seenFormats);
+            seenFormats = new it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet();
+            this.targetStageFormats.put(identity, seenFormats);
         }
         if (seenFormats.size() < 24) {
-            seenFormats.add(Integer.valueOf(formatId));
+            seenFormats.add(formatId);
         }
+    }
+
+    /** The refused-program counts, formatted like the LinkedHashMap text they used to be printed as. */
+    private String programRefusalsText() {
+        if (this.shaderProgramRefusedPrograms.isEmpty()) {
+            return "{}";
+        }
+        StringBuilder text = new StringBuilder("{");
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry : this.shaderProgramRefusedPrograms.int2IntEntrySet()) {
+            if (text.length() > 1) {
+                text.append(", ");
+            }
+            text.append(entry.getIntKey()).append('=').append(entry.getIntValue());
+        }
+        return text.append('}').toString();
+    }
+
+    /** An int set formatted like the boxed set it replaced: {@code [3, 4]}. */
+    private static String formatIntSet(it.unimi.dsi.fastutil.ints.IntSet values) {
+        if (values == null || values.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder text = new StringBuilder("[");
+        it.unimi.dsi.fastutil.ints.IntIterator iterator = values.iterator();
+        while (iterator.hasNext()) {
+            if (text.length() > 1) {
+                text.append(", ");
+            }
+            text.append(iterator.nextInt());
+        }
+        return text.append(']').toString();
     }
 
     /** {@return each identity seen, its route, and the textures and formats its groups carried}. */
     String celtium$targetStagesSummary() {
         StringBuilder text = new StringBuilder();
-        for (java.util.Map.Entry<Long, java.util.Set<Integer>> entry : this.targetStageTextures.entrySet()) {
-            long identity = entry.getKey().longValue();
+        for (it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet> entry
+                : this.targetStageTextures.long2ObjectEntrySet()) {
+            long identity = entry.getLongKey();
             if (text.length() > 0) {
                 text.append(' ');
             }
             text.append("0x").append(Long.toHexString(identity)).append(':')
                     .append(GllessFrameTarget.routeLabelForBinding(identity,
                             identity == this.targetRegistry.mainIdentity()))
-                    .append(":tex=").append(entry.getValue())
-                    .append(":fmt=").append(this.targetStageFormats.get(entry.getKey()));
+                    .append(":tex=").append(formatIntSet(entry.getValue()))
+                    .append(":fmt=").append(formatIntSet(this.targetStageFormats.get(identity)));
         }
         return text.toString();
     }
@@ -5807,10 +5840,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final java.util.Set<Long> tracedTargetIdentities = new java.util.HashSet<Long>();
     private int targetImageLogs;
     /** Textures and formats seen per render-target identity, for {@code targetStages} in the verification line. */
-    private final java.util.Map<Long, java.util.Set<Integer>> targetStageTextures =
-            new java.util.LinkedHashMap<Long, java.util.Set<Integer>>();
-    private final java.util.Map<Long, java.util.Set<Integer>> targetStageFormats =
-            new java.util.LinkedHashMap<Long, java.util.Set<Integer>>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet>
+            targetStageTextures = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet>
+            targetStageFormats = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     long[] framebufferColorTexture(long identity) {
         return this.publishedTextures.colorTexture(identity);
     }
@@ -7135,9 +7168,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 Integer seenCount = this.shaderProgramRefusedIds.get(programKey);
                 this.shaderProgramRefusedIds.put(programKey,
                         Integer.valueOf(seenCount == null ? 1 : seenCount.intValue() + 1));
-                Integer seenProgram = this.shaderProgramRefusedPrograms.get(Integer.valueOf(boundProgram));
-                this.shaderProgramRefusedPrograms.put(Integer.valueOf(boundProgram),
-                        Integer.valueOf(seenProgram == null ? 1 : seenProgram.intValue() + 1));
+                this.shaderProgramRefusedPrograms.put(boundProgram,
+                        this.shaderProgramRefusedPrograms.get(boundProgram) + 1);
                 if (seenCount == null) {
                     System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
                             + " format=" + formatId
