@@ -1107,6 +1107,13 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 7);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glGetProgramResourceLength", "(IJ)V", false);
+                // The property values are written too: the caller sized its array by propCount, so zeroing exactly that
+                // many is inside its allocation and leaves a deterministic "not supported" rather than stale values.
+                method.visitVarInsn(Opcodes.LLOAD, 9);
+                method.visitVarInsn(Opcodes.ILOAD, 3);
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
