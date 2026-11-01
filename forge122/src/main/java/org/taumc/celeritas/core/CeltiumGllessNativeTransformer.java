@@ -595,6 +595,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // a default value is not a valid one. These are the two families known to be checked here: the framebuffer
         // status, which has to say COMPLETE for the game to use its framebuffer, and the location lookups, where -1
         // is the documented "not found" and 0 would name a real location.
+        // GL_INVALID_INDEX / -1 is the documented "not found" for these lookups; the type's zero names a real object
+        // or location, which a caller would then use.
+        if (returnType.equals("I")
+                && (name.endsWith("glGetUniformBlockIndex") || name.endsWith("glGetProgramResourceIndex")
+                        || name.endsWith("glGetProgramResourceLocation"))) {
+            method.visitLdcInsn(Integer.valueOf(-1));
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         if (returnType.equals("I") && name.endsWith("glCheckFramebufferStatus")) {
             method.visitLdcInsn(Integer.valueOf(0x8CD5)); // GL_FRAMEBUFFER_COMPLETE
             method.visitInsn(Opcodes.IRETURN);
