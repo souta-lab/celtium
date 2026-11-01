@@ -1078,10 +1078,13 @@ public final class VulkanPostChain {
         // The header and the per-pass lines go out together, and the per-pass detail only for a run that touched a
         // target's first use: a run that reuses targets already in GENERAL has nothing to say about layouts, and
         // printing every pass of every run would spend the whole trace budget before the interesting frame.
-        trace("run=" + this.chainsRun + " recording=" + this.recordings + " cmd=0x" + hex(commandBuffer.address())
-                + " frame=0x" + hex(this.frameTarget.colorImage()) + " frameView=0x"
-                + hex(this.frameTarget.colorView()) + " passes=" + passes.size()
-                + " pendingInit=" + this.pendingInit.size());
+        // Built only while the budget can print it: one recording a frame for a whole session, eight parts each.
+        if (this.traceLines < TRACE_LIMIT) {
+            trace("run=" + this.chainsRun + " recording=" + this.recordings + " cmd=0x" + hex(commandBuffer.address())
+                    + " frame=0x" + hex(this.frameTarget.colorImage()) + " frameView=0x"
+                    + hex(this.frameTarget.colorView()) + " passes=" + passes.size()
+                    + " pendingInit=" + this.pendingInit.size());
+        }
         if (interesting) {
             for (String detail : details) {
                 trace(detail);
