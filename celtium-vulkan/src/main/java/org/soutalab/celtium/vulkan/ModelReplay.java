@@ -85,7 +85,6 @@ final class ModelReplay {
         if (b.MODEL_ONLY_LIST != 0 && listId != b.MODEL_ONLY_LIST) {
             return false;
         }
-        java.util.Map<Integer, VulkanDynamicMesh> meshes = b.modelGeometry.modelMeshes();
         VulkanDynamicMesh mesh = b.modelGeometry.meshFor(listId);
         if ((mesh == null || mesh.isEmpty()) && b.context != null
                 && VulkanModelQuadCapture.quadsForList(listId) > 0
@@ -103,7 +102,6 @@ final class ModelReplay {
             // the GPU table after a world switch, perform one bounded reconciliation
             // for that list and version rather than silently losing its first draws.
             b.celtium$buildModelMeshes();
-            meshes = b.modelGeometry.modelMeshes();
             mesh = b.modelGeometry.meshFor(listId);
         }
         if (mesh == null || mesh.isEmpty()) {
