@@ -1926,13 +1926,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Attribute pointers belong to the VAO: save the current record under the outgoing name and load the incoming
         // one, so a mod that sets its pointer once and rebinds its VAO draws from that pointer and not from whatever
         // the last unbind-free draw left behind.
-        if (stub.boundVertexArray > 0) {
-            stub.vaoRecords.put(stub.boundVertexArray, new long[] {stub.vertexPointerSize, stub.vertexPointerType,
-                    stub.vertexPointerStride, stub.vertexPointerOffset});
-        }
+        // Name 0 is the default VAO and keeps its own record too: skipping it lost the pointer a caller had set on
+        // VAO 0 when it bound another VAO and came back.
+        stub.vaoRecords.put(stub.boundVertexArray, new long[] {stub.vertexPointerSize, stub.vertexPointerType,
+                stub.vertexPointerStride, stub.vertexPointerOffset});
         stub.boundVertexArray = array;
-        long[] record = array > 0 ? stub.vaoRecords.get(array) : null;
-        if (array > 0 && record == null) {
+        long[] record = stub.vaoRecords.get(array);
+        if (record == null) {
             // A fresh VAO starts with GL's default attribute: size 4, float, no stride, null pointer.
             record = new long[] {4L, 0x1406L, 0L, 0L};
             stub.vaoRecords.put(array, record);
