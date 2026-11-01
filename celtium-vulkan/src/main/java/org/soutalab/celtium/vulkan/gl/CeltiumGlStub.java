@@ -5672,6 +5672,14 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return org.soutalab.celtium.vulkan.ImmediateFogState.current().glMode();
             case 0x85B5: // GL_VERTEX_ARRAY_BINDING
                 return this.boundVertexArray;
+            case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - one colour attachment is what the chain targets provide
+                return 1;
+            case 0x8824: // GL_MAX_DRAW_BUFFERS
+                return 1;
+            case 0x84E8: { // GL_MAX_RENDERBUFFER_SIZE
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
+            }
             case 0x0D33: { // GL_MAX_TEXTURE_SIZE
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
