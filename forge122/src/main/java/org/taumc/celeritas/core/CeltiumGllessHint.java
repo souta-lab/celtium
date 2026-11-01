@@ -1377,6 +1377,11 @@ public final class CeltiumGllessHint {
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
+    /** Raw {@code glGetVertexAttribPointerv}: attribute 0 answers the recorded pointer. */
+    public static void glGetVertexAttribPointer(int index, int pname, long out) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribPointer(index, pname, out);
+    }
+
     /** Raw {@code glGetVertexAttribiv}: attribute 0 answers the recorded client-array state. */
     public static void glGetVertexAttribiv(int index, int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribiv(index, pname, out);

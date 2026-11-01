@@ -947,6 +947,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetVertexAttribPointerv")) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glGetVertexAttribPointer", "(IIJ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetVertexAttribiv")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
