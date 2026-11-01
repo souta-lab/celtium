@@ -1025,7 +1025,9 @@ public final class VulkanPostChain {
                 shaderReadBarrier(commandBuffer, auxTarget.image);
             }
 
-            if (details.size() < 12) {
+            // Only while the trace budget can still print: after TRACE_LIMIT lines trace() is a no-op, and these
+            // strings were still built - three describe() calls each - for every pass of every frame.
+            if (this.traceLines < TRACE_LIMIT && details.size() < 12) {
                 details.add("pass=" + details.size() + " program=" + pass.program
                         + " in=" + describe(inTarget, pass.inIsMain, pass.inW, pass.inH)
                         + " aux=" + describe(auxTarget, auxIsMain, pass.auxFbIds.length > 0 ? pass.auxW[0] : 0,
