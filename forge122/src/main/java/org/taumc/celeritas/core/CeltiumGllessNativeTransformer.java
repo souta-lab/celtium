@@ -1064,6 +1064,27 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            if ("(II)V".equals(descriptor)
+                    && (name.endsWith("glEnablei") || name.endsWith("glDisablei")
+                            || name.endsWith("glEnableIndexedEXT") || name.endsWith("glDisableIndexedEXT"))) {
+                boolean enabled = name.contains("Enable");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitInsn(enabled ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glEnableIndexed", "(IIZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(II)Z".equals(descriptor)
+                    && (name.endsWith("glIsEnabledi") || name.endsWith("glIsEnabledIndexedEXT"))) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glIsEnabledIndexed", "(II)Z", false);
+                method.visitInsn(Opcodes.IRETURN);
+                return;
+            }
             if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetMaterialfv")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);

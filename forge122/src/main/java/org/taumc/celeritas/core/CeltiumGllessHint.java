@@ -374,6 +374,17 @@ public final class CeltiumGllessHint {
         }
     }
 
+    /** Indexed enables: this renderer has one target, so index 0 is the same as the unindexed call. */
+    public static void glEnableIndexed(int capability, int index, boolean enabled) {
+        if (index == 0) {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, enabled);
+        }
+    }
+
+    public static boolean glIsEnabledIndexed(int capability, int index) {
+        return index == 0 && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isEnabled(capability);
+    }
+
     /** Raw {@code glGetMaterialfv}: the material face this lighting model does not carry answers black/zero. */
     public static void glGetMaterialfv(int face, int pname, long out) {
         if (out == 0L) {
