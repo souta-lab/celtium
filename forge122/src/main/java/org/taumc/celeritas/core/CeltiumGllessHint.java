@@ -960,6 +960,22 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawArrays(mode, first, count);
     }
 
+    /**
+     * Instanced draws. Instancing needs per-instance attributes this renderer does not carry, but instanceCount 1 is
+     * simply the uninstanced call - the shape some mods emit per object - so that case forwards instead of vanishing.
+     */
+    public static void glDrawArraysInstanced(int mode, int first, int count, int instanceCount) {
+        if (instanceCount == 1) {
+            glDrawArrays(mode, first, count);
+        }
+    }
+
+    public static void glDrawElementsInstanced(int mode, int count, int type, long indices, int instanceCount) {
+        if (instanceCount == 1) {
+            glDrawElements(mode, count, type, indices);
+        }
+    }
+
     /** Binds an array buffer, as {@code glBindBuffer(target, name)} does. */
     public static void glBindBuffer(int target, int name) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBuffer(target, name);
