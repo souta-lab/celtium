@@ -7605,6 +7605,18 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glIsTexture/glIsBuffer/...} from the transformer's route: whether the name was generated here. */
+    public static boolean celtium$isObject(int name) {
+        CeltiumGlStub stub = installed;
+        return stub != null && name != 0 && (stub.liveNames.contains(name) || stub.liveSync.contains(name));
+    }
+
+    /** {@code glIsSync} from the transformer's route: the sync names are 64-bit. */
+    public static boolean celtium$isSync(long sync) {
+        CeltiumGlStub stub = installed;
+        return stub != null && sync != 0L && stub.liveSync.contains(sync);
+    }
+
     /** {@code glIsList} from the transformer's route: whether this stub compiled the name. */
     public static boolean celtium$isList(int list) {
         CeltiumGlStub stub = installed;

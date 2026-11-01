@@ -928,6 +928,24 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
+        // Object-existence queries. LWJGL's glIsTexture and friends are natives returning a boolean; unhandled they
+        // answered false for every name this stub had handed out, and a mod that checked its own object read it as
+        // dead. glIsEnabled has its own route above and is excluded here.
+        if (returnType.equals("Z") && "(I)Z".equals(descriptor) && name.startsWith("glIs")
+                && !"glIsEnabled".equals(name) && !"glIsEnabledi".equals(name)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glIsObject", "(I)Z", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
+        if (returnType.equals("Z") && "(J)Z".equals(descriptor) && name.startsWith("glIs")) {
+            method.visitVarInsn(Opcodes.LLOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glIsSync", "(J)Z", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return;
+        }
         if (returnType.equals("V")) {
             // The rest of the display-list surface. These were only in the stub's dispatch table, which a transformed
             // native never reaches: a mod's call was a bare return, so the delete notification and the glCallLists
