@@ -760,36 +760,47 @@ public final class VulkanContext {
                 fence = fenceHandle.get(0);
                 VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                         .pCommandBuffers(stack.pointers(commandBuffer));
-                java.util.List<Long> waits = new java.util.ArrayList<Long>();
+                // Count first and fill arrays directly: this runs once per window (about 30 a frame), and the two
+                // ArrayLists plus a boxed Long per semaphore were per-window garbage for a call that copies the values
+                // into stack memory immediately.
+                int waitCount = 0;
                 for (long semaphore : waitSemaphores) {
                     if (semaphore != VK_NULL_HANDLE) {
-                        waits.add(Long.valueOf(semaphore));
+                        waitCount++;
                     }
                 }
-                if (!waits.isEmpty()) {
+                if (waitCount > 0) {
                     // Explicit count, and one destination stage for each semaphore: LWJGL's pWaitSemaphores writes only
                     // the pointer. ALL_COMMANDS because the command buffer begins with a layout transition, which a wait
                     // whose stage mask does not cover it does not order against.
-                    long[] waitHandles = new long[waits.size()];
-                    int[] stages = new int[waits.size()];
-                    for (int i = 0; i < waitHandles.length; i++) {
-                        waitHandles[i] = waits.get(i).longValue();
-                        stages[i] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                    long[] waitHandles = new long[waitCount];
+                    int[] stages = new int[waitCount];
+                    int filled = 0;
+                    for (long semaphore : waitSemaphores) {
+                        if (semaphore != VK_NULL_HANDLE) {
+                            waitHandles[filled] = semaphore;
+                            stages[filled] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                            filled++;
+                        }
                     }
-                    submit.waitSemaphoreCount(waitHandles.length);
+                    submit.waitSemaphoreCount(waitCount);
                     submit.pWaitSemaphores(stack.longs(waitHandles));
                     submit.pWaitDstStageMask(stack.ints(stages));
                 }
-                java.util.List<Long> signals = new java.util.ArrayList<Long>();
+                int signalCount = 0;
                 for (long semaphore : signalSemaphores) {
                     if (semaphore != VK_NULL_HANDLE) {
-                        signals.add(Long.valueOf(semaphore));
+                        signalCount++;
                     }
                 }
-                if (!signals.isEmpty()) {
-                    long[] signalHandles = new long[signals.size()];
-                    for (int i = 0; i < signalHandles.length; i++) {
-                        signalHandles[i] = signals.get(i).longValue();
+                if (signalCount > 0) {
+                    long[] signalHandles = new long[signalCount];
+                    int filled = 0;
+                    for (long semaphore : signalSemaphores) {
+                        if (semaphore != VK_NULL_HANDLE) {
+                            signalHandles[filled] = semaphore;
+                            filled++;
+                        }
                     }
                     submit.pSignalSemaphores(stack.longs(signalHandles));
                 }
