@@ -668,6 +668,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             new java.util.concurrent.atomic.AtomicInteger();
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
     private volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
+    /** Scratch the clear-value query fills through {@link #mainClearValues(float[])}. */
+    private final float[] clearValueScratch = new float[4];
     private volatile float lineWidth = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
@@ -4810,6 +4812,21 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         switch (pname) {
+            case 0x0C22: { // GL_COLOR_CLEAR_VALUE
+                mainClearValues(this.clearValueScratch);
+                for (int i = 0; i < 4; i++) {
+                    putFloatOrDouble(out, i, this.clearValueScratch[i], asDouble);
+                }
+                return;
+            }
+            case 0x0B73: { // GL_DEPTH_CLEAR_VALUE
+                putFloatOrDouble(out, 0, (float) clearDepth(), asDouble);
+                return;
+            }
+            case 0x0B91: { // GL_STENCIL_CLEAR_VALUE - no stencil state is recorded, GL's default is 0
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
+                return;
+            }
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC, as a float as glGetFloatv reports enums
                 Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
                 float func = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
