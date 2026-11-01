@@ -186,6 +186,15 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /** Raw {@code glPixelStorei/glPixelStoref}: the unpack state the texture capture reads rows with. */
+    public static void glPixelStorei(int pname, int value) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pixelStorei(pname, value);
+    }
+
+    public static void glPixelStoref(int pname, float value) {
+        glPixelStorei(pname, (int) value);
+    }
+
     /**
      * LWJGL3's {@code glGetLightfv}: answered from the lighting mirror the payload is built from. GL reports the
      * position the driver stored - already transformed by the modelview at set time - which is what the mirror holds.

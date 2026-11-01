@@ -1615,6 +1615,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glPixelStorei} from the transformer's route: the unpack state a captured upload is read with. */
+    public static void celtium$pixelStorei(int pname, int value) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.pixelStore(pname, value);
+        }
+    }
+
     /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
     public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
         CeltiumGlStub stub = installed;

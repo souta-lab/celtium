@@ -74,7 +74,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glClearBufferfv", "glClearBufferiv", "glClearBufferuiv",
             "glStencilFuncSeparate", "glStencilOpSeparate", "glStencilMaskSeparate",
             "glPolygonMode", "glHint", "glPointSize", "glSampleCoverage", "glLogicOp", "glClampColor",
-            "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers",
+            "glReadBuffer", "glDrawBuffer", "glDrawBuffers",
             "glPrimitiveRestartIndex", "glSampleMaski", "glProvokingVertex",
             "glBindSampler", "glBindBufferBase", "glBindBufferRange",
             "glAlphaFunc", "glSecondaryColor3f"));
@@ -922,6 +922,25 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            // Pixel-store state: the upload conversion reads the captured rows with the alignment/skip the caller set.
+            // Without this route none of it was ever recorded - the stub's handler sat behind a dispatch path a
+            // transformed native never takes.
+            if (("glPixelStorei".equals(name) || "nglPixelStorei".equals(name)) && "(II)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glPixelStorei", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glPixelStoref".equals(name) || "nglPixelStoref".equals(name)) && "(IF)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.FLOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glPixelStoref", "(IF)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if (("glGetLightfv".equals(name) || "nglGetLightfv".equals(name)) && "(IIJ)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
