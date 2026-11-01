@@ -1025,7 +1025,14 @@ public final class TerrainRenderer {
 
     void uploadRegion(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable graphUpdateTrigger) {
         List<TerrainRenderer.PendingMesh> pending = this.uploadPendingScratch;
-        pending.clear();
+        // A previous call that threw before its tail released its meshes leaves them here holding a section's parts.
+        // Releasing them before the clear keeps the scratch's ownership rule: nothing in it outlives a call.
+        if (!pending.isEmpty()) {
+            for (TerrainRenderer.PendingMesh previous : pending) {
+                previous.release();
+            }
+            pending.clear();
+        }
         boolean needIndexBuffer = false;
         // Resolved once for the whole upload: it used to be looked up again for every mesh.
         TerrainRenderer.RegionResources meshResources = resourcesFor(this.context, region, vertexStride());
