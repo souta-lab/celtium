@@ -865,16 +865,17 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Releases a list's owned payloads; called when the list is replaced or deleted (#394). */
-    private final Map<Integer, List<NativeGeometryBuffer>> displayListGeometry = new HashMap<>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<NativeGeometryBuffer>> displayListGeometry =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private List<NativeGeometryBuffer> openListGeometry;
 
     private void releaseListPayloads(Integer list) {
-        List<NativeGeometryBuffer> geometry = this.displayListGeometry.remove(list);
+        List<NativeGeometryBuffer> geometry = this.displayListGeometry.remove(list.intValue());
         if (geometry != null) {
             for (NativeGeometryBuffer buffer : geometry) buffer.close();
             this.listPayloadsReleased += geometry.size();
         }
-        List<java.nio.ByteBuffer> payloads = this.displayListPayloads.remove(list);
+        List<java.nio.ByteBuffer> payloads = this.displayListPayloads.remove(list.intValue());
         if (payloads == null) {
             return;
         }
@@ -922,7 +923,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private List<java.nio.ByteBuffer> openListPayloads;
 
     /** Owned payloads per compiled list name, released on replacement or deletion. */
-    private final Map<Integer, List<java.nio.ByteBuffer>> displayListPayloads = new HashMap<>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<java.nio.ByteBuffer>> displayListPayloads =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
     /** Compiled commands whose pointer payload was copied into list-owned memory. */
     private long listPayloadsOwned;
@@ -3699,7 +3701,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.displayLists.put(this.compilingList, compiled);
                     if (this.openListGeometry != null) this.displayListGeometry.put(this.compilingList, this.openListGeometry);
                     if (this.openListPayloads != null) {
-                        this.displayListPayloads.put(Integer.valueOf(this.compilingList), this.openListPayloads);
+                        this.displayListPayloads.put(this.compilingList, this.openListPayloads);
                     }
                     this.displayListsCompiled++;
                 } else if (this.openListPayloads != null) {
