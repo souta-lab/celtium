@@ -186,6 +186,19 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /** The DSA spellings of the texture-parameter setter (the first argument is the texture name). */
+    public static void glTextureParameteri(int texture, int pname, int value) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameteri(texture, pname, value);
+    }
+
+    public static void glTextureParameterf(int texture, int pname, float value) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameterf(texture, pname, value);
+    }
+
+    public static void glTextureParameterPointer(int texture, int pname, long values, boolean floats) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameterPointer(texture, pname, values, floats);
+    }
+
     /** The float and pointer spellings of the texture-parameter setter, as glTexParameterf/iv/fv/Iiv/Iuiv. */
     public static void glTexParameterf(int target, int pname, float value) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterf(target, pname, value);

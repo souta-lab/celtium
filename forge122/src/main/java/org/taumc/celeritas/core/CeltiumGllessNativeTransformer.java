@@ -947,6 +947,37 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if (returnType.equals("V")) {
+            if (("glTextureParameteri".equals(name) || "nglTextureParameteri".equals(name)) && "(III)V".equals(descriptor)) {
+                for (int slot = 0; slot < 3; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTextureParameteri", "(III)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if (("glTextureParameterf".equals(name) || "nglTextureParameterf".equals(name)) && "(IIF)V".equals(descriptor)) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.FLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTextureParameterf", "(IIF)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("(IIJ)V".equals(descriptor)
+                    && (name.endsWith("glTextureParameteriv") || name.endsWith("glTextureParameterfv")
+                            || name.endsWith("glTextureParameterIiv") || name.endsWith("glTextureParameterIuiv"))) {
+                boolean floats = name.endsWith("glTextureParameterfv");
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.LLOAD, 2);
+                method.visitInsn(floats ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glTextureParameterPointer", "(IIJZ)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             if (("glTexParameterf".equals(name) || "nglTexParameterf".equals(name)) && "(IIF)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
