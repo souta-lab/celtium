@@ -7895,7 +7895,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int stride = this.vertexPointerStride;
         if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT || this.vertexPointerOffset != 0L
-                || (stride != 12 && stride != 24 && stride != 32)) {
+                || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
             return;
         }
         java.nio.ByteBuffer vertices;
