@@ -4722,6 +4722,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0B71: return enabledCap(GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
             case 0x0BC0: return enabledCap(GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
             case 0x0C11: return enabledCap(GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
+            // The delivered frame is RGBA8 colour with D24 depth and no stencil. Mods probe these to pick a format or
+            // a shadow path; the old answer was zero for every one of them, which reads as "no colour bits at all".
+            case 0x0D52: return 8; // GL_RED_BITS
+            case 0x0D53: return 8; // GL_GREEN_BITS
+            case 0x0D54: return 8; // GL_BLUE_BITS
+            case 0x0D55: return 8; // GL_ALPHA_BITS
+            case 0x0D56: return 24; // GL_DEPTH_BITS
+            case 0x0D57: return 0; // GL_STENCIL_BITS - this renderer keeps no stencil
             case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
                 return this.matrixMode;
             case 0x0B74: { // GL_DEPTH_FUNC
