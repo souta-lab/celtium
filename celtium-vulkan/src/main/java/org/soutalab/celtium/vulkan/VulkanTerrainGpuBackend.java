@@ -3596,8 +3596,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * frame.
      */
     private boolean frameSubmitReachedQueue;
-    /** Times a present skipped the bridge semaphore pair because its done signal was still outstanding. */
-    /** Times the frame-close submission (the second producer of the done semaphore) ran. */
 
     /**
      * Batches drawn, by format id - the counter that pairs with {@code acceptedByFormat}.

@@ -60,8 +60,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final byte R_INT = 1;
     private static final byte R_LONG = 2;
     private static final byte R_PTR = 3;
-    private static final byte R_FLOAT = 4;
-    private static final byte R_DOUBLE = 5;
 
     /** Argument types as they arrive at the trampoline: every arg slot is a pointer to the value. */
     private static final byte A_INT = 11;
@@ -1954,9 +1952,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     // it deliberately carries no org.lwjgl.opengl import, so the numbers are named where they are used.
     private static final int GL_CULL_FACE = 0x0B44;
     private static final int GL_BACK = 0x0405;
-    private static final int GL_FRONT = 0x0404;
     private static final int GL_CCW = 0x0901;
-    private static final int GL_CW = 0x0900;
 
     /** The game's clip rectangle as glScissor last set it, in GL's bottom-left coordinates. */
 
@@ -3781,8 +3777,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_REFUSED =
             new java.util.concurrent.atomic.AtomicLong();
     /** The first few multiplies, in one line each: which stack, which values, and who made the call. */
-    private static final java.util.Set<String> MATRIX_MULTIPLY_SHAPES =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** Every no-op entry point that was actually called, by name. Bounded by the table's size. */
     private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> NOOP_CALLS =
@@ -4024,8 +4018,6 @@ public final class CeltiumGlStub implements FunctionProvider {
             new java.util.concurrent.atomic.AtomicLong();
     private static final java.util.Set<String> IMMEDIATE_SITES =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private static final java.util.concurrent.atomic.AtomicLong IMMEDIATE_VERTICES =
-            new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * Names the site that opens a legacy immediate-mode run, once per (mode, site).
@@ -5937,12 +5929,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     // combine with a constant colour there, then asks it back when it builds the immediate batch's combine state. The
     // stub records what the game set instead of answering from GL, which under GL-less has nothing to answer from.
     private static final int GL_TEXTURE_ENV = 0x2300;
-    private static final int GL_TEXTURE_ENV_MODE = 0x2200;
-    private static final int GL_COMBINE_RGB = 0x8571;
-    private static final int GL_INTERPOLATE = 0x8575;
-    private static final int GL_COMBINE_ALPHA = 0x8572;
     private static final int GL_TEXTURE_ENV_COLOR = 0x2201;
-    private static final int GL_MODULATE = 0x2100;
     private void celtium$setTexEnvInt(int target, int pname, int param) {
         org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, param);
     }
@@ -6521,8 +6508,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Bytes per vertex of that layout. */
     private static final int POSITION_STRIDE = 12;
     /** Guards the one-off "first draw" line, so a run records what it decoded once instead of per frame. */
-    private static final java.util.concurrent.atomic.AtomicBoolean DRAWARRAY_FIRST_LOGGED =
-            new java.util.concurrent.atomic.AtomicBoolean();
 
     /**
      * One {@code glDrawArrays}, assembled from the mirrored array buffer and handed to the immediate path.
@@ -7572,6 +7557,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         return (float) (Math.round(value * 1000.0D) / 1000.0D);
     }
 
+
     /**
      * {@return why this batch must not be submitted, or {@code null} when its transform is usable}.
      * <p>
@@ -7590,10 +7576,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * kind draws the plane itself. Refusing the degenerate transform keeps the wrong pixels out of the frame and
      * names the gap instead of hiding it - the projection channel is the fix, not this class.
      */
-    /** Opt-in trace at the projection guard; pairs with the backend's CELTIUM_MATRIX_TRACE. */
-    private static final boolean MATRIX_TRACE = Boolean.getBoolean("celtium.vulkan.matrixTrace");
-    private static int projectionRefusalDumps;
-
     private static String celtium$projectionRefusal(TerrainGpuBackend backend, int drawFramebuffer) {
         if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
             return null;

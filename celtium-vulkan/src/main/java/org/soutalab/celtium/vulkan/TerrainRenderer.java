@@ -210,7 +210,6 @@ public final class TerrainRenderer {
     /** The vertex and index buffers of the captured batch, taken with the range rather than at their bind sites. */
 
     /** Incremented each time a frame's batch is captured, so the owner can attach its own state at the same moment. */
-    private boolean cameraWorldKnown;
 
 
 
