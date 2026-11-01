@@ -37,6 +37,13 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static final int ASM_API = 9 << 16;
     private static final String GET_ERROR_DESC = "()I";
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
+    /** State setters the stub answers with SEM_NOOP; see the direct-return branch for why the name is enough. */
+    private static final java.util.Set<String> VOID_NOOPS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "glLightf", "glLightfv", "glLighti", "glLightiv", "glLightModelf", "glLightModelfv", "glLightModeli",
+            "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
+            "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
+            "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
+            "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glTexCoord2f", "glTexCoord2d", "glVertex3f"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
@@ -422,6 +429,16 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.DLOAD, 2);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyTexCoord2d", "(DD)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        // The stub's table answers these state setters with SEM_NOOP ("record only - state the Vulkan side owns or
+        // nobody reads"). Each of them still crossed a native trampoline to be counted and dropped; a void no-op is the
+        // same answer without the crossing, and every overload of a no-op is a no-op, so the name is enough. The
+        // names here are the ones the measured session called most: glLightfv 2.8e5, glShadeModel 2.0e4, the stencil
+        // setters 1.6e4 each, glNormal3f 8e3, glTexCoord2f 9e3, glVertex3f 5.9e4. The fog setters are deliberately not
+        // here: they have real handlers that record the fog state for the terrain path.
+        if (VOID_NOOPS.contains(name) && descriptor.endsWith(")V")) {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
