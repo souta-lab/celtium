@@ -1553,6 +1553,89 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyMultiTexCoord2f(unit, u, v);
     }
 
+    // ---- the other component counts and widths of the same current-value coordinate ----
+    //
+    // The two-component float spelling is not the only way a mod sets its texture coordinate. GL defines
+    // glTexCoord1/2/3/4 x b/s/i/f/d (and the buffer forms) as writes to one current set, and a spelling left on the
+    // generic no-op keeps the previous UV - the wrong-atlas-region class the two-component routes were added for. The
+    // immediate layouts here carry exactly one (s, t) pair, so every spelling converges on {@code texCoord}: a
+    // one-component call leaves t at zero (GL's default for the components it does not name), and the third and fourth
+    // components have no consumer in a two-component layout. That last part is a limitation worth naming: a
+    // {@code glTexCoord4f} with q != 1 is a projected coordinate, and the projection is not applied here because the
+    // capture stores nothing to apply it with. It is still strictly less wrong than dropping the call.
+
+    /** {@code glTexCoord1f}: s, with GL's default t of zero. */
+    public static void glLegacyTexCoordF(float s, float t) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2f(s, t);
+    }
+
+    /** {@code glTexCoord1d}/{@code glTexCoord3d}/{@code glTexCoord4d}, narrowed before the write. */
+    public static void glLegacyTexCoordD(double s, double t) {
+        glLegacyTexCoordF((float) s, (float) t);
+    }
+
+    /** {@code glTexCoord1i}/{@code glTexCoord3i}/{@code glTexCoord4i}; short locals arrive sign-extended. */
+    public static void glLegacyTexCoordI(int s, int t) {
+        glLegacyTexCoordF((float) s, (float) t);
+    }
+
+    /** The multi-texture forms of the same rule: unit 0 is the pair, every other unit is counted by the stub. */
+    public static void glLegacyMultiTexCoordF(int unit, float s, float t) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyMultiTexCoord2f(unit, s, t);
+    }
+
+    public static void glLegacyMultiTexCoordD(int unit, double s, double t) {
+        glLegacyMultiTexCoordF(unit, (float) s, (float) t);
+    }
+
+    public static void glLegacyMultiTexCoordI(int unit, int s, int t) {
+        glLegacyMultiTexCoordF(unit, (float) s, (float) t);
+    }
+
+    /** Species of the buffer forms below: the type the pointer's first components are stored as. */
+    public static final int LEGACY_COORD_FLOAT = 1;
+    public static final int LEGACY_COORD_DOUBLE = 2;
+    public static final int LEGACY_COORD_INT = 3;
+    public static final int LEGACY_COORD_SHORT = 4;
+
+    /**
+     * {@code glTexCoord1fv/2fv/3fv/4fv} and the dv/iv/sv spellings: the pointer is the first component of one current
+     * coordinate, and the count says how many components the call names. Everything past the second is not carried by
+     * these layouts, exactly as in the scalar routes above.
+     */
+    public static void glLegacyTexCoordV(int type, int count, long address) {
+        if (address == 0L || count <= 0) {
+            return;
+        }
+        glLegacyTexCoordF(celtium$legacyCoord(type, address, 0),
+                count > 1 ? celtium$legacyCoord(type, address, 1) : 0.0F);
+    }
+
+    /** The multi-texture buffer forms; unit 0 reaches the pair and any other unit is counted. */
+    public static void glLegacyMultiTexCoordV(int unit, int type, int count, long address) {
+        if (address == 0L || count <= 0) {
+            return;
+        }
+        glLegacyMultiTexCoordF(unit, celtium$legacyCoord(type, address, 0),
+                count > 1 ? celtium$legacyCoord(type, address, 1) : 0.0F);
+    }
+
+    /** One component of a buffer-form coordinate, read at its own width and narrowed to the captured float. */
+    private static float celtium$legacyCoord(int type, long address, int index) {
+        switch (type) {
+            case LEGACY_COORD_FLOAT:
+                return org.lwjgl.system.MemoryUtil.memGetFloat(address + (long) index * 4L);
+            case LEGACY_COORD_DOUBLE:
+                return (float) org.lwjgl.system.MemoryUtil.memGetDouble(address + (long) index * 8L);
+            case LEGACY_COORD_INT:
+                return (float) org.lwjgl.system.MemoryUtil.memGetInt(address + (long) index * 4L);
+            case LEGACY_COORD_SHORT:
+                return (float) org.lwjgl.system.MemoryUtil.memGetShort(address + (long) index * 2L);
+            default:
+                return 0.0F;
+        }
+    }
+
     /** {@code glRectf}: one complete quad, expanded by the capture into four texcoord/vertex pairs. */
     public static void glLegacyRectf(float x1, float y1, float x2, float y2) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRectf(x1, y1, x2, y2);

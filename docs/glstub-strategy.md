@@ -15,8 +15,11 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
 | `glBegin`/`glEnd` | `-Dceltium.gless.legacyImmediate=true` の時だけ `LegacyImmediateCapture` が区間を開閉し、頂点を
   `POSITION_TEX_COLOR`(24B)/`POSITION_COLOR`(16B) に詰めて既存の即時描画経路へ渡す。**既定offでは従来どおり記録のみ** |
 | `glVertex*` | 2f/2d/3f/3d/4f/4d/2i/3i/4i/2s/3s を capture が受ける（4成分は w で除算、w=0 は理由付き拒否）。既定offでは no-op |
-| `glTexCoord*` / `glMultiTexCoord2f` | 2f/2d/2i/2s と、`glMultiTexCoord2f` の **unit 0** を capture が受ける。unit≠0 は数えるだけで書かない
-  （lightmap座標をalbedoのUVにしない）。変換器の既定応答は bare return のまま（lightmapは`LightmapCoordsMixin`経由） |
+| `glTexCoord*` / `glMultiTexCoord*` | **1/2/3/4成分 × f/d/i/s の全scalar形式**と、**全buffer形式**（`nglTexCoord*v`・
+  `nglMultiTexCoord*v`）を capture が受ける。即時layoutが持つ (s,t) 1組へ収束し、1成分は t=0、3/4成分の r/q は
+  保存先が無いため適用しない（`glTexCoord4f` の q≠1 の射影は未モデル。それでも前のUVを残すよりは正しい）。
+  multi の **unit 0** がこの組で、unit≠0 は数えるだけで書かない（lightmap座標をalbedoのUVにしない）。
+  変換器の既定応答は bare return のまま（lightmapは`LightmapCoordsMixin`経由） |
 | `glRect*` | 1呼び出し＝1クアッド。`Begin(QUADS)`＋GL定義の4組(TexCoord,Vertex)＋`End`に展開して同じ sink へ渡す。
   `glBegin`の内側での`glRect`はGL自身のエラーなので名前付きで数える |
 | `glColor*` | **GL11の32ネイティブ全て**が raw colour route を通る（glColor3/4 × b/s/i/f/d/ub/us/ui と 16 の
@@ -117,7 +120,8 @@ native 経路と共有する（同一 batch・同一 cache・同一 submit 最�
 `LegacyImmediateCapture`（GL/Vulkan 非依存）に分離し、`LegacyImmediateCaptureTest` が
 layout・stride・UV/色のバイト・`w` 除算・拒否理由を CPU で固定する。トランスフォーマの経路は
 `glVertex2f/2d/3f/3d/4f/4d` と `glVertex2i/3i/4i`・`glVertex2s/3s`、テクスチャ座標は
-`glTexCoord2f/2d/2i/2s`（整数と short は float layout への丸め。`glVertex4i` も `w` 除算し、`w=0` は名前付きで拒否）、
+`glTexCoord1/2/3/4 × f/d/i/s` とその buffer 形式、`glMultiTexCoord1/2/3/4 × f/d/i/s` とその buffer 形式
+（即時layoutの (s,t) 1組へ収束し、整数と short は float layout への丸め。`glVertex4i` も `w` 除算し、`w=0` は名前付きで拒否）、
 受理する primitive は `VulkanImmediateDrawer.refusalReason`
 （quads/triangles/fan/strip/quad strip/polygon/lines/line strip/line loop）で、ここにあった独自リストは削除した。
 `scripts/cpu-contract/transformer-route-verify.sh` は legacy 経路を **ON にした構成でも** 同じ検査を行う。

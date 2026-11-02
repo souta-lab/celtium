@@ -112,7 +112,7 @@ public final class VulkanTextureRegistry {
     private int mirrorDeferredLines;
 
     /** Bounded deferred-mirror notice: the level is a render target, so an empty mirror is the expected state. */
-    private void noteMirrorDeferred(int glTextureId, int width, int height, String why) {
+    void noteMirrorDeferred(int glTextureId, int width, int height, String why) {
         if (this.mirrorDeferredLines < 6) {
             this.mirrorDeferredLines++;
             System.out.println("[Celtium] CELTIUM_MIRROR_DEFERRED glTexture=" + glTextureId + " size=" + width + "x"

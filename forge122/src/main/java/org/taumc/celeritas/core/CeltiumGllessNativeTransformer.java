@@ -63,18 +63,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // in the measured session was 3.4e3.
             // glPushAttrib/glPopAttrib and the client pair are routed below to their state records.
             "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram",
-            // The remaining vertex/texcoord spellings a mod may use: none is in the stub's table, so each one
-            // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
+            // Spellings whose only route belongs to the legacy capture, which is armed by
+            // -Dceltium.gless.legacyImmediate=true and runs above this set. With the switch off the answer here is GL's
+            // silent no-op without a native crossing - the same answer these calls had before a route existed - and
+            // with it on the route is consulted first, so the listing cannot shadow it. The unconditional routes are
+            // the different case the note at the top of this set names: those names must not be listed at all.
             //
-            // The spellings that now have a legacy route are not listed here: glVertex2f/2d/3d/4f/4d/3i and
-            // glTexCoord2i/2s, and glRectf/glRecti/glRectd, are routed above - and a name in this set would shadow its
-            // route if the two were ever evaluated in the other order, the trap the note at the top of this set
-            // records. glVertex4f/glVertex4d were in this set while already routed above; they are gone rather than
-            // left as a trap that only the evaluation order keeps from firing.
-            //
-            // Every colour spelling is gone from this set for the same reason: the raw colour routes answer all 32
-            // natives (glColor3/4 x b/s/i/f/d/ub/us/ui and their 16 buffer forms) unconditionally, so the colour
-            // mirror and the font's current colour no longer depend on which spelling a mod happened to call.
+            // The vertex/rect/texcoord spellings that are routed above and are still here are exactly these
+            // switch-conditional ones: glVertex2i, glTexCoord2f/2d/3f/4f and the multi-texture 2d/3f/4f forms. Every
+            // colour spelling is absent because the raw colour routes answer all 32 natives (glColor3/4 x
+            // b/s/i/f/d/ub/us/ui and their 16 buffer forms) unconditionally, so the colour mirror and the font's
+            // current colour no longer depend on which spelling a mod happened to call.
             "glNormal3d",
             "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf",
             "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
@@ -442,6 +441,138 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     }
 
     /**
+     * The rest of the texcoord family: {@code glTexCoord1/3/4} and {@code glMultiTexCoord1/3/4} in every scalar width,
+     * plus all of their buffer forms ({@code nglTexCoord*v}, {@code nglMultiTexCoord*v}).
+     * <p>
+     * The immediate layouts carry one current (s, t) pair, and GL's other component counts are writes to that same
+     * pair: one component leaves t at zero, and the third and fourth components have no consumer here. A spelling left
+     * on the generic no-op keeps the previous UV, which is the wrong-atlas-region class the two-component routes were
+     * added for. The vector forms matter as much as the scalar ones because LWJGL's {@code FloatBuffer}/{@code
+     * DoubleBuffer} overloads are Java wrappers around these natives, so a mod that sets its coordinates from an array
+     * calls exactly these names.
+     * <p>
+     * The name and the descriptor are both decoded here and the descriptor is required to match the spelling: the
+     * transformer is one large name switch, and a route that matches a name whose JVM signature it did not expect would
+     * emit arbitrary bytecode. The component count only decides how many locals are read before the hint's single
+     * two-component entry point, and the buffer forms pass their type and count to one reader, so the hint surface stays
+     * small and the {@code glless_hint_descriptor_check.py} literal pairs stay checkable.
+     */
+    private static boolean emitLegacyTexCoordRoute(MethodVisitor method, String name, String descriptor) {
+        boolean multi;
+        String rest;
+        if (name.startsWith("glMultiTexCoord")) {
+            multi = true;
+            rest = name.substring("glMultiTexCoord".length());
+        } else if (name.startsWith("nglMultiTexCoord")) {
+            multi = true;
+            rest = name.substring("nglMultiTexCoord".length());
+        } else if (name.startsWith("glTexCoord")) {
+            multi = false;
+            rest = name.substring("glTexCoord".length());
+        } else if (name.startsWith("nglTexCoord")) {
+            multi = false;
+            rest = name.substring("nglTexCoord".length());
+        } else {
+            return false;
+        }
+        if (rest.length() < 2) {
+            return false;
+        }
+        char countChar = rest.charAt(0);
+        if (countChar < '1' || countChar > '4') {
+            return false;
+        }
+        int count = countChar - '0';
+        String form = rest.substring(1);
+        boolean vector;
+        char type;
+        switch (form) {
+            case "f": vector = false; type = 'F'; break;
+            case "d": vector = false; type = 'D'; break;
+            case "i": vector = false; type = 'I'; break;
+            case "s": vector = false; type = 'S'; break;
+            case "fv": vector = true; type = 'F'; break;
+            case "dv": vector = true; type = 'D'; break;
+            case "iv": vector = true; type = 'I'; break;
+            case "sv": vector = true; type = 'S'; break;
+            default: return false;
+        }
+        if (vector) {
+            String expected = multi ? "(IJ)V" : "(J)V";
+            if (!expected.equals(descriptor)) {
+                return false;
+            }
+            if (multi) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+            }
+            int code = type == 'F' ? 1 : type == 'D' ? 2 : type == 'I' ? 3 : 4;
+            method.visitInsn(Opcodes.ICONST_0 + code);
+            method.visitInsn(Opcodes.ICONST_0 + count);
+            method.visitVarInsn(Opcodes.LLOAD, multi ? 1 : 0);
+            if (multi) {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLegacyMultiTexCoordV", "(IIIJ)V", false);
+            } else {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLegacyTexCoordV", "(IIJ)V", false);
+            }
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        StringBuilder expected = new StringBuilder("(");
+        if (multi) {
+            expected.append('I');
+        }
+        for (int component = 0; component < count; component++) {
+            expected.append(type);
+        }
+        if (!expected.append(")V").toString().equals(descriptor)) {
+            return false;
+        }
+        int width = type == 'D' ? 2 : 1;
+        int first = multi ? 1 : 0;
+        int load = type == 'F' ? Opcodes.FLOAD : type == 'D' ? Opcodes.DLOAD : Opcodes.ILOAD;
+        if (multi) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+        }
+        method.visitVarInsn(load, first);
+        if (count == 1) {
+            if (type == 'F') {
+                method.visitInsn(Opcodes.FCONST_0);
+            } else if (type == 'D') {
+                method.visitInsn(Opcodes.DCONST_0);
+            } else {
+                method.visitInsn(Opcodes.ICONST_0);
+            }
+        } else {
+            method.visitVarInsn(load, first + width);
+        }
+        if (multi) {
+            if (type == 'F') {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLegacyMultiTexCoordF", "(IFF)V", false);
+            } else if (type == 'D') {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLegacyMultiTexCoordD", "(IDD)V", false);
+            } else {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLegacyMultiTexCoordI", "(III)V", false);
+            }
+        } else if (type == 'F') {
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyTexCoordF", "(FF)V", false);
+        } else if (type == 'D') {
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyTexCoordD", "(DD)V", false);
+        } else {
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyTexCoordI", "(II)V", false);
+        }
+        method.visitInsn(Opcodes.RETURN);
+        return true;
+    }
+
+    /**
      * {@code -Dceltium.gless.legacyImmediate=true} re-enables the legacy glBegin/glVertex3f routes.
      * <p>
      * Off by default while the menu crash one tester reports is bisected: both of that session's logs end in the same
@@ -767,6 +898,13 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (LEGACY_IMMEDIATE && "glRects".equals(name) && "(SSSS)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyRects", "(IIII)V");
+            return;
+        }
+        // The other component counts and widths of the same current texture coordinate, and their buffer forms. Their
+        // default answer must stay a no-op (the coordinate is not state the native path reads until a vertex takes it),
+        // so the emitter runs only under the legacy switch; a name that is in VOID_NOOPS below is answered by that set
+        // when the switch is off, exactly as the two-component spellings already are.
+        if (LEGACY_IMMEDIATE && emitLegacyTexCoordRoute(method, name, descriptor)) {
             return;
         }
         // The stub's table answers these state setters with SEM_NOOP ("record only - state the Vulkan side owns or

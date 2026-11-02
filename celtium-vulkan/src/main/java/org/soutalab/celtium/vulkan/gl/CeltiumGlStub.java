@@ -3848,6 +3848,43 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * {@return whether a full mirror supply for this GL name has to wait for the framebuffer that renders into it}.
+     * <p>
+     * The registry's lookups already defer a name that is a framebuffer's colour attachment and has no captured
+     * content: the image the name stands for is published by whoever owns the framebuffer, and an empty mirror built
+     * here would be superseded (and retired) a moment later. The lazy supply in the immediate and model paths was the
+     * one caller that bypassed that rule - it asked for an image directly, then ran a full upload whose only possible
+     * answer for a render target is the capture-miss "the level was allocated with no data and no upload ever wrote
+     * pixels into it". The cost is not the refusal, it is the image: one device allocation and one sampler per
+     * render-target name, then a retire, and a counted capture miss that says a supply failed when there was nothing
+     * to supply.
+     * <p>
+     * The answer stays "supply now" when the stub does hold content: a game pixel in level 0 (a texture that was
+     * uploaded before it became an attachment) or a pending patch backlog (the game is filling the level now). Those
+     * are the two sources the full upload can actually read, which is why they are the exception rather than the rule.
+     * The same question is asked by {@code fillFromCapture} when it refuses an all-zero surface.
+     *
+     * @param textureName the GL texture name the bound batch samples
+     */
+    public static boolean celtium$mirrorWaitsForFramebuffer(int textureName) {
+        if (textureName <= 0) {
+            return false;
+        }
+        return celtium$mirrorWaitsForFramebuffer(celtium$framebufferForColorTexture(textureName) != 0,
+                textureHasPendingPatches(textureName, 0), textureLevelHasGamePixels(textureName, 0));
+    }
+
+    /**
+     * The rule itself, with the three facts it reads passed in, so the pending-patch exception can be pinned by a CPU
+     * test: a geometry backlog is content {@code uploadFromGlTexture} replays, and treating it as "nothing to supply"
+     * would leave the level empty until its framebuffer happened to publish.
+     */
+    static boolean celtium$mirrorWaitsForFramebuffer(boolean colourAttachment, boolean pendingPatches,
+            boolean gamePixels) {
+        return colourAttachment && !pendingPatches && !gamePixels;
+    }
+
+    /**
      * One line of capture diagnostics: the levels currently holding pixels, how many came from a full image, a
      * sub-image patch or an undefined level allocated with no data and zero-filled (the shape the game gives its
      * atlases before writing them sprite by sprite), the uploads that could not be converted (unsupported format/type

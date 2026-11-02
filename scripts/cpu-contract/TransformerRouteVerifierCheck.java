@@ -78,6 +78,25 @@ public class TransformerRouteVerifierCheck {
         // default answer stays the bare return the light map's own path made it. Each is verified in the configuration
         // that installs it, which is why the script runs this list twice.
         "glRectf", "glRectd", "glRecti", "glRects", "glMultiTexCoord2f",
+        // The rest of the texcoord component counts and widths, and their buffer forms. Like the vertex spellings
+        // above, these are routed only with -Dceltium.gless.legacyImmediate=true; listing every one means the emitter's
+        // descriptor decoding is exercised for each spelling in the configuration that installs it, and the texcoord
+        // phase below reads the emitted hint call back out of the transformed probe.
+        "glTexCoord1f", "glTexCoord1d", "glTexCoord1i", "glTexCoord1s",
+        "glTexCoord3f", "glTexCoord3d", "glTexCoord3i", "glTexCoord3s",
+        "glTexCoord4f", "glTexCoord4d", "glTexCoord4i", "glTexCoord4s",
+        "nglTexCoord1fv", "nglTexCoord1dv", "nglTexCoord1iv", "nglTexCoord1sv",
+        "nglTexCoord2fv", "nglTexCoord2dv", "nglTexCoord2iv", "nglTexCoord2sv",
+        "nglTexCoord3fv", "nglTexCoord3dv", "nglTexCoord3iv", "nglTexCoord3sv",
+        "nglTexCoord4fv", "nglTexCoord4dv", "nglTexCoord4iv", "nglTexCoord4sv",
+        "glMultiTexCoord1f", "glMultiTexCoord1d", "glMultiTexCoord1i", "glMultiTexCoord1s",
+        "glMultiTexCoord2d", "glMultiTexCoord2i", "glMultiTexCoord2s",
+        "glMultiTexCoord3f", "glMultiTexCoord3d", "glMultiTexCoord3i", "glMultiTexCoord3s",
+        "glMultiTexCoord4f", "glMultiTexCoord4d", "glMultiTexCoord4i", "glMultiTexCoord4s",
+        "nglMultiTexCoord1fv", "nglMultiTexCoord1dv", "nglMultiTexCoord1iv", "nglMultiTexCoord1sv",
+        "nglMultiTexCoord2fv", "nglMultiTexCoord2dv", "nglMultiTexCoord2iv", "nglMultiTexCoord2sv",
+        "nglMultiTexCoord3fv", "nglMultiTexCoord3dv", "nglMultiTexCoord3iv", "nglMultiTexCoord3sv",
+        "nglMultiTexCoord4fv", "nglMultiTexCoord4dv", "nglMultiTexCoord4iv", "nglMultiTexCoord4sv",
         "glBindFramebufferEXT", "glBindFramebufferARB", "glFramebufferTexture2DEXT", "glFramebufferTexture2DARB",
         "glCheckFramebufferStatusEXT", "glCheckFramebufferStatusARB",
         "nglDeleteTextures", "nglDeleteBuffers", "nglDeleteFramebuffers", "nglGenTextures", "nglGenBuffers",
@@ -284,7 +303,49 @@ public class TransformerRouteVerifierCheck {
         }
         System.out.println("colour natives routed=" + colourRouted + "/" + COLOUR_NATIVES.length
                 + " resolved=" + colourResolved);
-        if (failed != 0 || classFailures != 0 || colourMissing != 0) System.exit(1);
+        // Phase 4: the texcoord family, in the configuration that installs its routes. A spelling that falls through to
+        // the generic no-op keeps the previous UV, which is a wrong picture rather than a missing call, and load success
+        // cannot see it. The probe is scanned for the legacy entry points only - noteUnrouted is also a hint call - so the
+        // positive control (one route deleted) reports the spelling by name instead of still reading full coverage.
+        int texcoordMissing = 0;
+        if (Boolean.getBoolean("celtium.gless.legacyImmediate")) {
+            final Set<String> wantedCoords = new HashSet<>(Arrays.asList(TEXCOORD_NATIVES));
+            final Map<String, Boolean> routedCoords = new HashMap<>();
+            new ClassReader(rewritten).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override public MethodVisitor visitMethod(int access, String methodName, String methodDescriptor,
+                        String signature, String[] exceptions) {
+                    if (!wantedCoords.contains(methodName)) {
+                        return null;
+                    }
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override public void visitMethodInsn(int opcode, String owner, String hintName,
+                                String hintDescriptor, boolean isInterface) {
+                            if (opcode == Opcodes.INVOKESTATIC
+                                    && "org/taumc/celeritas/core/CeltiumGllessHint".equals(owner)
+                                    && (hintName.startsWith("glLegacyTexCoord")
+                                            || hintName.startsWith("glLegacyMultiTexCoord"))) {
+                                routedCoords.put(methodName, Boolean.TRUE);
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG);
+            int declared = 0;
+            for (String name : TEXCOORD_NATIVES) {
+                if (!found.containsKey(name)) {
+                    continue;
+                }
+                declared++;
+                if (!routedCoords.containsKey(name)) {
+                    System.out.println("TEXCOORD-UNROUTED " + name + " (the previous UV stays current)");
+                    texcoordMissing++;
+                }
+            }
+            System.out.println("texcoord natives routed=" + (declared - texcoordMissing) + "/" + declared);
+        } else {
+            System.out.println("texcoord natives routed=skipped (legacy capture off)");
+        }
+        if (failed != 0 || classFailures != 0 || colourMissing != 0 || texcoordMissing != 0) System.exit(1);
     }
 
     /** One JVM descriptor character as the class it names, for the emitted-call lookup. */
@@ -311,6 +372,31 @@ public class TransformerRouteVerifierCheck {
         "glColor4b", "glColor4s", "glColor4i", "glColor4f", "glColor4d", "glColor4ub", "glColor4us", "glColor4ui",
         "nglColor4bv", "nglColor4sv", "nglColor4iv", "nglColor4fv", "nglColor4dv", "nglColor4ubv", "nglColor4usv",
         "nglColor4uiv",
+    };
+
+    /**
+     * Every texcoord native the legacy capture answers: 1/2/3/4 components x f/d/i/s (GL11) and the same counts for
+     * the multi-texture family (GL13), plus each one's buffer form. This is the phase-4 denominator; the list is kept
+     * beside {@link #NAMES} because that array is also the probe's declaration list, and a spelling missing here would
+     * still be transformed by phase 2 but never read back for its route.
+     */
+    static final String[] TEXCOORD_NATIVES = {
+        "glTexCoord1f", "glTexCoord1d", "glTexCoord1i", "glTexCoord1s",
+        "glTexCoord2f", "glTexCoord2d", "glTexCoord2i", "glTexCoord2s",
+        "glTexCoord3f", "glTexCoord3d", "glTexCoord3i", "glTexCoord3s",
+        "glTexCoord4f", "glTexCoord4d", "glTexCoord4i", "glTexCoord4s",
+        "nglTexCoord1fv", "nglTexCoord1dv", "nglTexCoord1iv", "nglTexCoord1sv",
+        "nglTexCoord2fv", "nglTexCoord2dv", "nglTexCoord2iv", "nglTexCoord2sv",
+        "nglTexCoord3fv", "nglTexCoord3dv", "nglTexCoord3iv", "nglTexCoord3sv",
+        "nglTexCoord4fv", "nglTexCoord4dv", "nglTexCoord4iv", "nglTexCoord4sv",
+        "glMultiTexCoord1f", "glMultiTexCoord1d", "glMultiTexCoord1i", "glMultiTexCoord1s",
+        "glMultiTexCoord2f", "glMultiTexCoord2d", "glMultiTexCoord2i", "glMultiTexCoord2s",
+        "glMultiTexCoord3f", "glMultiTexCoord3d", "glMultiTexCoord3i", "glMultiTexCoord3s",
+        "glMultiTexCoord4f", "glMultiTexCoord4d", "glMultiTexCoord4i", "glMultiTexCoord4s",
+        "nglMultiTexCoord1fv", "nglMultiTexCoord1dv", "nglMultiTexCoord1iv", "nglMultiTexCoord1sv",
+        "nglMultiTexCoord2fv", "nglMultiTexCoord2dv", "nglMultiTexCoord2iv", "nglMultiTexCoord2sv",
+        "nglMultiTexCoord3fv", "nglMultiTexCoord3dv", "nglMultiTexCoord3iv", "nglMultiTexCoord3sv",
+        "nglMultiTexCoord4fv", "nglMultiTexCoord4dv", "nglMultiTexCoord4iv", "nglMultiTexCoord4sv",
     };
 
     static Class<?> defineWith(ClassLoader loader, String name, byte[] bytes) {

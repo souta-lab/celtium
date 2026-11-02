@@ -1725,6 +1725,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long[] rawWriteSerialApplied = new long[4096];
     private int lazyMirrorFailures;
     /**
+     * Lazy supplies that did not build a mirror because the name stands for a framebuffer's colour attachment and the
+     * stub holds no pixels for it. Counted apart from {@link #lazyMirrorFailures}: nothing failed to upload, the
+     * content is the framebuffer's and arrives when its owner publishes the image.
+     */
+    private int lazyMirrorDeferrals;
+    /**
      * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
      * that failed. A texture the game allocated empty (a framebuffer attachment, say) carries no pixels for the supply
      * to read, fails the same way every bind, and cost 1,183 retries in one leg - the serial is the "new content"
@@ -2922,7 +2928,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " last=" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " rawWriteRefreshes=" + this.rawWriteRefreshes
                 + " skips=" + this.lazyMirrorRetrySkips
-                + " failures=" + this.lazyMirrorFailures + "]"
+                + " failures=" + this.lazyMirrorFailures + " deferred=" + this.lazyMirrorDeferrals + "]"
                 // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
                 // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
                 // ones" could not be told apart from a log. These are deltas over the frames this report covers.
@@ -4944,6 +4950,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " presentResult=[" + this.lastPresentResult + "]"
                     + " lazyMirrorSupplies=" + this.lazyMirrorSupplies
                     + " lazyMirrorFailures=" + this.lazyMirrorFailures
+                    + " lazyMirrorDeferrals=" + this.lazyMirrorDeferrals
                     + " lazyMirrorRetrySkips=" + this.lazyMirrorRetrySkips
                     + " prepareDescriptorFailures=" + this.prepareDescriptorFailures
                     + " noPassRefusals=" + this.prepareNoPassRefusals
@@ -5004,6 +5011,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         System.out.println("[Celtium] CELTIUM_GLESS_INVALIDATE kept=" + kept + " glTexture=" + glTextureId
                 + " atlasGlId=" + this.atlasSourceGlId + " lightmapGlId=" + this.lightmapSourceGlId
                 + " lazySupply=" + this.lazyMirrorSupplies + "/" + this.lazyMirrorFailures
+                + " lazyDeferred=" + this.lazyMirrorDeferrals
                 + " rawWriteRefreshes=" + this.rawWriteRefreshes
                 + "/" + this.lazyMirrorRetrySkips
                 + " lastLazyFailure=[" + this.lastLazyMirrorFailure + "]"
@@ -11086,6 +11094,20 @@ this.frameBufferOpen = false;
         this.lazySupplySerialByTexture[glTextureId] = writeSerial;
         this.lazySupplySerialRecorded[glTextureId] = true;
         int[] size = textureSize(glTextureId);
+        // The registry defers a name that stands for a framebuffer's colour attachment in both of its lookup branches;
+        // this direct imageFor() was the one path that built the empty mirror first, then asked the capture for pixels
+        // the stub does not hold. The image and its sampler are superseded (and retired) when the owner publishes, and
+        // the failed upload was counted as a supply failure although there was nothing a supply could read. Deferring
+        // here makes the answer the same one the lookups give; the serial recorded above means the decision is asked
+        // once per content change, and a real game upload or patch backlog still supplies as before.
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mirrorWaitsForFramebuffer(glTextureId)) {
+            this.lazyMirrorDeferrals++;
+            if (this.textureRegistry != null) {
+                this.textureRegistry.noteMirrorDeferred(glTextureId, size[0], size[1],
+                        "the stub holds no captured pixels for it");
+            }
+            return this.textureRegistry.get(glTextureId) != null;
+        }
         if (size[0] > 0 && size[1] > 0) {
             try {
                 VulkanGlTexture created = this.textureRegistry.imageFor(glTextureId, size[0], size[1], true);
