@@ -51,8 +51,15 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   atlas として描いていた。代入は供給の後に移した（再供給が失敗した時は同じ GL 名の既存ミラーがフィールドに残る
   ので、確立済みの像は失われない）。ライトマップと同じ規則。**部分的にしか塗られていないアトラスは正常状態**
   （sprite 単位で告知される）なので、ライトマップの「全内容」判定はここへは持ち込まない
-  （持ち込むと部分告知のフレームで world が消える）。計器は `CELTIUM_DIRECT_SUPPLY` の `arm` と `full`、
-  `pass skipped` の理由行（CPUテストのみ、GPU leg 未実施） |
+  （持ち込むと部分告知のフレームで world が消える）。さらに **readback が例外で答えられない時は、告知済みの
+  全面画像で確立する**（2026-11-02、`arm=announced-fallback`）。告知は定義上「全面」で、backlog も capture 読み
+  も要らない。ただし告知は**その時点の面**についての陳述なので、stub が記録する現在の extent と一致する時だけ
+  適用する（アトラスは一度告知された後に re-stitch される。古い告知で resize すると tile 幾何がずれる）。
+  健全な経路は readback が投げた後にしか走らないので、順序も呼び出し回数も変わらない。あわせて
+  `applyAnnouncedTo` の告知分岐が **entry の extent 記録を全面書き込み後に追従**させる（A07。`fromImage`・
+  `fillFromCapture` が既に守っていた規則で、ここだけ欠けていた。告知サイズが違えば `uploadFromImage` は像を
+  作り直すので、古い extent は以後の patch 境界と whole-texture 判定を誤らせる）。
+  計器は `CELTIUM_DIRECT_SUPPLY` の `arm` と `full`、`pass skipped` の理由行 |
 
 ⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、現在は上の表の状態。
 legacy capture は既定offのまま: 受入は[plan.md](plan.md)のgateどおり（validation 0・device lost 0・AMD/Intelの
@@ -149,9 +156,11 @@ layout・stride・UV/色のバイト・`w` 除算・拒否理由を CPU で固�
 
 **既定OFFの理由と再開条件**: 利用者報告の black screen は rc.24 で retire キューが記録中のコマンドバッファを
 破棄する競合（`VUID-vkEndCommandBuffer-00059` → RADV GPUVM fault）と判明し、修正済み。legacy 経路の
-「描画時点が早いだけ」という差分はその修正に覆われる可能性が高いが、**この環境に GPU leg が無い**ため
+「描画時点が早いだけ」という差分はその修正に覆われる可能性が高いが、**AMDのworld legが未実施**のため
 既定ONにはしていない。再開は、`-Dceltium.gless.legacyImmediate=true` で AMD/Intel の world とメニューを
 1 leg ずつ回し、validation 0・device lost 0・`CELTIUM_LEGACY_REFUSED` の理由が説明可能であることを確認できた時点。
+（2026-11-02訂正: この環境でAMD legは実行できる。`CELTIUM_INSTANCE_COHORT`/`CELTIUM_INSTANCE_WORLD` に
+Supersymmetryのcloneを指定する — [手順](development.md)§4。Intelは`DRI_PRIME`のrender nodeで選ぶ。）
 
 ## 未決・リスク
 

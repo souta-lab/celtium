@@ -4569,6 +4569,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * A full readback is the only way to get a texture whose pixels never came through an announcement, so it stays. When the
      * announced pixels are already in this image the readback is redundant and is skipped, and the skip is counted: those
      * skips are the stream that used to run once per animation frame.
+     * <p>
+     * A readback that cannot answer is not the end of the supply: the game may have handed the whole surface over as an
+     * announced image, and that is a source no readback has to serve. The fallback runs only after the readback has
+     * <em>thrown</em>, so the healthy path pays neither the extra lookup nor a different order - and it is the same
+     * announcement-then-capture order the invalidation path already uses, applied to the one supply that had no arm
+     * for it. Without it the mirror is left content-less (round 8's honest state) while the pixels for it were already
+     * in this process; the terrain pass then skips a frame it could have drawn.
      */
     private void celtium$establishAtlasImage(int glTextureId, VulkanGlTexture image, String what) {
         if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)
@@ -4581,12 +4588,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$noteDirectSupply(what, glTextureId, image, "announcement-skip");
             return;
         }
-        image.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+        try {
+            image.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+        } catch (RuntimeException | LinkageError readbackFailure) {
+            // The capture cannot answer for this name (no whole surface and no patch backlog in the stub - the
+            // over-budget atlas of a large pack is the shape that was measured). An announcement is a whole surface by
+            // definition, so it is asked for before the failure is allowed to leave the mirror empty - but only when
+            // it describes the surface this name has now, because the atlas is announced once and re-stitched later.
+            int[] current = textureSize(glTextureId);
+            if (this.textureRegistry == null
+                    || !this.textureRegistry.hasAnnouncedImageOfExtent(glTextureId, current[0], current[1])
+                    || !this.textureRegistry.applyAnnouncedTo(image, glTextureId)) {
+                throw readbackFailure;
+            }
+            this.textureStats.noteDirectMirrorFromAnnouncement();
+            celtium$noteDirectSupply(what, glTextureId, image, "announced-fallback");
+            return;
+        }
         if (this.textureRegistry != null) {
             this.textureRegistry.markFullyInitialized(glTextureId);
         }
         // Which of the two paths the atlas actually took, and what the mirror holds afterwards: the 268-mod E2E pack
-        // reports atlasFull=false while its atlas descriptor shows 8192x8192 writes, and the two supply arms above are
+        // reports atlasFull=false while its atlas descriptor shows 8192x8192 writes, and the supply arms above are
         // the only candidates. One bounded line per path answers it instead of another round of reading.
         celtium$noteDirectSupply(what, glTextureId, image, "readback");
     }

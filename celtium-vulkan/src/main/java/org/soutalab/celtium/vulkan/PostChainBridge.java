@@ -458,7 +458,7 @@ b.frameBufferOpen = false;
             int name = entry.getKey().intValue();
             b.celtium$registry().unpublishExternalImage(name);
             b.publishedTextures.removePublished(name);
-            b.publishedFrameImages.remove(entry.getKey());
+            b.publishedFrameImages.remove(entry.getKey().intValue());
             it.remove();
         }
         if (b.publishedChainOutput != null && b.publishedChainIdentity == identity) {
@@ -567,8 +567,10 @@ b.frameBufferOpen = false;
         for (java.util.Map.Entry<Integer, VulkanGlTexture> entry : b.publishedTextures.publishedEntries()) {
             names.add(entry.getKey());
             wrappers.add(entry.getValue());
-            Long image = b.publishedFrameImages.get(entry.getKey());
-            images.add(Long.valueOf(image == null ? 0L : image.longValue()));
+            // The map's primitive contract is the convention every other reader of it uses: 0 is "no image",
+            // which is what an absent key answers, so no box is needed to tell the two apart.
+            long image = b.publishedFrameImages.get(entry.getKey().intValue());
+            images.add(Long.valueOf(image));
         }
         this.cachedNames = new int[names.size()];
         this.cachedWrappers = new VulkanGlTexture[names.size()];
@@ -767,7 +769,7 @@ b.frameBufferOpen = false;
                 b.publishedTextures.publishedEntries().iterator();
         while (iterator.hasNext()) {
             java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
-            Long image = b.publishedFrameImages.get(entry.getKey());
+            long image = b.publishedFrameImages.get(entry.getKey().intValue());
             // A name survives only while the pair it belongs to still owns the very image it names. The owner is the
             // identity the image was published under - recorded at publish time - because with per-identity pairs the
             // live image differs per framebuffer and "the" chain pair is a question with no single answer.
@@ -778,13 +780,13 @@ b.frameBufferOpen = false;
             long live;
             if (owner != Long.MIN_VALUE) {
                 live = offTarget.chainPairColorImage(owner);
-            } else if (image != null && (image.longValue() == b.frameTarget.colorImage()
-                    || image.longValue() == offTarget.offTargetColorImage())) {
-                live = image.longValue();
+            } else if (image != 0L && (image == b.frameTarget.colorImage()
+                    || image == offTarget.offTargetColorImage())) {
+                live = image;
             } else {
                 live = 0L;
             }
-            if (image != null && live != 0L && image.longValue() == live) {
+            if (image != 0L && live != 0L && image == live) {
                 continue;
             }
             // The name's meaning is "the game framebuffer's colour texture, whose pixels the renderer serves from its
@@ -798,7 +800,7 @@ b.frameBufferOpen = false;
                         offTarget.chainPairColorView(owner), b.targetWidth, b.targetHeight);
                 if (republished != null) {
                     entry.setValue(republished);
-                    b.publishedFrameImages.put(entry.getKey(), Long.valueOf(live));
+                    b.publishedFrameImages.put(entry.getKey().intValue(), live);
                     b.publishedTextures.noteRepublished();
                     continue;
                 }
@@ -806,13 +808,13 @@ b.frameBufferOpen = false;
             // No live pair image at all (teardown, or the release half of a re-creation): there is nothing valid to
             // point the name at, so it is dropped rather than left naming freed memory.
             b.celtium$registry().unpublishExternalImage(entry.getKey().intValue());
-            b.publishedFrameImages.remove(entry.getKey());
+            b.publishedFrameImages.remove(entry.getKey().intValue());
             b.publishedFrameImageIdentities.remove(entry.getKey());
             b.publishedTextures.noteUnpublished();
             b.publishedTextures.noteStalePruned();
             if (b.publishedTextures.stalePruned() == 1) {
                 b.record("published name " + entry.getKey() + " named image 0x"
-                        + (image == null ? "unknown" : Long.toHexString(image.longValue()))
+                        + (image == 0L ? "unknown" : Long.toHexString(image))
                         + " which is no longer the pair's image (0x" + Long.toHexString(live)
                         + " for identity 0x" + Long.toHexString(owner)
                         + "); unpublished before any barrier could be recorded on it");
@@ -840,14 +842,14 @@ b.frameBufferOpen = false;
                     b.publishedTextures.publishedEntries().iterator();
             while (iterator.hasNext()) {
                 java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
-                Long image = b.publishedFrameImages.get(entry.getKey());
+                long image = b.publishedFrameImages.get(entry.getKey().intValue());
                 // Only names owned by this identity's pair can be stale when the pair is recreated; a name for the
                 // frame image, the default pair or another identity's pair still names a living image.
                 Long ownerBoxed = b.publishedFrameImageIdentities.get(entry.getKey());
                 if (ownerBoxed == null || ownerBoxed.longValue() != identity) {
                     continue;
                 }
-                if (image != null && image.longValue() == chainPairColorImage) {
+                if (image != 0L && image == chainPairColorImage) {
                     continue;
                 }
                 // The pair was recreated, and the name's meaning is "the game framebuffer's colour texture, whose pixels
@@ -862,13 +864,13 @@ b.frameBufferOpen = false;
                             liveImage, liveView, b.targetWidth, b.targetHeight);
                     if (republished != null) {
                         entry.setValue(republished);
-                        b.publishedFrameImages.put(entry.getKey(), Long.valueOf(liveImage));
+                        b.publishedFrameImages.put(entry.getKey().intValue(), liveImage);
                         b.publishedTextures.noteRepublished();
                         continue;
                     }
                 }
                 b.celtium$registry().unpublishExternalImage(entry.getKey().intValue());
-                b.publishedFrameImages.remove(entry.getKey());
+                b.publishedFrameImages.remove(entry.getKey().intValue());
                 b.publishedFrameImageIdentities.remove(entry.getKey());
                 b.publishedTextures.noteUnpublished();
                 iterator.remove();

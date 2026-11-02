@@ -64,7 +64,35 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64 scripts/build.sh
 同じsourceからは同じhashになる（実測: 574dc59d を2回再現）。hashが変わらないときは、差分が実際にそのJARへ
 入っていない可能性を先に疑う。
 
+### 実行時のfastutilへリンクすること（2026-11-02 実測）
+
+`celtium-vulkan` は Minecraft 1.12.2 の **fastutil 7.1.0** にコンパイルするが、製品の実行環境である
+Cleanroom 0.7 は **8.5.18** を積む。7.1.0 の primitive-key map には boxed キーの互換overload
+（`get(Integer)`・`put(Integer, Long)`・`add(Integer)`）が残っており javac はそちらを優先するため、
+8.5.18 には無いメソッドへリンクした JAR ができる。実測（leg `r9-supply`、AMD RX 6400、Supersymmetry）:
+`Gui.func_73729_b` の GUI quad が即時描画経路で `Int2ObjectOpenHashMap.get(Integer)` の
+`NoSuchMethodError` を投げ、全quadが `copy failed` で拒否された（= 描けない。色が違うのではない）。
+`:celtium-vulkan:test` の `FastutilLinkageTest` がコンパイル済みconstant poolを読み、boxed キーを渡す
+fastutil 呼び出しがあれば失敗する。コンパイル先を 8.5.18 へ上げて差を隠さない（古い側でコンパイルするから
+差が見える）。この検査は `scripts/cpu-contract/transformer-route-verify.sh` の対象外なので、
+`scripts/build.sh :celtium-vulkan:test` を回すこと。
+
 ## 4. freshなGPU leg
+
+**この環境でAMD legは実行できる（2026-11-02実測）**。`celtium-world-accept` は無いが、`plain`モードの
+instanceは `CELTIUM_INSTANCE_COHORT` で差し替えられる。実測した呼び出し（leg `r9-linkage`、AMD RX 6400、
+`fixtureStatus` まで到達しvalidation 0）:
+
+```sh
+CELTIUM_INSTANCE_COHORT=$HOME/.local/share/PrismLauncher/instances/Supersymmetry \
+CELTIUM_LEG_SEED_OPTIONS=$PWD/.celtium-work/options/guiScale3.txt \
+scripts/gv-leg.sh <fresh-leg> <stage-dir> plain amd 200
+```
+
+`<stage-dir>` には packaged JAR とvalidation JARを**ちょうど1個ずつ**置く。結果は `.gv-verify/<leg>-result.json`、
+ログは `.gv-verify/run-<leg>/logs/latest.log`。fixtureの判定行（`CELTIUM_PRESENTED_IMAGE` など）は
+`presentedBlackFraction` のような数値ごと読む。同じlegを2回回して差分を語る場合は、stageのfixtureを
+固定すること（rendererだけを変える）。
 
 正典は [gv-leg.sh](<../scripts/gv-leg.sh>) → [gv_leg.py](<../scripts/gv_leg.py>) → [prism_validation.py](<../scripts/prism_validation.py>)。
 未追跡の `.gv-verify/` 内の古いrunner/harnessは使わない。CLIは `scripts/gv-leg.sh --help`。

@@ -46,6 +46,12 @@ dependencies {
     // step, and this module goes through that same step, so it compiles against the original coordinates.
     compileOnly 'org.joml:joml:1.10.5'
     // The mod's render API is expressed with fastutil collections, which Minecraft already provides.
+    // Compile against the OLDEST fastutil the product runs on (vanilla 1.12.2's 7.1.0), because that is where the
+    // primitive-key Map-compatibility overloads (get(Integer), put(Integer, Long), add(Integer)) still exist and javac
+    // prefers them. Cleanroom 0.7 ships 8.5.18, which declares get(int) only, so a call site that lets javac pick the
+    // boxed form links to a method the game does not have - a NoSuchMethodError at the first draw that uses it (leg
+    // r9-supply: every GUI quad refused with "copy failed"). FastutilLinkageTest reads the compiled constant pools and
+    // rejects any call that passes a boxed key; do not compile against 8.5.18 instead, which would hide the mismatch.
     compileOnly 'it.unimi.dsi:fastutil:7.1.0'
     // The tests that touch the GL stub need the collections at runtime; the game provides them in production.
     testImplementation 'it.unimi.dsi:fastutil:7.1.0'

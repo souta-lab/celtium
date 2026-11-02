@@ -1342,6 +1342,28 @@ public final class VulkanTextureRegistry {
     }
 
     /**
+     * {@return whether this name holds an announced whole surface of exactly this extent}.
+     * <p>
+     * Asked by a supply the readback could not answer: an announcement is a whole surface by definition - the upload
+     * hook hands over the image the game is uploading - so applying it needs no backlog drain and no capture read. The
+     * question is deliberately narrower than calling {@link #applyAnnouncedTo} itself, for two reasons. Its capture
+     * branch probes the stub and records what that probe means (a deferral, a refused patch) for the caller that has no
+     * other source, and a caller with a fallback of its own must not write those conclusions for it. And an
+     * announcement is a statement about the surface at the moment it was made: the atlas is announced once and then
+     * re-stitched, so a held announcement whose extent disagrees with the one the stub records for this name describes
+     * an older surface, and resizing a directly sampled mirror to it would sample the atlas with the wrong tile
+     * geometry. The same rule {@code fillFromCapture} applies to a captured surface, and a dimension of 1 is not a
+     * record there either.
+     */
+    public boolean hasAnnouncedImageOfExtent(int glTextureId, int width, int height) {
+        java.awt.image.BufferedImage image = this.announcedImages.get(glTextureId);
+        if (image == null) {
+            return false;
+        }
+        return (width <= 1 || image.getWidth() == width) && (height <= 1 || image.getHeight() == height);
+    }
+
+    /**
      * Applies an announced image to a texture this registry does not own.
      * <p>
      * The block atlas and the light map are held directly by the backend rather than through this registry, and they refreshed
@@ -1368,6 +1390,16 @@ public final class VulkanTextureRegistry {
                     return true;
                 }
                 this.imageUploads++;
+                // The record follows the image: uploadFromImage recreates the Vulkan image when the announced extent
+                // differs from the one the entry was built at, and a stale entry size then makes every later patch's
+                // bounds and whole-texture check wrong (audit A07) - the rule fromImage and fillFromCapture already
+                // follow, and the one place it was missing. Only this name's own image is a record this class keeps; a
+                // target it does not own has none.
+                Entry recorded = this.entries.get((int) (glTextureId));
+                if (recorded != null && recorded.texture == target) {
+                    recorded.width = image.getWidth();
+                    recorded.height = image.getHeight();
+                }
                 // Same contract as the int[][] producer: the pixels are in the image the descriptors sample, so the invalidation
                 // that follows does not need to read the texture back.
                 recordApplication(glTextureId, true);
@@ -1491,7 +1523,7 @@ public final class VulkanTextureRegistry {
             java.nio.ByteBuffer rgba, int levels) {
         this.mirrorFillsBySource.merge(source, Integer.valueOf(1), Integer::sum);
         Integer id = Integer.valueOf(glTextureId);
-        String previous = this.mirrorSourceById.put(id, source);
+        String previous = this.mirrorSourceById.put(glTextureId, source);
         if (source.equals(previous) || this.mirrorSourceLogs >= MIRROR_SOURCE_LOG_LIMIT) {
             return;
         }
@@ -2016,7 +2048,7 @@ public final class VulkanTextureRegistry {
         // mirrors are not copying GL's mip levels (which would need the readback), the mirror is built from those pixels.
         // Nothing announced means nothing to look up: the three boxed map reads below ran once per offered batch (197 a
         // frame measured as skips alone) for the common case where no announcement is pending at all.
-        java.awt.image.BufferedImage announced = this.announcedImages.isEmpty() ? null : this.announcedImages.get(id);
+        java.awt.image.BufferedImage announced = this.announcedImages.isEmpty() ? null : this.announcedImages.get(glTextureId);
         if (announced != null) {
             // The conversion is 1.17 ms per call and it ran on almost every batch: the announcement stayed pending, so the
             // same image was turned into RGBA again and again. A consumed generation means the mirror already holds these
@@ -2186,7 +2218,7 @@ public final class VulkanTextureRegistry {
             return;
         }
         if (this.entries.containsKey((int) (glTextureId))) {
-            this.staleIds.add(Integer.valueOf(glTextureId));
+            this.staleIds.add(glTextureId);
         }
     }
 
