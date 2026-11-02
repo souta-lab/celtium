@@ -67,10 +67,29 @@ CELTIUM_FONT_RUN_CENSUS retainedRuns=0 retainedQuads=0 retainedPendingRuns=0 ret
 * `fontDrawStateFlushes=0` is the same kind of statement: the world scene's text is drawn under one draw state, so the
   witness that closed the tooltip's shadow/main defect has nothing to close here.
 
+A second scene was run to look for a refusal, because a fix that never fires is not evidence: leg `r39c-creative`
+(same JAR and fixture, `plain`, `-Dceltium.validation.screen=creative -Dceltium.validation.creativeTab=12
+-Dceltium.validation.screenshotAtTick=60`, `GuiContainerCreative` open at the capture, tab `littletiles`):
+
+```
+CELTIUM_FONT_RUN_CENSUS retainedRuns=0 ... fontRunRefusals=0 fontDrawStateFlushes=0
+  depthTest=false depthWrite=false blend=false cull=off(0) colorMask=f scissor=0
+```
+
+`fontRunRefusals=0` again, with `CELTIUM_REFUSALS_BY_FORMAT {}` and zero validation lines. The verdict is
+`UNCALIBRATED_PRESENTED_IMAGE` (exit 2) by construction - the creative scene's calibration key carries
+`screen=named:creative` while the terrain reference carries `screen=none` - so the verdict is not the measurement here;
+the census is. **Neither measured scene refuses a font run**, which is the round's other finding: the refusal path needs
+a scene with a custom program bound or a target that is not ready, and neither the calibrated world scene nor the
+creative inventory is one.
+
 ## What this does not claim
 
-* No picture changed in the calibrated scene, and none is claimed to.
+* No picture changed in either measured scene, and none is claimed to.
+* The fix is **not exercised by a leg**: both scenes refuse no immediate batch at all (`CELTIUM_REFUSALS_BY_FORMAT {}`,
+  `refusedBeforeAppend=0`), so the retention has nothing to keep. The evidence that the queue works is the four unit
+  tests; the legs' job is to show the change is inert where nothing is refused.
 * The scenes where a run *can* be refused (a custom program bound, a target that is not ready) were not run this round;
   the claim there is the contract and the unit tests, not a picture.
-* No performance claim. The retention adds a copy only when a run is refused, which is zero in this scene.
+* No performance claim. The retention adds a copy only when a run is refused, which is zero in both scenes.
 * Intel is not run this round.
