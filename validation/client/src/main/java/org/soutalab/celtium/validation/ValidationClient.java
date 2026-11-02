@@ -1991,6 +1991,14 @@ public final class ValidationClient {
      * puts at fault.
      */
     private net.minecraft.client.gui.inventory.GuiContainerCreative celtium$creativeScreen;
+    /**
+     * The moving-tooltip screen, when {@code -Dceltium.validation.screen=tooltipmotion} opened it.
+     * <p>
+     * Kept so the report can say the screen was painted, how many frames it painted and the layout those frames were
+     * laid out at - the checker turns the layout into picture pixels with the picture's own scale, and a run whose
+     * screen was never drawn must not read as "no ghost".
+     */
+    private org.soutalab.celtium.validation.TooltipMotionScreen celtium$tooltipMotionScreen;
     /** Whether the creative tab request has been applied, so the grid is selected once per leg. */
     private boolean celtium$creativeTabApplied;
     /**
@@ -5847,11 +5855,32 @@ public final class ValidationClient {
                     // GuiContainerCreative falls back to GuiInventory when the player is not in creative mode
                     // (initGui), so the report says which class actually opened rather than assuming this one did.
                     requested = new net.minecraft.client.gui.inventory.GuiContainerCreative(mc.player);
+                } else if ("tooltipmotion".equalsIgnoreCase(screenRequest)) {
+                    // The reported tooltip afterimage is a motion-only question: at rest the game's own screenshot and
+                    // the presented frame agree pixel for pixel, and no frame reaches its boundary without a clear, so
+                    // a still tooltip cannot show it. This screen moves a real vanilla tooltip between two positions on
+                    // consecutive frames over an opaque black panel and asks for the frames it draws, so one picture
+                    // says whether the previous frame's glyphs were drawn again at their old position.
+                    requested = new org.soutalab.celtium.validation.TooltipMotionScreen();
                 }
                 if (requested != null) {
                     mc.displayGuiScreen(requested);
                     if (requested instanceof net.minecraft.client.gui.inventory.GuiContainerCreative) {
                         celtium$creativeScreen = (net.minecraft.client.gui.inventory.GuiContainerCreative) requested;
+                    }
+                    if (requested instanceof org.soutalab.celtium.validation.TooltipMotionScreen) {
+                        // The screen asks for its own dumps: one picture per frame parity is the whole measurement, and
+                        // asking at a tick instead would leave it to chance which position a single dump caught.
+                        celtium$tooltipMotionScreen =
+                                (org.soutalab.celtium.validation.TooltipMotionScreen) requested;
+                        celtium$tooltipMotionScreen.setDumpRequester(
+                                new org.soutalab.celtium.validation.TooltipMotionScreen.DumpRequester() {
+                                    @Override
+                                    public void requestPresentedDump(String stage) {
+                                        celtium$requestPresentedDump(mc, stage);
+                                    }
+                                });
+                        report.addProperty("tooltipMotionLayoutOpened", celtium$tooltipMotionScreen.describeLayout());
                     }
                     report.addProperty("namedScreenOpened", requested.getClass().getName());
                     report.addProperty("namedScreenOpenedAtTick", worldTicks);
@@ -6995,6 +7024,59 @@ public final class ValidationClient {
     private double percentile(double fraction) {
         if (frameIntervals.isEmpty()) throw new IllegalStateException("No frame interval samples");
         return frameIntervals.get(Math.min(frameIntervals.size() - 1, (int) Math.ceil(fraction * frameIntervals.size()) - 1));
+    }
+
+    /**
+     * Writes what the moving-tooltip screen did, so a picture cannot be read as an answer on its own.
+     * <p>
+     * {@code tooltipMotionLayoutOpened} is the layout at the moment the screen was installed; this is the layout the
+     * frames were actually drawn at and how many frames were drawn, because a screen that was opened but never painted
+     * would leave a dump of something else to be measured as "no ghost". The dump stages are listed with their
+     * completion state for the same reason: the checker reads those files, and a leg that saved none of them has to
+     * fail rather than pass on an empty set.
+     */
+    private void celtium$reportTooltipMotion() {
+        if (this.celtium$tooltipMotionScreen == null) {
+            return;
+        }
+        report.addProperty("tooltipMotionDrawnFrames",
+                Integer.valueOf(this.celtium$tooltipMotionScreen.framesDrawn()));
+        report.addProperty("tooltipMotionLayout", this.celtium$tooltipMotionScreen.describeLayout());
+        report.addProperty("tooltipMotionGuiWidth",
+                Integer.valueOf(this.celtium$tooltipMotionScreen.laidOutWidth()));
+        report.addProperty("tooltipMotionGuiHeight",
+                Integer.valueOf(this.celtium$tooltipMotionScreen.laidOutHeight()));
+        int count = 0;
+        StringBuilder stages = new StringBuilder();
+        // Every request this screen makes is answered before the run ends, and the completion path *moves* an answered
+        // request out of the pending list into the evidence map. Reading the pending list alone therefore said
+        // "dumps=0" for a leg whose three pictures were on disk and whose identities were in this same report - the
+        // "instrument that cannot be read" shape this project keeps re-learning. Both are read, de-duplicated by stage.
+        java.util.LinkedHashMap<String, PictureEvidence> dumps = new java.util.LinkedHashMap<String, PictureEvidence>();
+        for (PictureEvidence evidence : this.celtium$pendingDumps) {
+            if (evidence.stage != null && evidence.stage.startsWith("tooltipmotion-")) {
+                dumps.put(evidence.stage, evidence);
+            }
+        }
+        for (PictureEvidence evidence : this.celtium$evidence.values()) {
+            if (evidence.stage != null && evidence.stage.startsWith("tooltipmotion-")) {
+                dumps.put(evidence.stage, evidence);
+            }
+        }
+        for (PictureEvidence evidence : dumps.values()) {
+            report.addProperty("tooltipMotionDump_" + evidence.stage,
+                    celtium$relative(evidence.image) + " completed=" + evidence.completed
+                            + " presentedFrame=" + evidence.presentedFrame + " tick=" + evidence.worldTick
+                            + " frames=" + evidence.worldFrames + " size=" + evidence.width + "x" + evidence.height
+                            + " error=" + evidence.completionError);
+            if (stages.length() > 0) {
+                stages.append(' ');
+            }
+            stages.append(evidence.stage);
+            count++;
+        }
+        report.addProperty("tooltipMotionDumpCount", Integer.valueOf(count));
+        report.addProperty("tooltipMotionDumpStages", stages.toString());
     }
 
     /**
@@ -11464,6 +11546,7 @@ public final class ValidationClient {
         // the user's lag unmeasured. They are written here instead, so every run that produces a report carries both
         // windows, with their sample counts and the window names beside them.
         celtium$reportFrameIntervals();
+        celtium$reportTooltipMotion();
         // The client loop's own tick timing, which no renderer bracket covers. The (g) comparison left ~17.4 ms per
         // frame outside every instrument and this scene runs more than one world tick per frame (241 ticks over 217
         // frames), so the tick is the first candidate and had no instrument at all. Read reflectively, by name, so
