@@ -365,3 +365,29 @@ button/icon が白いのは、button 経路がキャッシュに無い色を一�
 **規約**: 「quad は accepted で texture も full」を「絵に出る」の証拠にしない。presented frame の実画素と、
 run の **現在色**（census の `colour=`）を合わせて読む。mod が生の `glColor*` を使う画面では、
 `GlStateManager` の色キャッシュが GL の current colour と一致している保証がない。
+
+## presented dump の「completed=false」は「絵が無い」ではない（2026-11-02 実測）
+
+**症状**: display-list scene の leg `r29a` で `displayListDump_displaylist-f41-b` が
+`completed=false presentedFrame=-1` なのに、同じ stage の `-kept.png`・identity file（`presentedFrame=43`,
+`completedAtTick=258`）は存在した。checker が「dump file is missing」で落ちる。
+
+**原因**: 要求が draw frame 40/41 にあり、presented には 2 present 遅れて 42/43 に着地する。この scene の leg は
+tick 境界（下記）で終わるため、2枚目が *run の最後の presented frame* になり、report の行が完了前に直列化された。
+
+**規約**: presented dump は「要求 frame + 2」で presented に載る。run の終わり際に要求しない（この scene は 8/9 に
+移動した）。checker は report の行を信じる前に `-kept` コピーを探す。`completed=false` を「計器の故障」とも
+「絵の欠落」とも読まない。判別は identity file の `completedAtTick` と実ファイル。
+
+## この scene の leg は tick 境界で終わる（200s では足りないことがある・2026-11-02 実測）
+
+**症状**: 同じ `plain` / `displaylist` / 同 flags の leg が 187s・195s・213s とばらつき、`--duration 200` の
+`r29c` は tick 300 で kill され `celtium-validation.json` が **1つも書かれなかった**（`harnessExitCode=124`）。
+
+**原因**: terrain scene の capture は「pinned で安定した section 集合」を待つので tick で決まる。実測の
+`captureStartTick` は Celtium 287（`r29d`）・Celeritas 400（`r29e`）、round 8 の leg は 358。1 tick の実時間は
+validation と dump の stall（`submitToFenceMs worst≈10s`）で伸びるので、遅い leg は 200s で capture に届かない。
+
+**規約**: この scene は `--duration 300` を既定にする。frame 数（`displayListDrawnFrames` 51 vs 172）を FPS と
+して読まない — run の終端が tick で決まるので frame 数は run 長の関数であり、round 8 の同じ Celtium の leg は
+`frameIntervalP50Ms=73.7`、今回の `r29d` は 1710 で、window の定義が違う。性能は専用 leg で測る。
