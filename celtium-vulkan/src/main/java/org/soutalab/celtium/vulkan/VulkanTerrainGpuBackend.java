@@ -1872,6 +1872,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
     /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
 
+    /** Per target: batches dropped at a frame boundary because no pass ran for that identity (BH-15). */
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap unflushedTargetDroppedBatchesByTarget =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     /** {@return one line per target whose groups were dropped at a frame boundary}, or "none". */
     String unflushedTargetDropSummary() {
         if (this.unflushedTargetDroppedByTarget.isEmpty()) {
@@ -1880,15 +1884,67 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         StringBuilder text = new StringBuilder();
         for (it.unimi.dsi.fastutil.longs.Long2IntMap.Entry entry
                 : this.unflushedTargetDroppedByTarget.long2IntEntrySet()) {
-            text.append(Long.toHexString(entry.getLongKey())).append(":frames=").append(entry.getIntValue())
+            text.append(Long.toHexString(entry.getLongKey()))
+                    .append(":frames=").append(entry.getIntValue())
+                    .append(":batches=").append(this.unflushedTargetDroppedBatchesByTarget.get(entry.getLongKey()))
                     .append(' ');
         }
         return text.toString().trim();
     }
 
+    /**
+     * Drops the groups queued for targets that never got a pass this frame, counts them once per identity, and names
+     * the boundary that did it.
+     * <p>
+     * A frame ends at one of two boundaries: {@code captureWorldSnapshot}, which every world frame reaches, and
+     * {@code celtium$frameBoundary}, which a menu-only frame reaches instead. They account for the same loss
+     * differently, and the difference was measured rather than suspected - the round-14 calibrated world leg reported
+     * {@code unflushedTargetGroupsDropped=98} beside {@code unflushedTargetDropTargets=[none]}. All 98 came from the
+     * menu boundary, which counted the number of <em>groups</em>, recorded no identity, and logged nothing; the world
+     * boundary counted <em>batches</em> and recorded both. So the counter mixed two units (one entry per group versus
+     * one per batch), and the count could not be attributed to an image at all.
+     * <p>
+     * Both boundaries now go through here: batches at both sites (which is what the world site's own wording -
+     * "dropped N accepted immediate batches" - has always meant), an identity per target at both sites, and a bounded
+     * record line carrying the boundary's name. A counter that says geometry was accepted and never drawn has to name
+     * the image it was accepted for; otherwise the next reader cannot tell a menu panorama from a mod's off-target
+     * pass, and that is the difference between a known limitation and a picture that is silently missing.
+     */
+    private void celtium$dropUnflushedTargetGroups(String site) {
+        if (this.immediateGroups.isEmpty()) {
+            return;
+        }
+        int dropped = 0;
+        java.util.LinkedHashSet<Long> targets = new java.util.LinkedHashSet<Long>();
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap batchesByTarget =
+                new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        for (ImmediateGroup group : this.immediateGroups) {
+            dropped += group.batches;
+            targets.add(Long.valueOf(group.target));
+            batchesByTarget.addTo(group.target, group.batches);
+        }
+        this.targetStatistics.addUnflushedTargetGroupsDropped(dropped);
+        for (Long target : targets) {
+            this.unflushedTargetDroppedByTarget.addTo(target.longValue(), 1);
+            this.unflushedTargetDroppedBatchesByTarget.addTo(target.longValue(),
+                    batchesByTarget.get(target.longValue()));
+        }
+        if (this.unflushedTargetGroupsDroppedLogged < UNFLUSHED_TARGET_LOG_LIMIT) {
+            this.unflushedTargetGroupsDroppedLogged++;
+            record(site + " dropped " + dropped + " accepted immediate batches whose target never got a pass"
+                    + " (targets=" + targets + ", total "
+                    + this.targetStatistics.unflushedTargetGroupsDropped() + ")");
+        }
+        celtium$discardImmediateGroups();
+        this.pendingImmediateIndices = 0;
+    }
+
 
     /** Groups dropped because no pass could draw their target, and passes that failed (BH-15). */
     private int unflushedTargetGroupsDroppedLogged;
+    /** How many of the boundary drops reach the record; the rest are in the counters. */
+    private static final int UNFLUSHED_TARGET_LOG_LIMIT =
+            Integer.getInteger("celtium.vulkan.unflushedTargetLog", 8).intValue();
     String lastUnflushedTargetFailure = "none";
 
 
@@ -6469,11 +6525,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.currentImmediateMesh != null) {
             closeCurrentImmediateGroup();
         }
-        if (!this.immediateGroups.isEmpty()) {
-            this.targetStatistics.addUnflushedTargetGroupsDropped(this.immediateGroups.size());
-            celtium$discardImmediateGroups();
-            this.pendingImmediateIndices = 0;
-        }
+        celtium$dropUnflushedTargetGroups("menu frame boundary");
         // The run the replay appends to may be in the dropped set; the replay's extend check already rejects a group
         // that is not the last live one, but dropping the reference keeps the field from pinning a recycled object.
         this.openModelRunGroup = null;
@@ -6583,24 +6635,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             closeCurrentImmediateGroup();
         }
         if (!this.immediateGroups.isEmpty()) {
-            int dropped = 0;
-            java.util.LinkedHashSet<Long> targets = new java.util.LinkedHashSet<Long>();
-            for (ImmediateGroup group : this.immediateGroups) {
-                dropped += group.batches;
-                targets.add(Long.valueOf(group.target));
-            }
-            this.targetStatistics.addUnflushedTargetGroupsDropped(dropped);
-            for (Long target : targets) {
-                this.unflushedTargetDroppedByTarget.put(target.longValue(),
-                        this.unflushedTargetDroppedByTarget.get(target.longValue()) + 1);
-            }
-            if (this.targetStatistics.unflushedTargetGroupsDropped() <= this.unflushedTargetGroupsDroppedLogged + 3) {
-                this.unflushedTargetGroupsDroppedLogged++;
-                record("frame boundary dropped " + dropped + " accepted immediate batches whose target never got a"
-                        + " pass (targets=" + targets + ", total " + this.targetStatistics.unflushedTargetGroupsDropped() + ")");
-            }
-            celtium$discardImmediateGroups();
-            this.pendingImmediateIndices = 0;
+            celtium$dropUnflushedTargetGroups("world frame boundary");
         }
         // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
         // that is per frame - the window budget, these counters - is reset here and nowhere else.

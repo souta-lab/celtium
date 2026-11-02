@@ -11,28 +11,15 @@
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
-設計案は [new_architecture.md](<new_architecture.md>)（scene database・Native Everything Culling・frame compiler・
-Vulkan executor）。**採用する**: §12の結論（offerごとのJava受理・capture・record仕事を消す）と一致し、互換方針の変更
-（描画改変Modは競合として非サポート）でproducerまで所有できるため。**順序は実測コストで並べ替える**
-（leg `tickjfr-celtium-2`・JAR `652075c9…`・AMD・world・validation off・warm窓のclient threadサンプル692）:
-
-| 項目 | client thread占有（inclusive） | 対応するstage |
-|---|---|---|
-| block entity描画（TESR→GL stub→受理→即時window） | 34%（end portal 14.6%・看板 6.8%） | Stage 3（TESR/entity/itemのnative producer・retained mesh）。end portalは描画の正しさのみ修正済み（texgen）、1 block×15 layerのCPU費用は未削減 |
-| 即時windowの記録 `recordImmediateOnlyPass` | 30% | Stage 4（frame compiler）＋**executor thread**（下記） |
-| 受理経路 `submitGeometryBatch` | 10% | Stage 1（packet化）で消す |
-| client tick内のアニメtexture転送待ち | 3.6%（vkWaitForFences） | 修正済み（staging ring、下） |
-| tick以外のvanilla（tick/世界処理） | 約6% | 対象外（共有コスト） |
-
-- **Stage 2（CPU Everything Culling）は後ろへ**: TESR/entityはvanillaが既にfrustum判定しており、KPI sceneの削減は小さい見込み。
-- **Stage 5（GPU Hi-Z）は最後**: AMDのフレームは解像度非依存＝CPU律速。GPU cullingはCPU時間を減らさない。
-- **設計への追加**: frame packetを不変にして**記録・提出をexecutor threadへ移す**案（記録30%がmain threadから外れる、
-  遅延1frame・キュー長1）。採否はpaired KPIで決める。
-- 移行は「一度に全部作り直さない」（設計§7）。各段で画像gate・validation 0・paired KPI（control arm）を取ってから次へ。
-
-### 2026-10-24 の実測ダイジェスト
-
-model instance producer・JIT分割/arena・staging ring・native raster/texture owner の判定と証拠は [archive](<history/plan-archive-2026-10-24.md>)（当時の値。現在の判定には使わない）。
+設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
+record 仕事を消す）だけで、順序は実測コストで並べ替える（leg `tickjfr-celtium-2`・JAR `652075c9…`・AMD・world・
+validation off・warm 窓の client thread サンプル692）: block entity 描画 34%（end portal 14.6%・看板 6.8%）、
+即時 window の記録 `recordImmediateOnlyPass` 30%、受理経路 `submitGeometryBatch` 10%、アニメ texture 転送待ち 3.6%
+（修正済み）、tick 以外の vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**
+（AMD のフレームは解像度非依存＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
+移行は「一度に全部作り直さない」（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。
+2026-10-24 の実測ダイジェスト（model instance producer・JIT 分割/arena・staging ring・native raster/texture owner）は
+[archive](<history/plan-archive-2026-10-24.md>)（当時の値。現在の判定には使わない）。
 
 - **影**: 利用者指示により本体内は停止。stage (a)–(d計器) は commit 済み・**既定OFF**（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
   PCF受け側は `git stash`「paused: in-core shadow PCF receiver」（leg `shadowpcf-amd-1` PASSED、視覚効果は未確認）。
@@ -60,6 +47,11 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
    - **AMD: goal条件1を満たす**（最新 `rel-amd`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.591/0.596/0.826、p50 0.63 vs 1.06 ms。前回 `kpi5` 0.622/0.619/0.811）。
+     **この行は scene 限定**（`world-0.7.11`・Xaeroなし・旧JAR）。現行JARを実配布profileで測ると逆:
+     `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.66–1.76×遅い**（p50 median 1.677、
+     `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。同sceneの frameBudget は
+     `gpuShare=0.01`＝CPU律速、Celtium側 bracket は `record`0.6＋`batch`0.9＋`present`0.4 ms（frame 4.4 ms p95）。
+     **次の性能単位は window 記録（≈51/フレーム）と offer受理経路（≈133/フレーム）**。判定sceneは未決。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
