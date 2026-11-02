@@ -129,6 +129,10 @@ public abstract class RenderItemMixin {
      */
     private Object celtium$resourceEpoch;
     private long celtium$itemMeshHits, celtium$itemMeshMisses, celtium$itemMeshInvalidations;
+    /** Empty answers reported, bounded: see {@link #celtium$buildPlan}. */
+    private int celtium$itemMeshEmpty;
+    /** Whether the plan just built was empty because the model answered no quads; see the miss branch. */
+    private boolean celtium$planWasEmpty;
 
     @Shadow
     public abstract void renderQuads(BufferBuilder renderer, List<BakedQuad> quads, int color, ItemStack stack);
@@ -171,9 +175,18 @@ public abstract class RenderItemMixin {
         if (this.celtium$uncacheableMeshes.containsKey(key)) {
             return;
         }
+        this.celtium$planWasEmpty = false;
         plan = this.celtium$buildPlan(model, color, stack);
         if (plan == null) {
-            this.celtium$uncacheableMeshes.put(key, Boolean.TRUE);
+            if (!this.celtium$planWasEmpty) {
+                // A reason that is a property of the model (a light-carrying format, a stack-tinted quad) stays
+                // uncacheable, because it will be the same reason next frame.
+                this.celtium$uncacheableMeshes.put(key, Boolean.TRUE);
+            }
+            // An empty answer is a property of the frame - the model is a function of the stack it last saw, and a
+            // stack with no preview answers nothing while the next stack answers six faces. Demoting the key for
+            // that would take the model out of the cache for the whole resource epoch over one NBT-less stack, so
+            // the empty case is left cacheable and simply not cached: the next draw asks the model again.
             return;
         }
         this.celtium$itemMeshes.put(key, plan);
@@ -193,6 +206,15 @@ public abstract class RenderItemMixin {
      * hit costs one {@code getQuads} call where the original ran seven. Size plus first-quad identity
      * is the cheap stability signal - a dynamic model that rotates or rebuilds its quads changes one
      * of the two almost always, and a false negative only costs a rebuilt plan.
+     * <p>
+     * The null-face list alone is not a probe of everything this cache keys on. A model whose quads are a function of
+     * external state has no reason to change its null-face answer when that state changes, and the CreativeCore models
+     * in the creative inventory are exactly that shape: {@code CreativeBakedModel.getBlockQuads} returns an empty list
+     * for every null-face query by construction (it answers per {@code EnumFacing}), so the probe matched on every
+     * stack and the first stack's bytes - or, when the first answer was empty, nothing at all - were replayed for all
+     * thirty-six of them. A real face is part of those quads: for an ordinary baked model it is the same list instance
+     * on every call, so this costs one lookup and changes nothing; for a stack-dependent model it is what makes the
+     * next stack rebuild instead of replay.
      */
     private static boolean celtium$probe(IBakedModel model, Plan plan) {
         List<BakedQuad> probe = model.getQuads((IBlockState) null, (EnumFacing) null, 0L);
@@ -200,7 +222,14 @@ public abstract class RenderItemMixin {
             return false;
         }
         BakedQuad first = probe.isEmpty() ? null : probe.get(0);
-        return first == plan.probeQuad;
+        if (first != plan.probeQuad) {
+            return false;
+        }
+        List<BakedQuad> face = model.getQuads((IBlockState) null, EnumFacing.UP, 0L);
+        if (face.size() != plan.faceProbeCount) {
+            return false;
+        }
+        return (face.isEmpty() ? null : face.get(0)) == plan.faceProbeQuad;
     }
 
     /**
@@ -208,16 +237,20 @@ public abstract class RenderItemMixin {
      * loop when emissive items are off, a faithful copy of {@code ForgeHooksClient.renderLitItem}'s segmentation
      * when they are on - while emitting into a scratch builder per segment so the bytes can be stored.
      *
-     * @return {@code null} when the draw cannot be cached (stack-tinted quads or lighting-carrying formats)
+     * @return {@code null} when the draw cannot be cached (stack-tinted quads, lighting-carrying formats, or a model
+     *         that answers no quads at all right now) - the caller then marks the key uncacheable and leaves the draw to
+     *         the original code, which is the only path that can see a model change its mind later
      */
     private Plan celtium$buildPlan(IBakedModel model, int color, ItemStack stack) {
         boolean stackColored = color == -1 && !stack.isEmpty();
         if (stackColored && celtium$modelHasTintedQuads(model)) {
             return null;
         }
-        // The probe records what the hit path re-verifies: the null-face list's size and first quad.
+        // The probe records what the hit path re-verifies: the null-face list's size and first quad, and the UP face's.
         List<BakedQuad> probe = model.getQuads((IBlockState) null, (EnumFacing) null, 0L);
         BakedQuad probeQuad = probe.isEmpty() ? null : probe.get(0);
+        List<BakedQuad> faceProbe = model.getQuads((IBlockState) null, EnumFacing.UP, 0L);
+        BakedQuad faceProbeQuad = faceProbe.isEmpty() ? null : faceProbe.get(0);
         if (!ForgeModContainer.allowEmissiveItems) {
             BufferBuilder scratch = celtium$scratch();
             for (EnumFacing enumfacing : CELTIUM_FACINGS) {
@@ -230,7 +263,8 @@ public abstract class RenderItemMixin {
             int[] data = celtium$bytes(scratch);
             new WorldVertexBufferUploader().draw(scratch);
             return new Plan(new Segment[] {
-                    new Segment(data, false, 0, 0, false, false) }, false, probeQuad, probe.size());
+                    new Segment(data, false, 0, 0, false, false) }, false, probeQuad, probe.size(),
+                    faceProbeQuad, faceProbe.size());
         }
         // renderLitItem, faithfully: gather all quads, walk them by (blockLight, skyLight, shade) transitions, and
         // emit a segment whenever the lighting or shading state changes - with ITEM-format quads carrying no light
@@ -241,7 +275,22 @@ public abstract class RenderItemMixin {
         }
         allquads.addAll(model.getQuads((IBlockState) null, (EnumFacing) null, 0L));
         if (allquads.isEmpty()) {
-            return new Plan(new Segment[0], false, probeQuad, probe.size());
+            // A model that answers no quads right now is not a model that answers no quads always, and this used to
+            // store the difference as a plan with zero segments: the key is (model instance, colour), so the first
+            // draw of a model that happened to be empty took that whole model out of every later frame as well.
+            // Measured on the creative inventory (legs r22a/r22b): the grid's thirty `littletiles:premade` and six
+            // `littletiles:multitiles` stacks emit no immediate batch at all - not even an empty one - while the eight
+            // tool stacks beside them do, because every one of them shares a single CreativeCore `IBakedModel` whose
+            // quads are a function of the stack it last saw. Handing the draw back to the original code makes an
+            // empty answer a property of this frame instead of the process: nothing is emitted either way, but the
+            // cache no longer remembers it, so the next stack gets asked rather than replayed.
+            this.celtium$planWasEmpty = true;
+            if (this.celtium$itemMeshEmpty < 16) {
+                this.celtium$itemMeshEmpty++;
+                System.out.println("[Celtium] CELTIUM_ITEM_MESH_EMPTY colour=0x" + Integer.toHexString(color)
+                        + " model=" + model + " (no quads on any face: not cached, the next draw asks again)");
+            }
+            return null;
         }
         // Any quad outside the ITEM layout that carries a light element goes back to the original code: the light
         // gatherer's pipe is the piece this port deliberately does not reimplement, and the format check is what
@@ -286,7 +335,8 @@ public abstract class RenderItemMixin {
                     OpenGlHelper.lastBrightnessX, OpenGlHelper.lastBrightnessY);
             GlStateManager.enableLighting();
         }
-        return new Plan(segments.toArray(new Segment[0]), hasLighting, probeQuad, probe.size());
+        return new Plan(segments.toArray(new Segment[0]), hasLighting, probeQuad, probe.size(),
+                faceProbeQuad, faceProbe.size());
     }
 
     /**
@@ -418,20 +468,27 @@ public abstract class RenderItemMixin {
 
     /**
      * A plan: the segments plus the plan-level facts the replay cannot recompute - {@code hasLighting}
-     * for {@code renderLitItem}'s post-loop cleanup, and the null-face probe
-     * ({@code probeQuad}/{@code probeCount}) the hit path re-verifies before trusting the bytes.
+     * for {@code renderLitItem}'s post-loop cleanup, and the two probe stamps
+     * ({@code probeQuad}/{@code probeCount} on the null face, {@code faceProbeQuad}/{@code faceProbeCount} on UP)
+     * the hit path re-verifies before trusting the bytes.
      */
     private static final class Plan {
         final Segment[] segments;
         final boolean hasLighting;
         final BakedQuad probeQuad;
         final int probeCount;
+        /** The UP face's first quad and size, the half of the probe a stack-dependent model actually changes. */
+        final BakedQuad faceProbeQuad;
+        final int faceProbeCount;
 
-        Plan(Segment[] segments, boolean hasLighting, BakedQuad probeQuad, int probeCount) {
+        Plan(Segment[] segments, boolean hasLighting, BakedQuad probeQuad, int probeCount,
+                BakedQuad faceProbeQuad, int faceProbeCount) {
             this.segments = segments;
             this.hasLighting = hasLighting;
             this.probeQuad = probeQuad;
             this.probeCount = probeCount;
+            this.faceProbeQuad = faceProbeQuad;
+            this.faceProbeCount = faceProbeCount;
         }
     }
 

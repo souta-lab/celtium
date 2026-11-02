@@ -126,6 +126,46 @@ public abstract class WorldVertexBufferUploaderMixin {
         return text.toString();
     }
 
+    /**
+     * Finished immediate batches that carried no vertices, counted by layout and by the screen that submitted them.
+     * <p>
+     * The immediate path is only offered batches that have vertices, so an empty one is invisible: it produces no
+     * group (the backend is never called), no refusal (nothing was refused) and no counter (nothing counted it), and
+     * the only trace it leaves is a region of the picture that is not there. Measured need: the creative inventory's
+     * grid draws nine item groups a frame while forty-five slots hold a stack, and the two candidate causes - the
+     * model returned no quads for the stack, or {@code RenderItem} was never reached for that slot - both look like
+     * "the item is not in the picture". A format-4 empty batch submitted while {@code GuiContainerCreative} is open
+     * is the first of those; its absence is the second.
+     * <p>
+     * Bounded to a first arrival and the powers of ten, so a per-frame empty batch cannot spend the log budget.
+     */
+    private static final java.util.Map<String, Integer> celtium$emptyUploads =
+            java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<String, Integer>());
+
+    private static void celtium$noteEmptyUpload(int formatId, int mode) {
+        String screen;
+        try {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            screen = mc == null || mc.currentScreen == null ? "none"
+                    : mc.currentScreen.getClass().getSimpleName();
+        } catch (RuntimeException | LinkageError error) {
+            screen = "unknown";
+        }
+        String key = "fmt=" + formatId + " screen=" + screen + " mode=" + mode;
+        int count;
+        synchronized (celtium$emptyUploads) {
+            Integer had = celtium$emptyUploads.get(key);
+            count = had == null ? 1 : had.intValue() + 1;
+            celtium$emptyUploads.put(key, Integer.valueOf(count));
+        }
+        if (count == 1 || count == 10 || count == 100 || count == 1000 || count == 10000) {
+            System.out.println("[Celtium] CELTIUM_EMPTY_UPLOAD " + key + " count=" + count
+                    + " (a finished batch with no vertices: it is never offered to the backend, so it leaves no"
+                    + " group and no refusal - this line is the only place it can be seen)"
+                    + " callers=[" + celtium$drawCallers() + "]");
+        }
+    }
+
     private static final Map<VertexFormat, Integer> celtium$formatIds =
             Collections.synchronizedMap(new WeakHashMap<VertexFormat, Integer>());
 
@@ -181,6 +221,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             VertexFormat format = celtium$vertexFormat(buffer);
             int stride = format == null ? 0 : format.getSize();
             int vertices = buffer.getVertexCount();
+            if (vertices <= 0) {
+                // A finished batch with no vertices returns below without ever reaching the backend, so it leaves no
+                // group, no refusal and no counter anywhere: "the model returned no quads" and "this renderer never
+                // drew" are the same silence. Naming the layout and the screen is what tells those apart, and that is
+                // the difference between fixing a model and fixing a draw. See celtium$noteEmptyUpload.
+                celtium$noteEmptyUpload(celtium$formatId(format), celtium$drawMode(buffer));
+            }
             ByteBuffer data = celtium$byteBuffer(buffer);
             if (data == null || vertices <= 0) {
                 return;

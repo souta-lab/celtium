@@ -1993,6 +1993,61 @@ public final class ValidationClient {
     private net.minecraft.client.gui.inventory.GuiContainerCreative celtium$creativeScreen;
     /** Whether the creative tab request has been applied, so the grid is selected once per leg. */
     private boolean celtium$creativeTabApplied;
+    /**
+     * How many later grid snapshots have been written, so the per-slot record stays a handful of entries.
+     * <p>
+     * {@code creativeGridFilled} is counted two ticks after the tab switch, which is a fact about the switch and not
+     * about the frame: measured on leg {@code r21d-creative} it read 46 while the tick-60 picture and the tick-327
+     * capture both drew nine of those slots. A container emptied after the switch and a renderer that draws nothing
+     * are therefore the same report, and walking the slots again at the ticks the pictures are taken is what
+     * separates them.
+     */
+    private int celtium$creativeGridSnapshots;
+
+    /**
+     * The creative inventory's slots, slot by slot, at the tick this is called.
+     * <p>
+     * The tab-switch report says how many slots held a stack two ticks after the switch; that number cannot say
+     * whether the frame under test still has them, because {@code ContainerCreative.scrollTo} rewrites the shared
+     * {@code basicInventory} that every grid slot reads through, and nothing in the picture can tell a slot that is
+     * empty from a slot whose item the renderer did not draw. So each entry here is {@code index=item xcount} for the
+     * slots that hold one: a grid that is full at the switch and empty at the capture is a container fact, and a grid
+     * that is still full at the capture is a rendering one.
+     *
+     * @param tag suffix that names the tick in the report key, e.g. {@code At60}
+     */
+    private void celtium$reportCreativeGridSlots(String tag) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        if (mc == null || !(mc.currentScreen instanceof net.minecraft.client.gui.inventory.GuiContainerCreative)) {
+            return;
+        }
+        try {
+            net.minecraft.client.gui.inventory.GuiContainerCreative screen =
+                    (net.minecraft.client.gui.inventory.GuiContainerCreative) mc.currentScreen;
+            int slots = screen.inventorySlots.inventorySlots.size();
+            StringBuilder contents = new StringBuilder();
+            int filled = 0;
+            for (int i = 0; i < slots; i++) {
+                net.minecraft.item.ItemStack stack = screen.inventorySlots.getSlot(i).getStack();
+                if (stack.isEmpty()) {
+                    continue;
+                }
+                filled++;
+                Object name = stack.getItem().getRegistryName();
+                if (contents.length() > 0) {
+                    contents.append(' ');
+                }
+                contents.append(i).append('=')
+                        .append(name == null ? stack.getItem().getClass().getSimpleName() : name.toString())
+                        .append('x').append(stack.getCount());
+            }
+            report.addProperty("creativeGrid" + tag + "Slots", Integer.valueOf(slots));
+            report.addProperty("creativeGrid" + tag + "Filled", Integer.valueOf(filled));
+            report.addProperty("creativeGrid" + tag + "Contents", contents.toString());
+        } catch (Throwable error) {
+            report.addProperty("creativeGrid" + tag + "Contents", "failed: " + error);
+        }
+    }
 
     /** {@return the screen's GuiSlot, by field type}, or null when it has none. */
     private static Object celtium$namedScreenSlot(net.minecraft.client.gui.GuiScreen screen) {
@@ -5887,6 +5942,14 @@ public final class ValidationClient {
             } catch (Throwable error) {
                 report.addProperty("creativeGridSlots", "failed: " + error);
             }
+        }
+        // The same grid, again, at the ticks a picture is taken and every 60 ticks after: the count above is the state
+        // of the tab switch, and this is the state of the frame. Six entries is a handful of lines in the report and it
+        // is what says whether a slot that is not drawn is empty in the container or full and ignored by the renderer.
+        if (celtium$creativeScreen != null && celtium$creativeTabApplied && worldTicks >= 60
+                && worldTicks % 60 == 0 && celtium$creativeGridSnapshots < 6) {
+            celtium$creativeGridSnapshots++;
+            celtium$reportCreativeGridSlots("At" + worldTicks);
         }
         // The list scroll, a few ticks after the named screen opened (a slot list is laid out by then).
         if (celtium$namedScreenScrollTicks > 0 && !celtium$namedScreenScrolled
