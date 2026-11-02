@@ -559,6 +559,24 @@ b.frameBufferOpen = false;
     private int[] cachedNames = new int[0];
     private VulkanGlTexture[] cachedWrappers = new VulkanGlTexture[0];
     private long[] cachedImages = new long[0];
+    /**
+     * The chain-pair identity each cached name's image stands for, resolved once per cache rebuild.
+     * <p>
+     * The transition loop used to ask {@code chainPairIdentityForImage} for every name on every window - a hash lookup
+     * per name per window, and the loop runs once per window (35.8 a frame on the measured world scene). The answer
+     * only changes when the pair generation changes, which is already part of the cache key, so it is resolved here
+     * with the rest of the cache instead of 35.8 times a frame.
+     */
+    private long[] cachedPairIdentities = new long[0];
+
+    /**
+     * The key {@link #celtium$syncPublishedChainOutput}'s stale-name scan last completed for: the identity, the pair
+     * image it saw, and the publication version. The scan re-points names whose image died with a recreated pair, so
+     * it can only find one when one of those three moved.
+     */
+    private long syncScanIdentity = Long.MIN_VALUE;
+    private long syncScanImage;
+    private long syncScanVersion = Long.MIN_VALUE;
 
     private void celtium$rebuildPublishedCache() {
         java.util.List<Integer> names = new java.util.ArrayList<Integer>();
@@ -572,13 +590,18 @@ b.frameBufferOpen = false;
             long image = b.publishedFrameImages.get(entry.getKey().intValue());
             images.add(Long.valueOf(image));
         }
+        GllessFrameTarget pairOwner = b.offTargetTarget();
         this.cachedNames = new int[names.size()];
         this.cachedWrappers = new VulkanGlTexture[names.size()];
         this.cachedImages = new long[names.size()];
+        this.cachedPairIdentities = new long[names.size()];
         for (int i = 0; i < names.size(); i++) {
             this.cachedNames[i] = names.get(i).intValue();
             this.cachedWrappers[i] = wrappers.get(i);
-            this.cachedImages[i] = images.get(i).longValue();
+            long image = images.get(i).longValue();
+            this.cachedImages[i] = image;
+            this.cachedPairIdentities[i] = pairOwner == null || image == 0L
+                    ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(image);
         }
     }
 
@@ -600,14 +623,12 @@ b.frameBufferOpen = false;
                 return;
             }
         }
+        GllessFrameTarget pairOwner = b.offTargetTarget();
         for (int cachedIndex = 0; cachedIndex < this.cachedNames.length; cachedIndex++) {
             int entryKey = this.cachedNames[cachedIndex];
             VulkanGlTexture entryValue = this.cachedWrappers[cachedIndex];
-            long entryImage = this.cachedImages[cachedIndex];
-            GllessFrameTarget pairOwner = b.offTargetTarget();
-            long publishedImageHandleValue = entryImage;
-            long publishedImageIdentity = pairOwner == null || publishedImageHandleValue == 0L
-                    ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(publishedImageHandleValue);
+            long publishedImageHandleValue = this.cachedImages[cachedIndex];
+            long publishedImageIdentity = this.cachedPairIdentities[cachedIndex];
             boolean pairImageName = publishedImageIdentity != Long.MIN_VALUE;
             // The sampling side must not move the image this pass is about to attach: the pass declares GENERAL for
             // attachment 0, and the transition to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass is
@@ -835,6 +856,29 @@ b.frameBufferOpen = false;
      */
     void celtium$syncPublishedChainOutput(long identity, long chainPairColorImage) {
         if (!b.publishedTextures.isEmptyPublished()) {
+            // The scan below walks every published name and asks two boxed-key lookups of each, and it runs on every
+            // off-target window (13 a frame on the measured world scene) - which is where winHead's 0.1 ms a frame
+            // comes from. What it looks for is a name whose image died with a recreated pair, so it can only find one
+            // when the pair's image or the publication set moved. Both are in the key; when neither has, the scan
+            // would find nothing again and is skipped.
+            long publications = b.publishedTextures.publishedVersion();
+            if (identity == this.syncScanIdentity && chainPairColorImage == this.syncScanImage
+                    && publications == this.syncScanVersion) {
+                if (b.publishedChainOutput == null) {
+                    return;
+                }
+                if (b.publishedChainIdentity == identity && b.publishedChainImage != chainPairColorImage) {
+                    b.celtium$registry().unpublishExternalImage(b.publishedChainTexture);
+                    b.publishedChainOutput = null;
+                    b.publishedChainImage = 0L;
+                    return;
+                }
+                b.publishedChainOutput.ensureGeneralLayout(b.commandBuffer);
+                return;
+            }
+            this.syncScanIdentity = identity;
+            this.syncScanImage = chainPairColorImage;
+            this.syncScanVersion = publications;
             GllessFrameTarget liveTarget = b.offTargetTarget();
             long liveImage = liveTarget == null ? 0L : liveTarget.chainPairColorImage(identity);
             long liveView = liveTarget == null ? 0L : liveTarget.chainPairColorView(identity);

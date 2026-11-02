@@ -11214,6 +11214,10 @@ this.frameBufferOpen = false;
     }
 
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
+        // Everything this method does before the window's prefix: the target routing, the pair clear, the begin-info.
+        // winRecord is 0.5 ms a frame over 35.8 windows and winPrefix/winPassEnd were added to split the remainder;
+        // this bracket says whether the remainder is before the prefix or inside it. Opt-in like every other bracket.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("winHead");
         this.terrainStatistics.noteImmediateOnlyPasses();
         // Recorded for the model draw: it needs a render pass, and this is the one the frame is using. When no
         // terrain pass has run (the GL-less menu is all UI batches), the standalone frame-compatible pass stands in.
@@ -11222,6 +11226,7 @@ this.frameBufferOpen = false;
         if (this.gpuStalled) {
             // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("winHead");
             return;
         }
         long renderPass = terrain != null ? terrain.renderPass() : uiRenderPass();
@@ -11392,6 +11397,7 @@ this.frameBufferOpen = false;
         }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                 celtium$windowBeginInfo(renderPass, framebuffer, passWidth, passHeight);
+        org.soutalab.celtium.vulkan.FramePassTimings.end("winHead");
         // The window's own fixed cost, split off from the group loop: the two brackets that existed inside a window
         // (winBeginPass, wrecLoop) left ~10 us of the measured ~17 us per window unnamed on leg r36win (35.8 windows
         // a frame, winRecord 0.5-0.7 ms). This one is the sampling-side transitions and the probes between the begin
@@ -11412,7 +11418,14 @@ this.frameBufferOpen = false;
         // pass whose descriptor declares SHADER_READ_ONLY while the pair's own layout is GENERAL: leaving it there is
         // exactly the VUID-vkCmdDraw-None-09600 the vsync leg reported on three distinct images at vkQueueSubmit. The
         // transition is recorded outside the pass, before the draw, like the outline's.
-        this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
+        // Its own bracket: the loop walks every published name (38 at the end of the measured run) and each name costs
+        // hash lookups under VulkanGlTexture's monitor, so this is the candidate for the window's unnamed remainder.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("winPublish");
+        try {
+            this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("winPublish");
+        }
         // The handle this pass actually records against, not the label: the copy's resolution question is whether
         // the image the window's draws land in is the image the copy reads, and a label that says "frame" while the
         // pass attaches something else is exactly that mismatch. Printed beside the frame image's current handle and

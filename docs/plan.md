@@ -51,7 +51,9 @@ validation off・warm 窓の client thread サンプル692）: block entity 描�
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.66–1.76×遅い**（p50 median 1.677、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。同sceneの frameBudget は
      `gpuShare=0.01`＝CPU律速、Celtium側 bracket は `record`0.6＋`batch`0.9＋`present`0.4 ms（frame 4.4 ms p95）。
-     **次の性能単位は window 記録（実測 35.8/フレーム・1個≈17µs）**。内訳は pack の post chain 13.0・raw write 9.2・clear 3.2・font 4.0（leg `r36win`）。判定sceneは未決。
+     **窓の固定費はもう主因ではない**（35.8窓/フレーム、`winHead`0.1＋`wrecLoop`0.2 ms、published遷移ループ0.0で棄却、[証拠](evidence/window-split-2026-11-03.md)）。
+     鎖は `record`0.5＋`batch`0.8＋`present`0.2 ms、`other`1.6 ms（frame 3.2 p50）。Celeritas 1.79 ms を上回るには**鎖を~0.2 msへ**。
+     **次の性能単位は記録の client thread 外への移動**（§12のexecutor案）か 1 batch 3.6→1 µs。判定sceneは未決。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。

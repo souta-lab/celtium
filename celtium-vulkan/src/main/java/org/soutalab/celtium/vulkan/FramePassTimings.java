@@ -83,7 +83,12 @@ public final class FramePassTimings {
             // resolution, the sampling-side transitions and the begin-info - and the pass close after the group loop.
             // winRecord is 0.5-0.7 ms a frame over 35.8 windows, and winBeginPass plus wrecLoop accounted for only
             // part of it; these two names say which side the rest is on.
-            "winPrefix", "winPassEnd"};
+            "winPrefix", "winPassEnd",
+            // The two halves of what winPrefix and winPassEnd still left unnamed: winPublish is the sampling-side
+            // transition loop (every published name, every window - the per-name work is hash lookups under
+            // VulkanGlTexture's monitor), and winHead is everything recordImmediateOnlyPass does before winPrefix
+            // (the target routing, the pair clear and the begin-info). One of the two owns the remainder.
+            "winPublish", "winHead"};
 
     private static final int CAPACITY = 512;
 
