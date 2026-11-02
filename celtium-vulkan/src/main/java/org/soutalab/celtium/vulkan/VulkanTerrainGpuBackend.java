@@ -2445,6 +2445,52 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * here used to say "on by default", which the code has never been.
      */
     private static final boolean INDIRECT_IMMEDIATE = Boolean.getBoolean("celtium.vulkan.indirectImmediate");
+    /**
+     * {@code -Dceltium.vulkan.probeHighlight=true}: rewrites the hovered-slot highlight's own vertices to opaque magenta
+     * just before its draw, so one screenshot answers "did this group's draw reach the image at all".
+     * <p>
+     * The question is not answerable from the counters. The group is accepted, closed, counted as drawn, carries the
+     * right colour in its own vertex memory, projects onto the right slot, and blends with the same factors as the
+     * groups around it - and none of its pixels appear (creative inventory, guiScale 3, leg r23a: every reference pixel
+     * in the slot equals {@code (celtium + 255) / 2}, i.e. the {@code 0x80FFFFFF} half-white overlay is simply absent).
+     * "Drawn" in the counters means a draw command was recorded, not that a fragment reached the colour image, and no
+     * existing line separates those two. An opaque poison is the separation: a fragment that reaches the image at that
+     * slot shows magenta whatever the destination colour is, whatever the blend factor, and whether or not the alpha
+     * channel is writable - so "magenta there" means the loss is in what the fragment produced (its colour or its
+     * alpha), and "nothing there" means the loss is in the group's place in the command stream (clip, viewport, target
+     * image or order).
+     * <p>
+     * Off by default, bounded to three groups, and only from {@code probeHighlightMinFrame} on (default 8, the frame the
+     * group census uses: the loading screen and the menu own the earlier ones).
+     */
+    private static final boolean PROBE_HIGHLIGHT = Boolean.getBoolean("celtium.vulkan.probeHighlight");
+    private static final long PROBE_HIGHLIGHT_MIN_FRAME =
+            Long.getLong("celtium.vulkan.probeHighlightMinFrame", 8L).longValue();
+    /** {@code -Dceltium.vulkan.probeHighlightBorrow=true}: draw the poisoned group with its neighbour's pipeline. */
+    private static final boolean PROBE_HIGHLIGHT_BORROW =
+            Boolean.getBoolean("celtium.vulkan.probeHighlightBorrow");
+    /** The prepared material of the last group drawn before the poisoned one; the borrow probe's source. */
+    private PreparedImmediate probeLastPrepared;
+    /** How many groups the highlight probe has rewritten, so an accidental match cannot repaint a whole frame. */
+    private int probeHighlightGroups;
+    /** How many of the probe's read-back and borrow lines have been printed (the writes are not bounded). */
+    private int probeDrawPrints;
+    private int probeBorrowPrints;
+    /**
+     * {@code -Dceltium.vulkan.drawStateCensus=true}: the command state a colour group is actually drawn with.
+     * <p>
+     * {@code CELTIUM_GROUP_BOUNDS} reports what was <em>captured</em> with the group; {@code celtium$setGroupViewport}
+     * is where that rectangle becomes the Vulkan viewport and scissor, after the clip intersection and after the dedup
+     * against the previous group. Nothing printed the values that survive that conversion, so a group whose captured
+     * box is right and whose applied box is empty read exactly like a group that was never clipped - which is the one
+     * remaining group-unit difference between the invisible highlight and its visible neighbours. Four lines per side:
+     * the RGB-only write mask (the highlight's) and the full mask (its neighbours', which are visible).
+     */
+    private static final boolean DRAW_STATE_CENSUS = Boolean.getBoolean("celtium.vulkan.drawStateCensus");
+    private static final long DRAW_STATE_MIN_FRAME =
+            Long.getLong("celtium.vulkan.drawStateMinFrame", 8L).longValue();
+    private int drawStateCensusRgbOnly;
+    private int drawStateCensusFull;
     /** {@code -Dceltium.vulkan.arrayRecords=true}: also store each group's bindless texture index in its draw record. */
     static final boolean ARRAY_RECORDS = Boolean.getBoolean("celtium.vulkan.arrayRecords");
     private static final boolean DRAW_RECORDS_ARRAY_INDEX = ARRAY_RECORDS;
@@ -7443,7 +7489,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // the group ids are 45/46/48/49/50 both with and without it - it only split 901 groups into 1285.
             if (VulkanImmediateDrawer.isLineMode(drawMode)) {
                 // A bit of its own, so the preflight can pick the line pipeline without being told the mode again.
-                stateKey |= 1L << 61;
+                // The hash itself never sets it: see celtium$stateKey, which masks it for exactly this reason.
+                stateKey |= LINE_KEY_BIT;
             }
             if (BATCH_TIMINGS) this.immediateStatistics.addStateKeyNanos(System.nanoTime() - keyStart);
             // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
@@ -8760,6 +8807,23 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * {@return a viewport or clip rectangle as {@code x,y wxh}, or {@code none}}.
+     * <p>
+     * The four numbers are the ones GL and the run both name rectangles by, so a captured clip can be compared with an
+     * applied one without a reader counting array slots. {@code null} and a short array both mean "not captured", which
+     * is a state of its own: a group with no clip is unclipped, not clipped to zero.
+     */
+    static String boxText(int[] box) {
+        if (box == null) {
+            return "none";
+        }
+        if (box.length < 4) {
+            return "short(" + box.length + ")";
+        }
+        return box[0] + "," + box[1] + " " + box[2] + "x" + box[3];
+    }
+
+    /**
      * Brings a full mirror up to date with writes the game made through raw GL (see {@link #rawWriteRefreshes}).
      * Writes through TextureUtil arrive announced as well; for those the mirror's own serial check makes the call a
      * no-op once it has caught up. The atlas and the light map are refreshed by their own paths and never come here.
@@ -8999,12 +9063,35 @@ this.frameBufferOpen = false;
         return true;
     }
 
+    /**
+     * The bit of a group's state key that marks a line batch ({@code GL_LINES} / {@code GL_LINE_STRIP}).
+     * <p>
+     * The bit is set by the accept path for a line draw and read by the prepare path to choose the line-list pipeline.
+     * It is therefore <em>not</em> part of {@link #celtium$stateKey}'s hash: see that method.
+     */
+    static final long LINE_KEY_BIT = 1L << 61;
+
+    /**
+     * {@return the identity of one drawing state: a 64-bit hash of the format and the captured state array}.
+     * <p>
+     * The hash never sets {@link #LINE_KEY_BIT}. That bit is a flag the accept path adds ({@code stateKey |=
+     * LINE_KEY_BIT}) and the prepare path reads to pick the line-list pipeline, so a hash that happened to set it turned
+     * a triangle batch into three line segments - and half of all states do, because the bit is as likely as any other.
+     * Measured on the creative inventory (leg r24d): the hovered slot's half-white highlight ({@code POSITION_COLOR},
+     * colour {@code 0x80FFFFFF}, state key {@code 0x364d31f191fb43aa}, bit 61 set) was drawn with
+     * {@code VK_PRIMITIVE_TOPOLOGY_LINE_LIST}, so the quad reached the image as three one-pixel lines - its top edge,
+     * its bottom edge and its diagonal - and the slot looked unhighlighted. Poisoning the same quad's vertices to opaque
+     * magenta made exactly those three lines visible, which is how the pipeline was identified.
+     * <p>
+     * Masking the bit costs one collision between two states that differ only in it, which a 64-bit hash already permits;
+     * leaving it set costs a silently misdrawn batch whenever it happens.
+     */
     static long celtium$stateKey(int formatId, int[] state) {
         long key = formatId;
         for (int value : state) {
             key = (key * 31) + value;
         }
-        return key;
+        return key & ~LINE_KEY_BIT;
     }
 
     /**
@@ -10614,7 +10701,7 @@ this.frameBufferOpen = false;
             }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else {
-            boolean lineBatch = (key & (1L << 61)) != 0;
+            boolean lineBatch = (key & LINE_KEY_BIT) != 0;
             VulkanColorBlendState colorBlend = celtium$blendState(state);
             // No computeIfAbsent: it boxed the state key and allocated a capturing lambda per batch. The two caches
             // hold the same kind of pipeline, so one lookup and one creation branch have the same shape as before.
@@ -11657,6 +11744,9 @@ this.frameBufferOpen = false;
             }
             group.scissorBox = clipBox;
             group.scissorEnabled = clipEnabled;
+            // The highlight probe's accept half: the group's vertex memory is rewritten here, while the batch is still
+            // this frame's and before anything can have reused the slice. Bounded and off by default.
+            celtium$probeHighlightAccept(group, group.mesh);
             group.polygonOffsetEnabled = this.currentGroupPolygonOffsetEnabled;
             group.polygonOffsetFactor = this.currentGroupPolygonOffsetFactor;
             group.polygonOffsetUnits = this.currentGroupPolygonOffsetUnits;
@@ -17814,6 +17904,10 @@ this.frameBufferOpen = false;
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcViewport");
                 try (MemoryStack groupStack = MemoryStack.stackPush()) {
                     celtium$setGroupViewport(groupStack, group);
+                    // After the viewport and before the draw: the read-back records what the command will actually fetch
+                    // from the group's slice, which is the one fact the accept-time reads cannot supply.
+                    celtium$probeReadBack(group, mesh);
+                    prepared = celtium$probeBorrowPipeline(group, prepared);
                     // BH-11: GL's polygon offset, applied as this group's depth bias. It is command state - one
                     // pipeline serves every offset the game sets, which is why the pipelines declare
                     // VK_DYNAMIC_STATE_DEPTH_BIAS and depthBiasEnable. The two names are swapped between the APIs: GL's
@@ -17904,6 +17998,11 @@ this.frameBufferOpen = false;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
+                }
+                if (PROBE_HIGHLIGHT_BORROW && !group.probePoisoned) {
+                    // The borrow probe's source: the material of the group that was drawn immediately before the poisoned
+                    // one, which is a visible neighbour in the same family and the same layout.
+                    this.probeLastPrepared = prepared;
                 }
                 if (BUFFER_CENSUS) {
                     // The premise of one indirect command per run: every group of a run must draw from the same vertex
@@ -18315,6 +18414,196 @@ this.frameBufferOpen = false;
                     + " narrowCount=" + this.immediateNarrowViewports
                     + " full=" + restoredToFull);
         }
+        this.celtium$reportDrawnCommandState(group, viewport, scissorX, scissorY, scissorWidth, scissorHeight,
+                clip, clipEnabled, empty);
+    }
+
+    /**
+     * Prints the command state a colour group is drawn with, for the two populations that differ in the creative
+     * inventory: the RGB-only write mask (the hovered-slot highlight, which leaves no pixels) and the full mask (the
+     * groups around it, which are visible).
+     * <p>
+     * Everything printed here is the value that reached {@code vkCmdSetViewport} / {@code vkCmdSetScissor} - the
+     * post-intersection, post-clip box - beside the box that was captured and the image the pass attached. A captured
+     * box that is right and an applied box that is empty is the one shape that draws a correct quad and keeps it off
+     * the image, and it was invisible in every existing line.
+     */
+    private void celtium$reportDrawnCommandState(ImmediateGroup group, int[] viewport,
+                                                 int scissorX, int scissorY, int scissorWidth, int scissorHeight,
+                                                 int[] clip, boolean clipEnabled, boolean emptyViewport) {
+        if (!DRAW_STATE_CENSUS || group.formatId != VulkanImmediateFormats.POSITION_COLOR
+                || group.state == null || group.state.length < 12 || this.frameId < DRAW_STATE_MIN_FRAME) {
+            return;
+        }
+        int mask = group.state[11];
+        boolean rgbOnly = mask == 0x7;
+        int used = rgbOnly ? this.drawStateCensusRgbOnly : this.drawStateCensusFull;
+        if (used >= 4) {
+            return;
+        }
+        if (rgbOnly) {
+            this.drawStateCensusRgbOnly++;
+        } else {
+            this.drawStateCensusFull++;
+        }
+        System.out.println("[Celtium] CELTIUM_DRAW_STATE frame=" + this.frameId
+                + " rgbOnly=" + rgbOnly + " mask=0x" + Integer.toHexString(mask)
+                + " target=" + group.target
+                + " onMain=" + (group.target == this.targetRegistry.mainIdentity())
+                + " passImage=0x" + Long.toHexString(this.passAttachedColorImage)
+                + " pipeline=0x" + (group.prepared == null || group.prepared.pipeline == null ? "0"
+                        : Integer.toHexString(System.identityHashCode(group.prepared.pipeline)))
+                + " vpCaptured=" + java.util.Arrays.toString(viewport)
+                + " vpApplied=" + this.passVpX + "," + this.passVpY + " " + this.passVpW + "x" + this.passVpH
+                + " scissorApplied=" + this.passScX + "," + this.passScY + " " + this.passScW + "x" + this.passScH
+                + " clip=" + java.util.Arrays.toString(clip) + " clipOn=" + clipEnabled
+                + " emptyViewport=" + emptyViewport
+                + " blend=" + (group.prepared == null || group.prepared.pipeline == null ? "none"
+                        : group.prepared.pipeline instanceof VulkanImmediatePipeline colour
+                                ? colour.celtium$colorBlend().describe() : "other"));
+    }
+
+    /**
+     * The hovered-slot highlight probe, accept half: rewrites the group's own vertex colours to opaque magenta as the
+     * group closes.
+     * <p>
+     * Selected by the group's own vertex memory rather than by a caller name, because the only thing known about the
+     * group is what it carries: {@code POSITION_COLOR}, four vertices, first colour {@code 0x80FFFFFF}, from the frame
+     * the group census reads. The positions are not touched, so if the draw reaches the image the poison lands exactly
+     * in the slot the reference paints and the screenshot is a direct yes/no.
+     * <p>
+     * The poison is written here and read back at the draw ({@link #celtium$probeReadBack}) for one reason: the two
+     * answers are different findings. Magenta in the picture means the draw landed; a read-back that still says magenta
+     * with no magenta in the picture means the command reached the image and produced no fragment; a read-back that says
+     * something else means the frame arena's slice did not hold this batch any more when the command read it - a defect
+     * no counter could see, because the acceptance-time reads (bounds, first colour) happen at close, before anything
+     * could have overwritten them.
+     * <p>
+     * The colour offset is the layout's own for this format (12: three floats of position and four bytes of colour), not
+     * {@code mesh.layout().color}: an immediate mesh records itself as {@code Layout.positionOnly(stride)} because the
+     * copy moves the caller's bytes verbatim, so its layout carries no colour offset (-1) even though the vertex does.
+     * <p>
+     * <b>Every</b> matching group is poisoned, not the first few: the screenshot is taken at a fixed tick and the frames
+     * before it are not the frame whose picture is compared. A three-group bound poisoned frames 8-10 (leg r24c) and the
+     * picture at tick 60 was a later frame, so the probe would have reported "no magenta" about a frame that had never
+     * been poisoned. Only the printed lines are bounded now; the write is not.
+     */
+    private void celtium$probeHighlightAccept(ImmediateGroup group, VulkanDynamicMesh mesh) {
+        if (!PROBE_HIGHLIGHT || this.frameId < PROBE_HIGHLIGHT_MIN_FRAME) {
+            return;
+        }
+        if (group.formatId != VulkanImmediateFormats.POSITION_COLOR || mesh == null || mesh.layout() == null) {
+            return;
+        }
+        int stride = mesh.layout().stride;
+        int vertices = mesh.vertexCount();
+        long base = mesh.vertexAddress();
+        if (stride < VulkanImmediatePipeline.VERTEX_BYTES || vertices != 4 || base == 0L
+                || org.lwjgl.system.MemoryUtil.memGetInt(base + 12) != 0x80ffffff) {
+            return;
+        }
+        this.probeHighlightGroups++;
+        for (int vertex = 0; vertex < vertices; vertex++) {
+            // Opaque magenta. Alpha 0xFF so the write lands whatever the blend is; magenta because nothing in the
+            // creative inventory is magenta, so "did the poison reach the image" cannot be confused with the scene.
+            org.lwjgl.system.MemoryUtil.memPutInt(base + ((long) vertex * stride) + 12, 0xFFFF00FF);
+        }
+        group.probePoisoned = true;
+        if (this.probeHighlightGroups > 3) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_PROBE_POISON frame=" + this.frameId + " group="
+                + this.immediateStatistics.immediateGroupsClosed() + " vertices=" + vertices
+                + " stride=" + stride + " was=0x80ffffff now=0xffff00ff target=" + group.target
+                + " onMain=" + (group.target == this.targetRegistry.mainIdentity())
+                + " indices=" + mesh.indexCount() + " firstIndices=" + celtium$firstIndices(mesh, 6)
+                + " viewpoint=" + java.util.Arrays.toString(group.viewportValues));
+    }
+
+    /**
+     * The probe's draw half: what the group's vertex memory holds when the command is recorded.
+     * <p>
+     * Only for the poisoned group, so a default run pays one boolean per group and prints nothing.
+     */
+    private void celtium$probeReadBack(ImmediateGroup group, VulkanDynamicMesh mesh) {
+        if (!PROBE_HIGHLIGHT || !group.probePoisoned || mesh == null) {
+            return;
+        }
+        long base = mesh.vertexAddress();
+        int now = base == 0L ? 0 : org.lwjgl.system.MemoryUtil.memGetInt(base + 12);
+        // Printed for the first three draws, and for any draw whose slice no longer holds the poison: the write happens
+        // on every frame, but only an anomaly (or the sampling line) has to reach the log.
+        boolean anomaly = now != 0xffff00ff;
+        if (!anomaly && this.probeDrawPrints >= 3) {
+            return;
+        }
+        if (!anomaly) {
+            this.probeDrawPrints++;
+        }
+        Object pipeline = group.prepared == null ? null : group.prepared.pipeline;
+        System.out.println("[Celtium] CELTIUM_PROBE_DRAW frame=" + this.frameId + " group="
+                + this.immediateStatistics.immediateGroupsClosed() + " anomaly=" + anomaly
+                + " colourNow=0x" + Integer.toHexString(now)
+                + " strideNow=" + (mesh.layout() == null ? -1 : mesh.layout().stride)
+                + " verticesNow=" + mesh.vertexCount() + " indicesNow=" + mesh.indexCount()
+                + " firstIndices=" + celtium$firstIndices(mesh, 6)
+                + " indexBytes=" + (mesh.indexAddress() == 0L ? -1L : Long.valueOf(mesh.indexCount() * 4L))
+                // The handle the draw will bind. draw() returns silently for a zero handle, and a group that leaves no
+                // pixels while being counted as drawn is exactly what that silence looks like from outside.
+                + " pipeline=0x" + Integer.toHexString(System.identityHashCode(pipeline))
+                + " handle=0x" + (pipeline instanceof VulkanImmediatePipeline colour
+                        ? Long.toHexString(colour.celtium$handle()) : "other")
+                + " vertexBuffer=0x" + Long.toHexString(mesh.vertexBuffer())
+                + " indexBuffer=0x" + Long.toHexString(mesh.indexBuffer())
+                + " vertexBind=" + mesh.vertexBindOffset() + " indexBind=" + mesh.indexBindOffset()
+                + " postClears=" + (group.postClears == null ? 0 : group.postClears.size())
+                + " passOpen=" + (this.commandState != null && this.commandState.inRenderPass())
+                + " passImage=0x" + Long.toHexString(this.passAttachedColorImage));
+    }
+
+    /**
+     * The probe's third question: is the state-keyed pipeline the reason the group leaves no pixels?
+     * <p>
+     * The poisoned group is drawn with the prepared pipeline of the last group that reached the draw before it - a
+     * visible neighbour of the same family and the same layout, whose only differences are the colour write mask and the
+     * depth test. Magenta in the picture then names the pipeline as the difference; nothing in the picture moves the
+     * question to the mesh or the command stream. Off by default, and only ever for the poisoned group.
+     */
+    private PreparedImmediate celtium$probeBorrowPipeline(ImmediateGroup group, PreparedImmediate prepared) {
+        if (!PROBE_HIGHLIGHT_BORROW || !group.probePoisoned || this.probeLastPrepared == null || prepared == null) {
+            return prepared;
+        }
+        if (!(prepared.pipeline instanceof VulkanImmediatePipeline)
+                || !(this.probeLastPrepared.pipeline instanceof VulkanImmediatePipeline borrowed)) {
+            return prepared;
+        }
+        if (this.probeBorrowPrints < 3) {
+            this.probeBorrowPrints++;
+            System.out.println("[Celtium] CELTIUM_PROBE_BORROW frame=" + this.frameId
+                    + " from=0x" + Integer.toHexString(System.identityHashCode(prepared.pipeline))
+                    + " to=0x" + Integer.toHexString(System.identityHashCode(borrowed))
+                    + " borrowedHandle=0x" + Long.toHexString(borrowed.celtium$handle())
+                    + " blends=" + borrowed.celtium$blends() + " depthTests=" + borrowed.celtium$depthTests()
+                    + " blend=" + borrowed.celtium$colorBlend().describe());
+        }
+        return this.probeLastPrepared;
+    }
+
+    /** {@return the first {@code count} indices of the mesh as a comma-separated list}, for the probe's lines. */
+    private static String celtium$firstIndices(VulkanDynamicMesh mesh, int count) {
+        long address = mesh == null ? 0L : mesh.indexAddress();
+        if (address == 0L) {
+            return "none";
+        }
+        int available = Math.min(count, mesh.indexCount());
+        StringBuilder text = new StringBuilder();
+        for (int index = 0; index < available; index++) {
+            if (index > 0) {
+                text.append(',');
+            }
+            text.append(org.lwjgl.system.MemoryUtil.memGetInt(address + (long) index * 4));
+        }
+        return text.length() == 0 ? "none" : text.toString();
     }
 
     /** Bounded lines of the narrow-to-full viewport transitions (see CELTIUM_GROUP_VIEWPORT). */

@@ -1200,6 +1200,22 @@ final class BackendDiagnostics {
                     // named the pipeline that draw used.
                     + " prepared=" + (group.prepared == null ? "none"
                             : group.prepared.pipeline.getClass().getSimpleName())
+                    // The pipeline *instance*, not only its class, beside the render pass it was built for: two groups
+                    // of one class can be drawn by different pipelines (one per state key) and only one of them can be
+                    // the reason a group leaves no pixels. A group whose pipeline instance is shared with a group that
+                    // does reach the image is evidence the pipeline is not the difference.
+                    + " pipeline=0x" + (group.prepared == null || group.prepared.pipeline == null ? "0"
+                            : Integer.toHexString(System.identityHashCode(group.prepared.pipeline)))
+                    + " renderPass=0x" + (group.prepared != null
+                            && group.prepared.pipeline instanceof VulkanImmediatePipeline immediate
+                                    ? Long.toHexString(immediate.celtium$renderPass()) : "?")
+                    // The rectangle the group carries for its viewport and its clip. The capture is what the draw
+                    // applies (BH-09/OPT-10), so a group whose captured clip is empty or narrower than its quad is
+                    // clipped before any fragment exists - which is indistinguishable from "not drawn" in a counter.
+                    // Measured need: the hovered-slot highlight is the only fmt-1 group of its frame with a write mask
+                    // that excludes alpha, and the clip was the last captured value that had never been printed.
+                    + " vp=" + b.boxText(group.viewportValues)
+                    + " clip=" + b.boxText(group.scissorBox) + " clipOn=" + group.scissorEnabled
                     + " vertices=" + vertices + " indices=" + mesh.indexCount()
                     + " colour0=" + colour
                     // The attribute itself, read from the group's own vertex memory, beside the value the state

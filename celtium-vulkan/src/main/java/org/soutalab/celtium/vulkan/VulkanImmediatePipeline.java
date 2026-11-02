@@ -258,6 +258,18 @@ public final class VulkanImmediatePipeline {
         return this.colorBlend;
     }
 
+    /**
+     * {@return this pipeline's Vulkan handle, or 0 when it has none}.
+     * <p>
+     * {@link #draw} returns silently for a zero handle, so a group holding a released pipeline is counted as drawn and
+     * leaves no pixels with no message anywhere. That silence is the reason this accessor exists: a probe that rewrites
+     * a group's vertices and still sees nothing in the picture has to be able to rule out "the draw never happened"
+     * before it accuses the fragment stage.
+     */
+    public long celtium$handle() {
+        return this.pipeline;
+    }
+
     /** {@return whether face culling is on}. */
     public boolean celtium$culls() {
         return this.cull;

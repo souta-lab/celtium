@@ -110,6 +110,15 @@ public final class ImmediateGroup {
     public int[] scissorBox;
     /** Whether the clip was enabled when this group was opened. */
     public boolean scissorEnabled;
+    /**
+     * Set by {@code -Dceltium.vulkan.probeHighlight} on the one group whose vertices were rewritten to opaque magenta.
+     * <p>
+     * The probe needs the fact at both ends: the close writes the poison, and the draw reads it back. A read-back that
+     * still says magenta is what separates "the draw never reached the image" from "the vertices the draw read were not
+     * the vertices the group was accepted with" - the frame arena hands the group a slice, and nothing had ever checked
+     * that the slice still holds the batch by the time the command reads it.
+     */
+    public boolean probePoisoned;
 
     /**
      * {@return a hash of the group's viewport and scissor state}.
@@ -320,6 +329,7 @@ public final class ImmediateGroup {
         this.viewportValues = null;
         this.scissorBox = null;
         this.scissorEnabled = false;
+        this.probePoisoned = false;
         this.polygonOffsetFactor = 0.0f;
         this.polygonOffsetUnits = 0.0f;
         this.polygonOffsetEnabled = false;
