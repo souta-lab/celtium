@@ -1711,7 +1711,19 @@ public final class ValidationClient {
      */
     private static String celtium$screenVariant() {
         StringBuilder variant = new StringBuilder();
+        // The named-screen knob opens a screen in-world and keeps it open through the capture, which changes the
+        // picture: a floor measured with no screen open does not describe it. The variant listed jei/recipe/keep and
+        // not this owner, so a leg with celtium.validation.screen=mainmenu|resourcepacks|creative reported the plain
+        // terrain key and its floors were applied to a screen. The value names the request rather than the class that
+        // opened, because the request is what the run asked for and what a future reference would be measured under.
+        String named = System.getProperty("celtium.validation.screen", "");
+        if (!named.isEmpty()) {
+            variant.append("named:").append(named.toLowerCase(java.util.Locale.ROOT));
+        }
         if (Boolean.getBoolean("celtium.validation.jeiScreen")) {
+            if (variant.length() > 0) {
+                variant.append('+');
+            }
             variant.append("jei");
         }
         if (Boolean.getBoolean("celtium.validation.jeiRecipe")) {
@@ -1969,6 +1981,18 @@ public final class ValidationClient {
     private int celtium$namedScreenScrollTicks;
     private int celtium$namedScreenScrollBy;
     private boolean celtium$namedScreenScrolled;
+    /**
+     * The creative inventory the named-screen knob opened, kept so the tab request can be applied a tick later.
+     * <p>
+     * The user's report names this screen ("only some creative inventory tabs rendering wrong") and nothing in the
+     * fixture could open it, so no picture of it exists. It is the only vanilla screen whose picture is a tab strip
+     * plus a {@code RenderItem} grid inside a {@code GuiContainer} - with the two page arrows a pack's tab count adds
+     * ({@code GuiContainerCreative.initGui}: more than twelve tabs) - which is exactly the set of drawing the report
+     * puts at fault.
+     */
+    private net.minecraft.client.gui.inventory.GuiContainerCreative celtium$creativeScreen;
+    /** Whether the creative tab request has been applied, so the grid is selected once per leg. */
+    private boolean celtium$creativeTabApplied;
 
     /** {@return the screen's GuiSlot, by field type}, or null when it has none. */
     private static Object celtium$namedScreenSlot(net.minecraft.client.gui.GuiScreen screen) {
@@ -5760,9 +5784,20 @@ public final class ValidationClient {
                     // one picture. Nothing else in the fixture could open it - the screen request knew only the two
                     // GuiSlot screens it was added for.
                     requested = new net.minecraft.client.gui.GuiMainMenu();
+                } else if ("creative".equalsIgnoreCase(screenRequest)) {
+                    // The creative inventory: the screen the user's report names ("only some creative inventory tabs
+                    // rendering wrong") and the one the fixture could not open. Its picture is a tab strip whose icons
+                    // are themselves RenderItem draws, the page arrows a pack's >12 tabs add, and a scrolled item grid
+                    // inside a GuiContainer - the four drawing kinds the report's "some tabs" can be about.
+                    // GuiContainerCreative falls back to GuiInventory when the player is not in creative mode
+                    // (initGui), so the report says which class actually opened rather than assuming this one did.
+                    requested = new net.minecraft.client.gui.inventory.GuiContainerCreative(mc.player);
                 }
                 if (requested != null) {
                     mc.displayGuiScreen(requested);
+                    if (requested instanceof net.minecraft.client.gui.inventory.GuiContainerCreative) {
+                        celtium$creativeScreen = (net.minecraft.client.gui.inventory.GuiContainerCreative) requested;
+                    }
                     report.addProperty("namedScreenOpened", requested.getClass().getName());
                     report.addProperty("namedScreenOpenedAtTick", worldTicks);
                     // BH-09's missing piece: vanilla's GuiSlot.drawScreen enables the scissor only when the list is
@@ -5780,6 +5815,77 @@ public final class ValidationClient {
                 }
             } catch (Throwable error) {
                 report.addProperty("namedScreenOpened", "failed: " + error);
+            }
+        }
+        // The creative inventory's tab, two ticks after the screen opened (initGui has run and filled the static
+        // action list by then). The tab is chosen by index into CreativeTabs.CREATIVE_TAB_ARRAY, which is what the
+        // pack's own tabs extend; a pack with more than twelve tabs puts the higher indices behind the page arrows,
+        // and selecting one is the only way a picture can show that page rather than the first. The switch is applied
+        // through the screen's own private setCurrentCreativeTab - the method its tab click calls
+        // (GuiContainerCreative.mouseClicked -> setCurrentCreativeTab) - so the grid is filled exactly as a click
+        // fills it, and the report carries what the call produced rather than that it returned.
+        if (celtium$creativeScreen != null && worldTicks >= 32 && !celtium$creativeTabApplied) {
+            celtium$creativeTabApplied = true;
+            net.minecraft.client.gui.inventory.GuiContainerCreative screen = celtium$creativeScreen;
+            int tabIndex = Integer.getInteger("celtium.validation.creativeTab", -1).intValue();
+            int tabCount = net.minecraft.creativetab.CreativeTabs.CREATIVE_TAB_ARRAY.length;
+            report.addProperty("creativeTabCount", Integer.valueOf(tabCount));
+            if (tabIndex >= 0) {
+                if (tabIndex >= tabCount) {
+                    report.addProperty("creativeTabApplied", "index " + tabIndex + " outside 0.." + (tabCount - 1));
+                } else {
+                    net.minecraft.creativetab.CreativeTabs tab =
+                            net.minecraft.creativetab.CreativeTabs.CREATIVE_TAB_ARRAY[tabIndex];
+                    try {
+                        java.lang.reflect.Method setTab = null;
+                        for (String name : new String[] {"setCurrentCreativeTab", "func_147050_b"}) {
+                            try {
+                                setTab = screen.getClass().getDeclaredMethod(name,
+                                        net.minecraft.creativetab.CreativeTabs.class);
+                                break;
+                            } catch (NoSuchMethodException next) {
+                                // Try the SRG name; the packaged fixture runs against remapped members.
+                            }
+                        }
+                        if (setTab == null) {
+                            report.addProperty("creativeTabApplied", "no setCurrentCreativeTab/func_147050_b");
+                        } else {
+                            setTab.setAccessible(true);
+                            setTab.invoke(screen, tab);
+                            report.addProperty("creativeTabApplied", Integer.valueOf(tabIndex));
+                            report.addProperty("creativeTabLabel", tab.getTabLabel());
+                            report.addProperty("creativeTabTranslationKey", tab.getTranslationKey());
+                            report.addProperty("creativeTabPage", Integer.valueOf(tab.getTabPage()));
+                        }
+                    } catch (Throwable error) {
+                        Throwable cause = error instanceof java.lang.reflect.InvocationTargetException
+                                && error.getCause() != null ? error.getCause() : error;
+                        report.addProperty("creativeTabApplied", "failed: " + cause);
+                    }
+                }
+            }
+            // What the grid actually holds, so "the tab opened" is a fact about the picture's content: the container's
+            // slot count, how many slots hold a stack, and the first non-empty stack's own display name. An empty grid
+            // with a tab that selected is the case where the picture would show the tab and no items.
+            try {
+                int slots = screen.inventorySlots.inventorySlots.size();
+                int filled = 0;
+                String first = "none";
+                for (int i = 0; i < slots; i++) {
+                    net.minecraft.item.ItemStack stack =
+                            screen.inventorySlots.getSlot(i).getStack();
+                    if (!stack.isEmpty()) {
+                        filled++;
+                        if ("none".equals(first)) {
+                            first = stack.getDisplayName() + " x" + stack.getCount();
+                        }
+                    }
+                }
+                report.addProperty("creativeGridSlots", Integer.valueOf(slots));
+                report.addProperty("creativeGridFilled", Integer.valueOf(filled));
+                report.addProperty("creativeGridFirstStack", first);
+            } catch (Throwable error) {
+                report.addProperty("creativeGridSlots", "failed: " + error);
             }
         }
         // The list scroll, a few ticks after the named screen opened (a slot list is laid out by then).
