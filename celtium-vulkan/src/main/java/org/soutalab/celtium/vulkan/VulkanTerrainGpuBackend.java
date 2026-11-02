@@ -7331,10 +7331,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean submitImmediateBatchBody(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                              int vertexCount, int drawMode, NativeGeometryBuffer retained) {
         if (COALESCE_RAW_WRITES && !this.pendingRawWrites.isEmpty() && !this.immediateWindowBusy) {
-            // A batch is about to be accepted; it may sample a texture whose copy is still pending, so the queued groups
-            // are recorded first and the copies follow them before this batch can be recorded anywhere.
-            flushPendingBeforeGlDraw();
-            celtium$applyPendingRawWrites();
+            // A batch is about to be accepted, and a pending copy has to be recorded before any draw that samples its
+            // texture. That is a property of the texture, not of the acceptance: the first form of this branch flushed
+            // and applied on *every* offer while anything was pending, which is one window for each offer in a mod's
+            // copy-then-draw burst. Measured on the window census (leg r36win, the shipped profile): 9.2 of the 35.8
+            // windows a frame came from this site, at ~17 us of recording each, and the copies they ordered were for
+            // textures the offering batch did not sample. The gate below asks the question the rule actually needs -
+            // does this batch sample a texture whose copy is still pending - and the copies left pending are recorded
+            // at the next flush, after the groups queued before them, which is the order the rule asks for.
+            if (!RAW_WRITE_SAMPLE_GATE) {
+                this.rawWriteGateFlushes++;
+                flushPendingBeforeGlDraw();
+                celtium$applyPendingRawWrites();
+            } else if (celtium$pendingRawWriteSamples(formatId)) {
+                this.rawWriteGateFlushes++;
+                flushPendingBeforeGlDraw();
+                celtium$applyPendingRawWrites();
+            } else {
+                this.rawWriteGateSkips++;
+            }
         }
         long afterBatchStartNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
         if (this.gpuStalled) {
@@ -9213,6 +9228,22 @@ this.frameBufferOpen = false;
      */
     private static final boolean COALESCE_RAW_WRITES =
             !"false".equals(System.getProperty("celtium.vulkan.coalesceRawWrites", "true"));
+    /**
+     * On by default: a pending coalesced copy is applied before a batch only when that batch samples the copy's
+     * texture. {@code -Dceltium.vulkan.rawWriteSampleGate=false} restores the unconditional flush, which is the
+     * comparison arm for the window count this gate is meant to remove.
+     * <p>
+     * The rule the unconditional form was serving is "the copy must be recorded before any draw that samples it". A
+     * batch that samples a different texture cannot see the copy, so flushing for it buys nothing and costs a window:
+     * the copies stay pending, the groups queued before them are recorded at the next flush, and the copies are
+     * recorded after those groups - which is the order the rule asks for. The two textures a batch can sample are the
+     * bound one and, for the lightmapped layouts, the lightmap.
+     */
+    private static final boolean RAW_WRITE_SAMPLE_GATE =
+            !"false".equals(System.getProperty("celtium.vulkan.rawWriteSampleGate", "true"));
+    /** How many offers the gate let through without a flush, and how many it still flushed for. */
+    long rawWriteGateSkips;
+    long rawWriteGateFlushes;
     private final it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<PendingRawWrite> pendingRawWrites =
             new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<PendingRawWrite>();
 
@@ -9222,6 +9253,24 @@ this.frameBufferOpen = false;
         PendingRawWrite(org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
             this.mirror = mirror;
         }
+    }
+
+    /**
+     * {@return whether a pending coalesced copy targets a texture the batch about to be accepted samples}.
+     * <p>
+     * A batch samples the bound texture and, for the two lightmapped layouts, the lightmap. The lightmap's GL id is
+     * what a copy into it is keyed by, so both are asked by name. The check is two map lookups on a map that is empty
+     * on almost every offer (the caller already tested that), against a window that costs ~17 us.
+     */
+    private boolean celtium$pendingRawWriteSamples(int formatId) {
+        int bound = this.immediateState.boundTextureName();
+        if (bound != 0 && this.pendingRawWrites.containsKey(bound)) {
+            return true;
+        }
+        return (formatId == VulkanImmediateFormats.BLOCK
+                        || formatId == VulkanImmediateFormats.PARTICLE)
+                && this.lightmapGlId > 0
+                && this.pendingRawWrites.containsKey(this.lightmapGlId);
     }
 
     /** Records every pending raw write after the queued groups already recorded; called once those are in the buffer. */

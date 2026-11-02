@@ -7,7 +7,7 @@
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
 - **未解決**: Supersymmetryの最初の `VK_ERROR_DEVICE_LOST`。RC5のFence reset修正は後続AV対策で根本解決の証拠ではない。async presentは維持。
-- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（公開JAR `release-rc8-{amd,intel}2`、renderer `72665b41…`、fixture `c82c4bc8…`、`rawFboIdentityProbePassed=true`）。Bloom画素やWindows受入ではない。
+- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（`release-rc8-{amd,intel}2`、`72665b41…`）。Bloom画素やWindows受入ではない。
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
@@ -18,8 +18,7 @@ validation off・warm 窓の client thread サンプル692）: block entity 描�
 vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**（AMD のフレームは解像度非依存
 ＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。移行は「一度に全部作り直さない」
 （設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。
-2026-10-24 の実測ダイジェスト（model instance producer・JIT 分割/arena・staging ring・native raster/texture owner）は
-[archive](<history/plan-archive-2026-10-24.md>)（当時の値。現在の判定には使わない）。
+2026-10-24 の実測ダイジェストは [archive](<history/plan-archive-2026-10-24.md>)（当時の値。現在の判定には使わない）。
 
 - **影**: 利用者指示により本体内は停止。stage (a)–(d計器) は commit 済み・**既定OFF**（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
   PCF受け側は `git stash`（leg `shadowpcf-amd-1` PASSED、視覚効果は未確認）。**再開は利用者が明示した時だけ。**
@@ -56,6 +55,10 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
      **次の性能単位は記録の client thread 外への移動**（§12）か offer/窓の削減。client threadのprofile
      （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
      **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
+     **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「そのbatchがcopy先をsampleする時だけ」へ
+     （`-Dceltium.vulkan.rawWriteSampleGate`、既定ON）。同一JAR・同一sceneのpaired setで **36.02→27.59窓/フレーム
+     （−23.4%）**、siteのflush 17497→6884、validation 0・拒否0・画像gate両arm PASSED
+     （[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。p50 −4.5%は±7%内＝速度は主張しない。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
@@ -97,24 +100,22 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
 
 ## 撤回した前提
 
-[archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因・GLスタブ解消済み 等。再入条件つき）。
+[archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因 等。再入条件つき）。
 
-- **bind時のflush延期**（2026-10-31、2回試作→2回ともRADV SIGSEGV）: 再入条件と詳細は[検証の罠](<verification-traps.md>)。
+- **bind時のflush延期**（2026-10-31、2回ともRADV SIGSEGV）: 再入条件は[検証の罠](<verification-traps.md>)。
 
 ## 未確定（数値を前提にしない）
 
-- GPU pass時間、present/readback、アップロード量、GC、フレーム内訳の旧値は、artifact/区間が今回のビルドと一致しないため参考値としても使わない。
+- GPU pass時間・present/readback・アップロード量・GC・フレーム内訳の旧値は、artifact/区間が現ビルドと一致しないため参考値にも使わない。
 - validation clean・`exitCode=0`・色数gateは、それぞれ描画不存在・正しい絵・画像一致を証明しない。
 
 
 ## 更新と参照
 
-- [作業規約](<../AGENTS.md>) / [製品目標](<goal.md>) / [設計案（参考）](<new_architecture.md>) /
-  [手順](<development.md>) / [計器索引](<instruments.md>) / [検証の罠](<verification-traps.md>)。
-- 計測の生ログと棄却済みの詳細は
-  [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)（packet loopの撤回・validation層による膨張の記録もここ）。
-- 旧表・旧日記は [snapshot](<history/plan-state-snapshot-2026-10-17.md>)、
-  [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)、[diary](<history/plan-diary.md>)。
+- [作業規約](<../AGENTS.md>) / [目標](<goal.md>) / [設計案（参考）](<new_architecture.md>) /
+  [手順](<development.md>) / [計器](<instruments.md>) / [罠](<verification-traps.md>)。
+- 計測の生ログと棄却済みの詳細は [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)。
+- 旧表・旧日記は [snapshot](<history/plan-state-snapshot-2026-10-17.md>)・[diary](<history/plan-diary.md>)。
   履歴を現在の命令・判定として読み戻さない。
 
 ## 再開手順

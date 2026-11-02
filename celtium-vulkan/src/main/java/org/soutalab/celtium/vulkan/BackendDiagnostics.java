@@ -441,6 +441,7 @@ final class BackendDiagnostics {
                 + " retiredFlushes=" + b.submissionStatistics.retiredFlushes() + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + b.immediateStatistics.lastFrameAccepted() + " lastFrameDrawn=" + b.immediateStatistics.lastFrameDrawn()
                 + " immediateTaken=" + b.immediateStatistics.immediateTaken() + " immediateFlushes=" + b.immediateStatistics.immediateFlushes()
+                + " rawWriteGate=[skips=" + b.rawWriteGateSkips + " flushes=" + b.rawWriteGateFlushes + "]"
                 + " immediateGroupsClosed=" + b.immediateStatistics.immediateGroupsClosed()
                 + " immediateMaxGroupVertices=" + b.immediateStatistics.immediateMaxGroupVertices()
                 + " immediateRefusal=" + b.celtium$refusalText().replace(' ', '_')

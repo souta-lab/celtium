@@ -189,6 +189,10 @@ python3 .celtium-work/jfr-top.py .celtium-work/<leg>.jfr "Client thread" 1 40
 引くので、JDKを選ばない。記録できなかった場合は`jfrAttach.started=false`と理由が残り、空ファイルを「何も動いていなかった」と
 読み違えません。
 
+**world profileの`duration`は240秒が下限**（2026-11-03実測）: 188 modsの起動に約100秒かかり、240秒でようやく
+`worldTicksAtEnd` 338–351。150秒ではharnessが `harnessExitCode=124` で落ちる（leg `r46a-gateoff`）。
+warm窓（tick 400–600）のKPIを取るにはさらに長い`duration`が要る（240秒では`frameIntervalWarmP50Ms=-1`）。
+
 **Intel**は `CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"` と `gpuRequirementMet=true`。
 `fixtureStatus=PASSED`でもVulkan validationが失敗すれば受入失敗。古いIntel resize legはまさにその例。
 `validationClean=true`だけでも正しい絵は証明しない。図の対照・画像gateの適用範囲は [検証の罠](<verification-traps.md>)。
