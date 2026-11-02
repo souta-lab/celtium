@@ -323,12 +323,15 @@ class LegacyAttribStackTest {
                 LegacyAttribSnapshot.ENABLE_BIT | LegacyAttribSnapshot.COLOR_BUFFER_BIT
                         | LegacyAttribSnapshot.DEPTH_BUFFER_BIT | LegacyAttribSnapshot.POLYGON_BIT
                         | LegacyAttribSnapshot.SCISSOR_BIT));
-        assertEquals(LegacyAttribSnapshot.TRANSFORM_BIT | LegacyAttribSnapshot.LIGHTING_BIT,
+        assertEquals(LegacyAttribSnapshot.TRANSFORM_BIT,
                 LegacyAttribSnapshot.unmodelled(LegacyAttribSnapshot.TRANSFORM_BIT
-                        | LegacyAttribSnapshot.LIGHTING_BIT | LegacyAttribSnapshot.ENABLE_BIT));
-        // Vanilla's own mask is 8256 = GL_ENABLE_BIT | GL_LIGHTING_BIT: it selects one modelled and one unmodelled
-        // group, which is why the lighting state is named in the census rather than guessed at.
-        assertEquals(LegacyAttribSnapshot.ENABLE_BIT, LegacyAttribSnapshot.modelled(8256));
+                        | LegacyAttribSnapshot.LIGHTING_BIT | LegacyAttribSnapshot.ENABLE_BIT),
+                "the lighting group is restored in part now, so only the matrix stack is left in the gap");
+        // Vanilla's own mask is 8256 = GL_ENABLE_BIT | GL_LIGHTING_BIT: both groups are restored, and the lighting one
+        // is reported as partial because the material and spot terms GL keeps in it are not modelled here.
+        assertEquals(LegacyAttribSnapshot.ENABLE_BIT | LegacyAttribSnapshot.LIGHTING_BIT,
+                LegacyAttribSnapshot.modelled(8256));
+        assertEquals(LegacyAttribSnapshot.LIGHTING_BIT, LegacyAttribSnapshot.partial(8256));
     }
 
     /**
@@ -371,6 +374,65 @@ class LegacyAttribStackTest {
                 "GL_ENABLE_BIT saves capabilities, not GL_VIEWPORT");
         assertEquals(((long) 23 << 48) | ((long) 29 << 32) | ((long) 31 << 16) | 37L,
                 CeltiumGlStub.celtium$viewportPacked());
+    }
+
+    /**
+     * {@code GL_LIGHTING_BIT} is in the modelled set <em>and</em> in the partial one, and the unmodelled set must not
+     * still claim it.
+     *
+     * <p>The classification is what the census reports, and the census is how the next round decides what to work on:
+     * leaving the group in {@code UNMODELLED_GROUPS} while also restoring it would count one pop twice - once as
+     * restored, once as a gap - and a later round reading {@code selectedUnrestoredGroups} would go looking for a group
+     * that is already handled. The mask is GregTech's, the one the calibrated world leg measured 1038 times.
+     */
+    @Test
+    void theLightingGroupIsRestoredInPartAndNotCountedAsTheGap() {
+        int gtMask = 0x40;
+        assertEquals(LegacyAttribSnapshot.LIGHTING_BIT, LegacyAttribSnapshot.modelled(gtMask),
+                "the group is restored");
+        assertEquals(LegacyAttribSnapshot.LIGHTING_BIT, LegacyAttribSnapshot.partial(gtMask),
+                "and reported as restored in part, because the material and spot terms are not modelled");
+        assertEquals(0, LegacyAttribSnapshot.unmodelled(gtMask),
+                "a group that is restored must not also be counted as the unmodelled gap");
+        assertEquals(0, LegacyAttribSnapshot.partial(
+                        LegacyAttribSnapshot.ENABLE_BIT | LegacyAttribSnapshot.SCISSOR_BIT),
+                "only the lighting group is partial - the others are restored whole");
+    }
+
+    /** Two pushes own separate lighting records, so the second push cannot overwrite what the first one saved. */
+    @Test
+    void eachPushOwnsItsLightingRecord() {
+        LegacyAttribSnapshot first = new LegacyAttribSnapshot(2);
+        LegacyAttribSnapshot second = new LegacyAttribSnapshot(2);
+        first.lightDirections[0] = 0.25f;
+        first.lightDiffuse[2] = 0.5f;
+        first.lightAmbient[1] = 0.75f;
+        first.shadeModel = 0x1D00;
+        assertEquals(0.0f, second.lightDirections[0], "each push allocates its own direction array");
+        assertEquals(0.0f, second.lightDiffuse[2]);
+        assertEquals(0.0f, second.lightAmbient[1]);
+        assertEquals(0x1D01, second.shadeModel, "and its own shade model, GL_SMOOTH by default");
+        assertFalse(second.lightingCaptured, "and its own capture flag");
+        assertEquals(0.25f, first.lightDirections[0]);
+    }
+
+    /**
+     * Without a lighting mirror a push must not claim the group.
+     *
+     * <p>The restore writes the backend's immediate-state mirror, which is the only authority for the lighting payload;
+     * this stub keeps no second copy. A push taken before that mirror exists carries GL's initial values, and its pop
+     * must not write them over a mirror that has since started tracking - and it must not report the group as restored
+     * either, or the census would say the pack's {@code 0x40} pushes are handled when they are not.
+     */
+    @Test
+    void withoutALightingMirrorTheGroupIsNotCountedAsRestored() {
+        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.LIGHTING_BIT);
+        CeltiumGlStub.celtium$popAttrib();
+        String census = CeltiumGlStub.attribCensus();
+        assertTrue(census.contains("selectedPartialGroups=1"), census);
+        assertTrue(census.contains("lightingRestores=0"), census);
+        assertTrue(census.contains("lightingRestoresChanged=0"), census);
+        assertTrue(census.contains(" restoredGroups=0"), census);
     }
 
     /** Two pushes own separate records, so the second push cannot overwrite what the first one saved. */

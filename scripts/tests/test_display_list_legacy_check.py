@@ -54,12 +54,19 @@ ARM_F_Y = TEX_CONTROL_Y - 24
 GL_FRONT = 0x0404
 #: The state strings the arms report: the pushed block changes every key, and the pop has to put them all back. `cmB`
 #: is the boolean width of the same colour-write-mask state; GL answers it from the same state, so it must equal `cm`.
-ATTRIB_BEFORE = "cm=1111,cmB=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0,vw=0,0,1280,720"
-ATTRIB_INSIDE = "cm=0000,cmB=0000,dm=0,bs=1,bd=0,dt=0,cf=1028,sb=1,2,3,4,po=7.0,vw=11,13,17,19"
+#: `lp`/`ld`/`la` are `GL_LIGHTING_BIT` - light 0's eye-space position and diffuse, and the light-model ambient - the
+#: group the calibrated world scene measured 1038 pushes of with zero restores.
+ATTRIB_LIGHT_BEFORE = "lp=0.20,1.00,-0.70,ld=0.60,0.60,0.60,la=0.40,0.40,0.40"
+ATTRIB_LIGHT_INSIDE = "lp=0.37,0.11,-0.92,ld=0.25,0.50,0.75,la=0.33,0.22,0.11"
+ATTRIB_BEFORE = ("cm=1111,cmB=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0,vw=0,0,1280,720,"
+                 + ATTRIB_LIGHT_BEFORE)
+ATTRIB_INSIDE = ("cm=0000,cmB=0000,dm=0,bs=1,bd=0,dt=0,cf=1028,sb=1,2,3,4,po=7.0,vw=11,13,17,19,"
+                 + ATTRIB_LIGHT_INSIDE)
 ATTRIB_AFTER = ATTRIB_BEFORE
-#: The ENABLE_BIT-only arm: only the colour write mask and the viewport are written inside it, so only those may
-#: survive the pop - GL_ENABLE_BIT selects neither group.
-ATTRIB_OUTSIDE = "cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0,vw=23,29,31,37"
+#: The ENABLE_BIT-only arm: only the colour write mask, the viewport and the lighting are written inside it, so only
+#: those may survive the pop - GL_ENABLE_BIT selects none of those groups.
+ATTRIB_OUTSIDE = ("cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0,vw=23,29,31,37,"
+                  + ATTRIB_LIGHT_INSIDE)
 #: The two rectangles the arms set: the masked push must be undone, the unmasked one must survive (from the screen).
 ATTRIB_VIEWPORT_MASKED = "11,13,17,19"
 ATTRIB_VIEWPORT_UNMASKED = "23,29,31,37"
@@ -370,9 +377,29 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
         right, and the group is named by key."""
         code, output = self.run_check((255, 0, 0), (0, 255, 0),
                                       attrib_after="cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,"
-                                                   "sb=0,0,1280,720,po=0.0,vw=0,0,1280,720")
+                                                   "sb=0,0,1280,720,po=0.0,vw=0,0,1280,720,"
+                                                   + ATTRIB_LIGHT_BEFORE)
         self.assertEqual(1, code, "a pop that left the colour write mask off must not pass: " + output)
         self.assertIn("glPopAttrib did not put back cm", output)
+
+    def test_a_pop_that_did_not_restore_the_lighting_fails_by_key(self):
+        """GL_LIGHTING_BIT is the group the calibrated world scene pushes 1038 times, so its key is claimed too.
+
+        The values are the ones the masked arm sets: a pop that put every other group back and left the light at the
+        block's direction is named by key rather than passing on the picture, which a light change does not move in
+        this scene (nothing here is lit).
+        """
+        code, output = self.run_check((255, 0, 0), (0, 255, 0),
+                                      attrib_after=ATTRIB_BEFORE.replace(ATTRIB_LIGHT_BEFORE, ATTRIB_LIGHT_INSIDE))
+        self.assertEqual(1, code, "a pop that left the light at the block's value must not pass: " + output)
+        self.assertIn("glPopAttrib did not put back lp,ld,la", output)
+
+    def test_an_enable_only_push_that_restored_the_lighting_fails(self):
+        """The mask rule for the same group: GL_ENABLE_BIT saves capabilities, not GL_LIGHTING_BIT."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0),
+                                      attrib_outside=ATTRIB_OUTSIDE.replace(ATTRIB_LIGHT_INSIDE, ATTRIB_LIGHT_BEFORE))
+        self.assertEqual(1, code, "a GL_ENABLE_BIT push that restored the lighting must not pass: " + output)
+        self.assertIn("GL_LIGHTING_BIT is not saved by GL_ENABLE_BIT", output)
 
     def test_a_pop_that_did_not_restore_the_viewport_fails_by_key(self):
         """GL_VIEWPORT_BIT is the group this pack's mods actually select and change, so the key is claimed too.
@@ -403,7 +430,7 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
         measured: the native boolean query never reached the stub and the zero-writer answered one byte."""
         code, output = self.run_check((255, 0, 0), (0, 255, 0),
                                       attrib_before="cm=1111,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,"
-                                                    "sb=0,0,1280,720,po=0.0")
+                                                    "sb=0,0,1280,720,po=0.0," + ATTRIB_LIGHT_BEFORE)
         self.assertEqual(1, code, "a boolean query that answered another state must not pass: " + output)
         self.assertIn("cm=1111 through glGetFloatv and cmB=0000 through glGetBooleanv", output)
 

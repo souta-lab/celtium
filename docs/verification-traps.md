@@ -485,3 +485,22 @@ LagGoggles）、`0x41040`（SGCraft/architecturecraft の render target: `TEXTUR
 **規約**: 集団の実装順は「マスクの出現数」ではなく「**その集団の中身を block 内で書く呼び出しの数**」で決める。
 集団を対応済みに移すときは、(a) fixture が block 内でその状態を設定し、(b) クエリで前後を報告し、
 (c) マスク外の push では**戻らない**ことも同じ frame で主張する（`vw=17,13..` と `vw=31,37..` の対）。
+
+## 「集団を戻した」は「戻す値が変わった」ではない（2026-11-03 実測）
+
+**症状**: `GL_LIGHTING_BIT` を実装した較正済み world leg の census は
+`restoredGroups=1317 selectedUnrestoredGroups=0 selectedPartialGroups=1317 lightingRestores=1317
+lightingRestoresChanged=0` だった。集団は毎回戻っているのに、**戻す値が1回も動いていない**。これを
+「修正が効いていない」と読むと、動いている restore を壊しに行くことになる。
+
+**原因**: GregTech の `RenderUtil.useLightMap` は `glPushAttrib(64)` の block の**最後に**
+`RenderHelper.enableStandardItemLighting()` を呼ぶ。この helper は vanilla の標準ライト（light0/1 の
+position/diffuse と light model ambient）を設定する。block に入る前の値も、直前の同じ block が同じ
+modelview の下で設定した同じ値なので、push 時の snapshot と pop 時の mirror が一致する。つまり
+「block が値を変えていない」のではなく「**block が元の値に戻してから pop している**」。
+
+**規約**: 集団の復元を実装したら、`restoredGroups` だけでなく **`...Changed`**（実際に値を書いた回数）も
+同じ census に出す。`restored > 0 && changed == 0` は「意味論は直ったが、この scene の絵は変わらない」の
+証拠であり、次の round が同じ集団を追わないための情報になる。fixture 側は block 内で**必ず違う値**を
+設定して `attribInside != attribBefore` を主張し、`attribAfter == attribBefore` と
+`attribOutsideAfter == attribInside` を対で取る（この3つが揃って初めて「戻した」と言える）。

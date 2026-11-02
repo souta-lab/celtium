@@ -2217,6 +2217,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         snapshot.listBase = stub.listBase;
         snapshot.activeTextureUnit = stub.textures.activeUnit();
         snapshot.texture2d = stub.textures.texture2d();
+        // GL_LIGHTING_BIT's restorable part. The authority is the backend's immediate-state mirror, which is where the
+        // game's GlStateManager path and the raw glLightfv route both write; this stub keeps no second copy, and
+        // reading one would be the "restore a copy of a copy" shape the rest of this push avoids.
+        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend lighting = vulkanBackend();
+        if (lighting != null) {
+            System.arraycopy(lighting.celtium$lightDirections(), 0, snapshot.lightDirections, 0, 6);
+            System.arraycopy(lighting.celtium$lightDiffuse(), 0, snapshot.lightDiffuse, 0, 6);
+            System.arraycopy(lighting.celtium$lightAmbient(), 0, snapshot.lightAmbient, 0, 3);
+            snapshot.shadeModel = lighting.celtium$shadeModel();
+            snapshot.lightingCaptured = true;
+        }
         stub.attribPushes++;
         stub.noteAttribMask(mask);
         if (stub.attribStack.size() >= MAX_ATTRIB_DEPTH) {
@@ -2340,8 +2351,22 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.textures.bindTexture2d(snapshot.texture2d);
             restored |= LegacyAttribSnapshot.TEXTURE_BIT;
         }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIGHTING_BIT) && snapshot.lightingCaptured
+                && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend lighting) {
+            // The group is restored in part (see LegacyAttribSnapshot.PARTIAL_GROUPS): the two directions, the two
+            // diffuse colours, the scene ambient and the shade model. The material and per-light ambient/specular/spot
+            // terms GL also keeps in this group do not exist in this renderer's payload, so they are counted as the
+            // partial gap rather than silently claimed.
+            if (lighting.celtium$restoreLightState(snapshot.lightDirections, snapshot.lightDiffuse,
+                    snapshot.lightAmbient, snapshot.shadeModel)) {
+                this.attribLightingRestoresChanged++;
+            }
+            this.attribLightingRestores++;
+            restored |= LegacyAttribSnapshot.LIGHTING_BIT;
+        }
         this.attribRestoredGroups += Integer.bitCount(restored);
         this.attribUnrestoredGroups += Integer.bitCount(selectsAttrib(snapshot, LegacyAttribSnapshot.UNMODELLED_GROUPS));
+        this.attribPartialGroups += Integer.bitCount(selectsAttrib(snapshot, LegacyAttribSnapshot.PARTIAL_GROUPS));
         this.lastAttribRestored = restored;
         this.lastAttribMask = snapshot.mask;
     }
@@ -2372,6 +2397,11 @@ public final class CeltiumGlStub implements FunctionProvider {
     private long attribPops;
     private long attribRestoredGroups;
     private long attribUnrestoredGroups;
+    /** Pops that selected {@code GL_LIGHTING_BIT}, and of those how many actually moved a value. */
+    private long attribLightingRestores;
+    private long attribLightingRestoresChanged;
+    /** Pops that selected a group restored only in part; see {@code LegacyAttribSnapshot.PARTIAL_GROUPS}. */
+    private long attribPartialGroups;
     /** The mask of the last push and the groups its pop restored, for the one-line census. */
     private int lastAttribMask;
     private int lastAttribRestored;
@@ -2454,6 +2484,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 .append(" overflow=").append(stub.attribOverflow)
                 .append(" restoredGroups=").append(stub.attribRestoredGroups)
                 .append(" selectedUnrestoredGroups=").append(stub.attribUnrestoredGroups)
+                .append(" selectedPartialGroups=").append(stub.attribPartialGroups)
+                .append(" lightingRestores=").append(stub.attribLightingRestores)
+                .append(" lightingRestoresChanged=").append(stub.attribLightingRestoresChanged)
                 .append(" last=0x").append(Integer.toHexString(stub.lastAttribMask))
                 .append("/0x").append(Integer.toHexString(stub.lastAttribRestored))
                 .append(" histogram=[");

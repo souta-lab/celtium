@@ -178,10 +178,12 @@ def numbers(fields, key):
 
 #: The state keys the attribute arms read around their push and pop. They are the groups the two arms differ in:
 #: colour write mask, depth write mask, blend source/destination, depth-test enable, cull mode, scissor box, polygon
-#: offset factor and the viewport rectangle. Each arm writes all of them inside its push, so "the probe changed nothing"
-#: is a failure too. `vw` is the group the pack's own mods select and change (three Supersymmetry space renderers push
-#: 0xFFFFF and call glViewport inside the block; BetterQuesting's RenderUtils pushes 0x40B71, which also selects it).
-ATTRIB_STATE_KEYS = ("cm", "dm", "bs", "bd", "dt", "cf", "sb", "po", "vw")
+#: offset factor, the viewport rectangle and the three lighting terms. Each arm writes all of them inside its push, so
+#: "the probe changed nothing" is a failure too. `vw` is the group the pack's own mods select and change (three
+#: Supersymmetry space renderers push 0xFFFFF and call glViewport inside the block; BetterQuesting's RenderUtils pushes
+#: 0x40B71, which also selects it). `lp`/`ld`/`la` are `GL_LIGHTING_BIT`, the group the calibrated world scene measured
+#: 1038 pushes of with zero restores (GregTech's RenderUtil.useLightMap).
+ATTRIB_STATE_KEYS = ("cm", "dm", "bs", "bd", "dt", "cf", "sb", "po", "vw", "lp", "ld", "la")
 
 
 def parse_attrib_state(text):
@@ -524,8 +526,8 @@ def attrib_state_failures(layout, label):
 
     * the probe changed the state it reports (a renderer that ignored the writes would otherwise "restore" trivially);
     * the pop put every group its mask selected back (`attribAfter` == `attribBefore`), the viewport included;
-    * the push that selected only `GL_ENABLE_BIT` did *not* put the colour write mask or the viewport back - GL's rule,
-      and the exact superset the old "restore everything" stack got wrong.
+    * the push that selected only `GL_ENABLE_BIT` did *not* put the colour write mask, the viewport or the lighting
+      back - GL's rule, and the exact superset the old "restore everything" stack got wrong.
     * the arms' two viewport writes landed where the scene said they did: `attribInside` must carry the masked
       rectangle and `attribOutsideAfter` the unmasked one. Without those two, `vw` equality could pass on a scene that
       never wrote the state at all.
@@ -557,6 +559,12 @@ def attrib_state_failures(layout, label):
         failures.append(label + "a glPushAttrib(GL_ENABLE_BIT) restored the colour write mask (inside="
                         + str(inside.get("cm")) + " after=" + str(outside.get("cm")) + "); GL_ENABLE_BIT saves "
                         "capabilities only, and GL_COLOR_WRITEMASK is GL_COLOR_BUFFER_BIT state")
+    lighting_stale = [key for key in ("lp", "ld", "la") if outside.get(key) != inside.get(key)]
+    if lighting_stale:
+        failures.append(label + "a glPushAttrib(GL_ENABLE_BIT) put the lighting back (" + ",".join(lighting_stale)
+                        + " inside=" + str({key: inside.get(key) for key in lighting_stale})
+                        + " after=" + str({key: outside.get(key) for key in lighting_stale}) + "); GL_LIGHTING_BIT "
+                        "is not saved by GL_ENABLE_BIT, and the calibrated world scene pushes that group 1038 times")
     masked = layout.get("attrib_viewport_masked", "")
     unmasked = layout.get("attrib_viewport_unmasked", "")
     if not masked or not unmasked:

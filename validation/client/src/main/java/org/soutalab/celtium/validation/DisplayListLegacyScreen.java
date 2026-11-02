@@ -155,7 +155,26 @@ public final class DisplayListLegacyScreen extends GuiScreen {
      * pair is what separates "the group is restored" from "every pop restores everything".
      */
     private static final int ATTRIB_PUSH_MASK = GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-            | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_POLYGON_BIT | GL11.GL_SCISSOR_BIT | GL11.GL_VIEWPORT_BIT;
+            | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_POLYGON_BIT | GL11.GL_SCISSOR_BIT | GL11.GL_VIEWPORT_BIT
+            | GL11.GL_LIGHTING_BIT;
+    /**
+     * The light the masked arm sets and the pop has to undo, in a direction and colour no element of this scene uses.
+     *
+     * <p>{@code GL_LIGHTING_BIT} is in the mask because the calibrated world scene measured 1038 pushes of that one
+     * group and zero restores - GregTech's {@code RenderUtil.useLightMap} pushes it around every item it draws and calls
+     * vanilla's {@code enableStandardItemLighting} inside the block. The arm writes all three terms the renderer's
+     * payload carries (light 0's position and diffuse, the light-model ambient) and reads them back through
+     * {@code glGetLightfv}/{@code glGetFloatv}, the queries a mod's own save/restore code uses.
+     */
+    private static final float ATTRIB_LIGHT_X = 0.37f;
+    private static final float ATTRIB_LIGHT_Y = 0.11f;
+    private static final float ATTRIB_LIGHT_Z = -0.92f;
+    private static final float ATTRIB_LIGHT_R = 0.25f;
+    private static final float ATTRIB_LIGHT_G = 0.5f;
+    private static final float ATTRIB_LIGHT_B = 0.75f;
+    private static final float ATTRIB_AMBIENT_R = 0.33f;
+    private static final float ATTRIB_AMBIENT_G = 0.22f;
+    private static final float ATTRIB_AMBIENT_B = 0.11f;
     /** The rectangle the masked arm sets and the pop must undo; deliberately not 0,0,0,0 and not the window's. */
     private static final int ATTRIB_VIEWPORT_MASKED_X = 11;
     private static final int ATTRIB_VIEWPORT_MASKED_Y = 13;
@@ -229,6 +248,10 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private java.nio.IntBuffer attribInts;
     private java.nio.FloatBuffer attribFloats;
     private java.nio.ByteBuffer attribBooleans;
+    /** The three float arrays the lighting arm writes: light 0's position and diffuse, and the light-model ambient. */
+    private java.nio.FloatBuffer attribLightPosition;
+    private java.nio.FloatBuffer attribLightDiffuse;
+    private java.nio.FloatBuffer attribLightAmbient;
     /**
      * A texture whose only job is the filter readback, and the value {@code glGetTexParameteriv} answered for it.
      * <p>
@@ -750,6 +773,9 @@ public final class DisplayListLegacyScreen extends GuiScreen {
             this.attribInts = GLAllocation.createDirectIntBuffer(16);
             this.attribFloats = GLAllocation.createDirectFloatBuffer(16);
             this.attribBooleans = GLAllocation.createDirectByteBuffer(16);
+            this.attribLightPosition = GLAllocation.createDirectFloatBuffer(4);
+            this.attribLightDiffuse = GLAllocation.createDirectFloatBuffer(4);
+            this.attribLightAmbient = GLAllocation.createDirectFloatBuffer(4);
         }
         this.attribFrames++;
         celtium$readTextureFilter();
@@ -762,6 +788,11 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         this.attribViewportCaller = this.attribCallerViewport[0] + "," + this.attribCallerViewport[1] + ","
                 + this.attribCallerViewport[2] + "," + this.attribCallerViewport[3];
         this.attribBefore = celtium$attribState();
+        // The caller's own lighting is saved by an outer push and put back by the matching pop at the end of the arms.
+        // The unmasked arm below deliberately leaves the light at the value the masked arm set (that is the claim: an
+        // ENABLE-only push does not restore GL_LIGHTING_BIT state), so without this pair the rest of the frame would be
+        // lit by the probe's light. It is also a second, independent exercise of the group.
+        GL11.glPushAttrib(GL11.GL_LIGHTING_BIT);
         GL11.glPushAttrib(ATTRIB_PUSH_MASK);
         GL11.glColorMask(false, false, false, false);
         GL11.glDepthMask(false);
@@ -772,6 +803,7 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glPolygonOffset(7.0f, 8.0f);
         GL11.glViewport(ATTRIB_VIEWPORT_MASKED_X, ATTRIB_VIEWPORT_MASKED_Y,
                 ATTRIB_VIEWPORT_MASKED_W, ATTRIB_VIEWPORT_MASKED_H);
+        celtium$setAttribLight();
         this.attribInside = celtium$attribState();
         GL11.glPopAttrib();
         this.attribAfter = celtium$attribState();
@@ -780,9 +812,11 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glColorMask(false, false, false, false);
         GL11.glViewport(ATTRIB_VIEWPORT_UNMASKED_X, ATTRIB_VIEWPORT_UNMASKED_Y,
                 ATTRIB_VIEWPORT_UNMASKED_W, ATTRIB_VIEWPORT_UNMASKED_H);
+        celtium$setAttribLight();
         GL11.glPopAttrib();
         this.attribOutsideAfter = celtium$attribState();
         celtium$drawAttribQuad(celtium$armEX(panel));
+        GL11.glPopAttrib();
         GL11.glColorMask(true, true, true, true);
         GL11.glViewport(this.attribCallerViewport[0], this.attribCallerViewport[1], this.attribCallerViewport[2],
                 this.attribCallerViewport[3]);
@@ -894,13 +928,43 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     }
 
     /**
+     * Writes the three lighting terms the renderer's payload carries, through the raw GL entry points a mod uses.
+     *
+     * <p>Raw {@code glLightfv}/{@code glLightModelfv} rather than {@code GlStateManager}: the route is the one the
+     * transformer installs for a mod that sets its lights straight through GL, and it is a different path from the
+     * {@code GlStateManager} mixin the game itself uses. Both end in the same mirror, which is what the pop restores.
+     */
+    private void celtium$setAttribLight() {
+        this.attribLightPosition.clear();
+        this.attribLightPosition.put(ATTRIB_LIGHT_X).put(ATTRIB_LIGHT_Y).put(ATTRIB_LIGHT_Z).put(0.0f);
+        this.attribLightPosition.flip();
+        GL11.glLightfv(GL11.GL_LIGHT0, GL11.GL_POSITION, this.attribLightPosition);
+        this.attribLightDiffuse.clear();
+        this.attribLightDiffuse.put(ATTRIB_LIGHT_R).put(ATTRIB_LIGHT_G).put(ATTRIB_LIGHT_B).put(1.0f);
+        this.attribLightDiffuse.flip();
+        GL11.glLightfv(GL11.GL_LIGHT0, GL11.GL_DIFFUSE, this.attribLightDiffuse);
+        this.attribLightAmbient.clear();
+        this.attribLightAmbient.put(ATTRIB_AMBIENT_R).put(ATTRIB_AMBIENT_G).put(ATTRIB_AMBIENT_B).put(1.0f);
+        this.attribLightAmbient.flip();
+        GL11.glLightModelfv(GL11.GL_LIGHT_MODEL_AMBIENT, this.attribLightAmbient);
+    }
+
+    /** {@return three floats of {@code buffer} as {@code a,b,c}}, the form the report and the checker compare. */
+    private static String celtium$triple(java.nio.FloatBuffer buffer) {
+        return String.format(java.util.Locale.ROOT, "%.2f,%.2f,%.2f",
+                buffer.get(0), buffer.get(1), buffer.get(2));
+    }
+
+    /**
      * {@return the state the attribute arms read around their push and pop}, as the GL queries a mod's own
      * save/restore code would use.
      *
      * <p>Read back rather than assumed: the renderer's mirror is what the pop wrote, and a restore that updated a field
-     * the queries do not read would be invisible here. The four fields are the ones whose groups the two arms differ in:
+     * the queries do not read would be invisible here. The fields are the ones whose groups the two arms differ in:
      * {@code cm} (colour write mask), {@code dm} (depth write mask), {@code bs}/{@code bd} (blend factors), {@code dt}
-     * (depth-test enable), {@code cf} (cull mode), {@code sb} (scissor box) and {@code po} (polygon offset factor).
+     * (depth-test enable), {@code cf} (cull mode), {@code sb} (scissor box), {@code po} (polygon offset factor),
+     * {@code vw} (viewport) and {@code lp}/{@code ld}/{@code la} (light 0's position and diffuse, the light-model
+     * ambient).
      */
     private String celtium$attribState() {
         StringBuilder state = new StringBuilder("cm=");
@@ -954,6 +1018,18 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, this.attribInts);
         state.append(",vw=").append(this.attribInts.get(0)).append(",").append(this.attribInts.get(1))
                 .append(",").append(this.attribInts.get(2)).append(",").append(this.attribInts.get(3));
+        // GL_LIGHTING_BIT through the queries a mod's save/restore uses. glGetLightfv answers the eye-space value the
+        // driver stored, which is what the mirror holds and what the pop has to put back; the ambient is a
+        // glGetFloatv parameter, not a per-light one.
+        this.attribFloats.clear();
+        GL11.glGetLightfv(GL11.GL_LIGHT0, GL11.GL_POSITION, this.attribFloats);
+        state.append(",lp=").append(celtium$triple(this.attribFloats));
+        this.attribFloats.clear();
+        GL11.glGetLightfv(GL11.GL_LIGHT0, GL11.GL_DIFFUSE, this.attribFloats);
+        state.append(",ld=").append(celtium$triple(this.attribFloats));
+        this.attribFloats.clear();
+        GL11.glGetFloatv(GL11.GL_LIGHT_MODEL_AMBIENT, this.attribFloats);
+        state.append(",la=").append(celtium$triple(this.attribFloats));
         return state.toString();
     }
 

@@ -4084,6 +4084,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.immediateState.lightingEnabled();
     }
 
+    /** {@return the shade model the mirror holds}, for the attribute stack's {@code GL_LIGHTING_BIT} snapshot. */
+    public int celtium$shadeModel() {
+        return this.immediateState.shadeModel();
+    }
+
+    /**
+     * Puts the lighting payload back to an attribute-stack snapshot; see
+     * {@link VulkanGlState#restoreLightState(float[], float[], float[], int)} for why this cannot go through
+     * {@link #setLightPosition}.
+     *
+     * @return whether any value moved
+     */
+    public boolean celtium$restoreLightState(float[] directions, float[] diffuse, float[] ambient, int shadeModel) {
+        boolean changed = this.immediateState.restoreLightState(directions, diffuse, ambient, shadeModel);
+        this.immediateStatistics.noteImmediateStateCalls();
+        return changed;
+    }
+
     /** {@return the device's 2D texture size limit}, which glGetIntegerv(GL_MAX_TEXTURE_SIZE) answers. */
     public int celtium$maxTextureSize() {
         return this.context.maxImageDimension2D();

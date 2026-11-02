@@ -51,7 +51,24 @@ public final class LegacyAttribSnapshot {
 
     /** The groups this stack puts back. Kept beside {@link #UNMODELLED_GROUPS} so the census names a real gap. */
     public static final int MODELLED_GROUPS = CURRENT_BIT | POINT_BIT | LINE_BIT | POLYGON_BIT | DEPTH_BUFFER_BIT
-            | ENABLE_BIT | COLOR_BUFFER_BIT | LIST_BIT | TEXTURE_BIT | SCISSOR_BIT | VIEWPORT_BIT;
+            | ENABLE_BIT | COLOR_BUFFER_BIT | LIST_BIT | TEXTURE_BIT | SCISSOR_BIT | VIEWPORT_BIT | LIGHTING_BIT;
+    /**
+     * The groups a push may select that this renderer restores only in part.
+     *
+     * <p>A group here is also in {@link #MODELLED_GROUPS} - the pop really does put part of it back - and the census
+     * reports the count separately so "restored" never overclaims what the group covers.
+     *
+     * <p>{@code GL_LIGHTING_BIT} is the entry, and the part that is missing is named rather than implied. GL's group
+     * covers the per-light ambient, specular, spot direction/cutoff/exponent and the constant/linear/quadratic
+     * attenuation, the {@code GL_LIGHT_MODEL_LOCAL_VIEWER} and {@code GL_LIGHT_MODEL_TWO_SIDE} flags, the material
+     * parameters ({@code GL_AMBIENT}, {@code GL_DIFFUSE}, {@code GL_SPECULAR}, {@code GL_EMISSION},
+     * {@code GL_SHININESS}) and {@code GL_COLOR_MATERIAL}. None of those exist in this renderer's lighting payload,
+     * which is the two directions and two diffuse colours vanilla's {@code enableStandardItemLighting} writes plus the
+     * light-model ambient, so none of them can be put back - and a pop that claimed to restore the group while leaving
+     * them at the block's values is the same class of leak the mask rule was added to stop. What <em>is</em> restored
+     * is the pair of directions, the pair of diffuse colours, the scene ambient and the shade model.
+     */
+    public static final int PARTIAL_GROUPS = LIGHTING_BIT;
     /**
      * The groups a push may select that this renderer cannot restore.
      *
@@ -65,13 +82,19 @@ public final class LegacyAttribSnapshot {
      * Supersymmetry space renderers ({@code SunGlowRenderer}, {@code PlanetSurfaceRenderer}, {@code RingFeatureRenderer})
      * push {@code 0xFFFFF} and call {@code glViewport} inside the block, relying on the pop to put the rectangle back
      * (they run in the space dimensions, not in the calibrated overworld scene); BetterQuesting's {@code RenderUtils}
-     * pushes {@code 0x40B71}, which also selects the group. {@code GL_LIGHTING_BIT}
-     * stays unmodelled for the opposite reason: no mod in the pack calls {@code glLightfv}, {@code glLightModelfv},
-     * {@code glMaterialfv} or {@code glColorMaterial} at all, so the only values a pop could protect are the two constant
-     * light sets vanilla re-applies. {@code GL_FOG_BIT} has no in-pack provider either (only BiomesOPlenty references
-     * {@code glFog}, and no {@code 0xFFFFF} pusher changes fog state).
+     * pushes {@code 0x40B71}, which also selects the group.
+     *
+     * <p>{@code GL_LIGHTING_BIT} moved to {@link #PARTIAL_GROUPS} for a measured reason too: the calibrated world leg's
+     * attribute census reported every one of its 1038 pushes as mask {@code 0x40} with {@code restoredGroups=0} - one
+     * pack mod (GregTech, in {@code RenderUtil.useLightMap} and the central monitor) pushes the lighting group around
+     * every item and block it draws, calls {@code RenderHelper.enableStandardItemLighting} inside the block and lets
+     * the pop undo it. The scan's "no mod calls {@code glLightfv}" was true and beside the point: the vanilla helper
+     * they call does, through {@code GlStateManager}.
+     *
+     * <p>{@code GL_FOG_BIT} still has no in-pack provider (only BiomesOPlenty references {@code glFog}, and no
+     * {@code 0xFFFFF} pusher changes fog state).
      */
-    public static final int UNMODELLED_GROUPS = POLYGON_STIPPLE_BIT | PIXEL_MODE_BIT | LIGHTING_BIT | FOG_BIT
+    public static final int UNMODELLED_GROUPS = POLYGON_STIPPLE_BIT | PIXEL_MODE_BIT | FOG_BIT
             | ACCUM_BUFFER_BIT | STENCIL_BUFFER_BIT | TRANSFORM_BIT | HINT_BIT | EVAL_BIT
             | MULTISAMPLE_BIT;
 
@@ -126,6 +149,28 @@ public final class LegacyAttribSnapshot {
     /** {@code GL_ACTIVE_TEXTURE}'s unit index and the texture bound to {@code GL_TEXTURE_2D} on it. */
     public int activeTextureUnit;
     public int texture2d;
+    /**
+     * The restorable part of {@code GL_LIGHTING_BIT}: the two lights' eye-space directions and diffuse colours, the
+     * light-model ambient and the shade model.
+     *
+     * <p>Eye-space, not the caller's world-space position: {@code setLightPosition} folds the modelview in force at the
+     * call into the stored value, so the snapshot is what the driver would hand back and the pop writes it back
+     * without transforming it again. The arrays are copies for the same reason every other field here is a value.
+     */
+    public final float[] lightDirections = new float[6];
+    public final float[] lightDiffuse = new float[6];
+    public final float[] lightAmbient = new float[3];
+    /** {@code GL_SHADE_MODEL}, GL_SMOOTH by default. */
+    public int shadeModel = 0x1D01;
+    /**
+     * Whether the four lighting fields above really hold the mirror's values.
+     *
+     * <p>They can only be read when a backend is installed - that mirror is the one authority for the lighting payload,
+     * and this stub keeps no second copy. A push taken before the backend exists therefore carries GL's initial values,
+     * and its pop must not write them over a mirror that has since started tracking: the flag is what keeps the restore
+     * from turning "nothing was captured" into "the defaults were in force".
+     */
+    public boolean lightingCaptured;
 
     public LegacyAttribSnapshot(int capabilityCount) {
         this.capabilities = new boolean[Math.max(0, capabilityCount)];
@@ -144,6 +189,11 @@ public final class LegacyAttribSnapshot {
     /** {@return the selected groups this renderer cannot put back}, for the census. */
     public static int unmodelled(int mask) {
         return mask & UNMODELLED_GROUPS;
+    }
+
+    /** {@return the selected groups this renderer puts back only in part}, for the census. */
+    public static int partial(int mask) {
+        return mask & PARTIAL_GROUPS;
     }
 
     /** {@return the selected groups this renderer can put back}. */

@@ -757,6 +757,54 @@ public final class VulkanGlState {
         }
     }
 
+    /**
+     * Puts the fixed-function lighting payload back to a snapshot taken at a {@code glPushAttrib(GL_LIGHTING_BIT)}.
+     *
+     * <p>This is deliberately <em>not</em> {@link #setLightPosition}: that setter folds the modelview in force at the
+     * call into the value, which is what the driver does when a caller sets a light. A restore is the opposite
+     * operation - the snapshot already holds eye-space values, and the modelview at pop time is the pushed block's,
+     * not the one the saved values were captured under. Multiplying again would rotate the restored direction by the
+     * block's transform, which is the one thing a pop must not do.
+     *
+     * <p>{@code lightGeneration} moves once when anything really changed, so an immediate group opened before the pop
+     * cannot be reused for a batch drawn after it with the earlier payload. A pop that restores the values already in
+     * force (the common case: vanilla's {@code enableStandardItemLighting} writes the same two lights every time)
+     * leaves the generation alone, so the group is not split for nothing.
+     *
+     * @param directions six floats, light 0 then light 1, eye-space
+     * @param diffuse    six floats, light 0 then light 1
+     * @param ambient    three floats, {@code GL_LIGHT_MODEL_AMBIENT}
+     * @param shadeModel {@code GL_SHADE_MODEL}
+     * @return whether any value moved, which is what the attribute census counts
+     */
+    public boolean restoreLightState(float[] directions, float[] diffuse, float[] ambient, int shadeModel) {
+        boolean changed = false;
+        for (int i = 0; i < 6; i++) {
+            if (directions[i] != this.lightDirections[i]) {
+                this.lightDirections[i] = directions[i];
+                changed = true;
+            }
+            if (diffuse[i] != this.lightDiffuse[i]) {
+                this.lightDiffuse[i] = diffuse[i];
+                changed = true;
+            }
+        }
+        for (int i = 0; i < 3; i++) {
+            if (ambient[i] != this.lightAmbient[i]) {
+                this.lightAmbient[i] = ambient[i];
+                changed = true;
+            }
+        }
+        if (shadeModel != this.shadeModel) {
+            this.shadeModel = shadeModel;
+            changed = true;
+        }
+        if (changed) {
+            this.lightGeneration++;
+        }
+        return changed;
+    }
+
     /** {@return the eye-space direction of light index}, three floats starting at index*3. */
     public float[] lightDirections() {
         return this.lightDirections;

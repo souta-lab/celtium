@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -120,6 +121,53 @@ class VulkanGlStateTest {
         VulkanGlState state = new VulkanGlState();
         assertNotEquals(state.pipelineKey(1), state.pipelineKey(2));
         assertTrue(state.describe().contains("depthTest"));
+    }
+
+    /**
+     * A {@code glPopAttrib(GL_LIGHTING_BIT)} puts the eye-space payload back <em>without</em> the modelview multiply.
+     *
+     * <p>The distinction is the whole point of the restore path. {@code setLightPosition} folds the modelview in force
+     * at the call into the stored value, which is what the driver does when a caller sets a light; a restore is the
+     * opposite operation, because the snapshot already holds eye-space values and the modelview at pop time is the
+     * pushed block's. A restore that went through the setter would rotate the saved direction by the block's transform
+     * - the one thing a pop must not do - and the test below would see the rotated value instead of the saved one.
+     */
+    @Test
+    void theLightingPayloadComesBackWithoutTheModelviewMultiply() {
+        VulkanGlState state = new VulkanGlState();
+        state.setLightPosition(0, 0.2f, 1.0f, -0.7f);
+        state.setLightDiffuse(0, 0.6f, 0.6f, 0.6f);
+        state.setLightAmbient(0.4f, 0.4f, 0.4f);
+        float[] directions = state.lightDirections().clone();
+        float[] diffuse = state.lightDiffuse().clone();
+        float[] ambient = state.lightAmbient().clone();
+        int shade = state.shadeModel();
+        long generation = state.lightGeneration();
+
+        // The pushed block: a different modelview, the same world-space direction, a different diffuse and shade model.
+        state.pushMatrix();
+        state.loadMatrix(scale(2.0f, 3.0f, 4.0f));
+        state.setLightPosition(0, 0.2f, 1.0f, -0.7f);
+        state.setLightDiffuse(0, 0.1f, 0.2f, 0.3f);
+        state.shadeModel(VulkanGlState.SHADE_FLAT);
+        assertNotEquals(directions[0], state.lightDirections()[0],
+                "the block's modelview moved the stored eye-space direction, which is what the pop has to undo");
+        assertNotEquals(diffuse[1], state.lightDiffuse()[1]);
+
+        assertTrue(state.restoreLightState(directions, diffuse, ambient, shade),
+                "the restore reports that it moved a value");
+        assertArrayEquals(directions, state.lightDirections(),
+                "the saved eye-space direction, not the block's transform applied to it again");
+        assertArrayEquals(diffuse, state.lightDiffuse());
+        assertArrayEquals(ambient, state.lightAmbient());
+        assertEquals(shade, state.shadeModel());
+        assertTrue(state.lightGeneration() > generation,
+                "the generation moves, so an immediate group opened before the pop cannot be reused after it");
+        state.popMatrix();
+
+        assertFalse(state.restoreLightState(directions, diffuse, ambient, shade),
+                "a pop that restores the values already in force reports no change, so the group is not split for"
+                        + " nothing - vanilla re-sets the same two lights on every enableStandardItemLighting");
     }
 
     private static float[] identity() {

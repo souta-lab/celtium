@@ -63,11 +63,13 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   （raster mirror／backend の depth・alpha mirror／stub）から読み、スタックは64段で上限・溢れは数える。
   depth/alpha を戻せるように `celtium$noteDepthMask/noteDepthFunc/noteAlphaFunc` を raw/managed 両経路から記録し、
   `glGetFloatv(GL_DEPTH_WRITEMASK)` の欠落caseと初期値（GLはtrue）も直した。計器は
-  `celtium/attrib[masks= pushes= pops= unmatchedPops= overflow= restoredGroups= selectedUnrestoredGroups= last=
-  histogram=[mask:count]]`。`-Dceltium.glstub.attribMasks=false` は旧「全部戻す」動作で、この規則のA/B対照。
-  **未対応集団は数える**: `GL_TRANSFORM_BIT`（行列は mirror 側。modは `glPushMatrix` を使う）、`GL_LIGHTING_BIT`・
-  `GL_FOG_BIT`・`GL_STENCIL_BUFFER_BIT`。vanilla の mask `8256` は `GL_LIGHTING_BIT` を含むが、その中身（light 参数）は
-  パック内の mod が一切書かない（下記）。根拠: [attribute stack](evidence/attribute-stack-mask-2026-11-02.md)
+  `celtium/attrib[masks= pushes= pops= unmatchedPops= overflow= restoredGroups= selectedUnrestoredGroups=
+  selectedPartialGroups= lightingRestores= lightingRestoresChanged= last= histogram=[mask:count]]`。
+  `-Dceltium.glstub.attribMasks=false` は旧「全部戻す」動作で、この規則のA/B対照。
+  **未対応集団は数える**: `GL_TRANSFORM_BIT`（行列は mirror 側。modは `glPushMatrix` を使う。パック全数走査で
+  block 内の行列書きは自分の push/pop で釣り合うと確認済み＝生きた provider なし）・`GL_FOG_BIT`・
+  `GL_STENCIL_BUFFER_BIT`。**部分的にしか戻せない集団**は `selectedPartialGroups` として別枠で数える
+  （`GL_LIGHTING_BIT`、下記）。根拠: [attribute stack](evidence/attribute-stack-mask-2026-11-02.md)
   （fixture の arm D/E が same-scene で Celtium と Celeritas 実GLの両方で一致、validation 0） |
 | `glViewport` と `GL_VIEWPORT_BIT` | **viewport は状態であり、push した集団が戻す**（2026-11-03 修正）。`glViewport` の
   記録自体は既にあった（`GL_VIEWPORT` クエリと、offer ごとに読む packed 値）が、attribute stack の `GL_VIEWPORT_BIT`
@@ -84,6 +86,21 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   31x37 が**残る**ことを同じ frame で主張する。較正済み world leg の census は `histogram=[0x40:1038]`
   `restoredGroups=0`（= この scene の push は GregTech の `GL_LIGHTING_BIT` だけ）。根拠:
   [viewport group](evidence/viewport-attrib-2026-11-03.md) |
+| `GL_LIGHTING_BIT` | **部分的に戻す**（2026-11-03 修正）。較正済み world leg の census が
+  `histogram=[0x40:1038] restoredGroups=0` だったので、その `0x40` の出所を `javap -c` で読み切った:
+  GregTech `RenderUtil.useLightMap` は `glPushAttrib(64)` → `RenderHelper.disableStandardItemLighting()` →
+  lightmap座標の差し替え → runnable → 座標復帰 → `RenderHelper.enableStandardItemLighting()` → `glPopAttrib()`。
+  「パックの mod は `glLightfv` を呼ばない」という全数結果は正しいが、**その block が呼ぶ vanilla helper が呼ぶ**
+  （`GlStateManager.glLight` 経由で mirror に届く）。戻すのは mirror が持つ4項（light0/1 の eye-space 方向と
+  diffuse、`GL_LIGHT_MODEL_AMBIENT`、`GL_SHADE_MODEL`）だけで、`setLightPosition` は modelview を掛けるため
+  **復元専用の `restoreLightState` を別に持つ**（snapshot は既に eye-space。掛け直すと block の変換で回ってしまう）。
+  `GL_AMBIENT/SPECULAR/SPOT/attenuation`・material・`GL_COLOR_MATERIAL` は payload に存在しないので戻せず、
+  その事実は `PARTIAL_GROUPS` と `selectedPartialGroups` で数える（「戻した」と過剰に主張しない）。
+  実測: 較正済み world leg は `restoredGroups=1317 selectedUnrestoredGroups=0 selectedPartialGroups=1317
+  lightingRestores=1317 lightingRestoresChanged=0` — **集団は戻るが、この scene では戻す値が毎回同じ**
+  （block の最後の `enableStandardItemLighting` が push 時の値をそのまま再設定するため）。つまりこれは
+  意味論の修正であって絵の修正ではない、と実測が言っている。根拠:
+  [lighting group](evidence/lighting-attrib-2026-11-03.md) |
 | ネイティブ `glGet*` のクエリ | **ルートが一致しなければ「それらしい0」が返る**（2026-11-02 修正）。transformer は
   LWJGL3 の `ngl*` を Java 本体に置き換えるが、置き換え先が専用ハンドラでなく汎用 zero-writer
   （`glGetZero` が1個の0を書く）に落ちても、class は正常にロードされ例外も出ない。実測: `nglGetBooleanv` と
