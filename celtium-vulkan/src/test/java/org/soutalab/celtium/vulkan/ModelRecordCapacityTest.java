@@ -58,4 +58,51 @@ class ModelRecordCapacityTest {
         assertTrue(records <= 64L * 1024L * 1024L, "records at the default: " + records + " bytes");
         assertTrue(commands <= 4L * 1024L * 1024L, "commands at the default: " + commands + " bytes");
     }
+
+    @Test
+    void aFrameInsideTheSegmentAsksForNoGrowth() {
+        assertEquals(0, ModelRecordCapacity.grownFor(ModelRecordCapacity.DEFAULT, 26733),
+                "the pack's plateau fits the default; growing there would spend memory on nothing");
+        assertEquals(0, ModelRecordCapacity.grownFor(4096, 4096), "a frame that exactly fills the segment is covered");
+        assertEquals(0, ModelRecordCapacity.grownFor(ModelRecordCapacity.DEFAULT, 0), "a frame with no replays");
+        assertEquals(0, ModelRecordCapacity.grownFor(ModelRecordCapacity.DEFAULT, -5), "a negative demand is not a demand");
+    }
+
+    @Test
+    void aFrameBeyondTheSegmentAsksForItsDemandPlusHeadroom() {
+        int target = ModelRecordCapacity.grownFor(4096, 26733);
+        assertTrue(target >= 26733 + 26733L / 4L, "at least the demand plus its headroom: " + target);
+        assertEquals(0, target % ModelRecordCapacity.STEP, "a whole number of steps: " + target);
+        // r15b: frames 109..120 attempted 37380 replays against a 32768-record segment and declined 4612 of them. The
+        // growth target has to cover the demand that caused it, or the next frame overflows again and nothing changed.
+        int lateFrame = ModelRecordCapacity.grownFor(ModelRecordCapacity.DEFAULT, 37380);
+        assertTrue(lateFrame > ModelRecordCapacity.DEFAULT && lateFrame >= 37380,
+                "the late frame's demand is covered: " + lateFrame);
+        assertTrue(ModelRecordCapacity.bytes(lateFrame, VulkanModelInstances.SEGMENTS,
+                VulkanModelInstances.RECORD_BYTES) <= 128L * 1024L * 1024L,
+                "the growth a measured pack frame asks for stays inside a modest footprint");
+    }
+
+    @Test
+    void growthStopsAtTheRecordIndexCeiling() {
+        assertEquals(0, ModelRecordCapacity.grownFor(ModelRecordCapacity.MAX, 1000000),
+                "a segment at the ceiling cannot grow; the fallback has to keep the frame drawing");
+        assertEquals(ModelRecordCapacity.MAX, ModelRecordCapacity.grownFor(ModelRecordCapacity.MAX - 1, 1000000),
+                "a demand past the ceiling is clamped, not refused");
+    }
+
+    @Test
+    void growthAlwaysMovesForwardAndConvergesOnTheCeiling() {
+        int current = ModelRecordCapacity.MIN;
+        for (long demand : new long[] {1L, 1024L, 1025L, 8192L, 32768L, 32769L, 40000L, 100000L, 262144L, 1000000L}) {
+            int target = ModelRecordCapacity.grownFor(current, demand);
+            if (target != 0) {
+                assertTrue(target > current, "growth must move forward: " + current + " -> " + target);
+                assertEquals(0, target % ModelRecordCapacity.STEP, "a whole number of steps: " + target);
+                current = target;
+            }
+        }
+        assertEquals(ModelRecordCapacity.MAX, current, "a chain of growths converges on the ceiling");
+        assertEquals(0, ModelRecordCapacity.grownFor(current, 1000000), "and then stops asking");
+    }
 }

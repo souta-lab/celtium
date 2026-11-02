@@ -13,8 +13,10 @@ package org.soutalab.celtium.vulkan;
  * {@code r14e-menu-colour-fix} (Supersymmetry, AMD RX 6400, world stage): {@code appended=242944
  * declinedFull=479232 runs=72 pipelines=1}. Two thirds of that leg's model replays were declined by a 4096-record cap
  * that the pack's world exceeds - not by a missing mesh, an absent list or a state change ({@code declinedMissing=0}).
- * The cap is therefore a size, not a policy, and this class owns it: a 16384-record default (4x, 25 MiB of records and
- * 2 MiB of commands for the six segments) and a property for a machine whose world needs more.
+ * The cap is therefore a size, not a policy, and this class owns it: a 32768-record default (48 MiB of records and
+ * 3.75 MiB of commands for the six segments), a property for a machine whose world starts out heavier, and
+ * {@link #grownFor} for the frame that turns out to need more than either - because the next leg then showed the same
+ * defect one size up (leg {@code r15b}, 37380 replays in a late frame against a 32768-record segment, 4612 declined).
  * <p>
  * The value is clamped rather than refused: a typo must not silently return the model path to the slow lane for the
  * whole session, and a too-small value must not make the segment index arithmetic wrong. The record index
@@ -33,8 +35,48 @@ final class ModelRecordCapacity {
     static final int MIN = 1024;
     /** Six segments of this stay below 2^31, which is the width of the indirect command's record index. */
     static final int MAX = 262144;
+    /**
+     * Records the segment grows by, rounded up to a multiple of this. One page of records is 4 records, so a step of
+     * 1024 is 256 KiB of records and 20 KiB of commands per segment - small enough that a frame one replay over the
+     * size does not double the footprint, large enough that a load's rising demand converges in a few frames.
+     */
+    static final int STEP = 1024;
+    /**
+     * Headroom over the frame that asked for the growth. A load's demand rises for as long as new chunks and block
+     * entities are compiled, so a segment sized exactly to the frame that overflowed grows again a frame or two later;
+     * the measured rise in leg {@code r15b-model-records-32k} was 26733 (frames 47..60) to 37380 (frames 109..120),
+     * i.e. a quarter over the plateau. The fraction is the same 25 % the default carries over its own measurement.
+     */
+    static final int HEADROOM_PERCENT = 25;
 
     private ModelRecordCapacity() {
+    }
+
+    /**
+     * {@return the segment size a frame's demand asks for, or 0 when the current size is enough}.
+     * <p>
+     * The size is a measurement, not a policy: the default is the pack's plateau and the ceiling is the record index's
+     * width, so the only thing left to decide is how a frame that needs more than the default is answered. It answers by
+     * growing - the frame that overflowed pays the per-group fallback once, and every later frame writes its records -
+     * rather than by turning replays away for the rest of the session. That is the shape of the defect this parameter
+     * was found by: 4096 records declined two thirds of a leg's replays and nothing in the run said why.
+     * <p>
+     * The result is a multiple of {@link #STEP}, at least {@link #STEP} above {@code current} and at least
+     * {@code demand + demand * }{@link #HEADROOM_PERCENT}{@code / 100}, never above {@link #MAX}. A demand the current
+     * size already covers, a capacity at the ceiling and a non-positive demand all answer 0: nothing to do.
+     *
+     * @param current the records one frame's segment holds now
+     * @param demand  the replays the last frame tried to write, declined ones included
+     */
+    static int grownFor(int current, long demand) {
+        if (demand <= (long) current || current >= MAX) {
+            return 0;
+        }
+        long wanted = demand + demand / 100L * HEADROOM_PERCENT;
+        long withStep = Math.max(wanted, (long) current + STEP);
+        long rounded = ((withStep + STEP - 1L) / STEP) * STEP;
+        long target = Math.min((long) MAX, rounded);
+        return target > current ? (int) target : 0;
     }
 
     /**

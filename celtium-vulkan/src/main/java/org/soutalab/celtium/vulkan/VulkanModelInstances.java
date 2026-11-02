@@ -56,13 +56,15 @@ final class VulkanModelInstances {
     static final int COMMAND_BYTES = 20;
     static final int SEGMENTS = FrameSubmissionScheduler.FRAME_SLOTS + 2;
     /**
-     * Replays one frame's segment holds, {@code -Dceltium.vulkan.modelSegmentRecords=N} (default 32768).
+     * Replays one frame's segment holds when it is first allocated, {@code -Dceltium.vulkan.modelSegmentRecords=N}
+     * (default 32768). The segment is not fixed at this size: {@link #beginFrame} grows it to the demand a frame
+     * reports, so the value is a starting point rather than a limit (see {@link ModelRecordCapacity#grownFor}).
      * <p>
      * Measured need in leg {@code r14e-menu-colour-fix} (Supersymmetry, AMD RX 6400, world stage): the pack's world
      * attempted up to 26880 model replays in one presented frame; the 4096-record cap declined 479232 of that leg's
      * 722176 replays (two thirds) while {@code declinedMissing=0} and {@code pipelines=1} - so they took the per-group
      * path because of a size, not because their mesh, list or state was missing. {@link ModelRecordCapacity} owns the
-     * default, the clamp and the reasoning; this constant is only where the segment layout reads it.
+     * default, the clamp and the reasoning; this constant is only where the segment layout starts.
      */
     static final int SEGMENT_RECORDS = ModelRecordCapacity.resolve(
             System.getProperty("celtium.vulkan.modelSegmentRecords"));
@@ -144,6 +146,18 @@ final class VulkanModelInstances {
     private int segment;
     private int used;
     private long frameId = Long.MIN_VALUE;
+    /**
+     * Records one frame's segment holds now. Starts at {@link #SEGMENT_RECORDS} and only ever grows, to the demand a
+     * frame reports ({@link ModelRecordCapacity#grownFor}). A field rather than a constant because the size that binds
+     * is a property of the pack being drawn, and the two legs that measured it disagreed by 40 %.
+     */
+    private int segmentRecords = SEGMENT_RECORDS;
+    private long recordGrowths;
+    /** {@code -Dceltium.debug.modelRecords=N} also bounds the growth lines: a handful are the measurement. */
+    private static final int GROWTH_LOG_LINES =
+            Integer.getInteger("celtium.debug.modelRecords", 0).intValue();
+    /** Buffers, descriptor pool and set of a superseded capacity, released once no frame in flight can read them. */
+    private final List<Object[]> retiredSegments = new ArrayList<Object[]>();
 
     private VulkanHostBuffer poolVertices;
     private VulkanHostBuffer poolIndices;
@@ -174,6 +188,8 @@ final class VulkanModelInstances {
     private long worstFrameAttempts;
     private long framesOverCapacity;
     private int censusLines;
+    /** The replays the last frame asked for, kept for the growth line's {@code demand=} field. */
+    private long lastFrameAttempts;
 
     VulkanModelInstances(VulkanContext context, long textureSetLayout) {
         this.context = context;
@@ -182,9 +198,11 @@ final class VulkanModelInstances {
 
     /** Creates the record and command buffers, the records descriptor and the pipeline layout. */
     boolean create() {
-        this.records = new VulkanHostBuffer(this.context, (long) SEGMENTS * SEGMENT_RECORDS * RECORD_BYTES,
+        this.records = new VulkanHostBuffer(this.context,
+                ModelRecordCapacity.bytes(this.segmentRecords, SEGMENTS, RECORD_BYTES),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        this.commands = new VulkanHostBuffer(this.context, (long) SEGMENTS * SEGMENT_RECORDS * COMMAND_BYTES,
+        this.commands = new VulkanHostBuffer(this.context,
+                ModelRecordCapacity.bytes(this.segmentRecords, SEGMENTS, COMMAND_BYTES),
                 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer bindings =
@@ -197,25 +215,9 @@ final class VulkanModelInstances {
                 return false;
             }
             this.recordsLayout = handle.get(0);
-            org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer sizes = org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
-            sizes.get(0).type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1);
-            if (vkCreateDescriptorPool(this.context.device(), org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack)
-                    .sType$Default().maxSets(1).pPoolSizes(sizes), null, handle) != VK_SUCCESS) {
+            if (!allocateRecordsSet(stack)) {
                 return false;
             }
-            this.descriptorPool = handle.get(0);
-            if (vkAllocateDescriptorSets(this.context.device(), org.lwjgl.vulkan.VkDescriptorSetAllocateInfo
-                    .calloc(stack).sType$Default().descriptorPool(this.descriptorPool)
-                    .pSetLayouts(stack.longs(this.recordsLayout)), handle) != VK_SUCCESS) {
-                return false;
-            }
-            this.recordsSet = handle.get(0);
-            org.lwjgl.vulkan.VkDescriptorBufferInfo.Buffer info = org.lwjgl.vulkan.VkDescriptorBufferInfo.calloc(1, stack);
-            info.get(0).buffer(this.records.buffer()).offset(0L).range(VK_WHOLE_SIZE);
-            org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
-            write.get(0).sType$Default().dstSet(this.recordsSet).dstBinding(0)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1).pBufferInfo(info);
-            vkUpdateDescriptorSets(this.context.device(), write, null);
 
             // Projection and fog change per run; individual poses live in the storage records.
             org.lwjgl.vulkan.VkPushConstantRange.Buffer ranges = org.lwjgl.vulkan.VkPushConstantRange.calloc(1, stack);
@@ -228,6 +230,96 @@ final class VulkanModelInstances {
             this.pipelineLayout = handle.get(0);
         }
         return true;
+    }
+
+    /**
+     * Creates a descriptor pool of one set and points it at {@link #records}, the current capacity's buffer.
+     * <p>
+     * A pool per allocation rather than one reused pool, because a capacity change must not write through a set a frame
+     * in flight still reads: the superseded pool and set are retired with their buffers and destroyed only once the
+     * frames that could have recorded them have completed ({@link #beginFrame}).
+     */
+    private boolean allocateRecordsSet(MemoryStack stack) {
+        LongBuffer handle = stack.mallocLong(1);
+        org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer sizes = org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
+        sizes.get(0).type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1);
+        if (vkCreateDescriptorPool(this.context.device(), org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack)
+                .sType$Default().maxSets(1).pPoolSizes(sizes), null, handle) != VK_SUCCESS) {
+            return false;
+        }
+        long pool = handle.get(0);
+        if (vkAllocateDescriptorSets(this.context.device(), org.lwjgl.vulkan.VkDescriptorSetAllocateInfo
+                .calloc(stack).sType$Default().descriptorPool(pool)
+                .pSetLayouts(stack.longs(this.recordsLayout)), handle) != VK_SUCCESS) {
+            vkDestroyDescriptorPool(this.context.device(), pool, null);
+            return false;
+        }
+        long set = handle.get(0);
+        org.lwjgl.vulkan.VkDescriptorBufferInfo.Buffer info = org.lwjgl.vulkan.VkDescriptorBufferInfo.calloc(1, stack);
+        info.get(0).buffer(this.records.buffer()).offset(0L).range(VK_WHOLE_SIZE);
+        org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
+        write.get(0).sType$Default().dstSet(set).dstBinding(0)
+                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1).pBufferInfo(info);
+        vkUpdateDescriptorSets(this.context.device(), write, null);
+        this.descriptorPool = pool;
+        this.recordsSet = set;
+        return true;
+    }
+
+    /**
+     * Reallocates the records and commands buffers at {@code target} records per segment.
+     * <p>
+     * The superseded buffers, pool and set stay alive for {@link #SEGMENTS} more frames: a command buffer recorded
+     * against them may still be in flight, and its indirect draw reads the commands buffer while the shader reads the
+     * records one. A failure leaves the current capacity in place and is counted, because a segment that cannot grow
+     * must keep drawing through the fallback rather than take the model path down.
+     */
+    private boolean grow(int target) {
+        VulkanHostBuffer grownRecords = null;
+        VulkanHostBuffer grownCommands = null;
+        long previousRecords = this.records == null ? VK_NULL_HANDLE : this.records.buffer();
+        long previousCommands = this.commands == null ? VK_NULL_HANDLE : this.commands.buffer();
+        int previousSegmentRecords = this.segmentRecords;
+        try {
+            grownRecords = new VulkanHostBuffer(this.context,
+                    ModelRecordCapacity.bytes(target, SEGMENTS, RECORD_BYTES), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            grownCommands = new VulkanHostBuffer(this.context,
+                    ModelRecordCapacity.bytes(target, SEGMENTS, COMMAND_BYTES), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+            VulkanHostBuffer oldRecords = this.records;
+            VulkanHostBuffer oldCommands = this.commands;
+            long oldPool = this.descriptorPool;
+            this.records = grownRecords;
+            this.commands = grownCommands;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                if (!allocateRecordsSet(stack)) {
+                    this.records = oldRecords;
+                    this.commands = oldCommands;
+                    this.descriptorPool = oldPool;
+                    throw new IllegalStateException("record descriptor set allocation failed at " + target);
+                }
+            }
+            this.segmentRecords = target;
+            this.recordGrowths++;
+            this.retiredSegments.add(new Object[] {oldRecords, oldCommands, Long.valueOf(oldPool),
+                    Long.valueOf(this.frameId)});
+            if (GROWTH_LOG_LINES > 0 && this.recordGrowths <= 12) {
+                System.out.println("[Celtium] CELTIUM_MODEL_RECORDS_GROW frame=" + this.frameId + " from="
+                        + previousSegmentRecords + " to=" + target + " demand=" + this.lastFrameAttempts
+                        + " growths=" + this.recordGrowths);
+            }
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            if (grownRecords != null && this.records != grownRecords) {
+                grownRecords.delete();
+            }
+            if (grownCommands != null && this.commands != grownCommands) {
+                grownCommands.delete();
+            }
+            System.out.println("[Celtium] CELTIUM_MODEL_RECORDS_GROW_FAILED from=" + previousSegmentRecords
+                    + " to=" + target + " keepRecords=" + previousRecords + " keepCommands=" + previousCommands
+                    + " error=" + error);
+            return false;
+        }
     }
 
     /** Moves to this frame's segment, and releases mesh pools no frame in flight can still read. */
@@ -248,6 +340,7 @@ final class VulkanModelInstances {
         if (declinedThisFrame > 0) {
             this.framesOverCapacity++;
         }
+        this.lastFrameAttempts = attemptsThisFrame;
         if (RECORD_CENSUS_LINES > 0 && this.censusLines < RECORD_CENSUS_LINES && attemptsThisFrame > 0) {
             this.censusLines++;
             System.out.println("[Celtium] CELTIUM_MODEL_RECORDS frame=" + this.frameId
@@ -255,10 +348,18 @@ final class VulkanModelInstances {
                     + " appended=" + appendedThisFrame
                     + " declinedFull=" + declinedThisFrame
                     + " runs=" + (this.runs - this.censusRunsMark)
-                    + " usedAtEnd=" + this.used + "/" + SEGMENT_RECORDS
+                    + " usedAtEnd=" + this.used + "/" + this.segmentRecords
                     + " segment=" + this.segment
                     + " worstFrameAttempts=" + this.worstFrameAttempts
                     + " framesOverCapacity=" + this.framesOverCapacity);
+        }
+        // Sized by what the pack asked for, not by what a previous leg guessed: a frame that overflowed its segment is
+        // the measurement, and the only frame that pays the per-group fallback is the one that produced it. Growth
+        // happens here - between frames, before the new segment is written - because records of frames in flight are
+        // still being read by the GPU, which is why the superseded buffers are retired rather than reallocated.
+        int grown = ModelRecordCapacity.grownFor(this.segmentRecords, attemptsThisFrame);
+        if (grown > 0) {
+            grow(grown);
         }
         this.censusAppendedMark = this.appended;
         this.censusDeclinedMark = this.declinedFull;
@@ -272,6 +373,15 @@ final class VulkanModelInstances {
                 ((VulkanHostBuffer) retired[0]).delete();
                 ((VulkanHostBuffer) retired[1]).delete();
                 this.retiredPools.remove(i);
+            }
+        }
+        for (int i = this.retiredSegments.size() - 1; i >= 0; i--) {
+            Object[] retired = this.retiredSegments.get(i);
+            if (frameId - ((Long) retired[3]).longValue() > SEGMENTS) {
+                ((VulkanHostBuffer) retired[0]).delete();
+                ((VulkanHostBuffer) retired[1]).delete();
+                vkDestroyDescriptorPool(this.context.device(), ((Long) retired[2]).longValue(), null);
+                this.retiredSegments.remove(i);
             }
         }
     }
@@ -362,19 +472,19 @@ final class VulkanModelInstances {
     /** Opens a run at the next command of this frame's segment. */
     Run openRun(Pipeline pipeline) {
         this.runs++;
-        return new Run(pipeline, this.segment * SEGMENT_RECORDS + this.used, this.commands.buffer(),
+        return new Run(pipeline, this.segment * this.segmentRecords + this.used, this.commands.buffer(),
                 this.poolVertices.buffer(), this.poolIndices.buffer());
     }
 
     /** {@return whether a run opened on the current pool may still be appended to}. */
     boolean sameBuffers(Run run) {
         return run.vertexBuffer == this.poolVertices.buffer() && run.indexBuffer == this.poolIndices.buffer()
-                && run.firstCommand + run.count == this.segment * SEGMENT_RECORDS + this.used;
+                && run.firstCommand + run.count == this.segment * this.segmentRecords + this.used;
     }
 
     /** {@return whether this frame's segment has room for one more instance}. */
     boolean hasRoom() {
-        if (this.used < SEGMENT_RECORDS) {
+        if (this.used < this.segmentRecords) {
             return true;
         }
         this.declinedFull++;
@@ -390,7 +500,7 @@ final class VulkanModelInstances {
     void append(Run run, int listId, float[] modelView, float[] colour, float[] combine, float[] affine, float alphaRef, int alphaFunction,
             float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
         int[] entry = this.poolEntries.get(listId);
-        int index = this.segment * SEGMENT_RECORDS + this.used;
+        int index = this.segment * this.segmentRecords + this.used;
         long r = this.records.mappedAddress() + (long) index * RECORD_BYTES;
         for (int i = 0; i < 16; i++) {
             MemoryUtil.memPutFloat(r + i * 4L, modelView[i]);
@@ -537,7 +647,8 @@ final class VulkanModelInstances {
                 + " declinedMissing=" + this.declinedMissing + " poolBuilds=" + this.poolBuilds
                 + " poolAppends=" + this.poolAppends + " poolGrowths=" + this.poolGrowths
                 + " poolLists=" + this.poolEntries.size() + " pipelines=" + this.pipelines.size()
-                + " perFrameRecords=" + SEGMENT_RECORDS + " worstFrameAttempts=" + this.worstFrameAttempts
+                + " perFrameRecords=" + this.segmentRecords + " recordGrowths=" + this.recordGrowths
+                + " worstFrameAttempts=" + this.worstFrameAttempts
                 + " framesOverCapacity=" + this.framesOverCapacity + "]";
     }
 
@@ -564,6 +675,12 @@ final class VulkanModelInstances {
             ((VulkanHostBuffer) retired[1]).delete();
         }
         this.retiredPools.clear();
+        for (Object[] retired : this.retiredSegments) {
+            ((VulkanHostBuffer) retired[0]).delete();
+            ((VulkanHostBuffer) retired[1]).delete();
+            vkDestroyDescriptorPool(this.context.device(), ((Long) retired[2]).longValue(), null);
+        }
+        this.retiredSegments.clear();
         if (this.poolVertices != null) {
             this.poolVertices.delete();
             this.poolIndices.delete();
