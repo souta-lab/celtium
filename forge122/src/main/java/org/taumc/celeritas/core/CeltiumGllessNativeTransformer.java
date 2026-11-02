@@ -1073,7 +1073,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         // The tex-parameter queries: the stub records wrap/filter state and answers the dispatch path, but LWJGL3's
         // own natives bypassed it, so a mod that saved and restored a filter read zero.
-        if (returnType.equals("V") && "(IIJ)".equals(descriptor)) {
+        //
+        // The test must include the return type: it compared the descriptor against the string "(IIJ)" until
+        // 2026-11-02, and a real descriptor always carries one ("(IIJ)V"). The route was therefore dead and the call
+        // fell through to the zero-writer below - one zero int in the caller's buffer. The boolean route below had the
+        // same defect. The display-list leg r31a-queryroutes measured both: glGetTexParameteriv(GL_TEXTURE_2D,
+        // GL_TEXTURE_MIN_FILTER) answered 0 where the scene had set GL_LINEAR, and glGetBooleanv(GL_COLOR_WRITEMASK)
+        // answered 0000 while glGetFloatv answered 1111 in the same frame (#388 was fixed in the stub, but a native
+        // caller never reached the stub).
+        if (returnType.equals("V") && descriptor.startsWith("(IIJ)")) {
             String query = name.endsWith("nglGetTexParameteriv") ? "glGetTexParameteriv"
                     : name.endsWith("nglGetTexParameterfv") ? "glGetTexParameterfv"
                     : name.endsWith("nglGetTexParameterIiv") ? "glGetTexParameterIiv"
@@ -1090,8 +1098,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         // The boolean query family: nglGetIntegerv/nglGetFloatv were routed, nglGetBooleanv was not, so every
         // glGetBoolean/glGetBooleanv answered zero - the model state probe measured glGetBoolean(depth mask)=false
-        // against a mirror that had writes enabled.
-        if (returnType.equals("V") && "nglGetBooleanv".equals(name) && "(IJ)".equals(descriptor)) {
+        // against a mirror that had writes enabled. The descriptor test below carried the same missing return type as
+        // the tex-parameter route above, so the route stayed dead after it was written: see that comment.
+        if (returnType.equals("V") && "nglGetBooleanv".equals(name) && descriptor.startsWith("(IJ)")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.LLOAD, 1);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",

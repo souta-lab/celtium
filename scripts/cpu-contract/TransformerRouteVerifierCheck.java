@@ -8,6 +8,7 @@
 import java.io.InputStream;
 import java.lang.reflect.*;
 import java.util.*;
+import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import org.objectweb.asm.*;
 import org.taumc.celeritas.core.CeltiumGllessNativeTransformer;
@@ -347,7 +348,165 @@ public class TransformerRouteVerifierCheck {
         } else {
             System.out.println("texcoord natives routed=skipped (legacy capture off)");
         }
-        if (failed != 0 || classFailures != 0 || colourMissing != 0 || texcoordMissing != 0) System.exit(1);
+        // Phase 5: the query natives must name their dedicated hint entry, not fall through to the zero-writer.
+        // Load success cannot see this: the zero-writer's body is valid bytecode and answers "one zero component",
+        // which is why two routes lived dead for weeks - their descriptor test compared the descriptor against a
+        // string without the return type, so "(IJ)V" never equalled "(IJ)". The display-list leg r30b measured the
+        // consequences (glGetBooleanv answered 0000 where glGetFloatv answered 1111; glGetTexParameteriv answered 0),
+        // and only a check of the emitted call can catch the next one. The real classes are transformed here, one
+        // per native, because the same name can live in GL11 or in a version class.
+        int queryMissing = 0;
+        Map<String, String> queryOwners = new HashMap<>();
+        try (JarFile jar = new JarFile(args[0])) {
+            for (String entry : Collections.list(jar.entries()).stream().map(JarEntry::getName)
+                    .filter(n -> n.startsWith("org/lwjgl/opengl/") && n.endsWith(".class") && !n.contains("$"))
+                    .sorted().collect(java.util.stream.Collectors.toList())) {
+                String className = entry.substring(0, entry.length() - ".class".length()).replace('/', '.');
+                byte[] original;
+                try (InputStream stream = jar.getInputStream(jar.getJarEntry(entry))) {
+                    original = stream.readAllBytes();
+                }
+                new ClassReader(original).accept(new ClassVisitor(Opcodes.ASM9) {
+                    @Override public MethodVisitor visitMethod(int access, String methodName, String descriptor,
+                            String signature, String[] exceptions) {
+                        if ((access & Opcodes.ACC_NATIVE) != 0) {
+                            for (String[] route : QUERY_ROUTES) {
+                                if (route[0].equals(methodName) && route[2].equals(descriptor)) {
+                                    queryOwners.putIfAbsent(methodName, className);
+                                }
+                            }
+                        }
+                        return null;
+                    }
+                }, ClassReader.SKIP_CODE);
+            }
+        }
+        for (String[] route : QUERY_ROUTES) {
+            String owner = queryOwners.get(route[0]);
+            if (owner == null) {
+                System.out.println("QUERY-ABSENT " + route[0] + route[2] + " is not declared native anywhere in the "
+                        + "jar; the check cannot see its route");
+                queryMissing++;
+                continue;
+            }
+            byte[] original;
+            try (JarFile jar = new JarFile(args[0])) {
+                try (InputStream stream = jar.getInputStream(jar.getJarEntry(owner.replace('.', '/') + ".class"))) {
+                    original = stream.readAllBytes();
+                }
+            }
+            byte[] transformed = new CeltiumGllessNativeTransformer().transform(owner, owner, original);
+            Set<String> calls = new LinkedHashSet<>();
+            new ClassReader(transformed).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override public MethodVisitor visitMethod(int access, String methodName, String descriptor,
+                        String signature, String[] exceptions) {
+                    if (!route[0].equals(methodName) || !route[2].equals(descriptor)) {
+                        return null;
+                    }
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override public void visitMethodInsn(int opcode, String callOwner, String hintName,
+                                String hintDescriptor, boolean isInterface) {
+                            if (opcode == Opcodes.INVOKESTATIC
+                                    && "org/taumc/celeritas/core/CeltiumGllessHint".equals(callOwner)) {
+                                calls.add(hintName + hintDescriptor);
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG);
+            String expected = route[1] + route[2];
+            if (!calls.contains(expected)) {
+                System.out.println("QUERY-UNROUTED " + route[0] + route[2] + " in " + owner + " emits " + calls
+                        + ", not " + expected + " (the zero-writer answers one zero component)");
+                queryMissing++;
+            } else {
+                System.out.println("QUERY-ROUTE " + route[0] + route[2] + " -> " + expected + " in " + owner);
+            }
+        }
+        System.out.println("query natives routed=" + (QUERY_ROUTES.length - queryMissing) + "/" + QUERY_ROUTES.length);
+
+        // Phase 6: the routes actually answer. A transformed body can name the right entry and still be handed the
+        // wrong argument slot, and the stub can answer from the wrong record - neither shows in a bytecode read. The
+        // probe class is the same transformation of the same jar declarations the run gets, so this is the in-run
+        // route, executed: the stub is installed, the state is written through the stub's own dispatch entry, and the
+        // query is asked through the transformed native. The float width is the positive control: it was never dead,
+        // so a harness that fails it is failing its own marshalling rather than the route.
+        int queryAnswerFailures = 0;
+        try {
+            Class<?> stubClass = Class.forName("org.soutalab.celtium.vulkan.gl.CeltiumGlStub");
+            Class<?> rasterClass = Class.forName("org.soutalab.celtium.vulkan.NativeRasterState");
+            Class<?> bindingsClass = Class.forName("org.soutalab.celtium.vulkan.NativeTextureBindings");
+            Object raster = rasterClass.getMethod("current").invoke(null);
+            Object bindings = bindingsClass.getMethod("current").invoke(null);
+            var constructor = stubClass.getDeclaredConstructor(rasterClass, bindingsClass);
+            constructor.setAccessible(true);
+            Object stub = constructor.newInstance(raster, bindings);
+            var installedField = stubClass.getDeclaredField("installed");
+            installedField.setAccessible(true);
+            installedField.set(null, stub);
+            try {
+                var dispatch = stubClass.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+                dispatch.setAccessible(true);
+                var idsField = stubClass.getDeclaredField("IDS");
+                idsField.setAccessible(true);
+                Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
+                dispatch.invoke(stub, ids.get("glColorMask"), new long[] {1, 0, 1, 0});
+                dispatch.invoke(stub, ids.get("glBindTexture"), new long[] {0x0DE1, 7});
+                dispatch.invoke(stub, ids.get("glTexParameteri"), new long[] {0x0DE1, 0x2801, 0x2601});
+                var buffer = org.lwjgl.system.MemoryUtil.memAlloc(64);
+                try {
+                    long address = org.lwjgl.system.MemoryUtil.memAddress(buffer);
+                    java.lang.reflect.Method booleanv = api.getDeclaredMethod("nglGetBooleanv", int.class, long.class);
+                    java.lang.reflect.Method floatv = api.getDeclaredMethod("nglGetFloatv", int.class, long.class);
+                    java.lang.reflect.Method texParameteriv = api.getDeclaredMethod("nglGetTexParameteriv", int.class,
+                            int.class, long.class);
+                    for (int i = 0; i < 16; i++) org.lwjgl.system.MemoryUtil.memPutByte(address + i, (byte) 0x7F);
+                    booleanv.invoke(null, 0x0C23, address);
+                    StringBuilder mask = new StringBuilder();
+                    for (int i = 0; i < 4; i++) mask.append((org.lwjgl.system.MemoryUtil.memGetByte(address + i) & 0xFF)
+                            != 0 ? '1' : '0');
+                    for (int i = 0; i < 16; i++) org.lwjgl.system.MemoryUtil.memPutFloat(address + i * 4L, -12345.0f);
+                    floatv.invoke(null, 0x0C23, address);
+                    StringBuilder maskFloat = new StringBuilder();
+                    for (int i = 0; i < 4; i++) maskFloat.append(org.lwjgl.system.MemoryUtil.memGetFloat(address + i * 4L)
+                            != 0.0f ? '1' : '0');
+                    for (int i = 0; i < 16; i++) org.lwjgl.system.MemoryUtil.memPutInt(address + i * 4L, -12345);
+                    texParameteriv.invoke(null, 0x0DE1, 0x2801, address);
+                    int filter = org.lwjgl.system.MemoryUtil.memGetInt(address);
+                    System.out.println("query answers boolean=" + mask + " float=" + maskFloat + " texFilter=0x"
+                            + Integer.toHexString(filter));
+                    if (!"1010".equals(mask.toString())) {
+                        System.out.println("QUERY-ANSWER glGetBooleanv(GL_COLOR_WRITEMASK) answered " + mask
+                                + ", not 1010; the byte the route wrote is not the recorded mask");
+                        queryAnswerFailures++;
+                    }
+                    if (!"1010".equals(maskFloat.toString())) {
+                        System.out.println("QUERY-ANSWER glGetFloatv(GL_COLOR_WRITEMASK) answered " + maskFloat
+                                + ", not 1010; the harness itself is wrong (this width was never dead)");
+                        queryAnswerFailures++;
+                    }
+                    if (filter != 0x2601) {
+                        System.out.println("QUERY-ANSWER glGetTexParameteriv(GL_TEXTURE_MIN_FILTER) answered 0x"
+                                + Integer.toHexString(filter) + ", not 0x2601 (the GL_LINEAR the stub recorded)");
+                        queryAnswerFailures++;
+                    }
+                } finally {
+                    org.lwjgl.system.MemoryUtil.memFree(buffer);
+                }
+            } finally {
+                installedField.set(null, null);
+            }
+        } catch (ReflectiveOperationException | LinkageError error) {
+            System.out.println("QUERY-ANSWER the stub could not be driven: " + error);
+            queryAnswerFailures++;
+        }
+        if (queryAnswerFailures > 0) {
+            System.out.println("query answers failed=" + queryAnswerFailures);
+        }
+        if (failed != 0 || classFailures != 0 || colourMissing != 0 || texcoordMissing != 0 || queryMissing != 0
+                || queryAnswerFailures != 0) {
+            System.exit(1);
+        }
     }
 
     /** One JVM descriptor character as the class it names, for the emitted-call lookup. */
@@ -374,6 +533,25 @@ public class TransformerRouteVerifierCheck {
         "glColor4b", "glColor4s", "glColor4i", "glColor4f", "glColor4d", "glColor4ub", "glColor4us", "glColor4ui",
         "nglColor4bv", "nglColor4sv", "nglColor4iv", "nglColor4fv", "nglColor4dv", "nglColor4ubv", "nglColor4usv",
         "nglColor4uiv",
+    };
+
+    /**
+     * The query natives that must name a dedicated entry point: {native, hint entry, descriptor}.
+     *
+     * <p>These are the calls a mod's save/restore code makes, and the fallback for each is the zero-writer - a single
+     * zero component, which reads as a real answer ("the mask is off", "the filter is 0"). The list is the phase-5
+     * denominator; it deliberately includes the widths that were never dead, so the check's own positive control is in
+     * it.
+     */
+    static final String[][] QUERY_ROUTES = {
+        {"nglGetBooleanv", "glGetBooleanv", "(IJ)V"},
+        {"nglGetFloatv", "glGetFloatv", "(IJ)V"},
+        {"nglGetDoublev", "glGetDoublev", "(IJ)V"},
+        {"nglGetIntegerv", "glGetIntegerv", "(IJ)V"},
+        {"nglGetTexParameteriv", "glGetTexParameteriv", "(IIJ)V"},
+        {"nglGetTexParameterfv", "glGetTexParameterfv", "(IIJ)V"},
+        {"nglGetTexParameterIiv", "glGetTexParameterIiv", "(IIJ)V"},
+        {"nglGetTexParameterIuiv", "glGetTexParameterIuiv", "(IIJ)V"},
     };
 
     /**

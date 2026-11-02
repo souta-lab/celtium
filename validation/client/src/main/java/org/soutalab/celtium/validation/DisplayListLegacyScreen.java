@@ -195,6 +195,20 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private java.nio.IntBuffer attribInts;
     private java.nio.FloatBuffer attribFloats;
     private java.nio.ByteBuffer attribBooleans;
+    /**
+     * A texture whose only job is the filter readback, and the value {@code glGetTexParameteriv} answered for it.
+     * <p>
+     * The tex-parameter route lived behind a descriptor test that never matched a real native (see the transformer's
+     * comment), so the query fell through to the zero-writer: a mod that saved a filter read {@code 0} and restored a
+     * filter GL never had. The scene sets a filter that is neither GL's initial value ({@code GL_NEAREST_MIPMAP_LINEAR})
+     * nor zero ({@code GL_LINEAR}), so both a dead route and a missing record are distinguishable from an answer. It is
+     * a second texture on purpose: the layout arms sample {@code magentaTexture}, whose filtering a probe must not
+     * change.
+     */
+    private int filterProbeTexture;
+    private int textureFilter = -1;
+    /** How many {@code glGetBooleanv} answers disagreed with the {@code glGetFloatv} answer for the same state. */
+    private int booleanQueryMismatches;
     /** How many times each list was compiled, so a scene that silently recompiled is visible. */
     private int compiles;
     private final StringBuilder dumpStages = new StringBuilder();
@@ -255,6 +269,9 @@ public final class DisplayListLegacyScreen extends GuiScreen {
                 + " attribAfter=" + this.attribAfter
                 + " attribOutsideAfter=" + this.attribOutsideAfter
                 + " attribFrames=" + this.attribFrames
+                + " booleanQueryMismatches=" + this.booleanQueryMismatches
+                + " textureFilter=" + this.textureFilter
+                + " textureFilterExpected=" + GL11.GL_LINEAR
                 + " callColour=" + (int) (CALL_RED * 255) + "," + (int) (CALL_GREEN * 255) + ","
                 + (int) (CALL_BLUE * 255)
                 + " insideColour=" + (int) (INSIDE_RED * 255) + "," + (int) (INSIDE_GREEN * 255) + ","
@@ -665,6 +682,7 @@ public final class DisplayListLegacyScreen extends GuiScreen {
             this.attribBooleans = GLAllocation.createDirectByteBuffer(16);
         }
         this.attribFrames++;
+        celtium$readTextureFilter();
         this.attribBefore = celtium$attribState();
         GL11.glPushAttrib(ATTRIB_PUSH_MASK);
         GL11.glColorMask(false, false, false, false);
@@ -686,9 +704,39 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glColorMask(true, true, true, true);
     }
 
+    /**
+     * Reads the min filter back from a texture the scene set a known filter on, and leaves the layout arms' texture
+     * bound.
+     *
+     * <p>The tex-parameter query is reported by the same frame as the other state readbacks because it went through the
+     * same class of hole: {@code nglGetTexParameteriv} was routed to a descriptor test that could never match, so the
+     * caller's buffer got one zero int - {@code GL_LINEAR} read back as 0. A mod's save/restore then puts back a filter
+     * GL never had. {@code GL_LINEAR} is not GL's initial value and not zero, so a dead route, a missing record and a
+     * wrong constant are three different numbers here.
+     */
+    private void celtium$readTextureFilter() {
+        if (this.filterProbeTexture == 0) {
+            this.filterProbeTexture = GL11.glGenTextures();
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.filterProbeTexture);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+            java.nio.ByteBuffer pixels = GLAllocation.createDirectByteBuffer(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+            for (int texel = 0; texel < TEXTURE_SIZE * TEXTURE_SIZE; texel++) {
+                pixels.put((byte) 0xFF).put((byte) 0x40).put((byte) 0x20).put((byte) 0xFF);
+            }
+            pixels.flip();
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, TEXTURE_SIZE, TEXTURE_SIZE, 0,
+                    GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
+        }
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.filterProbeTexture);
+        this.attribInts.clear();
+        GL11.glGetTexParameteriv(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, this.attribInts);
+        this.textureFilter = this.attribInts.get(0);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.magentaTexture);
+    }
+
     /** One green quad at {@code centreX} on the attribute arms' row. */
-    private void celtium$drawAttribQuad(int centreX) {
-        GL11.glPushMatrix();
+    private void celtium$drawAttribQuad(int centreX) {        GL11.glPushMatrix();
         GL11.glTranslatef(centreX, celtium$armCY(celtium$panel()), 0.0f);
         GL11.glColor4f(ATTRIB_RED, ATTRIB_GREEN, ATTRIB_BLUE, 1.0f);
         GL11.glBegin(GL11.GL_QUADS);
@@ -713,18 +761,27 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         StringBuilder state = new StringBuilder("cm=");
         // Read through glGetFloatv: GL answers a boolean-state parameter through every glGet* width, and the float
         // form is the one this scene already reads elsewhere (GL_CURRENT_COLOR, GL_POLYGON_OFFSET_FACTOR). The
-        // boolean form is reported beside it as `cmB` - the first run of these arms measured cmB=0000 while the
-        // pipeline's own state key histogram said 0xf for every group, which is the boolean query answering nothing.
+        // boolean form is reported beside it as `cmB`: the arms' first run measured cmB=0000 while the float form
+        // answered 1111 in the same frame, which was the native query reaching the zero-writer instead of the stub
+        // (the transformer's descriptor test never matched). The two widths must agree - GL's rule - so a disagreement
+        // is counted as well as reported, and the checker claims the equality.
         this.attribFloats.clear();
         GL11.glGetFloatv(GL11.GL_COLOR_WRITEMASK, this.attribFloats);
+        String maskBits = "";
         for (int channel = 0; channel < 4; channel++) {
             state.append(this.attribFloats.get(channel) != 0.0f ? '1' : '0');
+            maskBits += this.attribFloats.get(channel) != 0.0f ? "1" : "0";
         }
         this.attribBooleans.clear();
         GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, this.attribBooleans);
         state.append(",cmB=");
+        String booleanBits = "";
         for (int channel = 0; channel < 4; channel++) {
             state.append(this.attribBooleans.get(channel) != 0 ? '1' : '0');
+            booleanBits += this.attribBooleans.get(channel) != 0 ? "1" : "0";
+        }
+        if (!maskBits.equals(booleanBits)) {
+            this.booleanQueryMismatches++;
         }
         this.attribFloats.clear();
         GL11.glGetFloatv(GL11.GL_DEPTH_WRITEMASK, this.attribFloats);

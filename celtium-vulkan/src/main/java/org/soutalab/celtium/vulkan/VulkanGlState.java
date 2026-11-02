@@ -137,10 +137,19 @@ public final class VulkanGlState {
     public static final int ALPHA_GEQUAL = 6;
     public static final int ALPHA_ALWAYS = 7;
 
-    /** Cull face identifiers. */
-    public static final int CULL_FRONT = 0;
-    public static final int CULL_BACK = 1;
-    public static final int CULL_BOTH = 2;
+    /**
+     * Cull face identifiers, in GL's own encoding.
+     * <p>
+     * The raw GL setter ({@code glCullFace}) stores its argument unchanged, and {@code GL_CULL_FACE_MODE} must answer
+     * the same enum, so this owner keeps one encoding rather than translating at each end. The constants used to be an
+     * internal 0/1/2 that only the {@code NativeRasterState.cullFace} initialiser ever wrote: until a caller set a face
+     * the query answered 1 - not a GL enum and not {@code GL_BACK} - which the display-list leg measured as
+     * {@code cf=1} against a Celeritas reference answering 1029 (one value, two encodings, the state-model shape
+     * that keeps producing these holes).
+     */
+    public static final int CULL_FRONT = 0x0404;
+    public static final int CULL_BACK = 0x0405;
+    public static final int CULL_BOTH = 0x0408;
 
     /** Shade model identifiers. */
     public static final int SHADE_FLAT = 0;

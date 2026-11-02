@@ -26,10 +26,14 @@ fastutil="$(find_one "$modules" 'fastutil-8.*.jar')"
 launchwrapper="$(find_one "$modules" 'launchwrapper-*.jar')"
 mixin="$(find_one "$HOME/.local/share/PrismLauncher/libraries/org/spongepowered/mixin" 'mixin-*.jar')"
 log4j="$(find_one "$HOME/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-api" 'log4j-api-*.jar')"
-for jar in "$lwjgl_opengl" "$lwjgl_core" "$asm" "$asm_tree" "$fastutil" "$launchwrapper" "$mixin" "$log4j"; do
+# The query phase drives the stub's own dispatch entry, and the stub's static initialiser builds libffi trampolines -
+# so the LWJGL natives have to be loadable. They are LWJGL's own library (no GL context and no driver is touched); the
+# alternative was a check that skips itself on the machines that need it least.
+lwjgl_natives="$(find_one "$modules" 'lwjgl-3.4.3-natives-linux.jar')"
+for jar in "$lwjgl_opengl" "$lwjgl_core" "$asm" "$asm_tree" "$fastutil" "$launchwrapper" "$mixin" "$log4j" "$lwjgl_natives"; do
     have "$jar"
 done
-classpath="$classes:$lwjgl_core:$lwjgl_opengl:$asm:$asm_tree:$fastutil:$launchwrapper:$mixin:$log4j"
+classpath="$classes:$lwjgl_core:$lwjgl_opengl:$lwjgl_natives:$asm:$asm_tree:$fastutil:$launchwrapper:$mixin:$log4j"
 
 rm -rf "$out/classes"
 javac -proc:none -cp "$classpath" -d "$out/classes" "$root/scripts/cpu-contract/TransformerRouteVerifierCheck.java"

@@ -46,18 +46,22 @@ ARM_C_INSIDE = (255, 0, 0)
 ARM_D_X = GUI_WIDTH // 3
 ARM_E_X = 4 * GUI_WIDTH // 5
 ATTRIB_COLOUR = (0, 255, 0)
-#: The state strings the arms report: the pushed block changes every key, and the pop has to put them all back.
-ATTRIB_BEFORE = "cm=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
-ATTRIB_INSIDE = "cm=0000,dm=0,bs=1,bd=0,dt=0,cf=1028,sb=1,2,3,4,po=7.0"
+#: The state strings the arms report: the pushed block changes every key, and the pop has to put them all back. `cmB`
+#: is the boolean width of the same colour-write-mask state; GL answers it from the same state, so it must equal `cm`.
+ATTRIB_BEFORE = "cm=1111,cmB=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
+ATTRIB_INSIDE = "cm=0000,cmB=0000,dm=0,bs=1,bd=0,dt=0,cf=1028,sb=1,2,3,4,po=7.0"
 ATTRIB_AFTER = ATTRIB_BEFORE
 #: The ENABLE_BIT-only arm: only the colour write mask is written inside it, so only that may survive the pop.
-ATTRIB_OUTSIDE = "cm=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
+ATTRIB_OUTSIDE = "cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
+#: GL_LINEAR, the filter the scene sets on its probe texture (not GL's initial value and not the zero-writer's 0).
+TEXTURE_FILTER = 9729
 WHITE = (255, 255, 255)
 MAGENTA = (255, 0, 255)
 
 
 def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE, attrib_after=ATTRIB_AFTER,
-           attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None):
+           attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None, boolean_mismatches=0, texture_filter=TEXTURE_FILTER,
+           filter_expected=TEXTURE_FILTER):
     """The layout `DisplayListLegacyScreen.describeLayout` prints, for a 427x240 GUI at scale 3."""
     return ("gui=%dx%d panel=%s square=%d slots=%d,%d triangle=%d,%d,%d direct=%d,%d,%d even=%d,%d odd=%d,%d "
             "armA=%d,%d,%d armB=%d,%d,%d texControl=%d,%d,%d "
@@ -65,6 +69,7 @@ def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB
             "colourAfterCompile=0,0,255 compileColourLeaks=%d compileColourFrames=%d "
             "attribMask=0x4f20c armD=%d,%d,%d armE=%d,%d,%d attribColour=0,255,0 "
             "attribBefore=%s attribInside=%s attribAfter=%s attribOutsideAfter=%s attribFrames=%d "
+            "booleanQueryMismatches=%d textureFilter=%d textureFilterExpected=%d "
             "callColour=255,0,0 insideColour=0,255,0 frames=%d compiles=1 dumps=2 stages=displaylist-f40-a "
             "displaylist-f41-b" % (GUI_WIDTH, GUI_HEIGHT, PANEL, HALF, SLOT_A, SLOT_B, TRIANGLE_X, TRIANGLE_Y,
                                    TRIANGLE_R, DIRECT_X, TRIANGLE_Y, DIRECT_HALF, SLOT_A, SLOT_B, SLOT_B, SLOT_A,
@@ -72,7 +77,8 @@ def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB
                                    ARM_HALF, ARM_C_X, ARM_C_Y, ARM_HALF, leaks, frames,
                                    ARM_D_X, ARM_C_Y, ARM_HALF, ARM_E_X, ARM_C_Y, ARM_HALF,
                                    attrib_before, attrib_inside, attrib_after, attrib_outside,
-                                   frames if attrib_frames is None else attrib_frames, frames))
+                                   frames if attrib_frames is None else attrib_frames,
+                                   boolean_mismatches, texture_filter, filter_expected, frames))
 
 
 def load_check():
@@ -139,7 +145,8 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
     def run_check(self, outer_colour, inner_colour, compile_time_green_in_both=False, compile_layout=False,
                   compile_colour_leak=False, leaks=0, second_stage_kept_only=False, attrib_restored=True,
                   attrib_leaked=False, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE,
-                  attrib_after=ATTRIB_AFTER, attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None):
+                  attrib_after=ATTRIB_AFTER, attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None,
+                  boolean_mismatches=0, texture_filter=TEXTURE_FILTER, filter_expected=TEXTURE_FILTER):
         """Builds the two frames and runs the checker; returns (exit code, output)."""
         check = load_check()
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +176,8 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
             report = {
                 "displayListLayout": layout(leaks=leaks, attrib_before=attrib_before, attrib_inside=attrib_inside,
                                             attrib_after=attrib_after, attrib_outside=attrib_outside,
-                                            attrib_frames=attrib_frames),
+                                            attrib_frames=attrib_frames, boolean_mismatches=boolean_mismatches,
+                                            texture_filter=texture_filter, filter_expected=filter_expected),
                 "displayListCompiles": 1,
                 "displayListDumpCount": 2,
                 "displayListDump_displaylist-f40-a": "screenshots/displaylist-f40-a.png completed=true frame=40",
@@ -294,9 +302,40 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
         """The state readback is its own instrument: a restore that misses a group is named even if the picture looks
         right, and the group is named by key."""
         code, output = self.run_check((255, 0, 0), (0, 255, 0),
-                                      attrib_after="cm=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0")
+                                      attrib_after="cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,"
+                                                   "sb=0,0,1280,720,po=0.0")
         self.assertEqual(1, code, "a pop that left the colour write mask off must not pass: " + output)
         self.assertIn("glPopAttrib did not put back cm", output)
+
+    def test_a_boolean_query_that_answers_another_state_fails(self):
+        """GL answers the colour write mask through every width. `cmB=0000` with `cm=1111` is the shape leg r30b
+        measured: the native boolean query never reached the stub and the zero-writer answered one byte."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0),
+                                      attrib_before="cm=1111,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,"
+                                                    "sb=0,0,1280,720,po=0.0")
+        self.assertEqual(1, code, "a boolean query that answered another state must not pass: " + output)
+        self.assertIn("cm=1111 through glGetFloatv and cmB=0000 through glGetBooleanv", output)
+
+    def test_a_missing_boolean_readback_is_named_not_read_as_agreement(self):
+        """A scene that does not report the boolean width cannot prove the query works, so the key is named."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0),
+                                      attrib_before=ATTRIB_BEFORE.replace("cmB=1111,", ""),
+                                      attrib_inside=ATTRIB_INSIDE.replace("cmB=0000,", ""),
+                                      attrib_after=ATTRIB_AFTER.replace("cmB=1111,", ""),
+                                      attrib_outside=ATTRIB_OUTSIDE.replace("cmB=0000,", ""))
+        self.assertEqual(1, code, "a dump without the boolean readback must not pass: " + output)
+        self.assertIn("has no cmB= readback", output)
+
+    def test_a_tex_parameter_query_that_answered_zero_fails(self):
+        """The same dead-route shape: the query wrote one zero int instead of the filter the scene set."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), texture_filter=0)
+        self.assertEqual(1, code, "a tex-parameter query that answered 0 must not pass: " + output)
+        self.assertIn("answered 0, not the " + str(TEXTURE_FILTER), output)
+
+    def test_a_scene_without_the_filter_probe_is_refused(self):
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), filter_expected=-1)
+        self.assertEqual(1, code, "a report without the filter probe must not pass: " + output)
+        self.assertIn("did not report the filter it set", output)
 
     def test_an_enable_only_push_that_restored_the_colour_mask_fails(self):
         """The old behaviour - restore everything regardless of the mask - is exactly this readback."""

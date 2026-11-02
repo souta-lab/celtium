@@ -412,3 +412,36 @@ validation と dump の stall（`submitToFenceMs worst≈10s`）で伸びるの�
 **規約**: この scene は `--duration 300` を既定にする。frame 数（`displayListDrawnFrames` 51 vs 172）を FPS と
 して読まない — run の終端が tick で決まるので frame 数は run 長の関数であり、round 8 の同じ Celtium の leg は
 `frameIntervalP50Ms=73.7`、今回の `r29d` は 1710 で、window の定義が違う。性能は専用 leg で測る。
+
+## 送っていないルートは bytecode 検証を通過する（2026-11-02 実測・修正）
+
+**症状**: `glGetBooleanv(GL_COLOR_WRITEMASK)` が同じ frame の `glGetFloatv` の `1111` に対して `0000`、
+`glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER)` が scene の設定した `GL_LINEAR` に対して `0`。
+in-process の dispatch テスト（stub の table 経由）は両方正しく答える。route verify も `called=241 failed=0`、
+class 87/0 で緑。
+
+**原因**: transformer の2つの route が `"(IJ)".equals(descriptor)` / `"(IIJ)".equals(descriptor)` で比較していた。
+descriptor は戻り値型を含む（`(IJ)V`）ので**一度も一致しない**。一致しない native は汎用の zero-writer
+（`glGetZero` が1個の0を書く）に落ち、呼び手の buffer は「それらしい0」になる。class は正常にロードされ、
+呼び出しも例外を出さないので、ロード/bytecode 検証からは見えない。直前の round で同じ穴を `startsWith` に
+直した箇所があり、コメントにも「`(IJ)` との一致は実 native に決して一致しない」と書いてあった隣で、
+2箇所が同じ書き方のまま残っていた。
+
+**規約**: route の検証は (a) 変換後の実 class の method body が**専用の hint を呼んでいる**こと（`glGetZero` で
+ないこと）と、(b) その route を**実行して答えを読む**ことの両方で行う
+（`scripts/cpu-contract/TransformerRouteVerifierCheck` の phase 5/6）。descriptor の比較は戻り値型まで含めるか
+`startsWith` を使う。「ロードできた」「例外が出ない」「0 が返った」は route が生きている証拠ではない。
+陽性対照は route を旧実装に戻して phase 5/6 が FAIL すること（実測: `query natives routed=3/8`,
+`boolean=0111 float=1010 texFilter=0x0`）。
+
+## 平文レポートの key 分割が小文字だけだと `cmB` は「無い」と読める（2026-11-02 実測）
+
+**症状**: fixture は `attribBefore=cm=1111,cmB=1111,...` と印字しているのに、checker は
+`attribBefore has no cmB= readback` で落ちた。
+
+**原因**: `parse_attrib_state` の分割が `re.split(r",(?=[a-z]+=)", text)` で、key の文字クラスが小文字だけ。
+`cmB` は大文字を含むので分割されず、`cm` の値が `1111,cmB=1111` になった。**「key が無い」は計器の欠落では
+なく parser の欠落**であり、そのまま「測っていない」と読むと存在する測定を捨てる。
+
+**規約**: 平文 key=value を足すときは、その parser の key 文法（大文字・数字・`_`）を先に確認する。
+checker の test は「key を消したとき」と「key があるのに読めないとき」を別々に持つ。

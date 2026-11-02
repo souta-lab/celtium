@@ -170,11 +170,13 @@ def parse_attrib_state(text):
 
     The values are the GL queries' answers joined with commas inside a single report token, so the split is on the
     comma that starts a new key - `sb=0,0,1280,720` is one value, and a plain `text.split(",")` would cut it in four.
+    The key pattern accepts capitals: `cmB` (the boolean width of the colour write mask) is camel-cased, and a
+    lowercase-only pattern silently swallowed it into the `cm` value - the key read as absent while the string showed it.
     """
     if not text or text == "none":
         return {}
     state = {}
-    for token in re.split(r",(?=[a-z]+=)", text):
+    for token in re.split(r",(?=[A-Za-z][A-Za-z0-9]*=)", text):
         if "=" in token:
             key, value = token.split("=", 1)
             state[key] = value
@@ -250,6 +252,10 @@ def layout_of(report):
         "attrib_after": attrib_after,
         "attrib_outside_after": attrib_outside_after,
         "attrib_frames": int(fields.get("attribFrames", "0")),
+        "boolean_query_mismatches": int(fields.get("booleanQueryMismatches", "0")),
+        "attrib_frames_reported": "attribFrames" in fields,
+        "texture_filter": int(fields.get("textureFilter", "-1")),
+        "texture_filter_expected": int(fields.get("textureFilterExpected", "-1")),
         "call_colour": call_colour,
         "inside_colour": inside_colour,
         "frames": int(fields.get("frames", "0")),
@@ -484,6 +490,49 @@ def attrib_state_failures(layout, label):
     return failures
 
 
+def query_width_failures(layout, label):
+    """{@return} the failures of the two state queries that must agree with their sibling width, or [].
+
+    GL answers one boolean-state parameter through every `glGet*` width, so these are not extra features:
+
+    * `glGetBooleanv(GL_COLOR_WRITEMASK)` must give the same four channels as `glGetFloatv` (the scene reports the
+      float form as `cm` and the boolean one as `cmB`). Measured on leg r30b: `cm=1111` with `cmB=0000` in one frame,
+      because the native boolean query never reached the stub and the zero-writer answered one byte. A renderer that
+      answers the float form and not the boolean one corrupts every mod that saves the mask in a byte array.
+    * `glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER)` must answer the filter the scene set. It read 0 for
+      the same reason, and a save/restore around it put back a filter GL never had.
+
+    Both claims need the scene's own report: a dump from before these fields existed cannot be judged, and the missing
+    key is named rather than treated as agreement.
+    """
+    label = label + ": "
+    failures = []
+    for name, state in (("attribBefore", layout["attrib_before"]), ("attribInside", layout["attrib_inside"]),
+                        ("attribAfter", layout["attrib_after"]),
+                        ("attribOutsideAfter", layout["attrib_outside_after"])):
+        if not state:
+            continue
+        if "cmB" not in state:
+            failures.append(label + name + " has no cmB= readback; the boolean width of the colour write mask query "
+                            "was not measured")
+        elif state.get("cmB") != state.get("cm"):
+            failures.append(label + name + " answers the colour write mask as cm=" + str(state.get("cm"))
+                            + " through glGetFloatv and cmB=" + str(state.get("cmB")) + " through glGetBooleanv; GL "
+                            "answers both widths from one state, so the boolean query is not reading it")
+    if layout.get("boolean_query_mismatches", 0) > 0:
+        failures.append(label + "the scene counted " + str(layout["boolean_query_mismatches"])
+                        + " frame(s) in which the two query widths disagreed")
+    expected_filter = layout.get("texture_filter_expected", -1)
+    if expected_filter <= 0:
+        failures.append(label + "the scene did not report the filter it set (textureFilterExpected="
+                        + str(expected_filter) + ")")
+    elif layout.get("texture_filter", -1) != expected_filter:
+        failures.append(label + "glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER) answered "
+                        + str(layout.get("texture_filter")) + ", not the " + str(expected_filter)
+                        + " (GL_LINEAR) the scene set; the tex-parameter query is not reading the recorded state")
+    return failures
+
+
 def attrib_picture_failures(reading, label):
     """{@return} the attribute arms' picture failures: the restored push draws, the unrestricted push does not."""
     failures = []
@@ -608,6 +657,7 @@ def single_picture_report(image, layout, scale, label):
     failures.extend(arm_failures(arms, label))
     failures.extend(compile_colour_failures(layout, label))
     failures.extend(attrib_state_failures(layout, label))
+    failures.extend(query_width_failures(layout, label))
     failures.extend(attrib_picture_failures(arms, label))
     reading = {"stage": label, "band0_red": bands[0][0], "band0_green": bands[0][1],
                "band1_red": bands[1][0], "band1_green": bands[1][1], "triangle_cyan": cyan, "direct_yellow": yellow,
@@ -818,6 +868,12 @@ def main(argv):
     if state_failed:
         passed = False
         failures.extend(state_failed)
+    # And the two queries that must agree with their sibling width: glGetBooleanv against glGetFloatv for the colour
+    # write mask, and glGetTexParameteriv against the filter the scene set. Both measured dead on leg r30b/r31a.
+    width_failed = query_width_failures(layout, next(iter(sorted(readings)), "measurement"))
+    if width_failed:
+        passed = False
+        failures.extend(width_failed)
 
     # The panel's markers must be where the layout says, or the picture is of something else.
     for stage, (image, scale, reading) in sorted(readings.items()):

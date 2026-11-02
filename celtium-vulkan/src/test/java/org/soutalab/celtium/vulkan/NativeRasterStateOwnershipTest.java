@@ -77,6 +77,29 @@ class NativeRasterStateOwnershipTest {
         } finally { MemoryUtil.memFree(out); }
     }
 
+    /**
+     * The cull mode starts at GL's own enum, not at an internal index.
+     *
+     * <p>The owner used to start at {@code VulkanGlState.CULL_BACK}, an internal {@code 1}, while every writer - the raw
+     * {@code glCullFace} adapter, the managed setter and the stub - stored GL's enum. A save/restore that read the mode
+     * before vanilla had set one got {@code 1}, which is not a GL enum at all: the display-list leg measured
+     * {@code cf=1} against a Celeritas reference answering {@code 1029} (GL_BACK). One encoding for a value the GL
+     * query answers is the fix; the constants are GL's enums so a future comparison cannot mix them again.
+     */
+    @Test
+    void theCullModeStartsAtGlBackAndTheConstantsAreGlEnums() throws Exception {
+        assertEquals(0x0405, this.raster.cullFace(), "GL's initial cull mode is GL_BACK");
+        assertEquals(0x0404, VulkanGlState.CULL_FRONT);
+        assertEquals(0x0405, VulkanGlState.CULL_BACK);
+        assertEquals(0x0408, VulkanGlState.CULL_BOTH);
+        var out = MemoryUtil.memAlloc(16);
+        try {
+            call("glGetIntegerv", 0x0B45, MemoryUtil.memAddress(out));
+            assertEquals(0x0405, out.getInt(0),
+                    "the query must answer the enum GL answers before any caller sets a face");
+        } finally { MemoryUtil.memFree(out); }
+    }
+
     @Test
     void deferredGeometryObservesOldStateAndSnapshotsOutliveSubsequentChanges() throws Exception {
         var observed = new ArrayList<Integer>();

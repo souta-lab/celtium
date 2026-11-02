@@ -69,6 +69,18 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   `GL_FOG_BIT`・`GL_STENCIL_BUFFER_BIT`・`GL_VIEWPORT_BIT`。vanilla の mask `8256` は `GL_LIGHTING_BIT` を含むので
   item frame/totem 経路では実在の穴。根拠: [attribute stack](evidence/attribute-stack-mask-2026-11-02.md)
   （fixture の arm D/E が same-scene で Celtium と Celeritas 実GLの両方で一致、validation 0） |
+| ネイティブ `glGet*` のクエリ | **ルートが一致しなければ「それらしい0」が返る**（2026-11-02 修正）。transformer は
+  LWJGL3 の `ngl*` を Java 本体に置き換えるが、置き換え先が専用ハンドラでなく汎用 zero-writer
+  （`glGetZero` が1個の0を書く）に落ちても、class は正常にロードされ例外も出ない。実測: `nglGetBooleanv` と
+  `nglGetTexParameteriv/fv/Iiv/Iuiv` の route が `"(IJ)".equals(descriptor)` / `"(IIJ)".equals(descriptor)` で
+  比較していて**一度も一致せず**（descriptor は戻り値型を含む）、`glGetBooleanv(GL_COLOR_WRITEMASK)` が同一
+  frame の `glGetFloatv` の `1111` に対して `0000`、`glGetTexParameteriv(GL_TEXTURE_MIN_FILTER)` が scene の
+  設定した `GL_LINEAR` に対して `0` を返した。今は `descriptor.startsWith("(IJ)")`/`startsWith("(IIJ)")` で
+  専用ハンドラに入る。検証は `scripts/cpu-contract/TransformerRouteVerifierCheck` の phase 5（変換後の実 class の
+  method body が専用 hint を呼ぶこと）と phase 6（stub を install して変換後の native を**実行**し、boolean/
+  float/tex の答えを読む）。fixture は `attrib*` に `cmB=`（boolean 幅）と `textureFilter=`/
+  `textureFilterExpected=` を併記し、checker が「同じ状態は全ての幅で同じ値」「設定した filter が返る」を主張する。
+  根拠: [query routes](evidence/query-routes-2026-11-02.md) |
 | ミラー（GL名→画像） | 供給元が無い名前には**空のミラーを作らない**（2026-11-02）。作っても sampling 側が
   「全内容が来ていないミラー」として拒否するので描けず、しかも entry が存在するせいで以後の lookup が plain hit に
   なり、後から届いた upload を二度と拾えなかった。いまは null を返し、その判断を**level の write serial ごとに記憶**
