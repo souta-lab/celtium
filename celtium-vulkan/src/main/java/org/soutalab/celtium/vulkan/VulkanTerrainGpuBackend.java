@@ -1014,9 +1014,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // In GL-less, terrain may be reached after the game has switched away from
         // the lightmap unit. Recover its mirror from the unit announced by Minecraft
         // before rejecting the terrain pass; a refused pass never reaches the queue.
-        if (this.lightmapTexture == null) {
-            ensureLightmapMirror();
-        }
+        // "An image exists" is not "the mirror is established": a supply that failed leaves an image no upload ever
+        // filled, and that is the state the one route with the owner's pixels as a source must still be asked about.
+        ensureUsableLightmap();
         if (this.atlasTexture == null || this.lightmapTexture == null) {
             // Without both textures the descriptor set cannot be filled; the pass is skipped and the reason is
             // recorded instead of drawing with an unbound atlas.
@@ -1783,6 +1783,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
+    /**
+     * Extents the light map's own pixel array answered because the stub had recorded none, and supply attempts skipped
+     * because the level's content had not changed since the last one.
+     * <p>
+     * The pair is what separates "the mirror is established" from "nothing was tried": the first says the size came
+     * from the DynamicTexture rather than from an allocation the stub may have missed, the second says a name nothing
+     * can fill is not re-read on every pass.
+     */
+    private int lightmapExtentFromOwner;
+    private int lightmapSupplyRetrySkips;
+    /**
+     * The light map supply's last answer per content serial - the same rule the registry's lookups and the lazy supply
+     * follow. A refused readback is not free and the light map is asked for on every pass, so "nothing can fill this
+     * name" is remembered only for the content it was asked about; the stub numbers every write to the level.
+     */
+    private final MirrorDeferralGate lightmapSupplyAttempts = new MirrorDeferralGate();
 
     /** Bounded report counter for the light map mirror's decision. */
     private int celtium$lightmapReports;
@@ -4925,6 +4941,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " keptForOtherTargets=" + this.immediateStatistics.immediateGroupsKeptForOtherTargets()
                     + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
                     + " lightmapSuppliedOnDemand=" + this.lightmapSuppliedOnDemand
+                    + " lightmapExtentFromOwner=" + this.lightmapExtentFromOwner
+                    + " lightmapSupplyRetrySkips=" + this.lightmapSupplyRetrySkips
                     + " lightmapSupplyFailure=[" + this.lastLightmapSupplyFailure + "]"
                     + " lineBatchesNative=" + this.lineBatchesNative
                     + " lineBatchesRefusedForWidth=" + this.lineBatchesRefusedForWidth
@@ -6535,9 +6553,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 texture = this.textureRegistry.get(boundTexture);
             }
         }
-        if (this.lightmapTexture == null) {
-            ensureLightmapMirror();
-        }
+        // Retried through the one route that can answer for the light map (see ensureUsableLightmap): a mirror whose
+        // supply failed is asked for again here rather than sampled empty.
+        ensureUsableLightmap();
         if (texture == null || this.lightmapTexture == null) {
             this.immediateLastRefusal = "the descriptor needs the light map and texture " + boundTexture + " (lightmap="
                     + (this.lightmapTexture != null) + " texture=" + (texture != null) + ")";
@@ -7196,7 +7214,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return false;
         }
         if (formatId == 3 || formatId == 5) {
-            ensureLightmapMirror();
+            ensureUsableLightmap();
         }
         if ((formatId == 3 || formatId == 5) && this.lightmapTexture == null) {
             // Which of the two conditions kept the mirror from being taken is named, so this does not end as a branch
@@ -9813,7 +9831,21 @@ this.frameBufferOpen = false;
         } finally { this.immediateWindowBusy = false; }
     }
 
-    /** Validate before acceptance; final default-FBO composite remains GL-owned, never inferred from format id. */
+    /**
+     * {@return whether a light map mirror holding whole content is held}, re-taking it when it is not.
+     * <p>
+     * The callers used to test the field for {@code null}, which is the weaker question: a mirror whose supply failed
+     * is an image no upload ever filled, and it is exactly the state in which the owner's pixels have to be asked for
+     * again. The answer is the field's content, not its existence, so the descriptor decision and the model path see
+     * the same rule the terrain pass does.
+     */
+    boolean ensureUsableLightmap() {
+        if (this.lightmapTexture == null || !this.lightmapTexture.hasFullContent()) {
+            ensureLightmapMirror();
+        }
+        return this.lightmapTexture != null && this.lightmapTexture.hasFullContent();
+    }
+
     /**
      * Takes the light map mirror again when its GL id is known but the mirror is missing.
      * <p>
@@ -9823,75 +9855,179 @@ this.frameBufferOpen = false;
      * refusals per run, with the light map supply sitting below the decision that turned the batch away).
      */
     void ensureLightmapMirror() {
-        if (this.lightmapTexture != null) {
+        // "The field holds an image" is not "the mirror is established". The other route to this field (refreshTextures)
+        // used to assign the image before its supply ran, and the supply it used cannot succeed for the light map: the
+        // stub's captured level is the NULL-data allocation, which readCapturedLevel refuses as "allocated with no data
+        // and no upload ever wrote pixels". The content-less image it left behind switched this method off - it is the
+        // only route with the owner's pixels as a source - while the terrain pass, which tests the same field for null,
+        // kept drawing with it. Testing the content, not the object, is what reopens the one route that can fill it.
+        if (this.lightmapTexture != null && this.lightmapTexture.hasFullContent()) {
             return;
         }
         int resource = LightmapIdSource.lightmapTextureId();
         if (resource > 0) this.lightmapGlId = resource;
-        if (this.lightmapGlId > 0) {
-            try {
-                int[] size = textureSize(this.lightmapGlId);
-                // Bounded report of the decision this block makes. Leg gv-cohort-lm2 learned the id (18) and still
-                // left lightmapSuppliedOnDemand at zero with no failure recorded, which means one of the silent
-                // conditions here is the one that fires; the size and the id together say which.
-                if (celtium$lightmapReports++ < 8) {
-                    System.out.println("[Celtium] CELTIUM_LIGHTMAP id=" + this.lightmapGlId
-                            + " size=" + size[0] + "x" + size[1]
-                            + " texture=" + (this.lightmapTexture == null ? "null" : "set"));
-                }
-                if (size[0] > 0 && size[1] > 0) {
-                    // Bounded stage marker. Leg gv-cohort-lm3 showed valid inputs (id=18, size=256x256) and still left
-                    // the mirror null with no failure recorded, so the question is which of these four calls is where
-                    // it stops - the report's counters are a single early heartbeat and cannot say.
-                    celtium$lightmapStage("imageFor");
-                    org.soutalab.celtium.vulkan.VulkanGlTexture established =
-                            celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
-                    celtium$lightmapStage("upload");
-                    try {
-                        established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
-                    } catch (IllegalStateException captureMiss) {
-                        // The stub captured no upload for this level, because 1.12.2 uploads the light map through
-                        // GlStateManager, which skips the GL calls when its cache already holds the state. Measured on
-                        // leg gv-cohort-lm5, where this threw on every attempt and the mirror stayed null. The
-                        // DynamicTexture that owns the pixels answers instead - the same route the texture name took.
-                        int[] pixels = org.soutalab.celtium.vulkan.LightmapIdSource.lightmapPixels();
-                        boolean usable = pixels != null && pixels.length >= 256;
-                        if (usable) {
-                            // false is not a failure here: uploadFromImage returns false when the image already holds
-                            // exactly these pixels (same hash, same size), which is the state a second call in the same
-                            // frame finds. Measured on leg gv-cohort-lm7, where the pixels were present (256 of them,
-                            // a 16x16 map) and the upload answered false, and this check rethrew on it - reading a
-                            // no-op as a failure. The image having the pixels is the outcome wanted either way.
-                            established.uploadFromImage(16, 16, celtium$argbToRgba(pixels));
-                        }
-                        if (celtium$lightmapFallbacks++ < 4) {
-                            System.out.println("[Celtium] CELTIUM_LIGHTMAP_FALLBACK pixels="
-                                    + (pixels == null ? "null" : String.valueOf(pixels.length))
-                                    + " usable=" + usable);
-                        }
-                        if (!usable) {
-                            throw captureMiss;
-                        }
-                    }
-                    celtium$lightmapStage("markInitialized");
-                    celtium$registry().markFullyInitialized(this.lightmapGlId);
-                    celtium$lightmapStage("assigned");
-                    this.lightmapTexture = established;
-                    this.lightmapReestablished++;
-                    this.lightmapSuppliedOnDemand++;
-                }
-            } catch (RuntimeException | LinkageError error) {
-                this.lastLightmapSupplyFailure = String.valueOf(error);
-                // The failure was only ever readable through the heartbeat, which prints once, so leg gv-cohort-lm4
-                // showed the upload being entered and the loop restarting without ever naming the exception. Bounded,
-                // and at the moment it happens.
-                if (celtium$lightmapFailures++ < 4) {
-                    System.out.println("[Celtium] CELTIUM_LIGHTMAP_FAILURE id=" + this.lightmapGlId
-                            + " error=" + error);
-                    error.printStackTrace(System.out);
+        if (this.lightmapGlId <= 0) {
+            return;
+        }
+        // The registry may already hold this name's whole content without this backend ever having supplied it: the
+        // light map's DynamicTexture announces its pixels on every update, and announceFullPixels establishes and fills
+        // the mirror from them. Adopting that image is the same economy the direct supply's "announcement-skip" arm
+        // uses, and it is the only source left when the owner's pixel supplier is not installed. It is checked before
+        // the content gate below, because an announcement is a registry write that moves no stub serial - a gate
+        // recorded against "nothing can fill this" would otherwise hide the very pixels it is waiting for.
+        org.soutalab.celtium.vulkan.VulkanGlTexture announced = celtium$registry().get(this.lightmapGlId);
+        if (announced != null && announced.hasFullContent()) {
+            this.lightmapTexture = announced;
+            this.lightmapSourceGlId = this.lightmapGlId;
+            this.lightmapSupplyAttempts.forget(this.lightmapGlId);
+            this.lightmapReestablished++;
+            this.lightmapSuppliedOnDemand++;
+            return;
+        }
+        long contentSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .textureUploadSerial(this.lightmapGlId, 0);
+        if (this.lightmapSupplyAttempts.isCurrent(this.lightmapGlId, contentSerial)) {
+            // The same answer about the same content. This is what keeps a name nothing can fill from costing a refused
+            // readback on every pass: a write to the level moves the serial and the question is asked again.
+            this.lightmapSupplyRetrySkips++;
+            return;
+        }
+        try {
+            int[] stubSize = textureSize(this.lightmapGlId);
+            int[] ownerPixels = LightmapIdSource.lightmapPixels();
+            int ownerSide = LightmapExtent.squareSide(ownerPixels);
+            int[] size = LightmapExtent.resolve(stubSize[0], stubSize[1], ownerSide);
+            if (ownerSide > 0 && stubSize[0] < LightmapExtent.MINIMUM_SIDE) {
+                // The size came from the pixels, not from a recorded allocation: the light map's write path is the one
+                // the state manager can skip, so a leg has to be able to tell this from the ordinary case.
+                if (this.lightmapExtentFromOwner++ == 0) {
+                    System.out.println("[Celtium] CELTIUM_LIGHTMAP_EXTENT id=" + this.lightmapGlId
+                            + " owner=" + ownerSide + "x" + ownerSide
+                            + " stubRecorded=" + stubSize[0] + "x" + stubSize[1]
+                            + " (the level's own pixels answer what the stub did not record)");
                 }
             }
+            // Bounded report of the decision this block makes. Leg gv-cohort-lm2 learned the id (18) and still left
+            // lightmapSuppliedOnDemand at zero with no failure recorded, which means one of the silent conditions here
+            // is the one that fires; the size, the source that answered it and the id together say which.
+            if (celtium$lightmapReports++ < 8) {
+                System.out.println("[Celtium] CELTIUM_LIGHTMAP id=" + this.lightmapGlId
+                        + " size=" + size[0] + "x" + size[1]
+                        + " stub=" + stubSize[0] + "x" + stubSize[1]
+                        + " ownerSide=" + ownerSide
+                        + " texture=" + (this.lightmapTexture == null ? "null"
+                                : this.lightmapTexture.width() + "x" + this.lightmapTexture.height()
+                                        + " full=" + this.lightmapTexture.hasFullContent()));
+            }
+            if (size[0] < LightmapExtent.MINIMUM_SIDE || size[1] < LightmapExtent.MINIMUM_SIDE) {
+                // Nothing answers the size: no record and no whole-level array. The decision is recorded against this
+                // content so the pass does not ask again until a write lands; the mirror stays absent, which is what
+                // the caller's pass-skip guard reads, instead of an image created at a placeholder extent.
+                this.lastLightmapSupplyFailure = "no extent for the light map: the stub recorded " + stubSize[0] + "x"
+                        + stubSize[1] + " and the owner's array " + (ownerPixels == null ? "was absent"
+                                : "is " + ownerPixels.length + " texels, not a square level-0 image");
+                this.lightmapSupplyAttempts.note(this.lightmapGlId, contentSerial);
+                return;
+            }
+            boolean captureHasPixels = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .textureLevelHasGamePixels(this.lightmapGlId, 0);
+            if (!captureHasPixels && ownerSide < LightmapExtent.MINIMUM_SIDE) {
+                // No source at all: the stub's level holds only the NULL-data allocation and the owner has no whole
+                // image to offer. Creating the mirror anyway is what rounds 5 and 6 removed from the registry's own
+                // door - an image nothing can fill existed, so every later lookup was a plain hit that never asked
+                // again, and the pixels that arrived later stayed invisible.
+                this.lastLightmapSupplyFailure = "no source for the light map: the captured level has no game pixels"
+                        + " and the owner's array " + (ownerPixels == null ? "was absent"
+                                : "is " + ownerPixels.length + " texels, not a square level-0 image");
+                this.lightmapSupplyAttempts.note(this.lightmapGlId, contentSerial);
+                return;
+            }
+            // Bounded stage marker. Leg gv-cohort-lm3 showed valid inputs (id=18, size=256x256) and still left the
+            // mirror null with no failure recorded, so the question is which of these four calls is where it stops -
+            // the report's counters are a single early heartbeat and cannot say.
+            celtium$lightmapStage("imageFor");
+            org.soutalab.celtium.vulkan.VulkanGlTexture established =
+                    celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
+            boolean supplied = false;
+            if (captureHasPixels) {
+                celtium$lightmapStage("upload");
+                try {
+                    established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                } catch (IllegalStateException captureMiss) {
+                    // The level has game pixels but the capture still cannot deliver them (a partial record, a level
+                    // re-allocated under the same name). The owner's array describes the whole image either way.
+                }
+                supplied = established.hasFullContent();
+            }
+            if (!supplied) {
+                // The level exists only as the NULL-data allocation, which is the light map's documented shape: there
+                // is nothing to read, and asking would throw on every establishment. The DynamicTexture's array is the
+                // same content GL is given, so it is supplied directly instead of through a rejection known in advance
+                // (measured on leg gv-cohort-lm5, where the readback threw on every attempt).
+                supplied = celtium$uploadLightmapOwnerPixels(established, ownerPixels, ownerSide);
+            }
+            if (!supplied) {
+                this.lastLightmapSupplyFailure = "no source for the light map: the captured level "
+                        + (captureHasPixels ? "could not be read" : "has no game pixels")
+                        + " and the owner's array did not fill the mirror";
+                this.lightmapSupplyAttempts.note(this.lightmapGlId, contentSerial);
+                return;
+            }
+            celtium$lightmapStage("markInitialized");
+            celtium$registry().markFullyInitialized(this.lightmapGlId);
+            celtium$lightmapStage("assigned");
+            this.lightmapTexture = established;
+            // The id the mirror was taken for, so the per-write refresh path recognises it. It used to be set only by
+            // refreshTextures, which is the route that could not establish this mirror at all.
+            this.lightmapSourceGlId = this.lightmapGlId;
+            this.lightmapSupplyAttempts.forget(this.lightmapGlId);
+            this.lightmapReestablished++;
+            this.lightmapSuppliedOnDemand++;
+        } catch (RuntimeException | LinkageError error) {
+            this.lastLightmapSupplyFailure = String.valueOf(error);
+            this.lightmapSupplyAttempts.note(this.lightmapGlId, contentSerial);
+            // The failure was only ever readable through the heartbeat, which prints once, so leg gv-cohort-lm4
+            // showed the upload being entered and the loop restarting without ever naming the exception. Bounded,
+            // and at the moment it happens.
+            if (celtium$lightmapFailures++ < 4) {
+                System.out.println("[Celtium] CELTIUM_LIGHTMAP_FAILURE id=" + this.lightmapGlId
+                        + " error=" + error);
+                error.printStackTrace(System.out);
+            }
         }
+    }
+
+    /**
+     * Uploads the owner's whole-level pixels into the light map mirror.
+     * <p>
+     * The upload's size is the array's own square side, not a hardcoded 16: the image was created at exactly this
+     * extent (see {@link LightmapExtent}), so the copy cannot recreate its resources behind the registry entry's
+     * record. A {@code false} return from {@code uploadFromImage} is not a failure - it means the image already holds
+     * these exact pixels, which is the state a second attempt in the same frame finds (leg gv-cohort-lm7) - so the
+     * image's own content flag is what answers.
+     *
+     * @return whether the mirror now holds the light map's whole content
+     */
+    private boolean celtium$uploadLightmapOwnerPixels(org.soutalab.celtium.vulkan.VulkanGlTexture image,
+            int[] pixels, int side) {
+        boolean usable = image != null && side >= LightmapExtent.MINIMUM_SIDE
+                && image.width() == side && image.height() == side;
+        if (usable) {
+            try {
+                image.uploadFromImage(side, side, celtium$argbToRgba(pixels));
+            } catch (RuntimeException | LinkageError error) {
+                this.lastLightmapSupplyFailure = "the owner's light map pixels would not upload: " + error;
+                usable = false;
+            }
+        }
+        if (celtium$lightmapFallbacks++ < 4) {
+            System.out.println("[Celtium] CELTIUM_LIGHTMAP_FALLBACK pixels="
+                    + (pixels == null ? "null" : String.valueOf(pixels.length))
+                    + " side=" + side + " usable=" + usable
+                    + " image=" + (image == null ? "none" : image.width() + "x" + image.height())
+                    + " full=" + (image != null && image.hasFullContent()));
+        }
+        return image != null && image.hasFullContent();
     }
 
 
@@ -16392,7 +16528,20 @@ this.frameBufferOpen = false;
 
     private int groupDepthRowChecks;
 
+    /**
+     * Takes both directly sampled textures' mirrors: the block atlas and the light map.
+     * <p>
+     * Two methods rather than one, because the atlas's "no storage yet" answer used to be a {@code return} from this
+     * method - and the atlas block sits above the light map's, so a frame in which the atlas had no extent also skipped
+     * the light map's establishment. Each texture's answer now ends its own method.
+     */
     private void refreshTextures() {
+        refreshAtlasMirror();
+        refreshLightmapMirror();
+    }
+
+    /** Takes the block atlas's mirror when its name is known, on the cadence the terrain sampler needs. */
+    private void refreshAtlasMirror() {
         // A terrain material names the atlas and lightmap resources. Whichever GUI/entity texture happened to be
         // bound last is not the terrain material, and querying that binding must not mutate the active unit.
         int atlasId = LightmapIdSource.atlasTextureId();
@@ -16405,7 +16554,6 @@ this.frameBufferOpen = false;
                 atlasId = fromGame;
             }
         }
-        int lightmapId = LightmapIdSource.lightmapTextureId();
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
         // nothing the game is drawing can be disturbed.
@@ -16458,15 +16606,42 @@ this.frameBufferOpen = false;
             }
         }
         this.atlasRefreshCountdown--;
+    }
 
-        if (lightmapId != 0 && (this.lightmapTexture == null || lightmapId != this.lightmapGlId || this.lightmapRefreshCountdown <= 0)) {
-            try {
-                if (this.lightmapTexture == null || lightmapId != this.lightmapGlId) {
-                    // Same reallocation rule as the atlas above: a new name owns a new registry entry, and the old
-                    // one was retired with the name.
-                    int[] size = textureSize(lightmapId);
-                    this.lightmapTexture = celtium$registry().imageFor(lightmapId, size[0], size[1], false);
-                }
+    /**
+     * Takes the light map mirror: the one route that can establish it, plus the per-frame refresh it needs.
+     * <p>
+     * The light map changes every frame (torch flicker, sun angle, weather), and it is small, so it is refreshed every
+     * frame instead of on a cadence: a stale copy shows up as a small uniform colour shift against the OpenGL render.
+     */
+    private void refreshLightmapMirror() {
+        int lightmapId = LightmapIdSource.lightmapTextureId();
+        if (lightmapId <= 0) {
+            // No name to mirror: the source is not installed yet, or it answered its "cannot answer" -1. A negative id
+            // used to reach imageFor() as an extent of 0x0, which threw IllegalArgumentException into the catch below on
+            // every frame of the window before the game side installed the supplier.
+            this.lightmapRefreshCountdown--;
+            return;
+        }
+        if (!(this.lightmapTexture == null || lightmapId != this.lightmapGlId
+                || this.lightmapRefreshCountdown <= 0)) {
+            this.lightmapRefreshCountdown--;
+            return;
+        }
+        try {
+            if (this.lightmapTexture == null || lightmapId != this.lightmapGlId) {
+                // A different name owns a different mirror. The old image stays in the registry under the name it was
+                // created for; what must not happen is this field naming it for the new id.
+                this.lightmapTexture = null;
+                this.lightmapGlId = lightmapId;
+                // The one route that can establish the light map: the DynamicTexture's own pixels answer both its
+                // content and, when the stub recorded no extent, its size. Creating the image here and supplying it
+                // below was the route that could not succeed - its readback always misses the light map's NULL-data
+                // level - and the content-less field it left behind switched the working route off for the rest of the
+                // run (see ensureLightmapMirror).
+                ensureLightmapMirror();
+            }
+            if (this.lightmapTexture != null) {
                 if (this.lightmapIdentityLogs < 4) {
                     this.lightmapIdentityLogs++;
                     org.soutalab.celtium.vulkan.VulkanGlTexture registryEntry =
@@ -16489,14 +16664,16 @@ this.frameBufferOpen = false;
                 int[] lightmapSize = textureSize(lightmapId);
                 record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
                 this.lightmapGlId = lightmapId;
-                // The light map changes every frame (torch flicker, sun angle, weather), and it is 16x16, so it is
-                // mirrored every frame instead of on a cadence: a stale copy shows up as a small uniform colour
-                // shift against the OpenGL render.
                 this.lightmapRefreshCountdown = 1;
-            } catch (RuntimeException | LinkageError error) {
-                record("lightmap upload failed: " + describe(error));
+            } else {
+                // Nothing could supply it this pass. The field stays null so the pass-skip guard names the light map as
+                // the mirror that is missing, instead of drawing with an image no upload ever filled; the next
+                // attempt is the one ensureLightmapMirror bounds by the level's content serial.
                 this.lightmapRefreshCountdown = 1;
             }
+        } catch (RuntimeException | LinkageError error) {
+            record("lightmap upload failed: " + describe(error));
+            this.lightmapRefreshCountdown = 1;
         }
         this.lightmapRefreshCountdown--;
     }

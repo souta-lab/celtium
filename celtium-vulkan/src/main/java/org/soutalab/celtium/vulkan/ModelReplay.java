@@ -232,10 +232,9 @@ final class ModelReplay {
             // frame's first terrain pass and was the one refusal per plain leg - measured reason, leg gv-cohort-dl15:
             // "could not queue list 109 (prepareImmediate null (format=4 texture=108 (mirror has full content:
             // descriptor creation failed) pipeline=present))". The recovery is idempotent and does nothing once the
-            // mirror exists, so this costs one null check per model draw in the steady state.
-            if (b.lightmapTexture == null) {
-                b.ensureLightmapMirror();
-            }
+            // mirror holds whole content, so this costs one content check per model draw in the steady state. The check
+            // is the content, not the field: an image a failed supply left behind is not a mirror the sampler can use.
+            b.ensureUsableLightmap();
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
                     mesh.indexCount() / 6, b.celtium$envCombineColor())) {
                 b.modelDrawRefusals++;

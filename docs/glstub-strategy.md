@@ -38,6 +38,13 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   （`MirrorDeferralGate`）して、serial が動いた時だけ capture を訊き直す。framebuffer の colour attachment は
   従来どおり所有者の publish を待つ。計器は `patchCostSummary` の `contentlessDeferred`・`deferralSkips`・
   `deferredNames`（CPUテストのみ、GPU leg 未実施） |
+| ライトマップのミラー | **「画像がある」＝「ミラーが確立した」ではない**（2026-11-02）。1.12.2 のライトマップは
+  `DynamicTexture(16,16)` で、stub が捕まえる level 0 は NULL data の確保（`readCapturedLevel` が
+  「allocated with no data」で拒否する）ため readback は**必ず**空振りする。確立経路は所有者の画素
+  （`LightmapIdSource.lightmapPixels`）1本に統一し、extent は配列の平方辺（`LightmapExtent`、stub の記録が
+  無い時のみ記録に fallback）、content の無いフィールドは再供給する。供給の再試行は level の write serial で
+  bound（`MirrorDeferralGate`）。計器は `CELTIUM_ANIM` の `lightmapExtentFromOwner`・`lightmapSupplyRetrySkips`
+  と `lightmapSupplyFailure`（CPUテストのみ、GPU leg 未実施） |
 
 ⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、現在は上の表の状態。
 legacy capture は既定offのまま: 受入は[plan.md](plan.md)のgateどおり（validation 0・device lost 0・AMD/Intelの
