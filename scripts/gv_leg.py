@@ -203,6 +203,14 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         require_dir(instance / "minecraft" / name)
     mods = [renderer, fixture]
     instance_exclusions = ["celtium-*pre-stub-changes.jar"]
+    # A pack mod can make an otherwise valid scene unjudgeable by replacing the screen it drives: measured 2026-11-02,
+    # the Supersymmetry clone's TipTheScales answers the Video Settings button with its own screen, so the videoSettings
+    # scene's precondition ("the screen has to be a GuiVideoSettings") fails before its capture. Excluding the replacement
+    # is what makes the scene measurable on the pack instance the symptom was reported on. Patterns are shell-quoted so a
+    # list stays one variable, and they apply to the isolated copy only - the source instance is never modified.
+    for pattern in shlex.split(os.environ.get("CELTIUM_LEG_EXCLUDE_INSTANCE_MODS", "")):
+        if pattern:
+            instance_exclusions.append(pattern)
     if mode == "cohort":
         mods.extend(jars_in(root / ".celtium-work/modcohort"))
         if os.environ.get("CLASH_DIR"):

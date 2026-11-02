@@ -119,6 +119,11 @@ scripts/gv-leg.sh <different-leg> .gv-verify/jars/<tag> cohort intel 900
   同マップのGL参照runから測った床で判定する（`celtium$worldMapGate`）。instanceが無ければ
   `CELTIUM_INSTANCE_COHORT` のcloneを作り `.celtium-work/worlds/qmagnet` を `minecraft/saves/qmagnet` へコピーする。
 - `CELTIUM_ROOT` / `CELTIUM_INSTANCE_COHORT` / `CELTIUM_INSTANCE_WORLD` / `CELTIUM_INSTANCE_E2E` / `CELTIUM_INSTANCE_RECIPE`でcheckout/instanceを差し替える。
+- **sceneの前提を壊すpack modは隔離コピーから外せる**: `CELTIUM_LEG_EXCLUDE_INSTANCE_MODS="'TipTheScales-*'"`
+  （globをshell quoteで並べる）。隔離先からのみ外し、元instanceは変更しない。manifestの `instanceModExclusions` に残る。
+  2026-11-02実測: SupersymmetryのTipTheScalesがVideo Settingsボタンに自前の画面
+  （`com.blamejared.tipthescales.client.GuiNewVideoSettings`）を返し、fixtureの `videoSettings` sceneが前提
+  （`GuiVideoSettings` であること）で落ちてGUI stageが判定不能だった。外すと scene が通り、判定が返る。
 - **Cleanroom Relauncher 構成（2026-10-29・テスターと同条件）**: 実プレイ報告の環境は「CurseForgeのForge profile +
   `!cleanroom-relauncher-*.jar`」。ForgeのcoremodがCleanroomを用意し、**2つ目のJVM**をCleanroomのclasspathで起動する。
   検証時の要点:

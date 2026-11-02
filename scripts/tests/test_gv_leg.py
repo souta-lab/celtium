@@ -159,7 +159,7 @@ class LegRunnerTests(unittest.TestCase):
         self.environment = {"CELTIUM_ROOT": str(self.root), "CELTIUM_INSTANCE_COHORT": str(self.instance),
                             "CELTIUM_INSTANCE_E2E": str(self.instance), "CELTIUM_INSTANCE_RECIPE": str(self.instance),
                             "FAKE_SCENARIO": "passed", "E2E_EXCLUDE": "", "CLASH_DIR": "",
-                            "CELTIUM_LEG_REFERENCE_RENDERER": ""}
+                            "CELTIUM_LEG_REFERENCE_RENDERER": "", "CELTIUM_LEG_EXCLUDE_INSTANCE_MODS": ""}
         self.environment["CELTIUM_LEG_WINDOW_SYSTEM"] = "x11"
         self.environment["CELTIUM_LEG_SEED_OPTIONS"] = ""
         self.env_patch = patch.dict(os.environ, self.environment)
@@ -351,6 +351,28 @@ class LegRunnerTests(unittest.TestCase):
         rejected = runner.postcheck(plan, 0)
         self.assertFalse(rejected["accepted"], rejected)
         self.assertTrue(any("replaced renderer(s) remain" in p for p in rejected["problems"]))
+
+    def test_a_leg_can_exclude_a_pack_mod_that_replaces_a_driven_screen(self):
+        # Measured 2026-11-02: TipTheScales answers the Video Settings button with its own screen in the
+        # Supersymmetry clone, so the videoSettings scene's own precondition ("the screen has to be a
+        # GuiVideoSettings") failed before its capture and the calibrated GUI stage could not be judged at all.
+        from prism_validation import copy_pack_into_game_dir
+        replacement = "TipTheScales-1.12.2-1.0.4.jar"
+        (self.instance / "minecraft/mods" / replacement).write_bytes(b"screen replacement")
+        (self.instance / "minecraft/mods" / "content-mod.jar").write_bytes(b"content")
+        os.environ["CELTIUM_LEG_EXCLUDE_INSTANCE_MODS"] = "'TipTheScales-*' 'tipthescales-*.jar'"
+        plan = self.plan()
+        exclusions = [plan.command[i + 1] for i, arg in enumerate(plan.command[:-1])
+                      if arg == "--exclude-instance-mod"]
+        self.assertEqual(exclusions, plan.manifest["instanceModExclusions"])
+        self.assertIn("TipTheScales-*", exclusions)
+        # Exercise the real copy helper: the isolated game dir loses the replacement, the source instance keeps it.
+        isolated = self.root / "plain-copy-helper"
+        isolated.mkdir()
+        copy_pack_into_game_dir(self.instance / "minecraft", isolated, [], exclusions)
+        self.assertEqual([p.name for p in (isolated / "mods").iterdir()], ["content-mod.jar"])
+        self.assertTrue((self.instance / "minecraft/mods" / replacement).is_file(),
+                        "the exclusion is for the isolated copy; the source instance is not modified")
 
     def test_recipe_copies_content_and_manifest_dependencies_have_sources(self):
         for name in ("resources", "structures", "scripts"):
