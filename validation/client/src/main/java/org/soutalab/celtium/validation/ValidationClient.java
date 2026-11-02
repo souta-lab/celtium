@@ -7233,6 +7233,10 @@ public final class ValidationClient {
                 Integer.valueOf(this.celtium$tooltipMotionScreen.laidOutWidth()));
         report.addProperty("tooltipMotionGuiHeight",
                 Integer.valueOf(this.celtium$tooltipMotionScreen.laidOutHeight()));
+        // The second arm's target: a mod framebuffer this screen created with raw GL. Reported separately from the
+        // layout so a leg whose framebuffer was incomplete cannot be read as "the mod-target arm drew nothing".
+        report.addProperty("tooltipMotionFbo", this.celtium$tooltipMotionScreen.fboStatus()
+                + " frames=" + this.celtium$tooltipMotionScreen.fboFrames());
         int count = 0;
         StringBuilder stages = new StringBuilder();
         // Every request this screen makes is answered before the run ends, and the completion path *moves* an answered

@@ -49,7 +49,7 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.66–1.76×遅い**（p50 median 1.677、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速、Celtium側 bracket は `record`0.6＋`batch`0.9＋`present`0.4 ms。
-     **窓の固定費はもう主因ではない**（35.8窓/フレーム、`winHead`0.1＋`wrecLoop`0.2 ms、[証拠](evidence/window-split-2026-11-03.md)）。
+     **窓の固定費はもう主因ではない**（27.6窓/フレーム、[証拠](evidence/window-split-2026-11-03.md)）。
      **prepareキャッシュの負荷率76%が欠陥**（ミス9.8→1.8%、p50 −5.8%、[証拠](evidence/prepare-cache-load-2026-11-03.md)）。
      鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには**鎖~0.2 ms**。
      **次の性能単位は記録の client thread 外への移動**（§12）か offer/窓の削減。client threadのprofile
@@ -64,7 +64,7 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: cull の面と winding・attribute stack の `GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 しか数えられず `none`→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は [cull](evidence/cull-face-2026-11-03.md)・[viewport](evidence/viewport-attrib-2026-11-03.md)・[lighting](evidence/lighting-attrib-2026-11-03.md)・[font](evidence/font-run-refusal-2026-11-03.md)・[no-op](evidence/noop-census-unreachable-2026-11-03.md)・[display-list](evidence/display-list-census-2026-11-03.md)。glint画素/inventory・actor較正は未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
+3. **native 状態・実行**: cull の面と winding・`GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 のみ→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は [cull](evidence/cull-face-2026-11-03.md)・[viewport](evidence/viewport-attrib-2026-11-03.md)・[lighting](evidence/lighting-attrib-2026-11-03.md)・[font](evidence/font-run-refusal-2026-11-03.md)・[no-op](evidence/noop-census-unreachable-2026-11-03.md)・[display-list](evidence/display-list-census-2026-11-03.md)。glint画素/inventory・actor較正は未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
@@ -81,7 +81,7 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル（texgen） ③F2黒スクショ（`nglGetTexImage`） ④ガラスのちらつき（背面cull `5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）。FBO対象・看板は未測定 |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル（texgen） ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（背面cull `5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）、mod FBO bind中も欠落・残像0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）。看板は未測定 |
 
 
 | **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)・[legacy既定ON](evidence/legacy-immediate-default-2026-11-02.md)。修正: 半透明cull・lit clamp・Forgeブロックモデル・legacy既定ON・atlas実寸・色同期・menu背景。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md): mean\|A-B\| 1.17・cell 最大 2.04、旧 19/24 が >6）|

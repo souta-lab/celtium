@@ -31,6 +31,15 @@ import java.util.List;
  * {@code -Dceltium.validation.screen=tooltipmotion}, the same named-screen switch the language, resource-pack, main
  * menu and creative scenes use, and it requests its own presented dumps through
  * {@link #setDumpRequester(DumpRequester)} so a leg does not have to know which frame parity it caught.
+ *
+ * <p><b>Two arms.</b> The same drawing commands run twice: straight onto the main target, and through a framebuffer
+ * this screen creates with raw {@code glGenFramebuffers}/{@code glFramebufferTexture2D} - the way a mod builds its own
+ * render target, and the case the retained-glyph-run drop was written for. The framebuffer arm draws the panel, its
+ * markers and the tooltip into the attachment, then composites the panel's rectangle back onto the main target
+ * unblended and one texel to one pixel, so the two arms' pictures are the same pixels unless the renderer lost or
+ * misplaced something on the way through the mod target. Two consecutive frames per arm, so each arm shows both
+ * positions and the second frame of an arm is the one where a run retained for the first frame's target would be
+ * offered again at the first frame's position.
  */
 public final class TooltipMotionScreen extends GuiScreen {
 
@@ -50,14 +59,25 @@ public final class TooltipMotionScreen extends GuiScreen {
 
     /** Which draw count the first dump is requested at: past the screen's first frames, still early in the leg. */
     private static final int FIRST_DUMP_FRAME = 40;
-    /** How many consecutive frames are dumped. Two alternating positions need at least two frames to cover both. */
-    private static final int DUMP_FRAMES = 3;
+    /**
+     * How many consecutive frames are dumped. Two arms times two alternating positions: frames 40-41 draw straight
+     * onto the main target, frames 42-43 draw the same commands through the mod framebuffer, and each pair covers both
+     * tooltip positions.
+     */
+    private static final int DUMP_FRAMES = 4;
 
     private DumpRequester dumps;
     private int frames;
     private int requested;
     private int laidOutWidth = -1;
     private int laidOutHeight = -1;
+    /** The mod framebuffer the second arm draws through, its colour attachment, and the size they were made at. */
+    private int fbo = -1;
+    private int fboTexture = -1;
+    private int fboWidth = -1;
+    private int fboHeight = -1;
+    private String fboStatus = "not created";
+    private int fboFrames;
 
     /** {@return the draw count so far}, so the report can say the screen was painted rather than opened. */
     public int framesDrawn() {
@@ -81,7 +101,8 @@ public final class TooltipMotionScreen extends GuiScreen {
                 + " panel=" + panel[0] + "," + panel[1] + "," + panel[2] + "," + panel[3]
                 + " slots=" + celtium$slotA(panel) + "," + celtium$slotB(panel)
                 + " textX=" + celtium$textX(panel)
-                + " frames=" + this.frames + " dumps=" + this.requested;
+                + " frames=" + this.frames + " dumps=" + this.requested
+                + " fbo=" + this.fboStatus + " fboFrames=" + this.fboFrames;
     }
 
     /** The panel's GUI rectangle: a sixth of the screen in from each edge, so it is fully on screen at any scale. */
@@ -128,6 +149,46 @@ public final class TooltipMotionScreen extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         int[] panel = celtium$panel();
+        int frame = this.frames++;
+        this.laidOutWidth = this.width;
+        this.laidOutHeight = this.height;
+        // Which arm this frame is: the same drawing commands, once straight onto the main target and once through a
+        // framebuffer this screen creates with raw GL - the way a mod builds its own render target. Two consecutive
+        // frames per arm, so each arm shows both tooltip positions and the second frame of an arm is the one where a
+        // run retained for the first frame's target would be offered again at the first frame's position.
+        boolean fboArm = (frame / 2) % 2 == 1;
+        boolean throughFbo = fboArm && celtium$ensureFbo(this.mc.displayWidth, this.mc.displayHeight);
+        if (throughFbo) {
+            this.fboFrames++;
+            org.lwjgl.opengl.GL30C.glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER, this.fbo);
+            // Opaque black, so the composite can be drawn without blending and the picture is the same pixels the main
+            // arm draws. A transparent clear would double-blend the tooltip's own alpha borders and make the two arms
+            // differ for a reason that is not the renderer's.
+            net.minecraft.client.renderer.GlStateManager.clearColor(0.0F, 0.0F, 0.0F, 1.0F);
+            net.minecraft.client.renderer.GlStateManager.clear(
+                    org.lwjgl.opengl.GL11C.GL_COLOR_BUFFER_BIT | org.lwjgl.opengl.GL11C.GL_DEPTH_BUFFER_BIT);
+        }
+        if (this.dumps != null && frame >= FIRST_DUMP_FRAME && this.requested < DUMP_FRAMES) {
+            this.requested++;
+            // The stage carries the frame, the parity and the arm, so a picture says which position it should hold and
+            // which target drew it without needing the report to be read first - and both parities are in the set
+            // because the dumps are consecutive.
+            this.dumps.requestPresentedDump("tooltipmotion-f" + frame + (frame % 2 == 0 ? "-a" : "-b")
+                    + (throughFbo ? "-fbo" : "-main"));
+        }
+        celtium$drawPanelAndTooltip(panel, frame);
+        if (throughFbo) {
+            org.lwjgl.opengl.GL30C.glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER, 0);
+            celtium$composite(panel);
+        }
+    }
+
+    /**
+     * The frame's own drawing, unchanged between the two arms: the panel, its markers and one vanilla tooltip.
+     *
+     * <p>Both arms run exactly this, so a difference between their pictures is the target and nothing else.
+     */
+    private void celtium$drawPanelAndTooltip(int[] panel, int frame) {
         // The panel: opaque black, the one background on which "any non-black pixel is ink" is true. Drawn first and
         // every frame, so a residue can only come from this frame's own drawing into a frame image that kept the last.
         drawRect(panel[0], panel[1], panel[2], panel[3], 0xFF000000);
@@ -135,19 +196,97 @@ public final class TooltipMotionScreen extends GuiScreen {
         // describeLayout says. They are 4 GUI units, inside the panel's corners and away from both tooltip boxes.
         drawRect(panel[0], panel[1], panel[0] + 4, panel[1] + 4, 0xFF00FF00);
         drawRect(panel[2] - 4, panel[3] - 4, panel[2], panel[3], 0xFF00FFFF);
-        int frame = this.frames++;
-        this.laidOutWidth = this.width;
-        this.laidOutHeight = this.height;
-        if (this.dumps != null && frame >= FIRST_DUMP_FRAME && this.requested < DUMP_FRAMES) {
-            this.requested++;
-            // The stage carries the frame and the parity, so a picture says which position it should hold without
-            // needing the report to be read first - and both parities are in the set because the dumps are consecutive.
-            this.dumps.requestPresentedDump("tooltipmotion-f" + frame + (frame % 2 == 0 ? "-a" : "-b"));
-        }
         // One tooltip, at one of two positions, alternating every frame. Both positions use the vanilla path
         // (GuiScreen.drawHoveringText -> Forge's GuiUtils), so the box, the border, the shadow and the glyph runs are
         // exactly the ones the reported defect was seen on.
         this.drawHoveringText(LINES, celtium$textX(panel), frame % 2 == 0 ? celtium$slotA(panel) : celtium$slotB(panel));
+    }
+
+    /**
+     * Creates the mod framebuffer the second arm draws through, or reports why it could not.
+     *
+     * <p>Raw GL, not the game's {@code Framebuffer}: {@code glGenFramebuffers} + {@code glFramebufferTexture2D} is how a
+     * mod's own render target is built, and it is the case the retained-glyph-run drop was written for. The attachment
+     * is the window's own size, so the GUI projection and viewport are unchanged and the two arms draw at the same
+     * pixels.
+     */
+    private boolean celtium$ensureFbo(int width, int height) {
+        if (this.fbo != -1 && this.fboWidth == width && this.fboHeight == height) {
+            return "complete".equals(this.fboStatus);
+        }
+        if (this.fbo != -1) {
+            org.lwjgl.opengl.GL30C.glDeleteFramebuffers(this.fbo);
+            org.lwjgl.opengl.GL11C.glDeleteTextures(this.fboTexture);
+            this.fbo = -1;
+            this.fboTexture = -1;
+        }
+        int texture = org.lwjgl.opengl.GL11C.glGenTextures();
+        org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, texture);
+        org.lwjgl.opengl.GL11C.glTexImage2D(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
+                org.lwjgl.opengl.GL11C.GL_RGBA8, width, height, 0, org.lwjgl.opengl.GL11C.GL_RGBA,
+                org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+        org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
+                org.lwjgl.opengl.GL11C.GL_TEXTURE_MIN_FILTER, org.lwjgl.opengl.GL11C.GL_NEAREST);
+        org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
+                org.lwjgl.opengl.GL11C.GL_TEXTURE_MAG_FILTER, org.lwjgl.opengl.GL11C.GL_NEAREST);
+        org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
+                org.lwjgl.opengl.GL11C.GL_TEXTURE_WRAP_S, org.lwjgl.opengl.GL12C.GL_CLAMP_TO_EDGE);
+        org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
+                org.lwjgl.opengl.GL11C.GL_TEXTURE_WRAP_T, org.lwjgl.opengl.GL12C.GL_CLAMP_TO_EDGE);
+        int framebuffer = org.lwjgl.opengl.GL30C.glGenFramebuffers();
+        org.lwjgl.opengl.GL30C.glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER, framebuffer);
+        org.lwjgl.opengl.GL30C.glFramebufferTexture2D(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER,
+                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, texture, 0);
+        int status = org.lwjgl.opengl.GL30C.glCheckFramebufferStatus(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER);
+        org.lwjgl.opengl.GL30C.glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER, 0);
+        this.fbo = framebuffer;
+        this.fboTexture = texture;
+        this.fboWidth = width;
+        this.fboHeight = height;
+        this.fboStatus = status == org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_COMPLETE
+                ? "complete" : "incomplete 0x" + Integer.toHexString(status);
+        return "complete".equals(this.fboStatus);
+    }
+
+    /**
+     * Draws the framebuffer's panel region back onto the main target, unblended and one texel to one pixel.
+     *
+     * <p>Only the panel's rectangle is composited, so the rest of the frame keeps the world the game drew. The
+     * framebuffer's origin is the bottom-left and the GUI's is the top-left, so the vertical texture coordinates are
+     * flipped; the horizontal ones are the panel's own fraction of the GUI width, which is the same fraction of the
+     * framebuffer because the attachment is the window's size.
+     */
+    private void celtium$composite(int[] panel) {
+        net.minecraft.client.renderer.GlStateManager.disableBlend();
+        net.minecraft.client.renderer.GlStateManager.enableTexture2D();
+        net.minecraft.client.renderer.GlStateManager.bindTexture(this.fboTexture);
+        net.minecraft.client.renderer.GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+        float guiWidth = Math.max(1, this.width);
+        float guiHeight = Math.max(1, this.height);
+        float u0 = panel[0] / guiWidth;
+        float u1 = panel[2] / guiWidth;
+        float vTop = 1.0F - panel[1] / guiHeight;
+        float vBottom = 1.0F - panel[3] / guiHeight;
+        net.minecraft.client.renderer.BufferBuilder buffer =
+                net.minecraft.client.renderer.Tessellator.getInstance().getBuffer();
+        buffer.begin(org.lwjgl.opengl.GL11C.GL_QUADS,
+                net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_TEX);
+        buffer.pos(panel[0], panel[3], 0.0D).tex(u0, vBottom).endVertex();
+        buffer.pos(panel[2], panel[3], 0.0D).tex(u1, vBottom).endVertex();
+        buffer.pos(panel[2], panel[1], 0.0D).tex(u1, vTop).endVertex();
+        buffer.pos(panel[0], panel[1], 0.0D).tex(u0, vTop).endVertex();
+        net.minecraft.client.renderer.Tessellator.getInstance().draw();
+        net.minecraft.client.renderer.GlStateManager.enableBlend();
+    }
+
+    /** {@return the mod framebuffer's creation status} - {@code complete} when the second arm really drew through it. */
+    public String fboStatus() {
+        return this.fboStatus;
+    }
+
+    /** {@return how many frames were drawn through the mod framebuffer}. */
+    public int fboFrames() {
+        return this.fboFrames;
     }
 
     /** {@return the GUI size this screen was last laid out at, or -1} - what the dumps were scaled from. */
