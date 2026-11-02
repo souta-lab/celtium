@@ -10200,10 +10200,18 @@ this.frameBufferOpen = false;
         // in 12,213 frames). A prepared material only depends on the pass's render pass and on the image's view: new
         // pixels in the same image keep the descriptor valid, and a replaced image changes the wrapper key. A texture
         // whose mirror is not complete yet is never cached, so the supply inside the uncached path still runs for it.
-        org.soutalab.celtium.vulkan.VulkanGlTexture live = textureId > 0 && this.textureRegistry != null
-                ? celtium$registry().get(textureId) : null;
+        //
+        // The lookup below is handed to the uncached path rather than made a second time there. Round 6 made the memo
+        // store only positive answers, so for a name whose mirror is not complete - the population that is refused
+        // rather than drawn - the memo answers nothing and a full lookup is what this call performs; the uncached path
+        // then resolved the same name again, and its only contribution was to observe the deferral gate the first
+        // lookup had written one statement earlier. Nothing between the two calls mutates the registry (same thread),
+        // so the answer cannot have changed: the uncached path asks the registry again only where it publishes a
+        // framebuffer image, which is a table write and therefore a different question.
+        boolean resolvedKnown = textureId > 0 && this.textureRegistry != null;
+        org.soutalab.celtium.vulkan.VulkanGlTexture live = resolvedKnown ? celtium$registry().get(textureId) : null;
         if (textureId > 0 && (live == null || !live.hasFullContent())) {
-            return prepareImmediateUncached(format, textureId, key, state);
+            return prepareImmediateUncached(format, textureId, key, state, live, resolvedKnown);
         }
         long textureKey = live == null ? 0L : live.key();
         // The lit families' descriptors also name the light map, which a resource reload replaces.
@@ -10222,7 +10230,7 @@ this.frameBufferOpen = false;
             this.prepareCacheHits++;
             return cached;
         }
-        PreparedImmediate prepared = prepareImmediateUncached(format, textureId, key, state);
+        PreparedImmediate prepared = prepareImmediateUncached(format, textureId, key, state, live, resolvedKnown);
         if (prepared != null) {
             this.prepareCachePass[slot] = pass;
             this.prepareCacheFormat[slot] = format;
@@ -10252,7 +10260,17 @@ this.frameBufferOpen = false;
         return this.prepareCacheHits + "/" + this.prepareCacheCalls;
     }
 
-    private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state) {
+    /**
+     * Resolves a batch's pipeline and descriptor set, sharing the caller's registry answer.
+     *
+     * @param resolved      the mirror {@link #prepareImmediate} resolved for {@code textureId}
+     * @param resolvedKnown whether that value is the registry's answer for the name - a null answer included - rather
+     *                      than "the name was not asked about". When it is, this method does not ask again: the lookup
+     *                      it used to repeat is the same question with no table write in between, and for a name with
+     *                      no mirror it is the whole cost of the call.
+     */
+    private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state,
+            org.soutalab.celtium.vulkan.VulkanGlTexture resolved, boolean resolvedKnown) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
         long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -10264,9 +10282,11 @@ this.frameBufferOpen = false;
         // settled the question. Under the GL-less window the same absence means a UI-only screen, and those batches
         // must still draw: the standalone frame-compatible render pass stands in.
         if (BATCH_TIMINGS) this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
+        // A registry created here was absent when the caller asked, so the caller's value is "no registry" rather
+        // than an answer about this name and is not used below.
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
         long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-        VulkanGlTexture texture = this.textureRegistry.get(textureId);
+        VulkanGlTexture texture = resolvedKnown ? resolved : this.textureRegistry.get(textureId);
         // A framebuffer's colour attachment stands for the image that framebuffer draws into even when the stub keeps
         // a mirror under the name: a mod that allocates its attachment with glTexImage2D(null) gets an (empty) mirror,
         // and that mirror used to win. Xaero's Minimap's rotation pass then sampled black from texture 124 while its
@@ -16576,10 +16596,13 @@ this.frameBufferOpen = false;
 
         if (atlasId != 0 && (this.atlasTexture == null || atlasId != this.atlasGlId || this.atlasRefreshCountdown <= 0)) {
             try {
-                if (this.atlasTexture == null || atlasId != this.atlasGlId) {
-                    // A name change is a reallocation: the registry entry for the old name was retired with it, so
-                    // binding the kept object samples a dead image - measured as a fully black terrain after the
-                    // reload re-stitched the atlas under a new GL name while this field still held the old mirror.
+                // The image this call supplies, decided before anything is handed to the field. A name change is a
+                // reallocation: the registry entry for the old name was retired with it, so binding the kept object
+                // samples a dead image - measured as a fully black terrain after the reload re-stitched the atlas
+                // under a new GL name while this field still held the old mirror.
+                VulkanGlTexture image = this.atlasTexture != null && atlasId == this.atlasGlId
+                        ? this.atlasTexture : null;
+                if (image == null) {
                     int[] size = textureSize(atlasId);
                     if (size[0] <= 0 || size[1] <= 0) {
                         // No storage to mirror yet. Creating an image of an unknown size is what produced a 1x1
@@ -16590,11 +16613,17 @@ this.frameBufferOpen = false;
                     }
                     // The registry owns the image; the backend samples that same object, so an announced patch and the
                     // descriptor look at one image instead of two.
-                    this.atlasTexture = celtium$registry().imageFor(atlasId, size[0], size[1], true);
+                    image = celtium$registry().imageFor(atlasId, size[0], size[1], true);
                 }
-                this.celtium$establishAtlasImage(atlasId, this.atlasTexture, "atlas");
+                this.celtium$establishAtlasImage(atlasId, image, "atlas");
+                // The field names the mirror only once its supply has run. The terrain pass's skip guard asks this
+                // field for null, so assigning before the supply - which is what this method did - is how a supply that
+                // threw left an image no upload ever filled in the field: the pass then drew it as the atlas instead of
+                // skipping with the reason recorded. A mirror this id already had stays in the field across a failed
+                // re-supply, because that image was established by an earlier one.
+                this.atlasTexture = image;
                 // The terrain sampler asks the atlas for its GL name to read the game's GL_TEXTURE_MAX_LEVEL.
-                this.atlasTexture.noteGlTextureName(atlasId);
+                image.noteGlTextureName(atlasId);
                 this.atlasSourceGlId = atlasId;
                 int[] atlasSize = textureSize(atlasId);
                 record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);

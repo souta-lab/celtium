@@ -51,6 +51,25 @@ class MirrorDeferralGateTest {
     }
 
     @Test
+    void askingIsPureSoASecondAskCannotDifferFromTheFirst() {
+        // The batch path resolved the same bound name twice per prepared material, one statement apart: the memo asked
+        // the registry, and the uncached path the memo called asked it again. Handing the first answer to the second
+        // call is only sound if the question is a read - the answer about one name at one content serial cannot move
+        // between two asks with no table write between them, and asking records nothing. If this gate ever records
+        // while answering, the two calls are not the same question and the handoff is wrong.
+        MirrorDeferralGate gate = new MirrorDeferralGate();
+        gate.note(300, 7L);
+        int deferred = gate.namesDeferred();
+        boolean first = gate.isCurrent(300, 7L);
+        boolean second = gate.isCurrent(300, 7L);
+        assertTrue(first, "the name was deferred at this content");
+        assertEquals(first, second, "the same question at the same content has one answer");
+        assertEquals(deferred, gate.namesDeferred(), "answering must not record a deferral of its own");
+        assertFalse(gate.isCurrent(300, 9L), "asking still answers about the content it was asked about");
+        assertEquals(deferred, gate.namesDeferred(), "a different content is a question, not a new deferral");
+    }
+
+    @Test
     void theTableGrowsPastItsFirstFrameAndCountsNamesOnce() {
         MirrorDeferralGate gate = new MirrorDeferralGate();
         int far = 5000;

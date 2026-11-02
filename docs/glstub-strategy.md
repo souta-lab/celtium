@@ -45,6 +45,14 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   無い時のみ記録に fallback）、content の無いフィールドは再供給する。供給の再試行は level の write serial で
   bound（`MirrorDeferralGate`）。計器は `CELTIUM_ANIM` の `lightmapExtentFromOwner`・`lightmapSupplyRetrySkips`
   と `lightmapSupplyFailure`（CPUテストのみ、GPU leg 未実施） |
+| ブロックアトラスのミラー | **「フィールドに入れた」＝「供給が走った」ではない**（2026-11-02）。`refreshAtlasMirror` は
+  `imageFor` の像を供給（`celtium$establishAtlasImage`）の**前に**フィールドへ代入していたため、供給が例外で終わると
+  「何も書かれていない像」がフィールドに残り、terrain pass の skip 判定（フィールドの null を見る）がそれを
+  atlas として描いていた。代入は供給の後に移した（再供給が失敗した時は同じ GL 名の既存ミラーがフィールドに残る
+  ので、確立済みの像は失われない）。ライトマップと同じ規則。**部分的にしか塗られていないアトラスは正常状態**
+  （sprite 単位で告知される）なので、ライトマップの「全内容」判定はここへは持ち込まない
+  （持ち込むと部分告知のフレームで world が消える）。計器は `CELTIUM_DIRECT_SUPPLY` の `arm` と `full`、
+  `pass skipped` の理由行（CPUテストのみ、GPU leg 未実施） |
 
 ⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、現在は上の表の状態。
 legacy capture は既定offのまま: 受入は[plan.md](plan.md)のgateどおり（validation 0・device lost 0・AMD/Intelの
