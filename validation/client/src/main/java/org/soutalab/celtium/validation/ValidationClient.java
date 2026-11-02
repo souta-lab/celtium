@@ -1999,6 +1999,14 @@ public final class ValidationClient {
      * screen was never drawn must not read as "no ghost".
      */
     private org.soutalab.celtium.validation.TooltipMotionScreen celtium$tooltipMotionScreen;
+    /**
+     * The display-list scene, when {@code -Dceltium.validation.screen=displaylist} opened it.
+     * <p>
+     * Kept for the same reason the tooltip screen is: the report has to say the screen painted, how many lists it
+     * compiled and which frames it asked for, or a leg whose scene never ran would read as "the list replay draws
+     * nothing".
+     */
+    private org.soutalab.celtium.validation.DisplayListLegacyScreen celtium$displayListScreen;
     /** Whether the creative tab request has been applied, so the grid is selected once per leg. */
     private boolean celtium$creativeTabApplied;
     /**
@@ -5862,6 +5870,12 @@ public final class ValidationClient {
                     // consecutive frames over an opaque black panel and asks for the frames it draws, so one picture
                     // says whether the previous frame's glyphs were drawn again at their old position.
                     requested = new org.soutalab.celtium.validation.TooltipMotionScreen();
+                } else if ("displaylist".equalsIgnoreCase(screenRequest)) {
+                    // The invisible-custom-rendering report's most concrete instance in this pack: GregTech's tool
+                    // overlays compile a GL_COMPILE display list out of glBegin/glEnd geometry and draw it with
+                    // glCallList every frame. This screen does the same and asks for two consecutive frames, so the
+                    // picture answers "was the list replayed at the caller's transform" without a wrench or a block.
+                    requested = new org.soutalab.celtium.validation.DisplayListLegacyScreen();
                 }
                 if (requested != null) {
                     mc.displayGuiScreen(requested);
@@ -5881,6 +5895,18 @@ public final class ValidationClient {
                                     }
                                 });
                         report.addProperty("tooltipMotionLayoutOpened", celtium$tooltipMotionScreen.describeLayout());
+                    }
+                    if (requested instanceof org.soutalab.celtium.validation.DisplayListLegacyScreen) {
+                        celtium$displayListScreen =
+                                (org.soutalab.celtium.validation.DisplayListLegacyScreen) requested;
+                        celtium$displayListScreen.setDumpRequester(
+                                new org.soutalab.celtium.validation.DisplayListLegacyScreen.DumpRequester() {
+                                    @Override
+                                    public void requestPresentedDump(String stage) {
+                                        celtium$requestPresentedDump(mc, stage);
+                                    }
+                                });
+                        report.addProperty("displayListLayoutOpened", celtium$displayListScreen.describeLayout());
                     }
                     report.addProperty("namedScreenOpened", requested.getClass().getName());
                     report.addProperty("namedScreenOpenedAtTick", worldTicks);
@@ -7077,6 +7103,56 @@ public final class ValidationClient {
         }
         report.addProperty("tooltipMotionDumpCount", Integer.valueOf(count));
         report.addProperty("tooltipMotionDumpStages", stages.toString());
+    }
+
+    /**
+     * Writes what the display-list scene did, so its pictures cannot be read as an answer on their own.
+     * <p>
+     * The layout, the frame count and the number of compiles are the facts that separate "the list replay draws
+     * nothing" from "the scene never compiled a list" and from "the screen was never painted": all three produce a black
+     * picture, and only the report tells them apart. The dump stages come from both the pending requests and the
+     * completed evidence, for the same reason the tooltip report reads both - the completion path moves an answered
+     * request out of the pending list, so reading one of them reported zero pictures for a leg whose files existed.
+     */
+    private void celtium$reportDisplayList() {
+        if (this.celtium$displayListScreen == null) {
+            return;
+        }
+        report.addProperty("displayListDrawnFrames",
+                Integer.valueOf(this.celtium$displayListScreen.framesDrawn()));
+        report.addProperty("displayListCompiles", Integer.valueOf(this.celtium$displayListScreen.compiles()));
+        report.addProperty("displayListLayout", this.celtium$displayListScreen.describeLayout());
+        report.addProperty("displayListGuiWidth",
+                Integer.valueOf(this.celtium$displayListScreen.laidOutWidth()));
+        report.addProperty("displayListGuiHeight",
+                Integer.valueOf(this.celtium$displayListScreen.laidOutHeight()));
+        int count = 0;
+        StringBuilder stages = new StringBuilder();
+        java.util.LinkedHashMap<String, PictureEvidence> dumps = new java.util.LinkedHashMap<String, PictureEvidence>();
+        for (PictureEvidence evidence : this.celtium$pendingDumps) {
+            if (evidence.stage != null && evidence.stage.startsWith("displaylist-")) {
+                dumps.put(evidence.stage, evidence);
+            }
+        }
+        for (PictureEvidence evidence : this.celtium$evidence.values()) {
+            if (evidence.stage != null && evidence.stage.startsWith("displaylist-")) {
+                dumps.put(evidence.stage, evidence);
+            }
+        }
+        for (PictureEvidence evidence : dumps.values()) {
+            report.addProperty("displayListDump_" + evidence.stage,
+                    celtium$relative(evidence.image) + " completed=" + evidence.completed
+                            + " presentedFrame=" + evidence.presentedFrame + " tick=" + evidence.worldTick
+                            + " frames=" + evidence.worldFrames + " size=" + evidence.width + "x" + evidence.height
+                            + " error=" + evidence.completionError);
+            if (stages.length() > 0) {
+                stages.append(' ');
+            }
+            stages.append(evidence.stage);
+            count++;
+        }
+        report.addProperty("displayListDumpCount", Integer.valueOf(count));
+        report.addProperty("displayListDumpStages", stages.toString());
     }
 
     /**
@@ -11547,6 +11623,7 @@ public final class ValidationClient {
         // windows, with their sample counts and the window names beside them.
         celtium$reportFrameIntervals();
         celtium$reportTooltipMotion();
+        celtium$reportDisplayList();
         // The client loop's own tick timing, which no renderer bracket covers. The (g) comparison left ~17.4 ms per
         // frame outside every instrument and this scene runs more than one world tick per frame (241 ticks over 217
         // frames), so the tick is the first candidate and had no instrument at all. Read reflectively, by name, so

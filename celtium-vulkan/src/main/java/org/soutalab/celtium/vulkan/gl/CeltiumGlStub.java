@@ -882,6 +882,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             for (NativeGeometryBuffer buffer : geometry) buffer.close();
             this.listPayloadsReleased += geometry.size();
         }
+        // The compiled legacy runs' byte allowance goes back with the list, before the buffers are freed: the copies
+        // are in the same payload list, so the subtraction and the release belong to the same event.
+        long legacyBytes = this.legacyListRunBytesByList.remove(list.intValue());
+        if (legacyBytes > 0L) {
+            this.legacyListRunBytes -= legacyBytes;
+        }
         List<java.nio.ByteBuffer> payloads = this.displayListPayloads.remove(list.intValue());
         if (payloads == null) {
             return;
@@ -2317,6 +2323,49 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.Set<String> legacyRunSignatures = new java.util.HashSet<String>();
     private int legacyRunLogs;
 
+    /**
+     * Whether {@code glBegin} geometry inside a {@code glNewList} compile is filed with the list,
+     * {@code -Dceltium.glstub.legacyListCompile=false} keeps the previous rule (refuse it and count the loss).
+     * <p>
+     * On by default: a refused run is a list that replays nothing, and GregTech's tool rotation marker - a
+     * {@code GL_COMPILE} list of {@code GL_LINE_LOOP} vertices, called every frame while a wrench is held - is drawn by
+     * exactly this route. Written from its class file, not from a guess:
+     * {@code gregtech/common/ToolEventHandlers.drawRotationMarker} calls {@code glNewList(4864)} (4864 is
+     * {@code GL_COMPILE}), {@code glBegin(GL_LINE_LOOP)}, 121 {@code glVertex3d}, {@code glEnd}, {@code glEndList}, and
+     * {@code glCallList} on every frame after that. The switch exists so the change can be taken back without a
+     * rebuild if a pack's list turns out to depend on the old silence.
+     */
+    private static final boolean LEGACY_LIST_COMPILE =
+            Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyListCompile", "true"));
+
+    /**
+     * The most bytes the stub will hold for compiled legacy runs across every list.
+     * <p>
+     * Bounded because a mod is entitled to compile a large list and recompile it: the copies are released with their
+     * list ({@link #releaseListPayloads}), so this is the ceiling on what is live at once, not a total over the run.
+     */
+    private static final long MAX_LEGACY_LIST_RUN_BYTES = 64L * 1024L * 1024L;
+
+    /** One line per distinct compiled run shape, so a list that replays nothing names what it held. */
+    private static final int LEGACY_LIST_RUN_LOG_LIMIT = 8;
+    private final java.util.Set<String> legacyListRunSignatures = new java.util.HashSet<String>();
+    private int legacyListRunLogs;
+
+    /** Compiled legacy runs: how many were filed, how many vertices, and how many were replayed. */
+    private long legacyListRunsRecorded;
+    private long legacyListRunVertices;
+    private long legacyListRunsReplayed;
+    private long legacyListRunReplayedVertices;
+    /** Bytes currently held for compiled runs, and the part of it not yet published to a list name. */
+    private long legacyListRunBytes;
+    private long openListLegacyRunBytes;
+    /** Bytes that arrived after the bound was reached, and runs that could not be copied at all. */
+    private long legacyListRunBytesDropped;
+    private long legacyListRunReplayRefusals;
+    /** Bytes held per compiled list name, so a replaced or deleted list gives its allowance back. */
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap legacyListRunBytesByList =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+
     /** {@code glBegin(mode)}: starts collecting; a previous run that was never ended is refused by name. */
     public static void celtium$legacyBegin(int mode) {
         CeltiumGlStub stub = installed;
@@ -2330,7 +2379,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long nested = stub.legacyCapture.nestedRefusals();
         long lists = stub.legacyCapture.listRefusals();
         long modes = stub.legacyCapture.modeRefusals();
-        stub.legacyCapture.begin(mode, textured, stub.compilingList != 0, LEGACY_MODE_GATE);
+        stub.legacyCapture.begin(mode, textured, LEGACY_LIST_COMPILE && stub.compilingList != 0, LEGACY_MODE_GATE);
         if (stub.legacyCapture.nestedRefusals() != nested && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason=a second glBegin before glEnd");
@@ -2338,7 +2387,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub.legacyCapture.listRefusals() != lists && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode
-                    + " reason=a display list is being compiled (list " + stub.compilingList + ")");
+                    + " reason=a display-list run could not be recorded (list " + stub.compilingList + ")");
         }
         if (stub.legacyCapture.modeRefusals() != modes && stub.legacyModeRefusalsLogged < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyModeRefusalsLogged++;
@@ -2629,7 +2678,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                         + (backend == null ? " (no backend)" : ": " + backend.lastRefusal()));
             }
             return accepted;
-        });
+        }, (layout, stride, count, drawMode, address) ->
+                stub.recordLegacyRunForList(layout, stride, count, drawMode, address));
         if (taken && stub.legacyCapture.submittedRuns() == 1) {
             System.out.println("[Celtium] CELTIUM_LEGACY_IMMEDIATE submitted=1 vertices=" + vertices + " mode=" + mode
                     + " format=" + format + " (legacy glBegin geometry now reaches the immediate path)");
@@ -2645,9 +2695,107 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * One bounded line per distinct legacy run, {@code -Dceltium.debug.legacyRuns=N} (default 0, off).
+     * Files one {@code glBegin}/{@code glEnd} run with the display list being compiled, as a copy the list replays.
+     *
+     * <p>Why the copy and the ordering matter is the same fact twice: GL compiles the commands and not the drawing, so
+     * a run written inside {@code glNewList} has to be stored where {@code glCallList} can replay it - and it has to be
+     * stored <em>in position</em>, because the commands around it (a {@code glTranslate}, a {@code glColor}, a
+     * {@code glBindTexture}) are replayed in order and the run draws under the state they leave. The entry therefore
+     * goes into the list's own command array, between the recorded calls that preceded and followed it.
+     *
+     * <p>The vertices are the capture's, which the next {@code glBegin} overwrites, so {@link CompiledLegacyRun} copies
+     * them. The copy is registered as a list payload, which is what frees it when the list is replaced or deleted - the
+     * one lifecycle the stub already enforces for compile-time buffers. The bytes held at once are bounded; past the
+     * bound a run is dropped and counted rather than growing the process.
+     *
+     * @return whether the run was filed
+     */
+    private boolean recordLegacyRunForList(int format, int stride, int count, int drawMode, long address) {
+        List<Object[]> open = this.openList;
+        if (open == null || this.compilingList <= 0 || count <= 0) {
+            return false;
+        }
+        long bytes = (long) count * (long) stride;
+        if (this.legacyListRunBytes + bytes > MAX_LEGACY_LIST_RUN_BYTES) {
+            this.legacyListRunBytesDropped += bytes;
+            return false;
+        }
+        CompiledLegacyRun run = CompiledLegacyRun.copy(format, stride, count, drawMode, address);
+        if (run == null) {
+            this.legacyListRunBytesDropped += bytes;
+            return false;
+        }
+        open.add(new Object[] { CompiledLegacyRun.TAG, run });
+        if (this.openListPayloads == null) {
+            this.openListPayloads = new ArrayList<java.nio.ByteBuffer>();
+        }
+        this.openListPayloads.add(run.buffer());
+        this.legacyListRunBytes += bytes;
+        this.openListLegacyRunBytes += bytes;
+        this.legacyListRunsRecorded++;
+        this.legacyListRunVertices += count;
+        if (this.legacyListRunLogs < LEGACY_LIST_RUN_LOG_LIMIT) {
+            String key = drawMode + "/" + count + "/" + format;
+            if (this.legacyListRunSignatures.add(key)) {
+                this.legacyListRunLogs++;
+                System.out.println("[Celtium] CELTIUM_LEGACY_LIST_RUN list=" + this.compilingList + " mode=" + drawMode
+                        + " vertices=" + count + " format=" + format + " bytes=" + bytes
+                        + " (compiled into the list; glCallList replays it with the state current then)");
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Replays one compiled legacy run: the same immediate path a run outside a list takes, under the matrix, texture and
+     * colour state current at {@code glCallList}.
+     *
+     * <p>Drawing it any other way would break the two things a display list promises: that the geometry is stored once
+     * and drawn where the caller put it, and that state changes made after the compile are not baked in. Both are why
+     * the run carries no matrix - {@link CompiledLegacyRun} stores vertices and a primitive only.
+     */
+    private void replayLegacyRun(CompiledLegacyRun run) {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        boolean taken = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                && vulkan.submitImmediateBatch(null, run.stride, run.format, run.address, run.count, run.mode);
+        if (taken) {
+            this.legacyListRunsReplayed++;
+            this.legacyListRunReplayedVertices += run.count;
+            return;
+        }
+        this.legacyListRunReplayRefusals++;
+        if (this.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
+            this.legacyRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_LEGACY_LIST_REPLAY_REFUSED list=" + this.lastCalledList
+                    + " " + run.describe() + " reason="
+                    + (backend == null ? "no backend" : backend.lastRefusal()));
+        }
+    }
+
+    /**
+     * {@return the compiled legacy-run census}, for the verification line.
      * <p>
-     * Why a census and not a single event: the legacy path's refusals are capped at four lines per run, and the menu's
+     * {@code recorded} counts the runs filed with a list and {@code replayed} the ones a {@code glCallList} actually
+     * drew, because a list that was compiled and never called must not read as a drawing path: GregTech's marker is
+     * compiled once and called every frame while a wrench is held, so the two numbers differ by design.
+     */
+    public static String legacyListCensus() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "none";
+        }
+        return "enabled=" + LEGACY_LIST_COMPILE
+                + " recorded=" + stub.legacyListRunsRecorded + "/" + stub.legacyListRunVertices
+                + " replayed=" + stub.legacyListRunsReplayed + "/" + stub.legacyListRunReplayedVertices
+                + " lists=" + stub.legacyListRunBytesByList.size()
+                + " bytes=" + stub.legacyListRunBytes + " droppedBytes=" + stub.legacyListRunBytesDropped
+                + " replayRefusals=" + stub.legacyListRunReplayRefusals;
+    }
+
+    /**
+     * One bounded line per distinct legacy run, {@code -Dceltium.debug.legacyRuns=N} (default 0, off).
+     * <p>     * Why a census and not a single event: the legacy path's refusals are capped at four lines per run, and the menu's
      * share of them was already spent by the splash before the title screen drew its first quad, so the picture's
      * missing background could not be attributed from the log. The title screen issues the same handful of quads every
      * frame - a black fill, a slideshow background, a banner, a frame, one per button - so deduplicating by shape and
@@ -5039,6 +5187,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                     if (this.openListPayloads != null) {
                         this.displayListPayloads.put(this.compilingList, this.openListPayloads);
                     }
+                    // The compiled legacy runs' bytes become this name's, and the release path above subtracts them
+                    // from the same accounting when the name is replaced or deleted.
+                    if (this.openListLegacyRunBytes > 0L) {
+                        this.legacyListRunBytesByList.put(this.compilingList, this.openListLegacyRunBytes);
+                    }
                     this.displayListsCompiled++;
                 } else if (this.openListPayloads != null) {
                     for (int i = 0; i < this.openListPayloads.size(); i++) {
@@ -5049,6 +5202,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     for (NativeGeometryBuffer buffer : this.openListGeometry) buffer.close();
                 this.openListGeometry = null;
                 this.openListPayloads = null;
+                this.openListLegacyRunBytes = 0L;
                 this.openList = null;
                 this.compilingList = 0;
                 return 0L;
@@ -9314,6 +9468,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             try {
                 for (int i = 0; i < list.size(); i++) {
                     Object[] call = list.get(i);
+                    if (call[0] == CompiledLegacyRun.TAG) {
+                        // A glBegin run compiled into this list: submitted now, in order, so the state the recorded
+                        // commands around it left is the state it draws under - which is what a display list does.
+                        replayLegacyRun((CompiledLegacyRun) call[1]);
+                        continue;
+                    }
                     Fn command = (Fn) call[0];
                     if (command.semantics == SEM_COMPILED_ARRAYS) replayCompiledArrays((long[]) call[1]);
                     else dispatchArgs(command, (long[]) call[1]);

@@ -199,15 +199,117 @@ class LegacyImmediateCaptureTest {
         assertEquals(1, capture.modeRefusals());
     }
 
+    /** Records what a compiled run was filed with, and copies its bytes the way the stub does. */
+    private static final class CompiledRecorder implements LegacyImmediateCapture.CompiledRunSink {
+        final List<int[]> shapes = new ArrayList<>();
+        final List<float[]> vertices = new ArrayList<>();
+        boolean refuse;
+
+        @Override
+        public boolean record(int format, int stride, int count, int drawMode, long address) {
+            if (this.refuse) {
+                return false;
+            }
+            this.shapes.add(new int[] {format, stride, count, drawMode});
+            float[] read = new float[count * 3];
+            for (int i = 0; i < count; i++) {
+                long at = address + (long) i * stride;
+                read[i * 3] = MemoryUtil.memGetFloat(at);
+                read[i * 3 + 1] = MemoryUtil.memGetFloat(at + 4L);
+                read[i * 3 + 2] = MemoryUtil.memGetFloat(at + 8L);
+            }
+            this.vertices.add(read);
+            return true;
+        }
+
+        int[] lastShape() {
+            return this.shapes.get(this.shapes.size() - 1);
+        }
+
+        float[] lastVertices() {
+            return this.vertices.get(this.vertices.size() - 1);
+        }
+    }
+
     @Test
     void geometryInsideADisplayListCompileBelongsToTheList() {
         LegacyImmediateCapture capture = capture();
         Recorder sink = new Recorder();
-        assertFalse(capture.begin(GL11.GL_QUADS, true, true, GATE), "a list compile owns its geometry");
+        CompiledRecorder compiled = new CompiledRecorder();
+        assertTrue(capture.begin(GL11.GL_LINE_LOOP, false, true, GATE), "a list compile owns its geometry");
+        capture.vertex3d(0.0, 0.0, 0.0);
+        capture.vertex3d(1.0, 0.0, 0.0);
+        capture.vertex3d(1.0, 1.0, 0.0);
+        assertTrue(capture.end(sink, compiled), "the run is filed with the list");
+        assertTrue(sink.runs.isEmpty(), "and is not drawn at compile time");
+        assertArrayEquals(new int[] {LegacyImmediateCapture.FORMAT_POSITION_COLOR,
+                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 3, GL11.GL_LINE_LOOP}, compiled.lastShape(),
+                "the list records the layout, the vertex count and the mode");
+        assertArrayEquals(new float[] {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+                compiled.lastVertices(), "the list gets the vertices themselves, not a reference to the buffer");
+        assertEquals(1, capture.compiledRuns(), "one run compiled");
+        assertEquals(3, capture.compiledVertices());
+        assertEquals(0, capture.listRefusals(), "a recorded run is not a refusal");
+        assertEquals(0, capture.submittedRuns(), "nothing reached the drawing path");
+    }
+
+    /**
+     * A run inside a compile that cannot be filed is refused by name rather than drawn.
+     * <p>
+     * The alternative - draw it now - would put a mod's list geometry on screen at the compile matrix and again at every
+     * replay, which is a wrong picture rather than a missing one. The refusal has to be counted because under GL-less
+     * nothing else shows the loss.
+     */
+    @Test
+    void aCompileWithNoRecordIsRefusedByName() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
         capture.vertex3f(0.0f, 0.0f, 0.0f);
-        assertFalse(capture.end(sink));
+        assertFalse(capture.end(sink, null), "there is nowhere to put the run");
+        assertTrue(sink.runs.isEmpty(), "and it is not drawn at compile time");
         assertEquals(1, capture.listRefusals());
-        assertTrue(capture.lastRefusal().contains("display list"));
+        assertTrue(capture.lastRefusal().contains("display list"), capture.lastRefusal());
+    }
+
+    @Test
+    void aRecordThatRefusesIsCounted() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        CompiledRecorder compiled = new CompiledRecorder();
+        compiled.refuse = true;
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertFalse(capture.end(sink, compiled));
+        assertEquals(1, capture.listRefusals());
+        assertEquals(0, capture.compiledRuns());
+        assertTrue(sink.runs.isEmpty());
+    }
+
+    /** The whole-primitive cut is GL's rule wherever the run goes, so a compiled run is cut the same way. */
+    @Test
+    void aCompiledRunIsCutToWholePrimitivesToo() {
+        LegacyImmediateCapture capture = capture();
+        CompiledRecorder compiled = new CompiledRecorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        for (int i = 0; i < 5; i++) {
+            capture.vertex3f(i, i, 0.0f);
+        }
+        assertTrue(capture.end(new Recorder(), compiled));
+        assertEquals(4, compiled.lastShape()[2], "four vertices are the quad GL draws; the fifth is incomplete");
+        assertEquals(1, capture.trailingVertices());
+    }
+
+    /** A mode with no pipeline is refused before it is filed, so a list cannot hold geometry its replay must refuse. */
+    @Test
+    void aCompiledRunWithNoDrawableModeIsRefusedBeforeItIsFiled() {
+        LegacyImmediateCapture capture = capture();
+        CompiledRecorder compiled = new CompiledRecorder();
+        assertFalse(capture.begin(GL11.GL_POINTS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertFalse(capture.end(new Recorder(), compiled));
+        assertTrue(compiled.shapes.isEmpty());
+        assertEquals(1, capture.modeRefusals());
     }
 
     @Test
@@ -322,7 +424,10 @@ class LegacyImmediateCaptureTest {
         capture.vertex3f(0.0f, 0.0f, 0.0f);
         assertTrue(capture.end(new Recorder()));
         capture.begin(GL11.GL_POINTS, false, false, GATE);
-        capture.begin(GL11.GL_QUADS, false, true, GATE);
+        // A compile with no record available is the one way a run inside a list is still a loss.
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        capture.end(new Recorder(), null);
         String summary = capture.summary();
         assertTrue(summary.contains("submitted=1"), summary);
         assertTrue(summary.contains("modeRefusals=1"), summary);

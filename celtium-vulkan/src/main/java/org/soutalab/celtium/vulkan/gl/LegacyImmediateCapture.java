@@ -26,9 +26,17 @@ import org.lwjgl.system.MemoryUtil;
  * projects by it, so a vertex with {@code w != 1} is stored as {@code x/w, y/w, z/w}. A {@code w} of zero has no
  * finite position; the run is refused by name rather than drawn with an invented one.</li>
  * <li><b>Refusals are counted by reason, never silently dropped.</b> A second {@code glBegin} before {@code glEnd}, a
- * layout the renderer has no draw for (the gate), geometry inside a display-list compile, more than
- * {@link #MAX_VERTICES} vertices in one run, and a sink that will not take the run all leave the run undrawn and land
- * in a named counter. Under GL-less a refusal draws nothing, so the count is the only way the loss is visible.</li>
+ * layout the renderer has no draw for (the gate), more than {@link #MAX_VERTICES} vertices in one run, and a sink that
+ * will not take the run all leave the run undrawn and land in a named counter. Under GL-less a refusal draws nothing,
+ * so the count is the only way the loss is visible.</li>
+ * <li><b>Geometry inside a display-list compile is recorded, not refused.</b> {@code glBegin} is legal inside
+ * {@code glNewList}/{@code glEndList}, and a mod that draws this way compiles its geometry into the list and replays it
+ * with {@code glCallList} - GregTech's tool rotation marker is exactly that ({@code ToolEventHandlers}, measured from
+ * its class file: {@code glNewList(4864=GL_COMPILE)} + {@code glBegin(GL_LINE_LOOP)} + 121 {@code glVertex3d} +
+ * {@code glEnd} + {@code glEndList}, then {@code glCallList} per frame). Drawn at compile time it would appear where
+ * the compile matrix put it, which is not where the list is used; refused (the previous rule) the list stays empty and
+ * every replay draws nothing. The run is therefore handed to {@link CompiledRunSink}, which owns a copy of the
+ * vertices and replays them with the matrix and state current at {@code glCallList} time.</li>
  * <li><b>The trailing vertices of an incomplete primitive are ignored, as GL ignores them.</b> A run that contains at
  * least one complete primitive is cut to whole primitives before it is offered ({@link #wholePrimitives}) and the cut
  * vertices are counted; a run with none is offered unchanged so the renderer's own refusal names it. Refusing the
@@ -57,6 +65,26 @@ public final class LegacyImmediateCapture {
          * @return whether the run was taken; a refusal keeps the refusal reason at the caller
          */
         boolean submit(long address, int stride, int format, int vertexCount, int drawMode);
+    }
+
+    /**
+     * Where a run drawn inside a display-list compile goes: it is not drawn now, it is copied and filed with the list.
+     * <p>
+     * The bytes are handed over as an address into this capture's own buffer, which the next {@code glBegin} reuses, so
+     * the implementation must copy them before returning.
+     */
+    public interface CompiledRunSink {
+        /**
+         * Files one run with the list being compiled.
+         *
+         * @param format     the immediate format id the run was packed for
+         * @param stride     the vertex width, matching {@code format}
+         * @param count      how many vertices the run holds
+         * @param drawMode   the GL primitive the run was opened with
+         * @param address    the first vertex's address in this capture's buffer
+         * @return whether the run was taken; a refusal keeps the reason at the caller
+         */
+        boolean record(int format, int stride, int count, int drawMode, long address);
     }
 
     /** Decides whether the renderer can draw a primitive at all; returns the reason when it cannot. */
@@ -101,6 +129,13 @@ public final class LegacyImmediateCapture {
     private int format = FORMAT_POSITION_TEX_COLOR;
     private int stride = STRIDE_POSITION_TEX_COLOR;
     private int count;
+    /**
+     * Whether the open run belongs to a display-list compile.
+     * <p>
+     * It changes where {@link #end(Sink, CompiledRunSink)} sends the run - to the list's copy instead of the drawing
+     * path - and it is cleared with the run, so a run that is compiled and a run that is drawn cannot be confused.
+     */
+    private boolean compiling;
 
     private float texU;
     private float texV;
@@ -112,6 +147,8 @@ public final class LegacyImmediateCapture {
     private long runs;
     private long submittedRuns;
     private long submittedVertices;
+    private long compiledRuns;
+    private long compiledVertices;
     private long modeRefusals;
     private long refusals;
     private long listRefusals;
@@ -168,17 +205,14 @@ public final class LegacyImmediateCapture {
         }
         this.mode = drawMode;
         this.count = 0;
-        if (compilingList) {
-            // A list's vertices are captured by the model path, which replays them with the list. Drawing them here
-            // would put the geometry on screen at compile time as well.
-            this.listRefusals++;
-            this.lastRefusal = "a display list is being compiled";
-            return false;
-        }
+        this.compiling = compilingList;
         String unsupported = gate == null ? null : gate.unsupportedReason(drawMode);
         if (unsupported != null) {
+            // Asked before the compile branch so a list cannot file geometry the replay would have to refuse: the same
+            // gate answers both, and a mode with no pipeline is a named loss either way.
             this.modeRefusals++;
             this.lastRefusal = unsupported;
+            this.compiling = false;
             return false;
         }
         this.format = textured ? FORMAT_POSITION_TEX_COLOR : FORMAT_POSITION_COLOR;
@@ -393,10 +427,29 @@ public final class LegacyImmediateCapture {
      * @return whether the run was submitted
      */
     public boolean end(Sink sink) {
+        return end(sink, null);
+    }
+
+    /**
+     * Closes the open run: a run drawn outside a list goes to {@code sink} and is drawn now, a run drawn inside a
+     * {@code glNewList} compile goes to {@code compiledSink} as a copy the list replays.
+     *
+     * <p>GL's rule is the reason for the split: under {@code GL_COMPILE} the commands between {@code glNewList} and
+     * {@code glEndList} are only stored, and drawing this run here would put the geometry on screen at the compile
+     * matrix as well as at every replay. A compile whose record cannot be made is counted and named rather than drawn
+     * - the one thing that must not happen is a run that appears neither in the list nor in the counters.
+     *
+     * @param sink         where a drawn run goes
+     * @param compiledSink where a run being compiled into a list goes; {@code null} refuses it by name
+     * @return whether the run was taken - submitted, or filed with the list
+     */
+    public boolean end(Sink sink, CompiledRunSink compiledSink) {
         if (!this.active) {
             return false;
         }
         this.active = false;
+        boolean compiled = this.compiling;
+        this.compiling = false;
         int vertices = this.count;
         this.count = 0;
         if (vertices <= 0) {
@@ -413,6 +466,28 @@ public final class LegacyImmediateCapture {
         int offer = drawable > 0 ? drawable : vertices;
         if (drawable > 0 && drawable < vertices) {
             this.trailingVertices += vertices - drawable;
+        }
+        if (compiled) {
+            if (compiledSink == null) {
+                this.listRefusals++;
+                this.refusals++;
+                this.lastRefusal = "a display list is being compiled and no list record is available";
+                return false;
+            }
+            if (!compiledSink.record(this.format, this.stride, offer, this.mode, this.address)) {
+                // The sink owns the reason (out of memory, the module's byte bound); counted here as well so the
+                // capture's own summary is not the quiet one.
+                this.listRefusals++;
+                this.refusals++;
+                if (this.lastRefusal.isEmpty()) {
+                    this.lastRefusal = "the display-list record refused it";
+                }
+                return false;
+            }
+            this.compiledRuns++;
+            this.compiledVertices += offer;
+            this.lastRefusal = "";
+            return true;
         }
         if (sink == null) {
             this.refusals++;
@@ -480,7 +555,8 @@ public final class LegacyImmediateCapture {
     /** {@return a one-line census, in the shape the other route counters report}. */
     public String summary() {
         return "legacyImmediate runs=" + this.runs + " submitted=" + this.submittedRuns
-                + " vertices=" + this.submittedVertices + " modeRefusals=" + this.modeRefusals
+                + " vertices=" + this.submittedVertices + " compiled=" + this.compiledRuns
+                + " compiledVertices=" + this.compiledVertices + " modeRefusals=" + this.modeRefusals
                 + " listRefusals=" + this.listRefusals + " nestedRefusals=" + this.nestedRefusals
                 + " sinkRefusals=" + this.sinkRefusals + " rectRefusals=" + this.rectRefusals
                 + " otherTexUnits=" + this.otherTexUnitCoords
@@ -510,6 +586,16 @@ public final class LegacyImmediateCapture {
 
     public long listRefusals() {
         return this.listRefusals;
+    }
+
+    /** {@return how many runs were filed with a display-list compile rather than drawn}. */
+    public long compiledRuns() {
+        return this.compiledRuns;
+    }
+
+    /** {@return how many vertices those compiled runs hold, which is what the list's copies cost}. */
+    public long compiledVertices() {
+        return this.compiledVertices;
     }
 
     public long nestedRefusals() {
