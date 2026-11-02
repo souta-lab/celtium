@@ -83,6 +83,40 @@ presented dump の grid 45 cell + 最下段で、slot 背景 `(139,139,139)` か
   `scripts/tests/test_creative_grid_check.py`（7 tests）が、icon の無い絵・1 cell だけ欠けた絵・
   layout の無い report を **FAIL** させ、揃った絵を PASS させることを固定する。
 
+## 修正の実機確認（leg `r42b-creative`、新 fixture `23b92ae5…`）
+
+同じ scene・同じ flags を、修正した fixture で1本走らせた（renderer は `aaf8eecb…` で不変）。
+`VUID` 0行、`CELTIUM_REFUSALS_BY_FORMAT {}`、`celtium/vulkan-check passes=2769 errors=0`。
+
+report に出たもの:
+
+```
+creativeGridLayout      = gui=427x240 left=116 top=52 first=9,18 pitch=18 cols=9 rows=6 slots=54
+creativeGridAt240Screen = net.minecraft.client.gui.inventory.GuiContainerCreative
+creativeGridAt240Layout = gui=427x240 left=116 top=52 first=9,18 pitch=18 cols=9 rows=6 slots=54
+creativeGridAt240Filled = 46
+creativeGridAt240Contents = 0=littletiles:hammerx1 … 45=betterquesting:quest_bookx1   (46 entries)
+```
+
+幾何は手で絵から導いた値（`left=116 top=52` は 427x240 の GUI に 195x136 の panel を中央寄せした値、
+`first=9,18` は `ContainerCreative` の最初の slot）と一致した。tick 240 の snapshot が走り、
+**そのとき開いていた screen を名指ししている**。
+
+`creative-grid-check.py --run .gv-verify/run-r42b-creative`:
+
+```
+container: slots=54 filled=46
+picture:   cells with an icon=54
+per-cell ink: 882 1782 1062 1683 690 708 1029 1035 307 565 370 471 363 631 1208 836 1050 1051 839 692 517 627
+              1630 1584 2304 2304 2304 459 721 327 1096 956 1724 2304 2304 2304 934 375 459 721 956 1584
+              2304 2304 2304 1800 540 540 540 495 861 1062 1062 1062
+control:   cells with an icon=54 of 54 (every empty cell painted from cell 24) -> ok
+filled slots: creativeGridAt240Contents (0 … 45)
+PASS: every one of the container's 46 stacks has an icon in its own cell
+```
+
+`2304` は tooltip に覆われた 9 cell（cell 全面が slot 背景と違う）。それ以外は 307–1800。
+
 ## この測定が言わないこと
 
 * **どの修正が効いたか**は言わない。`4c7b6b9a5` が根因（空の item plan の cache）と名指ししているが、
