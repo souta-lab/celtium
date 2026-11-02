@@ -2,7 +2,7 @@
 
 開発ベース **0.1.4-alpha-rc.26**（[build定義](<../build-1122/build.gradle.kts>)）。Windows検証用プレリリースは **v0.1.4-alpha-rc.26**（2026-10-30、[release notes](<releases/0.1.4-alpha-rc.26.md>)）。これまでの性能検証は本文に記載した 0.1.1-alpha を基準とする。
 2026-10-30 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
-製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案であり拘束しない（利用者指示 2026-10-28: 「new_architectureを絶対とするな」）。実測でより良い方法があればそちらを採る。
+製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案であり拘束しない（利用者指示 2026-10-28）。実測でより良い方法があればそちらを採る。
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
@@ -95,13 +95,13 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 
 ## FPSの現状と残る道（2026-10-31実測）
 
-- ABBA（クール・アイドル時）: Susy **1.27–1.48×**、ATM3 **~1.45×**。CPU律速。**測定はアイドル窓必須**（配信でCPU側だけ数ms失う）。
+- ABBA（クール・アイドル時）: Susy **1.27–1.48×**、ATM3 **~1.45×**。CPU律速。**測定はアイドル窓必須**。
 - 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier/submit各0.1）。30 windows・112 groups/frame。
 - 除去済み: raw-write flush -38%、published遷移 3.5→0.8%、epoch spin 3.0→0、nanoTime 1.2→0、window構造体再生成廃止。
-- 残差の主因はwindow固定費とper-batch呼び出し。parityにはarray-records（下記）が必要。
-- 棄却: bind flush延期（2回SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate（singletonで悪化）、フレーム再利用（アニメ凍結）。
+- 残差の主因はwindow固定費とper-batch呼び出し。pack legは1 frameでmodel replay 26,733–37,380。4096 capは72.3%を低速経路へ、segment=32768で9.4%（同一jar A/B r15b/c）。[証拠](evidence/model-record-capacity-2026-11-02.md)
+- 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate（singletonで悪化）、フレーム再利用（アニメ凍結）。
 
-- **次の実装単位: array-records（bindless即時描画）** — 設計と判明済みの土台は[新アーキテクチャ資料](<new_architecture.md>)の「array-records」節。
+- **次の実装単位: array-records（bindless）** — 土台は[新アーキテクチャ資料](<new_architecture.md>)の「array-records」節。
 
 ## 撤回した前提
 

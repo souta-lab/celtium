@@ -55,8 +55,24 @@ final class VulkanModelInstances {
     static final int RECORD_BYTES = 256;
     static final int COMMAND_BYTES = 20;
     static final int SEGMENTS = FrameSubmissionScheduler.FRAME_SLOTS + 2;
-    static final int SEGMENT_RECORDS = 4096;
+    /**
+     * Replays one frame's segment holds, {@code -Dceltium.vulkan.modelSegmentRecords=N} (default 32768).
+     * <p>
+     * Measured need in leg {@code r14e-menu-colour-fix} (Supersymmetry, AMD RX 6400, world stage): the pack's world
+     * attempted up to 26880 model replays in one presented frame; the 4096-record cap declined 479232 of that leg's
+     * 722176 replays (two thirds) while {@code declinedMissing=0} and {@code pipelines=1} - so they took the per-group
+     * path because of a size, not because their mesh, list or state was missing. {@link ModelRecordCapacity} owns the
+     * default, the clamp and the reasoning; this constant is only where the segment layout reads it.
+     */
+    static final int SEGMENT_RECORDS = ModelRecordCapacity.resolve(
+            System.getProperty("celtium.vulkan.modelSegmentRecords"));
     static final int VERTEX_BYTES = 28;
+    /**
+     * {@code -Dceltium.debug.modelRecords=N}: print one line per frame that wrote records - what it wrote, what the
+     * segment turned away and how full it ended - up to N lines. Off by default; the numbers are deltas of counters
+     * the append path already keeps, so a normal run pays nothing for the flag.
+     */
+    private static final int RECORD_CENSUS_LINES = Integer.getInteger("celtium.debug.modelRecords", 0).intValue();
 
     /** A run of instances that draw with one pipeline: one indirect call. */
     static final class Run {
@@ -151,6 +167,13 @@ final class VulkanModelInstances {
     private long declinedMissing;
     private long runs;
     private long poolBuilds;
+    /** Counters at the last frame boundary, so the per-frame census is a subtraction and not a second hot counter. */
+    private long censusAppendedMark;
+    private long censusDeclinedMark;
+    private long censusRunsMark;
+    private long worstFrameAttempts;
+    private long framesOverCapacity;
+    private int censusLines;
 
     VulkanModelInstances(VulkanContext context, long textureSetLayout) {
         this.context = context;
@@ -212,6 +235,34 @@ final class VulkanModelInstances {
         if (frameId == this.frameId) {
             return;
         }
+        // The frame that just ended is priced here, before its counters are absorbed into the marks: how many replays
+        // it wrote, how many the segment turned away and how full it ended say whether the capacity is the binding
+        // limit on this machine. Subtraction of counters the append path already keeps, so the frame boundary - not
+        // the per-replay path - pays for it.
+        long appendedThisFrame = this.appended - this.censusAppendedMark;
+        long declinedThisFrame = this.declinedFull - this.censusDeclinedMark;
+        long attemptsThisFrame = appendedThisFrame + declinedThisFrame;
+        if (attemptsThisFrame > this.worstFrameAttempts) {
+            this.worstFrameAttempts = attemptsThisFrame;
+        }
+        if (declinedThisFrame > 0) {
+            this.framesOverCapacity++;
+        }
+        if (RECORD_CENSUS_LINES > 0 && this.censusLines < RECORD_CENSUS_LINES && attemptsThisFrame > 0) {
+            this.censusLines++;
+            System.out.println("[Celtium] CELTIUM_MODEL_RECORDS frame=" + this.frameId
+                    + " attempts=" + attemptsThisFrame
+                    + " appended=" + appendedThisFrame
+                    + " declinedFull=" + declinedThisFrame
+                    + " runs=" + (this.runs - this.censusRunsMark)
+                    + " usedAtEnd=" + this.used + "/" + SEGMENT_RECORDS
+                    + " segment=" + this.segment
+                    + " worstFrameAttempts=" + this.worstFrameAttempts
+                    + " framesOverCapacity=" + this.framesOverCapacity);
+        }
+        this.censusAppendedMark = this.appended;
+        this.censusDeclinedMark = this.declinedFull;
+        this.censusRunsMark = this.runs;
         this.frameId = frameId;
         this.segment = (this.segment + 1) % SEGMENTS;
         this.used = 0;
@@ -485,7 +536,9 @@ final class VulkanModelInstances {
         return "modelInstances[appended=" + this.appended + " unlitAppended=" + this.unlitAppended + " runs=" + this.runs + " declinedFull=" + this.declinedFull
                 + " declinedMissing=" + this.declinedMissing + " poolBuilds=" + this.poolBuilds
                 + " poolAppends=" + this.poolAppends + " poolGrowths=" + this.poolGrowths
-                + " poolLists=" + this.poolEntries.size() + " pipelines=" + this.pipelines.size() + "]";
+                + " poolLists=" + this.poolEntries.size() + " pipelines=" + this.pipelines.size()
+                + " perFrameRecords=" + SEGMENT_RECORDS + " worstFrameAttempts=" + this.worstFrameAttempts
+                + " framesOverCapacity=" + this.framesOverCapacity + "]";
     }
 
     /** Destroys everything; the caller has waited for the device. */
