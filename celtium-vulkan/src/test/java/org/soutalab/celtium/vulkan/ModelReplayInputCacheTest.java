@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * The replay input cache may only skip work, never change a draw: a hit must mean the inputs of the value are exactly
  * the ones that value was built from. These cases are the input list of each value - the nine rotation floats the lit
- * payload reads, the light generation, and the sixteen projection floats - and the counters that make the hit rate
+ * payload reads, the light generation, and the projection stack's version - and the counters that make the hit rate
  * measurable on a leg.
  */
 class ModelReplayInputCacheTest {
@@ -62,43 +62,30 @@ class ModelReplayInputCacheTest {
         assertTrue(cache.describe().contains("light[hit=1 miss=2]"), cache.describe());
     }
 
-    @Test void projectionIsReusedOnlyForTheSameSixteenFloats() {
+    @Test void projectionIsReusedOnlyForTheSameVersion() {
+        // The remap's key is the projection stack's version, not its contents: every mutation of the stack bumps it
+        // (VulkanGlState.projectionVersion), so one compare proves the sixteen floats the remap was built from. Reading
+        // all sixteen back was a second copy of the same answer.
         ModelReplayInputCache cache = new ModelReplayInputCache();
-        float[] projection = new float[16];
-        projection[0] = 1.5f;
-        projection[5] = 2.5f;
-        projection[10] = -1.001f;
-        projection[11] = -1.0f;
-        assertFalse(cache.reuseProjection(projection));
+        assertFalse(cache.reuseProjection(11L), "an empty cache cannot answer a hit");
 
-        cache.noteProjection(projection);
-        assertTrue(cache.reuseProjection(projection));
-        assertTrue(cache.reuseProjection(projection.clone()), "equal contents, a different array");
+        cache.noteProjection(11L);
+        assertTrue(cache.reuseProjection(11L));
 
-        for (int index = 0; index < 16; index++) {
-            float[] changed = projection.clone();
-            changed[index] += 0.25f;
-            assertFalse(cache.reuseProjection(changed), "projection slot " + index + " is part of the remap");
-        }
-        assertFalse(cache.reuseProjection(null));
-        assertFalse(cache.reuseProjection(new float[15]));
+        assertFalse(cache.reuseProjection(12L), "every mutation of the projection stack bumps the version");
+        cache.noteProjection(12L);
+        assertTrue(cache.reuseProjection(12L));
+        assertFalse(cache.reuseProjection(11L), "a version that moved is not a hit even when the number comes back");
+        assertTrue(cache.describe().contains("projection[hit=2 miss=3]"), cache.describe());
     }
 
-    @Test void notingAProjectionCopiesIt() {
+    @Test void aProjectionIsOnlyReusedAfterTheVersionItWasRemappedFrom() {
         ModelReplayInputCache cache = new ModelReplayInputCache();
-        float[] projection = new float[16];
-        projection[0] = 4;
-        cache.noteProjection(projection);
-        projection[0] = 5;
-        assertFalse(cache.reuseProjection(projection));
-        assertTrue(cache.describe().contains("projection[hit=0 miss=1]"), cache.describe());
-    }
-
-    @Test void anUnsetProjectionStaysUnset() {
-        ModelReplayInputCache cache = new ModelReplayInputCache();
-        cache.noteProjection(new float[16]);
-        cache.noteProjection(null);
-        assertFalse(cache.reuseProjection(new float[16]));
+        cache.noteProjection(7L);
+        // Two stacks that alternate versions (a pass that restores the previous projection) never share the remap:
+        // Long.MIN_VALUE is the "never noted" marker, so it must not answer a hit either.
+        assertFalse(cache.reuseProjection(Long.MIN_VALUE));
+        assertTrue(cache.reuseProjection(7L));
     }
 
     @Test void theRotationHelpersNameTheSameNineSlotsAsTheCacheKey() {

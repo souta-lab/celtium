@@ -72,7 +72,12 @@ final class ModelReplayInputCache {
     private long lightGeneration = Long.MIN_VALUE;
     private boolean lightValid;
 
-    private final float[] projectionSource = new float[16];
+    /**
+     * The projection version the remap was built from. The projection is a stack ({@code glLoadMatrix}/{@code glOrtho}/
+     * {@code glPushMatrix}), and every mutation of it bumps this number, so equal numbers mean the same sixteen floats -
+     * a comparison of contents would read the same sixteen floats again to learn it.
+     */
+    private long projectionVersion = Long.MIN_VALUE;
     private boolean projectionValid;
 
     private long lightHits;
@@ -122,12 +127,11 @@ final class ModelReplayInputCache {
     /**
      * Asks whether the remapped projection can be reused, counting the answer like {@link #reuseLightPayload}.
      *
-     * @param projection the live projection the remap is computed from
-     * @return whether the remapped projection built from the same contents is still the right one
+     * @param version {@link VulkanGlState#projectionVersion()} at the moment the live projection was read
+     * @return whether the remapped projection built from the same projection is still the right one
      */
-    boolean reuseProjection(float[] projection) {
-        boolean reuse = ENABLED && this.projectionValid && projection != null && projection.length >= 16
-                && java.util.Arrays.equals(this.projectionSource, projection);
+    boolean reuseProjection(long version) {
+        boolean reuse = ENABLED && this.projectionValid && this.projectionVersion == version;
         if (reuse) {
             this.projectionHits++;
         } else {
@@ -136,13 +140,9 @@ final class ModelReplayInputCache {
         return reuse;
     }
 
-    /** Records the projection contents the remap was just built from. */
-    void noteProjection(float[] projection) {
-        if (projection == null || projection.length < 16) {
-            this.projectionValid = false;
-            return;
-        }
-        System.arraycopy(projection, 0, this.projectionSource, 0, 16);
+    /** Records the projection version the remap was just built from. */
+    void noteProjection(long version) {
+        this.projectionVersion = version;
         this.projectionValid = true;
     }
 

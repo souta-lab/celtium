@@ -37,6 +37,16 @@ final class ModelReplayFastPath {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modelReplayFastPath", "true"));
 
     /**
+     * {@code -Dceltium.vulkan.replayValueVersions=false}: the control arm for the same jar.
+     * <p>
+     * With this off {@link #sameVersions} answers false for every replay, so the guard captures and compares every value
+     * the way it did before the versions existed - same jar, same scene, same counters. A saving that only exists in a
+     * cross-build comparison is not a saving, and this switch is what makes that testable in one leg pair.
+     */
+    static final boolean VALUE_VERSIONS =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.replayValueVersions", "true"));
+
+    /**
      * The raw inputs the sixteen-int state array is a function of, in the order {@link VulkanTerrainGpuBackend}
      * fills them: the blend enable and its four factors and two equations, the colour mask, the alpha test's enable,
      * reference and function, cull, depth enable/write/function, lighting, unit 0's texture environment mode and RGB
@@ -95,6 +105,17 @@ final class ModelReplayFastPath {
         Object textureArray;
         Object lightmap;
         Object combine;
+        /**
+         * The four versions that prove the non-matrix half of the tuple is still the live value: the state and colour,
+         * the projection stack, the texture-matrix stacks and the texture environment. A hit compares these four - one
+         * read and one compare each - instead of capturing nineteen state inputs, reading the colour and the affine and
+         * comparing seventy-one values; a miss on any of them falls back to the full comparison, so a version that is
+         * too coarse costs work, never a wrong draw.
+         */
+        long stateVersion;
+        long projectionVersion;
+        long texMatrixVersion;
+        long envVersion;
         /** The pool slice the record's command points at, so a hit does not look the list up again. */
         int firstIndex;
         int vertexOffset;
@@ -239,12 +260,51 @@ final class ModelReplayFastPath {
      * @return whether every value the record carries is the cached tuple's
      */
     boolean matchesValues(Probe now, float[] projection, float[] lightCoord, float[] combineColour, float[] light) {
+        return matchesValues(now, projection, lightCoord, combineColour, light, sameVersions(now, this.matched));
+    }
+
+    /**
+     * {@return whether the four versions say the tuple's non-matrix values are the live ones}.
+     * <p>
+     * Each version is bumped by every mutator of the state it names - see {@link VulkanGlState#stateVersion()} and
+     * {@link NativeTextureEnvironment#version()} - so equality means every byte the version covers is unchanged. It is
+     * an over-approximation on purpose: a coarse version refuses replays it could have served, and no version can serve
+     * one it should have refused. The modelview is not one of them: it is the replay's own matrix, and the tuple
+     * deliberately does not carry it.
+     */
+    static boolean sameVersions(Probe now, Probe last) {
+        if (!VALUE_VERSIONS) {
+            return false;
+        }
+        return last != null
+                && now.stateVersion == last.stateVersion
+                && now.projectionVersion == last.projectionVersion
+                && now.texMatrixVersion == last.texMatrixVersion
+                && now.envVersion == last.envVersion;
+    }
+
+    /**
+     * The value half, with the versions' answer handed in: {@code versionsProven} means the state signature, the colour,
+     * the texture affine, the projection and the combine colour are unchanged by construction, so they are not captured
+     * or compared. The light-map coordinate and the lit payload are always compared: they are the values a replay's own
+     * matrix and the frame's light state can move without any version moving.
+     */
+    boolean matchesValues(Probe now, float[] projection, float[] lightCoord, float[] combineColour, float[] light,
+            boolean versionsProven) {
         if (!ENABLED) {
             return false;
         }
         Probe last = this.matched;
         if (last == null || last.listId != now.listId) {
             return false;
+        }
+        if (versionsProven) {
+            return now.lightCoordValid == last.lightCoordValid
+                    && (!now.lightCoordValid || java.util.Arrays.equals(lightCoord, last.lightCoord))
+                    && now.lightValid == last.lightValid
+                    && (!now.lightValid || java.util.Arrays.equals(light, last.light))
+                    && now.combineValid == last.combineValid
+                    && (!now.combineValid || java.util.Arrays.equals(combineColour, last.combineColour));
         }
         // Arrays whose "no value" answer is a stale buffer are compared only when both sides carry one: the record
         // ignores them when the flag is clear, so comparing the stale contents could only invent a miss.
@@ -345,6 +405,10 @@ final class ModelReplayFastPath {
         last.textureArray = now.textureArray;
         last.lightmap = now.lightmap;
         last.combine = now.combine;
+        last.stateVersion = now.stateVersion;
+        last.projectionVersion = now.projectionVersion;
+        last.texMatrixVersion = now.texMatrixVersion;
+        last.envVersion = now.envVersion;
         last.firstIndex = now.firstIndex;
         last.vertexOffset = now.vertexOffset;
         last.indexCount = now.indexCount;

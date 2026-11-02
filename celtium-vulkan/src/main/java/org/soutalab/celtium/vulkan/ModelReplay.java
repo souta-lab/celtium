@@ -201,6 +201,24 @@ final class ModelReplay {
             }
             int[] state = b.celtium$captureState();
             long key = b.celtium$stateKey(VulkanImmediateFormats.ITEM, state);
+            // The guard may have proved the versions and skipped the state, the colour and the affine: the tuple this
+            // replay is about to record must still carry *this* replay's bytes. The version it stores was read before
+            // the capture, and a value the versions do not cover (the light-map coordinate, the payload, the combine
+            // colour) can change without moving any of them - so recording the previous replay's signature behind this
+            // replay's version would let a later replay be served bytes that replay never resolved.
+            ModelReplayFastPath fastPath = b.modelReplayFastPath;
+            if (ModelReplayFastPath.sameVersions(fastPath.probe(), fastPath.cached())) {
+                ModelReplayFastPath.Probe resolved = fastPath.probe();
+                b.celtium$stateSignature(resolved.signature);
+                resolved.colourValid = b.colorMirrorHasValue;
+                if (resolved.colourValid) {
+                    resolved.colour[0] = b.immediateState.colorRed();
+                    resolved.colour[1] = b.immediateState.colorGreen();
+                    resolved.colour[2] = b.immediateState.colorBlue();
+                    resolved.colour[3] = b.immediateState.colorAlpha();
+                }
+                resolved.affineValid = b.celtium$readTextureAffine(resolved.affine);
+            }
             // The layer passes: a display list replayed under a texture other than the one it was compiled with. The
             // spider's red eyes are one (LayerSpiderEyes rebinds the eyes texture and draws the same lists again with
             // additive blending and full-brightness light-map coordinates), and it is the one model family whose
@@ -564,23 +582,35 @@ final class ModelReplay {
         probe.textureArray = b.textureArray;
         probe.lightmap = b.lightmapTexture;
         probe.combine = combineColor;
+        // The four versions the value half is decided by. Read before the shape guard so a refused shape costs nothing:
+        // they are four field reads, and the values behind them (the state capture, the colour, the affine) are the
+        // expensive half this path exists to skip.
+        probe.stateVersion = b.immediateState.stateVersion();
+        probe.projectionVersion = b.immediateState.projectionVersion();
+        probe.texMatrixVersion = b.immediateState.textureMatrixVersion();
+        probe.envVersion = NativeTextureEnvironment.current().version();
         if (!fast.matchesShape(probe)) {
             fast.noteMiss(ModelReplayFastPath.MISS_SHAPE);
             return false;
         }
-        // The value half. The state is compared through its raw inputs, not captured: a hit must not pay for the
-        // sixteen stores, the two light-map lookups and the key it already holds. The projection, the light-map
-        // coordinate and the combine colour are handed to the guard as they are, not copied into its scratch: the
-        // guard only reads them and a hit writes the cached tuple's bytes.
-        b.celtium$stateSignature(probe.signature);
-        probe.colourValid = b.colorMirrorHasValue;
-        if (probe.colourValid) {
-            probe.colour[0] = b.immediateState.colorRed();
-            probe.colour[1] = b.immediateState.colorGreen();
-            probe.colour[2] = b.immediateState.colorBlue();
-            probe.colour[3] = b.immediateState.colorAlpha();
+        // The value half. When the four versions are the tuple's, every value they cover - the nineteen state inputs,
+        // the colour, the texture affine, the projection and the combine colour - is the one the tuple was recorded
+        // from, so none of it is captured or compared: the hit writes the tuple's own bytes. Only when a version moved is
+        // the full comparison run, which is the unchanged path and can still serve a hit when the values happen to be
+        // equal. The projection, the light-map coordinate and the combine colour are handed to the guard as they are,
+        // not copied into its scratch: the guard only reads them and a hit writes the cached tuple's bytes.
+        boolean versionsProven = ModelReplayFastPath.sameVersions(probe, fast.cached());
+        if (!versionsProven) {
+            b.celtium$stateSignature(probe.signature);
+            probe.colourValid = b.colorMirrorHasValue;
+            if (probe.colourValid) {
+                probe.colour[0] = b.immediateState.colorRed();
+                probe.colour[1] = b.immediateState.colorGreen();
+                probe.colour[2] = b.immediateState.colorBlue();
+                probe.colour[3] = b.immediateState.colorAlpha();
+            }
+            probe.affineValid = b.celtium$readTextureAffine(probe.affine);
         }
-        probe.affineValid = b.celtium$readTextureAffine(probe.affine);
         probe.lightCoordValid = lightCoord != null;
         probe.combineValid = combineColor != null;
         // The lit payload is compared as the twenty floats the record carries. Its inputs (the light generation and
@@ -589,7 +619,7 @@ final class ModelReplay {
         // repeated. celtium$replayLight already asks its own cache first, so this is the same call the path made.
         float[] light = b.celtium$replayLight(fast.cached().state, modelView);
         probe.lightValid = light != null;
-        if (!fast.matchesValues(probe, projection, lightCoord, combineColor, light)) {
+        if (!fast.matchesValues(probe, projection, lightCoord, combineColor, light, versionsProven)) {
             fast.noteMiss(ModelReplayFastPath.MISS_INPUTS);
             return false;
         }
@@ -687,6 +717,9 @@ final class ModelReplay {
         probe.registry = b.textureRegistry;
         probe.textureArray = b.textureArray;
         probe.lightmap = b.lightmapTexture;
+        // The versions are deliberately not re-read here: they must be the ones the guard read *before* the values were
+        // captured, or a state change between the capture and this record would store a version newer than the bytes
+        // behind it - a false hit. An older version can only cost a full comparison later, which is the safe direction.
         probe.firstIndex = entry[0];
         probe.vertexOffset = entry[1];
         probe.indexCount = entry[2];

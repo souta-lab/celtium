@@ -101,7 +101,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 - 残差はwindow固定費とper-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate（singletonで悪化）、フレーム再利用（アニメ凍結）。
 
-- **次の実装単位: replay guard** — hit 288 ns・前段96 ns（383 ns、hit 98.2 %、leg r19d）。payloadは56 %で再構築、入力キー証明は全miss。array-recordsは後続。[証拠](evidence/model-replay-hit-cost-2026-11-02.md)
+- **次の実装単位: guard 残り309 ns** — 値halfを4 versionで証明（同一jar 315→309 ns・validation 0）。残りは record write・payload・run条件・census。[証拠](evidence/model-replay-value-versions-2026-11-02.md)
 
 ## 撤回した前提
 

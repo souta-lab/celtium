@@ -10,6 +10,11 @@ public final class NativeRasterState {
 
     public static NativeRasterState current() { return CURRENT; }
 
+    /** {@return the version of the values a queued draw copies}; see {@link #version}. */
+    public long version() {
+        return this.version;
+    }
+
     private boolean blendEnabled;
     private int blendSrcRgb = VulkanGlState.BLEND_SRC_ALPHA;
     private int blendDstRgb = VulkanGlState.BLEND_ONE_MINUS_SRC_ALPHA;
@@ -29,6 +34,15 @@ public final class NativeRasterState {
     private float polygonOffsetFactor, polygonOffsetUnits;
     private Runnable beforeChange;
     private boolean notifying;
+    /**
+     * Bumped by each setter whose value a model replay's tuple carries, and only when the value actually changes.
+     * <p>
+     * The state model wraps this owner but is not its only writer: the raw-GL adapter writes blend factors, equations,
+     * cull and the colour mask here directly, so a version kept beside the wrapper's fields would miss exactly the
+     * mutations a direct-GL mod makes between two model replays. It lives here, next to the fields, for that reason -
+     * and {@link VulkanGlState#stateVersion()} folds it into the number the replay path compares.
+     */
+    private long version;
 
     /** The callback submits deferred glyph geometry under the OLD state. It must run before changing any value. */
     public void beforeChange(Runnable callback) { this.beforeChange = callback; }
@@ -49,6 +63,7 @@ public final class NativeRasterState {
         if (this.blendEnabled == enabled) return;
         changing();
         this.blendEnabled = enabled;
+        this.version++;
     }
     public int blendSrcRgb() { return this.blendSrcRgb; }
     public int blendDstRgb() { return this.blendDstRgb; }
@@ -60,6 +75,7 @@ public final class NativeRasterState {
         changing();
         this.blendSrcRgb = srcRgb; this.blendDstRgb = dstRgb;
         this.blendSrcAlpha = srcAlpha; this.blendDstAlpha = dstAlpha;
+        this.version++;
     }
     public int blendEquationRgb() { return this.blendEquationRgb; }
     public int blendEquationAlpha() { return this.blendEquationAlpha; }
@@ -67,18 +83,21 @@ public final class NativeRasterState {
         if (this.blendEquationRgb == rgb && this.blendEquationAlpha == alpha) return;
         changing();
         this.blendEquationRgb = rgb; this.blendEquationAlpha = alpha;
+        this.version++;
     }
     public int colorMask() { return this.colorMask; }
     public void colorMask(int mask) {
         if (this.colorMask == mask) return;
         changing();
         this.colorMask = mask;
+        this.version++;
     }
     public boolean cullEnabled() { return this.cullEnabled; }
     public void cullEnabled(boolean enabled) {
         if (this.cullEnabled == enabled) return;
         changing();
         this.cullEnabled = enabled;
+        this.version++;
     }
     public int cullFace() { return this.cullFace; }
     public void cullFace(int face) {

@@ -4944,11 +4944,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * that keeps a projection asks {@link #celtium$shareProjection} for its own copy.
      */
     float[] celtium$replayProjection(float[] projectionNow) {
-        if (this.modelReplayInputCache.reuseProjection(projectionNow)) {
+        // The projection's version, not its contents: the remap is a 4x4 multiply and the cache used to read all sixteen
+        // floats back to prove they had not moved. Every mutation of the projection stack bumps the version, so one
+        // compare says the same thing.
+        long projectionVersion = this.immediateState.projectionVersion();
+        if (this.modelReplayInputCache.reuseProjection(projectionVersion)) {
             return this.modelReplayProjection;
         }
         remapClipDepth(projectionNow, this.modelReplayProjection);
-        this.modelReplayInputCache.noteProjection(projectionNow);
+        this.modelReplayInputCache.noteProjection(projectionVersion);
         return this.modelReplayProjection;
     }
 

@@ -72,6 +72,25 @@ class ModelReplayFastPathTest {
         probe.firstIndex = 12;
         probe.vertexOffset = 34;
         probe.indexCount = 56;
+        // The four versions the value half is decided by, at values no other case reuses: a probe that leaves them at
+        // zero would take the proven path and make every value comparison below vacuous.
+        probe.stateVersion = 41L;
+        probe.projectionVersion = 42L;
+        probe.texMatrixVersion = 43L;
+        probe.envVersion = 44L;
+        return probe;
+    }
+
+    /**
+     * The same tuple with every version moved: the fallback the guard takes when a mutator ran between two replays.
+     * A value test has to use this one, or the version would prove the bytes without comparing them.
+     */
+    private static ModelReplayFastPath.Probe refilled() {
+        ModelReplayFastPath.Probe probe = filled();
+        probe.stateVersion++;
+        probe.projectionVersion++;
+        probe.texMatrixVersion++;
+        probe.envVersion++;
         return probe;
     }
 
@@ -138,22 +157,22 @@ class ModelReplayFastPathTest {
         // One element of each value array, at both ends: an off-by-one in a copy shows up as a hit that should miss.
         assertTrue(matches(fast, filled()));
         for (int index = 0; index < ModelReplayFastPath.SIGNATURE; index++) {
-            ModelReplayFastPath.Probe changed = filled();
+            ModelReplayFastPath.Probe changed = refilled();
             changed.signature[index]++;
             assertFalse(matches(fast, changed), "signature slot " + index + " is part of the state");
         }
         for (int index : new int[] {0, 15}) {
-            ModelReplayFastPath.Probe changed = filled();
+            ModelReplayFastPath.Probe changed = refilled();
             changed.projection[index]++;
             assertFalse(matches(fast, changed), "projection slot " + index + " is part of the run");
         }
         for (int index = 0; index < 4; index++) {
-            ModelReplayFastPath.Probe changed = filled();
+            ModelReplayFastPath.Probe changed = refilled();
             changed.colour[index] += 0.125f;
             assertFalse(matches(fast, changed), "colour slot " + index + " is part of the record");
         }
         for (int index = 0; index < 6; index++) {
-            ModelReplayFastPath.Probe changed = filled();
+            ModelReplayFastPath.Probe changed = refilled();
             changed.affine[index] += 0.125f;
             assertFalse(matches(fast, changed), "affine slot " + index + " is part of the record");
         }
@@ -193,7 +212,7 @@ class ModelReplayFastPathTest {
         note(fast);
         // The unchanged path writes "no affine" as a record that ignores the buffer, so a stale buffer with the flag
         // clear is the same record. A flip in either direction is a different record.
-        ModelReplayFastPath.Probe stale = filled();
+        ModelReplayFastPath.Probe stale = refilled();
         stale.affineValid = false;
         stale.affine[0] = 99;                       // stale contents, which the record ignores
         assertFalse(matches(fast, stale), "an affine that appeared is a different record");
@@ -227,8 +246,7 @@ class ModelReplayFastPathTest {
         live.projection[3] = 0;
         live.light[7] = 0;
         live.state[0] = 0;
-        ModelReplayFastPath.Probe same = filled();
-        assertTrue(matches(fast, same), "the tuple was copied, not referenced");
+        assertTrue(matches(fast, refilled()), "the tuple was copied, not referenced");
     }
 
     @Test void theStateArrayIsCopiedForTheHitPath() {
@@ -293,6 +311,64 @@ class ModelReplayFastPathTest {
         note(fast, colliding);
         ModelReplayFastPath.Probe aAgain = filled();
         assertFalse(matches(fast, aAgain), "A was evicted by the list that shares its slot");
+    }
+
+    @Test void aProvenVersionSkipsTheStateAndTheProjectionButNeverThePayload() {
+        // The versions are the proof: when the state, projection and texture-matrix versions are the tuple's, the
+        // signature, colour, affine and projection the caller would have captured are the tuple's by construction, so
+        // they are neither read nor compared. The light-map coordinate, the payload and the combine are always compared:
+        // the replay's own matrix and the frame's light state can move them without any version moving.
+        ModelReplayFastPath fast = new ModelReplayFastPath();
+        note(fast);
+        ModelReplayFastPath.Probe stateMoved = filled();
+        stateMoved.signature[0] += 7;
+        stateMoved.projection[0] += 7;
+        stateMoved.colour[0] += 0.5f;
+        stateMoved.affine[0] += 0.5f;
+        assertTrue(matches(fast, stateMoved),
+                "a byte the version proves is not compared - the hit writes the tuple's own copy");
+
+        for (String what : new String[] {"lightCoord", "light", "combineColour"}) {
+            ModelReplayFastPath.Probe changed = filled();
+            switch (what) {
+                case "lightCoord": changed.lightCoord[0] += 0.125f; break;
+                case "light": changed.light[19] += 0.125f; break;
+                default: changed.combineColour[3] += 0.125f; break;
+            }
+            assertFalse(matches(fast, changed), what + " is compared even when every version is unchanged");
+        }
+    }
+
+    @Test void aMovedVersionFallsBackToTheFullComparison() {
+        // A coarse version may only cost work. With a version moved and every byte equal the fallback still serves the
+        // hit - so the change that bumped it (a colour written and written back, say) does not disable the path - and
+        // with a byte moved as well it refuses it.
+        ModelReplayFastPath fast = new ModelReplayFastPath();
+        note(fast);
+        assertTrue(matches(fast, refilled()), "the bytes are equal, so the fallback serves the hit");
+
+        ModelReplayFastPath.Probe changed = refilled();
+        changed.colour[2] += 0.25f;
+        assertFalse(matches(fast, changed), "the fallback compares the bytes, so a moved one is a miss");
+    }
+
+    @Test void everyVersionIsPartOfTheProof() {
+        // Each of the four is the only proof of one group: moving it alone must send the guard to the full comparison,
+        // which is observable because the tuple is then compared by bytes instead of trusted.
+        ModelReplayFastPath fast = new ModelReplayFastPath();
+        note(fast);
+        for (String name : new String[] {"stateVersion", "projectionVersion", "texMatrixVersion", "envVersion"}) {
+            ModelReplayFastPath.Probe moved = filled();
+            switch (name) {
+                case "stateVersion": moved.stateVersion++; break;
+                case "projectionVersion": moved.projectionVersion++; break;
+                case "texMatrixVersion": moved.texMatrixVersion++; break;
+                default: moved.envVersion++; break;
+            }
+            assertFalse(ModelReplayFastPath.sameVersions(moved, fast.cached()), name + " is part of the proof");
+            moved.signature[0] += 3;
+            assertFalse(matches(fast, moved), name + " moving must fall back to the bytes, and the bytes moved");
+        }
     }
 
     @Test void invalidateDropsTheTuple() {

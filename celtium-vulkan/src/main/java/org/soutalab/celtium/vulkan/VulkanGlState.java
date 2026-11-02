@@ -51,6 +51,26 @@ public final class VulkanGlState {
     private int lightsEnabledMask;
     /** Bumped by every lighting setter; see {@link #lightGeneration()}. */
     private long lightGeneration;
+    /**
+     * Bumped by every setter that can change a value a model replay's tuple carries, except the matrices.
+     * <p>
+     * The replay path keeps the tuple it resolved (the state signature, the colour, the texture affine, the projection)
+     * and has to prove that a later replay of the same list would resolve the same bytes. Comparing those bytes costs a
+     * capture of nineteen inputs plus dozens of compares per replay; comparing one version per group is one read and one
+     * compare and is exactly as strong <em>provided</em> every mutator bumps its group. That is the contract this field
+     * exists to make checkable: the setters in this class are the only writers of the fields the signature reads (the
+     * raster mirror, depth, the alpha test, cull, colorMask, the lighting enable and the current colour), so nothing can
+     * move one of them without moving this number.
+     * <p>
+     * Deliberately not bumped by a modelview change: the modelview is the one input a repeated replay is allowed to
+     * change, and bumping here would refuse every replay. The projection and the texture matrices have their own
+     * versions for the same reason, and the light state has {@link #lightGeneration()}.
+     */
+    private long stateVersion;
+    /** Bumped only by a projection-stack mutation: see {@link #projectionVersion()}. */
+    private long projectionVersion;
+    /** Bumped only by a texture-matrix mutation, on either unit: see {@link #textureMatrixVersion()}. */
+    private long textureMatrixVersion;
     /** The GL name of the bound texture; 0 means none, which is what the immediate path refuses to draw with. */
     private float alphaFuncReference = 0.1f;
     private int shadeModel = SHADE_SMOOTH;
@@ -162,6 +182,7 @@ public final class VulkanGlState {
         }
         System.arraycopy(top(this.matrixMode), 0, pushed, 0, MATRIX_FLOATS);
         stack.push(pushed);
+        noteMatrixMutation();
     }
 
     public void popMatrix() {
@@ -171,12 +192,14 @@ public final class VulkanGlState {
             if (popped != null && this.matrixScratchPool.size() < MATRIX_POOL_LIMIT) {
                 this.matrixScratchPool.push(popped);
             }
+            noteMatrixMutation();
         }
     }
 
     /** Replaces the active matrix with the identity, the {@code glLoadIdentity} case. */
     public void loadIdentity() {
         System.arraycopy(IDENTITY, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        noteMatrixMutation();
     }
 
     /**
@@ -200,6 +223,7 @@ public final class VulkanGlState {
         m[13] = m13;
         m[14] = m14;
         m[15] = m15;
+        noteMatrixMutation();
     }
 
     public void scale(double x, double y, double z) {
@@ -214,6 +238,7 @@ public final class VulkanGlState {
             m[4 + row] *= sy;
             m[8 + row] *= sz;
         }
+        noteMatrixMutation();
     }
 
     public void rotate(double angleDegrees, double x, double y, double z) {
@@ -236,6 +261,7 @@ public final class VulkanGlState {
                 m[a + row] = (ma * c) + (mb * s);
                 m[b + row] = (mb * c) - (ma * s);
             }
+            noteMatrixMutation();
             return;
         }
         double radians = Math.toRadians(angleDegrees);
@@ -274,6 +300,7 @@ public final class VulkanGlState {
             m[4 + row] = (x0 * r10) + (x1 * r11) + (x2 * r12);
             m[8 + row] = (x0 * r20) + (x1 * r21) + (x2 * r22);
         }
+        noteMatrixMutation();
     }
 
     /**
@@ -318,6 +345,7 @@ public final class VulkanGlState {
             throw new IllegalArgumentException("a matrix must have at least " + MATRIX_FLOATS + " floats");
         }
         System.arraycopy(matrix, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        noteMatrixMutation();
     }
 
     /** Multiplies the active matrix in place, the {@code glMultMatrixf} case. */
@@ -327,6 +355,7 @@ public final class VulkanGlState {
         }
         multiply(top(this.matrixMode), matrix, this.multiplyResult);
         System.arraycopy(this.multiplyResult, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        noteMatrixMutation();
     }
 
     /** {@return a copy of the active matrix}, for the push-constant block a draw uploads. */
@@ -373,6 +402,7 @@ public final class VulkanGlState {
      */
     public void setMatrix(int mode, float[] values) {
         System.arraycopy(values, 0, top(mode), 0, 16);
+        noteMatrixMutation(mode);
     }
 
     public int matrixMode() {
@@ -395,12 +425,57 @@ public final class VulkanGlState {
         this.matrixMode = mode;
     }
 
+    /**
+     * {@return the version of every replay-visible value this class holds outside the matrices and the light state}.
+     * <p>
+     * A model replay's tuple may be served from a cached one only while this number, {@link #projectionVersion()},
+     * {@link #textureMatrixVersion()}, {@link #lightGeneration()} and the caller's own identities are unchanged: each
+     * version moving means the bytes that depend on its group have to be compared again. The three are separate on
+     * purpose - a texture-matrix edit must not refuse the state half, and a modelview edit must refuse none of them.
+     */
+    public long stateVersion() {
+        // The raster mirror owns its own version because the raw-GL adapter writes it without going through this class.
+        // Both counters only increase, so their sum changes whenever either does: a false equality cannot come from one
+        // moving and the other moving back.
+        return this.stateVersion + this.raster.version();
+    }
+
+    /** {@return the version of the projection stack; see {@link #stateVersion()}. */
+    public long projectionVersion() {
+        return this.projectionVersion;
+    }
+
+    /** {@return the version of the texture-matrix stacks, both units; see {@link #stateVersion()}. */
+    public long textureMatrixVersion() {
+        return this.textureMatrixVersion;
+    }
+
+    /** Records that a matrix on the active stack moved: the mode decides which version that is. */
+    private void noteMatrixMutation() {
+        noteMatrixMutation(this.matrixMode);
+    }
+
+    /** Records that a matrix on the named stack moved. */
+    private void noteMatrixMutation(int mode) {
+        if (mode == MATRIX_MODE_PROJECTION) {
+            this.projectionVersion++;
+        } else if (mode == MATRIX_MODE_TEXTURE) {
+            this.textureMatrixVersion++;
+        }
+    }
+
+    /** Records that a setter changed a replay-visible value outside the matrices; see {@link #stateVersion()}. */
+    private void noteStateMutation() {
+        this.stateVersion++;
+    }
+
     public boolean blendEnabled() {
         return this.raster.blendEnabled();
     }
 
     public void blendEnabled(boolean enabled) {
         this.raster.blendEnabled(enabled);
+        noteStateMutation();
     }
 
     /**
@@ -416,6 +491,7 @@ public final class VulkanGlState {
 
     public void blendFunc(int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
         this.raster.blendFunc(srcRgb, dstRgb, srcAlpha, dstAlpha);
+        noteStateMutation();
     }
 
     public int blendSrcRgb() {
@@ -452,6 +528,7 @@ public final class VulkanGlState {
 
     public void blendEquation(int rgb, int alpha) {
         this.raster.blendEquation(rgb, alpha);
+        noteStateMutation();
     }
 
     /**
@@ -468,6 +545,7 @@ public final class VulkanGlState {
 
     public void colorMask(int mask) {
         this.raster.colorMask(mask);
+        noteStateMutation();
     }
 
     public boolean depthTestEnabled() {
@@ -476,6 +554,7 @@ public final class VulkanGlState {
 
     public void depthTestEnabled(boolean enabled) {
         this.depthTestEnabled = enabled;
+        noteStateMutation();
     }
 
     public int depthFunc() {
@@ -484,6 +563,7 @@ public final class VulkanGlState {
 
     public void depthFunc(int func) {
         this.depthFunc = func;
+        noteStateMutation();
     }
 
     public boolean depthMask() {
@@ -492,11 +572,13 @@ public final class VulkanGlState {
 
     public void depthMask(boolean mask) {
         this.depthMask = mask;
+        noteStateMutation();
     }
 
     /** The reference value of the alpha test, as the fragment shader compares against it. */
     public void alphaFuncReference(float reference) {
         this.alphaFuncReference = reference;
+        noteStateMutation();
     }
 
     public float alphaFuncReference() {
@@ -509,6 +591,7 @@ public final class VulkanGlState {
 
     public void cullEnabled(boolean enabled) {
         this.raster.cullEnabled(enabled);
+        noteStateMutation();
     }
 
     public int cullFace() {
@@ -517,6 +600,7 @@ public final class VulkanGlState {
 
     public void cullFace(int face) {
         this.raster.cullFace(face);
+        noteStateMutation();
     }
 
     public boolean alphaTestEnabled() {
@@ -525,6 +609,7 @@ public final class VulkanGlState {
 
     public void alphaTestEnabled(boolean enabled) {
         this.alphaTestEnabled = enabled;
+        noteStateMutation();
     }
 
     public int alphaFunc() {
@@ -549,6 +634,7 @@ public final class VulkanGlState {
         this.alphaFunc = func;
         this.alphaRef = reference;
         this.alphaFuncReference = reference;
+        noteStateMutation();
     }
 
     public boolean lightingEnabled() {
@@ -558,6 +644,7 @@ public final class VulkanGlState {
     public void lightingEnabled(boolean enabled) {
         this.lightingEnabled = enabled;
         this.lightGeneration++;
+        noteStateMutation();
     }
 
     /**
@@ -575,6 +662,7 @@ public final class VulkanGlState {
     }
 
     public void lightEnabled(int index, boolean enabled) {
+        noteStateMutation();
         if (index < 0 || index >= 2) {
             return;
         }
@@ -813,6 +901,7 @@ public final class VulkanGlState {
         this.colorGreen = green;
         this.colorBlue = blue;
         this.colorAlpha = alpha;
+        noteStateMutation();
     }
 
     public float colorRed() {

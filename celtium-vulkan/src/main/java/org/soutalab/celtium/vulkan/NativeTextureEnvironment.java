@@ -19,6 +19,15 @@ public final class NativeTextureEnvironment {
     private final float[][] colors = new float[32][4];
     private boolean snapshotValid;
     private float[] snapshot;
+    /**
+     * Bumped by every parameter or colour that actually changed, on any unit and for any pname.
+     * <p>
+     * The model replay path's state signature reads unit 0's {@code MODE} and {@code RGB}, and its record carries
+     * {@link #combinedColor()}, which reads the combine mode of every unit. Comparing those five numbers per replay is a
+     * pair of map lookups; this number says the same thing in one read, provided every mutator moves it. Deliberately
+     * coarse: a change to a unit or pname nothing reads costs a miss, never a wrong draw.
+     */
+    private long version;
 
     @SuppressWarnings("unchecked")
     public NativeTextureEnvironment(NativeTextureBindings bindings, NativeRasterState boundaries) {
@@ -31,6 +40,11 @@ public final class NativeTextureEnvironment {
         }
     }
     public static NativeTextureEnvironment current() { return CURRENT; }
+
+    /** {@return the version of every parameter and colour this environment holds}; see {@link #version}. */
+    public long version() {
+        return this.version;
+    }
 
     public int unitParameter(int unit, int pname) {
         int value = this.parameters[unit].get(pname);
@@ -50,6 +64,7 @@ public final class NativeTextureEnvironment {
         this.boundaries.flushBeforeChange();
         this.parameters[unit].put(pname, value);
         this.snapshotValid = false;
+        this.version++;
     }
     public void color(int target, int pname, float r, float g, float b, float a) {
         if (target != TARGET || pname != COLOR) return;
@@ -58,6 +73,7 @@ public final class NativeTextureEnvironment {
         this.boundaries.flushBeforeChange();
         old[0] = r; old[1] = g; old[2] = b; old[3] = a;
         this.snapshotValid = false;
+        this.version++;
     }
     public float colorComponent(int component) { return this.colors[this.bindings.activeUnit()][component]; }
 
