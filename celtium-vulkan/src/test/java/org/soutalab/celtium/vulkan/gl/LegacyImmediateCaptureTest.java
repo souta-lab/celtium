@@ -474,4 +474,46 @@ class LegacyImmediateCaptureTest {
         assertEquals(1, capture.otherTexUnitCoords(), "and is counted");
         assertEquals(1, capture.lastOtherTexUnit(), "with its unit named");
     }
+
+    /**
+     * A run's placement is read before {@code end} resets the buffer: a quad's vertices are what separate "the menu
+     * background was never written" from "it was written at a size that cannot show", and the census needs them.
+     */
+    @Test
+    void theCensusCanReadARunsEndVerticesBeforeItIsOffered() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, true, false, GATE));
+        capture.texCoord(0.0f, 0.0f);
+        capture.vertex3f(0.0f, 240.0f, 0.0f);
+        capture.texCoord(1.0f, 1.0f);
+        capture.vertex3f(1920.0f, 0.0f, 0.0f);
+        float[] position = new float[3];
+        float[] uv = new float[2];
+        assertTrue(capture.vertexAt(0, position, uv), "the first vertex is readable");
+        assertArrayEquals(new float[] {0.0f, 240.0f, 0.0f}, position, "its position");
+        assertArrayEquals(new float[] {0.0f, 0.0f}, uv, "its texture coordinate");
+        assertTrue(capture.vertexAt(1, position, uv), "the last vertex is readable");
+        assertArrayEquals(new float[] {1920.0f, 0.0f, 0.0f}, position);
+        assertArrayEquals(new float[] {1.0f, 1.0f}, uv);
+        assertFalse(capture.vertexAt(2, position, uv), "past the run there is nothing to read");
+        assertFalse(capture.vertexAt(-1, position, uv), "and neither is an index before it");
+        assertTrue(capture.end(sink), "reading does not consume the run");
+        assertEquals(2, capture.submittedVertices());
+    }
+
+    /** An untextured run has no coordinate pair to read; the census still gets its placement. */
+    @Test
+    void theCensusReadsAnUntexturedRunWithZeroCoordinates() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, false, false, GATE));
+        capture.vertex3f(5.0f, 6.0f, 7.0f);
+        float[] position = new float[3];
+        float[] uv = new float[2];
+        assertTrue(capture.vertexAt(0, position, uv));
+        assertArrayEquals(new float[] {5.0f, 6.0f, 7.0f}, position);
+        assertArrayEquals(new float[] {0.0f, 0.0f}, uv, "no coordinate is written into the pair");
+        assertTrue(capture.end(sink));
+    }
 }

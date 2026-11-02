@@ -16380,6 +16380,47 @@ this.frameBufferOpen = false;
         return this.textureRegistry;
     }
 
+    /**
+     * {@return one line's worth of what this renderer holds for a texture name, for the legacy-run census}.
+     * <p>
+     * The menu's missing background has two candidate homes - the quad was never written, or it was written sampling a
+     * mirror with no content - and the capture alone cannot tell them apart. The size and completeness of the mirror
+     * the run's texture resolves to is the fact that separates them; the source label says which route filled it.
+     */
+    public String celtium$textureCensus(int glTextureId) {
+        if (glTextureId <= 0) {
+            return "none";
+        }
+        try {
+            VulkanGlTexture texture = celtium$registry().get(glTextureId);
+            if (texture == null) {
+                return "absent source=" + celtium$registry().celtium$mirrorSourceFor(glTextureId);
+            }
+            return texture.width() + "x" + texture.height() + " full=" + texture.hasFullContent()
+                    + " source=" + celtium$registry().celtium$mirrorSourceFor(glTextureId);
+        } catch (RuntimeException | LinkageError error) {
+            return "unreadable:" + error.getClass().getSimpleName();
+        }
+    }
+
+    /**
+     * {@return the mirrored matrices an immediate group is about to be transformed by}.
+     * <p>
+     * Printed beside a legacy run because the placement of a quad is decided here: a full-screen background that
+     * arrives with an on-screen GL rectangle and is still absent from the frame cannot be explained by the vertices,
+     * and the projection's two diagonal terms plus the modelview's translation are what say whether the group landed
+     * where the game asked for.
+     */
+    public String celtium$immediateMatrixState() {
+        // The modelview's z translation is printed with the x and y: the GUI's ortho maps z=0 to the near plane and
+        // the overlay rendering puts the eye at z=-2000, so a group recorded without that translation lands outside
+        // the clip volume and vanishes even though its x/y rectangle is on screen.
+        return "proj=" + round3(this.glProjection[0]) + "," + round3(this.glProjection[5])
+                + " mv=" + round3(this.glModelView[0]) + "," + round3(this.glModelView[5])
+                + " mvT=" + round3(this.glModelView[12]) + "," + round3(this.glModelView[13]) + ","
+                + round3(this.glModelView[14]);
+    }
+
     private boolean ensureFrameTarget() {
         // The window's own framebuffer size is what the frame target must match: it is the drawable the swapchain
         // presents, and it does not move when the game binds one of its own framebuffers. Sizing from the GL viewport

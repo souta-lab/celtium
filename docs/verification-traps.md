@@ -343,3 +343,25 @@ r12b の「menu 画像経路に到達していない」は取消し（[legacy �
 `immediateOfferVertices`（形）と `immediateOfferCount`（回数）に分離した。
 
 **規約**: 拒否理由の数値を根因に使う前に、そのフィールドが単一の意味だけを持つことを代入箇所で確かめる。
+
+## `GlStateManager.color` のキャッシュは、mod の raw `glColor*` で黙って desync する（2026-11-02 実測・修正）
+
+**症状**: Supersymmetry の title screen（CustomMainMenu `GuiCustom`）で、背景（1920x1080 のスライド）と
+banner（10000x450）が presented frame に出ない。quad は `taken=true`・texture は `full=true`・座標は画面内・
+target は main。font のラベルと右下の icon だけが出る。r13 はこれを「画像quadは描かれている」と読んだが、
+実際の menu frame は font と icon だけだった（根拠 PNG が loading stage の bytes だった）。
+
+**原因**: 1.12.2 の `GlStateManager.color` は自前の `ColorState` と同じ値なら GL 呼び出しを**省略**する。
+`GuiCustom` は panorama 無しの構成で黒の全面 quad を `GL11.glColor3f(0,0,0)`（生の GL）で描き、その後
+`GlStateManager.color(1,1,1,1)` で白に戻して画像を描く。生の GL 呼び出しはキャッシュを通らないので、
+キャッシュは白のまま → `color(1,1,1,1)` は省略 → GL の current colour は黒のまま → 背景と banner は黒で描かれ、
+黒地に黒で消える。`CELTIUM_LEGACY_RUN ... colour=0.0,0.0,0.0,1.0` がそのまま出る。
+button/icon が白いのは、button 経路がキャッシュに無い色を一度通すため。
+
+**修正**: `CeltiumGllessHint.glColor4f`（raw 色の入口）で `GlStateManager.color(...)` を呼び、キャッシュを GL の
+実際の current colour に合わせる。同値なら本体は省略され、再帰もしない。GL の無い probe では classpath に
+`GlStateManager` が無いので try/catch で無視する。
+
+**規約**: 「quad は accepted で texture も full」を「絵に出る」の証拠にしない。presented frame の実画素と、
+run の **現在色**（census の `colour=`）を合わせて読む。mod が生の `glColor*` を使う画面では、
+`GlStateManager` の色キャッシュが GL の current colour と一致している保証がない。

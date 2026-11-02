@@ -1465,6 +1465,23 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyColor(red, green, blue, alpha);
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.setColor(red, green, blue, alpha);
+        // Keep GlStateManager's colour cache honest. 1.12.2's `GlStateManager.color` only reaches GL when the value
+        // differs from its cached ColorState, and a Mod that sets its colour through GL11 itself changes GL's current
+        // colour without that cache knowing. The next `GlStateManager.color` with the value the cache already holds is
+        // then elided and the Mod's colour stays in force - measured on Supersymmetry's title screen, whose black
+        // `glColor3f(0,0,0)` fill runs before every image: CustomMainMenu's `GlStateManager.color(1,1,1,1)` was
+        // elided, so the slideshow background (1920x1080), the banner (10000x450) and the frame were all recorded with
+        // colour 0,0,0,1 and drawn black (`CELTIUM_LEGACY_RUN ... colour=0.0,0.0,0.0,1.0`), while the button images -
+        // which follow a colour the cache did not already hold - were drawn white. Setting the cache to the colour GL
+        // actually holds makes the next same-value call emit, which is the call the game meant to make. A call that
+        // does not change the cache elides here, so a vanilla colour costs nothing extra and cannot recurse: the
+        // re-entry runs after the cache already holds this value.
+        try {
+            net.minecraft.client.renderer.GlStateManager.color(red, green, blue, alpha);
+        } catch (Throwable absent) {
+            // The CPU contract's probe runs the transformed LWJGL surface in a plain JVM: the game's cache is not on
+            // that classpath, and its absence is a property of the probe rather than a renderer fault.
+        }
     }
 
     // ---- legacy immediate mode, routed by the transformer ----
@@ -2301,14 +2318,21 @@ public final class CeltiumGllessHint {
      * {@code textureSize()} asked this way, got zero for both dimensions, and skipped the upload silently. The
      * lightmapped batches were then refused 553 times in a run that presented 563 frames.
      * <p>
-     * The value is the same 256 the buffer form answers, for the same reason: the light map and Forge's cloud
-     * texture are 256 square, and the caller divides by these numbers rather than merely reading them.
+     * The answer is the bound texture's own recorded level-0 extent when the stub has one, and 256 otherwise. The fixed
+     * 256 is right for the two callers that motivated it (the light map and Forge's cloud texture are 256 square) but
+     * wrong for every other texture whose callers divide by it: CustomMainMenu's title screen draws its background
+     * with {@code MODE.FILL}, whose cover rectangle and texture coordinates both come from this query, and a 1920x1080
+     * slide asked to be 256x256 is drawn at the wrong size. A texture with no record (a proxy target, a level above 0,
+     * a name the uploads never saw) keeps the 256, because a wrong-but-usable divisor is what those callers assume and
+     * a zero is not.
      */
     public static int glGetTexLevelParameteri(int target, int level, int pname) {
-        return (pname == 0x1000 || pname == 0x1001) ? 256 : 0; // GL_TEXTURE_WIDTH / GL_TEXTURE_HEIGHT
+        int measured = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texLevelSize(target, level, pname);
+        return org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
     }
     public static void glGetTexLevelParameteriv(int target, int level, int pname, long params) {
-        int value = (pname == 0x1000 || pname == 0x1001) ? 256 : 0; // GL_TEXTURE_WIDTH / GL_TEXTURE_HEIGHT
+        int measured = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texLevelSize(target, level, pname);
+        int value = org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
         if (params == 0L) {
             return;
         }

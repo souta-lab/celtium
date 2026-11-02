@@ -94,3 +94,13 @@ AMD の gated `world` stage を ON と OFF で比べた差は 3.78%（旧jar・r
    per-batch 呼び出しを増やしうるので、次に測る時は idle 窓の paired KPI で switch ON/OFF を同一jarで比較する。
 3. legacy 経路の `unrecorded ... stage=3` 拒否が menu で1回出る（4頂点quad）。名前の無い拒否なので、
    次の判別は stage 3 の checkpoint を名指しすること。
+
+## 訂正（2026-11-02 round14）: 本ファイルの menu 画像の記述
+
+本ファイルの「menu 画像（banner・frame・button・icon）が出た」という記述と、根拠にした
+`menu-legacy-default-2026-11-02.png` は**取り消す**。この PNG の sha256 `7cae79c0…` は同じ run の
+`celtium-presented-loading-*-kept.png` と同一で、menu stage の frame ではなかった。実際の menu frame を撮り直すと、
+出ていたのは font のラベル・下部の行・右下の icon だけで、背景・banner・frame は **`GlStateManager` の色キャッシュが
+mod の生 `glColor3f(0,0,0)` で desync し、白のつもりの quad が黒で描かれていた**ため
+（[根因と修正](menu-frame-colour-2026-11-02.md)、修正後の絵 [menu-frame-art-2026-11-02.png](menu-frame-art-2026-11-02.png)）。
+legacy quad が即時経路に届く、という本ファイルの範囲の結論は有効。

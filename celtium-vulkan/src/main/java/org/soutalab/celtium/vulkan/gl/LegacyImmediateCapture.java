@@ -356,6 +356,37 @@ public final class LegacyImmediateCapture {
     }
 
     /**
+     * Copies one collected vertex's position and texture coordinate out, for the bounded census of legacy runs.
+     * <p>
+     * A run's own numbers - mode, vertex count, format - say which primitive was written but not where it lands, and a
+     * quad's placement is what separates "the menu's background image was never drawn" from "it was drawn off the
+     * screen or with a zero extent". Reading the two end vertices is the smallest fact that answers that. It has to be
+     * taken before {@link #end(Sink)}, which resets the buffer.
+     *
+     * @param index    the vertex to read, 0-based
+     * @param position receives x, y and z
+     * @param texCoord receives u and v, or 0,0 when the layout carries no texture coordinate
+     * @return whether the index was inside the run
+     */
+    public boolean vertexAt(int index, float[] position, float[] texCoord) {
+        if (index < 0 || index >= this.count) {
+            return false;
+        }
+        long at = this.address + (long) index * this.stride;
+        position[0] = MemoryUtil.memGetFloat(at);
+        position[1] = MemoryUtil.memGetFloat(at + 4L);
+        position[2] = MemoryUtil.memGetFloat(at + 8L);
+        if (this.format == FORMAT_POSITION_TEX_COLOR) {
+            texCoord[0] = MemoryUtil.memGetFloat(at + 12L);
+            texCoord[1] = MemoryUtil.memGetFloat(at + 16L);
+        } else {
+            texCoord[0] = 0.0f;
+            texCoord[1] = 0.0f;
+        }
+        return true;
+    }
+
+    /**
      * Closes the open run and offers it.
      *
      * @param sink where the run goes; a null sink refuses it

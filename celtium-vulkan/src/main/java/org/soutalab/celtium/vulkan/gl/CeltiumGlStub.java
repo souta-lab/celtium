@@ -2305,6 +2305,18 @@ public final class CeltiumGlStub implements FunctionProvider {
     private int legacyRefusalLogs;
     private int legacyModeRefusalsLogged;
 
+    /**
+     * How many distinct legacy runs the census prints, {@code -Dceltium.debug.legacyRuns=N}; 0 (the default) is off.
+     * <p>
+     * The refusal lines above are what a run normally carries, and their cap is why the title screen's missing
+     * background could not be attributed: the loading phase had already spent the four lines before the menu drew. The
+     * census deduplicates by shape, so it costs one line per kind of quad and answers whether that quad was written,
+     * with which texture, and where it landed.
+     */
+    private static final int LEGACY_RUN_LOG_LIMIT = Integer.getInteger("celtium.debug.legacyRuns", 0);
+    private final java.util.Set<String> legacyRunSignatures = new java.util.HashSet<String>();
+    private int legacyRunLogs;
+
     /** {@code glBegin(mode)}: starts collecting; a previous run that was never ended is refused by name. */
     public static void celtium$legacyBegin(int mode) {
         CeltiumGlStub stub = installed;
@@ -2591,6 +2603,22 @@ public final class CeltiumGlStub implements FunctionProvider {
         int mode = stub.legacyCapture.mode();
         int format = stub.legacyCapture.format();
         long sinkRefusals = stub.legacyCapture.sinkRefusals();
+        // The run's placement, read before end() resets the buffer. Taken only when the census is on, so a normal leg
+        // pays nothing for it.
+        float[] firstPosition = null;
+        float[] lastPosition = null;
+        float[] firstUv = null;
+        float[] lastUv = null;
+        if (LEGACY_RUN_LOG_LIMIT > 0 && vertices > 0) {
+            firstPosition = new float[3];
+            lastPosition = new float[3];
+            firstUv = new float[2];
+            lastUv = new float[2];
+            if (!stub.legacyCapture.vertexAt(0, firstPosition, firstUv)
+                    || !stub.legacyCapture.vertexAt(vertices - 1, lastPosition, lastUv)) {
+                firstPosition = null;
+            }
+        }
         boolean taken = stub.legacyCapture.end((address, stride, layout, count, drawMode) -> {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -2611,6 +2639,93 @@ public final class CeltiumGlStub implements FunctionProvider {
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason="
                     + stub.legacyCapture.lastRefusal());
         }
+        if (firstPosition != null) {
+            stub.celtium$logLegacyRun(mode, vertices, format, taken, firstPosition, lastPosition, firstUv, lastUv);
+        }
+    }
+
+    /**
+     * One bounded line per distinct legacy run, {@code -Dceltium.debug.legacyRuns=N} (default 0, off).
+     * <p>
+     * Why a census and not a single event: the legacy path's refusals are capped at four lines per run, and the menu's
+     * share of them was already spent by the splash before the title screen drew its first quad, so the picture's
+     * missing background could not be attributed from the log. The title screen issues the same handful of quads every
+     * frame - a black fill, a slideshow background, a banner, a frame, one per button - so deduplicating by shape and
+     * bound texture costs one line each and answers the three questions the picture cannot: was the quad written, with
+     * which texture, and where did it land in GL coordinates.
+     * <p>
+     * Each line carries the texture the run sampled with its mirrored size and whether that mirror is complete, the
+     * run's two end vertices and their texture coordinates, whether the immediate path took it, and the mirrored
+     * matrices the group will be transformed by. A quad that is accepted with a complete texture and on-screen
+     * coordinates still missing from the frame then points at the sampling or the composite, not at the capture.
+     */
+    private void celtium$logLegacyRun(int mode, int vertices, int format, boolean taken,
+                                      float[] firstPosition, float[] lastPosition, float[] firstUv, float[] lastUv) {
+        String key = mode + "/" + vertices + "/" + format + "/" + this.textures.texture2d() + "/"
+                + round2(firstPosition[0]) + "," + round2(firstPosition[1]) + "/"
+                + round2(lastPosition[0]) + "," + round2(lastPosition[1]);
+        if (!this.legacyRunSignatures.add(key) || this.legacyRunLogs >= LEGACY_RUN_LOG_LIMIT) {
+            return;
+        }
+        this.legacyRunLogs++;
+        int texture = this.textures.texture2d();
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        String mirror = "none";
+        String matrix = "none";
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            mirror = vulkan.celtium$textureCensus(texture);
+            matrix = vulkan.celtium$immediateMatrixState();
+        }
+        System.out.println("[Celtium] CELTIUM_LEGACY_RUN mode=" + mode + " vertices=" + vertices + " format=" + format
+                + " texture=" + texture + " mirror=" + mirror + " taken=" + taken
+                // The run's current colour: a quad accepted with a full texture but written with a zero alpha is the
+                // one case where "drawn" and "visible" differ without any refusal to point at.
+                + " colour=" + round2(this.legacyCapture.red()) + "," + round2(this.legacyCapture.green()) + ","
+                + round2(this.legacyCapture.blue()) + "," + round2(this.legacyCapture.alpha())
+                + " first=(" + round2(firstPosition[0]) + "," + round2(firstPosition[1]) + "," + round2(firstPosition[2])
+                + " uv=" + round2(firstUv[0]) + "," + round2(firstUv[1]) + ")"
+                + " last=(" + round2(lastPosition[0]) + "," + round2(lastPosition[1]) + "," + round2(lastPosition[2])
+                + " uv=" + round2(lastUv[0]) + "," + round2(lastUv[1]) + ")"
+                + " " + matrix
+                + " refusal=" + (taken ? "none" : this.legacyCapture.lastRefusal()));
+    }
+
+    /** Rounds to two decimals for a log line, so a float's noise does not decide a reading. */
+    private static String round2(float value) {
+        return Float.toString(Math.round(value * 100.0f) / 100.0f);
+    }
+
+    /**
+     * {@return the size the stub answers for a texture level query, or 0 when it has nothing recorded}.
+     * <p>
+     * GL answers {@code glGetTexLevelParameteri(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH/HEIGHT)} from the bound texture's
+     * storage. The transformer answered a fixed 256 for every caller, which is right for the two callers that motivated
+     * it (Forge's 256-square cloud texture and the 256-square light map) and wrong for every other texture that divides
+     * by the answer. CustomMainMenu's title screen is that case: its background is a 1920x1080 slide drawn with
+     * {@code MODE.FILL}, and the fill's cover rectangle and its texture coordinates are both computed from this query,
+     * so a 256 answer asked a 1920x1080 image to be a 256x256 one.
+     * <p>
+     * The answer is the extent the uploads already recorded for that name at level 0 - the same record the DSA
+     * {@code glGetTextureLevelParameteriv} route reads - so no new measurement is taken and a texture with no record
+     * (never uploaded, a proxy target, a level above 0) keeps the hint's fallback.
+     */
+    public static int celtium$texLevelSize(int target, int level, int pname) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || target != GL_TEXTURE_2D || level != 0) {
+            return 0;
+        }
+        int[] extent = celtium$textureExtent(stub.textures.texture2d());
+        return extent == null ? 0 : celtium$texLevelAnswer(extent[0], extent[1], pname);
+    }
+
+    /**
+     * {@return the answer for a recorded extent and a level-query name, or 0 when the query is not one this answers}.
+     * <p>
+     * Split out from {@link #celtium$texLevelSize(int, int, int)} so the two names a caller divides by are decided in
+     * one place that a plain JVM test can pin without a GL stub.
+     */
+    public static int celtium$texLevelAnswer(int width, int height, int pname) {
+        return TextureLevelAnswer.answer(width, height, pname);
     }
 
     /**
@@ -2706,7 +2821,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
     public static int celtium$boundTexture() {
         CeltiumGlStub stub = installed;
-        return stub == null ? -1 : stub.textures.texture2d(0);
+        return stub == null ? -1 : stub.textures.texture2d();
     }
 
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
