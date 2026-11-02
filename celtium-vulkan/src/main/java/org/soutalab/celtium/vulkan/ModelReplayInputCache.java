@@ -29,6 +29,35 @@ final class ModelReplayInputCache {
     private static final int ROTATION_FLOATS = ROTATION.length;
 
     /**
+     * {@return whether two modelviews carry the same nine rotation floats the lit payload reads}.
+     * <p>
+     * The single owner of that list: {@code VulkanTerrainGpuBackend.celtium$lightParams} reads the payload from a
+     * {@link #copyRotation} of the modelview, and {@link #reuseLightPayload} asks this comparison, so the cache's key
+     * and the function's inputs cannot drift. It is deliberately <em>not</em> the model replay's hit test: that
+     * compares the payload's twenty bytes, because the payload is invariant under a change of modelview (the inverse
+     * of the rotation cancels the rotation the light was set under). A guard keyed on this pair was measured to serve
+     * zero of 2,940,981 replays of the pack's scene while the bytes repeated (leg {@code r19b-fastpath}).
+     */
+    static boolean sameRotation(float[] modelView, float[] rotation) {
+        if (modelView == null || modelView.length < 11 || rotation == null || rotation.length < ROTATION_FLOATS) {
+            return false;
+        }
+        for (int i = 0; i < ROTATION_FLOATS; i++) {
+            if (modelView[ROTATION[i]] != rotation[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Copies the nine rotation floats the payload is built from, so its inputs are named in one place. */
+    static void copyRotation(float[] modelView, float[] out) {
+        for (int i = 0; i < ROTATION_FLOATS; i++) {
+            out[i] = modelView[ROTATION[i]];
+        }
+    }
+
+    /**
      * {@code -Dceltium.vulkan.replayInputCache=false}: the control arm for the next measurement.
      * <p>
      * A cache that is on by default must be measurable against the same jar in the same scene, or its saving is a

@@ -100,4 +100,30 @@ class ModelReplayInputCacheTest {
         cache.noteProjection(null);
         assertFalse(cache.reuseProjection(new float[16]));
     }
+
+    @Test void theRotationHelpersNameTheSameNineSlotsAsTheCacheKey() {
+        // The fast path proves a cached lit payload with these two helpers instead of comparing its twenty floats, so a
+        // change to the cache key that the helpers did not follow would turn a real payload change into a false hit.
+        float[] view = view(1, 2, 3, 4);
+        float[] rotation = new float[9];
+        ModelReplayInputCache.copyRotation(view, rotation);
+        assertTrue(ModelReplayInputCache.sameRotation(view, rotation));
+        assertTrue(ModelReplayInputCache.sameRotation(view(1, 2, 3, 90), rotation),
+                "the translation is not an input of the payload");
+        for (int index : new int[] {0, 1, 2, 4, 5, 6, 8, 9, 10}) {
+            float[] changed = view(1, 2, 3, 4);
+            changed[index] += 0.5f;
+            assertFalse(ModelReplayInputCache.sameRotation(changed, rotation),
+                    "rotation slot " + index + " is part of the payload");
+        }
+        assertFalse(ModelReplayInputCache.sameRotation(null, rotation));
+        assertFalse(ModelReplayInputCache.sameRotation(new float[10], rotation));
+        assertFalse(ModelReplayInputCache.sameRotation(view, null));
+        // The copy is a copy: the caller rewrites its scratch every replay.
+        float[] copied = new float[9];
+        float[] scratch = view(1, 2, 3, 4);
+        ModelReplayInputCache.copyRotation(scratch, copied);
+        scratch[0] = 9;
+        assertTrue(ModelReplayInputCache.sameRotation(view(1, 2, 3, 4), copied));
+    }
 }

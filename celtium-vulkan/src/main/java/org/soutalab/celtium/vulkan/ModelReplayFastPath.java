@@ -16,10 +16,12 @@ package org.soutalab.celtium.vulkan;
  * affine, the lit payload, the two array indices, the alpha reference and function) is a pure function of inputs this
  * class holds, so a hit writes the same bytes the slow path would and only pays for the matrix.
  * <p>
- * The guard is the whole contract: every field of {@link Probe} is compared, and any difference is a miss, which
- * takes the unchanged path. Two groups - {@link #matchesShape} for the identities and {@link #matchesInputs} for the
- * values - let the caller stop before resolving the expensive half. {@link #describe()} says how many replays were
- * served and why the others were not, so a scene whose replays never repeat reports its misses instead of a saving.
+ * The guard is the whole contract: every input of {@link Probe} is compared, and any difference is a miss, which
+ * takes the unchanged path. Two groups - {@link #matchesShape} for the identities and {@link #matchesValues} for the
+ * values - let the caller stop before resolving the expensive half. The values are the caller's live arrays rather
+ * than copies. {@link #describe()} says how many replays were served, why the others were not, and - with
+ * {@code -Dceltium.vulkan.batchTimings=true} - what the served and refused attempts cost inside one leg, so a scene
+ * whose replays never repeat reports its misses instead of a saving.
  * <p>
  * Render thread only. Not thread safe.
  */
@@ -44,18 +46,29 @@ final class ModelReplayFastPath {
      */
     static final int SIGNATURE = 19;
 
-    /** One replay's values. Reused: the caller fills it in place, so a guard costs no allocation. */
+    /**
+     * One replay's values, and the storage of a cached tuple.
+     * <p>
+     * The arrays are the tuple's own bytes: {@link #note} copies the live values into them, and a hit writes the record
+     * from them. Four of the values are not carried here on the live side: {@link #matchesValues} takes the
+     * projection, the light-map coordinate, the combine colour and the lit payload as arguments, so a hit compares the
+     * caller's arrays directly instead of moving forty-two floats into a scratch first. The colour and the affine stay
+     * on the probe because one is read as four scalars and the other is filled into the probe's own six-float scratch.
+     * Reused: the caller fills it in place, so a guard costs no allocation.
+     */
     static final class Probe {
         final int[] signature = new int[SIGNATURE];
         final int[] state = new int[16];
+        /** The tuple's sixteen projection floats; written by {@link #note}, compared against the live array. */
         final float[] projection = new float[16];
         final float[] colour = new float[4];
         final float[] affine = new float[6];
         final float[] lightCoord = new float[2];
+        /** The tuple's twenty lit-payload floats; written by {@link #note}. */
         final float[] light = new float[20];
-        /** The combine colour the record carries while a combine owns the fragment stage, copied. */
         final float[] combineColour = new float[4];
-        /** The GL names, which is what the record's two array indices are resolved from. */
+
+        /** The GL name of the display list, which is what the record's two array indices are resolved from. */
         int listId;
         int texture;
         /** The render pass the open run's pipeline was created for. */
@@ -104,7 +117,7 @@ final class ModelReplayFastPath {
     private final Probe probe = new Probe();
     private final Probe[] cached = new Probe[SLOTS];
     private final boolean[] armed = new boolean[SLOTS];
-    /** The slot the last successful guard matched, which is what {@link #matchesInputs} and {@link #cached} read. */
+    /** The slot the last successful shape guard matched, which is what {@link #matchesValues} and {@link #cached} read. */
     private Probe matched;
 
     ModelReplayFastPath() {
@@ -119,6 +132,30 @@ final class ModelReplayFastPath {
     private long shapeMisses;
     private long inputMisses;
     private long runMisses;
+    /**
+     * What a served attempt and a refused attempt cost, in nanoseconds, when {@code -Dceltium.vulkan.batchTimings=true}.
+     * <p>
+     * Measured need: leg {@code r18g-on} reported {@code modelEnqueueMillis=865} for 2,149,974 replays (402 ns each),
+     * which is the whole enqueue path - the texture lookup, the matrix relativisation, the projection remap and this
+     * guard - so it could not say which half to attack next. The call site times the attempt inside the enqueue's own
+     * bracket, so one leg gives both: a hit's cost is this function's, and the preamble is the enqueue's total minus
+     * these nanoseconds. Off in an ordinary run, like every other timing on that switch.
+     */
+    private long hitNanos;
+    private long hitCalls;
+    private long missNanos;
+    private long missCalls;
+
+    /** Records one timed attempt: the fast path's own cost, split by the answer the guard gave. */
+    void noteAttempt(long nanos, boolean served) {
+        if (served) {
+            this.hitNanos += nanos;
+            this.hitCalls++;
+        } else {
+            this.missNanos += nanos;
+            this.missCalls++;
+        }
+    }
 
     /** {@return the live probe, to be filled by the caller before asking}. */
     Probe probe() {
@@ -142,6 +179,8 @@ final class ModelReplayFastPath {
 
     /**
      * The first half of the guard: the identities that decide which objects a replay is about.
+     * <p>
+     * A success arms {@link #matchesValues} for this probe: the tuple it compared against becomes {@link #cached()}.
      *
      * @return whether every identity is the one the cached tuple was resolved for
      */
@@ -155,7 +194,6 @@ final class ModelReplayFastPath {
             return false;
         }
         Probe last = this.cached[slot];
-        this.matched = last;
         // Named one at a time: a scene that repeats nothing reports which identity moved, so a guard that is too
         // strict costs a field name and not a round of guessing.
         if (now.listId != last.listId) return shapeMiss("list");
@@ -170,6 +208,8 @@ final class ModelReplayFastPath {
         if (now.textureArray != last.textureArray) return shapeMiss("textureArray");
         if (now.lightmap != last.lightmap) return shapeMiss("lightmap");
         if (now.combine != last.combine) return shapeMiss("combine");
+        // Only a success names the tuple: a refused shape must not leave the previous list's tuple looking matched.
+        this.matched = last;
         return true;
     }
 
@@ -183,32 +223,43 @@ final class ModelReplayFastPath {
     private String lastShapeMiss = "none";
 
     /**
-     * The second half of the guard: every value the record depends on.
+     * The value half, for a caller that has already passed {@link #matchesShape} with this probe: re-running the
+     * twelve identity comparisons on every hit was the one thing the split existed to avoid.
      * <p>
-     * The state signature is the strong one; the rest are the resolved buffers the previous replay wrote, and they
-     * are compared by content because a hit reuses the bytes.
+     * The values are the caller's live arrays, not copies into the probe: the guard only reads them, and moving them
+     * into a scratch first was forty-two floats per replay. The lit payload is compared as the twenty floats the
+     * record carries, not through the inputs it was built from. <b>Measured</b> (leg {@code r19b-fastpath}, 2,940,981
+     * replays): an input-keyed comparison - the light generation plus the modelview's nine rotation floats - produced
+     * <em>zero</em> hits, because the payload is invariant under a change of modelview (the inverse of the rotation
+     * cancels the rotation the light was set under), so a scene that replays one list at many entity orientations
+     * rebuilds the same twenty floats every time. Comparing the bytes is what lets that repetition hit; comparing the
+     * inputs was sound but refused every replay it was meant to serve.
      *
-     * @return whether the cached tuple is what this replay would resolve to
+     * @param light the payload this replay resolved, or null when it is unlit
+     * @return whether every value the record carries is the cached tuple's
      */
-    boolean matchesInputs(Probe now) {
-        if (!this.matchesShape(now)) {
+    boolean matchesValues(Probe now, float[] projection, float[] lightCoord, float[] combineColour, float[] light) {
+        if (!ENABLED) {
             return false;
         }
         Probe last = this.matched;
+        if (last == null || last.listId != now.listId) {
+            return false;
+        }
         // Arrays whose "no value" answer is a stale buffer are compared only when both sides carry one: the record
         // ignores them when the flag is clear, so comparing the stale contents could only invent a miss.
         return java.util.Arrays.equals(now.signature, last.signature)
-                && java.util.Arrays.equals(now.projection, last.projection)
+                && projection != null && java.util.Arrays.equals(projection, last.projection)
                 && now.colourValid == last.colourValid
                 && (!now.colourValid || java.util.Arrays.equals(now.colour, last.colour))
                 && now.affineValid == last.affineValid
                 && (!now.affineValid || java.util.Arrays.equals(now.affine, last.affine))
                 && now.lightCoordValid == last.lightCoordValid
-                && (!now.lightCoordValid || java.util.Arrays.equals(now.lightCoord, last.lightCoord))
+                && (!now.lightCoordValid || java.util.Arrays.equals(lightCoord, last.lightCoord))
                 && now.lightValid == last.lightValid
-                && (!now.lightValid || java.util.Arrays.equals(now.light, last.light))
+                && (!now.lightValid || java.util.Arrays.equals(light, last.light))
                 && now.combineValid == last.combineValid
-                && (!now.combineValid || java.util.Arrays.equals(now.combineColour, last.combineColour));
+                && (!now.combineValid || java.util.Arrays.equals(combineColour, last.combineColour));
     }
 
     /** Counts one replay served by the unchanged path, classifying what failed the guard. */
@@ -236,23 +287,41 @@ final class ModelReplayFastPath {
     static final int MISS_RUN = 2;
 
     /**
-     * Records the tuple a replay resolved, for the next replay to compare against. The arrays are copied: the caller
+     * Records the tuple a replay resolved, for the next replay to compare against. The values are copied: the caller
      * writes its scratches on the next replay, and a cached tuple that aliased them could fake a hit.
+     * <p>
+     * The resolved buffers arrive as arguments rather than through the probe because the live probe does not copy them
+     * any more: this is the one place the copy has to happen, and it is one copy instead of two.
      */
-    void note(Probe now) {
+    void note(Probe now, float[] projection, float[] light, float[] lightCoord, float[] combineColour) {
         if (!ENABLED) {
             return;
         }
         int slot = now.listId & SLOT_MASK;
         Probe last = this.cached[slot];
+        if (projection == null
+                || (now.lightValid && light == null)
+                || (now.lightCoordValid && lightCoord == null)
+                || (now.combineValid && combineColour == null)) {
+            // A tuple whose resolved buffers are missing is not one a hit may be served from: disarm rather than keep
+            // the previous list's bytes behind an identity that now means something else.
+            this.armed[slot] = false;
+            return;
+        }
         System.arraycopy(now.signature, 0, last.signature, 0, SIGNATURE);
         System.arraycopy(now.state, 0, last.state, 0, 16);
-        System.arraycopy(now.projection, 0, last.projection, 0, 16);
+        System.arraycopy(projection, 0, last.projection, 0, 16);
         System.arraycopy(now.colour, 0, last.colour, 0, 4);
         System.arraycopy(now.affine, 0, last.affine, 0, 6);
-        System.arraycopy(now.lightCoord, 0, last.lightCoord, 0, 2);
-        System.arraycopy(now.light, 0, last.light, 0, 20);
-        System.arraycopy(now.combineColour, 0, last.combineColour, 0, 4);
+        if (now.lightCoordValid) {
+            System.arraycopy(lightCoord, 0, last.lightCoord, 0, 2);
+        }
+        if (now.lightValid) {
+            System.arraycopy(light, 0, last.light, 0, 20);
+        }
+        if (now.combineValid) {
+            System.arraycopy(combineColour, 0, last.combineColour, 0, 4);
+        }
         last.listId = now.listId;
         last.texture = now.texture;
         last.renderPass = now.renderPass;
@@ -294,6 +363,8 @@ final class ModelReplayFastPath {
     String describe() {
         return "hit=" + this.hits + " miss=" + this.misses
                 + "(shape=" + this.shapeMisses + " inputs=" + this.inputMisses + " run=" + this.runMisses + ")"
-                + " armed=" + this.armed() + " lastShape=" + this.lastShapeMiss + " enabled=" + ENABLED;
+                + " armed=" + this.armed() + " lastShape=" + this.lastShapeMiss + " enabled=" + ENABLED
+                + " hitNanos=" + this.hitNanos + " hitCalls=" + this.hitCalls
+                + " missNanos=" + this.missNanos + " missCalls=" + this.missCalls;
     }
 }

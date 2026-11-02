@@ -98,10 +98,10 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 - ABBA（クール・アイドル時）: Susy **1.27–1.48×**、ATM3 **~1.45×**。CPU律速。**測定はアイドル窓必須**。
 - 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier/submit各0.1）。30 windows・112 groups/frame。
 - 除去済み: raw-write flush -38%、published遷移 3.5→0.8%、epoch spin 3.0→0、nanoTime 1.2→0、window構造体再生成廃止。
-- 残差の主因はwindow固定費とper-batch。pack legは1 frameでmodel replay 26,733–39,424。segmentは**frame要求で自動拡張**（4096→40,960。declines 11,373/2.51M、固定4096なら≥2.05M）。[根拠](evidence/model-record-growth-2026-11-02.md)
+- 残差はwindow固定費とper-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate（singletonで悪化）、フレーム再利用（アニメ凍結）。
 
-- **次の実装単位: array-records（bindless）** — 土台は[新アーキテクチャ資料](<new_architecture.md>)の「array-records」節。
+- **次の実装単位: replay guard** — hit 288 ns・前段96 ns（383 ns、hit 98.2 %、leg r19d）。payloadは56 %で再構築、入力キー証明は全miss。array-recordsは後続。[証拠](evidence/model-replay-hit-cost-2026-11-02.md)
 
 ## 撤回した前提
 

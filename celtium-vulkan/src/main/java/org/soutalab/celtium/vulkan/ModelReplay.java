@@ -186,8 +186,17 @@ final class ModelReplay {
             // so every replay of a run re-captured a state that could not have changed and re-resolved a texture, an
             // affine, a light map and a lit payload that were already in hand. A hit writes the same record bytes the
             // path below would and only pays for its own matrix; anything that differs takes the path below unchanged.
-            if (celtium$tryModelReplayFastPath(listId, texture, mesh, projectionRemapped, modelViewNow, lightCoord,
-                    combineColor)) {
+            //
+            // Timed with the batch-timing switch: this bracket sits inside the enqueue's own, so a leg reports both the
+            // guard's cost and the whole path's, and the difference is the preamble this path cannot remove (texture
+            // lookup, matrix relativisation, projection remap) - the split r18g's 402 ns a replay could not name.
+            long fastPathStart = b.BATCH_TIMINGS ? System.nanoTime() : 0L;
+            boolean served = celtium$tryModelReplayFastPath(listId, texture, mesh, projectionRemapped, modelViewNow,
+                    lightCoord, combineColor);
+            if (b.BATCH_TIMINGS) {
+                b.modelReplayFastPath.noteAttempt(System.nanoTime() - fastPathStart, served);
+            }
+            if (served) {
                 return true;
             }
             int[] state = b.celtium$captureState();
@@ -560,9 +569,10 @@ final class ModelReplay {
             return false;
         }
         // The value half. The state is compared through its raw inputs, not captured: a hit must not pay for the
-        // sixteen stores, the two light-map lookups and the key it already holds.
+        // sixteen stores, the two light-map lookups and the key it already holds. The projection, the light-map
+        // coordinate and the combine colour are handed to the guard as they are, not copied into its scratch: the
+        // guard only reads them and a hit writes the cached tuple's bytes.
         b.celtium$stateSignature(probe.signature);
-        System.arraycopy(projection, 0, probe.projection, 0, 16);
         probe.colourValid = b.colorMirrorHasValue;
         if (probe.colourValid) {
             probe.colour[0] = b.immediateState.colorRed();
@@ -572,22 +582,14 @@ final class ModelReplay {
         }
         probe.affineValid = b.celtium$readTextureAffine(probe.affine);
         probe.lightCoordValid = lightCoord != null;
-        if (probe.lightCoordValid) {
-            System.arraycopy(lightCoord, 0, probe.lightCoord, 0, 2);
-        }
         probe.combineValid = combineColor != null;
-        if (probe.combineValid) {
-            System.arraycopy(combineColor, 0, probe.combineColour, 0, 4);
-        }
-        // The lit payload is a function of the rotation and the light generation, both of which the cached state and
-        // the guard cover: asking the cache is what makes the comparison free when it is right, and what makes it a
-        // miss when the rotation moved.
+        // The lit payload is compared as the twenty floats the record carries. Its inputs (the light generation and
+        // the modelview's rotation) are not a usable key: the payload is invariant under a change of modelview, so an
+        // input-keyed guard refused every replay of the pack's scene (leg r19b: hit=0 of 2,940,981) while the bytes
+        // repeated. celtium$replayLight already asks its own cache first, so this is the same call the path made.
         float[] light = b.celtium$replayLight(fast.cached().state, modelView);
         probe.lightValid = light != null;
-        if (probe.lightValid) {
-            System.arraycopy(light, 0, probe.light, 0, 20);
-        }
-        if (!fast.matchesInputs(probe)) {
+        if (!fast.matchesValues(probe, projection, lightCoord, combineColor, light)) {
             fast.noteMiss(ModelReplayFastPath.MISS_INPUTS);
             return false;
         }
@@ -601,7 +603,7 @@ final class ModelReplay {
                 || open.modelRun == null
                 || open.modelRun.pipeline.renderPass != cached.renderPass
                 || open.stamp == null || open.stamp.frameId != b.frameId
-                || !java.util.Arrays.equals(open.projection, probe.projection)
+                || !java.util.Arrays.equals(open.projection, projection)
                 || b.fog.movedFrom(open.fog)
                 || !java.util.Arrays.equals(open.viewportValues, b.currentGroupViewportValues)
                 || !b.modelInstances.sameBuffers(open.modelRun)
@@ -667,28 +669,18 @@ final class ModelReplay {
         probe.stateKey = key;
         System.arraycopy(state, 0, probe.state, 0, 16);
         b.celtium$stateSignature(probe.signature);
-        System.arraycopy(projection, 0, probe.projection, 0, 16);
         probe.colourValid = colour != null;
         if (probe.colourValid) {
             System.arraycopy(colour, 0, probe.colour, 0, 4);
         }
         probe.combine = combineColor;
         probe.combineValid = combineColor != null;
-        if (probe.combineValid) {
-            System.arraycopy(combineColor, 0, probe.combineColour, 0, 4);
-        }
         probe.affineValid = affine != null;
         if (probe.affineValid) {
             System.arraycopy(affine, 0, probe.affine, 0, 6);
         }
         probe.lightValid = light != null;
-        if (probe.lightValid) {
-            System.arraycopy(light, 0, probe.light, 0, 20);
-        }
         probe.lightCoordValid = lightCoord != null;
-        if (probe.lightCoordValid) {
-            System.arraycopy(lightCoord, 0, probe.lightCoord, 0, 2);
-        }
         probe.meshTable = b.modelGeometry.modelMeshes();
         probe.openGroup = open;
         probe.instances = b.modelInstances;
@@ -698,7 +690,9 @@ final class ModelReplay {
         probe.firstIndex = entry[0];
         probe.vertexOffset = entry[1];
         probe.indexCount = entry[2];
-        fast.note(probe);
+        // The resolved buffers are handed in as they are: note() is the one place that copies them into the tuple,
+        // which is the copy a later hit reads and writes its record from.
+        fast.note(probe, projection, light, lightCoord, combineColor);
     }
 
     /**

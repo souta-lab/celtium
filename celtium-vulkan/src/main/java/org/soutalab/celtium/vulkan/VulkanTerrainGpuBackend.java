@@ -2393,6 +2393,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
     /** The nine-float working matrix {@link #celtium$lightParams} inverts the modelview's upper 3x3 into. */
     private final float[] lightInverseScratch = new float[9];
+    /**
+     * The nine rotation floats {@link #celtium$lightParams} reads, copied out of the modelview by
+     * {@link ModelReplayInputCache#copyRotation}: the payload's only geometric input, named in one place rather than
+     * read out of a sixteen-float matrix in two of them.
+     */
+    private final float[] lightRotationScratch = new float[9];
     /** Shared immutable white for a group whose GL colour read failed; only ever read, never written. */
     private static final float[] WHITE_GROUP_COLOR = {1.0f, 1.0f, 1.0f, 1.0f};
     /**
@@ -4947,27 +4953,54 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     float[] celtium$lightParams(int[] state, float[] modelView, float[] into) {
-        if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
+        if (modelView == null || modelView.length < 11) {
             return null;
         }
-        // Inverse of the upper 3x3, named in row/col so the cofactors stay readable: a b c / d e f / g h i, with the
-        // modelview's column-major array addressed as a=m[0], d=m[1], g=m[2], b=m[4] and so on.
-        float a = modelView[0], d = modelView[1], g = modelView[2];
-        float b = modelView[4], e = modelView[5], h = modelView[6];
-        float c = modelView[8], f = modelView[9], i22 = modelView[10];
+        // One owner of "which floats of a modelview the payload depends on": the copy below is the array this function
+        // reads, and the input cache keys on it too, so the two cannot drift. Reading the modelview directly here and
+        // listing the nine indices again in the cache's key was two lists that could disagree.
+        ModelReplayInputCache.copyRotation(modelView, this.lightRotationScratch);
+        return celtium$lightParamsFromRotation(state, this.lightRotationScratch, into);
+    }
+
+    /**
+     * Inverts a rotation's upper 3x3 into {@code inv}, column-major, or writes the identity for a singular one.
+     * <p>
+     * Split out and static so the geometry the model replay trusts is testable without a device: {@code rotation} is
+     * {@link ModelReplayInputCache#copyRotation}'s nine floats, the array the payload is built from, so a test of this
+     * inverse is a test of the payload a hit reuses.
+     */
+    static void celtium$invertRotation(float[] rotation, float[] inv) {
+        // Named in row/col so the cofactors stay readable: a b c / d e f / g h i, with the rotation array holding the
+        // modelview's column-major a=m[0], d=m[1], g=m[2], b=m[4] and so on.
+        float a = rotation[0], d = rotation[1], g = rotation[2];
+        float b = rotation[3], e = rotation[4], h = rotation[5];
+        float c = rotation[6], f = rotation[7], i22 = rotation[8];
         float det = a * (e * i22 - f * h) - b * (d * i22 - f * g) + c * (d * h - e * g);
-        // The inverse is a local working matrix: a member scratch rather than a nine-float allocation per lit group.
-        float[] inv = this.lightInverseScratch;
         if (Math.abs(det) < 1.0e-8f) {
             // A singular modelview degenerates the draw anyway; identity directions refuse nothing.
             java.util.Arrays.fill(inv, 0f);
             inv[0] = inv[4] = inv[8] = 1f;
-        } else {
-            float invDet = 1.0f / det;
-            inv[0] = (e * i22 - f * h) * invDet; inv[1] = (f * g - d * i22) * invDet; inv[2] = (d * h - e * g) * invDet;
-            inv[3] = (c * h - b * i22) * invDet; inv[4] = (a * i22 - c * g) * invDet; inv[5] = (b * g - a * h) * invDet;
-            inv[6] = (b * f - c * e) * invDet; inv[7] = (c * d - a * f) * invDet; inv[8] = (a * e - b * d) * invDet;
+            return;
         }
+        float invDet = 1.0f / det;
+        inv[0] = (e * i22 - f * h) * invDet; inv[1] = (f * g - d * i22) * invDet; inv[2] = (d * h - e * g) * invDet;
+        inv[3] = (c * h - b * i22) * invDet; inv[4] = (a * i22 - c * g) * invDet; inv[5] = (b * g - a * h) * invDet;
+        inv[6] = (b * f - c * e) * invDet; inv[7] = (c * d - a * f) * invDet; inv[8] = (a * e - b * d) * invDet;
+    }
+
+    /**
+     * The lit payload from the nine rotation floats alone, in {@link ModelReplayInputCache#copyRotation}'s order.
+     *
+     * @param rotation the modelview's nine rotation floats: the payload's only geometric input
+     */
+    float[] celtium$lightParamsFromRotation(int[] state, float[] rotation, float[] into) {
+        if (state == null || state.length < 9 || state[8] == 0 || rotation == null) {
+            return null;
+        }
+        // The inverse is a local working matrix: a member scratch rather than a nine-float allocation per lit group.
+        celtium$invertRotation(rotation, this.lightInverseScratch);
+        float[] inv = this.lightInverseScratch;
         float[] params = into == null ? new float[20] : into;
         if (into != null) {
             java.util.Arrays.fill(params, 0f);
