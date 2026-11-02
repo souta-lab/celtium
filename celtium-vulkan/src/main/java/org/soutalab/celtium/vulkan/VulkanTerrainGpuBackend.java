@@ -11104,7 +11104,7 @@ this.frameBufferOpen = false;
             this.lazyMirrorDeferrals++;
             if (this.textureRegistry != null) {
                 this.textureRegistry.noteMirrorDeferred(glTextureId, size[0], size[1],
-                        "the stub holds no captured pixels for it");
+                        "the stub holds no captured pixels for it; the owner publishes it");
             }
             return this.textureRegistry.get(glTextureId) != null;
         }

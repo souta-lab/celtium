@@ -32,6 +32,12 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   多段 FBO（GregTech Bloom）・Raw FBO の整合は RC7/RC8 で前進、Windows 実測は未完 |
 | Display List | `glNewList`/`glCallList` は描画内容の再実行/コンパイル経路が限定的。**list compile中のlegacy geometryは
   captureが拒否して数える**（モデル経路がlistの頂点を持つ） |
+| ミラー（GL名→画像） | 供給元が無い名前には**空のミラーを作らない**（2026-11-02）。作っても sampling 側が
+  「全内容が来ていないミラー」として拒否するので描けず、しかも entry が存在するせいで以後の lookup が plain hit に
+  なり、後から届いた upload を二度と拾えなかった。いまは null を返し、その判断を**level の write serial ごとに記憶**
+  （`MirrorDeferralGate`）して、serial が動いた時だけ capture を訊き直す。framebuffer の colour attachment は
+  従来どおり所有者の publish を待つ。計器は `patchCostSummary` の `contentlessDeferred`・`deferralSkips`・
+  `deferredNames`（CPUテストのみ、GPU leg 未実施） |
 
 ⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、現在は上の表の状態。
 legacy capture は既定offのまま: 受入は[plan.md](plan.md)のgateどおり（validation 0・device lost 0・AMD/Intelの

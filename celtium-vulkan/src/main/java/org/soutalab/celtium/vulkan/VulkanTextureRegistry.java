@@ -111,12 +111,15 @@ public final class VulkanTextureRegistry {
     private int mirrorCount;
     private int mirrorDeferredLines;
 
-    /** Bounded deferred-mirror notice: the level is a render target, so an empty mirror is the expected state. */
+    /**
+     * Bounded deferred-mirror notice: the caller passes the whole reason, because the consequences differ - an
+     * attachment arrives from the framebuffer that renders into it, a name with no owner arrives from its first upload.
+     */
     void noteMirrorDeferred(int glTextureId, int width, int height, String why) {
         if (this.mirrorDeferredLines < 6) {
             this.mirrorDeferredLines++;
             System.out.println("[Celtium] CELTIUM_MIRROR_DEFERRED glTexture=" + glTextureId + " size=" + width + "x"
-                    + height + " (" + why + "; content arrives from the framebuffer that renders into it)");
+                    + height + " (" + why + ")");
         }
     }
     private int imageUploads;
@@ -156,6 +159,29 @@ public final class VulkanTextureRegistry {
      * needs its own number or a leg cannot say which of the two a run used.
      */
     private int staleAttachmentsDeferred;
+    /**
+     * Lookups answered from {@link #deferrals}: the name had no mirror source at the level's current upload serial, so
+     * the capture was not asked again for the same content.
+     * <p>
+     * This is the number that says the deferral costs one stub probe per lookup instead of a full-surface view per
+     * lookup. It is not a success count - a non-zero value means a name is being sampled and not drawn - but a leg that
+     * reads it together with {@code contentlessDeferred} can tell "the source never arrived" from "the lookup paid for
+     * the same answer every frame".
+     */
+    private long deferralLookupsSkipped;
+    /**
+     * Mirrors that would have been built content-less and were deferred instead.
+     * <p>
+     * The registry used to answer a name with nothing to fill its mirror by creating an empty image at the extent the
+     * stub recorded and returning it. The sampling side refuses a mirror whose whole content never arrived, so that
+     * image could not draw; and because it existed, every later lookup was a plain hit - it never asked the capture
+     * again. A late upload therefore could not reach the name at all. Now the answer is null and the content is asked
+     * for again when the level's serial moves, so a texture that arrives after its first sample is filled on the next
+     * lookup instead of staying refused for the run.
+     */
+    private int contentlessMirrorsDeferred;
+    /** The names whose lookups were answered "no source" and at which content serial, one entry per name. */
+    private final MirrorDeferralGate deferrals = new MirrorDeferralGate();
     /** Readback refreshes by the origin that asked for them. */
     private final java.util.Map<String, Integer> readbackByOrigin = new java.util.HashMap<String, Integer>();
     private String currentOrigin = "unknown";
@@ -441,20 +467,28 @@ public final class VulkanTextureRegistry {
         // A one-entry memo over the map lookup: the callers resolve the same name several times in a row (the JFR
         // census showed get() calling get() with the same argument, and the draw path asks once per group), and the map
         // is a boxed HashMap. Any mutation of the table drops the memo, so it cannot answer a stale name.
+        //
+        // Only a positive answer is memoised. "There is no image for this name" is the one answer that can be made
+        // wrong by something this class never sees - the stub recording an upload - because it mutates no table here
+        // and so drops no memo. Remembering it is how a texture that arrived after its first sample stayed refused
+        // for the rest of the run; the full lookup answers it again and the deferral gate keeps that from costing a
+        // capture per lookup.
         int slot = glTextureId & (MEMO_SLOTS - 1);
-        if (glTextureId == this.lastMemoId && this.memoTextureIds[slot] == glTextureId) {
-            // The same name as the previous ask: answered as the one-entry memo did, with no further work.
-            return this.memoTextures[slot];
-        }
-        if (this.memoTextureIds[slot] == glTextureId && this.announcedImages.isEmpty()) {
-            this.lastMemoId = glTextureId;
-            VulkanGlTexture memo = this.memoTextures[slot];
-            // The one step of the full lookup that can change with no table mutation: the sampler parameters the game
-            // set after the upload. Asked of the remembered texture directly - a version compare when nothing moved.
-            if (SAMPLER_CONFIRM_EARLY && memo != null) {
-                memo.confirmSamplerStateFromRecord(glTextureId);
+        VulkanGlTexture remembered = this.memoTextureIds[slot] == glTextureId ? this.memoTextures[slot] : null;
+        if (remembered != null) {
+            if (glTextureId == this.lastMemoId) {
+                // The same name as the previous ask: answered as the one-entry memo did, with no further work.
+                return remembered;
             }
-            return memo;
+            if (this.announcedImages.isEmpty()) {
+                this.lastMemoId = glTextureId;
+                // The one step of the full lookup that can change with no table mutation: the sampler parameters the
+                // game set after the upload. Asked of the remembered texture directly - a version compare otherwise.
+                if (SAMPLER_CONFIRM_EARLY) {
+                    remembered.confirmSamplerStateFromRecord(glTextureId);
+                }
+                return remembered;
+            }
         }
         VulkanGlTexture texture = get(glTextureId, true);
         this.memoTextureIds[slot] = glTextureId;
@@ -883,7 +917,8 @@ public final class VulkanTextureRegistry {
                     || CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
                 // The render-target idiom: GL reserves the level with NULL data and a framebuffer renders into it. The
                 // content is not late, it never comes through an upload, so this is a deferred fill rather than a miss.
-                this.noteMirrorDeferred(glTextureId, extent[0], extent[1], "level allocated with no data");
+                this.noteMirrorDeferred(glTextureId, extent[0], extent[1],
+                        "level allocated with no data; its content arrives when a framebuffer renders into it");
             } else {
                 this.rejectPatch("GL-less mirror: the captured surface for GL texture " + glTextureId + " is " + extent[0]
                         + "x" + extent[1] + " with no game pixels (an allocation with a NULL data pointer) and nothing"
@@ -1714,6 +1749,10 @@ public final class VulkanTextureRegistry {
         Entry entry = this.entries.remove((int) (id));
         celtium$noteLargeRemoval(glTextureId, entry, "forgetTexture");
         celtium$dropMemo();
+        // A deleted name's id is free for reuse, and the deferral is an answer about the content the previous owner
+        // had: keeping it would let the next texture under this name inherit "nothing writes this" until its serial
+        // happened to differ from a number that described different pixels.
+        this.deferrals.forget(glTextureId);
         this.fullyInitialized.remove(id);
         // The GL name is free for reuse the moment it is deleted ("its name is free for reuse"), so the label that
         // says which source filled *this* name's mirror must go with the entry. It did not, and `splashSourcedGroups`
@@ -1917,10 +1956,19 @@ public final class VulkanTextureRegistry {
         // The GL-less split: which source filled a mirror when no readback could, how often a mirror was left without
         // content because neither was there, and how often a captured surface was refused because the level held no
         // game pixels at all (an allocation with a NULL data pointer - the stub's own answer, not a pixel guess).
+        //
+        // The deferral pair reads together: `contentlessDeferred` is how many names would have had an empty image
+        // built for them (each one a permanent "refused" state before), and `deferralSkips` is how many lookups were
+        // answered from the remembered serial instead of materializing the capture again. A leg whose
+        // `contentlessDeferred` names the render targets of a pack is the case that used to answer with a mirror
+        // nothing ever wrote; `deferredNames` says whether it was a handful of names or the whole frame.
         return costs + " glLess[fromAnnouncement=" + this.filledFromAnnouncement + " fromCapture=" + this.filledFromCapture
                 + " noContent=" + this.readbacksSkippedWithoutContent
                 + " staleAttachmentDeferred=" + this.staleAttachmentsDeferred
                 + " noGamePixels=" + this.capturesRefusedWithoutGamePixels
+                + " contentlessDeferred=" + this.contentlessMirrorsDeferred
+                + " deferralSkips=" + this.deferralLookupsSkipped
+                + " deferredNames=" + this.deferrals.namesDeferred()
                 + " wrapDefaults=" + wrapDefaultsUsed + "]";
     }
 
@@ -2040,7 +2088,7 @@ public final class VulkanTextureRegistry {
                 if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferForColorTexture(glTextureId) != 0) {
                     this.staleAttachmentsDeferred++;
                     this.noteMirrorDeferred(glTextureId, existing.width, existing.height,
-                            "stale and content-less, but a framebuffer's colour attachment");
+                            "stale and content-less, but a framebuffer's colour attachment; the owner publishes it");
                     return null;
                 }
                 this.rejectPatch("GL-less mirror: stale GL texture " + glTextureId + " has no announced pixels and"
@@ -2055,14 +2103,27 @@ public final class VulkanTextureRegistry {
         // Under the stub the readback below would copy memory GL never filled: the pixels of this process exist in
         // the game's announcements - which the block above has already handled, so there is none here - and in the
         // uploads the stub captured. The capture is asked first, and it carries the whole surface.
+        //
+        // Asked once per content change, not once per lookup. A name with nothing behind it yet - a mod's texture
+        // before its first upload, a render target before its owner publishes - answers "no source" for as long as the
+        // level's write serial is unchanged, and the full-surface view the question materializes is not free on a
+        // 1920x1080 name that every group of a window samples. The serial moves with the stub's next write to the
+        // level, so a late upload is still seen: what is remembered is an answer about content, not a refusal. The
+        // backend's lazy supply records the same serial for the same reason.
+        long contentSerial = CeltiumGlStub.textureUploadSerial(glTextureId, 0);
+        if (this.deferrals.isCurrent(glTextureId, contentSerial)) {
+            // The same answer to the same question: counted apart from the content-less decision below, so that
+            // counter keeps meaning "lookups that had to decide this", not "lookups that asked".
+            this.deferralLookupsSkipped++;
+            return null;
+        }
         if (fillFromCapture(glTextureId, nearestFilter, false)) {
             HIT_CALLS++;
             return this.entries.get((int) (id)).texture;
         }
-        // Nothing announced, nothing captured, and no readback either. The mirror is still created at the size the
-        // stub recorded - when even that is unknown there is no image to build, and no size may be invented - and it
-        // is left content-less: the sampling side refuses a mirror whose whole content never arrived instead of
-        // drawing texels nothing ever wrote.
+        // Nothing announced, nothing captured, and no readback either: remember that this name had no source at this
+        // content, so the next lookup does not pay for the same answer.
+        this.deferrals.note(glTextureId, contentSerial);
         this.readbacksSkippedWithoutContent++;
         // A framebuffer's colour attachment stands for the image that framebuffer draws into. The prepare path
         // publishes or adopts that image before this name is sampled (CELTIUM_EXTERNAL_IMAGE), so a content-less
@@ -2085,30 +2146,20 @@ public final class VulkanTextureRegistry {
             // A name with no extent at all is not a render target the stub can size; the draw path substitutes the
             // 1x1 black mirror for it (CELTIUM_INCOMPLETE_TEXTURE_BLACK), so nothing is lost here and the notice is
             // classification, not a refusal.
-            this.noteMirrorDeferred(glTextureId, 0, 0, "no recorded extent");
+            this.noteMirrorDeferred(glTextureId, 0, 0, "no recorded extent; nothing can size it");
             return null;
         }
-        VulkanGlTexture empty = VulkanGlTexture.create(this.context, width, height, nearestFilter);
-        this.entries.put((int) (glTextureId), new Entry(glTextureId, width, height, empty));
-        this.mutations++;
-    celtium$dropMemo();
-        this.mirrorCount++;
-        celtium$noteMirrorSource(glTextureId, "none", width, height, null);
-        if (CeltiumGlStub.textureAllocatedWithoutData(glTextureId)
-                || CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
-            // The level was allocated with NULL data, which is how GL reserves a render target: its content arrives
-            // when its framebuffer render is published, so an empty mirror now is the expected state, not a refusal.
-            if (this.mirrorDeferredLines < 4) {
-                this.mirrorDeferredLines++;
-                System.out.println("[Celtium] CELTIUM_MIRROR_DEFERRED glTexture=" + glTextureId + " size=" + width
-                        + "x" + height + " (level allocated with no data; filled when its render is published)");
-            }
-        } else {
-            this.rejectPatch("GL-less mirror: GL texture " + glTextureId + " has no announced pixels and no captured"
-                    + " upload; mirror created content-less at " + width + "x" + height);
-        }
-        HIT_CALLS++;
-        return empty;
+        // The extent is known, but there is still no source: the capture refused above and no framebuffer owns the
+        // name. Building the mirror anyway was the last way an empty image could become a name's permanent state. It
+        // could not draw - the sampling side refuses a mirror whose whole content never arrived - and because it
+        // existed, every later lookup was a plain hit that never asked the capture again, so pixels arriving after
+        // this point were invisible for the rest of the run. The next lookup after the level's serial moves fills the
+        // name from the capture instead, and reads its filter and wrap modes from the texture as it is then, which is
+        // also the difference between a placeholder's sampler and the one the game actually set.
+        this.contentlessMirrorsDeferred++;
+        this.noteMirrorDeferred(glTextureId, width, height,
+                "no upload has written it and no framebuffer owns it; the first upload or publish fills it");
+        return null;
     }
 
     /** Drops one mirror so the next use re-uploads it; used when a texture's contents are known to have changed. */
