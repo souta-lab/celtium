@@ -46,7 +46,13 @@ def declared_methods(source: str) -> set[tuple[str, str]]:
 
 def emitted_calls(source: str) -> set[tuple[str, str]]:
     pattern = r'"org/taumc/celeritas/core/CeltiumGllessHint",\s*"(\w+)",\s*"(\([^"]*\)[^"]*)"'
-    return set(re.findall(pattern, source, re.S))
+    found = set(re.findall(pattern, source, re.S))
+    # The integer legacy routes go through one emitter, so their pair sits at the emitter's call site as a literal
+    # (name, descriptor) argument instead of inside a visitMethodInsn of its own. The emitter emits exactly what it is
+    # given - it reads the load count from the descriptor and refuses anything but ints - so these are emitted calls
+    # too, and leaving them out would be the same silent hole this check exists to close.
+    found |= set(re.findall(r'emitLegacyIntRoute\(\s*method,\s*"(\w+)",\s*"(\([^"]*\)[^"]*)"', source, re.S))
+    return found
 
 
 def main() -> int:

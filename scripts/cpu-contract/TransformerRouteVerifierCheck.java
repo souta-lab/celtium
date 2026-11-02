@@ -66,8 +66,13 @@ public class TransformerRouteVerifierCheck {
         // The legacy immediate-mode surface, in every vertex spelling the transformer routes. These are only routed
         // with -Dceltium.gless.legacyImmediate=true, so the script runs this check once per setting: a route that
         // emits bad bytecode must fail in the configuration that installs it, not only in the one that does not.
+        // The integer and short spellings are listed with the float ones: they share one emitter, and the emitter's
+        // arity is what decides the descriptor - a spelling left out here would be exactly the route whose bytecode
+        // no run ever verifies.
         "glBegin", "glEnd", "glTexCoord2f", "glTexCoord2d",
         "glVertex2f", "glVertex2d", "glVertex3f", "glVertex3d", "glVertex4f", "glVertex4d",
+        "glVertex2i", "glVertex3i", "glVertex4i", "glVertex2s", "glVertex3s",
+        "glTexCoord2i", "glTexCoord2s",
         "glBindFramebufferEXT", "glBindFramebufferARB", "glFramebufferTexture2DEXT", "glFramebufferTexture2DARB",
         "glCheckFramebufferStatusEXT", "glCheckFramebufferStatusARB",
         "nglDeleteTextures", "nglDeleteBuffers", "nglDeleteFramebuffers", "nglGenTextures", "nglGenBuffers",

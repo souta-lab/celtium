@@ -278,4 +278,69 @@ class LegacyImmediateCaptureTest {
         assertTrue(summary.contains("listRefusals=1"), summary);
         assertTrue(summary.startsWith("legacyImmediate "), summary);
     }
+
+    /**
+     * The integer spelling GL rounds to float.
+     * <p>
+     * A mod that draws a legacy surface with {@code glVertex3i}/{@code glVertex2i} used to get nothing appended: the
+     * call was a no-op, so the run reached the sink with fewer vertices than the mod wrote - a partially drawn model,
+     * which reads as a rendering bug rather than as a missing route. The layout is the float one; only the source
+     * type differs, so the bytes at the offsets are the whole check.
+     */
+    @Test
+    void theIntegerVertexSpellingsPackIntoTheSameLayout() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, true, false, GATE));
+        capture.texCoord2i(1, 0);
+        capture.vertex3i(2, -3, 4);
+        capture.texCoord2i(0, 1);
+        // The two-component form leaves z at GL's current zero, exactly like glVertex2f.
+        capture.vertex2i(-5, 6);
+        assertTrue(capture.end(sink), "the run reaches the sink");
+
+        assertArrayEquals(new int[] {LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR,
+                LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR, 2, GL11.GL_QUADS}, sink.lastShape(),
+                "an integer vertex lands in the float layout, not a second one");
+        long base = capture.address();
+        assertEquals(2.0f, MemoryUtil.memGetFloat(base), "x");
+        assertEquals(-3.0f, MemoryUtil.memGetFloat(base + 4L), "y is signed, not clamped or narrowed to a byte");
+        assertEquals(4.0f, MemoryUtil.memGetFloat(base + 8L), "z");
+        assertEquals(1.0f, MemoryUtil.memGetFloat(base + 12L), "u from glTexCoord2i");
+        assertEquals(0.0f, MemoryUtil.memGetFloat(base + 16L), "v from glTexCoord2i");
+        long second = base + LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR;
+        assertEquals(-5.0f, MemoryUtil.memGetFloat(second), "second x is negative and survives the narrowing");
+        assertEquals(6.0f, MemoryUtil.memGetFloat(second + 4L), "second y");
+        assertEquals(0.0f, MemoryUtil.memGetFloat(second + 8L), "a two-component vertex keeps z at zero");
+        assertEquals(0.0f, MemoryUtil.memGetFloat(second + 12L), "the second glTexCoord2i reached the second vertex");
+        assertEquals(1.0f, MemoryUtil.memGetFloat(second + 16L), "including its v");
+        assertEquals(2, capture.submittedVertices(), "both integer vertices were appended");
+    }
+
+    /**
+     * The integer four-component form divides by its {@code w}, like the float one, and refuses a zero {@code w} with
+     * the same name. The division is GL's semantics, not a float-path detail, so a projection through
+     * {@code glVertex4i} has to behave identically.
+     */
+    @Test
+    void theIntegerFourComponentVertexDividesByItsWAndRefusesZero() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_TRIANGLES, false, false, GATE));
+        capture.vertex4i(2, 4, 6, 2);
+        assertTrue(capture.end(sink));
+        long base = capture.address();
+        assertEquals(1.0f, MemoryUtil.memGetFloat(base), "x/w");
+        assertEquals(2.0f, MemoryUtil.memGetFloat(base + 4L), "y/w");
+        assertEquals(3.0f, MemoryUtil.memGetFloat(base + 8L), "z/w");
+
+        LegacyImmediateCapture refusing = capture();
+        Recorder never = new Recorder();
+        assertTrue(refusing.begin(GL11.GL_TRIANGLES, false, false, GATE));
+        refusing.vertex4i(1, 1, 1, 0);
+        assertFalse(refusing.active(), "the run is abandoned, as the float spelling does");
+        assertFalse(refusing.end(never), "and nothing is offered");
+        assertEquals(1, refusing.refusals(), "the loss is counted");
+        assertTrue(refusing.lastRefusal().contains("w=0"), "and named: " + refusing.lastRefusal());
+    }
 }

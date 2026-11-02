@@ -1505,12 +1505,44 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex4d(x, y, z, w);
     }
 
+    /** {@code glVertex2i}: the integer spelling GL rounds to float. */
+    public static void glLegacyVertex2i(int x, int y) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2i(x, y);
+    }
+
+    public static void glLegacyVertex3i(int x, int y, int z) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3i(x, y, z);
+    }
+
+    /** {@code glVertex4i}: the capture projects by {@code w}, as the float spelling does. */
+    public static void glLegacyVertex4i(int x, int y, int z, int w) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex4i(x, y, z, w);
+    }
+
+    /** {@code glVertex2s}: a {@code (SS)V} caller leaves the shorts sign-extended in int locals. */
+    public static void glLegacyVertex2s(int x, int y) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2s(x, y);
+    }
+
+    public static void glLegacyVertex3s(int x, int y, int z) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3s(x, y, z);
+    }
+
     public static void glLegacyTexCoord2f(float u, float v) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2f(u, v);
     }
 
     public static void glLegacyTexCoord2d(double u, double v) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2d(u, v);
+    }
+
+    /** {@code glTexCoord2i}/{@code glTexCoord2s}: narrowed to the float coordinate the capture stores. */
+    public static void glLegacyTexCoord2i(int u, int v) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2i(u, v);
+    }
+
+    public static void glLegacyTexCoord2s(int u, int v) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2s(u, v);
     }
 
     /** {@code glColor4ub}: the bytes are unsigned and map to [0, 1], as GL does. */

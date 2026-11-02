@@ -61,7 +61,10 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram",
             // The remaining vertex/texcoord/colour spellings a mod may use: none is in the stub's table, so each one
             // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
-            "glVertex2f", "glVertex2d", "glVertex3d", "glVertex3i", "glTexCoord2i", "glTexCoord2s",
+            //
+            // The spellings that now have a legacy route are not listed here: glVertex2f/2d/3d/3i and
+            // glTexCoord2i/2s are routed above, and a name in this set would shadow its route if the two were ever
+            // evaluated in the other order - the trap the glLightfv note at the top of this set records.
             "glNormal3d", "glColor3b", "glColor3d", "glColor4ui", "glRectf", "glRecti",
             "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf",
             "glVertex4f", "glVertex4d", "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
@@ -298,6 +301,34 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      * the projection; the default path is the one that was measured good.
      */
     private static final boolean MOD_MATRIX_ROUTES = Boolean.getBoolean("celtium.glless.modMatrixRoutes");
+
+    /**
+     * Emits one legacy route whose native takes only integers: the int locals pass through unchanged and the hint
+     * narrows them to the float layout the capture stores, which is the rounding GL itself performs.
+     * <p>
+     * One emitter serves the integer and the short spellings because the JVM describes both with int locals: the
+     * {@code (SS)V} form's shorts were sign-extended into its locals before the body ran, so the same {@code ILOAD}s
+     * read the same numbers. The load count comes from the descriptor rather than from a second argument, so a spelling
+     * cannot push a different number of values than the method it calls takes - and the descriptor stays a literal at
+     * the call site, which is what {@code scripts/cpu-contract/glless_hint_descriptor_check.py} reads to prove the
+     * method exists. A descriptor that is not all ints is a mistake in this emitter's own call site and fails the
+     * transform loudly rather than at the first mod that draws.
+     */
+    private static void emitLegacyIntRoute(MethodVisitor method, String hintName, String descriptor) {
+        int arguments = 0;
+        for (int at = descriptor.indexOf('(') + 1; at < descriptor.length() && descriptor.charAt(at) != ')'; at++) {
+            if (descriptor.charAt(at) != 'I') {
+                throw new IllegalArgumentException("an integer legacy route takes only ints: " + descriptor);
+            }
+            arguments++;
+        }
+        for (int slot = 0; slot < arguments; slot++) {
+            method.visitVarInsn(Opcodes.ILOAD, slot);
+        }
+        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                hintName, descriptor, false);
+        method.visitInsn(Opcodes.RETURN);
+    }
 
     /**
      * {@code -Dceltium.gless.legacyImmediate=true} re-enables the legacy glBegin/glVertex3f routes.
@@ -553,6 +584,40 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyTexCoord2d", "(DD)V", false);
             method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        // The integer and short spellings. They were no-ops - listed in VOID_NOOPS below and counted as unmapped -
+        // so a mod that drew a legacy surface with glVertex3i/glTexCoord2i lost the geometry outright, and one that
+        // used glTexCoord2i kept the previous glyph's UV and sampled the wrong part of its own atlas. GL rounds these
+        // components to float, which is what the capture's layout carries; the hint does the narrowing once, so the
+        // bytecode here is a straight pass-through of the int locals. A {@code (SS)V} descriptor's locals are already
+        // sign-extended ints, which is why one emitter serves both widths.
+        if (LEGACY_IMMEDIATE && "glVertex2i".equals(name) && "(II)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyVertex2i", "(II)V");
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex3i".equals(name) && "(III)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyVertex3i", "(III)V");
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex4i".equals(name) && "(IIII)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyVertex4i", "(IIII)V");
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex2s".equals(name) && "(SS)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyVertex2s", "(II)V");
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glVertex3s".equals(name) && "(SSS)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyVertex3s", "(III)V");
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glTexCoord2i".equals(name) && "(II)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyTexCoord2i", "(II)V");
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glTexCoord2s".equals(name) && "(SS)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyTexCoord2s", "(II)V");
             return;
         }
         // The stub's table answers these state setters with SEM_NOOP ("record only - state the Vulkan side owns or

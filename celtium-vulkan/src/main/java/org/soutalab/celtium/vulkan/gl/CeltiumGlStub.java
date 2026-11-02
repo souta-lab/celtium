@@ -2383,6 +2383,52 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glVertex2i}: the integer spelling, narrowed to the float layout as GL does. */
+    public static void celtium$legacyVertex2i(int x, int y) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex2i(x, y);
+        }
+    }
+
+    /** {@code glVertex3i}. */
+    public static void celtium$legacyVertex3i(int x, int y, int z) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex3i(x, y, z);
+        }
+    }
+
+    /** {@code glVertex4i}: the integer position is projected by {@code w}, as the float spelling is. */
+    public static void celtium$legacyVertex4i(int x, int y, int z, int w) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex4i(x, y, z, w);
+        }
+    }
+
+    /**
+     * {@code glVertex2s}/{@code glVertex3s}: the short spellings.
+     * <p>
+     * A {@code (SS)V} descriptor has int locals holding sign-extended shorts, so both spellings land on the integer
+     * entry point instead of a second narrowing step. They are separate methods because the transformer emits the
+     * call by name, and a leg reads which spelling a mod actually used.
+     */
+    public static void celtium$legacyVertex2s(int x, int y) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex2i(x, y);
+        }
+    }
+
+    /** {@code glVertex3s}. */
+    public static void celtium$legacyVertex3s(int x, int y, int z) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.legacyCapture.vertex3i(x, y, z);
+        }
+    }
+
     /** {@code glTexCoord2f}: the coordinate the following vertices carry. */
     public static void celtium$legacyTexCoord2f(float u, float v) {
         CeltiumGlStub stub = installed;
@@ -2393,6 +2439,16 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glTexCoord2d}, narrowed to the float coordinate the capture stores. */
     public static void celtium$legacyTexCoord2d(double u, double v) {
+        celtium$legacyTexCoord2f((float) u, (float) v);
+    }
+
+    /** {@code glTexCoord2i}, narrowed like the double spelling. */
+    public static void celtium$legacyTexCoord2i(int u, int v) {
+        celtium$legacyTexCoord2f((float) u, (float) v);
+    }
+
+    /** {@code glTexCoord2s}: int locals holding sign-extended shorts, narrowed to the stored float coordinate. */
+    public static void celtium$legacyTexCoord2s(int u, int v) {
         celtium$legacyTexCoord2f((float) u, (float) v);
     }
 

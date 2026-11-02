@@ -185,6 +185,28 @@ public final class LegacyImmediateCapture {
         vertex((float) x, (float) y, (float) z);
     }
 
+    /**
+     * {@code glVertex2i}: GL rounds integer vertex components to float, which is what the layout carries.
+     * <p>
+     * The integer and short spellings were counted as unmapped and appended nothing, so a mod that drew a legacy
+     * surface with them lost the whole run - the same class of silence the float and double spellings had before they
+     * were routed. {@code glVertex2s} lands here too: a JVM local for a {@code (SS)V} descriptor is an int, and the
+     * caller has already sign-extended it.
+     */
+    public void vertex2i(int x, int y) {
+        vertex((float) x, (float) y, 0.0f);
+    }
+
+    /** {@code glVertex3i}, narrowed like {@link #vertex2i}. */
+    public void vertex3i(int x, int y, int z) {
+        vertex((float) x, (float) y, (float) z);
+    }
+
+    /** {@code glVertex4i}: the same w division the float spelling performs, on integer components. */
+    public void vertex4i(int x, int y, int z, int w) {
+        vertex4f((float) x, (float) y, (float) z, (float) w);
+    }
+
     /** {@code glVertex4f}: the position is projected by {@code w}, as GL does for every vertex. */
     public void vertex4f(float x, float y, float z, float w) {
         if (w == 1.0f) {
@@ -212,6 +234,15 @@ public final class LegacyImmediateCapture {
     public void texCoord(float u, float v) {
         this.texU = u;
         this.texV = v;
+    }
+
+    /**
+     * {@code glTexCoord2i}/{@code glTexCoord2s}: narrowed to the float coordinate the capture stores, the same way
+     * the double spelling is. A run whose UVs stayed at the previous value samples the wrong part of the atlas, which
+     * is a wrong picture rather than a missing one - the reason to accept these spellings instead of counting them.
+     */
+    public void texCoord2i(int u, int v) {
+        texCoord((float) u, (float) v);
     }
 
     /** {@code glColor4f}: the colour every following vertex carries until it is set again. */

@@ -105,7 +105,9 @@ native 経路と共有する（同一 batch・同一 cache・同一 submit 最�
 上の 1–3 は `-Dceltium.gless.legacyImmediate=true` の下で実装済み。捕捉の詰め方は
 `LegacyImmediateCapture`（GL/Vulkan 非依存）に分離し、`LegacyImmediateCaptureTest` が
 layout・stride・UV/色のバイト・`w` 除算・拒否理由を CPU で固定する。トランスフォーマの経路は
-`glVertex2f/2d/3f/3d/4f/4d` と `glTexCoord2f/2d`、受理する primitive は `VulkanImmediateDrawer.refusalReason`
+`glVertex2f/2d/3f/3d/4f/4d` と `glVertex2i/3i/4i`・`glVertex2s/3s`、テクスチャ座標は
+`glTexCoord2f/2d/2i/2s`（整数と short は float layout への丸め。`glVertex4i` も `w` 除算し、`w=0` は名前付きで拒否）、
+受理する primitive は `VulkanImmediateDrawer.refusalReason`
 （quads/triangles/fan/strip/quad strip/polygon/lines/line strip/line loop）で、ここにあった独自リストは削除した。
 `scripts/cpu-contract/transformer-route-verify.sh` は legacy 経路を **ON にした構成でも** 同じ検査を行う。
 
