@@ -39,13 +39,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
     /** State setters the stub answers with SEM_NOOP; see the direct-return branch for why the name is enough. */
     private static final java.util.Set<String> VOID_NOOPS = new java.util.HashSet<>(java.util.Arrays.asList(
-            // glLightfv and glLightModelfv are routed to the lighting mirror below, so they are not listed here: the
-            // no-op set is consulted before the routes, and listing them shadowed the route.
+            // The routes are consulted before this set, so a name that has one must not be listed here: it would look
+            // like the answer came from the set and would shadow the route outright if the two were ever evaluated in
+            // the other order. glLightfv/glLightModelfv and the whole unconditional colour family are routed above,
+            // and are therefore absent.
             "glLightf", "glLighti", "glLightiv", "glLightModelf", "glLightModeli",
             "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
             "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
             "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
-            "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glTexCoord2f", "glTexCoord2d", "glVertex3f",
+            // These texcoord/vertex names ARE answered here by default: their routes exist only with
+            // -Dceltium.gless.legacyImmediate=true, and with the switch off the no-op is the answer this set gives.
+            "glTexCoord2f", "glTexCoord2d", "glVertex3f",
             // The uniform setters are listed no-ops in the stub's table (the programs those values belong to are
             // GL-less stubs, so nothing reads them); the measured session called them 4.0e4 times. The three below
             // are absent from the table entirely and reach the generic unknown-symbol no-op, 5.9e3 calls together.
@@ -59,18 +63,22 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // in the measured session was 3.4e3.
             // glPushAttrib/glPopAttrib and the client pair are routed below to their state records.
             "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram",
-            // The remaining vertex/texcoord/colour spellings a mod may use: none is in the stub's table, so each one
+            // The remaining vertex/texcoord spellings a mod may use: none is in the stub's table, so each one
             // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
             //
             // The spellings that now have a legacy route are not listed here: glVertex2f/2d/3d/4f/4d/3i and
-            // glTexCoord2i/2s, and this round's glRectf/glRecti/glRectd, are routed above - and a name in this set
-            // would shadow its route if the two were ever evaluated in the other order, the trap the glLightfv note at
-            // the top of this set records. glVertex4f/glVertex4d were in this set while already routed above; they are
-            // gone rather than left as a trap that only the evaluation order keeps from firing.
-            "glNormal3d", "glColor3b", "glColor3d", "glColor4ui",
+            // glTexCoord2i/2s, and glRectf/glRecti/glRectd, are routed above - and a name in this set would shadow its
+            // route if the two were ever evaluated in the other order, the trap the note at the top of this set
+            // records. glVertex4f/glVertex4d were in this set while already routed above; they are gone rather than
+            // left as a trap that only the evaluation order keeps from firing.
+            //
+            // Every colour spelling is gone from this set for the same reason: the raw colour routes answer all 32
+            // natives (glColor3/4 x b/s/i/f/d/ub/us/ui and their 16 buffer forms) unconditionally, so the colour
+            // mirror and the font's current colour no longer depend on which spelling a mod happened to call.
+            "glNormal3d",
             "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf",
             "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
-            "glMultiTexCoord4f", "glNormal3i", "glColor4b", "glRasterPos2i", "glRasterPos4f",
+            "glMultiTexCoord4f", "glNormal3i", "glRasterPos2i", "glRasterPos4f",
             "glIndexd", "glIndexs",
             // The rest of the raster/clear state that the table lists as a no-op on purpose (the Vulkan side mirrors
             // that state through the GlStateManager hooks, not through these raw setters).
@@ -200,6 +208,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      * The raw GL11 colour and depth-mask natives, forwarded to CeltiumGllessHint, which feeds the same mirror
      * GlStateManager's hooks do. Every form is widened to one entry point: floats as given, a missing alpha as 1,
      * doubles narrowed, unsigned bytes through glColor4ub.
+     * <p>
+     * <b>All 32 colour natives</b> in the GL surface answer here - glColor3/4 x b/s/i/f/d/ub/us/ui and the 16
+     * {@code ngl*Color*v} buffer forms - because the colour is state the immediate pipelines read for every layout
+     * that carries no per-vertex colour: a spelling answered with a zero left the previous colour in force, which is
+     * a wrong picture rather than a missing one. The integer widths share one rule (unsigned at their own width) in
+     * {@link #emitLegacyIntRoute} and in the hint's scalar entry points.
      */
     private static boolean emitRawColourRoute(MethodVisitor method, String name, String descriptor) {
         String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
@@ -278,6 +292,101 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
                 method.visitInsn(Opcodes.ICONST_M1);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4ub", "(BBBB)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            // The short and int widths, scalar and buffer: every one of them was answered by the generic no-op, so a
+            // mod that set its colour through glColor4ui/4i/4us/4s drew with whatever colour had been set before - the
+            // same wrong-picture class the byte and float spellings were pulled out of. The colour mirror is default
+            // path state (the immediate pipelines read it for the layouts that carry no per-vertex colour), so these
+            // are not behind the legacy switch.
+            case "glColor4s(SSSS)V":
+                emitLegacyIntRoute(method, "glColor4s", "(IIII)V");
+                return true;
+            case "glColor4us(SSSS)V":
+                emitLegacyIntRoute(method, "glColor4us", "(IIII)V");
+                return true;
+            case "glColor4i(IIII)V":
+                emitLegacyIntRoute(method, "glColor4i", "(IIII)V");
+                return true;
+            case "glColor4ui(IIII)V":
+                emitLegacyIntRoute(method, "glColor4ui", "(IIII)V");
+                return true;
+            // A 3-component spelling leaves alpha at GL's 1.0, and ICONST_M1 is the bit pattern of the maximum at every
+            // integer width (65535 as a short, 0xFFFFFFFF as an int); the hint reads integers as unsigned, so one
+            // widened call per width is enough. Each pair is spelled out rather than chosen by a variable so the
+            // emitted-call check can verify it against the hint's declarations.
+            case "glColor3s(SSS)V":
+                for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitInsn(Opcodes.ICONST_M1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4s", "(IIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "glColor3us(SSS)V":
+                for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitInsn(Opcodes.ICONST_M1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4us", "(IIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "glColor3i(III)V":
+                for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitInsn(Opcodes.ICONST_M1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4i", "(IIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "glColor3ui(III)V":
+                for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.ILOAD, slot);
+                method.visitInsn(Opcodes.ICONST_M1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4ui", "(IIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor3sv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3sv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4sv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4sv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor3usv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3usv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4usv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4usv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor3iv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3iv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4iv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4iv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor3uiv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3uiv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4uiv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4uiv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor3dv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor3dv", "(J)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return true;
+            case "nglColor4dv(J)V":
+                method.visitVarInsn(Opcodes.LLOAD, 0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glColor4dv", "(J)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return true;
             case "glDepthMask(Z)V":

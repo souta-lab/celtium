@@ -2537,6 +2537,31 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * One integer colour component as GL's {@code [0, 1]} float, read as an unsigned value of its own width.
+     * <p>
+     * This is the one conversion every integer {@code glColor*} spelling goes through, so the widths cannot disagree:
+     * 255, 65535 and 0xFFFFFFFF are all 1.0, and half the range is 0.5. The reading is unsigned because a Java caller
+     * writes these bit patterns without an unsigned type - {@code glColor4ub(r, g, b, (byte) 255)} is white, so
+     * {@code glColor4us(..., (short) 65535)} and {@code glColor4ui(..., -1)} mean white too. GL's own signed
+     * normalisation would read -1 as negative and clamp it to black, which is not what the call site meant and not
+     * what the unsigned spelling next to it does.
+     * <p>
+     * The scale is the type's maximum (255, 65535, 2^32-1), which is also GL's factor for the unsigned spellings.
+     */
+    public static float celtium$colourComponent(byte value) {
+        return (value & 0xFF) / 255.0F;
+    }
+
+    public static float celtium$colourComponent(short value) {
+        return (value & 0xFFFF) / 65535.0F;
+    }
+
+    public static float celtium$colourComponent(int value) {
+        // Through a long: the top bit of the int would otherwise make the division negative.
+        return (float) ((value & 0xFFFFFFFFL) / 4294967295.0);
+    }
+
     /** Records the colour for {@code glGetFloatv(GL_CURRENT_COLOR)}; fed by every path that sets the mirror. */
     public static void celtium$setCurrentColor(float red, float green, float blue, float alpha) {
         CeltiumGlStub stub = installed;

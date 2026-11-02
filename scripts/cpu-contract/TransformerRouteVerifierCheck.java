@@ -203,8 +203,115 @@ public class TransformerRouteVerifierCheck {
             }
         }
         System.out.println("classes checked=" + classes + " failed=" + classFailures);
-        if (failed != 0 || classFailures != 0) System.exit(1);
+        // Phase 3: every colour spelling answers. A colour native left on the generic no-op keeps the previous colour
+        // in the mirror, and the immediate pipelines read that mirror for every layout with no per-vertex colour - so
+        // one unrouted spelling is a wrong picture for whoever calls it, not a missing feature. Load success cannot see
+        // this: a route that was never emitted still verifies. So the transformed GL11 body is read for the hint call.
+        int colourMissing = 0;
+        int colourRouted = 0;
+        int colourResolved = 0;
+        try (JarFile jar = new JarFile(args[0])) {
+            byte[] original;
+            try (InputStream stream = jar.getInputStream(jar.getJarEntry("org/lwjgl/opengl/GL11.class"))) {
+                original = stream.readAllBytes();
+            }
+            byte[] transformed = new CeltiumGllessNativeTransformer().transform("org/lwjgl/opengl/GL11",
+                    "org.lwjgl.opengl.GL11", original);
+            final Set<String> wanted = new HashSet<>(Arrays.asList(COLOUR_NATIVES));
+            final Map<String, Boolean> routed = new HashMap<>();
+            final Set<String> hintCalls = new LinkedHashSet<>();
+            new ClassReader(transformed).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override public MethodVisitor visitMethod(int access, String name, String descriptor,
+                        String signature, String[] exceptions) {
+                    if (!wanted.contains(name)) {
+                        return null;
+                    }
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override public void visitMethodInsn(int opcode, String owner, String hintName,
+                                String hintDescriptor, boolean isInterface) {
+                            // A colour entry point, not any call on the hint: the generic no-op also calls the hint
+                            // (noteUnrouted), so counting every invokestatic would report a dropped spelling as routed
+                            // - the positive control that removed one route was answered with 32/32 before this.
+                            if (opcode == Opcodes.INVOKESTATIC
+                                    && "org/taumc/celeritas/core/CeltiumGllessHint".equals(owner)
+                                    && hintName.startsWith("glColor")) {
+                                routed.put(name, Boolean.TRUE);
+                                hintCalls.add(hintName + hintDescriptor);
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG);
+            for (String name : COLOUR_NATIVES) {
+                if (routed.containsKey(name)) {
+                    colourRouted++;
+                } else {
+                    System.out.println("COLOUR-UNROUTED " + name + " (the previous colour stays in the mirror)");
+                    colourMissing++;
+                }
+            }
+            // And each emitted call names a method the hint actually declares. Resolved through the class that owns
+            // the route, not by executing it: the hint's static initialisers need the Vulkan/LWJGL natives this check
+            // deliberately does not load, so initialization is asked for as false and only the method lookup runs.
+            // This is the failure mode that compiles fine and first appears in whichever mod calls that spelling.
+            Class<?> hintClass = Class.forName("org.taumc.celeritas.core.CeltiumGllessHint", false,
+                    TransformerRouteVerifierCheck.class.getClassLoader());
+            for (String call : hintCalls) {
+                int paren = call.indexOf('(');
+                String methodName = call.substring(0, paren);
+                String descriptor = call.substring(paren);
+                Class<?> returnType = descriptorType(descriptor.substring(descriptor.indexOf(')') + 1));
+                String arguments = descriptor.substring(1, descriptor.indexOf(')'));
+                List<Class<?>> parameters = new ArrayList<>();
+                for (int at = 0; at < arguments.length(); at++) {
+                    char code = arguments.charAt(at);
+                    if (code == '[') {
+                        throw new IllegalStateException("the colour routes take no arrays: " + call);
+                    }
+                    parameters.add(descriptorType(String.valueOf(code)));
+                }
+                if (returnType != void.class) {
+                    throw new IllegalStateException("a colour route must return void: " + call);
+                }
+                try {
+                    hintClass.getDeclaredMethod(methodName, parameters.toArray(new Class<?>[0]));
+                    colourResolved++;
+                } catch (NoSuchMethodException missing) {
+                    System.out.println("COLOUR-MISSING " + call + " is not declared by CeltiumGllessHint");
+                    colourMissing++;
+                }
+            }
+        }
+        System.out.println("colour natives routed=" + colourRouted + "/" + COLOUR_NATIVES.length
+                + " resolved=" + colourResolved);
+        if (failed != 0 || classFailures != 0 || colourMissing != 0) System.exit(1);
     }
+
+    /** One JVM descriptor character as the class it names, for the emitted-call lookup. */
+    static Class<?> descriptorType(String code) {
+        switch (code) {
+            case "V": return void.class;
+            case "Z": return boolean.class;
+            case "B": return byte.class;
+            case "S": return short.class;
+            case "C": return char.class;
+            case "I": return int.class;
+            case "J": return long.class;
+            case "F": return float.class;
+            case "D": return double.class;
+            default: throw new IllegalStateException("unexpected descriptor character " + code);
+        }
+    }
+
+    /** The colour natives GL11 declares, in javap order: 8 widths x 3/4 components, plus the 16 buffer spellings. */
+    static final String[] COLOUR_NATIVES = {
+        "glColor3b", "glColor3s", "glColor3i", "glColor3f", "glColor3d", "glColor3ub", "glColor3us", "glColor3ui",
+        "nglColor3bv", "nglColor3sv", "nglColor3iv", "nglColor3fv", "nglColor3dv", "nglColor3ubv", "nglColor3usv",
+        "nglColor3uiv",
+        "glColor4b", "glColor4s", "glColor4i", "glColor4f", "glColor4d", "glColor4ub", "glColor4us", "glColor4ui",
+        "nglColor4bv", "nglColor4sv", "nglColor4iv", "nglColor4fv", "nglColor4dv", "nglColor4ubv", "nglColor4usv",
+        "nglColor4uiv",
+    };
 
     static Class<?> defineWith(ClassLoader loader, String name, byte[] bytes) {
         try {

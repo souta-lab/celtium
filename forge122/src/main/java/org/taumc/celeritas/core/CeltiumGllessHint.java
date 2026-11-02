@@ -1643,7 +1643,147 @@ public final class CeltiumGllessHint {
      * so the unsigned interpretation is what keeps a mod's colour matching its own glColor4ub spelling.
      */
     public static void glColor4b(byte red, byte green, byte blue, byte alpha) {
-        glColor4f((red & 0xFF) / 255.0F, (green & 0xFF) / 255.0F, (blue & 0xFF) / 255.0F, (alpha & 0xFF) / 255.0F);
+        glColor4f(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(red),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(green),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(blue),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(alpha));
+    }
+
+    /**
+     * {@code glColor4s/glColor4us}: the short widths, scaled by 65535 through the same rule as the byte and int ones.
+     * <p>
+     * Reading them as unsigned is what makes {@code (short) 65535} white: a Java caller has no unsigned short, so the
+     * bit pattern is how it writes the maximum, exactly as {@code (byte) 255} is how it writes white to glColor4ub.
+     * <p>
+     * The parameters are {@code int} because that is what a {@code (SSSS)V} caller leaves in its locals, and the
+     * transformer's integer emitter loads exactly those: the narrowing back to {@code short} is where the width, and
+     * therefore the scale, is decided.
+     */
+    public static void glColor4s(int red, int green, int blue, int alpha) {
+        glColor4f(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) red),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) green),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) blue),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) alpha));
+    }
+
+    public static void glColor4us(int red, int green, int blue, int alpha) {
+        glColor4s(red, green, blue, alpha);
+    }
+
+    /**
+     * {@code glColor4i/glColor4ui}: the 32-bit widths, scaled by 2^32-1. {@code -1} is 0xFFFFFFFF and therefore white,
+     * which is the value a caller writes when it means the maximum of an unsigned int.
+     */
+    public static void glColor4i(int red, int green, int blue, int alpha) {
+        glColor4f(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(red),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(green),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(blue),
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(alpha));
+    }
+
+    public static void glColor4ui(int red, int green, int blue, int alpha) {
+        glColor4i(red, green, blue, alpha);
+    }
+
+    /**
+     * The short/int buffer spellings, which are what LWJGL's {@code ShortBuffer}/{@code IntBuffer} overloads call.
+     * Each reads its own width and funnels into the scalar form above, so one scale rule covers the whole family; the
+     * 3-component forms take GL's default alpha of 1.
+     */
+    public static void glColor3sv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4s(org.lwjgl.system.MemoryUtil.memGetShort(address),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 2L),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 4L), -1);
+    }
+
+    public static void glColor4sv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4s(org.lwjgl.system.MemoryUtil.memGetShort(address),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 2L),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 6L));
+    }
+
+    public static void glColor3usv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4us(org.lwjgl.system.MemoryUtil.memGetShort(address),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 2L),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 4L), -1);
+    }
+
+    public static void glColor4usv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4us(org.lwjgl.system.MemoryUtil.memGetShort(address),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 2L),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetShort(address + 6L));
+    }
+
+    public static void glColor3iv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4i(org.lwjgl.system.MemoryUtil.memGetInt(address),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 8L), -1);
+    }
+
+    public static void glColor4iv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4i(org.lwjgl.system.MemoryUtil.memGetInt(address),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 8L),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 12L));
+    }
+
+    public static void glColor3uiv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4ui(org.lwjgl.system.MemoryUtil.memGetInt(address),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 8L), -1);
+    }
+
+    public static void glColor4uiv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4ui(org.lwjgl.system.MemoryUtil.memGetInt(address),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 4L),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 8L),
+                org.lwjgl.system.MemoryUtil.memGetInt(address + 12L));
+    }
+
+    /** {@code glColor3dv/glColor4dv}: the double-buffer spellings, narrowed to the float mirror. */
+    public static void glColor3dv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4f((float) org.lwjgl.system.MemoryUtil.memGetDouble(address),
+                (float) org.lwjgl.system.MemoryUtil.memGetDouble(address + 8L),
+                (float) org.lwjgl.system.MemoryUtil.memGetDouble(address + 16L), 1.0F);
+    }
+
+    public static void glColor4dv(long address) {
+        if (address == 0L) {
+            return;
+        }
+        glColor4f((float) org.lwjgl.system.MemoryUtil.memGetDouble(address),
+                (float) org.lwjgl.system.MemoryUtil.memGetDouble(address + 8L),
+                (float) org.lwjgl.system.MemoryUtil.memGetDouble(address + 16L),
+                (float) org.lwjgl.system.MemoryUtil.memGetDouble(address + 24L));
     }
 
     /**

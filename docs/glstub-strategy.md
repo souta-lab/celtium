@@ -19,6 +19,10 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   （lightmap座標をalbedoのUVにしない）。変換器の既定応答は bare return のまま（lightmapは`LightmapCoordsMixin`経由） |
 | `glRect*` | 1呼び出し＝1クアッド。`Begin(QUADS)`＋GL定義の4組(TexCoord,Vertex)＋`End`に展開して同じ sink へ渡す。
   `glBegin`の内側での`glRect`はGL自身のエラーなので名前付きで数える |
+| `glColor*` | **GL11の32ネイティブ全て**が raw colour route を通る（glColor3/4 × b/s/i/f/d/ub/us/ui と 16 の
+  `ngl*Color*v` buffer形式）。整数幅は幅ごとに unsigned で [0,1]（255 / 65535 / 2^32-1 が 1.0、`(short)65535`・`-1` も
+  1.0）。float/int/byte の全形式が同じ3か所へ流れる: font の current colour・stub の legacy colour・backend の colour
+  mirror。**既定経路**（legacy switch 不要）。mirror の色は per-vertex colour を持たない即時layoutが読む |
 | Tessellator / 即時描画（vanilla 経路） | `submitImmediateBatch(null, stride, formatId, address, count, mode)` で実描画。
   format 1 = POSITION_COLOR（stride 16）、format 2 = POSITION_TEX_COLOR（stride 24） |
 | FBO / chain pair | `GllessFrameTarget` / `PostChainBridge` / `VulkanImmediateTexturePipeline` で既定描画は通る。
