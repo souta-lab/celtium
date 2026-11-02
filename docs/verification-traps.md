@@ -247,3 +247,19 @@ bind flush 延期のフラグ（`celtium.vulkan.deferBindFlushes`）を、境界
 世界legで測った。結果: **windows/frame は 33（基準~30）で削減なし、P50 31ms（基準2.45ms）、破棄 966 groups**。
 理由は構造的で、1フレームに現れる target はほぼ毎回異なる（A→B→C…）ため、延期しても drain は target ごとに
 1 window ずつ必要で、window 数は変わらない。破棄は内容の欠落そのもの（FBOが消えたもの）。以後この方向は再入しない。
+
+## begin/end が全経路に無い bracket は、値を「0」でも「大きい」でもなく**消す**（2026-11-02）
+
+**症状**: pass-split の1項目が、実際には別の処理を測っている、または同じ名前が frame 内で一度も加算されない。
+値が小さいので「ホットスポット無し」と結論してしまう。
+
+**実例**: `submitGeometryBatch` の `offMerge` は `begin` が全バッチで呼ばれる一方、`end` が**slow path の末尾にしか
+無かった**。fast-merge したバッチ（大半）は depth を 1 のまま残し、`insideDepth` が 0 に戻らないので**どの加算も起きない**。
+次に slow path が閉じたとき、最初の未回収 begin からの全時間が「merge 判定」として加算される。`docs/development.md` の
+「offMerge 0.5ms・1バッチ約0.43µs・目立つホットスポットは無い」はこの形から読まれており、実際に入っていたのは
+slow path（prepareImmediate・group open・mirror supply）だった。同じ形が `offPrepare` にもあり、shader program 拒否の
+`return false` が bracket を開いたまま抜けていた（spider scene では 1 run 1470 バッチ）。
+
+**規約**: bracket は**全経路**（成功・拒否・早期 return の全て）で閉じる。片方の経路にしか `end` が無い計器の値は、
+「その区間のコスト」ではなく**別の区間の残差**として読む。修正後は `offMerge` が判定だけを、slow path は
+offer stage 10→12 のマーク（`BATCH_TIMINGS`）と `acceptPreflightNanos` が持つ。

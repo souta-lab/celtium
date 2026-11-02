@@ -7366,6 +7366,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.immediateLastRefusal = "no shader program could be prepared for this batch";
                 this.immediateStatistics.noteShaderProgramRefusals();
                 this.immediateStatistics.noteRefusedBeforeAppend();
+                // Close the span before refusing, or this return leaves its depth at one for the rest of the frame and
+                // every later span of the same name is neither started nor added - which is how a bracket that names a
+                // cost ends up reporting a smaller one as more batches refuse.
+                org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
                 this.flushPendingBeforeGlDraw();
                 return false;
             }
@@ -7420,6 +7424,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (BATCH_TIMINGS && acceptDecideStart != 0L) {
                 this.acceptDecideNanos += System.nanoTime() - acceptDecideStart;
             }
+            // The decision's bracket closes here, on both paths. It used to close at the end of the slow path only, so
+            // a fast-merged batch - most of them - left it open: the depth never returned to zero, its time was never
+            // added, and the next slow path's close attributed everything since the first unanswered open to "merge".
+            // The accept-path split in docs/development.md was read as "offMerge 0.5 ms, ~0.43 us a batch, no hotspot"
+            // from exactly that: what the bracket actually held was the slow path's prepareImmediate, group open and
+            // mirror supply. The slow half is named by the offer-stage marks (stage 10 to 12, BATCH_TIMINGS) and by
+            // acceptPreflightNanos, which is where to read it now that this bracket means only the predicate.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("offMerge");
             long acceptPreflightStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             if (!fastMerged) {
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
@@ -7893,7 +7905,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // The reuse census covers both families: it hashes the source block before either append, because the
             // question it answers (how much of this work repeats frame to frame) is about the offers, not about which
             // of the two append paths they take.
-            org.soutalab.celtium.vulkan.FramePassTimings.end("offMerge");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offAppend");
             if (BATCH_REUSE_CENSUS) {
                 celtium$noteBatchReuse(vertexAddress, vertexCount, vertexStride, formatId, drawMode, state);
