@@ -1619,6 +1619,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long fontRunRefusals;
     /** How many refusal lines have printed; bounded so a refusal storm is one line, not a log of its own. */
     private int fontRunRefusalLogs;
+    /** Whether the font run census has printed; a leg may tear down more than one world. */
+    private boolean fontRunCensusPrinted;
 
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
     final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
@@ -6984,6 +6986,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The font run's draw-state witness, for a leg to read; see {@link #celtium$fontRetentionSummary()}. */
     public String celtium$fontStateSummary() {
         return this.fontBatch.celtium$fontStateSummary();
+    }
+
+    /**
+     * Prints the font run's refusal, retention and draw-state census once, at world teardown.
+     * <p>
+     * The two summaries existed with no caller, so "the retention never had to fire" and "the retention cannot fire"
+     * were the same absence - and it was the second: the sink answered every run with {@code true}. The glyph
+     * capture's shutdown summary carries them too, but a shutdown hook's stdout is not in the log (measured on leg
+     * r39a-gate: {@code CELTIUM_FONT_GLYPH_SUMMARY} appears in no file of the run), so this is the copy a leg can
+     * actually read. Printed once, because a leg may tear down more than one world.
+     */
+    private void celtium$printFontRunCensus() {
+        if (this.fontRunCensusPrinted) {
+            return;
+        }
+        this.fontRunCensusPrinted = true;
+        System.out.println("[Celtium] CELTIUM_FONT_RUN_CENSUS " + celtium$fontRetentionSummary()
+                + " " + celtium$fontStateSummary());
     }
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
@@ -12817,6 +12837,11 @@ this.frameBufferOpen = false;
         // The per-frame split's session summary: printed here rather than at device teardown because the log is
         // already closed by then, and this is the last point a leg is guaranteed to reach while it is alive.
         FrameBudgetTimings.printSummary();
+        // The font run's refusal/retention/draw-state census, for the same reason and at the same point. It is also
+        // appended to the glyph capture's shutdown summary, but a shutdown hook's stdout is not in the log: measured on
+        // leg r39a-gate, where CELTIUM_FONT_GLYPH_SUMMARY appears in no file of the run at all. World teardown is the
+        // last point whose output the log actually holds.
+        celtium$printFontRunCensus();
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
         // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
         // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a

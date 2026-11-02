@@ -60,7 +60,7 @@ validation off・warm 窓の client thread サンプル692）: block entity 描�
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）と描画側残差は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: instance fog・96B run定数化・MVP合成のGPU移動・照明OFF統合・alpha全比較・**cull の面と winding**（[証拠](evidence/cull-face-2026-11-03.md)）・**attribute stack の `GL_VIEWPORT_BIT`**（[証拠](evidence/viewport-attrib-2026-11-03.md)）・**`GL_LIGHTING_BIT` の部分復元**（[証拠](evidence/lighting-attrib-2026-11-03.md)。較正world legで `restoredGroups=1317`／`changed=0`＝意味論のみ）まで実装済み。glint画素/inventory・actor較正/lit fogは未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
+3. **native 状態・実行**: instance fog・96B run定数化・MVP合成のGPU移動・照明OFF統合・alpha全比較・**cull の面と winding**（[証拠](evidence/cull-face-2026-11-03.md)）・**attribute stack の `GL_VIEWPORT_BIT`**（[証拠](evidence/viewport-attrib-2026-11-03.md)）・**`GL_LIGHTING_BIT` の部分復元**（[証拠](evidence/lighting-attrib-2026-11-03.md)。較正legで`changed=0`＝意味論のみ）・**font run の拒否を保持**（[証拠](evidence/font-run-refusal-2026-11-03.md)。sinkが戻り値を捨て保持キューが到達不能だった。較正sceneは拒否0で絵は不変）まで実装済み。glint画素/inventory・actor較正/lit fogは未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
@@ -94,8 +94,6 @@ validation off・warm 窓の client thread サンプル692）: block entity 描�
 - 除去済み: raw-write flush -38%、published遷移 3.5→0.8%、epoch spin 3.0→0、nanoTime 1.2→0、window構造体再生成廃止。
 - 残差はwindow固定費とper-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate（singletonで悪化）、フレーム再利用（アニメ凍結）。
-
-- **次の実装単位: guard 残り309 ns** — 値halfを4 versionで証明（同一jar 315→309 ns・validation 0）。残りは record write・payload・run条件・census。[証拠](evidence/model-replay-value-versions-2026-11-02.md)
 
 ## 撤回した前提
 
