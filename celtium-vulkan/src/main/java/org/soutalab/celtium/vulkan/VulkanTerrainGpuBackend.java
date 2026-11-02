@@ -1608,6 +1608,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** The font domain's fragment of the verification line (refactoring plan R2, stage 1). */
     final FontStatistics fontStats = new FontStatistics(this.fontBatch);
+    /**
+     * Font runs the sink refused, i.e. runs FontBatch now keeps in its retention queue and offers again.
+     * <p>
+     * This is the number that says whether the retention is exercised at all: the sink used to answer every run with
+     * {@code true}, so the queue could only be entered by a thrown submission and the counter would have read zero on
+     * every leg whichever way the picture went. It is reported with the font domain's other counters in the shutdown
+     * summary ({@code CELTIUM_FONT_GLYPH_SUMMARY}) and named once in the log.
+     */
+    private long fontRunRefusals;
+    /** How many refusal lines have printed; bounded so a refusal storm is one line, not a log of its own. */
+    private int fontRunRefusalLogs;
 
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
     final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
@@ -6899,10 +6910,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateState.alphaFuncReference(run.alphaRef);
             System.arraycopy(run.projection, 0, this.glProjection, 0, 16);
             System.arraycopy(run.modelView, 0, this.glModelView, 0, 16);
-            submitImmediateBatch(run.format, run.stride, run.formatId, run.address, run.vertexCount, run.drawMode);
-            return true;
+            // The sink's contract is that a refused run comes back as false so FontBatch can retain it and offer it
+            // again at the next flush - {@link FontBatch.RunSink}'s own doc: "a refused run that is dropped is text
+            // drawn by nobody". This returned true unconditionally, so the retention queue could only ever be entered
+            // by a *thrown* submission, and submitImmediateBatch does not throw on a refusal - it returns false. The
+            // queue was therefore unreachable through the shipped sink and every refused glyph run was lost in
+            // silence. The calibrated world scene refuses no batch at all (refusedBeforeAppend=0), so this changes
+            // nothing there; the scenes where a run can be refused are the ones with a custom program bound or a
+            // target that is not ready, and there the text was drawn by nobody.
+            boolean accepted = submitImmediateBatch(run.format, run.stride, run.formatId, run.address,
+                    run.vertexCount, run.drawMode);
+            if (!accepted) {
+                this.fontRunRefusals++;
+                if (this.fontRunRefusalLogs < 4) {
+                    this.fontRunRefusalLogs++;
+                    System.out.println("[Celtium] CELTIUM_FONT_RUN_REFUSED reason=" + this.immediateLastRefusal
+                            + " target=0x" + Long.toHexString(run.targetIdentity)
+                            + " vertices=" + run.vertexCount + " texture=" + run.texture
+                            + " (retained and offered again at the next flush)");
+                }
+            }
+            return accepted;
         } catch (RuntimeException | LinkageError error) {
             this.immediateLastRefusal = "the coalesced font run could not be submitted: " + error;
+            this.fontRunRefusals++;
             return false;
         } finally {
             this.immediateState.activeTextureUnit(0);
@@ -6935,6 +6966,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
     public String celtium$fontBatchSummary() {
         return this.fontBatch.celtium$fontBatchSummary();
+    }
+
+    /**
+     * The font run's refusal and retention census, for a leg to read.
+     * <p>
+     * {@link FontBatch#celtium$fontRetentionSummary()} existed with no caller, so "the retention is implemented and
+     * unexercised" could not be told apart from "the retention is unreachable" - and it was the second: the sink
+     * answered every run with {@code true}. The two summaries are printed together with the glyph capture's own
+     * shutdown summary, which is the one place that runs after the last glyph of every configuration.
+     */
+    public String celtium$fontRetentionSummary() {
+        return this.fontBatch.celtium$fontRetentionSummary()
+                + " fontRunRefusals=" + this.fontRunRefusals;
+    }
+
+    /** The font run's draw-state witness, for a leg to read; see {@link #celtium$fontRetentionSummary()}. */
+    public String celtium$fontStateSummary() {
+        return this.fontBatch.celtium$fontStateSummary();
     }
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);

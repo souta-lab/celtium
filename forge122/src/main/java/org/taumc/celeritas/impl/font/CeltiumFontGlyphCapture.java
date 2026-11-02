@@ -1428,6 +1428,26 @@ public final class CeltiumFontGlyphCapture {
     }
 
     /**
+     * {@return the coalesced run's refusal, retention and draw-state census}.
+     * <p>
+     * These three summaries existed on the batch with no caller, so a leg could not tell "the retention never had to
+     * fire" from "the retention cannot fire" - and it was the second: the backend's sink answered every run with
+     * {@code true}, so a refused run was dropped instead of retained. They are printed beside the batch summary
+     * because the same shutdown hook is the one place that runs after the last glyph of every configuration, and
+     * because the question they answer ("was a glyph run refused, and did it come back") is the same question the
+     * batch summary's flush reasons are read against.
+     */
+    private static String runCensus() {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            return vulkan.celtium$fontRetentionSummary() + " " + vulkan.celtium$fontStateSummary();
+        }
+        return "retainedRuns=0 retainedQuads=0 retainedPendingRuns=0 retainedPendingBytes=0 retainedDroppedRuns=0"
+                + " retainedDroppedQuads=0 retainedControlDrops=0 fontRunRefusals=0 (no coalescing backend)";
+    }
+
+    /**
      * Prints {@link #summary()} once, when the JVM exits.
      * <p>
      * The progress lines stop after {@link #PROGRESS_LINES} of them, so the totals a run ends with were only ever
@@ -1438,7 +1458,8 @@ public final class CeltiumFontGlyphCapture {
     static {
         try {
             Runtime.getRuntime().addShutdownHook(new Thread(
-                    () -> System.out.println("[Celtium] CELTIUM_FONT_GLYPH_SUMMARY " + summary()),
+                    () -> System.out.println("[Celtium] CELTIUM_FONT_GLYPH_SUMMARY " + summary()
+                            + " " + runCensus()),
                     "celtium-font-summary"));
         } catch (IllegalStateException | SecurityException ignored) {
             // A shutdown already in progress, or a security manager: the counters are a diagnostic, not a contract.
