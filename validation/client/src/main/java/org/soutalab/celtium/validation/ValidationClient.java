@@ -3584,6 +3584,15 @@ public final class ValidationClient {
                         net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
+                // The spawn height against the pose's own Y, so a leg can say whether the mobs stand on the ground
+                // rather than assume it: the two differ by the stack's height, and a scene whose mobs hang in the air
+                // is a different picture that reads as a renderer fault. See celtium$spawnEntity.
+                int spawnSurface = mc.world.getHeight(new net.minecraft.util.math.BlockPos(
+                        (int) Math.floor(mc.player.posX), 0, (int) Math.floor(mc.player.posZ))).getY();
+                report.addProperty("entitySpawnSurfaceY", Integer.valueOf(spawnSurface));
+                report.addProperty("entitySpawnPoseY", Double.valueOf(mc.player.posY));
+                report.addProperty("entitySpawnOnGround", Boolean.valueOf(
+                        Math.abs(spawnSurface - mc.player.posY) <= 1.0D));
             }
             if (worldTicks >= 60 && (!celtium$hurtSpawned || celtium$hurtSlime != null && celtium$hurtSlime.isDead)
                     && Boolean.getBoolean("celtium.validation.hurtEntity")) {
@@ -3704,6 +3713,27 @@ public final class ValidationClient {
                     ((net.minecraft.entity.Entity) obj).setGlowing(true);
                 }
             }
+        }
+        // The glow's within-run A/B: three consecutive ticks, off / on / off, each dumping the frame it draws.
+        // <p>
+        // Why this exists. "The outline is drawn" was a claim read off a picture, and a cross-run pair cannot settle
+        // it: two runs of one world scene with only a flag apart differ on 82.46% of the frame (round 23's measured
+        // trap), and even a static stack leaves a 7% noise floor between two same-arm frames. A within-run triple has
+        // no such confound - the camera is pinned, the stack is static, and the only thing that changes between the
+        // three frames is whether the mobs carry the glowing tag. The outline pixels must therefore be present in the
+        // middle frame and absent from both outer ones, and the outer pair is the noise floor the middle is read
+        // against.
+        // <p>
+        // It replaces {@code glowEntities} rather than combining with it: that switch re-sets the tag every tick of
+        // its window, so a frame-scheduled toggle inside the window would be overwritten before the frame drew.
+        int glowAbTick = Integer.getInteger("celtium.validation.glowAbTick", -1).intValue();
+        if (glowAbTick > 0 && worldTicks >= glowAbTick && worldTicks <= glowAbTick + 2) {
+            int step = worldTicks - glowAbTick;
+            boolean on = step == 1;
+            int changed = celtium$setGlowing(mc, on);
+            report.addProperty("glowAb" + (char) ('a' + step),
+                    worldTicks + " on=" + on + " entities=" + changed);
+            celtium$requestPresentedDump(mc, "glow-" + (char) ('a' + step));
         }
         if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
                 // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
@@ -4676,9 +4706,43 @@ public final class ValidationClient {
         }
     }
 
-    /** Puts one entity next to the player, on the client world the renderer draws from. */
+    /**
+     * Sets or clears the glowing tag on every non-player entity in the loaded world, and answers how many it touched.
+     * <p>
+     * The tag is what routes an entity through {@code RenderGlobal}'s entity-outline pass, so this is the one input the
+     * glow A/B changes between its three frames. The player is skipped for the same reason the outline pass skips it:
+     * a first-person player is not drawn, so tagging it would change nothing and the count would overstate the scene.
+     */
+    private static int celtium$setGlowing(Minecraft mc, boolean glowing) {
+        int changed = 0;
+        for (Object obj : mc.world.loadedEntityList) {
+            if (obj instanceof net.minecraft.entity.Entity && obj != mc.player) {
+                ((net.minecraft.entity.Entity) obj).setGlowing(glowing);
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Puts one entity next to the player, on the client world the renderer draws from, standing on the ground.
+     * <p>
+     * The Y is the world's own surface height at the entity's column, not the player's. It used to be
+     * {@code mc.player.posY}, which is only "ground level" for the default stack: the pose is a teleport to y=12, and
+     * the default stack's top block is at y=10, so the mobs stood one block up. Any leg that names its own
+     * {@code worldLayers} - the static stack the fog and glow arms use is four blocks tall - put them eight blocks in
+     * the air instead: measured on leg {@code r44a-glow}, whose creeper, zombie and spider were drawn floating above a
+     * flat plane with the camera at y=12 and the grass at y=3. A scene whose mobs hang in the air is not the
+     * ground-standing scene the entity coverage is meant to be, and the error is invisible in the report because the
+     * spawn position was never recorded. The surface is asked per column, so a stack with a tree or a chest layer
+     * still puts each mob on top of what is actually there.
+     */
     private static void celtium$spawnEntity(Minecraft mc, net.minecraft.entity.Entity entity, double dx, double dz) {
-        entity.setPosition(mc.player.posX + dx, mc.player.posY, mc.player.posZ + dz);
+        double x = mc.player.posX + dx;
+        double z = mc.player.posZ + dz;
+        int surface = mc.world.getHeight(new net.minecraft.util.math.BlockPos(
+                (int) Math.floor(x), 0, (int) Math.floor(z))).getY();
+        entity.setPosition(x, surface, z);
         if (entity instanceof net.minecraft.entity.EntityLiving) {
             // Frozen where it is put, so two runs of the entity scene draw the same pose at the same place: without this
             // the mobs walk and fall between the spawn tick and the capture, and a comparison of the two paths would be

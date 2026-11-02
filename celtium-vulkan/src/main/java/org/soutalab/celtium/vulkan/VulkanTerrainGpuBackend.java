@@ -10665,8 +10665,16 @@ this.frameBufferOpen = false;
             // froze every GL-less picture: the presented frame stopped advancing after world frame 3 while the run
             // still reported 63097 completed groups and successful presents, and the same frozen image (identical
             // sha256) appeared even with the glyph draws refused - so it was not caused by any one batch, it was the
-            // world's own route into the image being refused. The glow defect is real and is not fixed here; the shared
-            // off-target pair needs a fix that does not cut this path.
+            // world's own route into the image being refused.
+            //
+            // The defect that theory was reaching for was real and has since been fixed where it belonged, not here:
+            // the two off-target pairs are split by identity (GllessFrameTarget's defaultPair for identity 0 and
+            // chainPairs for the game's own framebuffers, de8233fdb), so the outline chain's input is the silhouette
+            // the game drew rather than a copy of the finished frame. Measured on leg r44a-glow (AMD RX 6400, static
+            // stack, keepEntities+captureEntities+glowEntities): postChains=149 postPasses=596 postAdopted=1, the
+            // silhouette flushed 49 groups a frame into the chain's identity, nativeFramebufferComposites=168, and
+            // the presented dump shows the white outline around the creeper, the zombie and the spider. This branch
+            // therefore stays as it is: the default-framebuffer draw is the world's own route into the image.
             this.defaultFramebufferCompositesTaken++;
             sharedComposite = true;
             this.immediateLastRefusal = "taken: the glless default-framebuffer draw goes into the owned image";
