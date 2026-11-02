@@ -251,7 +251,7 @@ class LegacyImmediateCaptureTest {
         LegacyImmediateCapture capture = capture();
         CompiledRecorder compiled = new CompiledRecorder();
         capture.color(0.0f, 1.0f, 0.0f, 1.0f);
-        capture.setCompileOpen(true);
+        capture.openCompile(GL11.GL_COMPILE, 1.0f, 1.0f, 1.0f, 1.0f);
         assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
         capture.vertex3f(0.0f, 0.0f, 0.0f);
         assertTrue(capture.end(null, compiled));
@@ -265,7 +265,7 @@ class LegacyImmediateCaptureTest {
     void aColourSetInsideTheCompileIsBaked() {
         LegacyImmediateCapture capture = capture();
         CompiledRecorder compiled = new CompiledRecorder();
-        capture.setCompileOpen(true);
+        capture.openCompile(GL11.GL_COMPILE, 1.0f, 1.0f, 1.0f, 1.0f);
         capture.color(0.0f, 1.0f, 0.0f, 1.0f);
         assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
         capture.vertex3f(0.0f, 0.0f, 0.0f);
@@ -279,7 +279,7 @@ class LegacyImmediateCaptureTest {
     void aColourChangedBetweenVerticesKeepsTheBakedBytes() {
         LegacyImmediateCapture capture = capture();
         CompiledRecorder compiled = new CompiledRecorder();
-        capture.setCompileOpen(true);
+        capture.openCompile(GL11.GL_COMPILE, 1.0f, 1.0f, 1.0f, 1.0f);
         assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
         capture.vertex3f(0.0f, 0.0f, 0.0f);
         capture.color(0.0f, 0.0f, 1.0f, 1.0f);
@@ -295,7 +295,7 @@ class LegacyImmediateCaptureTest {
         LegacyImmediateCapture capture = capture();
         CompiledRecorder outside = new CompiledRecorder();
         capture.texCoord(0.5f, 0.25f);
-        capture.setCompileOpen(true);
+        capture.openCompile(GL11.GL_COMPILE, 1.0f, 1.0f, 1.0f, 1.0f);
         assertTrue(capture.begin(GL11.GL_QUADS, true, true, GATE));
         capture.vertex3f(0.0f, 0.0f, 0.0f);
         assertTrue(capture.end(null, outside));
@@ -305,7 +305,7 @@ class LegacyImmediateCaptureTest {
 
         LegacyImmediateCapture inside = capture();
         CompiledRecorder baked = new CompiledRecorder();
-        inside.setCompileOpen(true);
+        inside.openCompile(GL11.GL_COMPILE, 1.0f, 1.0f, 1.0f, 1.0f);
         inside.texCoord(0.5f, 0.25f);
         assertTrue(inside.begin(GL11.GL_QUADS, true, true, GATE));
         inside.vertex3f(0.0f, 0.0f, 0.0f);
@@ -317,15 +317,108 @@ class LegacyImmediateCaptureTest {
     void closingTheCompileForgetsWhereTheColourCameFrom() {
         LegacyImmediateCapture capture = capture();
         CompiledRecorder compiled = new CompiledRecorder();
-        capture.setCompileOpen(true);
+        capture.openCompile(GL11.GL_COMPILE, 1.0f, 1.0f, 1.0f, 1.0f);
         capture.color(0.0f, 1.0f, 0.0f, 1.0f);
         // The list was not executed, so its glColor never became the caller's current colour.
-        capture.setCompileOpen(false);
+        assertTrue(capture.closeCompile(), "a GL_COMPILE close rolls the mirror back");
         assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
         capture.vertex3f(0.0f, 0.0f, 0.0f);
         assertTrue(capture.end(null, compiled));
         assertEquals(CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL, compiled.lastAttributes()
                 & CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL, "a compile stores commands; it does not run them");
+    }
+
+    /**
+     * The other half of the same rule: a {@code GL_COMPILE} list does not change the caller's colour.
+     * <p>
+     * {@code glColor} inside the compile is a recorded command, so the colour in force after {@code glEndList} is the
+     * one the caller set before it. The capture's mirror is written by the direct colour route, which does not pass the
+     * stub's "a list being compiled does not execute" guard - so without the rollback every following run that does not
+     * set a colour of its own is drawn in the list's, which is a wrong picture rather than a missing one.
+     */
+    @Test
+    void aColourInsideAGLCompileIsRolledBackAtItsClose() {
+        LegacyImmediateCapture capture = capture();
+        capture.color(0.0f, 0.0f, 1.0f, 1.0f);
+        assertTrue(capture.openCompile(GL11.GL_COMPILE, 0.0f, 0.0f, 1.0f, 1.0f));
+        capture.color(0.0f, 1.0f, 0.0f, 1.0f);
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(null, new CompiledRecorder()));
+        assertTrue(capture.closeCompile(), "the list's colour was stored, not executed");
+        assertEquals(0.0f, capture.red(), "the caller's blue is the colour in force after glEndList");
+        assertEquals(0.0f, capture.green());
+        assertEquals(1.0f, capture.blue());
+        assertEquals(1L, capture.compileRollbacks());
+        // The caller's GL_CURRENT_COLOR is the second snapshot the stub puts back; it is stored with the mode that
+        // decides the rollback so the two cannot disagree.
+        assertEquals(0.0f, capture.callerRed());
+        assertEquals(0.0f, capture.callerGreen());
+        assertEquals(1.0f, capture.callerBlue());
+        assertEquals(1.0f, capture.callerAlpha());
+
+        // And the run drawn after the close really carries that colour: blue, not the list's green.
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, false, false, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(sink));
+        // POSITION_TEX_COLOR? no: this run was opened untextured, so its colour is at byte 12.
+        assertArrayEquals(new int[] {LegacyImmediateCapture.STRIDE_POSITION_COLOR,
+                LegacyImmediateCapture.FORMAT_POSITION_COLOR, 1, GL11.GL_QUADS}, sink.lastShape());
+        // The second eight-byte word is z followed by the four colour bytes, so the colour is its high half; the
+        // integer's low byte is red, as GL stores a colour - blue is 0x00,0x00,0xFF,0xFF.
+        int colour = (int) (sink.lastBytes()[1] >>> 32);
+        assertEquals(0xFFFF0000, colour, "position is twelve bytes; the colour is the caller's blue, not the list's");
+    }
+
+    /** {@code GL_COMPILE_AND_EXECUTE} runs the recorded colour, so there is nothing to put back. */
+    @Test
+    void aColourInsideACompileAndExecuteListStays() {
+        LegacyImmediateCapture capture = capture();
+        capture.color(0.0f, 0.0f, 1.0f, 1.0f);
+        assertTrue(capture.openCompile(GL11.GL_COMPILE_AND_EXECUTE, 0.0f, 0.0f, 1.0f, 1.0f));
+        capture.color(0.0f, 1.0f, 0.0f, 1.0f);
+        assertFalse(capture.closeCompile(), "the command ran, so the mirror is already the caller's");
+        assertEquals(0.0f, capture.red());
+        assertEquals(1.0f, capture.green(), "GL_COMPILE_AND_EXECUTE executes the colour it records");
+        assertEquals(0L, capture.compileRollbacks());
+        // The compile ran, so nothing is put back - and the next compile still snaps a fresh caller colour, which the
+        // stub relies on: a snapshot left over from this one would restore a value two lists old.
+        assertTrue(capture.openCompile(GL11.GL_COMPILE, 0.0f, 1.0f, 0.0f, 1.0f));
+        assertEquals(1.0f, capture.callerGreen(), "the next compile's snapshot is the one now stored");
+        assertTrue(capture.closeCompile(), "the second compile is a GL_COMPILE, so it does restore");
+        assertEquals(1L, capture.compileRollbacks());
+    }
+
+    /** The texture coordinate is one current value like the colour, and the same compile rule applies to it. */
+    @Test
+    void aTextureCoordinateInsideAGLCompileIsRolledBackAtItsClose() {
+        LegacyImmediateCapture capture = capture();
+        capture.texCoord(0.25f, 0.75f);
+        assertTrue(capture.openCompile(GL11.GL_COMPILE, 0.0f, 0.0f, 1.0f, 1.0f));
+        capture.texCoord(0.5f, 0.5f);
+        assertTrue(capture.closeCompile());
+        assertEquals(0.25f, capture.texU(), 1e-6f, "the list's glTexCoord is not the caller's coordinate");
+        assertEquals(0.75f, capture.texV(), 1e-6f);
+        assertEquals(1L, capture.compileRollbacks());
+    }
+
+    /** A compile that sets neither colour nor coordinate leaves both alone, and a close with none open is a no-op. */
+    @Test
+    void aCompileThatSetsNothingLeavesTheCallerStateAlone() {
+        LegacyImmediateCapture capture = capture();
+        capture.color(0.0f, 0.0f, 1.0f, 1.0f);
+        capture.texCoord(0.25f, 0.75f);
+        assertTrue(capture.openCompile(GL11.GL_COMPILE, 0.0f, 0.0f, 1.0f, 1.0f));
+        assertFalse(capture.openCompile(GL11.GL_COMPILE, 0.0f, 0.0f, 1.0f, 1.0f),
+                "the two layers that report glNewList share one compile");
+        assertTrue(capture.closeCompile());
+        assertEquals(0.0f, capture.red());
+        assertEquals(1.0f, capture.blue());
+        assertEquals(0.25f, capture.texU(), 1e-6f);
+        assertEquals(1L, capture.compileRollbacks());
+        assertFalse(capture.closeCompile(), "a close with no compile open changes nothing");
+        assertEquals(1L, capture.compileRollbacks());
     }
 
     @Test

@@ -45,6 +45,12 @@ import org.lwjgl.system.MemoryUtil;
  * are right) or <em>outside</em> one (the replay has to substitute the call-time value), and whether the list changed
  * one of them <em>between</em> the run's vertices (the baked per-vertex values are the only way to keep that mid-run
  * change). See {@link CompiledRunSink#record}.</li>
+ * <li><b>A {@code GL_COMPILE} list does not change the caller's colour or texture coordinate.</b> The same rule read
+ * from the other side: the recorded {@code glColor}/{@code glTexCoord} run at {@code glCallList}, not at
+ * {@code glEndList}, so the capture snapshots both at {@link #openCompile} and puts them back at
+ * {@link #closeCompile}. Without that, a mod's compile leaves its last colour in force for every following
+ * {@code glBegin} that does not set one - a wrong picture rather than a missing one. {@code GL_COMPILE_AND_EXECUTE} is
+ * the exception the spec names, and there the mirror is left alone because the command really did run.</li>
  * <li><b>The trailing vertices of an incomplete primitive are ignored, as GL ignores them.</b> A run that contains at
  * least one complete primitive is cut to whole primitives before it is offered ({@link #wholePrimitives}) and the cut
  * vertices are counted; a run with none is offered unchanged so the renderer's own refusal names it. Refusing the
@@ -127,6 +133,10 @@ public final class LegacyImmediateCapture {
     private static final int GL_TRIANGLES = 0x0004;
     private static final int GL_QUADS = 0x0007;
     private static final int GL_QUAD_STRIP = 0x0008;
+    /** {@code GL_COMPILE}: record the commands, do not run them - so a recorded colour never becomes the caller's. */
+    private static final int GL_COMPILE = 0x1300;
+    /** {@code GL_COMPILE_AND_EXECUTE}: record and run, so a recorded colour does become the caller's. */
+    private static final int GL_COMPILE_AND_EXECUTE = 0x1301;
 
     /** Room for {@link #MAX_VERTICES} textured vertices before the first growth; a run larger than this grows once. */
     private static final int INITIAL_BYTES = MAX_VERTICES * STRIDE_POSITION_TEX_COLOR;
@@ -158,15 +168,55 @@ public final class LegacyImmediateCapture {
     /**
      * Whether a {@code glNewList} compile is open right now.
      * <p>
-     * Needed by the attribute tracking below and by nothing else: a {@code glColor}/{@code glTexCoord} that arrives
+     * Needed by the attribute tracking below and by the rollback: a {@code glColor}/{@code glTexCoord} that arrives
      * while this is true is a command <em>inside</em> the list, so the replay will apply it in order and the baked
      * bytes are right; one that arrives while it is false is the caller's state, which a display list does not freeze.
      */
     private boolean compileOpen;
+    /**
+     * Whether the open compile only <em>records</em> its commands, which is the difference that decides the rollback.
+     * <p>
+     * {@code GL_COMPILE} (the mode vanilla's model compilation and GregTech's marker use) stores the commands and does
+     * not run them, so the caller's current colour and texture coordinate are the ones still in force after
+     * {@code glEndList}. {@code GL_COMPILE_AND_EXECUTE} stores <em>and</em> runs them, so there is nothing to roll back:
+     * the list's last {@code glColor} really did become the caller's colour.
+     */
+    private boolean compileStoredOnly;
+    /**
+     * The colour and texture coordinate current when the compile opened, restored at the close under
+     * {@code GL_COMPILE}.
+     * <p>
+     * The mirror is written by the capture's own {@link #color}/{@link #texCoord} whatever the GL mode is: the
+     * transformer rewrites a raw {@code glColor4f} into a direct call here, so it does not pass the stub's
+     * "a list being compiled does not execute" guard. Without this snapshot a {@code glColor} inside a compile stays
+     * the current colour afterwards, and every following {@code glBegin} without a colour of its own takes it - the
+     * wrong picture exactly where a mod compiles custom geometry.
+     */
+    private boolean compileSaved;
+    private float savedRed;
+    private float savedGreen;
+    private float savedBlue;
+    private float savedAlpha;
+    private float savedTexU;
+    private float savedTexV;
+    /**
+     * The caller's {@code GL_CURRENT_COLOR} as the stub recorded it at {@link #openCompile}.
+     * <p>
+     * Kept here rather than in the stub so the snapshot and the mode that decides whether to restore it cannot
+     * disagree: the capture's own mirror is written only by the raw colour route that feeds vertices, while this one is
+     * written by every path that sets the colour (the game's {@code GlStateManager.color} included) and is what the
+     * backend's group tint and model replay read. Only meaningful after a close that returned {@code true}.
+     */
+    private float callerRed = 1.0f;
+    private float callerGreen = 1.0f;
+    private float callerBlue = 1.0f;
+    private float callerAlpha = 1.0f;
     /** Whether the current colour was last set by a command that arrived inside a compile. */
     private boolean colourSetInList;
     /** Whether the current texture coordinate was last set by a command that arrived inside a compile. */
     private boolean texSetInList;
+    /** How many compiles rolled the colour/coordinate mirror back at their close. */
+    private long compileRollbacks;
     /** The provenance of the values the open run's first vertex carried. */
     private boolean runColourInList;
     private boolean runTexInList;
@@ -422,23 +472,103 @@ public final class LegacyImmediateCapture {
     }
 
     /**
-     * Tells the capture whether a {@code glNewList} compile is open, which decides where the current colour and texture
-     * coordinate came from.
+     * Tells the capture that a {@code glNewList} compile opened, which decides where the current colour and texture
+     * coordinate came from and what has to be restored when it closes.
      *
-     * <p>The flags are reset when a compile closes: under {@code GL_COMPILE} the commands were stored, not executed, so
-     * a {@code glColor} inside the list does not become the caller's current colour - whatever was current before the
-     * compile still is. The capture's mirror is not rolled back (the backend's colour mirror is written by the same
-     * call), so a run after the compile is marked "set outside" and its replay takes the call-time value, which is the
-     * answer that does not depend on the stale mirror.
+     * <p>Called from both layers that can see the call - the stub's own {@code glNewList} dispatch and the transformer
+     * hint that vanilla's and a mod's raw calls reach - so a second arrival for the same compile is ignored rather than
+     * re-snapshotting, which would capture the list's own colour as if it were the caller's.
      *
-     * @param open whether a compile is open
+     * @param glMode      {@code GL_COMPILE} (0x1300) or {@code GL_COMPILE_AND_EXECUTE} (0x1301)
+     * @param callerRed   the caller's {@code GL_CURRENT_COLOR}, red
+     * @param callerGreen the same, green
+     * @param callerBlue  the same, blue
+     * @param callerAlpha the same, alpha
+     * @return whether this call opened the compile; {@code false} when one was already open
      */
-    public void setCompileOpen(boolean open) {
-        this.compileOpen = open;
-        if (!open) {
-            this.colourSetInList = false;
-            this.texSetInList = false;
+    public boolean openCompile(int glMode, float callerRed, float callerGreen, float callerBlue, float callerAlpha) {
+        if (this.compileOpen) {
+            return false;
         }
+        this.compileOpen = true;
+        this.compileStoredOnly = glMode != GL_COMPILE_AND_EXECUTE;
+        this.compileSaved = true;
+        this.savedRed = this.red;
+        this.savedGreen = this.green;
+        this.savedBlue = this.blue;
+        this.savedAlpha = this.alpha;
+        this.savedTexU = this.texU;
+        this.savedTexV = this.texV;
+        this.callerRed = callerRed;
+        this.callerGreen = callerGreen;
+        this.callerBlue = callerBlue;
+        this.callerAlpha = callerAlpha;
+        return true;
+    }
+
+    /**
+     * Closes the open compile and, for {@code GL_COMPILE}, puts the caller's colour and texture coordinate back.
+     *
+     * <p>GL's rule is the reason: under {@code GL_COMPILE} the recorded {@code glColor}/{@code glTexCoord} are stored,
+     * not executed, so whatever was current before {@code glNewList} is current after {@code glEndList}. Under
+     * {@code GL_COMPILE_AND_EXECUTE} the command did run and the mirror it left is the correct one.
+     *
+     * @return whether the mirror was rolled back; {@code false} when no compile was open, when it was
+     *         {@code GL_COMPILE_AND_EXECUTE}, or when this call is the second layer's arrival for the same close
+     */
+    public boolean closeCompile() {
+        if (!this.compileOpen) {
+            return false;
+        }
+        this.compileOpen = false;
+        // The provenance flags are per run: after a compile closes, the next glBegin outside it is the caller's state
+        // again, whether or not the mirror was rolled back.
+        this.colourSetInList = false;
+        this.texSetInList = false;
+        if (!this.compileStoredOnly || !this.compileSaved) {
+            this.compileSaved = false;
+            return false;
+        }
+        this.compileSaved = false;
+        this.red = this.savedRed;
+        this.green = this.savedGreen;
+        this.blue = this.savedBlue;
+        this.alpha = this.savedAlpha;
+        this.texU = this.savedTexU;
+        this.texV = this.savedTexV;
+        this.compileRollbacks++;
+        return true;
+    }
+
+    /** {@return whether a compile is open, for the layer that reports it or the test that pins the rule}. */
+    public boolean compileOpen() {
+        return this.compileOpen;
+    }
+
+    /**
+     * {@return the caller's colour recorded at the last {@link #openCompile}, red}
+     * <p>Meaningful after {@link #closeCompile} returned {@code true}, which is the only case in which the stub puts it
+     * back; it is kept otherwise so a caller can report what the closed compile held.
+     */
+    public float callerRed() {
+        return this.callerRed;
+    }
+
+    public float callerGreen() {
+        return this.callerGreen;
+    }
+
+    public float callerBlue() {
+        return this.callerBlue;
+    }
+
+    public float callerAlpha() {
+        return this.callerAlpha;
+    }
+
+    /** {@return how many compiles put the caller's colour and texture coordinate back at their close}. */
+    public long compileRollbacks() {
+        return this.compileRollbacks;
     }
 
     /** {@return the current texture coordinate's s}, for a compiled run that takes it at {@code glCallList}. */
@@ -680,7 +810,8 @@ public final class LegacyImmediateCapture {
     public String summary() {
         return "legacyImmediate runs=" + this.runs + " submitted=" + this.submittedRuns
                 + " vertices=" + this.submittedVertices + " compiled=" + this.compiledRuns
-                + " compiledVertices=" + this.compiledVertices + " modeRefusals=" + this.modeRefusals
+                + " compiledVertices=" + this.compiledVertices + " compileRollbacks=" + this.compileRollbacks
+                + " modeRefusals=" + this.modeRefusals
                 + " listRefusals=" + this.listRefusals + " nestedRefusals=" + this.nestedRefusals
                 + " sinkRefusals=" + this.sinkRefusals + " rectRefusals=" + this.rectRefusals
                 + " otherTexUnits=" + this.otherTexUnitCoords

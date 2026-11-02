@@ -58,6 +58,16 @@ magenta texture bound so that the compile-time layout's answer is the other arm'
 * **texControl - magenta** - a directly-drawn textured quad in the same state, so "arm B has no magenta" can be told
   from "the texture never reached the sampler at all".
 
+## The compile-colour arm
+
+The other half of GL's display-list rule is that a recorded colour is *stored*, not executed: a `glColor` between
+`glNewList` and `glEndList` has no effect on the caller's current colour. "Arm C" sets blue outside a `GL_COMPILE`
+compile, records red inside it, and then draws a quad with **no colour call of its own** - so the quad has to be blue,
+and a renderer whose colour mirror follows the recorded command draws it red. The same frame also reports
+`colourAfterCompile`, the answer `glGetFloatv(GL_CURRENT_COLOR)` gives right after the `glEndList`, so the state and the
+picture are two instruments on one rule. Its list is recompiled every frame because the state it must leave behind is
+only observable immediately after its own close; the rest of the scene sets colours of its own before the dump.
+
 ## The reference arm
 
 The same fixture runs under Celeritas (real OpenGL) through `CELTIUM_LEG_REFERENCE_RENDERER`, which is what settles the
@@ -75,7 +85,8 @@ requires the same analysis to report green in both. The control is built from th
 hand, and it is the failure this round's fix removes. `--picture` runs the same control by pasting the green square
 over the red one and requiring the single-picture check to reject the result. The layout arms have their own control,
 for the same reason: exchanging the white and magenta squares is exactly the compile-time layout's answer, and the
-check has to reject that picture in both modes.
+check has to reject that picture in both modes. The compile-colour arm has one too: painting the outer square's red -
+the list's colour after the call - over arm C is the picture the leak leaves, and it has to be rejected.
 
 Runs without a GPU:
 
@@ -170,11 +181,16 @@ def layout_of(report):
     arm_a = numbers(fields, "armA")
     arm_b = numbers(fields, "armB")
     tex_control = numbers(fields, "texControl")
+    arm_c = numbers(fields, "armC")
+    arm_c_outside = numbers(fields, "armCOutside")
+    arm_c_inside = numbers(fields, "armCInside")
     if (len(panel) != 4 or len(slots) != 2 or len(triangle) != 3 or len(direct) != 3
             or len(even) != 2 or len(odd) != 2 or len(call_colour) != 3 or len(inside_colour) != 3
-            or len(arm_a) != 3 or len(arm_b) != 3 or len(tex_control) != 3):
-        raise SystemExit("displayListLayout is not the expected shape (the layout arms armA=/armB=/texControl= "
-                         "included; a dump from before they existed cannot be judged): " + text)
+            or len(arm_a) != 3 or len(arm_b) != 3 or len(tex_control) != 3
+            or len(arm_c) != 3 or len(arm_c_outside) != 3 or len(arm_c_inside) != 3):
+        raise SystemExit("displayListLayout is not the expected shape (the layout arms armA=/armB=/texControl= and"
+                         " the compile-colour arm armC=/armCOutside=/armCInside= included; a dump from before they"
+                         " existed cannot be judged): " + text)
     return {
         "gui": (gui_width, gui_height),
         "panel": panel,
@@ -187,10 +203,14 @@ def layout_of(report):
         "armA": arm_a,
         "armB": arm_b,
         "texControl": tex_control,
+        "armC": arm_c,
+        "arm_c_outside": arm_c_outside,
+        "arm_c_inside": arm_c_inside,
         "call_colour": call_colour,
         "inside_colour": inside_colour,
         "frames": int(fields.get("frames", "0")),
         "compiles": int(fields.get("compiles", "0")),
+        "compile_colour_leaks": int(fields.get("compileColourLeaks", "0")),
         "text": text,
     }
 
@@ -325,14 +345,53 @@ def arm_rect_for(scale, centre, half):
 
 
 def arm_reading(image, layout, scale):
-    """{@return} the white and magenta ink in each layout arm and in the direct textured control."""
+    """{@return} the white and magenta ink in each layout arm, the direct textured control, and arm C's two colours."""
     reading = {}
     for name, key in (("armA", "armA"), ("armB", "armB"), ("texControl", "texControl")):
         x, y, half = layout[key]
         rect = arm_rect_for(scale, (x, y), half)
         reading[name + "_white"] = count_white(image, rect)
         reading[name + "_magenta"] = count_magenta(image, rect)
+    # Arm C's colours come from the scene's own layout, not from constants here: the quad has to be drawn in the colour
+    # the scene set *outside* the compile and must not be drawn in the one it recorded *inside* it, and a checker that
+    # hard-coded those could drift away from the fixture without anything failing.
+    x, y, half = layout["armC"]
+    rect = arm_rect_for(scale, (x, y), half)
+    reading["armC_outside"] = count_colour(image, rect, colour_mask(layout["arm_c_outside"]))
+    reading["armC_inside"] = count_colour(image, rect, colour_mask(layout["arm_c_inside"]))
     return reading
+
+
+def colour_mask(rgb):
+    """{@return} the (high, high, high) tuple `count_colour` wants, for an RGB triple the scene reported."""
+    return tuple(value >= BRIGHT for value in rgb)
+
+
+def compile_colour_failures(layout, label):
+    """{@return} the named failure for a run whose own state query saw the compile-time colour, or [] when clean.
+
+    Separate from the picture on purpose: `GL_CURRENT_COLOR` right after the `glEndList` is the state the next
+    `glBegin` will use, so a non-zero count is the same defect the arm's pixels show - two instruments on one rule,
+    and the state answer does not depend on the frame reaching a dump.
+    """
+    if layout.get("compile_colour_leaks", 0) <= 0:
+        return []
+    return [label + ": " + str(layout["compile_colour_leaks"]) + " frame(s) reported the colour recorded inside a "
+            "GL_COMPILE list as current right after its glEndList (colourAfterCompile); a recorded glColor is stored, "
+            "not executed, until glCallList"]
+
+
+def arm_c_failures(reading, label):
+    """{@return} the arm C failures: the compile recorded a colour and the caller's has to survive it."""
+    failures = []
+    if reading["armC_outside"] < ARM_INK:
+        failures.append(label + ": the quad drawn after a GL_COMPILE list recorded a colour is not the caller's colour "
+                        "(armC_outside=" + str(reading["armC_outside"]) + " px); the recorded glColor became current")
+    if reading["armC_inside"] >= ARM_INK:
+        failures.append(label + ": the colour recorded inside GL_COMPILE is the current colour after glEndList "
+                        "(armC_inside=" + str(reading["armC_inside"]) + " px); GL runs that command at glCallList, not "
+                        "at the compile")
+    return failures
 
 
 def arm_failures(reading, label):
@@ -359,7 +418,23 @@ def arm_failures(reading, label):
         failures.append(label + ": the direct textured control left no magenta ink (texControl_magenta="
                         + str(reading["texControl_magenta"]) + " px); the texture or the sampler failed in this frame, "
                         "so the arms' colours are not attributable")
+    failures.extend(arm_c_failures(reading, label))
     return failures
+
+
+def arm_c_contaminated(image, layout, scale, outer_band_y):
+    """{@return} a copy of the picture with the list's own colour painted over arm C.
+
+    That is the picture a renderer whose colour mirror follows the recorded command leaves, so the arm-C check has to
+    reject it. The paint is the run's own pixels - the outer square, which is the list's colour after the call - rather
+    than a colour chosen here.
+    """
+    painted = image.copy()
+    centre_x = (layout["panel"][0] + layout["panel"][2]) / 2
+    if not copy_square(painted, image, scale, (centre_x, outer_band_y),
+                       (layout["armC"][0], layout["armC"][1]), layout["armC"][2]):
+        return None
+    return painted
 
 
 def swap_arms(image, layout, scale):
@@ -421,10 +496,12 @@ def single_picture_report(image, layout, scale, label):
     if yellow < SLOT_INK:
         failures.append(label + ": the direct glBegin control left no ink (" + str(yellow) + " px)")
     arms = arm_reading(image, layout, scale)
-    lines.append(label + " armA_white=%d armA_magenta=%d armB_white=%d armB_magenta=%d texControl_magenta=%d" % (
-        arms["armA_white"], arms["armA_magenta"], arms["armB_white"], arms["armB_magenta"],
-        arms["texControl_magenta"]))
+    lines.append(label + " armA_white=%d armA_magenta=%d armB_white=%d armB_magenta=%d texControl_magenta=%d"
+                 " armC_outside=%d armC_inside=%d" % (
+                     arms["armA_white"], arms["armA_magenta"], arms["armB_white"], arms["armB_magenta"],
+                     arms["texControl_magenta"], arms["armC_outside"], arms["armC_inside"]))
     failures.extend(arm_failures(arms, label))
+    failures.extend(compile_colour_failures(layout, label))
     reading = {"stage": label, "band0_red": bands[0][0], "band0_green": bands[0][1],
                "band1_red": bands[1][0], "band1_green": bands[1][1], "triangle_cyan": cyan, "direct_yellow": yellow,
                "outer_band": red_bands[0] if len(red_bands) == 1 else -1}
@@ -474,6 +551,22 @@ def main(argv):
             if not layout_control_ok:
                 failures.append("the layout-arm positive control was accepted: a picture with the two arms' colours "
                                 "exchanged - the compile-time layout's answer - read as correct")
+        # Arm C's control: the list's own colour painted over the caller-colour quad is the picture a mirror that
+        # follows the recorded glColor leaves, so the arm-C check has to reject it.
+        compile_colour_control_ok = None
+        outer_band_y = layout["slots"][reading["outer_band"]] if reading["outer_band"] >= 0 else None
+        if outer_band_y is not None:
+            painted = arm_c_contaminated(image, layout, scale, outer_band_y)
+            if painted is not None:
+                painted_reading = analyse(painted, layout, scale, "control(compile-colour)")
+                compile_colour_control_ok = bool(arm_c_failures(painted_reading, "control"))
+                lines.append("control (list colour painted over arm C) armC_outside="
+                             + str(painted_reading["armC_outside"]) + " armC_inside="
+                             + str(painted_reading["armC_inside"]) + " rejected="
+                             + str(compile_colour_control_ok))
+                if not compile_colour_control_ok:
+                    failures.append("the arm-C positive control was accepted: a picture with the colour recorded "
+                                    "inside the compile over the caller-colour quad read as correct")
         print("layout: " + layout["text"])
         for line in lines:
             print(line)
@@ -483,15 +576,19 @@ def main(argv):
                 print("  - " + failure)
         else:
             print("PASSED: one square in the call-time colour, one in the list's own, each layout arm in the colour the"
-                  + " call-time state selects, the line loop and the controls"
+                  + " call-time state selects, the compile-colour arm in the caller's colour, the line loop and the"
+                  + " controls"
                   + ("" if control_ok is None else "; the baked-colour positive control is rejected")
-                  + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected"))
+                  + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected")
+                  + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected"))
         if args.json:
             pathlib.Path(args.json).write_text(json.dumps({
                 "leg": args.leg, "picture": str(args.picture), "passed": not failures,
                 "layout": layout["text"], "reading": reading,
                 "control_baked_colour_rejected": control_ok,
-                "control_compile_layout_rejected": layout_control_ok, "failures": failures}, indent=2) + "\n")
+                "control_compile_layout_rejected": layout_control_ok,
+                "control_compile_colour_rejected": compile_colour_control_ok,
+                "failures": failures}, indent=2) + "\n")
         return 0 if not failures else 1
     
     if layout["compiles"] <= 0:
@@ -522,6 +619,14 @@ def main(argv):
             path = pathlib.Path(args.pictures).parent / path
         if not path.exists():
             path = pathlib.Path(args.pictures) / path.name
+        if not path.exists():
+            # The harness keeps a completed dump under a "-kept" copy of the same name. A report line written just
+            # before the completion was recorded names the plain file (measured on leg r29a: the second stage's line
+            # said completed=false while the image, its identity file and presentedFrame=43 were all written), and the
+            # kept copy is that picture - so the check must not call the frame missing when it is on disk.
+            kept = path.with_name(path.stem + "-kept" + path.suffix)
+            if kept.exists():
+                path = kept
         if not path.exists():
             failures.append(stage + ": the dump file is missing (" + str(path) + ")")
             continue
@@ -574,6 +679,10 @@ def main(argv):
         if arm_failed:
             passed = False
             failures.extend(arm_failed)
+        leak_failed = compile_colour_failures(layout, stage)
+        if leak_failed:
+            passed = False
+            failures.extend(leak_failed)
 
     # The panel's markers must be where the layout says, or the picture is of something else.
     for stage, (image, scale, reading) in sorted(readings.items()):
@@ -633,6 +742,26 @@ def main(argv):
                 failures.append("the layout-arm positive control was accepted: a picture with the two arms' colours "
                                 "exchanged - the compile-time layout's answer - read as correct")
 
+    # Third positive control: the colour recorded inside the compile painted over arm C, which is the picture a renderer
+    # whose mirror follows the recorded glColor leaves. The arm-C assertions above have to reject it.
+    compile_colour_control_ok = None
+    if ordered:
+        (stage_first, (image_first, scale_first, reading_first)) = ordered[0]
+        outer_band_first = 0 if even_frame(stage_first) else 1
+        painted = arm_c_contaminated(image_first, layout, scale_first,
+                                     layout["slots"][outer_band_first])
+        if painted is not None:
+            painted_reading = analyse(painted, layout, scale_first, "control(compile-colour)")
+            compile_colour_control_ok = bool(arm_c_failures(painted_reading, "control"))
+            report_lines.append("control (" + stage_first + "'s list colour painted over arm C) armC_outside="
+                                + str(painted_reading["armC_outside"]) + " armC_inside="
+                                + str(painted_reading["armC_inside"]) + " rejected="
+                                + str(compile_colour_control_ok))
+            if not compile_colour_control_ok:
+                passed = False
+                failures.append("the arm-C positive control was accepted: a picture with the colour recorded inside the "
+                                "compile over the caller-colour quad read as correct")
+
     print("layout: " + layout["text"])
     for line in report_lines:
         print(line)
@@ -642,15 +771,18 @@ def main(argv):
             print("  - " + failure)
     else:
         print("PASSED: the outer list draws in the call-time colour, the inner list keeps its own, both move with the"
-              + " frame, the line loop replays and each layout arm is drawn in the colour the call-time state selects"
+              + " frame, the line loop replays, each layout arm is drawn in the colour the call-time state selects and"
+              + " a compile's recorded colour does not survive its glEndList"
               + ("" if control_ok is None else "; the positive control reads as the baked-colour failure")
-              + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected"))
+              + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected")
+              + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected"))
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({
             "leg": args.leg, "passed": passed and not failures, "layout": layout["text"],
             "readings": {stage: reading for stage, (_, _, reading) in readings.items()},
             "control_baked_colour_detected": control_ok,
-            "control_compile_layout_rejected": layout_control_ok, "failures": failures}, indent=2) + "\n")
+            "control_compile_layout_rejected": layout_control_ok,
+            "control_compile_colour_rejected": compile_colour_control_ok, "failures": failures}, indent=2) + "\n")
     return 0 if passed and not failures else 1
 
 

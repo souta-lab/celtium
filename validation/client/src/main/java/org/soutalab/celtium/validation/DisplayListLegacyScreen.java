@@ -49,6 +49,11 @@ import org.lwjgl.opengl.GL11;
  *       texture at the caller's coordinate. Both are called with that magenta bound, which makes the compile-time
  *       layout's answer the <em>other</em> arm's colour - the two count as each other's failure mode - and a small
  *       directly-drawn textured quad in the same state is the control that the texture and sampler work at all.</li>
+ *   <li><b>A compile does not change the caller's colour.</b> Arm C sets blue outside a {@code GL_COMPILE} compile,
+ *       records red inside it, and then draws a quad with no colour call of its own: GL stores the recorded red and runs
+ *       it at {@code glCallList}, so the quad is <b>blue</b>. A renderer whose colour mirror follows the recorded command
+ *       draws it <b>red</b>, and the same frame reports the colour GL says is current right after the
+ *       {@code glEndList} - the state answer and the picture answer to the same question, in one frame.</li>
  * </ul>
  *
  * <p>Two things about this scene were measured on earlier runs of it and are built in deliberately. <b>The quads are
@@ -72,8 +77,17 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         void requestPresentedDump(String stage);
     }
 
-    /** Which draw count the first dump is requested at: past the screen's first frames, still early in the leg. */
-    private static final int FIRST_DUMP_FRAME = 40;
+    /**
+     * Which draw count the first dump is requested at: past the screen's first frames, and far enough from the end of
+     * the leg that the second one is presented before the run stops.
+     * <p>
+     * The request lands on the presented frame two presents later, so at 40 the pair needed presented frames 42 and 43 -
+     * which is where this scene's legs were ending (measured on leg r29a: the second stage's report line was serialized
+     * before its completion, and the frame after it was the last one of the run). At 8 the pair is comfortably inside
+     * even a run that draws forty frames, and the two frames are still consecutive, so the slot swap they measure is
+     * unchanged.
+     */
+    private static final int FIRST_DUMP_FRAME = 8;
     /** Two alternating positions need at least two consecutive frames to cover both. */
     private static final int DUMP_FRAMES = 2;
     /** The compiled square's half extent, in GUI units, and the line loop's radius. */
@@ -104,6 +118,21 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private static final float LOOP_RED = 0.0f;
     private static final float LOOP_GREEN = 1.0f;
     private static final float LOOP_BLUE = 1.0f;
+    /**
+     * Arm C's caller colour: blue, which no other element in the frame uses.
+     * <p>
+     * The arm answers the rule from the other side of the arms A and B: a {@code glColor} recorded inside a
+     * {@code GL_COMPILE} list is <em>stored</em>, not executed, so after {@code glEndList} the colour in force is still
+     * this one. The list's own red is the failure colour, and it is exactly what a capture that lets the hook write its
+     * mirror straight through leaves behind.
+     */
+    private static final float COMPILE_OUTSIDE_RED = 0.0f;
+    private static final float COMPILE_OUTSIDE_GREEN = 0.0f;
+    private static final float COMPILE_OUTSIDE_BLUE = 1.0f;
+    /** The colour arm C's list records, which must not escape the compile. */
+    private static final float COMPILE_INSIDE_RED = 1.0f;
+    private static final float COMPILE_INSIDE_GREEN = 0.0f;
+    private static final float COMPILE_INSIDE_BLUE = 0.0f;
 
     private DumpRequester dumps;
     private int frames;
@@ -121,6 +150,21 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private int plainList;
     /** The 1x1-equivalent magenta texture the layout arms sample, so the wrong layout is a measurable colour. */
     private int magentaTexture;
+    /**
+     * The list arm C recompiles every frame: a {@code GL_COMPILE} list whose only interesting command is a colour.
+     * <p>
+     * Recompiled per frame rather than once because the state it has to leave behind is the state <em>immediately
+     * after</em> its own {@code glEndList}: the rest of the GUI sets colours of its own before the frame is dumped, so a
+     * single compile on the first frame would have its evidence overwritten by the time the picture is taken. Four
+     * vertices, once a frame, is the whole cost.
+     */
+    private int compileColourList;
+    /** The colour GL reported as current right after arm C's {@code glEndList}. */
+    private final float[] afterCompileColour = new float[4];
+    /** How many frames arm C was drawn in, and how many of them left the compile-time colour current. */
+    private int compileColourFrames;
+    private int compileColourLeaks;
+    private java.nio.FloatBuffer currentColour;
     /** How many times each list was compiled, so a scene that silently recompiled is visible. */
     private int compiles;
     private final StringBuilder dumpStages = new StringBuilder();
@@ -161,6 +205,16 @@ public final class DisplayListLegacyScreen extends GuiScreen {
                 + " armA=" + celtium$armAX(panel) + "," + (panel[1] + panel[3]) / 2 + "," + ARM_HALF
                 + " armB=" + celtium$armBX(panel) + "," + (panel[1] + panel[3]) / 2 + "," + ARM_HALF
                 + " texControl=" + celtium$centreX(panel) + "," + celtium$textureControlY(panel) + "," + ARM_HALF
+                + " armC=" + celtium$armCX(panel) + "," + celtium$armCY(panel) + "," + ARM_HALF
+                + " armCOutside=" + (int) (COMPILE_OUTSIDE_RED * 255) + "," + (int) (COMPILE_OUTSIDE_GREEN * 255)
+                + "," + (int) (COMPILE_OUTSIDE_BLUE * 255)
+                + " armCInside=" + (int) (COMPILE_INSIDE_RED * 255) + "," + (int) (COMPILE_INSIDE_GREEN * 255)
+                + "," + (int) (COMPILE_INSIDE_BLUE * 255)
+                + " colourAfterCompile=" + Math.round(this.afterCompileColour[0] * 255.0f) + ","
+                + Math.round(this.afterCompileColour[1] * 255.0f) + ","
+                + Math.round(this.afterCompileColour[2] * 255.0f)
+                + " compileColourLeaks=" + this.compileColourLeaks
+                + " compileColourFrames=" + this.compileColourFrames
                 + " callColour=" + (int) (CALL_RED * 255) + "," + (int) (CALL_GREEN * 255) + ","
                 + (int) (CALL_BLUE * 255)
                 + " insideColour=" + (int) (INSIDE_RED * 255) + "," + (int) (INSIDE_GREEN * 255) + ","
@@ -214,6 +268,20 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     /** The direct textured control's vertical centre: below the squares' lower slot, above the panel marker. */
     private static int celtium$textureControlY(int[] panel) {
         return panel[3] - 15;
+    }
+
+    /**
+     * Arm C's centre: the direct control's column, on the bottom row.
+     * <p>
+     * Below the direct quad (which spans the middle of that column) and clear of the direct textured control (which
+     * sits on the same row but at the panel's centre), so the arm's ink cannot be mistaken for either.
+     */
+    private static int celtium$armCX(int[] panel) {
+        return celtium$directX(panel);
+    }
+
+    private static int celtium$armCY(int[] panel) {
+        return celtium$textureControlY(panel);
     }
 
     /** The direct immediate quad's half extent, in GUI units. */
@@ -454,11 +522,72 @@ public final class DisplayListLegacyScreen extends GuiScreen {
             GL11.glEnd();
             GL11.glPopMatrix();
             GL11.glDisable(GL11.GL_TEXTURE_2D);
+            celtium$drawCompileColourArm(panel);
         } finally {
             // Restored in a finally: the rest of the frame is the game's GUI, which draws text and icons with this
             // state on, and a scene that left it off would break every screen after it.
             GL11.glEnable(GL11.GL_TEXTURE_2D);
         }
+    }
+
+    /**
+     * Arm C: compiles a list that sets a colour, then draws a quad <em>without</em> setting one.
+     *
+     * <p>GL's rule for a display list is that the recorded {@code glColor} runs at {@code glCallList}, not at
+     * {@code glEndList}, so the colour current before the compile is the colour the next {@code glBegin} carries. The
+     * probe does three things in one frame, all of them measured rather than assumed:
+     * <ul>
+     *   <li>sets the caller's colour (blue), compiles a {@code GL_COMPILE} list that records red, and closes it;</li>
+     *   <li>asks GL, at that point, what the current colour is - so a renderer that let the recorded red through is
+     *       named by the query as well as by the picture;</li>
+     *   <li>draws the arm's quad with no colour call of its own, so its pixels are that answer.</li>
+     * </ul>
+     * The list is recompiled on every frame because the state it must leave behind is only observable right after its
+     * own {@code glEndList}: the rest of the scene sets colours of its own before the frame is dumped.
+     *
+     * <p>Nothing here is called: the list exists to be compiled, and calling it would draw its red square on top of the
+     * arm - the inner list already answers "does a replayed colour command draw".
+     */
+    private void celtium$drawCompileColourArm(int[] panel) {
+        if (this.compileColourList == 0) {
+            this.compileColourList = GLAllocation.generateDisplayLists(1);
+        }
+        if (this.currentColour == null) {
+            this.currentColour = GLAllocation.createDirectFloatBuffer(4);
+        }
+        GL11.glColor4f(COMPILE_OUTSIDE_RED, COMPILE_OUTSIDE_GREEN, COMPILE_OUTSIDE_BLUE, 1.0f);
+        GL11.glNewList(this.compileColourList, GL11.GL_COMPILE);
+        // The recorded command. Under GL_COMPILE this is stored; a renderer that executes it here has already lost.
+        GL11.glColor4f(COMPILE_INSIDE_RED, COMPILE_INSIDE_GREEN, COMPILE_INSIDE_BLUE, 1.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+        GL11.glEnd();
+        GL11.glEndList();
+        this.currentColour.clear();
+        GL11.glGetFloatv(GL11.GL_CURRENT_COLOR, this.currentColour);
+        for (int channel = 0; channel < this.afterCompileColour.length; channel++) {
+            this.afterCompileColour[channel] = this.currentColour.get(channel);
+        }
+        this.compileColourFrames++;
+        // A leak is "the list's colour is current", not "the caller's is not": a renderer could leave some third value,
+        // and that would be a different defect. The threshold is half a byte of the recorded red.
+        if (this.afterCompileColour[0] * 255.0f > 127.0f && this.afterCompileColour[1] * 255.0f < 128.0f
+                && this.afterCompileColour[2] * 255.0f < 128.0f) {
+            this.compileColourLeaks++;
+        }
+        // No glColor4f here, deliberately: the quad has to be drawn in whatever colour the compile left current.
+        GL11.glPushMatrix();
+        GL11.glTranslatef(celtium$armCX(panel), celtium$armCY(panel), 0.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+        GL11.glEnd();
+        GL11.glPopMatrix();
     }
 
     /** {@return the GUI size this screen was last laid out at, or -1} - what the dumps were scaled from. */

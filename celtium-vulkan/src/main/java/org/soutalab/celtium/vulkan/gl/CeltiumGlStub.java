@@ -1273,9 +1273,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.compilingList = list;
         stub.compilingListMode = mode;
         // Where the current colour and texture coordinate came from decides whether a compiled run keeps its baked
-        // bytes or takes the values current at glCallList; see CompiledLegacyRun.
-        if (stub.legacyCapture != null) {
-            stub.legacyCapture.setCompileOpen(list != 0);
+        // bytes or takes the values current at glCallList; see CompiledLegacyRun. A name of zero is not a list.
+        if (list > 0) {
+            stub.openCompileState(mode);
         }
         // The model capture takes a generation per compile. The vanilla path notifies it from its own mixin before
         // this call (a harmless second reset, since no quad arrives between them); a mod's raw glNewList reaches only
@@ -1316,8 +1316,43 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         stub.compilingList = 0;
         stub.compilingListMode = 0;
-        if (stub.legacyCapture != null) {
-            stub.legacyCapture.setCompileOpen(false);
+        stub.closeCompileState();
+    }
+
+    /**
+     * Snapshots the colour state a {@code GL_COMPILE} list must leave untouched, from whichever layer saw
+     * {@code glNewList} first.
+     *
+     * <p>Both layers report the call - the stub's own dispatch and the transformer hint the game's calls reach - so a
+     * second arrival for the same compile is dropped rather than re-snapshotting: by the second arrival the list may
+     * already have recorded a colour, and snapshotting that would make the rollback restore the list's own value.
+     *
+     * @param mode {@code GL_COMPILE} (0x1300) or {@code GL_COMPILE_AND_EXECUTE} (0x1301)
+     */
+    private void openCompileState(int mode) {
+        if (this.legacyCapture == null) {
+            return;
+        }
+        // The capture owns both snapshots - its own mirror and GL_CURRENT_COLOR, which every colour route writes and
+        // the backend's group tint reads - so the mode that decides the rollback and the values it rolls back cannot
+        // disagree, and a second arrival (the other layer's report of the same glNewList) is dropped inside.
+        this.legacyCapture.openCompile(mode, this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+    }
+
+    private void closeCompileState() {
+        if (this.legacyCapture == null || !this.legacyCapture.closeCompile()) {
+            return;
+        }
+        this.currentRed = this.legacyCapture.callerRed();
+        this.currentGreen = this.legacyCapture.callerGreen();
+        this.currentBlue = this.legacyCapture.callerBlue();
+        this.currentAlpha = this.legacyCapture.callerAlpha();
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend != null) {
+            // One state call per compile, and models compile once: the colour the list's compile must not tint the
+            // next group with.
+            backend.setColor(this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
         }
     }
 
@@ -2861,7 +2896,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " layout=" + stub.legacyListRunsLayout
                 + " provenance[colour=" + stub.legacyCapture.compiledCallStateColour()
                 + " tex=" + stub.legacyCapture.compiledCallStateTex()
-                + " midRun=" + stub.legacyCapture.compiledMidRunChanges() + "]"
+                + " midRun=" + stub.legacyCapture.compiledMidRunChanges()
+                + " rollbacks=" + stub.legacyCapture.compileRollbacks() + "]"
                 + " callStateSwitch=" + LEGACY_CALL_STATE + " callLayoutSwitch=" + LEGACY_CALL_LAYOUT;
     }
 
@@ -5239,8 +5275,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.compilingList = (int) c[0];
                 this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
                 this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
-                if (this.legacyCapture != null) {
-                    this.legacyCapture.setCompileOpen(this.compilingList != 0);
+                if (this.compilingList > 0) {
+                    this.openCompileState(this.compilingListMode);
                 }
                 // The model capture takes a new generation per compile. The GlStateManager path notifies it; a mod
                 // that calls GL11.glNewList directly did not, so recompiling a name kept the mesh built from its
@@ -5280,9 +5316,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.openListLegacyRunBytes = 0L;
                 this.openList = null;
                 this.compilingList = 0;
-                if (this.legacyCapture != null) {
-                    this.legacyCapture.setCompileOpen(false);
-                }
+                this.closeCompileState();
                 return 0L;
             case SEM_CALL_LIST:
                 replayDisplayList((int) c[0]);

@@ -41,12 +41,18 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   `-Dceltium.glstub.legacyCallState=false` で焼き込みに戻せる。**頂点レイアウトも同じ規則**（2026-11-02）:
   replay時の `GL_TEXTURE_2D` の有効状態で layout を選び、compile時と違えば色/UVの位置を移して詰め替える
   （textured→untextured は焼いた色、untextured→textured は call時の UV で sampler が読む）。
-  `-Dceltium.glstub.legacyCallLayout=false` で compile時の layout に戻せる。コピーはlistのpayloadと同じ寿命で、
+  `-Dceltium.glstub.legacyCallLayout=false` で compile時の layout に戻せる。**compile は caller の色/UVを変えない**（2026-11-02）:
+  `GL_COMPILE` の `glColor`/`glTexCoord` は `glCallList` まで実行されないので、`glNewList` で色4成分とUVを
+  スナップショットし `glEndList` で戻す（`GL_COMPILE_AND_EXECUTE` は実行済みなので戻さない）。直呼びの色ルートは
+  stub の「compile中は実行しない」ガードを通らないため、これが無いとlistの最後の色が次の`glBegin`へ漏れる。
+  stub側の`GL_CURRENT_COLOR`とbackendの色mirror（format 6/7/9とmodel replayのgroup tintが読む）も同じsnapshotで戻す。
+  2層（stub dispatchとtransformer hint）が同じcompileを報告するのでsnapshotは冪等。コピーはlistのpayloadと同じ寿命で、
   同時保持は 64 MiB上限。計器は検証行の `celtium/legacyListRuns[recorded/replayed/bytes/droppedBytes/
-  replayRefusals/callState/layout/provenance[colour tex midRun]]`。根拠:
+  replayRefusals/callState/layout/provenance[colour tex midRun rollbacks]]`。根拠:
   [list compile](evidence/display-list-legacy-2026-11-02.md)・
   [call-time属性](evidence/display-list-call-state-2026-11-02.md)・
-  [call-timeレイアウト](evidence/display-list-call-layout-2026-11-02.md)（いずれもCeleritas実GLと同一sceneで一致。
+  [call-timeレイアウト](evidence/display-list-call-layout-2026-11-02.md)・
+  [compile後のcaller状態](evidence/display-list-compile-colour-2026-11-02.md)（いずれもCeleritas実GLと同一sceneで一致。
   GregTechの`ToolEventHandlers`が同じ形） |
 | ミラー（GL名→画像） | 供給元が無い名前には**空のミラーを作らない**（2026-11-02）。作っても sampling 側が
   「全内容が来ていないミラー」として拒否するので描けず、しかも entry が存在するせいで以後の lookup が plain hit に
