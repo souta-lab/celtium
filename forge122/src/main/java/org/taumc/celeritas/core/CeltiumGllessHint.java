@@ -1894,6 +1894,9 @@ public final class CeltiumGllessHint {
     public static void glAlphaFunc(int func, float reference) {
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.setAlphaFunc(func, reference);
+        // Same reason as glDepthFunc: glPushAttrib(GL_COLOR_BUFFER_BIT) saves the comparison, and the stack that puts
+        // it back is the stub's.
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteAlphaFunc(func, reference);
     }
 
         /** Releases a sync id, as {@code glDeleteSync} does; the transformer used to answer this with a zero. */
@@ -1909,12 +1912,17 @@ public final class CeltiumGllessHint {
     public static void glDepthFunc(int func) {
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.depthFunc(func);
+        // The stub keeps the same value for its attribute stack: a glPushAttrib(GL_DEPTH_BUFFER_BIT) has to be able
+        // to put the comparison back, and the stub is what owns that stack (the backend's mirror is what it reads
+        // while one is installed, but a push may outlive the backend whose mirror it took the value from).
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthFunc(func);
     }
 
         /** A raw {@code GL11.glDepthMask}, for the same reason as {@link #glColor4f}: canopies and overlays set it raw. */
     public static void glDepthMask(boolean mask) {
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.setDepthMask(mask);
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthMask(mask);
     }
 
     /** Maps the bound buffer's storage, as {@code glMapBuffer}/{@code glMapBufferRange} do; 0 is GL's NULL. */

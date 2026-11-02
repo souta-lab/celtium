@@ -54,6 +54,21 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   [call-timeレイアウト](evidence/display-list-call-layout-2026-11-02.md)・
   [compile後のcaller状態](evidence/display-list-compile-colour-2026-11-02.md)（いずれもCeleritas実GLと同一sceneで一致。
   GregTechの`ToolEventHandlers`が同じ形） |
+| `glPushAttrib`/`glPopAttrib` | **マスクが復元する集団を決める**（2026-11-02）。旧実装はマスクを無視して追跡していた
+  ものを全部戻し（vanilla の `GlStateManager.pushAttrib()` は `8256` = `GL_ENABLE_BIT|GL_LIGHTING_BIT` なので、
+  マスク外の現在色・line width・point size まで戻していた）、しかも capability・色・サイズしか保存していなかった。
+  `LegacyAttribSnapshot` が1回のpush（mask・capability・色・line/point・**depth write mask/func**・
+  **blend係数/式・色writeマスク・alpha test**・cull mode/front face・polygon offset・scissor box・list base・
+  **bound texture**）を保持し、pop は **push時のmaskが選んだ集団だけ** を戻す。値は各集団の生きた権威
+  （raster mirror／backend の depth・alpha mirror／stub）から読み、スタックは64段で上限・溢れは数える。
+  depth/alpha を戻せるように `celtium$noteDepthMask/noteDepthFunc/noteAlphaFunc` を raw/managed 両経路から記録し、
+  `glGetFloatv(GL_DEPTH_WRITEMASK)` の欠落caseと初期値（GLはtrue）も直した。計器は
+  `celtium/attrib[masks= pushes= pops= unmatchedPops= overflow= restoredGroups= selectedUnrestoredGroups= last=
+  histogram=[mask:count]]`。`-Dceltium.glstub.attribMasks=false` は旧「全部戻す」動作で、この規則のA/B対照。
+  **未対応集団は数える**: `GL_TRANSFORM_BIT`（行列は mirror 側。modは `glPushMatrix` を使う）、`GL_LIGHTING_BIT`・
+  `GL_FOG_BIT`・`GL_STENCIL_BUFFER_BIT`・`GL_VIEWPORT_BIT`。vanilla の mask `8256` は `GL_LIGHTING_BIT` を含むので
+  item frame/totem 経路では実在の穴。根拠: [attribute stack](evidence/attribute-stack-mask-2026-11-02.md)
+  （fixture の arm D/E が same-scene で Celtium と Celeritas 実GLの両方で一致、validation 0） |
 | ミラー（GL名→画像） | 供給元が無い名前には**空のミラーを作らない**（2026-11-02）。作っても sampling 側が
   「全内容が来ていないミラー」として拒否するので描けず、しかも entry が存在するせいで以後の lookup が plain hit に
   なり、後から届いた upload を二度と拾えなかった。いまは null を返し、その判断を**level の write serial ごとに記憶**

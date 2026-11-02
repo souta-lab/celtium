@@ -98,6 +98,27 @@
 - 指示・観測・推論を混ぜない。歴史資料にある「最終指示」「現在」「確定」を現行の命令/受入へ昇格させない。
 - 同じ失敗の再試行が続いたら、成功条件・不足証拠・次の判別条件を短く残す。印や自己評価の反復ではなく、検証可能な次の操作を選ぶ。
 
+## 同じ状態を glGetBooleanv と glGetFloatv が別の答えで返す（2026-11-02 実測、Celtiumのみ）
+
+fixture が **同じ frame・同じ raster mirror** から `glGetFloatv(GL_COLOR_WRITEMASK)` と
+`glGetBooleanv(GL_COLOR_WRITEMASK)` を続けて読むと、Celtium は `cm=1111` / `cmB=0000`、Celeritas 実GLは
+`cm=1111` / `cmB=1111` を返した。`colorMaskHistogram` は全 group が `0xf` なので pipeline は 0xF で描いており、
+**boolean 側の in-run 経路だけが答えていない**（CPUの dispatch テストでは両方正しい）。GL は boolean 状態を
+どの glGet* 幅でも答えるので、mod の save/restore が boolean 形式を読むと 0 を得て「誤った状態を戻す」。
+教訓: **状態の readback は、その経路が答えていることを先に確かめた query で取る**。この round の arm は
+`glGetFloatv` に切り替え、`cmB=` を診断として併記して次回の計器にした（boolean 経路自体は未修理）。
+落とし穴の一般形: 「マスクが 0000 だから probe が空振りした」と読む前に、*別の幅の同じ query* と
+*renderer 自身の状態 key histogram* を突き合わせる。
+
+## probe が「押した block で何も変えない」と restore の証拠にならない（2026-11-02）
+
+`glPushAttrib`/`glPopAttrib` の復元を state readback で測るとき、push の**前**の値が偶然 0 だと
+「書いた値 = 前の値」になり、inside と before が一致して**何も測っていない**のに「戻った」と読める。
+Celtium の最初の leg（`r30a`）はまさにこれで、`cm=0000`/`dm=0` が before と inside で同じだった。
+正しい gate は3つ組: (1) inside が before と**全部違う**（probe が効いた）、(2) after が before と**全部同じ**
+（mask が選んだ集団が戻った）、(3) mask 外の集団は **after でも書き換わったまま**（戻していない）。
+画像側は、mask が選ぶ集団の quad が見え、選ばない集団の quad が**見えない**ことで同じ規則を別の計器で押さえる。
+
 ## `-Dceltium.vulkan.skipImmediateRecord=true` は分離計測に使えない（2026-10-23 実測）
 
 terrain と flush を分離する目的でこのフラグを立てたところ、frame は **6.8ms → 28.0ms**、fps は **20.5/15.7** と

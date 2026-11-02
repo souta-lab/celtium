@@ -134,6 +134,27 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private static final float COMPILE_INSIDE_GREEN = 0.0f;
     private static final float COMPILE_INSIDE_BLUE = 0.0f;
 
+    /**
+     * Arms D and E: what {@code glPopAttrib} puts back, and what it deliberately leaves alone.
+     *
+     * <p>GL's attribute stack is mask-selective. {@code GL_COLOR_BUFFER_BIT} saves the colour write mask, the blend
+     * factors and the alpha test; {@code GL_ENABLE_BIT} saves only capabilities. So a {@code glColorMask} written inside
+     * a push survives a pop that did not select the colour group, and the picture has to show that: arm D pushes a mask
+     * that includes the group and its green quad appears after the pop, arm E pushes {@code GL_ENABLE_BIT} only and its
+     * green quad must not appear. A renderer that restores everything it tracks (what this project did before the
+     * attribute stack carried groups) draws both quads and the checker names it.
+     *
+     * <p>The mask deliberately contains nothing that changes the picture by itself: the scissor test stays disabled, the
+     * pushed block draws nothing, and the depth/cull/polygon writes are unobservable in this scene. The colour mask is
+     * the one variable the dump can count.
+     */
+    private static final int ATTRIB_PUSH_MASK = GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
+            | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_POLYGON_BIT | GL11.GL_SCISSOR_BIT;
+    /** The colour both arms draw after their pop: green, which no other element of this scene uses there. */
+    private static final float ATTRIB_RED = 0.0f;
+    private static final float ATTRIB_GREEN = 1.0f;
+    private static final float ATTRIB_BLUE = 0.0f;
+
     private DumpRequester dumps;
     private int frames;
     private int requested;
@@ -165,6 +186,15 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private int compileColourFrames;
     private int compileColourLeaks;
     private java.nio.FloatBuffer currentColour;
+    /** The state read back around the attribute arms, for the report line (and the checker). */
+    private String attribBefore = "none";
+    private String attribInside = "none";
+    private String attribAfter = "none";
+    private String attribOutsideAfter = "none";
+    private int attribFrames;
+    private java.nio.IntBuffer attribInts;
+    private java.nio.FloatBuffer attribFloats;
+    private java.nio.ByteBuffer attribBooleans;
     /** How many times each list was compiled, so a scene that silently recompiled is visible. */
     private int compiles;
     private final StringBuilder dumpStages = new StringBuilder();
@@ -215,6 +245,16 @@ public final class DisplayListLegacyScreen extends GuiScreen {
                 + Math.round(this.afterCompileColour[2] * 255.0f)
                 + " compileColourLeaks=" + this.compileColourLeaks
                 + " compileColourFrames=" + this.compileColourFrames
+                + " attribMask=0x" + Integer.toHexString(ATTRIB_PUSH_MASK)
+                + " armD=" + celtium$armDX(panel) + "," + celtium$armCY(panel) + "," + ARM_HALF
+                + " armE=" + celtium$armEX(panel) + "," + celtium$armCY(panel) + "," + ARM_HALF
+                + " attribColour=" + (int) (ATTRIB_RED * 255) + "," + (int) (ATTRIB_GREEN * 255) + ","
+                + (int) (ATTRIB_BLUE * 255)
+                + " attribBefore=" + this.attribBefore
+                + " attribInside=" + this.attribInside
+                + " attribAfter=" + this.attribAfter
+                + " attribOutsideAfter=" + this.attribOutsideAfter
+                + " attribFrames=" + this.attribFrames
                 + " callColour=" + (int) (CALL_RED * 255) + "," + (int) (CALL_GREEN * 255) + ","
                 + (int) (CALL_BLUE * 255)
                 + " insideColour=" + (int) (INSIDE_RED * 255) + "," + (int) (INSIDE_GREEN * 255) + ","
@@ -282,6 +322,21 @@ public final class DisplayListLegacyScreen extends GuiScreen {
 
     private static int celtium$armCY(int[] panel) {
         return celtium$textureControlY(panel);
+    }
+
+    /**
+     * Arms D and E's horizontal centres: the bottom row, either side of the direct textured control.
+     *
+     * <p>Arm C already owns the direct control's column on that row and the texture control owns the centre, so the two
+     * new arms take the free columns at 150 and 340 GUI units - between arm C (85) and the texture control (213), and
+     * on the far side of it. The row is clear of slot B, which ends at three quarters of the height.
+     */
+    private static int celtium$armDX(int[] panel) {
+        return panel[0] + (panel[2] - panel[0]) / 3;
+    }
+
+    private static int celtium$armEX(int[] panel) {
+        return panel[0] + 4 * (panel[2] - panel[0]) / 5;
     }
 
     /** The direct immediate quad's half extent, in GUI units. */
@@ -523,6 +578,7 @@ public final class DisplayListLegacyScreen extends GuiScreen {
             GL11.glPopMatrix();
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             celtium$drawCompileColourArm(panel);
+            celtium$drawAttribArms(panel);
         } finally {
             // Restored in a finally: the rest of the frame is the game's GUI, which draws text and icons with this
             // state on, and a scene that left it off would break every screen after it.
@@ -588,6 +644,109 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glVertex2i(ARM_HALF, -ARM_HALF);
         GL11.glEnd();
         GL11.glPopMatrix();
+    }
+
+    /**
+     * Arms D and E: the mask rule of {@code glPopAttrib}, measured as state and as pixels in the same frame.
+     *
+     * <p>Arm D pushes a mask that selects {@code GL_COLOR_BUFFER_BIT} and writes a colour mask that keeps no channel
+     * inside it; after the pop the write mask must be back, so the green quad it draws appears. Arm E pushes
+     * {@code GL_ENABLE_BIT} only and writes the same colour mask; GL leaves it in force, so its green quad must not
+     * appear. Both arms report the state they read back, so a renderer whose pop restored the value but whose pipeline
+     * ignored the mask is separated from one that never applied the write in the first place.
+     *
+     * <p>The colour mask is put back by hand after arm E. That is the caller's own restore - the same one a mod has to
+     * make - and without it the rest of the frame (and every later frame) would be drawn with three channels masked.
+     */
+    private void celtium$drawAttribArms(int[] panel) {
+        if (this.attribInts == null) {
+            this.attribInts = GLAllocation.createDirectIntBuffer(16);
+            this.attribFloats = GLAllocation.createDirectFloatBuffer(16);
+            this.attribBooleans = GLAllocation.createDirectByteBuffer(16);
+        }
+        this.attribFrames++;
+        this.attribBefore = celtium$attribState();
+        GL11.glPushAttrib(ATTRIB_PUSH_MASK);
+        GL11.glColorMask(false, false, false, false);
+        GL11.glDepthMask(false);
+        GL11.glBlendFunc(GL11.GL_ONE, GL11.GL_ZERO);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glCullFace(GL11.GL_FRONT);
+        GL11.glScissor(1, 2, 3, 4);
+        GL11.glPolygonOffset(7.0f, 8.0f);
+        this.attribInside = celtium$attribState();
+        GL11.glPopAttrib();
+        this.attribAfter = celtium$attribState();
+        celtium$drawAttribQuad(celtium$armDX(panel));
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT);
+        GL11.glColorMask(false, false, false, false);
+        GL11.glPopAttrib();
+        this.attribOutsideAfter = celtium$attribState();
+        celtium$drawAttribQuad(celtium$armEX(panel));
+        GL11.glColorMask(true, true, true, true);
+    }
+
+    /** One green quad at {@code centreX} on the attribute arms' row. */
+    private void celtium$drawAttribQuad(int centreX) {
+        GL11.glPushMatrix();
+        GL11.glTranslatef(centreX, celtium$armCY(celtium$panel()), 0.0f);
+        GL11.glColor4f(ATTRIB_RED, ATTRIB_GREEN, ATTRIB_BLUE, 1.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+        GL11.glEnd();
+        GL11.glPopMatrix();
+    }
+
+    /**
+     * {@return the state the attribute arms read around their push and pop}, as the GL queries a mod's own
+     * save/restore code would use.
+     *
+     * <p>Read back rather than assumed: the renderer's mirror is what the pop wrote, and a restore that updated a field
+     * the queries do not read would be invisible here. The four fields are the ones whose groups the two arms differ in:
+     * {@code cm} (colour write mask), {@code dm} (depth write mask), {@code bs}/{@code bd} (blend factors), {@code dt}
+     * (depth-test enable), {@code cf} (cull mode), {@code sb} (scissor box) and {@code po} (polygon offset factor).
+     */
+    private String celtium$attribState() {
+        StringBuilder state = new StringBuilder("cm=");
+        // Read through glGetFloatv: GL answers a boolean-state parameter through every glGet* width, and the float
+        // form is the one this scene already reads elsewhere (GL_CURRENT_COLOR, GL_POLYGON_OFFSET_FACTOR). The
+        // boolean form is reported beside it as `cmB` - the first run of these arms measured cmB=0000 while the
+        // pipeline's own state key histogram said 0xf for every group, which is the boolean query answering nothing.
+        this.attribFloats.clear();
+        GL11.glGetFloatv(GL11.GL_COLOR_WRITEMASK, this.attribFloats);
+        for (int channel = 0; channel < 4; channel++) {
+            state.append(this.attribFloats.get(channel) != 0.0f ? '1' : '0');
+        }
+        this.attribBooleans.clear();
+        GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, this.attribBooleans);
+        state.append(",cmB=");
+        for (int channel = 0; channel < 4; channel++) {
+            state.append(this.attribBooleans.get(channel) != 0 ? '1' : '0');
+        }
+        this.attribFloats.clear();
+        GL11.glGetFloatv(GL11.GL_DEPTH_WRITEMASK, this.attribFloats);
+        state.append(",dm=").append(this.attribFloats.get(0) != 0.0f ? '1' : '0');
+        this.attribInts.clear();
+        GL11.glGetIntegerv(GL11.GL_BLEND_SRC, this.attribInts);
+        int blendSource = this.attribInts.get(0);
+        this.attribInts.clear();
+        GL11.glGetIntegerv(GL11.GL_BLEND_DST, this.attribInts);
+        state.append(",bs=").append(blendSource).append(",bd=").append(this.attribInts.get(0));
+        state.append(",dt=").append(GL11.glIsEnabled(GL11.GL_DEPTH_TEST) ? '1' : '0');
+        this.attribInts.clear();
+        GL11.glGetIntegerv(GL11.GL_CULL_FACE_MODE, this.attribInts);
+        state.append(",cf=").append(this.attribInts.get(0));
+        this.attribInts.clear();
+        GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, this.attribInts);
+        state.append(",sb=").append(this.attribInts.get(0)).append(",").append(this.attribInts.get(1))
+                .append(",").append(this.attribInts.get(2)).append(",").append(this.attribInts.get(3));
+        this.attribFloats.clear();
+        GL11.glGetFloatv(GL11.GL_POLYGON_OFFSET_FACTOR, this.attribFloats);
+        state.append(",po=").append(String.format(java.util.Locale.ROOT, "%.1f", this.attribFloats.get(0)));
+        return state.toString();
     }
 
     /** {@return the GUI size this screen was last laid out at, or -1} - what the dumps were scaled from. */

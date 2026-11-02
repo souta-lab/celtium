@@ -2160,10 +2160,19 @@ public final class CeltiumGlStub implements FunctionProvider {
     };
 
     /**
-     * {@code glPushAttrib/glPopAttrib} from the transformer's route. The mask is not interpreted: this renderer's
-     * server-side state is small enough that restoring every capability it tracks is cheaper than tracking masks, and a
-     * mod that pushed before disabling depth test then expected the pop to restore it - which the no-op did not do, so
-     * the raw disable leaked into the next vanilla pass.
+     * {@code glPushAttrib}: snapshot every state group this renderer can put back, and remember the mask that says
+     * which of them the caller asked for.
+     *
+     * <p>The push reads the <em>live</em> value from whichever authority owns it - the raster mirror for blending, the
+     * colour write mask and culling, the backend's state mirror for the depth and alpha-test comparisons, this stub for
+     * the colour, the line and point sizes, the list base and the texture binding. Reading a copy of a copy is how the
+     * old stack ended up restoring "the last value the stub saw" rather than "the value in force"; the two disagree
+     * whenever the game's own {@code GlStateManager} cache skips the GL call (measured on the depth test and the alpha
+     * test, both of which the backend mirror is the authority for).
+     *
+     * <p>Bounded: a caller that pushes without popping (a mod's exception path) would otherwise grow this for the life
+     * of the process. Past {@link #MAX_ATTRIB_DEPTH} entries the push is dropped and counted, so the pop restores an
+     * older snapshot rather than nothing.
      */
     public static void celtium$pushAttrib(int mask) {
         CeltiumGlStub stub = installed;
@@ -2171,49 +2180,281 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         int caps = ATTRIB_CAPABILITIES.length;
-        long[] snapshot = new long[caps + 6];
+        LegacyAttribSnapshot snapshot = new LegacyAttribSnapshot(caps);
+        snapshot.mask = mask;
         for (int i = 0; i < caps; i++) {
-            snapshot[i] = stub.enables[ATTRIB_CAPABILITIES[i]] != 0 ? 1L : 0L;
+            snapshot.capabilities[i] = stub.enabledCap(ATTRIB_CAPABILITIES[i]);
         }
-        snapshot[caps] = Float.floatToRawIntBits(stub.currentRed);
-        snapshot[caps + 1] = Float.floatToRawIntBits(stub.currentGreen);
-        snapshot[caps + 2] = Float.floatToRawIntBits(stub.currentBlue);
-        snapshot[caps + 3] = Float.floatToRawIntBits(stub.currentAlpha);
-        snapshot[caps + 4] = Float.floatToRawIntBits(stub.lineWidth);
-        snapshot[caps + 5] = Float.floatToRawIntBits(stub.pointSize);
+        snapshot.red = stub.currentRed;
+        snapshot.green = stub.currentGreen;
+        snapshot.blue = stub.currentBlue;
+        snapshot.alpha = stub.currentAlpha;
+        snapshot.lineWidth = stub.lineWidth;
+        snapshot.pointSize = stub.pointSize;
+        snapshot.depthWrites = stub.attribDepthWrites();
+        snapshot.depthFunc = stub.attribDepthFunc();
+        snapshot.alphaFunc = stub.attribAlphaFunc();
+        snapshot.alphaReference = stub.attribAlphaReference();
+        snapshot.blendSourceRgb = stub.raster.blendSrcRgb();
+        snapshot.blendDestinationRgb = stub.raster.blendDstRgb();
+        snapshot.blendSourceAlpha = stub.raster.blendSrcAlpha();
+        snapshot.blendDestinationAlpha = stub.raster.blendDstAlpha();
+        snapshot.blendEquationRgb = stub.raster.blendEquationRgb();
+        snapshot.blendEquationAlpha = stub.raster.blendEquationAlpha();
+        snapshot.colorMask = stub.raster.colorMask();
+        snapshot.cullFace = stub.raster.cullFace();
+        snapshot.frontFace = stub.raster.frontFace();
+        snapshot.scissorX = stub.raster.scissorX();
+        snapshot.scissorY = stub.raster.scissorY();
+        snapshot.scissorWidth = stub.raster.scissorWidth();
+        snapshot.scissorHeight = stub.raster.scissorHeight();
+        snapshot.polygonOffsetFactor = stub.raster.polygonOffsetFactor();
+        snapshot.polygonOffsetUnits = stub.raster.polygonOffsetUnits();
+        snapshot.listBase = stub.listBase;
+        snapshot.activeTextureUnit = stub.textures.activeUnit();
+        snapshot.texture2d = stub.textures.texture2d();
+        stub.attribPushes++;
+        stub.noteAttribMask(mask);
+        if (stub.attribStack.size() >= MAX_ATTRIB_DEPTH) {
+            stub.attribOverflow++;
+            return;
+        }
         stub.attribStack.addLast(snapshot);
     }
 
+    /**
+     * {@code glPopAttrib}: put back the groups the corresponding push saved.
+     *
+     * <p>The rule is GL's: a group is restored when the <em>pushed</em> mask selected it. {@code GL_ENABLE_BIT} alone
+     * therefore restores the capability bits and leaves a {@code glColorMask} written inside the block in force - which
+     * is what a mod that mirrors GL depends on, and what the old "restore everything" made impossible to see.
+     * {@code -Dceltium.glstub.attribMasks=false} restores every modelled group regardless of the mask, which is the
+     * old behaviour and the A/B arm for this rule.
+     */
     public static void celtium$popAttrib() {
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
         }
-        long[] snapshot = stub.attribStack.pollLast();
+        LegacyAttribSnapshot snapshot = stub.attribStack.pollLast();
         if (snapshot == null) {
+            stub.attribUnmatchedPops++;
             return;
         }
-        int caps = ATTRIB_CAPABILITIES.length;
-        for (int i = 0; i < caps; i++) {
-            stub.setCapability(ATTRIB_CAPABILITIES[i], snapshot[i] != 0L);
-        }
-        stub.currentRed = Float.intBitsToFloat((int) snapshot[caps]);
-        stub.currentGreen = Float.intBitsToFloat((int) snapshot[caps + 1]);
-        stub.currentBlue = Float.intBitsToFloat((int) snapshot[caps + 2]);
-        stub.currentAlpha = Float.intBitsToFloat((int) snapshot[caps + 3]);
-        stub.lineWidth = Float.intBitsToFloat((int) snapshot[caps + 4]);
-        stub.pointSize = Float.intBitsToFloat((int) snapshot[caps + 5]);
-        // The group payload reads its colour from the backend mirror, not from these fields: restoring only the stub
-        // would leave the popped draw's tint as the next vanilla group's colour.
+        stub.attribPops++;
+        stub.restoreAttrib(snapshot);
+    }
+
+    /** The group-gated restore itself, beside the push so "saved here" and "put back there" cannot drift apart. */
+    private void restoreAttrib(LegacyAttribSnapshot snapshot) {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        if (backend != null) {
-            backend.setColor(stub.currentRed, stub.currentGreen, stub.currentBlue, stub.currentAlpha);
+        int restored = 0;
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.ENABLE_BIT)) {
+            for (int i = 0; i < ATTRIB_CAPABILITIES.length; i++) {
+                setCapability(ATTRIB_CAPABILITIES[i], snapshot.capabilities[i]);
+            }
+            restored |= LegacyAttribSnapshot.ENABLE_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.CURRENT_BIT)) {
+            this.currentRed = snapshot.red;
+            this.currentGreen = snapshot.green;
+            this.currentBlue = snapshot.blue;
+            this.currentAlpha = snapshot.alpha;
+            // The group payload reads its colour from the backend mirror, not from these fields: restoring only the
+            // stub would leave the popped draw's tint as the next vanilla group's colour.
+            if (backend != null) {
+                backend.setColor(this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+            }
+            restored |= LegacyAttribSnapshot.CURRENT_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.LINE_BIT)) {
+            this.lineWidth = snapshot.lineWidth;
+            restored |= LegacyAttribSnapshot.LINE_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.POINT_BIT)) {
+            this.pointSize = snapshot.pointSize;
+            restored |= LegacyAttribSnapshot.POINT_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.DEPTH_BUFFER_BIT)) {
+            this.attribDepthWrites = snapshot.depthWrites;
+            this.attribDepthFunc = snapshot.depthFunc;
+            // GL_DEPTH_WRITEMASK is answered from the enable record when no backend mirror exists, and the restore has
+            // to land there too or the query keeps reporting the pushed block's value.
+            this.enables[GL_DEPTH_WRITEMASK_CAP] = (byte) (snapshot.depthWrites ? 1 : 0);
+            if (backend != null) {
+                backend.setDepthMask(snapshot.depthWrites);
+                backend.depthFunc(snapshot.depthFunc);
+            }
+            restored |= LegacyAttribSnapshot.DEPTH_BUFFER_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.COLOR_BUFFER_BIT)) {
+            // GL puts the blend factors and equation, the colour write mask and the alpha test's comparison in
+            // GL_COLOR_BUFFER_BIT - the *enables* are GL_ENABLE_BIT, which is why this is a separate group.
+            this.raster.blendFunc(snapshot.blendSourceRgb, snapshot.blendDestinationRgb,
+                    snapshot.blendSourceAlpha, snapshot.blendDestinationAlpha);
+            this.raster.blendEquation(snapshot.blendEquationRgb, snapshot.blendEquationAlpha);
+            this.raster.colorMask(snapshot.colorMask);
+            this.attribAlphaFunc = snapshot.alphaFunc;
+            this.attribAlphaReference = snapshot.alphaReference;
+            if (backend != null) {
+                backend.setAlphaFunc(snapshot.alphaFunc, snapshot.alphaReference);
+            }
+            restored |= LegacyAttribSnapshot.COLOR_BUFFER_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.POLYGON_BIT)) {
+            this.raster.cullFace(snapshot.cullFace);
+            this.raster.frontFace(snapshot.frontFace);
+            this.raster.polygonOffset(snapshot.polygonOffsetFactor, snapshot.polygonOffsetUnits);
+            restored |= LegacyAttribSnapshot.POLYGON_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.SCISSOR_BIT)) {
+            this.raster.scissor(snapshot.scissorX, snapshot.scissorY,
+                    snapshot.scissorWidth, snapshot.scissorHeight);
+            restored |= LegacyAttribSnapshot.SCISSOR_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIST_BIT)) {
+            this.listBase = snapshot.listBase;
+            restored |= LegacyAttribSnapshot.LIST_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.TEXTURE_BIT)) {
+            this.textures.activeUnit(snapshot.activeTextureUnit);
+            this.textures.bindTexture2d(snapshot.texture2d);
+            restored |= LegacyAttribSnapshot.TEXTURE_BIT;
+        }
+        this.attribRestoredGroups += Integer.bitCount(restored);
+        this.attribUnrestoredGroups += Integer.bitCount(selectsAttrib(snapshot, LegacyAttribSnapshot.UNMODELLED_GROUPS));
+        this.lastAttribRestored = restored;
+        this.lastAttribMask = snapshot.mask;
+    }
+
+    /** {@return whether this pop restores {@code group}} - the mask rule, or the all-groups A/B arm. */
+    private static boolean restoresAttrib(LegacyAttribSnapshot snapshot, int group) {
+        return !ATTRIB_MASKS || snapshot.restores(group);
+    }
+
+    /** {@return the groups a push with this mask selects that this renderer cannot put back}. */
+    private static int selectsAttrib(LegacyAttribSnapshot snapshot, int groups) {
+        return snapshot.mask & groups;
+    }
+
+    /**
+     * {@code -Dceltium.glstub.attribMasks=false} restores every modelled group whatever the mask said.
+     *
+     * <p>It is the A/B arm for the mask rule, not a supported mode: the old behaviour is what the mask-selective
+     * measurements are compared against, and a leg that needs one number for both can run twice on one jar.
+     */
+    private static final boolean ATTRIB_MASKS = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.glstub.attribMasks", "true"));
+
+    /** The pushes a pop could not match, and the pushes dropped for depth - both visible in the census. */
+    private long attribUnmatchedPops;
+    private long attribOverflow;
+    private long attribPushes;
+    private long attribPops;
+    private long attribRestoredGroups;
+    private long attribUnrestoredGroups;
+    /** The mask of the last push and the groups its pop restored, for the one-line census. */
+    private int lastAttribMask;
+    private int lastAttribRestored;
+    /** Bounded histogram of the masks callers push: which groups the pack actually asks to be saved. */
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap attribMasks =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+    private static final int MAX_ATTRIB_MASKS = 8;
+    /** {@code GL_DEPTH_WRITEMASK}, {@code GL_DEPTH_FUNC} and the alpha test as this stub last heard them. */
+    private volatile boolean attribDepthWrites = true;
+    private volatile int attribDepthFunc = 0x0201;
+    private volatile int attribAlphaFunc = 0x0207;
+    private volatile float attribAlphaReference;
+
+    /** The stub's record of a raw or managed {@code glDepthMask}, for the push snapshot and the query fallback. */
+    public static void celtium$noteDepthMask(boolean mask) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.attribDepthWrites = mask;
+            stub.enables[GL_DEPTH_WRITEMASK_CAP] = (byte) (mask ? 1 : 0);
         }
     }
 
+    /** The stub's record of a raw or managed {@code glDepthFunc}. */
+    public static void celtium$noteDepthFunc(int func) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.attribDepthFunc = func;
+        }
+    }
+
+    /** The stub's record of a raw or managed {@code glAlphaFunc}. */
+    public static void celtium$noteAlphaFunc(int func, float reference) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.attribAlphaFunc = func;
+            stub.attribAlphaReference = reference;
+        }
+    }
+
+    private boolean attribDepthWrites() {
+        var vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$depthWritesLive() : this.attribDepthWrites;
+    }
+
+    private int attribDepthFunc() {
+        var vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$depthFuncGl() : this.attribDepthFunc;
+    }
+
+    private int attribAlphaFunc() {
+        var vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : this.attribAlphaFunc;
+    }
+
+    private float attribAlphaReference() {
+        var vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$alphaTestReference() : this.attribAlphaReference;
+    }
+
+    private void noteAttribMask(int mask) {
+        Long previous = this.attribMasks.get(mask);
+        if (previous != null) {
+            this.attribMasks.put(mask, previous.longValue() + 1L);
+        } else if (this.attribMasks.size() < MAX_ATTRIB_MASKS) {
+            this.attribMasks.put(mask, 1L);
+        }
+    }
+
+    /** {@return one line: how the pack pushes and pops attributes, and which selected groups went unrestored}. */
+    public static String attribCensus() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "absent";
+        }
+        StringBuilder line = new StringBuilder();
+        line.append("masks=").append(ATTRIB_MASKS)
+                .append(" pushes=").append(stub.attribPushes)
+                .append(" pops=").append(stub.attribPops)
+                .append(" unmatchedPops=").append(stub.attribUnmatchedPops)
+                .append(" overflow=").append(stub.attribOverflow)
+                .append(" restoredGroups=").append(stub.attribRestoredGroups)
+                .append(" selectedUnrestoredGroups=").append(stub.attribUnrestoredGroups)
+                .append(" last=0x").append(Integer.toHexString(stub.lastAttribMask))
+                .append("/0x").append(Integer.toHexString(stub.lastAttribRestored))
+                .append(" histogram=[");
+        boolean first = true;
+        for (it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry : stub.attribMasks.int2LongEntrySet()) {
+            if (!first) {
+                line.append(' ');
+            }
+            first = false;
+            line.append("0x").append(Integer.toHexString(entry.getIntKey())).append(':').append(entry.getLongValue());
+        }
+        return line.append(']').toString();
+    }
+
     /** Bounded legacy server-attribute stack. */
-    private final java.util.ArrayDeque<long[]> attribStack = new java.util.ArrayDeque<long[]>();
+    private final java.util.ArrayDeque<LegacyAttribSnapshot> attribStack =
+            new java.util.ArrayDeque<LegacyAttribSnapshot>();
+    /** GL's own stack has no documented limit; this one is bounded so an unbalanced mod cannot grow it forever. */
+    private static final int MAX_ATTRIB_DEPTH = 64;
 
     /**
      * {@code glPushClientAttrib/glPopClientAttrib} from the transformer's route. Legacy mods save the client vertex-array
@@ -4326,6 +4567,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         // -1 is "no binding recorded": texture and buffer names are generated ids and never negative, while 0 is
         // the GL "unbound" name a caller can legitimately store.
         this.textureBindings.defaultReturnValue(-1);
+        // GL's initial GL_DEPTH_WRITEMASK is GL_TRUE. The record existed but started at zero, so a query before any
+        // glDepthMask answered "writes disabled" - the opposite of the context's initial state.
+        this.enables[GL_DEPTH_WRITEMASK_CAP] = 1;
     }
 
     // ---- FunctionProvider ------------------------------------------------------------
@@ -6331,12 +6575,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x8B8D: // GL_CURRENT_PROGRAM
                 return this.currentProgram;
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC
+                // The mirror is the authority while a backend exists; without one the stub's own record is, which is
+                // what the attribute stack puts back and what a mod's raw glAlphaFunc reported here.
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : 0x0207; // GL_ALWAYS
+                return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : this.attribAlphaFunc;
             }
             case 0x0BC2: { // GL_ALPHA_TEST_REF
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : 0.0f;
+                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : this.attribAlphaReference;
                 return reference >= 0.5f ? 1 : 0;
             }
             case 0x0B50: return enabledCap(0x0B50) ? 1 : 0; // GL_LIGHTING
@@ -6376,9 +6622,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return this.matrixMode;
             case 0x0B74: { // GL_DEPTH_FUNC
                 // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
-                // touches this stub's own enable record.
+                // touches this stub's own enable record. With no backend the stub's record is the answer, the same one
+                // glPushAttrib(GL_DEPTH_BUFFER_BIT) saves and glPopAttrib puts back.
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$depthFuncGl() : 0x0201; // GL_LESS
+                return vulkan != null ? vulkan.celtium$depthFuncGl() : this.attribDepthFunc;
             }
             case 0x0D05: // GL_PACK_ALIGNMENT
                 return 4;
@@ -6607,6 +6854,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 for (int i = 0; i < 4; i++) {
                     putFloatOrDouble(out, i, ((mask >>> i) & 1), asDouble);
                 }
+                return;
+            }
+            case 0x0B72: { // GL_DEPTH_WRITEMASK, the same boolean state through the float query
+                // GL answers boolean-state parameters through every glGet* width; this case was missing, so a
+                // save/restore that reads the depth mask with glGetFloatv got the generic zero - which reads as
+                // "depth writes are off" and is exactly the state a pop is supposed to have restored.
+                putFloatOrDouble(out, 0, attribDepthWrites() ? 1.0f : 0.0f, asDouble);
                 return;
             }
             case 0x0C22: { // GL_COLOR_CLEAR_VALUE

@@ -42,21 +42,37 @@ ARM_C_X = DIRECT_X
 ARM_C_Y = TEX_CONTROL_Y
 ARM_C_OUTSIDE = (0, 0, 255)
 ARM_C_INSIDE = (255, 0, 0)
+#: The attribute arms: arm D at a third of the width, arm E at four fifths, both on the bottom row (from the screen).
+ARM_D_X = GUI_WIDTH // 3
+ARM_E_X = 4 * GUI_WIDTH // 5
+ATTRIB_COLOUR = (0, 255, 0)
+#: The state strings the arms report: the pushed block changes every key, and the pop has to put them all back.
+ATTRIB_BEFORE = "cm=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
+ATTRIB_INSIDE = "cm=0000,dm=0,bs=1,bd=0,dt=0,cf=1028,sb=1,2,3,4,po=7.0"
+ATTRIB_AFTER = ATTRIB_BEFORE
+#: The ENABLE_BIT-only arm: only the colour write mask is written inside it, so only that may survive the pop.
+ATTRIB_OUTSIDE = "cm=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
 WHITE = (255, 255, 255)
 MAGENTA = (255, 0, 255)
 
 
-def layout(frames=42, leaks=0):
+def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE, attrib_after=ATTRIB_AFTER,
+           attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None):
     """The layout `DisplayListLegacyScreen.describeLayout` prints, for a 427x240 GUI at scale 3."""
     return ("gui=%dx%d panel=%s square=%d slots=%d,%d triangle=%d,%d,%d direct=%d,%d,%d even=%d,%d odd=%d,%d "
             "armA=%d,%d,%d armB=%d,%d,%d texControl=%d,%d,%d "
             "armC=%d,%d,%d armCOutside=0,0,255 armCInside=255,0,0 "
             "colourAfterCompile=0,0,255 compileColourLeaks=%d compileColourFrames=%d "
+            "attribMask=0x4f20c armD=%d,%d,%d armE=%d,%d,%d attribColour=0,255,0 "
+            "attribBefore=%s attribInside=%s attribAfter=%s attribOutsideAfter=%s attribFrames=%d "
             "callColour=255,0,0 insideColour=0,255,0 frames=%d compiles=1 dumps=2 stages=displaylist-f40-a "
             "displaylist-f41-b" % (GUI_WIDTH, GUI_HEIGHT, PANEL, HALF, SLOT_A, SLOT_B, TRIANGLE_X, TRIANGLE_Y,
                                    TRIANGLE_R, DIRECT_X, TRIANGLE_Y, DIRECT_HALF, SLOT_A, SLOT_B, SLOT_B, SLOT_A,
                                    ARM_A_X, ARM_Y, ARM_HALF, ARM_B_X, ARM_Y, ARM_HALF, CENTRE_X, TEX_CONTROL_Y,
-                                   ARM_HALF, ARM_C_X, ARM_C_Y, ARM_HALF, leaks, frames, frames))
+                                   ARM_HALF, ARM_C_X, ARM_C_Y, ARM_HALF, leaks, frames,
+                                   ARM_D_X, ARM_C_Y, ARM_HALF, ARM_E_X, ARM_C_Y, ARM_HALF,
+                                   attrib_before, attrib_inside, attrib_after, attrib_outside,
+                                   frames if attrib_frames is None else attrib_frames, frames))
 
 
 def load_check():
@@ -66,7 +82,8 @@ def load_check():
     return module
 
 
-def frame(path, outer_y, inner_y, outer_colour, inner_colour, compile_layout=False, compile_colour_leak=False):
+def frame(path, outer_y, inner_y, outer_colour, inner_colour, compile_layout=False, compile_colour_leak=False,
+          attrib_restored=True, attrib_leaked=False):
     """Draws one frame of the scene at scale 3: backdrop, markers, the two squares, the loop and the controls.
 
     `compile_layout` paints the layout arms the way a renderer that keeps the compile-time vertex layout leaves them -
@@ -109,12 +126,20 @@ def frame(path, outer_y, inner_y, outer_colour, inner_colour, compile_layout=Fal
     arm(CENTRE_X, TEX_CONTROL_Y, MAGENTA)
     # Arm C: the caller's blue, or the colour the compile recorded - the failure shape.
     arm(ARM_C_X, ARM_C_Y, ARM_C_INSIDE if compile_colour_leak else ARM_C_OUTSIDE)
+    # The attribute arms: arm D's quad appears because its push selected GL_COLOR_BUFFER_BIT, arm E's does not because
+    # its push selected GL_ENABLE_BIT only. `attrib_leaked` paints arm E, which is the pop that ignores its mask.
+    if attrib_restored:
+        arm(ARM_D_X, ARM_C_Y, ATTRIB_COLOUR)
+    if attrib_leaked:
+        arm(ARM_E_X, ARM_C_Y, ATTRIB_COLOUR)
     image.save(path)
 
 
 class DisplayListLegacyCheckTest(unittest.TestCase):
     def run_check(self, outer_colour, inner_colour, compile_time_green_in_both=False, compile_layout=False,
-                  compile_colour_leak=False, leaks=0, second_stage_kept_only=False):
+                  compile_colour_leak=False, leaks=0, second_stage_kept_only=False, attrib_restored=True,
+                  attrib_leaked=False, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE,
+                  attrib_after=ATTRIB_AFTER, attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None):
         """Builds the two frames and runs the checker; returns (exit code, output)."""
         check = load_check()
         with tempfile.TemporaryDirectory() as tmp:
@@ -124,21 +149,27 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
             if compile_time_green_in_both:
                 # The failure shape: the colour set outside the compile was baked, so both squares are green.
                 frame(pictures / "displaylist-f40-a.png", SLOT_A, SLOT_B, (0, 255, 0), (0, 255, 0),
-                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak)
+                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
                 frame(pictures / "displaylist-f41-b.png", SLOT_B, SLOT_A, (0, 255, 0), (0, 255, 0),
-                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak)
+                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
             else:
                 frame(pictures / "displaylist-f40-a.png", SLOT_A, SLOT_B, outer_colour, inner_colour,
-                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak)
+                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
                 frame(pictures / "displaylist-f41-b.png", SLOT_B, SLOT_A, outer_colour, inner_colour,
-                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak)
+                      compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
             if second_stage_kept_only:
                 # A report line serialized just before the completion was recorded names the plain file; the harness
                 # only kept the completed copy. The check has to read it rather than call the frame missing.
                 plain = pictures / "displaylist-f41-b.png"
                 plain.rename(pictures / "displaylist-f41-b-kept.png")
             report = {
-                "displayListLayout": layout(leaks=leaks),
+                "displayListLayout": layout(leaks=leaks, attrib_before=attrib_before, attrib_inside=attrib_inside,
+                                            attrib_after=attrib_after, attrib_outside=attrib_outside,
+                                            attrib_frames=attrib_frames),
                 "displayListCompiles": 1,
                 "displayListDumpCount": 2,
                 "displayListDump_displaylist-f40-a": "screenshots/displaylist-f40-a.png completed=true frame=40",
@@ -175,14 +206,15 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
         self.assertIn("FAILED", output)
 
     def run_single_picture(self, outer_colour, inner_colour, compile_layout=False, compile_colour_leak=False,
-                           leaks=0):
+                           leaks=0, attrib_restored=True, attrib_leaked=False):
         """Judges one picture the way the reference (real GL) arm's game screenshot is judged."""
         check = load_check()
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
             picture = tmp / "gl-screenshot.png"
             frame(picture, SLOT_A, SLOT_B, outer_colour, inner_colour, compile_layout=compile_layout,
-                  compile_colour_leak=compile_colour_leak)
+                  compile_colour_leak=compile_colour_leak, attrib_restored=attrib_restored,
+                  attrib_leaked=attrib_leaked)
             report = tmp / "celtium-validation.json"
             report.write_text(json.dumps({"displayListLayout": layout(leaks=leaks), "displayListCompiles": 1}))
             import contextlib
@@ -235,6 +267,56 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
         self.assertEqual(0, code, output)
         self.assertIn("the compile-colour arm control is rejected", output)
         self.assertIn("'s list colour painted over arm C)", output)
+
+    def test_the_attribute_arms_are_judged_and_their_control_is_rejected(self):
+        """A clean run names the attribute arms; the control proves the arm-E rule can fail."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0))
+        self.assertEqual(0, code, output)
+        self.assertIn("the attribute-mask control is rejected", output)
+        self.assertIn("'s restored quad pasted into arm E)", output)
+        self.assertIn("armD_green=", output)
+        self.assertIn("armE_green=", output)
+
+    def test_a_missing_restored_quad_fails(self):
+        """The pop put the colour write mask back but the picture does not show the quad: the pipeline disagrees."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), attrib_restored=False)
+        self.assertEqual(1, code, "a restored push whose quad is absent must not pass: " + output)
+        self.assertIn("armD_green=0", output)
+        self.assertIn("the pop did not put the colour write mask back", output)
+
+    def test_a_quad_from_an_enable_only_push_fails(self):
+        """GL_ENABLE_BIT does not save the colour write mask, so arm E's quad must not be in the picture."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), attrib_leaked=True)
+        self.assertEqual(1, code, "a pop that restored a group its mask did not select must not pass: " + output)
+        self.assertIn("the pop restored a group the mask did not select", output)
+
+    def test_a_pop_that_did_not_restore_the_selected_groups_fails(self):
+        """The state readback is its own instrument: a restore that misses a group is named even if the picture looks
+        right, and the group is named by key."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0),
+                                      attrib_after="cm=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0")
+        self.assertEqual(1, code, "a pop that left the colour write mask off must not pass: " + output)
+        self.assertIn("glPopAttrib did not put back cm", output)
+
+    def test_an_enable_only_push_that_restored_the_colour_mask_fails(self):
+        """The old behaviour - restore everything regardless of the mask - is exactly this readback."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), attrib_outside=ATTRIB_BEFORE)
+        self.assertEqual(1, code, "restoring a group outside the pushed mask must not pass: " + output)
+        self.assertIn("a glPushAttrib(GL_ENABLE_BIT) restored the colour write mask", output)
+
+    def test_a_probe_that_changed_nothing_fails(self):
+        """A readback whose inside state equals its before state measured nothing, and must not be read as a restore."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), attrib_inside=ATTRIB_BEFORE)
+        self.assertEqual(1, code, "a vacuous attribute probe must not pass: " + output)
+        self.assertIn("the pushed block did not change", output)
+
+    def test_a_layout_without_the_attribute_arms_is_refused(self):
+        """A dump from before arms D and E existed cannot answer the mask rule, so it is refused rather than guessed."""
+        check = load_check()
+        old = layout().replace("attribMask=0x4f20c armD=%d,%d,%d armE=%d,%d,%d attribColour=0,255,0 " % (
+            ARM_D_X, ARM_C_Y, ARM_HALF, ARM_E_X, ARM_C_Y, ARM_HALF), "")
+        with self.assertRaises(SystemExit):
+            check.layout_of({"displayListLayout": old})
 
     def test_a_layout_without_the_compile_colour_arm_is_refused(self):
         """A dump from before arm C existed has no rectangle for it, so the compile-colour rule cannot be judged."""

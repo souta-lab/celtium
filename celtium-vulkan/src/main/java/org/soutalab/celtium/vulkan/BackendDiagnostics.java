@@ -21,6 +21,7 @@ final class BackendDiagnostics {
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
                 + "celtium/clears[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearCensus() + "] "
                 + "celtium/lists[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.listCensus() + "] "
+                + "celtium/attrib[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.attribCensus() + "] "
                 + "celtium/legacyListRuns[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.legacyListCensus() + "] "
                 + "celtium/vulkan-check passes=" + b.terrainStatistics.passSubmissions() + " skipped=" + b.terrainStatistics.passSkips() + " errors="
                 + b.terrainStatistics.passErrors() + " lastDraw=" + b.terrainStatistics.lastDrawCommands() + " lastSections=" + b.terrainStatistics.lastSectionsDrawn()

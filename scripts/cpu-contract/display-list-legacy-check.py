@@ -101,6 +101,7 @@ or with explicit inputs:
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 from PIL import Image
@@ -123,6 +124,9 @@ MARGIN = 2
 #: It is lower than SLOT_INK because the arms are deliberately small: they share the middle band with the four elements
 #: the earlier scene already placed there.
 ARM_INK = 400
+#: The attribute arms draw one green quad each, the same 20x20 GUI units as the other arms, so the layout arms' floor is
+#: theirs too. The second arm's quad must leave *no* ink, so its counter is judged against a floor instead of a count.
+ATTRIB_EMPTY_INK = 40
 
 
 def parse_args(argv):
@@ -155,6 +159,28 @@ def numbers(fields, key):
     return [int(v) for v in value.split(",")] if value else []
 
 
+#: The state keys the attribute arms read around their push and pop. They are the groups the two arms differ in:
+#: colour write mask, depth write mask, blend source/destination, depth-test enable, cull mode, scissor box and polygon
+#: offset factor. Each arm writes all of them inside its push, so "the probe changed nothing" is a failure too.
+ATTRIB_STATE_KEYS = ("cm", "dm", "bs", "bd", "dt", "cf", "sb", "po")
+
+
+def parse_attrib_state(text):
+    """{@return} one arm's readback as {key: value}, or {} when the scene did not report it.
+
+    The values are the GL queries' answers joined with commas inside a single report token, so the split is on the
+    comma that starts a new key - `sb=0,0,1280,720` is one value, and a plain `text.split(",")` would cut it in four.
+    """
+    if not text or text == "none":
+        return {}
+    state = {}
+    for token in re.split(r",(?=[a-z]+=)", text):
+        if "=" in token:
+            key, value = token.split("=", 1)
+            state[key] = value
+    return state
+
+
 def layout_of(report):
     """{@return} the scene's resolved layout: GUI size, panel rect, slot centres, square half, triangle, both slots."""
     text = report.get("displayListLayout")
@@ -184,13 +210,22 @@ def layout_of(report):
     arm_c = numbers(fields, "armC")
     arm_c_outside = numbers(fields, "armCOutside")
     arm_c_inside = numbers(fields, "armCInside")
+    arm_d = numbers(fields, "armD")
+    arm_e = numbers(fields, "armE")
+    attrib_colour = numbers(fields, "attribColour")
+    attrib_before = parse_attrib_state(fields.get("attribBefore", "none"))
+    attrib_inside = parse_attrib_state(fields.get("attribInside", "none"))
+    attrib_after = parse_attrib_state(fields.get("attribAfter", "none"))
+    attrib_outside_after = parse_attrib_state(fields.get("attribOutsideAfter", "none"))
     if (len(panel) != 4 or len(slots) != 2 or len(triangle) != 3 or len(direct) != 3
             or len(even) != 2 or len(odd) != 2 or len(call_colour) != 3 or len(inside_colour) != 3
             or len(arm_a) != 3 or len(arm_b) != 3 or len(tex_control) != 3
-            or len(arm_c) != 3 or len(arm_c_outside) != 3 or len(arm_c_inside) != 3):
-        raise SystemExit("displayListLayout is not the expected shape (the layout arms armA=/armB=/texControl= and"
-                         " the compile-colour arm armC=/armCOutside=/armCInside= included; a dump from before they"
-                         " existed cannot be judged): " + text)
+            or len(arm_c) != 3 or len(arm_c_outside) != 3 or len(arm_c_inside) != 3
+            or len(arm_d) != 3 or len(arm_e) != 3 or len(attrib_colour) != 3):
+        raise SystemExit("displayListLayout is not the expected shape (the layout arms armA=/armB=/texControl=, the"
+                         " compile-colour arm armC=/armCOutside=/armCInside= and the attribute arms"
+                         " armD=/armE=/attribColour= included; a dump from before they existed cannot be judged): "
+                         + text)
     return {
         "gui": (gui_width, gui_height),
         "panel": panel,
@@ -206,6 +241,15 @@ def layout_of(report):
         "armC": arm_c,
         "arm_c_outside": arm_c_outside,
         "arm_c_inside": arm_c_inside,
+        "armD": arm_d,
+        "armE": arm_e,
+        "attrib_colour": attrib_colour,
+        "attrib_mask": fields.get("attribMask", ""),
+        "attrib_before": attrib_before,
+        "attrib_inside": attrib_inside,
+        "attrib_after": attrib_after,
+        "attrib_outside_after": attrib_outside_after,
+        "attrib_frames": int(fields.get("attribFrames", "0")),
         "call_colour": call_colour,
         "inside_colour": inside_colour,
         "frames": int(fields.get("frames", "0")),
@@ -359,6 +403,12 @@ def arm_reading(image, layout, scale):
     rect = arm_rect_for(scale, (x, y), half)
     reading["armC_outside"] = count_colour(image, rect, colour_mask(layout["arm_c_outside"]))
     reading["armC_inside"] = count_colour(image, rect, colour_mask(layout["arm_c_inside"]))
+    # The attribute arms are one colour, so the count is the whole question: arm D's quad appears because its push
+    # selected the colour group, arm E's does not because its push did not.
+    for name, key in (("armD", "armD"), ("armE", "armE")):
+        ax, ay, ahalf = layout[key]
+        reading[name + "_green"] = count_colour(image, arm_rect_for(scale, (ax, ay), ahalf),
+                                                colour_mask(layout["attrib_colour"]))
     return reading
 
 
@@ -391,6 +441,61 @@ def arm_c_failures(reading, label):
         failures.append(label + ": the colour recorded inside GL_COMPILE is the current colour after glEndList "
                         "(armC_inside=" + str(reading["armC_inside"]) + " px); GL runs that command at glCallList, not "
                         "at the compile")
+    return failures
+
+
+def attrib_state_failures(layout, label):
+    """{@return} the named failures of the attribute arms' state readback, or [] when the mask rule held.
+
+    Three claims, each a way the stack can be wrong:
+
+    * the probe changed the state it reports (a renderer that ignored the writes would otherwise "restore" trivially);
+    * the pop put every group its mask selected back (`attribAfter` == `attribBefore`);
+    * the push that selected only `GL_ENABLE_BIT` did *not* put the colour write mask back - GL's rule, and the exact
+      superset the old "restore everything" stack got wrong.
+    """
+    label = label + ": "
+    if layout["attrib_frames"] <= 0:
+        return [label + "the attribute arms never ran (attribFrames=0), so the mask rule was not measured"]
+    before = layout["attrib_before"]
+    inside = layout["attrib_inside"]
+    after = layout["attrib_after"]
+    outside = layout["attrib_outside_after"]
+    if not before or not inside or not after or not outside:
+        return [label + "the attribute arms reported no state readback (attribBefore/attribInside/attribAfter/"
+                        "attribOutsideAfter missing)"]
+    missing = [key for key in ATTRIB_STATE_KEYS if key not in before or key not in inside
+               or key not in after or key not in outside]
+    if missing:
+        return [label + "the attribute arms' readback is missing " + ",".join(missing)]
+    failures = []
+    unchanged = [key for key in ATTRIB_STATE_KEYS if inside.get(key) == before.get(key)]
+    if unchanged:
+        failures.append(label + "the pushed block did not change " + ",".join(unchanged)
+                        + " (before=" + str(before) + " inside=" + str(inside) + "); the probe measured nothing")
+    stale = [key for key in ATTRIB_STATE_KEYS if after.get(key) != before.get(key)]
+    if stale:
+        failures.append(label + "glPopAttrib did not put back " + ",".join(stale) + " (before=" + str(before)
+                        + " after=" + str(after) + "); the mask selected those groups")
+    if outside.get("cm") != inside.get("cm"):
+        failures.append(label + "a glPushAttrib(GL_ENABLE_BIT) restored the colour write mask (inside="
+                        + str(inside.get("cm")) + " after=" + str(outside.get("cm")) + "); GL_ENABLE_BIT saves "
+                        "capabilities only, and GL_COLOR_WRITEMASK is GL_COLOR_BUFFER_BIT state")
+    return failures
+
+
+def attrib_picture_failures(reading, label):
+    """{@return} the attribute arms' picture failures: the restored push draws, the unrestricted push does not."""
+    failures = []
+    drawn = reading.get("armD_green", 0)
+    suppressed = reading.get("armE_green", 0)
+    if drawn < ARM_INK:
+        failures.append(label + ": the quad drawn after a push that selected GL_COLOR_BUFFER_BIT left no ink "
+                        "(armD_green=" + str(drawn) + " px); the pop did not put the colour write mask back")
+    if suppressed >= ATTRIB_EMPTY_INK:
+        failures.append(label + ": the quad drawn after a push that selected only GL_ENABLE_BIT is in the picture "
+                        "(armE_green=" + str(suppressed) + " px); the pop restored a group the mask did not select, "
+                        "which GL does not do")
     return failures
 
 
@@ -502,6 +607,8 @@ def single_picture_report(image, layout, scale, label):
                      arms["texControl_magenta"], arms["armC_outside"], arms["armC_inside"]))
     failures.extend(arm_failures(arms, label))
     failures.extend(compile_colour_failures(layout, label))
+    failures.extend(attrib_state_failures(layout, label))
+    failures.extend(attrib_picture_failures(arms, label))
     reading = {"stage": label, "band0_red": bands[0][0], "band0_green": bands[0][1],
                "band1_red": bands[1][0], "band1_green": bands[1][1], "triangle_cyan": cyan, "direct_yellow": yellow,
                "outer_band": red_bands[0] if len(red_bands) == 1 else -1}
@@ -567,6 +674,21 @@ def main(argv):
                 if not compile_colour_control_ok:
                     failures.append("the arm-C positive control was accepted: a picture with the colour recorded "
                                     "inside the compile over the caller-colour quad read as correct")
+        # Arm D's restored green pasted over arm E: the picture a pop that ignores its mask leaves. The arm-E rule
+        # above has to reject it.
+        attrib_control_ok = None
+        if reading.get("armD_green", 0) >= ARM_INK:
+            painted = image.copy()
+            if copy_square(painted, image, scale, (layout["armD"][0], layout["armD"][1]),
+                           (layout["armE"][0], layout["armE"][1]), layout["armE"][2]):
+                painted_reading = analyse(painted, layout, scale, "control(attrib-mask)")
+                attrib_control_ok = bool(attrib_picture_failures(painted_reading, "control"))
+                lines.append("control (restored quad pasted into arm E) armD_green="
+                             + str(painted_reading["armD_green"]) + " armE_green="
+                             + str(painted_reading["armE_green"]) + " rejected=" + str(attrib_control_ok))
+                if not attrib_control_ok:
+                    failures.append("the attribute-mask positive control was accepted: a picture with the restored "
+                                    "quad in the arm whose push did not select the colour group read as correct")
         print("layout: " + layout["text"])
         for line in lines:
             print(line)
@@ -580,7 +702,8 @@ def main(argv):
                   + " controls"
                   + ("" if control_ok is None else "; the baked-colour positive control is rejected")
                   + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected")
-                  + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected"))
+                  + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected")
+                  + ("" if attrib_control_ok is None else "; the attribute-mask control is rejected"))
         if args.json:
             pathlib.Path(args.json).write_text(json.dumps({
                 "leg": args.leg, "picture": str(args.picture), "passed": not failures,
@@ -588,6 +711,7 @@ def main(argv):
                 "control_baked_colour_rejected": control_ok,
                 "control_compile_layout_rejected": layout_control_ok,
                 "control_compile_colour_rejected": compile_colour_control_ok,
+                "control_attrib_mask_rejected": attrib_control_ok,
                 "failures": failures}, indent=2) + "\n")
         return 0 if not failures else 1
     
@@ -683,6 +807,17 @@ def main(argv):
         if leak_failed:
             passed = False
             failures.extend(leak_failed)
+        attrib_failed = attrib_picture_failures(reading, stage)
+        if attrib_failed:
+            passed = False
+            failures.extend(attrib_failed)
+
+    # The attribute arms' state readback: the same in every frame, so it is judged once. The picture half ran per stage
+    # above, where the ink is.
+    state_failed = attrib_state_failures(layout, next(iter(sorted(readings)), "measurement"))
+    if state_failed:
+        passed = False
+        failures.extend(state_failed)
 
     # The panel's markers must be where the layout says, or the picture is of something else.
     for stage, (image, scale, reading) in sorted(readings.items()):
@@ -762,6 +897,25 @@ def main(argv):
                 failures.append("the arm-C positive control was accepted: a picture with the colour recorded inside the "
                                 "compile over the caller-colour quad read as correct")
 
+    # Fourth positive control: arm D's restored green pasted over arm E, which is the picture a renderer whose pop
+    # ignores the mask leaves. The arm-E assertion above has to reject it.
+    attrib_control_ok = None
+    if ordered:
+        (stage_first, (image_first, scale_first, reading_first)) = ordered[0]
+        if reading_first.get("armD_green", 0) >= ARM_INK:
+            painted = image_first.copy()
+            if copy_square(painted, image_first, scale_first, (layout["armD"][0], layout["armD"][1]),
+                           (layout["armE"][0], layout["armE"][1]), layout["armE"][2]):
+                painted_reading = analyse(painted, layout, scale_first, "control(attrib-mask)")
+                attrib_control_ok = bool(attrib_picture_failures(painted_reading, "control"))
+                report_lines.append("control (" + stage_first + "'s restored quad pasted into arm E) armD_green="
+                                    + str(painted_reading["armD_green"]) + " armE_green="
+                                    + str(painted_reading["armE_green"]) + " rejected=" + str(attrib_control_ok))
+                if not attrib_control_ok:
+                    passed = False
+                    failures.append("the attribute-mask positive control was accepted: a picture with the restored "
+                                    "quad in the arm whose push did not select the colour group read as correct")
+
     print("layout: " + layout["text"])
     for line in report_lines:
         print(line)
@@ -775,14 +929,16 @@ def main(argv):
               + " a compile's recorded colour does not survive its glEndList"
               + ("" if control_ok is None else "; the positive control reads as the baked-colour failure")
               + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected")
-              + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected"))
+              + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected")
+              + ("" if attrib_control_ok is None else "; the attribute-mask control is rejected"))
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({
             "leg": args.leg, "passed": passed and not failures, "layout": layout["text"],
             "readings": {stage: reading for stage, (_, _, reading) in readings.items()},
             "control_baked_colour_detected": control_ok,
             "control_compile_layout_rejected": layout_control_ok,
-            "control_compile_colour_rejected": compile_colour_control_ok, "failures": failures}, indent=2) + "\n")
+            "control_compile_colour_rejected": compile_colour_control_ok,
+            "control_attrib_mask_rejected": attrib_control_ok, "failures": failures}, indent=2) + "\n")
     return 0 if passed and not failures else 1
 
 
