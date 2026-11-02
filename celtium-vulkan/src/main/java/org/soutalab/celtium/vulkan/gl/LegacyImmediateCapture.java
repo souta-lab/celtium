@@ -37,6 +37,14 @@ import org.lwjgl.system.MemoryUtil;
  * the compile matrix put it, which is not where the list is used; refused (the previous rule) the list stays empty and
  * every replay draws nothing. The run is therefore handed to {@link CompiledRunSink}, which owns a copy of the
  * vertices and replays them with the matrix and state current at {@code glCallList} time.</li>
+ * <li><b>Where the current colour and texture coordinate come from is recorded with the run.</b> A display list
+ * compiles the <em>commands</em>, not the values the vertices happened to see: a {@code glVertex} written inside a list
+ * takes the current colour and texture coordinate <em>at {@code glCallList} time</em> unless the list itself sets them
+ * with a {@code glColor}/{@code glTexCoord} command. The capture therefore carries, per run, whether the colour and the
+ * coordinate were last set by a command <em>inside</em> a compile (the replay applies it in order, so the baked bytes
+ * are right) or <em>outside</em> one (the replay has to substitute the call-time value), and whether the list changed
+ * one of them <em>between</em> the run's vertices (the baked per-vertex values are the only way to keep that mid-run
+ * change). See {@link CompiledRunSink#record}.</li>
  * <li><b>The trailing vertices of an incomplete primitive are ignored, as GL ignores them.</b> A run that contains at
  * least one complete primitive is cut to whole primitives before it is offered ({@link #wholePrimitives}) and the cut
  * vertices are counted; a run with none is offered unchanged so the renderer's own refusal names it. Refusing the
@@ -82,9 +90,12 @@ public final class LegacyImmediateCapture {
          * @param count      how many vertices the run holds
          * @param drawMode   the GL primitive the run was opened with
          * @param address    the first vertex's address in this capture's buffer
+         * @param attributes which of the run's per-vertex attributes were set outside the compile and therefore have to
+         *                   follow the state current at {@code glCallList} - the {@code ATTRIBUTE_*} flags in
+         *                   {@link CompiledLegacyRun}
          * @return whether the run was taken; a refusal keeps the reason at the caller
          */
-        boolean record(int format, int stride, int count, int drawMode, long address);
+        boolean record(int format, int stride, int count, int drawMode, long address, int attributes);
     }
 
     /** Decides whether the renderer can draw a primitive at all; returns the reason when it cannot. */
@@ -143,6 +154,29 @@ public final class LegacyImmediateCapture {
     private float green = 1.0f;
     private float blue = 1.0f;
     private float alpha = 1.0f;
+
+    /**
+     * Whether a {@code glNewList} compile is open right now.
+     * <p>
+     * Needed by the attribute tracking below and by nothing else: a {@code glColor}/{@code glTexCoord} that arrives
+     * while this is true is a command <em>inside</em> the list, so the replay will apply it in order and the baked
+     * bytes are right; one that arrives while it is false is the caller's state, which a display list does not freeze.
+     */
+    private boolean compileOpen;
+    /** Whether the current colour was last set by a command that arrived inside a compile. */
+    private boolean colourSetInList;
+    /** Whether the current texture coordinate was last set by a command that arrived inside a compile. */
+    private boolean texSetInList;
+    /** The provenance of the values the open run's first vertex carried. */
+    private boolean runColourInList;
+    private boolean runTexInList;
+    /** Whether the list changed the colour or the coordinate between this run's vertices. */
+    private boolean colourChangedInRun;
+    private boolean texChangedInRun;
+    /** How many compiled runs left an attribute to the state at {@code glCallList}, and how many kept baked values. */
+    private long compiledCallStateColour;
+    private long compiledCallStateTex;
+    private long compiledMidRunChanges;
 
     private long runs;
     private long submittedRuns;
@@ -206,6 +240,11 @@ public final class LegacyImmediateCapture {
         this.mode = drawMode;
         this.count = 0;
         this.compiling = compilingList;
+        // The provenance the first vertex will carry. Taken before the gate, so a refused run leaves no half-state.
+        this.runColourInList = this.colourSetInList;
+        this.runTexInList = this.texSetInList;
+        this.colourChangedInRun = false;
+        this.texChangedInRun = false;
         String unsupported = gate == null ? null : gate.unsupportedReason(drawMode);
         if (unsupported != null) {
             // Asked before the compile branch so a list cannot file geometry the replay would have to refuse: the same
@@ -288,6 +327,12 @@ public final class LegacyImmediateCapture {
 
     /** {@code glTexCoord2f}: the coordinate every following vertex carries until it is set again. */
     public void texCoord(float u, float v) {
+        if (this.active && this.compiling) {
+            // A coordinate that changes between two vertices of a compiled run: the replay submits the run as one block
+            // under the state at glCallList, so the per-vertex bytes are the only place that change can live.
+            this.texChangedInRun = true;
+        }
+        this.texSetInList = this.compileOpen;
         this.texU = u;
         this.texV = v;
     }
@@ -366,10 +411,44 @@ public final class LegacyImmediateCapture {
 
     /** {@code glColor4f}: the colour every following vertex carries until it is set again. */
     public void color(float red, float green, float blue, float alpha) {
+        if (this.active && this.compiling) {
+            this.colourChangedInRun = true;
+        }
+        this.colourSetInList = this.compileOpen;
         this.red = red;
         this.green = green;
         this.blue = blue;
         this.alpha = alpha;
+    }
+
+    /**
+     * Tells the capture whether a {@code glNewList} compile is open, which decides where the current colour and texture
+     * coordinate came from.
+     *
+     * <p>The flags are reset when a compile closes: under {@code GL_COMPILE} the commands were stored, not executed, so
+     * a {@code glColor} inside the list does not become the caller's current colour - whatever was current before the
+     * compile still is. The capture's mirror is not rolled back (the backend's colour mirror is written by the same
+     * call), so a run after the compile is marked "set outside" and its replay takes the call-time value, which is the
+     * answer that does not depend on the stale mirror.
+     *
+     * @param open whether a compile is open
+     */
+    public void setCompileOpen(boolean open) {
+        this.compileOpen = open;
+        if (!open) {
+            this.colourSetInList = false;
+            this.texSetInList = false;
+        }
+    }
+
+    /** {@return the current texture coordinate's s}, for a compiled run that takes it at {@code glCallList}. */
+    public float texU() {
+        return this.texU;
+    }
+
+    /** {@return the current texture coordinate's t}, for a compiled run that takes it at {@code glCallList}. */
+    public float texV() {
+        return this.texV;
     }
 
     /** The current colour's red component, for the {@code glGetFloatv(GL_CURRENT_COLOR)} mirror. */
@@ -474,7 +553,8 @@ public final class LegacyImmediateCapture {
                 this.lastRefusal = "a display list is being compiled and no list record is available";
                 return false;
             }
-            if (!compiledSink.record(this.format, this.stride, offer, this.mode, this.address)) {
+            int attributes = attributeFlags();
+            if (!compiledSink.record(this.format, this.stride, offer, this.mode, this.address, attributes)) {
                 // The sink owns the reason (out of memory, the module's byte bound); counted here as well so the
                 // capture's own summary is not the quiet one.
                 this.listRefusals++;
@@ -483,6 +563,15 @@ public final class LegacyImmediateCapture {
                     this.lastRefusal = "the display-list record refused it";
                 }
                 return false;
+            }
+            if ((attributes & CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL) != 0) {
+                this.compiledCallStateColour++;
+            }
+            if ((attributes & CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL) != 0) {
+                this.compiledCallStateTex++;
+            }
+            if (this.colourChangedInRun || this.texChangedInRun) {
+                this.compiledMidRunChanges++;
             }
             this.compiledRuns++;
             this.compiledVertices += offer;
@@ -533,6 +622,41 @@ public final class LegacyImmediateCapture {
     public void noteRefusal(String reason) {
         this.refusals++;
         this.lastRefusal = reason == null ? "" : reason;
+    }
+
+    /**
+     * The attribute provenance of the run that just closed, as {@link CompiledLegacyRun} flags.
+     *
+     * <p>An attribute is left to the state at {@code glCallList} when the list never set it (so the caller's current
+     * value is what GL would use) and the list did not change it between the run's vertices. If the list did set it,
+     * either before the run or between its vertices, the baked per-vertex bytes are what replay reproduces.
+     *
+     * @return the flags for {@link CompiledRunSink#record}
+     */
+    private int attributeFlags() {
+        int flags = 0;
+        if (!this.runColourInList && !this.colourChangedInRun) {
+            flags |= CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL;
+        }
+        if (!this.runTexInList && !this.texChangedInRun) {
+            flags |= CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL;
+        }
+        return flags;
+    }
+
+    /** {@return how many compiled runs take their colour from the state at {@code glCallList}}. */
+    public long compiledCallStateColour() {
+        return this.compiledCallStateColour;
+    }
+
+    /** {@return how many compiled runs take their texture coordinate from the state at {@code glCallList}}. */
+    public long compiledCallStateTex() {
+        return this.compiledCallStateTex;
+    }
+
+    /** {@return how many compiled runs kept baked bytes because the list changed an attribute between vertices}. */
+    public long compiledMidRunChanges() {
+        return this.compiledMidRunChanges;
     }
 
     /** {@return the run's first vertex address, for a caller that wants the sink's view of it}. */
@@ -656,9 +780,13 @@ public final class LegacyImmediateCapture {
     }
 
     /** GL's {@code glColor4f} saturates before the conversion, and so does this. */
-    private static byte toByte(float value) {
+    static byte colourByte(float value) {
         float clamped = value <= 0.0f ? 0.0f : value >= 1.0f ? 1.0f : value;
         return (byte) (int) (clamped * 255.0f + 0.5f);
+    }
+
+    private static byte toByte(float value) {
+        return colourByte(value);
     }
 
     /**

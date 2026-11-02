@@ -1272,6 +1272,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         stub.compilingList = list;
         stub.compilingListMode = mode;
+        // Where the current colour and texture coordinate came from decides whether a compiled run keeps its baked
+        // bytes or takes the values current at glCallList; see CompiledLegacyRun.
+        if (stub.legacyCapture != null) {
+            stub.legacyCapture.setCompileOpen(list != 0);
+        }
         // The model capture takes a generation per compile. The vanilla path notifies it from its own mixin before
         // this call (a harmless second reset, since no quad arrives between them); a mod's raw glNewList reaches only
         // this point, and without the notification its recompiled list kept the mesh built from the old contents.
@@ -1311,6 +1316,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         stub.compilingList = 0;
         stub.compilingListMode = 0;
+        if (stub.legacyCapture != null) {
+            stub.legacyCapture.setCompileOpen(false);
+        }
     }
 
     /**
@@ -2339,6 +2347,19 @@ public final class CeltiumGlStub implements FunctionProvider {
             Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyListCompile", "true"));
 
     /**
+     * Whether a compiled legacy run takes an attribute the list never set from the state current at {@code glCallList},
+     * which is GL's rule for a display list; {@code -Dceltium.glstub.legacyCallState=false} keeps the bytes baked at
+     * compile time, which is the behaviour that shipped with display-list replay.
+     * <p>
+     * On by default because baking is a wrong picture and not a smaller one: a mod that compiles a mesh once and draws
+     * it in a different colour per instance gets the compile-time colour under the baked rule, and OpenComputers'
+     * screen text, AE-Net-Vis' link renderers and GregTech's marker all set the colour immediately before
+     * {@code glCallList}. The switch keeps the old answer reachable for an A/B on one JAR.
+     */
+    private static final boolean LEGACY_CALL_STATE =
+            Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyCallState", "true"));
+
+    /**
      * The most bytes the stub will hold for compiled legacy runs across every list.
      * <p>
      * Bounded because a mod is entitled to compile a large list and recompile it: the copies are released with their
@@ -2362,6 +2383,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Bytes that arrived after the bound was reached, and runs that could not be copied at all. */
     private long legacyListRunBytesDropped;
     private long legacyListRunReplayRefusals;
+    /** Replays that substituted the state current at glCallList into an attribute the list never set. */
+    private long legacyListRunsCallState;
     /** Bytes held per compiled list name, so a replaced or deleted list gives its allowance back. */
     private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap legacyListRunBytesByList =
             new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
@@ -2678,8 +2701,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                         + (backend == null ? " (no backend)" : ": " + backend.lastRefusal()));
             }
             return accepted;
-        }, (layout, stride, count, drawMode, address) ->
-                stub.recordLegacyRunForList(layout, stride, count, drawMode, address));
+        }, (layout, stride, count, drawMode, address, attributes) ->
+                stub.recordLegacyRunForList(layout, stride, count, drawMode, address, attributes));
         if (taken && stub.legacyCapture.submittedRuns() == 1) {
             System.out.println("[Celtium] CELTIUM_LEGACY_IMMEDIATE submitted=1 vertices=" + vertices + " mode=" + mode
                     + " format=" + format + " (legacy glBegin geometry now reaches the immediate path)");
@@ -2710,7 +2733,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      *
      * @return whether the run was filed
      */
-    private boolean recordLegacyRunForList(int format, int stride, int count, int drawMode, long address) {
+    private boolean recordLegacyRunForList(int format, int stride, int count, int drawMode, long address,
+                                           int attributes) {
         List<Object[]> open = this.openList;
         if (open == null || this.compilingList <= 0 || count <= 0) {
             return false;
@@ -2720,7 +2744,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.legacyListRunBytesDropped += bytes;
             return false;
         }
-        CompiledLegacyRun run = CompiledLegacyRun.copy(format, stride, count, drawMode, address);
+        CompiledLegacyRun run = CompiledLegacyRun.copy(format, stride, count, drawMode, address, attributes);
         if (run == null) {
             this.legacyListRunBytesDropped += bytes;
             return false;
@@ -2735,11 +2759,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.legacyListRunsRecorded++;
         this.legacyListRunVertices += count;
         if (this.legacyListRunLogs < LEGACY_LIST_RUN_LOG_LIMIT) {
-            String key = drawMode + "/" + count + "/" + format;
+            String key = drawMode + "/" + count + "/" + format + "/" + attributes;
             if (this.legacyListRunSignatures.add(key)) {
                 this.legacyListRunLogs++;
                 System.out.println("[Celtium] CELTIUM_LEGACY_LIST_RUN list=" + this.compilingList + " mode=" + drawMode
-                        + " vertices=" + count + " format=" + format + " bytes=" + bytes
+                        + " vertices=" + count + " format=" + format + " bytes=" + bytes + " attributes=" + attributes
                         + " (compiled into the list; glCallList replays it with the state current then)");
             }
         }
@@ -2757,6 +2781,20 @@ public final class CeltiumGlStub implements FunctionProvider {
     private void replayLegacyRun(CompiledLegacyRun run) {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (LEGACY_CALL_STATE && (run.attributes() & (CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL
+                | CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL)) != 0) {
+            // GL's rule, applied here because the copy is the run's vertices: an attribute the list never set is the
+            // caller's current value, so the replay writes it into the copy before submitting. The commands the list
+            // did record (a glColor inside the compile, a glTexCoord between two vertices) have already run through
+            // this dispatch and left their answer in the capture's mirror - or in the baked bytes, which is why the
+            // capture marks a run whose list changes an attribute between its vertices.
+            boolean written = run.applyCallState(this.legacyCapture.red(), this.legacyCapture.green(),
+                    this.legacyCapture.blue(), this.legacyCapture.alpha(),
+                    this.legacyCapture.texU(), this.legacyCapture.texV());
+            if (written) {
+                this.legacyListRunsCallState++;
+            }
+        }
         boolean taken = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                 && vulkan.submitImmediateBatch(null, run.stride, run.format, run.address, run.count, run.mode);
         if (taken) {
@@ -2790,7 +2828,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " replayed=" + stub.legacyListRunsReplayed + "/" + stub.legacyListRunReplayedVertices
                 + " lists=" + stub.legacyListRunBytesByList.size()
                 + " bytes=" + stub.legacyListRunBytes + " droppedBytes=" + stub.legacyListRunBytesDropped
-                + " replayRefusals=" + stub.legacyListRunReplayRefusals;
+                + " replayRefusals=" + stub.legacyListRunReplayRefusals
+                + " callState=" + stub.legacyListRunsCallState
+                + " provenance[colour=" + stub.legacyCapture.compiledCallStateColour()
+                + " tex=" + stub.legacyCapture.compiledCallStateTex()
+                + " midRun=" + stub.legacyCapture.compiledMidRunChanges() + "]" + " callStateSwitch=" + LEGACY_CALL_STATE;
     }
 
     /**
@@ -5167,6 +5209,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.compilingList = (int) c[0];
                 this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
                 this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
+                if (this.legacyCapture != null) {
+                    this.legacyCapture.setCompileOpen(this.compilingList != 0);
+                }
                 // The model capture takes a new generation per compile. The GlStateManager path notifies it; a mod
                 // that calls GL11.glNewList directly did not, so recompiling a name kept the mesh built from its
                 // previous contents and the new geometry was never drawn.
@@ -5205,6 +5250,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.openListLegacyRunBytes = 0L;
                 this.openList = null;
                 this.compilingList = 0;
+                if (this.legacyCapture != null) {
+                    this.legacyCapture.setCompileOpen(false);
+                }
                 return 0L;
             case SEM_CALL_LIST:
                 replayDisplayList((int) c[0]);

@@ -34,10 +34,15 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   多段 FBO（GregTech Bloom）・Raw FBO の整合は RC7/RC8 で前進、Windows 実測は未完 |
 | Display List | `glNewList`/`glCallList` は描画内容の再実行/コンパイル経路が限定的。**list compile中のlegacy geometryは
   捕捉してlistのコマンド列に位置どおり差し込み、`glCallList`でreplay時に即時描画経路へ提出する**（2026-11-02、
-  `CompiledLegacyRun`、`-Dceltium.glstub.legacyListCompile=false` で旧拒否に戻せる）。色は頂点に焼き込み、行列・
-  texture・blendはreplay時の状態を使う（GL仕様どおり）。コピーはlistのpayloadと同じ寿命で、同時保持は64 MiB上限。
-  計器は検証行の `celtium/legacyListRuns[recorded/replayed/bytes/droppedBytes/replayRefusals]`、根拠は
-  [証拠](evidence/display-list-legacy-2026-11-02.md)（GregTechの`ToolEventHandlers`が同じ形） |
+  `CompiledLegacyRun`、`-Dceltium.glstub.legacyListCompile=false` で旧拒否に戻せる）。行列・texture・blendは
+  replay時の状態を使う（GL仕様どおり）。**色とUVも同じ規則**（2026-11-02）: listが設定していない属性は
+  `glCallList`時の現在値で頂点コピーを書き換える（`applyCallState`）。list自身が`glColor`/`glTexCoord`を持つ場合は
+  焼いたバイトが正しく、頂点間で変わる場合は焼いたまま（`midRun`で数える）。
+  `-Dceltium.glstub.legacyCallState=false` で焼き込みに戻せる。コピーはlistのpayloadと同じ寿命で、同時保持は
+  64 MiB上限。計器は検証行の `celtium/legacyListRuns[recorded/replayed/bytes/droppedBytes/replayRefusals/
+  callState/provenance[colour tex midRun]]`。根拠: [list compile](evidence/display-list-legacy-2026-11-02.md)・
+  [call-time属性](evidence/display-list-call-state-2026-11-02.md)（Celeritas実GLと同一sceneで一致。
+  GregTechの`ToolEventHandlers`が同じ形） |
 | ミラー（GL名→画像） | 供給元が無い名前には**空のミラーを作らない**（2026-11-02）。作っても sampling 側が
   「全内容が来ていないミラー」として拒否するので描けず、しかも entry が存在するせいで以後の lookup が plain hit に
   なり、後から届いた upload を二度と拾えなかった。いまは null を返し、その判断を**level の write serial ごとに記憶**

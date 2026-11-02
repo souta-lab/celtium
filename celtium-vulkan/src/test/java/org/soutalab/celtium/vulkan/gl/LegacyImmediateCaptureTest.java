@@ -203,14 +203,16 @@ class LegacyImmediateCaptureTest {
     private static final class CompiledRecorder implements LegacyImmediateCapture.CompiledRunSink {
         final List<int[]> shapes = new ArrayList<>();
         final List<float[]> vertices = new ArrayList<>();
+        final List<Integer> attributes = new ArrayList<>();
         boolean refuse;
 
         @Override
-        public boolean record(int format, int stride, int count, int drawMode, long address) {
+        public boolean record(int format, int stride, int count, int drawMode, long address, int attributeFlags) {
             if (this.refuse) {
                 return false;
             }
             this.shapes.add(new int[] {format, stride, count, drawMode});
+            this.attributes.add(attributeFlags);
             float[] read = new float[count * 3];
             for (int i = 0; i < count; i++) {
                 long at = address + (long) i * stride;
@@ -226,9 +228,104 @@ class LegacyImmediateCaptureTest {
             return this.shapes.get(this.shapes.size() - 1);
         }
 
+        int lastAttributes() {
+            return this.attributes.get(this.attributes.size() - 1);
+        }
+
         float[] lastVertices() {
             return this.vertices.get(this.vertices.size() - 1);
         }
+    }
+
+    /**
+     * The provenance rule GL has for a display list, checked where it can be decided without a GPU.
+     * <p>
+     * A list compiles the commands, not the values: a vertex written inside it takes the colour current at
+     * {@code glCallList} unless the list itself carries a {@code glColor}. The capture has to say which of the two a
+     * run is, because the replay cannot tell afterwards - so this pins the three cases that differ: set outside the
+     * compile (the replay must use the call-time colour), set inside it (the baked bytes are what the replayed command
+     * leaves), and changed between two vertices (only the per-vertex bytes can carry that).
+     */
+    @Test
+    void aColourSetOutsideTheCompileIsLeftToTheCall() {
+        LegacyImmediateCapture capture = capture();
+        CompiledRecorder compiled = new CompiledRecorder();
+        capture.color(0.0f, 1.0f, 0.0f, 1.0f);
+        capture.setCompileOpen(true);
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(null, compiled));
+        assertEquals(CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL, compiled.lastAttributes()
+                        & CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL,
+                "nothing in the list set the colour, so the call-time colour is the one GL draws");
+        assertEquals(1, capture.compiledCallStateColour());
+    }
+
+    @Test
+    void aColourSetInsideTheCompileIsBaked() {
+        LegacyImmediateCapture capture = capture();
+        CompiledRecorder compiled = new CompiledRecorder();
+        capture.setCompileOpen(true);
+        capture.color(0.0f, 1.0f, 0.0f, 1.0f);
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(null, compiled));
+        assertEquals(0, compiled.lastAttributes() & CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL,
+                "the list records the glColor, so the replay applies it before these bytes");
+        assertEquals(0, capture.compiledCallStateColour());
+    }
+
+    @Test
+    void aColourChangedBetweenVerticesKeepsTheBakedBytes() {
+        LegacyImmediateCapture capture = capture();
+        CompiledRecorder compiled = new CompiledRecorder();
+        capture.setCompileOpen(true);
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        capture.color(0.0f, 0.0f, 1.0f, 1.0f);
+        capture.vertex3f(1.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(null, compiled));
+        assertEquals(0, compiled.lastAttributes() & CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL,
+                "a mid-run change only exists in the per-vertex bytes");
+        assertEquals(1, capture.compiledMidRunChanges());
+    }
+
+    @Test
+    void texCoordProvenanceFollowsTheSameRule() {
+        LegacyImmediateCapture capture = capture();
+        CompiledRecorder outside = new CompiledRecorder();
+        capture.texCoord(0.5f, 0.25f);
+        capture.setCompileOpen(true);
+        assertTrue(capture.begin(GL11.GL_QUADS, true, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(null, outside));
+        assertEquals(CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL, outside.lastAttributes()
+                & CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL, "the list has no glTexCoord, so the call's applies");
+        assertEquals(1, capture.compiledCallStateTex());
+
+        LegacyImmediateCapture inside = capture();
+        CompiledRecorder baked = new CompiledRecorder();
+        inside.setCompileOpen(true);
+        inside.texCoord(0.5f, 0.25f);
+        assertTrue(inside.begin(GL11.GL_QUADS, true, true, GATE));
+        inside.vertex3f(0.0f, 0.0f, 0.0f);
+        assertTrue(inside.end(null, baked));
+        assertEquals(0, baked.lastAttributes() & CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL);
+    }
+
+    @Test
+    void closingTheCompileForgetsWhereTheColourCameFrom() {
+        LegacyImmediateCapture capture = capture();
+        CompiledRecorder compiled = new CompiledRecorder();
+        capture.setCompileOpen(true);
+        capture.color(0.0f, 1.0f, 0.0f, 1.0f);
+        // The list was not executed, so its glColor never became the caller's current colour.
+        capture.setCompileOpen(false);
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(null, compiled));
+        assertEquals(CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL, compiled.lastAttributes()
+                & CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL, "a compile stores commands; it does not run them");
     }
 
     @Test

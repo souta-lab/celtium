@@ -29,10 +29,15 @@ import org.lwjgl.opengl.GL11;
  *   <li><b>It moves between two positions on consecutive frames.</b> The square alternates between an upper and a lower
  *       slot, so two consecutive dumps have to disagree; a stale copy of the previous frame's list draw would show both
  *       slots carrying ink.</li>
- *   <li><b>The colour is the one compiled in, not the one current at {@code glCallList}.</b> The list is compiled with
- *       bright green and the call is made after {@code glColor4f} sets red, exactly as GL specifies: a display list
- *       compiles the {@code glColor} that preceded the vertices, so the square must be green. A renderer that applied
- *       the call-time colour would draw it red, which the checker names.</li>
+ *   <li><b>An attribute the list never set comes from the caller, not from the compile.</b> This is the half the
+ *       first version of this scene got wrong and made a fixture out of: a display list compiles the
+ *       <em>commands</em>, so a {@code glVertex} written inside it takes the colour current at {@code glCallList}
+ *       unless the list carries a {@code glColor} of its own. Two lists are drawn in opposite slots every frame, both
+ *       under {@code glColor4f(red)}: the <b>outer</b> list was compiled after a green was set <em>outside</em> it, so
+ *       GL draws it <b>red</b>, and the <b>inner</b> list sets green <em>inside</em> the compile, so GL draws it
+ *       <b>green</b>. A renderer that bakes the compile-time colour puts green in both slots, which the checker counts
+ *       as a failure and names. (That is what Celtium did until now; the previous scene asserted the baked answer as
+ *       if it were GL's, and its "0 red pixels" reading was the defect, not the control.)</li>
  *   <li><b>A same-frame control tells a list failure from an immediate-path failure.</b> A third quad is drawn directly
  *       with {@code glBegin}/{@code glEnd}, in yellow, under the same matrix and the same untextured state. If the
  *       yellow quad is in the picture and the compiled square is not, the list replay is at fault rather than the
@@ -68,11 +73,22 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     /** The compiled square's half extent, in GUI units, and the line loop's radius. */
     private static final int SQUARE_HALF = 30;
     private static final int TRIANGLE_RADIUS = 24;
-    /** Compile-time colour of the square, and the colour the call sets to prove it is not the one used. */
-    private static final float COMPILED_RED = 0.0f;
-    private static final float COMPILED_GREEN = 1.0f;
-    private static final float COMPILED_BLUE = 0.0f;
+    /** The green set outside the outer list, which GL ignores in favour of the call-time colour. */
+    private static final float OUTSIDE_RED = 0.0f;
+    private static final float OUTSIDE_GREEN = 1.0f;
+    private static final float OUTSIDE_BLUE = 0.0f;
+    /** The green the inner list sets itself, which the replay has to reproduce. */
+    private static final float INSIDE_RED = 0.0f;
+    private static final float INSIDE_GREEN = 1.0f;
+    private static final float INSIDE_BLUE = 0.0f;
+    /** The colour both lists are called under. GL draws the outer list in it and the inner list is unaffected. */
     private static final float CALL_RED = 1.0f;
+    private static final float CALL_GREEN = 0.0f;
+    private static final float CALL_BLUE = 0.0f;
+    /** The line loop's colour, set inside its own list so the cyan survives the red call. */
+    private static final float LOOP_RED = 0.0f;
+    private static final float LOOP_GREEN = 1.0f;
+    private static final float LOOP_BLUE = 1.0f;
 
     private DumpRequester dumps;
     private int frames;
@@ -80,8 +96,9 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private int laidOutWidth = -1;
     private int laidOutHeight = -1;
 
-    /** The two display lists, 0 until the first frame compiles them. */
-    private int squareList;
+    /** The three display lists, 0 until the first frame compiles them. */
+    private int outerList;
+    private int innerList;
     private int triangleList;
     /** How many times each list was compiled, so a scene that silently recompiled is visible. */
     private int compiles;
@@ -102,11 +119,12 @@ public final class DisplayListLegacyScreen extends GuiScreen {
 
     /**
      * {@return the resolved layout in GUI units}, as
-     * {@code gui=WxH square=H slots=A,B triangle=(x,y,r) direct=(x,y,h) colour=(r,g,b)}.
+     * {@code gui=WxH square=H slots=A,B triangle=(x,y,r) direct=(x,y,h) even/odd=(outer slot,inner slot)}.
      * <p>
      * Reported rather than assumed: the checker turns these into picture pixels with the picture's own scale, and fails
      * when the ink it finds is not at these coordinates. An unreported constant is how a gate and the picture drift
-     * apart without anyone noticing.
+     * apart without anyone noticing. {@code even} and {@code odd} name which slot each list is drawn in on a frame of
+     * that parity, so the checker never has to guess which square it is looking at.
      */
     public String describeLayout() {
         int[] panel = celtium$panel();
@@ -117,8 +135,12 @@ public final class DisplayListLegacyScreen extends GuiScreen {
                 + " triangle=" + celtium$triangleX(panel) + "," + (panel[1] + panel[3]) / 2 + ","
                 + TRIANGLE_RADIUS
                 + " direct=" + celtium$directX(panel) + "," + (panel[1] + panel[3]) / 2 + "," + DIRECT_HALF
-                + " colour=" + (int) (COMPILED_RED * 255) + "," + (int) (COMPILED_GREEN * 255) + ","
-                + (int) (COMPILED_BLUE * 255)
+                + " even=" + celtium$slotA(panel) + "," + celtium$slotB(panel)
+                + " odd=" + celtium$slotB(panel) + "," + celtium$slotA(panel)
+                + " callColour=" + (int) (CALL_RED * 255) + "," + (int) (CALL_GREEN * 255) + ","
+                + (int) (CALL_BLUE * 255)
+                + " insideColour=" + (int) (INSIDE_RED * 255) + "," + (int) (INSIDE_GREEN * 255) + ","
+                + (int) (INSIDE_BLUE * 255)
                 + " frames=" + this.frames + " compiles=" + this.compiles + " dumps=" + this.requested
                 + " stages=" + this.dumpStages;
     }
@@ -165,23 +187,25 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     }
 
     /**
-     * Compiles both lists once, at the origin, with each list's colour set before {@code glNewList}.
+     * Compiles the three lists once, at the origin, and only one of them gets its colour from outside the compile.
      * <p>
-     * The colour is set <em>outside</em> the list on purpose. A {@code glColor4f} inside a compile is both baked into the
-     * vertices (which is what the capture stores) and recorded as a command that replays first, so a green set there
-     * would make the picture green whether the renderer used the compiled per-vertex colour or the current one. Set
-     * outside, the list carries no colour command at all: the only thing that can make the square green is the vertices'
-     * own colour, which is GL's rule for a display list.
+     * <b>The outer list</b> is compiled after green is set outside it, so the list carries no colour command at all: GL
+     * draws its vertices in the colour current at {@code glCallList}, which is red. <b>The inner list</b> sets green
+     * inside its compile, so that command is replayed first and the square is green whatever the caller set. Both are
+     * called under the same red, in opposite slots of the same frame, so one picture separates the two rules.
+     * <p>
+     * The line loop sets cyan inside its own list for the same reason: it is drawn after the red call, and a list with
+     * no colour of its own would otherwise be red too.
      * <p>
      * The compile is under {@code GL_COMPILE} and not {@code GL_COMPILE_AND_EXECUTE}: the point of the scene is that the
-     * geometry is <em>not</em> drawn here, so a renderer that drew it now would paint the square at the screen's origin
-     * in this frame and the checker would see it there.
+     * geometry is <em>not</em> drawn here, so a renderer that drew it now would paint the squares at the screen's
+     * origin in this frame and the checker would see them there.
      */
     private void celtium$compileLists() {
         this.compiles++;
-        GL11.glColor4f(COMPILED_RED, COMPILED_GREEN, COMPILED_BLUE, 1.0f);
-        this.squareList = GLAllocation.generateDisplayLists(1);
-        GL11.glNewList(this.squareList, GL11.GL_COMPILE);
+        GL11.glColor4f(OUTSIDE_RED, OUTSIDE_GREEN, OUTSIDE_BLUE, 1.0f);
+        this.outerList = GLAllocation.generateDisplayLists(1);
+        GL11.glNewList(this.outerList, GL11.GL_COMPILE);
         GL11.glBegin(GL11.GL_QUADS);
         // Wound the way vanilla's Gui.drawRect winds a quad, which is the winding a GUI face is front-facing under
         // the overlay's y-down ortho. The other order is back-facing and is culled - measured on leg r26b, where a quad
@@ -194,9 +218,20 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glEnd();
         GL11.glEndList();
 
-        GL11.glColor4f(0.0f, 1.0f, 1.0f, 1.0f);
+        this.innerList = GLAllocation.generateDisplayLists(1);
+        GL11.glNewList(this.innerList, GL11.GL_COMPILE);
+        GL11.glColor4f(INSIDE_RED, INSIDE_GREEN, INSIDE_BLUE, 1.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-SQUARE_HALF, -SQUARE_HALF);
+        GL11.glVertex2i(-SQUARE_HALF, SQUARE_HALF);
+        GL11.glVertex2i(SQUARE_HALF, SQUARE_HALF);
+        GL11.glVertex2i(SQUARE_HALF, -SQUARE_HALF);
+        GL11.glEnd();
+        GL11.glEndList();
+
         this.triangleList = GLAllocation.generateDisplayLists(1);
         GL11.glNewList(this.triangleList, GL11.GL_COMPILE);
+        GL11.glColor4f(LOOP_RED, LOOP_GREEN, LOOP_BLUE, 1.0f);
         GL11.glBegin(GL11.GL_LINE_LOOP);
         for (int corner = 0; corner < 3; corner++) {
             double angle = Math.PI / 2.0 + corner * 2.0 * Math.PI / 3.0;
@@ -204,8 +239,10 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         }
         GL11.glEnd();
         GL11.glEndList();
-        System.out.println("[Celtium] CELTIUM_DISPLAYLIST_COMPILED square=" + this.squareList + " triangle="
-                + this.triangleList + " colourGreen=" + COMPILED_GREEN + " (GL_COMPILE: nothing is drawn here)");
+        System.out.println("[Celtium] CELTIUM_DISPLAYLIST_COMPILED outer=" + this.outerList + " inner="
+                + this.innerList + " triangle=" + this.triangleList
+                + " (GL_COMPILE: nothing is drawn here; the outer list's green was set outside it and is not part of"
+                + " the list, the inner list's green is)");
     }
 
     @Override
@@ -229,7 +266,7 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         // vertex colour is the picture and the probe asks only its own question.
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         try {
-            if (this.squareList == 0) {
+            if (this.outerList == 0) {
                 celtium$compileLists();
             }
             int frame = this.frames++;
@@ -254,16 +291,26 @@ public final class DisplayListLegacyScreen extends GuiScreen {
             GL11.glVertex2i(DIRECT_HALF, -DIRECT_HALF);
             GL11.glEnd();
             GL11.glPopMatrix();
-            // The square: compiled at the origin, drawn under a translation that alternates every frame. The colour the
-            // call sets is red and the compiled one is green, which is GL's rule (a list compiles the colour) - so the
-            // square being green is the second half of "this list was replayed, not drawn at compile time".
+            // Both squares are compiled at the origin and drawn under a translation that alternates every frame, in
+            // opposite slots of the same frame. The call sets red for both.
+            boolean even = frame % 2 == 0;
+            int outerSlot = even ? celtium$slotA(panel) : celtium$slotB(panel);
+            int innerSlot = even ? celtium$slotB(panel) : celtium$slotA(panel);
+            // The outer list has no colour command of its own, so GL draws it in the red the call sets - a renderer that
+            // kept the compile-time green draws the wrong colour here, and the checker counts exactly that.
             GL11.glPushMatrix();
-            GL11.glTranslatef(celtium$centreX(panel), (frame % 2 == 0 ? celtium$slotA(panel) : celtium$slotB(panel)),
-                    0.0f);
-            GL11.glColor4f(CALL_RED, 0.0f, 0.0f, 1.0f);
-            GL11.glCallList(this.squareList);
+            GL11.glTranslatef(celtium$centreX(panel), outerSlot, 0.0f);
+            GL11.glColor4f(CALL_RED, CALL_GREEN, CALL_BLUE, 1.0f);
+            GL11.glCallList(this.outerList);
             GL11.glPopMatrix();
-            // The line loop, GregTech's primitive, on the other side of the screen under its own translation.
+            // The inner list sets green inside its compile, so the replayed command wins over the caller's red.
+            GL11.glPushMatrix();
+            GL11.glTranslatef(celtium$centreX(panel), innerSlot, 0.0f);
+            GL11.glColor4f(CALL_RED, CALL_GREEN, CALL_BLUE, 1.0f);
+            GL11.glCallList(this.innerList);
+            GL11.glPopMatrix();
+            // The line loop, GregTech's primitive, on the other side of the screen under its own translation. Its cyan
+            // is set inside the list, like the inner square's green.
             GL11.glPushMatrix();
             GL11.glTranslatef(celtium$triangleX(panel), (panel[1] + panel[3]) / 2, 0.0f);
             GL11.glCallList(this.triangleList);

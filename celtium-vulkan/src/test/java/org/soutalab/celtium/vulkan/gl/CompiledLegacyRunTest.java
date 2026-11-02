@@ -34,7 +34,8 @@ class CompiledLegacyRunTest {
             MemoryUtil.memPutByte(at + 15L, (byte) 0xFF);
         }
         CompiledLegacyRun run = CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_COLOR,
-                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 4, 7 /* GL_QUADS */, address);
+                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 4, 7 /* GL_QUADS */, address,
+                CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL);
         assertNotNull(run, "a four-vertex run is copyable");
         assertEquals(4 * LegacyImmediateCapture.STRIDE_POSITION_COLOR, run.bytes());
         assertEquals(4, run.count);
@@ -71,10 +72,81 @@ class CompiledLegacyRunTest {
     @Test
     void aRequestThatHoldsNoVerticesIsNotARun() {
         assertNull(CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_COLOR,
-                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 0, 7, 1L), "zero vertices");
+                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 0, 7, 1L, 0), "zero vertices");
         assertNull(CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_COLOR,
-                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 4, 7, 0L), "no source address");
+                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 4, 7, 0L, 0), "no source address");
         assertNull(CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_COLOR,
-                0, 4, 7, 1L), "no vertex width");
+                0, 4, 7, 1L, 0), "no vertex width");
+    }
+
+    /**
+     * The one thing a display list must not freeze is the value of an attribute it never set, and this is where the
+     * replay puts the caller's value: into the run's own copy, at the offsets of the layout it was packed for.
+     */
+    @Test
+    void anAttributeTheListNeverSetIsWrittenFromTheCallState() {
+        ByteBuffer source = MemoryUtil.memAlloc(2 * LegacyImmediateCapture.STRIDE_POSITION_COLOR);
+        long address = MemoryUtil.memAddress(source);
+        for (int vertex = 0; vertex < 2; vertex++) {
+            long at = address + (long) vertex * LegacyImmediateCapture.STRIDE_POSITION_COLOR;
+            MemoryUtil.memPutFloat(at, vertex);
+            MemoryUtil.memPutByte(at + 12L, (byte) 0x7F); // a compile-time colour the list did not set
+        }
+        CompiledLegacyRun run = CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_COLOR,
+                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 2, 7, address,
+                CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL);
+        assertTrue(run.applyCallState(1.0f, 0.0f, 0.0f, 0.5f, 0.0f, 0.0f), "the colour was left to the call");
+        for (int vertex = 0; vertex < 2; vertex++) {
+            long at = run.address + (long) vertex * LegacyImmediateCapture.STRIDE_POSITION_COLOR;
+            assertEquals((byte) 255, MemoryUtil.memGetByte(at + 12L), "red is the call-time colour");
+            assertEquals((byte) 0, MemoryUtil.memGetByte(at + 13L));
+            assertEquals((byte) 0, MemoryUtil.memGetByte(at + 14L));
+            assertEquals((byte) 128, MemoryUtil.memGetByte(at + 15L), "0.5 alpha rounds to 128");
+            assertEquals((float) vertex, MemoryUtil.memGetFloat(at), "positions are untouched");
+        }
+        assertEquals(1, run.callTimeColourReplays());
+        // A second replay with another colour is what a list drawn twice in a frame does: the last one wins.
+        assertTrue(run.applyCallState(0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f));
+        assertEquals((byte) 255, MemoryUtil.memGetByte(run.address + 14L), "the newest call-time colour is written");
+        assertEquals(2, run.callTimeColourReplays());
+
+        run.free();
+        MemoryUtil.memFree(source);
+    }
+
+    @Test
+    void aTexturedRunTakesTheCoordinateAndKeepsItsColourOffsets() {
+        ByteBuffer source = MemoryUtil.memAlloc(LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR);
+        long address = MemoryUtil.memAddress(source);
+        MemoryUtil.memPutFloat(address + 12L, 0.125f);
+        MemoryUtil.memPutFloat(address + 16L, 0.875f);
+        MemoryUtil.memPutByte(address + 20L, (byte) 3);
+        CompiledLegacyRun run = CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR,
+                LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR, 1, 7, address,
+                CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL | CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL);
+        assertTrue(run.applyCallState(0.0f, 1.0f, 0.0f, 1.0f, 0.25f, 0.75f));
+        assertEquals(0.25f, MemoryUtil.memGetFloat(run.address + 12L), "s is the call-time coordinate");
+        assertEquals(0.75f, MemoryUtil.memGetFloat(run.address + 16L));
+        assertEquals((byte) 255, MemoryUtil.memGetByte(run.address + 21L), "the colour lives after the coordinate");
+        assertEquals(1, run.callTimeTexReplays());
+
+        run.free();
+        MemoryUtil.memFree(source);
+    }
+
+    @Test
+    void aRunTheListSetItselfIsNotRewritten() {
+        ByteBuffer source = MemoryUtil.memAlloc(LegacyImmediateCapture.STRIDE_POSITION_COLOR);
+        long address = MemoryUtil.memAddress(source);
+        MemoryUtil.memPutByte(address + 12L, (byte) 0x40);
+        CompiledLegacyRun run = CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_COLOR,
+                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 1, 7, address, 0);
+        assertFalse(run.applyCallState(1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f),
+                "the list carries the command, so the baked byte is the answer");
+        assertEquals((byte) 0x40, MemoryUtil.memGetByte(run.address + 12L));
+        assertEquals(0, run.callTimeColourReplays());
+
+        run.free();
+        MemoryUtil.memFree(source);
     }
 }
