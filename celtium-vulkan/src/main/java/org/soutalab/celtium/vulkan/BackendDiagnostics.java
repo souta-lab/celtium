@@ -1191,6 +1191,15 @@ final class BackendDiagnostics {
                     + " group=" + b.immediateStatistics.immediateGroupsClosed() + " fmt=" + group.formatId
                     + " worldPass=" + b.worldPassActive + " target=" + group.target
                     + " texture=" + group.texture + " batches=" + group.batches
+                    // The pipeline class this group was prepared for, beside the layout it carries. A group can be
+                    // accepted, closed and drawn and still leave no pixels when the pipeline it drew with does not
+                    // read the mesh it was given - the position/colour pipeline at a stride the mesh does not have,
+                    // or a texture pipeline for an untextured group. Measured need: the creative inventory's
+                    // hovered-slot highlight (fmt=1, 4 vertices, colour 0x80ffffff, ndc bounds exactly the slot) is
+                    // counted by the draw site and leaves none of its pixels in the frame, and nothing on this line
+                    // named the pipeline that draw used.
+                    + " prepared=" + (group.prepared == null ? "none"
+                            : group.prepared.pipeline.getClass().getSimpleName())
                     + " vertices=" + vertices + " indices=" + mesh.indexCount()
                     + " colour0=" + colour
                     // The attribute itself, read from the group's own vertex memory, beside the value the state
