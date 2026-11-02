@@ -10,8 +10,8 @@
 // special casing - vanilla sets one normal per quad, so every vertex of a quad evaluates identically.
 
 // Celtium - the record-reading form of immediate_tex_color_lit.vert: the same block, taken from the draw-record
-// storage buffer at set 1 and indexed by gl_InstanceIndex. The lit block is 216 bytes (its light coordinate sits at
-// 208) and the record array's stride is 224, which is what the trailing pad is for.
+// storage buffer at set 1 and indexed by gl_InstanceIndex. The lit block is 256 bytes: light coordinate at 208, the
+// bindless texture index the record writer stores at 216 (unread here), and the fog block at 224/240.
 struct DrawRecord {
     mat4 u_ProjectionMatrix;   // 0
     vec4 u_TexA;               // 64
@@ -23,7 +23,9 @@ struct DrawRecord {
     vec4 u_Ambient;            // 160
     vec4 u_Diffuse0;           // 176
     vec4 u_Diffuse1;           // 192
-    vec4 u_LightCoordPad;      // 208: xy the light-map coordinate, zw pad to the stride
+    vec4 u_LightCoordPad;      // 208: xy the light-map coordinate, zw the bindless index (unused by this path)
+    vec4 u_FogColor;           // 224
+    vec4 u_FogParams;          // 240: x density, y start, z end, w mode + 8 * shape
 };
 
 layout(std430, set = 1, binding = 0) readonly buffer DrawRecords {
@@ -42,6 +44,24 @@ layout(location = 3) in vec3 a_Normal;
 
 layout(location = 0) out vec2 v_TexCoord;
 layout(location = 1) out vec4 v_Color;
+layout(location = 2) out float v_FogDistance;
+layout(location = 3) flat out vec4 v_FogColor;
+layout(location = 4) flat out vec4 v_FogParams;
+
+/**
+ * The same eye-space reconstruction as immediate_tex_color_lit.vert: this family's block carries the combined
+ * projection (P * MV) and no model view, so the eye position comes from the perspective structure - clip.x = P00 *
+ * eye.x, clip.y = P11 * eye.y, clip.w = -eye.z - with P00/P11 riding in the lighting payload's unused .w slots.
+ */
+float celtiumFogDistance(vec4 clip, DrawRecord record) {
+    float sx = record.u_Light0Dir.w;
+    float sy = record.u_Light1Dir.w;
+    vec3 eye = (sx != 0.0 && sy != 0.0)
+            ? vec3(clip.x / sx, clip.y / sy, -clip.w)
+            : vec3(0.0, 0.0, -clip.w);
+    int selector = int(record.u_FogParams.w + 0.5);
+    return (selector >> 3) == 2 ? abs(eye.z) : length(eye);
+}
 
 void main() {
     DrawRecord record = records[gl_InstanceIndex];
@@ -75,5 +95,9 @@ void main() {
     // exceeds 1 on a face both lights reach (0.4 + 0.6 + 0.6 at most), and unclamped it drew the first-person arm
     // x1.16 brighter than Celeritas. The light map modulates after the clamp, as unit 1 does.
     v_Color = vec4(clamp(a_Color.rgb * groupColour.rgb * lit, 0.0, 1.0) * lightmap, a_Color.a * groupColour.a);
-    gl_Position = record.u_ProjectionMatrix * vec4(a_Position, 1.0);
+    vec4 clip = record.u_ProjectionMatrix * vec4(a_Position, 1.0);
+    v_FogDistance = (int(record.u_FogParams.w + 0.5) & 7) == 0 ? 0.0 : celtiumFogDistance(clip, record);
+    v_FogColor = record.u_FogColor;
+    v_FogParams = record.u_FogParams;
+    gl_Position = clip;
 }

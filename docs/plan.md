@@ -7,23 +7,22 @@
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
 - **未解決**: Supersymmetryの最初の `VK_ERROR_DEVICE_LOST`。RC5のFence reset修正は後続AV対策で根本解決の証拠ではない。async presentは維持。
-- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（公開JAR `release-rc8-{amd,intel}2`、renderer `72665b41e3040da63bfc0555aded6f8b053babd5b304ec2df5d6c4e7208a1d7d`、fixture `c82c4bc8d8fdcbfe6d131db6ad8964ae874c7ebcb1b6f49dc556fec1789fcc72`、`rawFboIdentityProbePassed=true`・`CELTIUM_OPAQUE_COPY_PROBE partial/alpha/resize` PASSED）。Bloom画素やWindows受入ではない。
+- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（公開JAR `release-rc8-{amd,intel}2`、renderer `72665b41…`、fixture `c82c4bc8…`、`rawFboIdentityProbePassed=true`）。Bloom画素やWindows受入ではない。
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
 設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
 record 仕事を消す）だけで、順序は実測コストで並べ替える（leg `tickjfr-celtium-2`・JAR `652075c9…`・AMD・world・
 validation off・warm 窓の client thread サンプル692）: block entity 描画 34%（end portal 14.6%・看板 6.8%）、
-即時 window の記録 `recordImmediateOnlyPass` 30%、受理経路 `submitGeometryBatch` 10%、アニメ texture 転送待ち 3.6%
-（修正済み）、tick 以外の vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**
-（AMD のフレームは解像度非依存＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
-移行は「一度に全部作り直さない」（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。
+即時 window の記録 30%、受理経路 `submitGeometryBatch` 10%、アニメ texture 転送待ち 3.6%（修正済み）、tick 以外の
+vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**（AMD のフレームは解像度非依存
+＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。移行は「一度に全部作り直さない」
+（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。
 2026-10-24 の実測ダイジェスト（model instance producer・JIT 分割/arena・staging ring・native raster/texture owner）は
 [archive](<history/plan-archive-2026-10-24.md>)（当時の値。現在の判定には使わない）。
 
 - **影**: 利用者指示により本体内は停止。stage (a)–(d計器) は commit 済み・**既定OFF**（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
-  PCF受け側は `git stash`「paused: in-core shadow PCF receiver」（leg `shadowpcf-amd-1` PASSED、視覚効果は未確認）。
-  **再開は利用者が明示した時だけ。**
+  PCF受け側は `git stash`（leg `shadowpcf-amd-1` PASSED、視覚効果は未確認）。**再開は利用者が明示した時だけ。**
 
 
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
@@ -59,8 +58,8 @@ validation off・warm 窓の client thread サンプル692）: block entity 描�
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
-   - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）と描画側残差は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: **cull の面と winding**（[証拠](evidence/cull-face-2026-11-03.md)）・**attribute stack の `GL_VIEWPORT_BIT`**（[証拠](evidence/viewport-attrib-2026-11-03.md)）・**`GL_LIGHTING_BIT` の部分復元**（[証拠](evidence/lighting-attrib-2026-11-03.md)）・**font run の拒否を保持**（[証拠](evidence/font-run-refusal-2026-11-03.md)）・**no-op census は出荷経路で発火しない**→ 生きた描画census `CELTIUM_GL_SURFACE_DRAWING`（[証拠](evidence/noop-census-unreachable-2026-11-03.md)）・**display-list census は id<512 しか数えられず `none`**→総量/id を報告、entity arm は modelDraws=5545・拒否0（[証拠](evidence/display-list-census-2026-11-03.md)）。glint画素/inventory・actor較正/lit fogは未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
+   - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）は[証拠](evidence/intel-gap-2026-10-26.md)。
+3. **native 状態・実行**: cull の面と winding・attribute stack の `GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 しか数えられず `none`→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は [cull](evidence/cull-face-2026-11-03.md)・[viewport](evidence/viewport-attrib-2026-11-03.md)・[lighting](evidence/lighting-attrib-2026-11-03.md)・[font](evidence/font-run-refusal-2026-11-03.md)・[no-op](evidence/noop-census-unreachable-2026-11-03.md)・[display-list](evidence/display-list-census-2026-11-03.md)。glint画素/inventory・actor較正は未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
@@ -77,15 +76,15 @@ validation off・warm 窓の client thread サンプル692）: block entity 描�
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ（GuiMainMenu経路） ②エンドポータル（texgen） ③F2黒スクショ（`nglGetTexImage`） ④ガラスのちらつき（背面cull `5f75fc009`） ⑤残像＝静止は0差分、tooltipの動きは連続3フレームで残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）。FBO対象・看板は未測定 |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル（texgen） ③F2黒スクショ（`nglGetTexImage`） ④ガラスのちらつき（背面cull `5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）。FBO対象・看板は未測定 |
 
 
 | **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)・[legacy既定ON](evidence/legacy-immediate-default-2026-11-02.md)。修正: 半透明cull・lit clamp・Forgeブロックモデル・legacy既定ON・atlas実寸・色同期・menu背景。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md): mean\|A-B\| 1.17・cell 最大 2.04、旧 19/24 が >6）|
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0（`e2ee-amd-c4`）、Intel未実行。残課題は[証拠](evidence/e2e-cleanroom07-2026-10-26.md)の末尾** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは証拠ファイルへ。 |
 
-| **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない。2026-10-30: `celtium.vulkan.glless`とGL bridgeを削除 |
-| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②非instance lit fog ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
+| **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない（2026-10-30: `celtium.vulkan.glless`とGL bridgeを削除） |
+| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②~~非instance lit fog~~ **修正**（lit ITEMのfog block 224/240・256B・device contract 256、[証拠](evidence/lit-fog-2026-11-03.md): within-run A/Bで10,355画素が `w=0.12–0.77` のfog混合・残差p50 0.29/255、gate PASSED） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
 
 ## FPSの現状と残る道（2026-10-31実測）
 

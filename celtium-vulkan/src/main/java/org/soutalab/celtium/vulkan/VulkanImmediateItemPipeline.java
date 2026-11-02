@@ -81,11 +81,27 @@ public final class VulkanImmediateItemPipeline {
     private final ReusableDuplicate clampedView = new ReusableDuplicate();
     /**
      * The lit variant's block: the shared 128 plus five vec4 - two model-space light directions, the scene ambient,
-     * and each light's diffuse - plus the light-map coordinate pair at 208, matching the layout
-     * {@code immediate_tex_color_lit.vert} declares. The block is the one place the world light level can travel for
-     * this batch: the ITEM layout's vertices carry position, texture, colour and normal, and no light coordinate.
+     * and each light's diffuse - plus the light-map coordinate pair at 208 and the fog block at 224/240, matching the
+     * layout {@code immediate_tex_color_lit.vert} declares. The block is the one place the world light level can travel
+     * for this batch: the ITEM layout's vertices carry position, texture, colour and normal, and no light coordinate.
+     * <p>
+     * 256, not 216: the fog block is the fix that ended this family's exemption from fog, and it needs the two vec4 past
+     * the light coordinate. 216..223 stays free because the record-reading path stores its bindless texture index
+     * there. The block is therefore exactly the 256 bytes Vulkan 1.4 guarantees, and the device contract in
+     * {@code VulkanContext} names that number, so a narrower device is skipped at selection rather than failing inside
+     * pipeline creation. Only the vertex stage reads the fog: it hands the fragment stage a flat pair, which is how the
+     * record-reading variant's per-draw fog reaches it too.
      */
-    private static final int PUSH_CONSTANT_BYTES_LIT = 216;
+    private static final int PUSH_CONSTANT_BYTES_LIT = 256;
+
+    /**
+     * {@return the lit variant's declared push range}, for the layout test that holds the shader's explicit offsets to
+     * it: a range shorter than the block a stage declares is a pipeline-creation error, and the fog block at 224/240 is
+     * what moved this number.
+     */
+    static int celtium$pushBytesLit() {
+        return PUSH_CONSTANT_BYTES_LIT;
+    }
 
     private final VulkanContext context;
     private final long renderPass;

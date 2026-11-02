@@ -6249,6 +6249,46 @@ public final class ValidationClient {
         }
     }
 
+    /**
+     * The within-run A/B for the lit ITEM family's fog: flip the renderer's switch between consecutive frames and dump
+     * each frame.
+     * <p>
+     * Why within a run. Two runs of the same world scene differ on most of the frame - the animated water/lava/fire
+     * textures, the clouds and the entity animation phases are wall-clock driven - so a cross-run pair cannot separate
+     * "the fog was applied" from "the animation was at another phase". Measured on legs {@code r43b}/{@code r43c}, which
+     * differed only in {@code -Dceltium.vulkan.litFog}: 82% of the frame changed, mean |A-B| 14.1. Two consecutive
+     * frames of one run share the scene, the camera and (within a tick) the animation phase, so the only difference is
+     * the flag.
+     * <p>
+     * {@code -Dceltium.validation.litFogFrames=60,61,62} names the world frames (the fixture's own count, not the JVM's
+     * frame counter, which starts on the loading screen): the first is dumped with the fog off, the second with it on,
+     * the third off again. The third is the control - it is two frames after the first with the same
+     * flag, so whatever it differs by is the animation noise the pair has to be read against. The stages are
+     * {@code litfog-a}, {@code litfog-b} and {@code litfog-c}.
+     */
+    private void celtium$litFogFrame(Minecraft mc) {
+        String spec = System.getProperty("celtium.validation.litFogFrames", "").trim();
+        if (spec.isEmpty() || mc.world == null) {
+            return;
+        }
+        // The fixture's world-frame count: the JVM frame counter starts on the loading screen, so a number read from
+        // it would name a frame before the world exists. This one is incremented by the first world frame.
+        int frame = this.worldFrames;
+        String[] parts = spec.split(",");
+        for (int i = 0; i < parts.length && i < 3; i++) {
+            if (parts[i].trim().isEmpty() || Integer.parseInt(parts[i].trim()) != frame) {
+                continue;
+            }
+            // The flag is set before the frame draws, which is where the push block is written.
+            boolean on = i == 1;
+            Object applied = celtium$backendCall("celtium$setLitFog", new Class<?>[] {boolean.class},
+                    Boolean.valueOf(on));
+            report.addProperty("litFogFrame" + (char) ('a' + i), frame + " on=" + on + " applied=" + applied);
+            celtium$requestPresentedDump(mc, "litfog-" + (char) ('a' + i));
+            return;
+        }
+    }
+
     /** Controlled fog for comparing lit model shading with the GL reference; never part of a calibrated scene. */
     private static final float MODEL_FOG_END = Float.parseFloat(System.getProperty("celtium.validation.testFogEnd", "-1"));
     private boolean modelFogReported;
@@ -6288,6 +6328,7 @@ public final class ValidationClient {
             // is not the pose ... measured pitch=-14". A pose comparison across legs is only a comparison if both legs
             // render the same pose.
             celtium$applyClientPoseOverride(Minecraft.getMinecraft());
+            celtium$litFogFrame(Minecraft.getMinecraft());
             return;
         }
         if (celtium$frameEndSeen++ == 0) {
@@ -9009,13 +9050,31 @@ public final class ValidationClient {
         }
     }
 
-    /** Sets the scene's position and both rotations on an entity, through the game's own setter. */
+    /**
+     * Sets the scene's position and both rotations on an entity, through the game's own setter - and the previous-tick
+     * fields with them.
+     * <p>
+     * The renderer does not draw the entity's current position: it draws
+     * {@code lastTickPos + (pos - lastTickPos) * partialTicks} and the same interpolation of the two rotations. Setting
+     * only the current values therefore leaves the drawn camera between the pinned pose and whatever the previous tick
+     * left, and the fraction depends on the frame's partial tick - so every frame is drawn from a slightly different
+     * camera. Measured on leg {@code r43d-fogpair}: two consecutive frames of one run, with nothing changed between
+     * them, differed on 11% of the frame and the difference image was the terrain's block edges, i.e. a sub-pixel
+     * camera shift. That is a confound for any comparison of two frames, and it is why the previous-tick fields are
+     * pinned here: with them equal to the current values the interpolation is the identity and every frame of the
+     * scene is drawn from exactly the pose the report names.
+     */
     private void celtium$setPoseOn(net.minecraft.entity.Entity entity) {
         entity.motionX = 0.0D;
         entity.motionY = 0.0D;
         entity.motionZ = 0.0D;
         entity.fallDistance = 0.0F;
         entity.setPositionAndRotation(celtium$pose.x, celtium$pose.y, celtium$pose.z, celtium$pose.yaw, celtium$pose.pitch);
+        entity.prevPosX = entity.lastTickPosX = celtium$pose.x;
+        entity.prevPosY = entity.lastTickPosY = celtium$pose.y;
+        entity.prevPosZ = entity.lastTickPosZ = celtium$pose.z;
+        entity.prevRotationYaw = entity.rotationYaw;
+        entity.prevRotationPitch = entity.rotationPitch;
         // The head and body yaw fields are EntityLivingBase's, not Entity's: a view entity that is not a living entity
         // (a camera entity a mod installed) gets the position and the Entity-level rotations and nothing else.
         if (entity instanceof net.minecraft.entity.EntityLivingBase) {

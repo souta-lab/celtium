@@ -22,8 +22,11 @@ struct DrawRecord {
     vec4 u_FogRow0;            // 160
     vec4 u_FogRow1;            // 176
     vec4 u_FogRow2;            // 192
-    vec4 u_RecordPad;          // 208: padding to the array's 224-byte stride, which the lit family needs for its
-                               // light coordinates. The unlit block ends at 208 and reads none of this.
+    vec4 u_RecordPad;          // 208: padding to the array's 256-byte stride, which the lit family needs for its
+                               // light coordinates (208), the record writer's bindless index (216) and its fog block
+                               // (224/240). The unlit block ends at 208 and reads none of this.
+    vec4 u_RecordPad2;         // 224
+    vec4 u_RecordPad3;         // 240
 };
 
 // Set 1, not set 0: set 0 is the per-texture pair the immediate path already writes (binding 0 the texture, binding 1

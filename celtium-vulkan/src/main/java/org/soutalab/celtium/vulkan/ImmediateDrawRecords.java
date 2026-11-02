@@ -18,11 +18,13 @@ import java.nio.ByteBuffer;
 final class ImmediateDrawRecords {
 
     /**
-     * Bytes per record. 208 is the textured family's push block and 216 the lit family's (its light coordinate sits at
-     * 208), so the stride is 224 and the unlit record declares a trailing pad: a record array has one stride, and a
-     * 208-byte struct in a 224-byte array would index the wrong bytes from the second record on.
+     * Bytes per record. 208 is the textured family's push block and 256 the lit family's (light coordinate at 208, the
+     * bindless texture index at 216, the fog block at 224/240), so the stride is 256 and the unlit record declares the
+     * trailing pads: a record array has one stride, and a 208-byte struct in a 256-byte array would index the wrong
+     * bytes from the second record on. The lit record's own fog is what makes the lit fog work on this path too - the
+     * run's push block cannot carry it, because one run spans many draws.
      */
-    static final int RECORD_BYTES = 224;
+    static final int RECORD_BYTES = 256;
 
     private static final int INITIAL_RECORDS = 256;
 
@@ -120,7 +122,7 @@ final class ImmediateDrawRecords {
     /**
      * Appends one record.
      *
-     * @param pushBlock a block of at least {@link #RECORD_BYTES} bytes, positioned anywhere; the first 208 bytes are copied
+     * @param pushBlock a block of at least 208 bytes, positioned anywhere; what it holds is copied
      * @return the record's index, which is the indirect command's firstInstance, or -1 when the block is too short
      */
     int record(ByteBuffer pushBlock) {
@@ -131,15 +133,16 @@ final class ImmediateDrawRecords {
      * Appends one record and stores the texture's bindless array index in the eight bytes past the lit block's payload.
      * <p>
      * Offset 216 is free in both families: the textured block ends at 208 and the lit one spends 208..215 on its light
-     * coordinates. The index is written as float bits because the GLSL struct is a vec4 block and the shader reads it back
-     * with {@code floatBitsToInt}; an index of -1 means "no array index", which is what the per-texture path records.
+     * coordinates and 224..255 on its fog. The index is written as float bits because the GLSL struct is a vec4 block
+     * and the shader reads it back with {@code floatBitsToInt}; an index of -1 means "no array index", which is what the
+     * per-texture path records.
      *
-     * @param pushBlock the block; the first 208 bytes are copied, the lit family's 216 when present
+     * @param pushBlock the block; as much of it as the record stride holds is copied
      * @param arrayIndex the bindless texture index, or -1 when the group has none
      * @return the record's index or -1 when the block is too short
      */
     int record(ByteBuffer pushBlock, int arrayIndex) {
-        // 208 is the smallest push block the two families produce; the stride rounds that up to 224 with a zeroed pad.
+        // 208 is the smallest push block the two families produce; the stride carries the lit block's fog with a pad.
         if (pushBlock == null || pushBlock.capacity() < 208) {
             return -1;
         }

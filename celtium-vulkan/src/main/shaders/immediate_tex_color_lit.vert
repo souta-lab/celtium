@@ -29,6 +29,17 @@ layout(push_constant) uniform PushConstants {
     // OpenGlHelper.setLightmapTextureCoords, captured per draw by LightmapCoordsMixin. Vanilla applies it on texture
     // unit 1 through the fixed-function texture matrix, whose scale is 1/256, so the sample is u_LightCoord / 256.
     layout(offset = 208) vec2 u_LightCoord;
+
+    // The fixed-function fog, at 224: the same two vec4 the shared immediate_tex_color block puts at 128/144, moved
+    // past the lighting payload because 128..215 is the lighting. Declaring it is what ends this family's exemption
+    // from fog: every lit batch - entities, TESRs, the held item, dropped items - was drawn unfogged, so a mob in
+    // water, in the Nether or under the blindness effect stayed crisp while the terrain around it dissolved into the
+    // fog colour. 216..223 stays free: the record-reading path writes its bindless texture index there. The block ends
+    // at 256, which is the range the pipeline declares. Only this stage reads the fog: the weight is computed here from
+    // the interpolated distance and handed to the fragment stage as the flat pair below, so the record-reading variant
+    // reads its own record's fog instead of a run-wide push block.
+    layout(offset = 224) vec4 u_FogColor;   // rgb = GL_FOG_COLOR, a = blend weight (1.0 in vanilla)
+    layout(offset = 240) vec4 u_FogParams;  // x density, y start, z end, w = mode + 8 * shape
 } celtium;
 
 layout(set = 0, binding = 0) uniform sampler2D u_Texture;
@@ -43,6 +54,34 @@ layout(location = 3) in vec3 a_Normal;
 
 layout(location = 0) out vec2 v_TexCoord;
 layout(location = 1) out vec4 v_Color;
+layout(location = 2) out float v_FogDistance;
+// Constant over the draw, so flat: the fragment stage evaluates the fog curve from the interpolated distance exactly
+// where GL does, without the params having to travel through the push block (which the record-reading variant does not
+// have per draw).
+layout(location = 3) flat out vec4 v_FogColor;
+layout(location = 4) flat out vec4 v_FogParams;
+
+/**
+ * The fog coordinate in eye space, reconstructed without a model-view matrix.
+ * <p>
+ * This family's push block carries the *combined* projection (P * MV) at 0 and no model-view: the lighting payload
+ * spends 128..215 and the model-view's three columns are the texture affine's slots. For the perspective projection
+ * the world draws with, the combined matrix still answers the eye position exactly:
+ * {@code clip.x = P00 * eye.x}, {@code clip.y = P11 * eye.y} and {@code clip.w = -eye.z} (P's fourth row is
+ * {@code (0,0,-1,0)}), so the two projection scales are all that is missing. They ride in the lighting payload's
+ * unused {@code .w} components - {@code u_Light0Dir.w = P00}, {@code u_Light1Dir.w = P11} - which the CPU writes and
+ * the lighting eval never reads. A zero scale means the projection is not the perspective one (an orthographic GUI
+ * projection, where fog is off anyway): the distance then falls back to the eye depth, which is still exact.
+ */
+float celtiumFogDistance(vec4 clip) {
+    float sx = celtium.u_Light0Dir.w;
+    float sy = celtium.u_Light1Dir.w;
+    vec3 eye = (sx != 0.0 && sy != 0.0)
+            ? vec3(clip.x / sx, clip.y / sy, -clip.w)
+            : vec3(0.0, 0.0, -clip.w);
+    int selector = int(celtium.u_FogParams.w + 0.5);
+    return (selector >> 3) == 2 ? abs(eye.z) : length(eye);
+}
 
 void main() {
     if (celtium.u_TexB.z > 0.5) {
@@ -75,5 +114,11 @@ void main() {
     // exceeds 1 on a face both lights reach (0.4 + 0.6 + 0.6 at most), and unclamped it drew the first-person arm
     // x1.16 brighter than Celeritas. The light map modulates after the clamp, as unit 1 does.
     v_Color = vec4(clamp(a_Color.rgb * groupColour.rgb * lit, 0.0, 1.0) * lightmap, a_Color.a * groupColour.a);
-    gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
+    vec4 clip = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
+    // A batch offered while the game had fog off carries selector 0, and then no distance is evaluated at all: the
+    // GUI and every orthographic lit draw pay one integer test, not three dot products per vertex.
+    v_FogDistance = (int(celtium.u_FogParams.w + 0.5) & 7) == 0 ? 0.0 : celtiumFogDistance(clip);
+    v_FogColor = celtium.u_FogColor;
+    v_FogParams = celtium.u_FogParams;
+    gl_Position = clip;
 }

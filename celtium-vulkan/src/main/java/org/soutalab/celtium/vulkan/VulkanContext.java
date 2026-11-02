@@ -2611,12 +2611,17 @@ public final class VulkanContext {
     private static final String COLOR_FORMAT_NAME = "R8G8B8A8_UNORM";
     private static final int REQUIRED_SAMPLES = 1;
     /**
-     * The largest push-constant block the immediate path uses - the fog-carrying POSITION layout's 208 bytes
-     * ({@code VulkanImmediateTexturePipeline.PUSH_CONSTANT_BYTES}) and the lit ITEM layout's, which are equal today.
-     * Reported beside the device's {@code maxPushConstantsSize} so the limit the renderer actually spends is named
-     * with the device's number next to it (audit B01/B11); this run does not enforce it, it reports it.
+     * The largest push-constant block the immediate path uses: the lit ITEM layout's 256 bytes
+     * ({@code VulkanImmediateItemPipeline.PUSH_CONSTANT_BYTES_LIT}) - the shared 128, the five-vec4 lighting payload,
+     * the light-map coordinate pair at 208 and the fog block at 224/240. The fog-carrying POSITION layout spends 208.
+     * <p>
+     * This number is the device contract, not a report: a device whose {@code maxPushConstantsSize} is below it is
+     * skipped at selection with its own number, because the lit pipeline's layout declares the whole block and a
+     * shorter device would fail inside {@code vkCreatePipelineLayout}. It used to read 208 while the lit layout already
+     * declared 216, so a device in that 8-byte window would have been selected and then failed; the number now names
+     * the largest block any family declares.
      */
-    private static final int PUSH_CONSTANT_BYTES_USED = 208;
+    private static final int PUSH_CONSTANT_BYTES_USED = 256;
 
     /**
      * Prints the device contract this run was selected under, once, as {@code CELTIUM_DEVICE_CONTRACT}.

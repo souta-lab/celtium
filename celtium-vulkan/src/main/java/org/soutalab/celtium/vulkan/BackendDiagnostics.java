@@ -349,6 +349,10 @@ final class BackendDiagnostics {
                 + " swapPointPollMillis=" + (b.swapPointPollNanos / 1000000L)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=native-owner"
+                // The lit ITEM family's fog: 0 lit-fog groups with a 256-byte block means the fix is compiled but never
+                // written, and the skip counter names the remaining unfogged shape (a non-perspective projection).
+                + " litFogGroups=" + b.litFogGroupCount()
+                + " litFogSkippedNonPerspective=" + b.litFogSkipCount()
                 + " boundTextureSamples=" + b.textureStats.boundTextureComparisons()
                 + " boundTextureMismatches=" + b.textureStats.boundTextureMismatches()
                 + " announcedDynamicTextures=" + b.textureStats.announcedDynamicTextures()

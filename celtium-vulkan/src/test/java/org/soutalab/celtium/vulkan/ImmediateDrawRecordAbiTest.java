@@ -15,7 +15,9 @@ import org.junit.jupiter.api.Test;
  * the push block. Nothing in the type system holds those two together, so this test reads the shader and sums the
  * declared members: mat4 plus three vec4s plus the alpha/colour vec4 plus the fog block. If either side gains or loses a
  * member, the sum stops matching {@link ImmediateDrawRecords#RECORD_BYTES} and this fails instead of producing a picture
- * that is quietly a few bytes out of phase.
+ * that is quietly a few bytes out of phase. The lit struct is checked the same way, and a third test holds the lit push
+ * block's declared range to the last offset its vertex stage declares - the fog block at 224/240 is what made that block
+ * 256 bytes, and a range shorter than the declaration is a pipeline-creation error rather than a wrong picture.
  * <p>
  * This is a layout test, not evidence about rendering.
  */
@@ -23,8 +25,8 @@ class ImmediateDrawRecordAbiTest {
 
     @Test
     void theRecordIsThePushBlockAndTheShaderAgreesWithIt() throws IOException {
-        assertEquals(224, ImmediateDrawRecords.RECORD_BYTES,
-                "the record is the 208-byte push block of the immediate families");
+        assertEquals(256, ImmediateDrawRecords.RECORD_BYTES,
+                "the record is the widest push block of the immediate families (the lit ITEM block's 256 bytes)");
         Path shader = findShader("immediate_tex_color_records.vert");
         String source = Files.readString(shader);
         assertTrue(source.contains("std430"), "the records binding is std430");
@@ -58,9 +60,30 @@ class ImmediateDrawRecordAbiTest {
         int structEnd = source.indexOf("};", structStart);
         String body = source.substring(structStart, structEnd);
         long bytes = 64L * count(body, "mat4 ") + 16L * count(body, "vec4 ") + 16L * count(body, "vec2 ");
-        // 216 bytes of lit block plus the pad the 224-byte stride needs: the two families share one record array.
+        // The lit block's 256 bytes: the lighting payload, the light coordinate, the bindless index's slot and the fog
+        // block. The two families share one record array, so the unlit struct pads to the same stride.
         assertEquals(ImmediateDrawRecords.RECORD_BYTES, bytes,
                 "the lit struct must be one record long, padded to the shared stride");
+    }
+
+    @Test
+    void theLitPushRangeCoversEveryOffsetTheVertexStageDeclares() throws IOException {
+        String source = Files.readString(findShader("immediate_tex_color_lit.vert"));
+        int last = -1;
+        int widest = 0;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("layout\\(offset = (\\d+)\\)\\s+(vec4|vec2|float)").matcher(source);
+        while (matcher.find()) {
+            int offset = Integer.parseInt(matcher.group(1));
+            int size = "vec4".equals(matcher.group(2)) ? 16 : "vec2".equals(matcher.group(2)) ? 8 : 4;
+            last = Math.max(last, offset);
+            widest = Math.max(widest, offset + size);
+        }
+        assertTrue(last >= 0, "the lit vertex stage declares explicit offsets");
+        assertEquals(240, last, "the fog block's params are the last member the lit vertex stage declares");
+        assertEquals(256, widest, "the lit block ends at 256 bytes");
+        assertEquals(256, VulkanImmediateItemPipeline.celtium$pushBytesLit(),
+                "the pipeline's declared range must cover the whole block: a shorter range is a pipeline-creation error");
     }
 
     private static int count(String haystack, String needle) {

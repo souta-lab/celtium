@@ -4318,6 +4318,39 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The immediate path's fixed-function fog, mirrored from GlStateManager (see ImmediateFogState). */
     final ImmediateFogState fog = ImmediateFogState.current();
 
+    /**
+     * The lit ITEM family's fog, on by default: the block at 224..255 and the eye-space reconstruction in
+     * {@code immediate_tex_color_lit.vert}. The switch exists so the fix can be measured as one flag apart on one jar -
+     * with it false the block is still written (selector 0) and the picture is exactly the unfogged one this family
+     * produced before.
+     * <p>
+     * Mutable rather than final because the only clean A/B for a world scene is a <em>within-run</em> one: two runs of
+     * the same scene differ on most of the frame (animated water/lava/fire textures, clouds and entity animation phases
+     * are wall-clock driven, measured on legs r43b/r43c: 82% of the frame changed between two runs that differ only in
+     * this flag). {@link #celtium$setLitFog} lets the fixture flip it between two consecutive frames of one run, where
+     * the scene is the same scene. The push-block cache keys on it, so a cached block cannot carry the other arm's fog.
+     */
+    static boolean LIT_FOG = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.litFog", "true"));
+
+    /**
+     * Flips the lit ITEM family's fog at runtime, for the fixture's within-run A/B.
+     *
+     * @return the value now in force
+     */
+    public boolean celtium$setLitFog(boolean enabled) {
+        LIT_FOG = enabled;
+        return LIT_FOG;
+    }
+    /** Lit groups whose fog block was written: the number that says the fix is on the path, not merely compiled. */
+    private long litFogGroups;
+    /**
+     * Lit groups that carried fog but were drawn unfogged because their projection is not the perspective one the
+     * eye-space reconstruction reads. Counted rather than silent: an orthographic lit draw with fog on is the only
+     * shape that can land here, and the GUI (where it happens) has fog off.
+     */
+    private long litFogSkippedNonPerspective;
+    private int litFogSkipLogs;
+
     @Override
     public void setFogEnabled(boolean enabled) {
         this.fog.enabled(enabled);
@@ -4486,6 +4519,76 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         push.putFloat(200, mv[10]);
         push.putFloat(204, mv[14]);
         this.fog.groups++;
+    }
+
+    /**
+     * The lit ITEM family's fog block (224..255) and the two projection scales its vertex stage needs.
+     * <p>
+     * The lit block's 128..215 is the lighting payload and 208..215 the light-map coordinate, so the fog cannot share
+     * the unlit families' 128..207 region - they would overwrite each other, which is why the lit family used to be
+     * drawn with no fog at all. It has its own two vec4 at 224/240 now. The eye position that the unlit families get
+     * from the model-view rows has to be reconstructed instead: this family's block carries the <em>combined</em>
+     * projection (P * MV) at 0 and no model view, and for the perspective projection the world draws with,
+     * {@code clip.x = P00 * eye.x}, {@code clip.y = P11 * eye.y} and {@code clip.w = -eye.z}. The two scales therefore
+     * ride in the lighting payload's unused {@code .w} components ({@code u_Light0Dir.w}, {@code u_Light1Dir.w}),
+     * which the lighting eval never reads.
+     * <p>
+     * Written for every lit group, selector 0 included, because the push buffer is shared by the whole flush and a
+     * stale selector would fog the next draw. A group whose projection is not the perspective one (an orthographic GUI
+     * projection, where the game has fog off anyway) is written with selector 0 and counted, so "the projection was not
+     * one this reconstruction can read" is a number rather than a silently unfogged batch.
+     */
+    /** {@return the lit groups whose fog block was written} - the report's witness that the path is live. */
+    long litFogGroupCount() {
+        return this.litFogGroups;
+    }
+
+    /** {@return the lit groups drawn unfogged because their projection is not perspective}. */
+    long litFogSkipCount() {
+        return this.litFogSkippedNonPerspective;
+    }
+
+    private void celtium$writeLitFogPush(ImmediateGroup group, ByteBuffer push) {
+        float[] projection = group.projection;
+        // The exact shape the reconstruction reads: a symmetric perspective. P00 and P11 scale the eye's x and y,
+        // P[11] = -1 makes clip.w the eye depth, and P02/P12/P03/P13 must be zero or clip.x/clip.y would carry an
+        // eye.z or translation term the two scales cannot undo. A projection outside this set is drawn unfogged and
+        // counted rather than reconstructed approximately.
+        boolean perspective = projection != null && projection.length >= 16
+                && Math.abs(projection[11] + 1.0f) < 1.0e-3f
+                && Math.abs(projection[8]) < 1.0e-6f && Math.abs(projection[9]) < 1.0e-6f
+                && Math.abs(projection[12]) < 1.0e-6f && Math.abs(projection[13]) < 1.0e-6f
+                && projection[0] != 0.0f && projection[5] != 0.0f;
+        float[] fog = group.fog;
+        if (fog == null || !LIT_FOG || !perspective) {
+            push.putFloat(240 + 12, 0.0f); // u_FogParams.w: 0 = mode NONE
+            if (fog != null && LIT_FOG) {
+                this.litFogSkippedNonPerspective++;
+                if (this.litFogSkipLogs < 4) {
+                    this.litFogSkipLogs++;
+                    System.out.println("[Celtium] CELTIUM_LIT_FOG_SKIPPED frame=" + this.frameId
+                            + " format=" + group.formatId + " batches=" + group.batches
+                            + " reason=the projection is not the perspective one the eye-space reconstruction reads"
+                            + " proj00=" + (projection == null ? Float.NaN : projection[0])
+                            + " proj11=" + (projection == null ? Float.NaN : projection[11])
+                            + " (drawn unfogged; the GUI is the caller and has fog off)");
+                }
+            }
+            return;
+        }
+        push.putFloat(224, fog[4]);
+        push.putFloat(228, fog[5]);
+        push.putFloat(232, fog[6]);
+        push.putFloat(236, fog[7]);
+        push.putFloat(240, fog[1]);
+        push.putFloat(244, fog[2]);
+        push.putFloat(248, fog[3]);
+        push.putFloat(252, fog[0]);
+        // The projection's own two scale factors, in the .w components the lighting eval ignores:
+        // u_Light0Dir.w at 128+12 and u_Light1Dir.w at 128+28. Written after the lighting loop above.
+        push.putFloat(140, projection[0]);
+        push.putFloat(156, projection[5]);
+        this.litFogGroups++;
     }
 
     /**
@@ -15238,6 +15341,9 @@ this.frameBufferOpen = false;
         hash = celtium$mixPushFloats(hash, group.texMatrix);
         hash = celtium$mixPushFloats(hash, group.lightParams);
         hash = celtium$mixPushFloats(hash, group.lightmapCoords);
+        // The lit fog switch is part of the block's content: the same group drawn with it off writes selector 0 at 240,
+        // and a cached block from the other arm would otherwise be reused unchanged.
+        hash = celtium$mixPushKey(hash, LIT_FOG ? 0x1f0 : 0x0f1);
         return celtium$mixPushFloats(hash, group.fog);
     }
 
@@ -15283,7 +15389,9 @@ this.frameBufferOpen = false;
         if (this.pushBlocks.size() >= PUSH_BLOCK_LIMIT) {
             return;
         }
-        byte[] copy = new byte[216];
+        // 256, the widest block any family writes: the lit ITEM block's fog sits at 224..255, and a 216-byte copy
+        // would leave those bytes as whatever the previous group left in the shared buffer.
+        byte[] copy = new byte[256];
         int position = push.position();
         push.position(0);
         push.get(copy);
@@ -17755,14 +17863,14 @@ this.frameBufferOpen = false;
         java.util.Arrays.fill(this.immediateBindCache, -1L);
         closeCurrentImmediateGroup();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            // 216, not 208: the lit ITEM pipeline's block is five lighting vec4 (128..207) *plus* the light-map
-            // coordinate pair at 208..215, and every other pipeline clamps to its own declared range when it pushes.
-            // The buffer was 208 while the light-coordinate write below targets 208 and 212, so drawing any group that
-            // carried light-map coordinates - the model and item batches, exactly - threw IndexOutOfBoundsException out
-            // of the window flush; the catch then cleared the whole immediate queue, which is the measured reason
-            // id4/id9 were accepted and never drawn (windowFlushFailures=64, windowFlushDroppedBatches=9680,
-            // drawnByFormat id4=0 id9=0).
-            ByteBuffer push = stack.calloc(216);
+            // 256, not 208: the lit ITEM pipeline's block is five lighting vec4 (128..207), the light-map coordinate
+            // pair at 208..215 and the fog block at 224..255, and every other pipeline clamps to its own declared range
+            // when it pushes. The buffer was 208 while the light-coordinate write below targets 208 and 212, so drawing
+            // any group that carried light-map coordinates - the model and item batches, exactly - threw
+            // IndexOutOfBoundsException out of the window flush; the catch then cleared the whole immediate queue, which
+            // is the measured reason id4/id9 were accepted and never drawn (windowFlushFailures=64,
+            // windowFlushDroppedBatches=9680, drawnByFormat id4=0 id9=0).
+            ByteBuffer push = stack.calloc(256);
             // Compaction rather than iterator.remove(): removing each drawn or retired group shifted the remaining
             // tail left, so a flush that drew N of M groups cost O(N*M) array moves. The groups that stay are collected
             // into keptImmediateGroups in order - the draw order is the list order, so order must be preserved - and
@@ -18137,14 +18245,17 @@ this.frameBufferOpen = false;
                         this.immediateStatistics.noteLightmapCoordGroups();
                     }
                 }
-                // The fog block, which lives in the same 128..207 region as the lighting payload: a lit group's block
-                // is the lighting and must not be overwritten, so the fog is written only for groups that do not carry
-                // one. Everything that can arrive here with fog on is camera-space or object-space world geometry;
-                // the selector is 0 for a group offered while the game had fog off, so the shaders' fog branch is a
-                // no-op there. The ITEM pipeline's lit layout is the one family whose shaders do not declare this
-                // block at all (see the report: lit items and entities are the unfogged part of the immediate path).
+                // The fog block. The unlit families read it at 128..207, the same region as the lighting payload, so
+                // it is written only for groups that carry no lighting. The lit ITEM family has its own fog block at
+                // 224..255 (past the lighting and the light coordinate) and is written by celtium$writeLitFogPush,
+                // which also puts the projection's two scales into the lighting payload's unused .w slots - the vertex
+                // stage reconstructs the eye position from them, because this family's block carries the combined
+                // projection and no model view. The selector is 0 for a group offered while the game had fog off, so
+                // the shaders' fog branch is a no-op there.
                 if (light == null) {
                     celtium$writeFogPush(group, push);
+                } else {
+                    celtium$writeLitFogPush(group, push);
                 }
                 }
                 if (PUSH_BLOCK_CACHE && !pushBlockCached) {
