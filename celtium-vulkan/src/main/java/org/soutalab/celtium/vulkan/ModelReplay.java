@@ -210,9 +210,9 @@ final class ModelReplay {
             }
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
             // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
-            // switch was removed rather than kept.
-            float[] projectionRemapped = b.modelReplayProjection;
-            b.remapClipDepth(projectionNow, projectionRemapped);
+            // switch was removed rather than kept. The remap is cached by the projection contents: it is installed per
+            // pass, and this path asked for the same sixteen floats once per replay.
+            float[] projectionRemapped = b.celtium$replayProjection(projectionNow);
             // Gated and bounded: this line is per model list per frame, and on the operator's own session it was the
             // flood that pushed the game's log past 100,000 lines.
             if (VulkanDiagnostics.withinLimit(b.modelMatrixLines, b.MODEL_MATRIX_LINES)) {
@@ -504,7 +504,9 @@ final class ModelReplay {
             colour[3] = b.immediateState.colorAlpha();
         }
         float[] affine = b.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
-        float[] light = b.celtium$lightParams(state, modelView, b.modelInstanceLight);
+        // Cached on the rotation and the light state: the same payload was rebuilt for every replay of a scene whose
+        // entities share an orientation (2.5 M rebuilds in one pack leg; the cache's miss counter says how many remain).
+        float[] light = b.celtium$replayLight(state, modelView);
         if (MODEL_LIGHT_DEBUG_FRAME > 0 && b.frameId >= MODEL_LIGHT_DEBUG_FRAME && modelLightLines++ < 80) {
             // One frame of the instances' lighting inputs, for a lit model whose shade differs from the reference:
             // the flag, the object-space light terms and the lightmap coordinate the shader will see, by list.

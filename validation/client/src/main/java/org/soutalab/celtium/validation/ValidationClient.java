@@ -108,6 +108,29 @@ public final class ValidationClient {
     /** A pixel this dark in every channel counts as black: the audit's "large black region" measured this way. */
     private static final int PRESENTED_BLACK_CHANNEL_MAX = 8;
 
+    /**
+     * The band of a 1280x720 pack menu the title screen's own art occupies, as fractions of the picture.
+     * <p>
+     * Measured on the two GPU captures this fixture has: the AMD r14e frame (pack resources carried, colour cache
+     * fixed) and the Intel r16d frame. The band was taken from the legacy-run census's banner quad - screen
+     * (60,40)..(1220,200) at 1280x720 - and widened to the top strip a menu frame has, so a banner drawn at another
+     * GUI scale stays inside it: AMD mean 89.565 / non-black 0.925094, Intel 57.488 / 0.835704. The two negative
+     * controls - the pre-fix frame whose background and banner were drawn black, and the no-pack frame that drew the
+     * missing-texture checkerboard - both measure 0.0 / 0.0 here, so a floor of 20 mean luma and 0.30 non-black sits
+     * between the working frames and the broken ones with the worse working frame 2.8x above it.
+     */
+    private static final double MENU_TOP_X0 = 0.03D;
+    private static final double MENU_TOP_Y0 = 0.05D;
+    private static final double MENU_TOP_X1 = 0.97D;
+    private static final double MENU_TOP_Y1 = 0.31D;
+    /** The mean luma floor of that band: 34 % of the worse working capture (Intel 57.488) and 0 for both defects. */
+    private static final double MENU_TOP_MIN_MEAN_LUMA = 20.0D;
+    /** The non-black floor of that band: 36 % of the worse working capture (Intel 0.835704) and 0 for both defects. */
+    private static final double MENU_TOP_MIN_NON_BLACK = 0.30D;
+    /** The extent the menu floors were measured at; another size is reported and not judged. */
+    private static final int MENU_FLOOR_WIDTH = 1280;
+    private static final int MENU_FLOOR_HEIGHT = 720;
+
     /** The scene this run drives; {@code -Dceltium.validation.scene=<name>}. */
     private static final String SCENE_PROPERTY = "celtium.validation.scene";
 
@@ -10130,6 +10153,9 @@ public final class ValidationClient {
                 }
             }
         }
+        // The menu is not one of the scene's stages, but a leg that asked for its frame gets it judged: the pack's
+        // title-screen art is a fidelity unit of its own, and a menu leg that draws a black band must not read PASSED.
+        failures.addAll(celtium$gateMenuStage());
         celtium$presentedImageFailures = failures.size();
         report.addProperty("presentedImageAssertionFailures", Integer.valueOf(failures.size()));
         report.addProperty("presentedImageAssertions", celtium$presentedImageAssertionMessage(failures));
@@ -10600,6 +10626,102 @@ public final class ValidationClient {
                     + "), which is what a frame with the screen's backgrounds missing measures - the world shows"
                     + " through the panel and the region is richer than the world, not darker (this ceiling was"
                     + " measured on " + floors.source + ") for " + label);
+        }
+        return failures;
+    }
+
+    /**
+     * The pack menu's own floor, judged on the title screen's presented frame: the band its background and banner
+     * occupy has to hold a picture.
+     * <p>
+     * The menu is not a scene stage - a leg can request it with {@code -Dceltium.validation.dumpPresentedMenuTick} on
+     * any scene, and the title screen is up before a world exists - so it is judged here, beside the scene's stages,
+     * and only when the leg asked for it. The floors and their provenance are in the constants above: the two GPU
+     * captures that hold the art pass with the worse one 2.8x above the non-black floor, and the two controls that do
+     * not - the pre-fix frame whose background and banner were drawn black, and the no-pack frame - measure zero.
+     * <p>
+     * A picture whose extent is not the calibrated 1280x720 is reported as NOT_CALIBRATED and not judged: the band is
+     * a fraction of the frame, and the GUI scale that places the art changes with the window. A picture whose bytes no
+     * longer hash to the named frame is a failure, because it is not the frame this capture is about.
+     */
+    private java.util.List<String> celtium$gateMenuStage() {
+        java.util.List<String> failures = new java.util.ArrayList<String>();
+        PictureEvidence evidence = this.celtium$evidence.get("menu");
+        if (evidence == null) {
+            report.addProperty("menuRegionGate", "NOT_APPLICABLE: this leg requested no menu picture");
+            return failures;
+        }
+        if (!evidence.completed) {
+            report.addProperty("menuRegionGate", "NOT_CAPTURED: the menu request at tick " + evidence.requestedAtTick
+                    + " was not completed (" + (evidence.completionError == null ? "no error recorded"
+                            : evidence.completionError) + ")");
+            return failures;
+        }
+        Picture picture;
+        try {
+            picture = Picture.read(evidence.image);
+        } catch (Throwable unreadable) {
+            picture = null;
+            report.addProperty("menuRegionGate", "NOT_CAPTURED: the menu picture at "
+                    + celtium$relative(evidence.image) + " could not be read: " + unreadable);
+            return failures;
+        }
+        if (picture == null) {
+            report.addProperty("menuRegionGate", "NOT_CAPTURED: the menu picture at "
+                    + celtium$relative(evidence.image) + " has no pixels");
+            return failures;
+        }
+        if (picture.hash() != evidence.imageHash) {
+            failures.add("the menu picture at " + celtium$relative(evidence.image) + " is not the frame its identity"
+                    + " names: the pixels hash to 0x" + Integer.toHexString(picture.hash()) + ", the identity records"
+                    + " 0x" + Integer.toHexString(evidence.imageHash) + ", so the menu's art cannot be judged from it");
+            report.addProperty("menuRegionGate", "FAILED: the file is not the named frame");
+            return failures;
+        }
+        report.addProperty("menuRegionSource", SOURCE_PRESENTED_DUMP + " " + picture.width + "x" + picture.height
+                + " file=" + celtium$relative(evidence.image) + " presentedFrame=" + evidence.presentedFrame);
+        if (picture.width != MENU_FLOOR_WIDTH || picture.height != MENU_FLOOR_HEIGHT) {
+            report.addProperty("menuRegionGate", "NOT_CALIBRATED: the floors were measured at " + MENU_FLOOR_WIDTH
+                    + "x" + MENU_FLOOR_HEIGHT + ", this picture is " + picture.width + "x" + picture.height);
+            return failures;
+        }
+        int x0 = (int) Math.round(MENU_TOP_X0 * picture.width);
+        int y0 = (int) Math.round(MENU_TOP_Y0 * picture.height);
+        int x1 = (int) Math.round(MENU_TOP_X1 * picture.width);
+        int y1 = (int) Math.round(MENU_TOP_Y1 * picture.height);
+        double meanLuma = picture.regionMeanLuma(x0, y0, x1, y1);
+        long nonBlack = 0L;
+        long pixels = 0L;
+        for (int y = y0; y < y1; y++) {
+            for (int x = x0; x < x1; x++) {
+                int pixel = picture.pixel(x, y);
+                int luma = (299 * ((pixel >> 16) & 0xFF) + 587 * ((pixel >> 8) & 0xFF) + 114 * (pixel & 0xFF)) / 1000;
+                if (luma > PRESENTED_BLACK_CHANNEL_MAX) {
+                    nonBlack++;
+                }
+                pixels++;
+            }
+        }
+        double nonBlackFraction = pixels == 0L ? 0.0D : (double) nonBlack / (double) pixels;
+        report.addProperty("menuRegionRect", x0 + "," + y0 + ".." + x1 + "," + y1 + " (fractions "
+                + MENU_TOP_X0 + "," + MENU_TOP_Y0 + ".." + MENU_TOP_X1 + "," + MENU_TOP_Y1 + ")");
+        report.addProperty("menuRegionMeanLuma", Double.valueOf(meanLuma));
+        report.addProperty("menuRegionNonBlackFraction", Double.valueOf(nonBlackFraction));
+        String label = "scene=" + celtium$scene.name + " stage=menu file=" + celtium$relative(evidence.image)
+                + " presentedFrame=" + evidence.presentedFrame + " extent=" + picture.width + "x" + picture.height
+                + " band=" + x0 + "," + y0 + ".." + x1 + "," + y1
+                + " (floors measured on AMD r14e 89.565/0.925094 and Intel r16d 57.488/0.835704; pre-fix and"
+                + " no-pack controls 0.0/0.0)";
+        if (meanLuma < MENU_TOP_MIN_MEAN_LUMA || nonBlackFraction < MENU_TOP_MIN_NON_BLACK) {
+            report.addProperty("menuRegionGate", "FAILED");
+            failures.add("the pack menu's art did not draw: menuRegionMeanLuma=" + meanLuma + " and"
+                    + " menuRegionNonBlackFraction=" + nonBlackFraction + " over the top band are below the floors of "
+                    + MENU_TOP_MIN_MEAN_LUMA + " and " + MENU_TOP_MIN_NON_BLACK + " for " + label);
+        } else {
+            report.addProperty("menuRegionGate", "PASSED");
+            System.out.println("[Celtium] CELTIUM_MENU_REGION_GATE status=PASSED mean=" + meanLuma
+                    + " nonBlack=" + nonBlackFraction + " band=" + x0 + "," + y0 + ".." + x1 + "," + y1
+                    + " presentedFrame=" + evidence.presentedFrame);
         }
         return failures;
     }

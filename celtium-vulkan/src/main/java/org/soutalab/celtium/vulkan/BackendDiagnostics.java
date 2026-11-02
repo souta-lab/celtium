@@ -357,6 +357,10 @@ final class BackendDiagnostics {
                 + " modelEnqueueMicrosPerCall=" + b.modelStats.enqueueMicrosPerCall()
                 + " modelRepeatsPrev=" + b.modelStats.repeatReplays()
                 + " modelRepeatsPercent=" + b.modelStats.repeatPercent()
+                // What the replay input cache skipped: a hit is a 3x3 inverse + two square roots (light) or a 4x4
+                // multiply (projection) that produced bytes already in hand. The miss side is what a scene that
+                // repeats nothing would pay, so the pair is the measurement of this optimisation on that scene.
+                + " modelReplayCache[" + b.modelReplayInputCache.describe() + "]"
                 + " texMatrixGroups=" + b.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + b.modelDrawRefusals
                 + " modelLastRefusal=" + b.modelLastRefusal

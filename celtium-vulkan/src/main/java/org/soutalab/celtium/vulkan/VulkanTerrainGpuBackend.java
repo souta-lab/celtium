@@ -3204,6 +3204,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final float[] modelInstanceLight = new float[20];
     final float[] modelReplayView = new float[16];
     final float[] modelReplayProjection = new float[16];
+    /**
+     * The two per-replay values that depend on inputs a scene repeats: the lit payload (rotation + light generation)
+     * and the depth-remapped projection (per pass). A miss rebuilds exactly the bytes a hit reuses; the counters say
+     * how often the scene's own repetitions let the work be skipped. See {@link ModelReplayInputCache}.
+     */
+    final ModelReplayInputCache modelReplayInputCache = new ModelReplayInputCache();
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> texGenPipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
@@ -4892,6 +4898,46 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Filled by the two-arg form before it decides whether a group needs its own array. */
     private final float[] lightParamsScratch = new float[20];
     private float[] lastLightParams;
+
+    /**
+     * The model replay's lit payload, rebuilt only when the rotation or the light state moved.
+     * <p>
+     * The replay path calls this per display-list replay - 2.5 M times in one pack leg - while the payload depends only
+     * on {@code modelView[0..10]} and {@link VulkanGlState#lightGeneration()}. A scene of entities sharing an
+     * orientation repeats both, so the 3x3 inverse, two square roots and twenty stores were being done to arrive at
+     * the bytes that were already in {@link #modelInstanceLight}. The scratch is the model path's own, never
+     * {@link #lightParamsScratch}, because the two-arg form above writes that one for the per-group path.
+     *
+     * @return the payload to copy into the record, or null when the replay is unlit
+     */
+    float[] celtium$replayLight(int[] state, float[] modelView) {
+        if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
+            return null;
+        }
+        long generation = this.immediateState.lightGeneration();
+        if (this.modelReplayInputCache.reuseLightPayload(generation, modelView)) {
+            return this.modelInstanceLight;
+        }
+        this.celtium$lightParams(state, modelView, this.modelInstanceLight);
+        this.modelReplayInputCache.noteLightPayload(generation, modelView);
+        return this.modelInstanceLight;
+    }
+
+    /**
+     * The replay's depth-remapped projection, rebuilt only when the live projection changes.
+     * <p>
+     * The remap is a 4x4 multiply with a constant matrix, and the projection is installed per pass, so nearly every
+     * replay of a frame recomputed the same sixteen floats. The returned array is the model path's scratch; the group
+     * that keeps a projection asks {@link #celtium$shareProjection} for its own copy.
+     */
+    float[] celtium$replayProjection(float[] projectionNow) {
+        if (this.modelReplayInputCache.reuseProjection(projectionNow)) {
+            return this.modelReplayProjection;
+        }
+        remapClipDepth(projectionNow, this.modelReplayProjection);
+        this.modelReplayInputCache.noteProjection(projectionNow);
+        return this.modelReplayProjection;
+    }
 
     float[] celtium$lightParams(int[] state, float[] modelView, float[] into) {
         if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
