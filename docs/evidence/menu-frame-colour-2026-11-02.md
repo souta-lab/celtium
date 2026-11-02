@@ -110,3 +110,36 @@ stub が upload 時に記録している level-0 extent（`texLevels`）を答�
 - banner は TextureApng 相当の 10000x450 を UV 0..1 で引くため、参照の1コマ表示とはスケールが違う可能性がある。
   位相とコマ送りは未測定。
 - Intel leg はこの修正では回していない（AMD のみ）。次の paired 確認で Intel を取る。
+
+## Intel leg（2026-11-02、r16d-intel-menu-frame）— この修正の Intel 実測はこれが初めて
+
+renderer `4130f4c8f6bfd637e80f8d5b4d51e645963a1f51ead885b3371846f26ac9479b`、fixture
+`1494d31751249f27e9dc301344de813ff86bcae69e8f161595122e879df2bddf`、Intel(R) UHD Graphics 630 (CFL GT2)、
+mode `plain`・X11・validation 既定ON・220 s・`CELTIUM_LEG_COPY_PACK_DIRS=resources`・
+`-Dceltium.validation.menuHoldTicks=70 -Dceltium.validation.dumpPresentedMenuTick=40 -Dceltium.debug.legacyRuns=6`。
+`accepted=true`、`verdict=PASSED`、`problems=[]`、`validationMessageCount=0`、`validationClean=true`、
+`gpuRequirementMet=true`（実 device 行 `Intel(R) UHD Graphics 630 (CFL GT2)`）、`fixtureUncalibrated=false`、
+device lost/VK_ERROR 0。
+
+`CELTIUM_LEGACY_RUN`（同じ census。修正前の AMD r14d は背景/banner/frame が `colour=0,0,0,1` だった）:
+
+```
+r16d  CELTIUM_LEGACY_RUN texture=506 mirror=256x256   full=true taken=true colour=0.0,0.0,0.0,1.0   ← title screen 自身の黒fill
+r16d  CELTIUM_LEGACY_RUN texture=507 mirror=1920x1080 full=true taken=true colour=1.0,1.0,1.0,1.0   ← 背景
+r16d  CELTIUM_LEGACY_RUN texture=508 mirror=10000x450 full=true taken=true colour=1.0,1.0,1.0,1.0   ← banner
+r16d  CELTIUM_LEGACY_RUN texture=509 mirror=304x104   full=true taken=true colour=1.0,1.0,1.0,1.0   ← frame
+r16d  CELTIUM_LEGACY_RUN texture=511 mirror=100x40    full=true taken=true colour=1.0,1.0,1.0,1.0   ← button
+```
+
+つまり Intel でも `GlStateManager.color(1,1,1,1)` は発行され、背景・banner・frame・button は白で描かれる
+（キャッシュ desync の修正は GPU 非依存）。もう 1 本の Intel leg（`r16c-intel-menu`、dump 無し・
+`menuDumpTick` のつもりの誤った property 名）も同じ形で、背景が 2560x1369 のスライドだっただけ。
+
+menu presented frame: `celtium-presented-menu-run-17f837310e22-…-kept.png`（presented frame 100、1280x720）、
+mean **57.06** / 非黒 **0.93067**。同じ leg の world は PASSED。AMD の r14e は mean 95.15 / 非黒 0.9824 で、
+**この差はスライドの画像が違うため**（r14e は 1920x1080 の市街、この leg も 1920x1080 だが別の絵。
+`menuDumpPanoramaTimer=0.0`）。数値の一致は主張しない。主張は「Intel で背景・banner・frame・button が
+presented frame に出ている」ことと、その形が AMD の修正後と同じ（黒 0,0,0,1 ではない）ことまで。
+
+残り: menu stage の較正 floor は依然として無い（スライド位相を揃える手段が未実装なので、参照画像との一致は
+判定できない）。tooltip・creative tab の frame は未取得。
