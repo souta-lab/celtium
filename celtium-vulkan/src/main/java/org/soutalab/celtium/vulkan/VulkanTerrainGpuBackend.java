@@ -10567,24 +10567,13 @@ this.frameBufferOpen = false;
             this.defaultFramebufferCompositesTaken++;
             sharedComposite = true;
             this.immediateLastRefusal = "taken: the glless default-framebuffer draw goes into the owned image";
-        } else if (fbo == 0) {
-            // The default framebuffer is what Minecraft's own composite draws into: it blends an overlay over the frame on
-            // the way to the screen. With the game rendering into the shared images that framebuffer is not where the
-            // picture comes from any more, and the composite's content is the same picture - so it is taken and drawn there
-            // instead, which puts the overlay into the image the next present shows. Measured: 874 such batches per run,
-            // every one of them refused before this, all of them format 2, stride 24, one quad.
-            int sharedTarget = this.gameFramebufferIsShared && this.frameTarget != null
-                    ? this.frameTarget.adoptableFramebuffer(this.targetWidth, this.targetHeight) : 0;
-            if (sharedTarget != 0) {
-                this.defaultFramebufferCompositesTaken++;
-                fbo = sharedTarget;
-                sharedComposite = true;
-                this.immediateLastRefusal = "taken: the default framebuffer composite goes into the shared image";
-            } else {
-                this.immediateLastRefusal = "target: the default framebuffer is bound";
-                return false;
-            }
         }
+        // There used to be an `else if (fbo == 0)` here that redirected the default-framebuffer composite to the shared
+        // image through adoptableFramebuffer(). It could not run: the branch above takes every fbo == 0 case, so the
+        // redirect's body was unreachable while its comment read as if the redirect existed. The two branches wanted
+        // the same thing - the composite's pixels in the image the next present shows - and the branch above already
+        // does it, so the dead one is gone rather than reordered. adoptableFramebuffer() stays on the backend for the
+        // adoption path that does use it (celtium$adoptableFramebuffer).
         int[] viewport = currentViewport();
         if (viewport[0] < 0 || viewport[1] < 0) {
             this.immediateLastRefusal = "target: the viewport origin is " + viewport[0] + "," + viewport[1];
@@ -12817,8 +12806,34 @@ this.frameBufferOpen = false;
 
     private void celtium$printVerificationSummary(String trigger, boolean snapshot) {
         celtium$reportFlushReasonsForSummary();
+        if (!snapshot) {
+            // The no-op census, at the same point and for the same reason as the flush census above: it is the only
+            // instrument that names drawing that reached no image, and its own shutdown hook does not reach the log.
+            // Measured on leg r39b-gate: CELTIUM_NOOP_CENSUS, CELTIUM_UNKNOWN_SYMBOLS, CELTIUM_BLEND_CENSUS,
+            // CELTIUM_TEX_PARAM_CENSUS and CELTIUM_DISPLAY_LISTS are in no file of the run, while a *different*
+            // shutdown hook (CELTIUM_GL_SURFACE trigger=shutdown) printed in the same teardown - so the hook is
+            // registered and the JVM runs hooks, and this one still leaves nothing. Printing here does not depend on
+            // that: world teardown and the fixture's final request are both inside the log's lifetime.
+            celtium$printNoopCensus(trigger);
+        }
         // The guard and the line's shape live in BackendReport now; the counter text is still this class's.
         this.report.printSummary(trigger, this.verificationSummary(), snapshot);
+    }
+
+    /**
+     * Prints the no-op census and the drawing-only subset of it, naming the trigger.
+     * <p>
+     * Two lines because they answer different questions. The first is the general "which swallowed calls were made at
+     * all", ranked by count. The second is the one that matters for the picture: a drawing entry point in the no-op
+     * table is geometry that no image received, and it is invisible in the ranked list under a thousand state calls.
+     * {@code none} on the second line is the only answer that says the drawing surface is complete for the calls that
+     * arrived.
+     */
+    private void celtium$printNoopCensus(String trigger) {
+        System.out.println("[Celtium] CELTIUM_NOOP_CENSUS via=" + trigger + " "
+                + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noopCensusSummary());
+        System.out.println("[Celtium] CELTIUM_NOOP_DRAWING via=" + trigger + " "
+                + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noopDrawingCensusSummary());
     }
 
     @Override

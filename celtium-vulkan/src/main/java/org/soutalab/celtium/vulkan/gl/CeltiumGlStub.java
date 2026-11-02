@@ -5867,8 +5867,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         NOOP_COUNTS_BY_ID.incrementAndGet(functionId);
     }
 
-    /** The name-keyed no-op path remains for callers that genuinely have a name: it folds into the id arrays. */
-    private static void celtium$noteNoop(String name) {
+    /**
+     * The name-keyed no-op path remains for callers that genuinely have a name: it folds into the id arrays.
+     * <p>
+     * Public because the census's own test drives it: a census that can only be filled by a real GL call is a census
+     * whose name list cannot be checked, and a name that is not in the table would leave it reading {@code none} for
+     * ever. The production caller is the no-op trampoline.
+     */
+    public static void celtium$noteNoop(String name) {
         Integer id = IDS.get(name);
         if (id != null) {
             celtium$noteNoopById(id.intValue());
@@ -5914,6 +5920,110 @@ public final class CeltiumGlStub implements FunctionProvider {
             out.add(entry.getKey() + "=" + entry.getValue().get());
         }
         return out;
+    }
+
+    /**
+     * The no-op entry points whose whole job is to put geometry in the image.
+     * <p>
+     * The general census ranks every swallowed call by count, and the top of that list is always state - {@code glHint},
+     * {@code glShadeModel}, the material and light setters - because those are called per batch. A drawing entry point
+     * that reaches the no-op table is a different kind of fact: the transformer routes the indexed and instanced draws
+     * to real handlers, so a count here means a call arrived by a route the transformer did not rewrite, and its
+     * geometry reached no image at all. That is a hole in the picture, not a state detail, and it is invisible in a
+     * count-ranked list that a thousand {@code glHint} calls sit on top of.
+     * <p>
+     * The names are the table's own: {@link #isNoopEntryPoint(String)} answers whether one of them is really registered
+     * as a no-op, and {@code NoopDrawingCensusTest} pins that every name here is - a name that is not in the table can
+     * never be counted, so a typo would leave a census that always reads "none" and looks like a clean run.
+     */
+    private static final String NOOP_DRAWING_NAMES_TEXT =
+            "glDrawElements glDrawRangeElements glDrawElementsInstanced glDrawArraysInstanced"
+                    + " glMultiDrawArrays glMultiDrawElements glDrawElementsBaseVertex"
+                    + " glDrawArraysIndirect glMultiDrawArraysIndirect glMultiDrawElementsIndirect"
+                    + " glDrawElementsIndirect glArrayElement glRects glBitmap glDrawPixels glCopyPixels";
+
+    /**
+     * Holds the drawing-name set, in its own class initializer.
+     * <p>
+     * Not a field of {@link CeltiumGlStub} on purpose: this class's own {@code <clinit>} is at HotSpot's
+     * {@code HugeMethodLimit}. Measured while adding this census - the set built inline took the initializer to
+     * <b>8030</b> bytes, over the 8000-byte limit, and {@code HugeMethodLimitTest} failed on it. Above the limit the
+     * JIT never compiles the method, and this initializer is the one that registers every GL entry point, so it would
+     * run interpreted for the whole session. A nested holder gets its own initializer and leaves the outer one alone.
+     */
+    private static final class NoopDrawingNames {
+        static final java.util.Set<String> SET = java.util.Collections.unmodifiableSet(
+                new java.util.LinkedHashSet<String>(java.util.Arrays.asList(NOOP_DRAWING_NAMES_TEXT.split(" "))));
+    }
+
+    /** {@return the drawing entry points {@link #noopDrawingCensusSummary()} reports on}. */
+    public static java.util.Set<String> noopDrawingNames() {
+        return NoopDrawingNames.SET;
+    }
+
+    /** {@return whether {@code name} is registered in the table as a no-op entry point}. */
+    public static boolean isNoopEntryPoint(String name) {
+        for (int i = 0; i < TABLE.size(); i++) {
+            Fn fn = TABLE.get(i);
+            if (fn.semantics == SEM_NOOP && fn.name.equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@return whether {@code key} names a drawing entry point, with or without a descriptor}.
+     * <p>
+     * The two censuses spell a call differently and this is the join between them: the stub's table holds bare names
+     * ({@code glDrawElements}), while the transformer's unrouted census holds the JVM key it rewrote
+     * ({@code glDrawElements(IIIJ)V}). A bare-name {@code contains} against the second form is false for every entry,
+     * so the drawing line would read {@code none} for ever - a census that cannot fire, which is the failure this
+     * project keeps finding. The descriptor is therefore stripped here, once, and the test drives both spellings.
+     */
+    public static boolean isDrawingEntryPointKey(String key) {
+        if (key == null || key.isEmpty()) {
+            return false;
+        }
+        int paren = key.indexOf('(');
+        String bare = paren > 0 ? key.substring(0, paren) : key;
+        return NoopDrawingNames.SET.contains(bare);
+    }
+
+    /**
+     * {@return one line naming every drawing entry point that was called and drew nothing, or {@code none}}.
+     * <p>
+     * Read it as the picture's missing-geometry list, not as a state census: a name here is geometry the run asked for
+     * and no image received. {@code none} is the only answer that says the drawing surface is complete for the calls
+     * that arrived; it says nothing about calls that never arrived.
+     * <p>
+     * <b>This is the trampoline's census, and in the shipped path it reads zero for a structural reason.</b> Measured
+     * on leg {@code r40a-gate}: this line read {@code none} while {@code CELTIUM_GL_SURFACE} reported 47,078 unrouted
+     * calls in the same run. The transformer rewrites the LWJGL natives and answers them itself, so a rewritten call
+     * never reaches the trampoline that increments these counters - zero here means "the trampoline was not the path",
+     * not "nothing was swallowed". The live drawing census is {@code CELTIUM_GL_SURFACE_DRAWING}, which is computed
+     * from the transformer's own unrouted counts. This one still answers for a caller without the transformer (the CPU
+     * contract check drives it directly), and it is kept because deleting it would leave that path uncounted.
+     */
+    public static String noopDrawingCensusSummary() {
+        StringBuilder line = new StringBuilder();
+        int named = 0;
+        for (int i = 0; i < TABLE.size(); i++) {
+            long count = NOOP_COUNTS_BY_ID.get(i);
+            if (count <= 0L) {
+                continue;
+            }
+            String name = TABLE.get(i).name;
+            if (!NoopDrawingNames.SET.contains(name)) {
+                continue;
+            }
+            if (named > 0) {
+                line.append(' ');
+            }
+            line.append(name).append('=').append(count);
+            named++;
+        }
+        return named == 0 ? "none" : line.toString();
     }
 
     /** {@return the number of distinct no-op entry points called, and the total number of calls}. */

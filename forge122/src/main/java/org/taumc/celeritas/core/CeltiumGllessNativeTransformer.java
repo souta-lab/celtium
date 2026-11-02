@@ -639,8 +639,21 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
     }
 
-    private static int unroutedId(String key) {
-        Integer existing = UNROUTED_IDS.get(key);
+    /**
+     * Registers one unrouted call for the surface census, so the CPU check can prove the drawing line fires.
+     * <p>
+     * The line reads {@code none} on a run whose unrouted calls are all state, and that is also exactly what a census
+     * that cannot fire looks like - the two are indistinguishable from the leg alone. The check therefore registers a
+     * drawing key and reads the line back; without that, {@code none} in a leg would not be evidence of anything.
+     */
+    public static void celtium$noteUnroutedForCheck(String key) {
+        int id = unroutedId(key);
+        if (id >= 0) {
+            org.taumc.celeritas.core.CeltiumGllessHint.noteUnrouted(id);
+        }
+    }
+
+    private static int unroutedId(String key) {        Integer existing = UNROUTED_IDS.get(key);
         if (existing != null) {
             return existing.intValue();
         }
@@ -706,6 +719,40 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 + " unroutedCalls=" + calls
                 + " [" + line + "]";
         System.out.println(report);
+        // The drawing-only subset of the same counts, and this is the line that answers the picture's question.
+        // The stub's own no-op census cannot: measured on leg r40a-gate, CELTIUM_NOOP_CENSUS read
+        // noopEntryPoints=0 noopCalls=0 while this census reported 47,078 unrouted calls in the same run, because the
+        // transformer answers every rewritten native before the stub's trampoline is reached - so the trampoline's
+        // counter is structurally unreachable in the shipped path, not clean. A drawing entry point here is geometry
+        // the run asked for and no image received; "none" is the only answer that says the drawing surface is
+        // complete for the calls that arrived.
+        StringBuilder drawing = new StringBuilder();
+        int drawingNames = 0;
+        for (int i = 0; i < order.size(); i++) {
+            int id = order.get(i).intValue();
+            if (id >= names.length
+                    || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isDrawingEntryPointKey(names[id])) {
+                continue;
+            }
+            if (drawingNames > 0) {
+                drawing.append(' ');
+            }
+            drawing.append(names[id]).append('=').append(counts[id]);
+            drawingNames++;
+        }
+        if (drawingNames > 0 || "shutdown".equals(trigger)) {
+            String drawingReport = "[Celtium] CELTIUM_GL_SURFACE_DRAWING trigger=" + trigger + " "
+                    + (drawingNames == 0 ? "none" : drawing.toString());
+            System.out.println(drawingReport);
+            if ("shutdown".equals(trigger)) {
+                try (java.io.PrintStream out = new java.io.PrintStream(
+                        new java.io.FileOutputStream(java.io.FileDescriptor.out), false)) {
+                    out.println(drawingReport);
+                } catch (Throwable ignored) {
+                    // Not fatal: the log line above is the primary record.
+                }
+            }
+        }
         // The log is the harness's file; a shutdown print can lose the race with Log4j's own hook, so the same line
         // also goes to the process stdout descriptor when this is the shutdown pass.
         if ("shutdown".equals(trigger)) {

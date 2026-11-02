@@ -503,8 +503,35 @@ public class TransformerRouteVerifierCheck {
         if (queryAnswerFailures > 0) {
             System.out.println("query answers failed=" + queryAnswerFailures);
         }
+        // Positive control for the live drawing census. The line reads "none" on a run whose unrouted calls are all
+        // state, and that is also what a census that cannot fire looks like - so one drawing key is registered here and
+        // the line is read back. Without this, "none" in a leg is not evidence of anything.
+        int drawingCensusFailures = 0;
+        try {
+            org.taumc.celeritas.core.CeltiumGllessNativeTransformer
+                    .celtium$noteUnroutedForCheck("glDrawElements(IIIJ)V");
+            java.io.PrintStream original = System.out;
+            java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+            try {
+                System.setOut(new java.io.PrintStream(captured, true, "UTF-8"));
+                org.taumc.celeritas.core.CeltiumGllessNativeTransformer.printSurfaceReport("positive-control");
+            } finally {
+                System.setOut(original);
+            }
+            String text = captured.toString("UTF-8");
+            String expected = "CELTIUM_GL_SURFACE_DRAWING trigger=positive-control glDrawElements(IIIJ)V=1";
+            if (!text.contains(expected)) {
+                System.out.println("DRAWING-CENSUS-FAIL expected [" + expected + "] in [" + text.trim() + "]");
+                drawingCensusFailures++;
+            } else {
+                System.out.println("DRAWING-CENSUS positive control named the drawing key");
+            }
+        } catch (Throwable error) {
+            System.out.println("DRAWING-CENSUS-FAIL " + error);
+            drawingCensusFailures++;
+        }
         if (failed != 0 || classFailures != 0 || colourMissing != 0 || texcoordMissing != 0 || queryMissing != 0
-                || queryAnswerFailures != 0) {
+                || queryAnswerFailures != 0 || drawingCensusFailures != 0) {
             System.exit(1);
         }
     }
