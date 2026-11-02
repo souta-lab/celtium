@@ -264,6 +264,57 @@ class LegacyImmediateCaptureTest {
         assertEquals(6 * 24, sink.lastBytes().length * 8, "one 24-byte vertex per vertex");
     }
 
+    /**
+     * GL ignores the trailing vertices of an incomplete primitive, and so must the capture.
+     * <p>
+     * The renderer refuses a {@code GL_QUADS} run whose count is not a multiple of four, so a mod that wrote one stray
+     * vertex lost the whole run, the complete quad included. Cutting the run to its complete quads keeps the renderer's
+     * strict rule and gives GL's answer; the cut vertex is counted.
+     */
+    @Test
+    void aTrailingVertexIsIgnoredAndTheWholeQuadsAreDrawn() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, true, false, GATE));
+        for (int i = 0; i < 5; i++) {
+            capture.vertex3f(i, i, 0.0f);
+        }
+        assertTrue(capture.end(sink), "the complete quad is still offered");
+        assertEquals(4, sink.lastShape()[2], "GL draws four vertices and ignores the incomplete fifth");
+        assertEquals(1, capture.trailingVertices(), "and the ignored vertex is counted");
+        assertEquals(4, capture.submittedVertices());
+    }
+
+    /**
+     * A run with no complete primitive is offered unchanged, not turned into a draw.
+     * <p>
+     * The capture's contract is "pack what the mod wrote, and offer it"; the renderer decides whether a two-vertex
+     * triangle is drawable. Inventing a draw here would hide that decision, and truncating the run to zero would claim
+     * a loss where GL also draws nothing.
+     */
+    @Test
+    void aRunWithNoCompletePrimitiveIsOfferedUnchanged() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_TRIANGLES, false, false, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        capture.vertex3f(1.0f, 0.0f, 0.0f);
+        assertTrue(capture.end(sink), "the run reaches the sink as the mod wrote it");
+        assertEquals(2, sink.lastShape()[2], "two vertices stay two vertices");
+        assertEquals(0, capture.trailingVertices(), "nothing was cut, so nothing is counted as a trailing primitive");
+    }
+
+    @Test
+    void theWholePrimitiveCutFollowsTheMode() {
+        assertEquals(8, LegacyImmediateCapture.wholePrimitives(9, GL11.GL_QUADS));
+        assertEquals(8, LegacyImmediateCapture.wholePrimitives(9, GL11.GL_QUAD_STRIP));
+        assertEquals(0, LegacyImmediateCapture.wholePrimitives(3, GL11.GL_QUAD_STRIP));
+        assertEquals(6, LegacyImmediateCapture.wholePrimitives(8, GL11.GL_TRIANGLES));
+        assertEquals(4, LegacyImmediateCapture.wholePrimitives(5, GL11.GL_LINES));
+        assertEquals(5, LegacyImmediateCapture.wholePrimitives(5, GL11.GL_TRIANGLE_FAN),
+                "a fan draws every count of three or more");
+    }
+
     @Test
     void theSummaryNamesEveryKindOfLoss() {
         LegacyImmediateCapture capture = capture();

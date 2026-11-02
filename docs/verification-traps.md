@@ -321,3 +321,25 @@ dump の evidence を上書きし、`completed` を見る hold が presented を
 (c) screenshot と presented dump を別 stage にする、(d) hold に上限を置き、未完了なら pending request を破棄して
 理由を report に残す（world frame を menu の絵として完了させない）。GL arm は presented dump を要求できないので、
 そこで hold を待たせない。実測は [menu撮影の証拠](evidence/menu-capture-2026-11-02.md)。
+
+## 上限付きの計器の「行が無い」を「出来事が無い」と読まない（2026-11-02 実測）
+
+**症状**: r12b-menu の menu hold 中、`CELTIUM_UNIT_BIND` は font atlas 510 と 513 の96行だけ、
+`CELTIUM_ANNOUNCE_EXTENT` は12行だけだった。これを「menu 画像は bind も upload もされていない」と読み、
+根因を mod 側へ寄せた。実際は menu 画像の quad が legacy 経路の既定OFFで捨てられていただけで、
+**bind の記録上限（非panorama 96行・panorama帯 40行）に既に達していた**ため、後から来た bind は1行も出ない。
+`CELTIUM_ANNOUNCE_EXTENT` は32行、`CELTIUM_LEGACY_REFUSED` は4行で同じく打ち切られる（`VulkanGlState` /
+`VulkanTextureRegistry` / `CeltiumGlStub` の定数）。
+
+**規約**: 上限のある tag で「無い」を根拠にする時は、(a) 行数が上限に達していないこと、(b) 同じ tag に陽性対照
+（別の名前・別の時刻）があること、(c) 上限を超える名前は summary/census の数値側で確認すること、を先に満たす。
+r12b の「menu 画像経路に到達していない」は取消し（[legacy 既定ONの証拠](evidence/legacy-immediate-default-2026-11-02.md)）。
+
+## 拒否理由の「count=」が実頂点数ではなかった（2026-11-02 修正）
+
+`unrecorded (format=2 stride=24 mode=7 count=5)` の count は `immediateOfferCount` で、この1つのフィールドを
+「offer の形（頂点数）」と「offer 回数」に兼用し、頂点数を代入した直後に `++` していた。そのため拒否理由は常に
+**実頂点数+1** を表示し、4頂点の run が5と見えた（「5頂点の run がある」と誤読した）。フィールドを
+`immediateOfferVertices`（形）と `immediateOfferCount`（回数）に分離した。
+
+**規約**: 拒否理由の数値を根因に使う前に、そのフィールドが単一の意味だけを持つことを代入箇所で確かめる。

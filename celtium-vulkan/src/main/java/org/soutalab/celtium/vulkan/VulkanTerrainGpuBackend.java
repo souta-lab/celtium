@@ -1203,7 +1203,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * working; the detail is expanded at the read sites by {@link #celtium$refusalText()}.
      */
     private int immediateOfferFormat = -1;
-    private int immediateOfferStride, immediateOfferMode, immediateOfferCount;
+    private int immediateOfferStride, immediateOfferMode, immediateOfferVertices;
+    /**
+     * How many batches were offered. Not the shape of the current one: this field and {@code immediateOfferVertices}
+     * used to be the same variable, so a refusal that reported "count=5" named a four-vertex batch (the field was set
+     * to the batch's count and then incremented), and the summary's {@code offerCount} was that last count plus one
+     * rather than a count of anything.
+     */
+    private int immediateOfferCount;
     /** The checkpoint the offer path last passed, so an unnamed refusal can still say where it stopped. */
     private int offerStage;
     /**
@@ -5565,7 +5572,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         String reason = this.immediateLastRefusal;
         if (reason != null && "unrecorded".equals(reason) && this.immediateOfferFormat >= 0) {
             return "unrecorded (format=" + this.immediateOfferFormat + " stride=" + this.immediateOfferStride
-                    + " mode=" + this.immediateOfferMode + " count=" + this.immediateOfferCount + ")";
+                    + " mode=" + this.immediateOfferMode + " count=" + this.immediateOfferVertices + ")";
         }
         return reason;
     }
@@ -6854,7 +6861,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     this.immediateOfferFormat = formatId;
     this.immediateOfferStride = vertexStride;
     this.immediateOfferMode = drawMode;
-    this.immediateOfferCount = vertexCount;
+    this.immediateOfferVertices = vertexCount;
     this.immediateLastRefusal = "unrecorded";
         if (REFERENCE_RENDER) {
             // Same reason as the pass entry: this method is called by the uploader hook directly, so reference mode has to

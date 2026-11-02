@@ -308,7 +308,9 @@ public class TransformerRouteVerifierCheck {
         // cannot see it. The probe is scanned for the legacy entry points only - noteUnrouted is also a hint call - so the
         // positive control (one route deleted) reports the spelling by name instead of still reading full coverage.
         int texcoordMissing = 0;
-        if (Boolean.getBoolean("celtium.gless.legacyImmediate")) {
+        // The product default is on (2026-11-02), so the check runs unless a run explicitly turns it off; the script
+        // still also runs the -D...=true configuration, which then reports the same coverage.
+        if (Boolean.parseBoolean(System.getProperty("celtium.gless.legacyImmediate", "true"))) {
             final Set<String> wantedCoords = new HashSet<>(Arrays.asList(TEXCOORD_NATIVES));
             final Map<String, Boolean> routedCoords = new HashMap<>();
             new ClassReader(rewritten).accept(new ClassVisitor(Opcodes.ASM9) {

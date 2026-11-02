@@ -47,8 +47,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
             "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
             "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
-            // These texcoord/vertex names ARE answered here by default: their routes exist only with
-            // -Dceltium.gless.legacyImmediate=true, and with the switch off the no-op is the answer this set gives.
+            // These texcoord/vertex names are switch-conditional: their routes are installed while the legacy capture
+            // is on (the default), and the route is consulted before this set, so an entry here only answers the calls
+            // a run with -Dceltium.gless.legacyImmediate=false still makes.
             "glTexCoord2f", "glTexCoord2d", "glVertex3f",
             // The uniform setters are listed no-ops in the stub's table (the programs those values belong to are
             // GL-less stubs, so nothing reads them); the measured session called them 4.0e4 times. The three below
@@ -573,15 +574,21 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     }
 
     /**
-     * {@code -Dceltium.gless.legacyImmediate=true} re-enables the legacy glBegin/glVertex3f routes.
+     * The legacy {@code glBegin}/{@code glVertex*}/{@code glEnd} routes, on by default; {@code -D...=false} turns them
+     * off as one A/B switch.
      * <p>
-     * Off by default while the menu crash one tester reports is bisected: both of that session's logs end in the same
-     * RADV GPUVM fault immediately after the legacy loading-bar quad was submitted, and the build that introduced the
-     * route (0.1.4-alpha-rc.2) is the first one that crashed. The routes are what the screenshot shows as a missing
-     * loading bar; nothing else in the picture depends on them, so turning them off is a clean A/B.
+     * They were off while the RADV GPUVM fault one tester reported was bisected: both of that session's logs ended
+     * right after the legacy loading-bar quad was submitted. The fault was the retire queue discarding a command
+     * buffer that was still recording (VUID-vkEndCommandBuffer-00059), fixed in rc.24 - not the legacy vertices, whose
+     * draw goes through the same immediate accept path as the Tessellator's. With the routes off, every direct-GL mod's
+     * {@code glBegin} surface was silently dropped. Measured on the Supersymmetry title screen: given its images (the
+     * pack's {@code resources} carried into the leg), the menu drew the font labels and the bottom lines only;
+     * {@code -Dceltium.gless.legacyImmediate=true} draws the SUPERSYMMETRY banner, the button frame and the Discord
+     * icon from the same instance, and the leg is PASSED with validation 0. The switch stays so a mod's legacy surface
+     * can still be excluded from a leg without rebuilding.
      */
     private static final boolean LEGACY_IMMEDIATE =
-            Boolean.parseBoolean(System.getProperty("celtium.gless.legacyImmediate", "false"));
+            Boolean.parseBoolean(System.getProperty("celtium.gless.legacyImmediate", "true"));
 
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");

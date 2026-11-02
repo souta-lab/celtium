@@ -12,9 +12,11 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
 
 | 項目 | 現状（2026-11-02 改訂） |
 |---|---|
-| `glBegin`/`glEnd` | `-Dceltium.gless.legacyImmediate=true` の時だけ `LegacyImmediateCapture` が区間を開閉し、頂点を
-  `POSITION_TEX_COLOR`(24B)/`POSITION_COLOR`(16B) に詰めて既存の即時描画経路へ渡す。**既定offでは従来どおり記録のみ** |
-| `glVertex*` | 2f/2d/3f/3d/4f/4d/2i/3i/4i/2s/3s を capture が受ける（4成分は w で除算、w=0 は理由付き拒否）。既定offでは no-op |
+| `glBegin`/`glEnd` | **既定で** `LegacyImmediateCapture` が区間を開閉し、頂点を
+  `POSITION_TEX_COLOR`(24B)/`POSITION_COLOR`(16B) に詰めて既存の即時描画経路へ渡す。完結する primitive が1つ以上ある
+  run は**末尾の不完全primitiveを落として**渡す（GLと同じ。落とした頂点は `trailingVertices` で数える）。
+  `-Dceltium.gless.legacyImmediate=false` で従来どおり記録のみ |
+| `glVertex*` | 2f/2d/3f/3d/4f/4d/2i/3i/4i/2s/3s を capture が受ける（4成分は w で除算、w=0 は理由付き拒否）。switch offでは no-op |
 | `glTexCoord*` / `glMultiTexCoord*` | **1/2/3/4成分 × f/d/i/s の全scalar形式**と、**全buffer形式**（`nglTexCoord*v`・
   `nglMultiTexCoord*v`）を capture が受ける。即時layoutが持つ (s,t) 1組へ収束し、1成分は t=0、3/4成分の r/q は
   保存先が無いため適用しない（`glTexCoord4f` の q≠1 の射影は未モデル。それでも前のUVを残すよりは正しい）。
@@ -142,25 +144,24 @@ native 経路と共有する（同一 batch・同一 cache・同一 submit 最�
 5. 受入: Forge Splash（`glBegin(GL_QUADS)` 3 箇所）と Cyberware radial menu を実機で描画し、
    validation error 0・フレーム時間の悪化なしを確認してから次段（FBO/表示リスト）へ進む。
 
-### 現在地（2026-11-02、既定OFF）
+### 現在地（2026-11-02、既定ON）
 
-上の 1–3 は `-Dceltium.gless.legacyImmediate=true` の下で実装済み。捕捉の詰め方は
+上の 1–3 は既定で有効。捕捉の詰め方は
 `LegacyImmediateCapture`（GL/Vulkan 非依存）に分離し、`LegacyImmediateCaptureTest` が
-layout・stride・UV/色のバイト・`w` 除算・拒否理由を CPU で固定する。トランスフォーマの経路は
+layout・stride・UV/色のバイト・`w` 除算・末尾primitiveの切捨て・拒否理由を CPU で固定する。トランスフォーマの経路は
 `glVertex2f/2d/3f/3d/4f/4d` と `glVertex2i/3i/4i`・`glVertex2s/3s`、テクスチャ座標は
 `glTexCoord1/2/3/4 × f/d/i/s` とその buffer 形式、`glMultiTexCoord1/2/3/4 × f/d/i/s` とその buffer 形式
 （即時layoutの (s,t) 1組へ収束し、整数と short は float layout への丸め。`glVertex4i` も `w` 除算し、`w=0` は名前付きで拒否）、
 受理する primitive は `VulkanImmediateDrawer.refusalReason`
 （quads/triangles/fan/strip/quad strip/polygon/lines/line strip/line loop）で、ここにあった独自リストは削除した。
-`scripts/cpu-contract/transformer-route-verify.sh` は legacy 経路を **ON にした構成でも** 同じ検査を行う。
+`scripts/cpu-contract/transformer-route-verify.sh` は legacy 経路を **ON/OFF 両方の構成で** 同じ検査を行う。
 
-**既定OFFの理由と再開条件**: 利用者報告の black screen は rc.24 で retire キューが記録中のコマンドバッファを
-破棄する競合（`VUID-vkEndCommandBuffer-00059` → RADV GPUVM fault）と判明し、修正済み。legacy 経路の
-「描画時点が早いだけ」という差分はその修正に覆われる可能性が高いが、**AMDのworld legが未実施**のため
-既定ONにはしていない。再開は、`-Dceltium.gless.legacyImmediate=true` で AMD/Intel の world とメニューを
-1 leg ずつ回し、validation 0・device lost 0・`CELTIUM_LEGACY_REFUSED` の理由が説明可能であることを確認できた時点。
-（2026-11-02訂正: この環境でAMD legは実行できる。`CELTIUM_INSTANCE_COHORT`/`CELTIUM_INSTANCE_WORLD` に
-Supersymmetryのcloneを指定する — [手順](development.md)§4。Intelは`DRI_PRIME`のrender nodeで選ぶ。）
+**既定ONの根拠**: 既定OFFの理由だった black screen は rc.24 で retire キューが記録中のコマンドバッファを
+破棄する競合（`VUID-vkEndCommandBuffer-00059` → RADV GPUVM fault）と判明し、修正済み。2026-11-02 に AMD RX 6400 と
+Intel UHD 630 で world+menu を含む leg（`r13f`/`r13g`、同一jar）を回し、validation clean・device lost 0・
+`CELTIUM_LEGACY_REFUSED` の理由が説明可能（内容を持たない 256x256 の viewport canvas で、GL でも alpha 0 で
+何も出ない）なことを確認した。`-Dceltium.gless.legacyImmediate=false` で従来の no-op 構成に戻せる。
+根因・実測・残りは [証拠](evidence/legacy-immediate-default-2026-11-02.md)。
 
 ## 未決・リスク
 

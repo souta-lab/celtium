@@ -29,6 +29,11 @@ import org.lwjgl.system.MemoryUtil;
  * layout the renderer has no draw for (the gate), geometry inside a display-list compile, more than
  * {@link #MAX_VERTICES} vertices in one run, and a sink that will not take the run all leave the run undrawn and land
  * in a named counter. Under GL-less a refusal draws nothing, so the count is the only way the loss is visible.</li>
+ * <li><b>The trailing vertices of an incomplete primitive are ignored, as GL ignores them.</b> A run that contains at
+ * least one complete primitive is cut to whole primitives before it is offered ({@link #wholePrimitives}) and the cut
+ * vertices are counted; a run with none is offered unchanged so the renderer's own refusal names it. Refusing the
+ * whole run instead - the rule the renderer's index expansion keeps - lost the complete quad a mod wrote before one
+ * stray vertex.</li>
  * </ul>
  * <p>
  * Not captured, deliberately: normals, and multi-texture coordinates on units other than 0. Every mode here is drawn
@@ -73,6 +78,17 @@ public final class LegacyImmediateCapture {
      */
     public static final int MAX_VERTICES = 65536;
 
+    /**
+     * The GL primitive values a run is cut to whole primitives by; see {@link #wholePrimitives}.
+     * <p>
+     * Kept as the GL enum values instead of importing LWJGL so this class keeps no GL dependency - the reason its
+     * packing rules can be checked by a plain JVM test.
+     */
+    private static final int GL_LINES = 0x0001;
+    private static final int GL_TRIANGLES = 0x0004;
+    private static final int GL_QUADS = 0x0007;
+    private static final int GL_QUAD_STRIP = 0x0008;
+
     /** Room for {@link #MAX_VERTICES} textured vertices before the first growth; a run larger than this grows once. */
     private static final int INITIAL_BYTES = MAX_VERTICES * STRIDE_POSITION_TEX_COLOR;
 
@@ -103,6 +119,7 @@ public final class LegacyImmediateCapture {
     private long sinkRefusals;
     private long rectRefusals;
     private long otherTexUnitCoords;
+    private long trailingVertices;
     private int lastOtherTexUnit = -1;
     private String lastRefusal = "";
 
@@ -355,20 +372,55 @@ public final class LegacyImmediateCapture {
             // glBegin/glEnd around no vertices is not a draw in GL either.
             return false;
         }
+        // GL draws the complete primitives of a run and ignores an incomplete trailing one (a fifth vertex in
+        // GL_QUADS, the odd last vertex of GL_LINES). The renderer refuses a run whose count is not a whole number of
+        // quads, so a mod that writes one extra vertex loses the whole run - the complete quad included. Cutting here
+        // gives GL's answer and keeps the renderer's rule strict; the ignored vertices are counted so the loss is
+        // visible rather than silent. A run with no complete primitive is offered unchanged: the capture does not
+        // invent a draw, and the renderer's own refusal is the named answer.
+        int drawable = wholePrimitives(vertices, this.mode);
+        int offer = drawable > 0 ? drawable : vertices;
+        if (drawable > 0 && drawable < vertices) {
+            this.trailingVertices += vertices - drawable;
+        }
         if (sink == null) {
             this.refusals++;
             this.lastRefusal = "no immediate path is installed";
             return false;
         }
-        boolean taken = sink.submit(this.address, this.stride, this.format, vertices, this.mode);
+        boolean taken = sink.submit(this.address, this.stride, this.format, offer, this.mode);
         if (!taken) {
             this.sinkRefusals++;
             return false;
         }
         this.submittedRuns++;
-        this.submittedVertices += vertices;
+        this.submittedVertices += offer;
         this.lastRefusal = "";
         return true;
+    }
+
+    /**
+     * The longest prefix of a run that makes whole primitives.
+     *
+     * @param vertexCount how many vertices the run holds
+     * @param drawMode    the {@code glBegin} mode
+     * @return the vertices GL would actually draw; the remainder is an incomplete primitive, which GL ignores
+     */
+    static int wholePrimitives(int vertexCount, int drawMode) {
+        switch (drawMode) {
+            case GL_QUADS:
+                return vertexCount - vertexCount % 4;
+            case GL_QUAD_STRIP:
+                // A strip needs four vertices for one quad; an odd trailing vertex is the incomplete primitive.
+                return vertexCount < 4 ? 0 : vertexCount - vertexCount % 2;
+            case GL_TRIANGLES:
+                return vertexCount - vertexCount % 3;
+            case GL_LINES:
+                return vertexCount - vertexCount % 2;
+            default:
+                // Fans, strips and polygons draw any count of three or more; the renderer's own gate answers those.
+                return vertexCount;
+        }
     }
 
     /** Records a refusal the sink decided on, so the capture's counters and the caller's reason agree. */
@@ -401,6 +453,7 @@ public final class LegacyImmediateCapture {
                 + " listRefusals=" + this.listRefusals + " nestedRefusals=" + this.nestedRefusals
                 + " sinkRefusals=" + this.sinkRefusals + " rectRefusals=" + this.rectRefusals
                 + " otherTexUnits=" + this.otherTexUnitCoords
+                + " trailingVertices=" + this.trailingVertices
                 + " refusals=" + this.refusals;
     }
 
@@ -434,6 +487,11 @@ public final class LegacyImmediateCapture {
 
     public long sinkRefusals() {
         return this.sinkRefusals;
+    }
+
+    /** {@return vertices an incomplete trailing primitive left undrawn, the answer GL gives and counts here}. */
+    public long trailingVertices() {
+        return this.trailingVertices;
     }
 
     /** {@return the last named reason a run was not drawn}. */
