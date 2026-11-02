@@ -2030,10 +2030,22 @@ public final class ValidationClient {
      * slots that hold one: a grid that is full at the switch and empty at the capture is a container fact, and a grid
      * that is still full at the capture is a rendering one.
      *
+     * <p>
+     * The screen is reported first and unconditionally. The first version returned silently when the current screen
+     * was not the creative inventory, and the counter that bounds the snapshots was incremented before the call - so a
+     * leg whose screen had gone by the sampled tick wrote <b>no</b> {@code creativeGridAt*} key at all while the
+     * counter said six snapshots had been taken. Measured on leg {@code r42a-creative}: the report held
+     * {@code creativeGridSlots=54 creativeGridFilled=46} from the tab switch and not one {@code creativeGridAt*}
+     * entry, so "the grid was full at the capture" could not be read from the report at all. A snapshot that cannot
+     * say what it saw is the same defect as a census that cannot count; the screen's own class name is the answer.
+     *
      * @param tag suffix that names the tick in the report key, e.g. {@code At60}
      */
     private void celtium$reportCreativeGridSlots(String tag) {
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        String screenName = mc == null || mc.currentScreen == null
+                ? "none" : mc.currentScreen.getClass().getName();
+        report.addProperty("creativeGrid" + tag + "Screen", screenName);
         if (mc == null || !(mc.currentScreen instanceof net.minecraft.client.gui.inventory.GuiContainerCreative)) {
             return;
         }
@@ -2060,9 +2072,49 @@ public final class ValidationClient {
             report.addProperty("creativeGrid" + tag + "Slots", Integer.valueOf(slots));
             report.addProperty("creativeGrid" + tag + "Filled", Integer.valueOf(filled));
             report.addProperty("creativeGrid" + tag + "Contents", contents.toString());
+            report.addProperty("creativeGrid" + tag + "Layout", celtium$creativeGridLayout(screen));
         } catch (Throwable error) {
             report.addProperty("creativeGrid" + tag + "Contents", "failed: " + error);
         }
+    }
+
+    /**
+     * {@return the creative grid's geometry in GUI units}, so a checker can turn the presented picture into cells.
+     * <p>
+     * The picture is the only place the item icons exist, and a checker that assumed the panel's position would be
+     * measuring its own constant. The numbers come from the screen itself: {@code GuiContainer.getGuiLeft/getGuiTop}
+     * (Forge's accessors for the protected fields), the first grid slot's own {@code xPos}/{@code yPos}, and the
+     * container's slot count. {@code ContainerCreative} lays the grid out as nine columns of eighteen GUI units with
+     * the first cell at {@code (9, 18)} and the hotbar row at {@code y=112}, so the pitch and the column count are
+     * read off the slots rather than assumed: the second slot's {@code xPos} minus the first's is the pitch, and the
+     * number of slots sharing the first row's {@code yPos} is the column count.
+     * <p>
+     * The scale is not reported here: it is {@code picture_width / guiWidth}, which the checker reads from the picture
+     * and this line, exactly as {@code tooltip-motion-check.py} does.
+     */
+    private static String celtium$creativeGridLayout(
+            net.minecraft.client.gui.inventory.GuiContainerCreative screen) {
+        int left = screen.getGuiLeft();
+        int top = screen.getGuiTop();
+        int slots = screen.inventorySlots.inventorySlots.size();
+        if (slots <= 0) {
+            return "gui=" + screen.width + "x" + screen.height + " left=" + left + " top=" + top + " slots=0";
+        }
+        int firstX = screen.inventorySlots.getSlot(0).xPos;
+        int firstY = screen.inventorySlots.getSlot(0).yPos;
+        int pitch = slots > 1 ? screen.inventorySlots.getSlot(1).xPos - firstX : 18;
+        int columns = 0;
+        for (int i = 0; i < slots; i++) {
+            if (screen.inventorySlots.getSlot(i).yPos != firstY) {
+                break;
+            }
+            columns++;
+        }
+        int rows = columns == 0 ? 0 : (slots + columns - 1) / columns;
+        return "gui=" + screen.width + "x" + screen.height
+                + " left=" + left + " top=" + top
+                + " first=" + firstX + "," + firstY
+                + " pitch=" + pitch + " cols=" + columns + " rows=" + rows + " slots=" + slots;
     }
 
     /** {@return the screen's GuiSlot, by field type}, or null when it has none. */
@@ -5994,6 +6046,10 @@ public final class ValidationClient {
                 report.addProperty("creativeGridSlots", Integer.valueOf(slots));
                 report.addProperty("creativeGridFilled", Integer.valueOf(filled));
                 report.addProperty("creativeGridFirstStack", first);
+                // The geometry the picture's cells are computed from, taken here as well as at every snapshot: the
+                // per-tick snapshots are bounded and can be spent on ticks whose screen is not the creative one, and
+                // a checker that has the contents but no geometry cannot measure the picture at all.
+                report.addProperty("creativeGridLayout", celtium$creativeGridLayout(screen));
             } catch (Throwable error) {
                 report.addProperty("creativeGridSlots", "failed: " + error);
             }
