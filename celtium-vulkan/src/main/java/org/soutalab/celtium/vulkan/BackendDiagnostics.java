@@ -41,7 +41,10 @@ final class BackendDiagnostics {
                 // were never printed, so the question "is the per-batch cost the state capture, the key, the program query or
                 // the preparation" had no answer in a run.
                 + (b.BATCH_TIMINGS ? b.immediateStatistics.batchTimingSummary() + b.offerStageNanosSummary() : "")
-                + " identicalFrameSignatures=" + b.identicalFrameSignatures + "/" + b.comparedFrameSignatures
+                // "off" rather than "0/0": the per-frame hash is opt-in, and a counter that can only read zero would
+                // invite "no two frames were identical" from a number that was never measured.
+                + " identicalFrameSignatures=" + (b.FRAME_SIGNATURE
+                        ? b.identicalFrameSignatures + "/" + b.comparedFrameSignatures : "off")
                 // Task-60: the wait facts, so the JSON report names the wait instead of a reader guessing. The
                 // bootstrap path's waits have no API bound at all; the frame path's fence wait has a 5 s one and is
                 // the only place that sets gpuStalled. Worst is the number that says whether either is a hazard.

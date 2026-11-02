@@ -7184,10 +7184,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // Texture-coordinate generation turns an untextured layout into a textured draw (the end portal's layers).
             formatId = VulkanImmediateFormats.POSITION_COLOR_TEXGEN;
         }
-        {
+        if (FRAME_SIGNATURE) {
             // Repeatability: if a frame's batch traffic is byte-for-byte the previous frame's, its recording could be
             // reused instead of rebuilt. This hashes what decides a batch - format, state, texture, vertex count and the
             // first and last vertex's bytes - per frame, and compares the result with the previous frame's.
+            //
+            // Opt-in, because it is the only per-offer work in this method whose answer nothing on the shipped path
+            // reads: the hash feeds one diagnostic counter (identicalFrameSignatures) and costs two memGetInt calls
+            // plus six multiplies on every one of the ~220 offers a frame. The question it was written to answer -
+            // "could a frame's recording be reused" - was answered by the census, and the reuse itself was never built.
             long hash = this.frameBatchSignature;
             hash = (hash ^ formatId) * 1099511628211L;
             hash = (hash ^ (this.immediateState.boundTextureName())) * 1099511628211L;
@@ -7299,18 +7304,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.lightCoordLogged = 4;
             }
         }
-        int expectedStride = formatId == VulkanImmediateFormats.COMBINE4 ? VulkanImmediateTexturePipeline.COMBINE4_BYTES
-                : formatId == 11 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_FLOAT_BYTES
-                : formatId == 10 ? VulkanImmediateTexturePipeline.POSITION_NORMAL_BYTES
-                : formatId == 9 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES
-                : formatId == 8 ? VulkanImmediateTexturePipeline.POSITION_TEX_COLOR_NORMAL_BYTES
-                : formatId == 7 ? VulkanImmediateTexturePipeline.POSITION_BYTES
-                : formatId == 6 ? VulkanImmediateTexturePipeline.POSITION_TEX_BYTES
-                : formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
-                : formatId == 3 ? VulkanImmediateBlockPipeline.VERTEX_BYTES
-                : formatId == 4 ? VulkanImmediateItemPipeline.VERTEX_BYTES
-                : formatId == 5 ? VulkanImmediateParticlePipeline.VERTEX_BYTES
-                : VulkanImmediatePipeline.VERTEX_BYTES;
+        int expectedStride = celtium$expectedStride(formatId);
         // The property name says "present from composite", and that is what it is for - but with the check below it
         // currently presents nothing: measured compositePresentRefusals 1/frame and no present at all, because the
         // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
@@ -8780,6 +8774,32 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * The vertex width a layout id must have, in one place.
+     * <p>
+     * This was a twelve-term ternary chain in the accept path, evaluated on every offer (~220 a frame) to answer a
+     * question whose answer is a constant per id. A switch is the same table the JIT builds for a dense int key, and
+     * it keeps the mapping in one named place instead of inside a boolean expression - the chain had already grown
+     * twice (ids 10 and 11) and each addition was a chance to put a term in the wrong position, which is exactly the
+     * defect the stride check exists to catch.
+     */
+    static int celtium$expectedStride(int formatId) {
+        switch (formatId) {
+            case VulkanImmediateFormats.COMBINE4: return VulkanImmediateTexturePipeline.COMBINE4_BYTES;
+            case 11: return VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_FLOAT_BYTES;
+            case 10: return VulkanImmediateTexturePipeline.POSITION_NORMAL_BYTES;
+            case 9: return VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES;
+            case 8: return VulkanImmediateTexturePipeline.POSITION_TEX_COLOR_NORMAL_BYTES;
+            case 7: return VulkanImmediateTexturePipeline.POSITION_BYTES;
+            case 6: return VulkanImmediateTexturePipeline.POSITION_TEX_BYTES;
+            case 2: return VulkanImmediateTexturePipeline.VERTEX_BYTES;
+            case 3: return VulkanImmediateBlockPipeline.VERTEX_BYTES;
+            case 4: return VulkanImmediateItemPipeline.VERTEX_BYTES;
+            case 5: return VulkanImmediateParticlePipeline.VERTEX_BYTES;
+            default: return VulkanImmediatePipeline.VERTEX_BYTES;
+        }
+    }
+
+    /**
      * The Vulkan blend state a captured group asks for, rebuilt from its own array.
      * <p>
      * One place owns the GL-to-Vulkan mapping for the whole immediate path, and the pipeline factories take the result
@@ -9508,9 +9528,11 @@ this.frameBufferOpen = false;
             // The frame's wall clock split. A sampling profiler cannot see a thread that is waiting, and the gap to the
             // reference is larger than the CPU the samples account for, so the boundary reports the three parts it can
             // name: the recording (already bracketed), this submit, and the slot wait at the next frame's start.
-            {
+            if (FRAME_SIGNATURE) {
                 // Close off the frame's signature: a frame that hashes the same as the previous one repeated its batch
-                // traffic exactly, which is the condition a cached recording would have to detect.
+                // traffic exactly, which is the condition a cached recording would have to detect. Gated with the hash
+                // itself: with the hash off both values stay zero, and counting "0 == 0" as a repeat would report every
+                // frame as identical.
                 this.comparedFrameSignatures++;
                 if (this.frameBatchSignature == this.previousFrameBatchSignature && this.frameBatchSignature != 0L) {
                     this.identicalFrameSignatures++;
@@ -10581,7 +10603,7 @@ this.frameBufferOpen = false;
                 ^ (textureKey * 0x27D4EB2F165667C5L)
                 ^ ((long) System.identityHashCode(pass) * 0x94D049BB133111EBL)
                 ^ (lightKey * 0xBF58476D1CE4E5B9L);
-        int slot = (int) (mix >>> 56) & (PREPARE_CACHE_SIZE - 1);
+        int slot = (int) (mix >>> (64 - PREPARE_CACHE_BITS));
         PreparedImmediate cached = this.prepareCacheValue[slot];
         if (cached != null && this.prepareCachePass[slot] == pass && this.prepareCacheFormat[slot] == format
                 && this.prepareCacheTexture[slot] == textureId && this.prepareCacheKey[slot] == key
@@ -10602,8 +10624,21 @@ this.frameBufferOpen = false;
         return prepared;
     }
 
-    /** 256 entries: a world frame asks for about 194 distinct materials, so it holds a frame's worth. */
-    private static final int PREPARE_CACHE_SIZE = 256;
+    /**
+     * 1024 entries, direct-mapped: a world frame asks for about 194 distinct materials, and 256 slots put that
+     * population at a 76% load factor - two materials that hash to one slot evict each other on every frame, so the
+     * table thrashes even though nothing new is being asked for. The census read 111,415 hits of 117,710 calls
+     * (5.4% misses) against ~194 live materials, and a miss is not a lookup: it is the whole uncached path (pipeline
+     * lookup, registry lookup, the framebuffer-attachment probes and the descriptor resolution). 1024 slots put the
+     * same population at 19%, where a collision is rare rather than structural.
+     * <p>
+     * {@code -Dceltium.vulkan.prepareCacheBits=8} restores the old 256-slot table, so the same JAR can be run twice
+     * and the two arms differ in the table and nothing else. Bounded to 6..12: below 6 the table is smaller than the
+     * live population, above 12 the arrays are larger than the win is worth.
+     */
+    private static final int PREPARE_CACHE_BITS =
+            Math.max(6, Math.min(12, Integer.getInteger("celtium.vulkan.prepareCacheBits", 10).intValue()));
+    private static final int PREPARE_CACHE_SIZE = 1 << PREPARE_CACHE_BITS;
     private final int[] prepareCacheFormat = new int[PREPARE_CACHE_SIZE];
     private final int[] prepareCacheTexture = new int[PREPARE_CACHE_SIZE];
     private final long[] prepareCacheKey = new long[PREPARE_CACHE_SIZE];
@@ -10614,9 +10649,14 @@ this.frameBufferOpen = false;
     private long prepareCacheHits;
     private long prepareCacheCalls;
 
-    /** {@return the prepare cache census, as {@code hits/calls}}. */
+    /**
+     * {@return the prepare cache census, as {@code hits/calls}}, with the table's size beside it.
+     * <p>
+     * The size is part of the census because the same JAR can be run at two sizes ({@code prepareCacheBits}) and a
+     * hit rate without the table it was measured on cannot be compared with another arm's.
+     */
     String prepareCacheSummary() {
-        return this.prepareCacheHits + "/" + this.prepareCacheCalls;
+        return this.prepareCacheHits + "/" + this.prepareCacheCalls + "@" + PREPARE_CACHE_SIZE;
     }
 
     /**
@@ -14371,6 +14411,11 @@ this.frameBufferOpen = false;
      * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one
      * command, and how many of them draw from the frame arena. Off by default.
      */
+    /**
+     * {@code -Dceltium.vulkan.frameSignature=true}: per-frame batch-traffic hash, for the "could a recording be reused"
+     * census. Off by default - see the hashing site for why the shipped path does not pay for it.
+     */
+    static final boolean FRAME_SIGNATURE = Boolean.getBoolean("celtium.vulkan.frameSignature");
     /** Hash of the current frame's batch traffic, and the previous frame's, to count identical frames. */
     private long frameBatchSignature;
     private long previousFrameBatchSignature;
