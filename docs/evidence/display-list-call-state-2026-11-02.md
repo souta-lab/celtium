@@ -101,7 +101,9 @@ are untextured.
   and it is counted. No pack path measured this round exercises it (`midRun=0`).
 * **The layout at `glCallList` is still the layout at compile time.** A list compiled with `GL_TEXTURE_2D` enabled is
   replayed as `POSITION_TEX_COLOR` even if the caller disabled texturing, and the other way round. That is a separate
-  question (it needs a vertex-format conversion) and is not addressed here.
+  question (it needs a vertex-format conversion) and is not addressed here. *(Fixed in
+  [call-time layout](display-list-call-layout-2026-11-02.md); this document's numbers remain the record of what this
+  round measured.)*
 * **The colour mirror of a compile is not rolled back.** Under `GL_COMPILE` a `glColor` inside the list is stored, not
   executed, so it should not become the caller's current colour; the capture's mirror and the backend's colour mirror
   still hold it after `glEndList`. Runs after the compile are marked "set outside" and their replay takes the call-time

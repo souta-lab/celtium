@@ -38,10 +38,15 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   replay時の状態を使う（GL仕様どおり）。**色とUVも同じ規則**（2026-11-02）: listが設定していない属性は
   `glCallList`時の現在値で頂点コピーを書き換える（`applyCallState`）。list自身が`glColor`/`glTexCoord`を持つ場合は
   焼いたバイトが正しく、頂点間で変わる場合は焼いたまま（`midRun`で数える）。
-  `-Dceltium.glstub.legacyCallState=false` で焼き込みに戻せる。コピーはlistのpayloadと同じ寿命で、同時保持は
-  64 MiB上限。計器は検証行の `celtium/legacyListRuns[recorded/replayed/bytes/droppedBytes/replayRefusals/
-  callState/provenance[colour tex midRun]]`。根拠: [list compile](evidence/display-list-legacy-2026-11-02.md)・
-  [call-time属性](evidence/display-list-call-state-2026-11-02.md)（Celeritas実GLと同一sceneで一致。
+  `-Dceltium.glstub.legacyCallState=false` で焼き込みに戻せる。**頂点レイアウトも同じ規則**（2026-11-02）:
+  replay時の `GL_TEXTURE_2D` の有効状態で layout を選び、compile時と違えば色/UVの位置を移して詰め替える
+  （textured→untextured は焼いた色、untextured→textured は call時の UV で sampler が読む）。
+  `-Dceltium.glstub.legacyCallLayout=false` で compile時の layout に戻せる。コピーはlistのpayloadと同じ寿命で、
+  同時保持は 64 MiB上限。計器は検証行の `celtium/legacyListRuns[recorded/replayed/bytes/droppedBytes/
+  replayRefusals/callState/layout/provenance[colour tex midRun]]`。根拠:
+  [list compile](evidence/display-list-legacy-2026-11-02.md)・
+  [call-time属性](evidence/display-list-call-state-2026-11-02.md)・
+  [call-timeレイアウト](evidence/display-list-call-layout-2026-11-02.md)（いずれもCeleritas実GLと同一sceneで一致。
   GregTechの`ToolEventHandlers`が同じ形） |
 | ミラー（GL名→画像） | 供給元が無い名前には**空のミラーを作らない**（2026-11-02）。作っても sampling 側が
   「全内容が来ていないミラー」として拒否するので描けず、しかも entry が存在するせいで以後の lookup が plain hit に

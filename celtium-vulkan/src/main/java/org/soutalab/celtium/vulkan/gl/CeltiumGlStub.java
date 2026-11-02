@@ -2360,6 +2360,20 @@ public final class CeltiumGlStub implements FunctionProvider {
             Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyCallState", "true"));
 
     /**
+     * Whether a compiled legacy run's vertex layout is chosen from the texturing state at {@code glCallList} rather
+     * than fixed at compile time; {@code -Dceltium.glstub.legacyCallLayout=false} keeps the compiled layout.
+     * <p>
+     * GL selects the layout when the vertex is executed, so a list compiled with {@code GL_TEXTURE_2D} enabled and
+     * called with it disabled draws untextured geometry carrying the colour it stored, and the reverse draws textured
+     * geometry with the caller's current coordinate. Replaying the compile-time layout instead samples whatever texture
+     * the caller had bound - or leaves the caller's texture unsampled - which is a wrong picture. Both directions are
+     * measured by {@code -Dceltium.validation.screen=displaylist}. On by default, and a switch of its own so it can be
+     * A/B'd against {@link #LEGACY_CALL_STATE} on one JAR.
+     */
+    private static final boolean LEGACY_CALL_LAYOUT =
+            Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyCallLayout", "true"));
+
+    /**
      * The most bytes the stub will hold for compiled legacy runs across every list.
      * <p>
      * Bounded because a mod is entitled to compile a large list and recompile it: the copies are released with their
@@ -2385,6 +2399,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private long legacyListRunReplayRefusals;
     /** Replays that substituted the state current at glCallList into an attribute the list never set. */
     private long legacyListRunsCallState;
+    /** Replays whose vertex layout was repacked because the texturing state at glCallList differed from the compile's. */
+    private long legacyListRunsLayout;
     /** Bytes held per compiled list name, so a replaced or deleted list gives its allowance back. */
     private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap legacyListRunBytesByList =
             new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
@@ -2781,22 +2797,34 @@ public final class CeltiumGlStub implements FunctionProvider {
     private void replayLegacyRun(CompiledLegacyRun run) {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        if (LEGACY_CALL_STATE && (run.attributes() & (CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL
-                | CompiledLegacyRun.ATTRIBUTE_TEX_FROM_CALL)) != 0) {
-            // GL's rule, applied here because the copy is the run's vertices: an attribute the list never set is the
-            // caller's current value, so the replay writes it into the copy before submitting. The commands the list
-            // did record (a glColor inside the compile, a glTexCoord between two vertices) have already run through
-            // this dispatch and left their answer in the capture's mirror - or in the baked bytes, which is why the
-            // capture marks a run whose list changes an attribute between its vertices.
-            boolean written = run.applyCallState(this.legacyCapture.red(), this.legacyCapture.green(),
-                    this.legacyCapture.blue(), this.legacyCapture.alpha(),
+        boolean vulkanBackend = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
+        // GL's rule, applied here because the copy is the run's vertices: an attribute the list never set is the
+        // caller's current value, and the layout is the one the caller's texturing state selects. The commands the list
+        // did record (a glColor inside the compile, a glTexCoord between two vertices) have already run through this
+        // dispatch and left their answer in the capture's mirror - or in the baked bytes, which is why the capture marks
+        // a run whose list changes an attribute between its vertices.
+        CompiledLegacyRun.Submission submission;
+        int substitutedBefore = run.callTimeColourReplays() + run.callTimeTexReplays();
+        if (LEGACY_CALL_LAYOUT) {
+            boolean texturedAtCall = vulkanBackend
+                    && ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$texture2dEnabled();
+            submission = run.prepareCall(LEGACY_CALL_STATE, texturedAtCall, this.legacyCapture.red(),
+                    this.legacyCapture.green(), this.legacyCapture.blue(), this.legacyCapture.alpha(),
                     this.legacyCapture.texU(), this.legacyCapture.texV());
-            if (written) {
-                this.legacyListRunsCallState++;
+            if (submission.format != run.format) {
+                this.legacyListRunsLayout++;
             }
+        } else {
+            submission = run.prepareCompiled(LEGACY_CALL_STATE, this.legacyCapture.red(),
+                    this.legacyCapture.green(), this.legacyCapture.blue(), this.legacyCapture.alpha(),
+                    this.legacyCapture.texU(), this.legacyCapture.texV());
+        }
+        if (run.callTimeColourReplays() + run.callTimeTexReplays() != substitutedBefore) {
+            this.legacyListRunsCallState++;
         }
         boolean taken = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                && vulkan.submitImmediateBatch(null, run.stride, run.format, run.address, run.count, run.mode);
+                && vulkan.submitImmediateBatch(null, submission.stride, submission.format, submission.address,
+                        run.count, run.mode);
         if (taken) {
             this.legacyListRunsReplayed++;
             this.legacyListRunReplayedVertices += run.count;
@@ -2830,9 +2858,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " bytes=" + stub.legacyListRunBytes + " droppedBytes=" + stub.legacyListRunBytesDropped
                 + " replayRefusals=" + stub.legacyListRunReplayRefusals
                 + " callState=" + stub.legacyListRunsCallState
+                + " layout=" + stub.legacyListRunsLayout
                 + " provenance[colour=" + stub.legacyCapture.compiledCallStateColour()
                 + " tex=" + stub.legacyCapture.compiledCallStateTex()
-                + " midRun=" + stub.legacyCapture.compiledMidRunChanges() + "]" + " callStateSwitch=" + LEGACY_CALL_STATE;
+                + " midRun=" + stub.legacyCapture.compiledMidRunChanges() + "]"
+                + " callStateSwitch=" + LEGACY_CALL_STATE + " callLayoutSwitch=" + LEGACY_CALL_LAYOUT;
     }
 
     /**

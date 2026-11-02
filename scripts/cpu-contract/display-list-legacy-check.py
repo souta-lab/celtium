@@ -45,6 +45,19 @@ reasons rather than looks. The gradient is what lets the probe's own frame clear
 because the first run compiled the runs as POSITION_TEX_COLOR with no glTexCoord of their own - the GUI leaves
 GL_TEXTURE_2D on - so the vertices sampled whatever coordinate was current and a transparent texel left no ink.
 
+## The layout arms
+
+GL chooses the vertex layout from the *enabled* state when the vertex executes, so a list compiled with texturing on
+and called with it off draws untextured. Two small lists measure both directions in every frame, each called with a
+magenta texture bound so that the compile-time layout's answer is the other arm's colour:
+
+* **arm A - white** - compiled with `GL_TEXTURE_2D` on and a recorded coordinate, called with it off: GL draws the
+  colour the list carries (white). A renderer that kept the layout samples the bound texture instead (magenta).
+* **arm B - magenta** - compiled with `GL_TEXTURE_2D` off, called with it on: GL samples the caller's texture at the
+  caller's coordinate (magenta). A renderer that kept the layout draws it untextured (white).
+* **texControl - magenta** - a directly-drawn textured quad in the same state, so "arm B has no magenta" can be told
+  from "the texture never reached the sampler at all".
+
 ## The reference arm
 
 The same fixture runs under Celeritas (real OpenGL) through `CELTIUM_LEG_REFERENCE_RENDERER`, which is what settles the
@@ -60,7 +73,9 @@ A check that cannot fail proves nothing. The script pastes one frame's **inner**
 **outer** slot - the exact shape a renderer that baked the compile-time colour would leave, green in both slots - and
 requires the same analysis to report green in both. The control is built from the run's own pixels, not painted by
 hand, and it is the failure this round's fix removes. `--picture` runs the same control by pasting the green square
-over the red one and requiring the single-picture check to reject the result.
+over the red one and requiring the single-picture check to reject the result. The layout arms have their own control,
+for the same reason: exchanging the white and magenta squares is exactly the compile-time layout's answer, and the
+check has to reject that picture in both modes.
 
 Runs without a GPU:
 
@@ -93,6 +108,10 @@ SLOT_INK = 40
 CYAN_INK = 40
 #: How far outside the nominal rect a slot's ink is still attributed to it, in GUI units.
 MARGIN = 2
+#: The layout arms are 2*ARM_HALF GUI units on a side, 20 at scale 3, so about 3600 pixels; a ninth is a safe floor.
+#: It is lower than SLOT_INK because the arms are deliberately small: they share the middle band with the four elements
+#: the earlier scene already placed there.
+ARM_INK = 400
 
 
 def parse_args(argv):
@@ -148,9 +167,14 @@ def layout_of(report):
     odd = numbers(fields, "odd")
     call_colour = numbers(fields, "callColour")
     inside_colour = numbers(fields, "insideColour")
+    arm_a = numbers(fields, "armA")
+    arm_b = numbers(fields, "armB")
+    tex_control = numbers(fields, "texControl")
     if (len(panel) != 4 or len(slots) != 2 or len(triangle) != 3 or len(direct) != 3
-            or len(even) != 2 or len(odd) != 2 or len(call_colour) != 3 or len(inside_colour) != 3):
-        raise SystemExit("displayListLayout is not the expected shape (even=/odd= slot pairs included): " + text)
+            or len(even) != 2 or len(odd) != 2 or len(call_colour) != 3 or len(inside_colour) != 3
+            or len(arm_a) != 3 or len(arm_b) != 3 or len(tex_control) != 3):
+        raise SystemExit("displayListLayout is not the expected shape (the layout arms armA=/armB=/texControl= "
+                         "included; a dump from before they existed cannot be judged): " + text)
     return {
         "gui": (gui_width, gui_height),
         "panel": panel,
@@ -160,6 +184,9 @@ def layout_of(report):
         "odd": odd,
         "triangle": triangle,
         "direct": direct,
+        "armA": arm_a,
+        "armB": arm_b,
+        "texControl": tex_control,
         "call_colour": call_colour,
         "inside_colour": inside_colour,
         "frames": int(fields.get("frames", "0")),
@@ -204,6 +231,11 @@ RED = (True, False, False)
 GREEN = (False, True, False)
 CYAN = (False, True, True)
 YELLOW = (True, True, False)
+#: The two colours the layout arms can carry. Arm A was compiled textured and is called untextured, so GL draws the
+#: white colour it stored; arm B was compiled untextured and is called textured, so GL samples the magenta texture the
+#: call binds. Each is the other's failure mode: a renderer that keeps the compile-time layout paints them swapped.
+WHITE = (True, True, True)
+MAGENTA = (True, False, True)
 
 
 def count_green(image, rect):
@@ -220,6 +252,14 @@ def count_yellow(image, rect):
 
 def count_cyan(image, rect):
     return count_colour(image, rect, CYAN)
+
+
+def count_white(image, rect):
+    return count_colour(image, rect, WHITE)
+
+
+def count_magenta(image, rect):
+    return count_colour(image, rect, MAGENTA)
 
 
 def pixel(image, x, y):
@@ -275,7 +315,69 @@ def analyse(image, layout, scale, stage):
     reading["triangle_cyan"] = count_cyan(image, rect_for(scale, triangle_x, triangle_y, triangle_r + MARGIN + 2))
     direct_x, direct_y, direct_half = layout["direct"]
     reading["direct_yellow"] = count_yellow(image, rect_for(scale, direct_x, direct_y, direct_half + MARGIN))
+    reading.update(arm_reading(image, layout, scale))
     return reading
+
+
+def arm_rect_for(scale, centre, half):
+    """{@return} the pixel rect of one layout arm, with the margin a mispositioned quad is still counted in."""
+    return rect_for(scale, centre[0], centre[1], half + MARGIN)
+
+
+def arm_reading(image, layout, scale):
+    """{@return} the white and magenta ink in each layout arm and in the direct textured control."""
+    reading = {}
+    for name, key in (("armA", "armA"), ("armB", "armB"), ("texControl", "texControl")):
+        x, y, half = layout[key]
+        rect = arm_rect_for(scale, (x, y), half)
+        reading[name + "_white"] = count_white(image, rect)
+        reading[name + "_magenta"] = count_magenta(image, rect)
+    return reading
+
+
+def arm_failures(reading, label):
+    """{@return} the layout-arm failures in one reading, named.
+
+    The two arms answer the two directions of the same rule - the layout follows the texturing state at `glCallList` -
+    and each is the other's defect colour, so a swapping renderer fails both. The direct textured control is the frame's
+    proof that magenta can appear at all; without it a white arm A would also read as "the texture never arrived".
+    """
+    failures = []
+    if reading["armA_white"] < ARM_INK:
+        failures.append(label + ": the textured-compiled list drawn untextured is not white (armA_white="
+                        + str(reading["armA_white"]) + " px); the replay kept the compile-time layout")
+    if reading["armA_magenta"] >= ARM_INK:
+        failures.append(label + ": the textured-compiled list drawn untextured sampled the bound texture (armA_magenta="
+                        + str(reading["armA_magenta"]) + " px); the layout came from the compile, not the call")
+    if reading["armB_magenta"] < ARM_INK:
+        failures.append(label + ": the untextured-compiled list drawn textured did not sample the caller's texture "
+                        "(armB_magenta=" + str(reading["armB_magenta"]) + " px); the replay kept the untextured layout")
+    if reading["armB_white"] >= ARM_INK:
+        failures.append(label + ": the untextured-compiled list drawn textured drew untextured (armB_white="
+                        + str(reading["armB_white"]) + " px); the layout came from the compile, not the call")
+    if reading["texControl_magenta"] < ARM_INK:
+        failures.append(label + ": the direct textured control left no magenta ink (texControl_magenta="
+                        + str(reading["texControl_magenta"]) + " px); the texture or the sampler failed in this frame, "
+                        "so the arms' colours are not attributable")
+    return failures
+
+
+def swap_arms(image, layout, scale):
+    """{@return} a copy of the picture with the two layout arms' squares exchanged.
+
+    That is the picture a renderer that keeps the compile-time layout leaves - white where the sampled texture should be
+    and magenta where the stored colour should be - so the arm check has to reject it.
+    """
+    swapped = image.copy()
+    a = [int(round(v)) for v in arm_rect_for(scale, (layout["armA"][0], layout["armA"][1]), layout["armA"][2])]
+    b = [int(round(v)) for v in arm_rect_for(scale, (layout["armB"][0], layout["armB"][1]), layout["armB"][2])]
+    if a[2] <= a[0] or a[3] <= a[1] or b[2] <= b[0] or b[3] <= b[1]:
+        return None
+    piece_a = image.crop((a[0], a[1], a[2], a[3]))
+    piece_b = image.crop((b[0], b[1], b[2], b[3]))
+    swapped.paste(piece_b, (a[0], a[1]))
+    swapped.paste(piece_a, (b[0], b[1]))
+    return swapped
 
 
 def even_frame(stage):
@@ -318,9 +420,15 @@ def single_picture_report(image, layout, scale, label):
         failures.append(label + ": the GL_LINE_LOOP list left no ink (" + str(cyan) + " px)")
     if yellow < SLOT_INK:
         failures.append(label + ": the direct glBegin control left no ink (" + str(yellow) + " px)")
+    arms = arm_reading(image, layout, scale)
+    lines.append(label + " armA_white=%d armA_magenta=%d armB_white=%d armB_magenta=%d texControl_magenta=%d" % (
+        arms["armA_white"], arms["armA_magenta"], arms["armB_white"], arms["armB_magenta"],
+        arms["texControl_magenta"]))
+    failures.extend(arm_failures(arms, label))
     reading = {"stage": label, "band0_red": bands[0][0], "band0_green": bands[0][1],
                "band1_red": bands[1][0], "band1_green": bands[1][1], "triangle_cyan": cyan, "direct_yellow": yellow,
                "outer_band": red_bands[0] if len(red_bands) == 1 else -1}
+    reading.update(arms)
     return not failures, failures, lines, reading
 
 
@@ -353,6 +461,19 @@ def main(argv):
                 if control_passed:
                     failures.append("the positive control was accepted: a picture with the list's green in both "
                                     "squares read as correct, so the single-picture check cannot fail")
+        # The same second control as the two-frame mode: the compile-time layout's answer is the two arms exchanged.
+        layout_control_ok = None
+        swapped = swap_arms(image, layout, scale)
+        if swapped is not None:
+            swapped_reading = analyse(swapped, layout, scale, "control(compile-layout)")
+            layout_control_ok = bool(arm_failures(swapped_reading, "control"))
+            lines.append("control (layout arms exchanged) armA_white=" + str(swapped_reading["armA_white"])
+                         + " armA_magenta=" + str(swapped_reading["armA_magenta"]) + " armB_white="
+                         + str(swapped_reading["armB_white"]) + " armB_magenta="
+                         + str(swapped_reading["armB_magenta"]) + " rejected=" + str(layout_control_ok))
+            if not layout_control_ok:
+                failures.append("the layout-arm positive control was accepted: a picture with the two arms' colours "
+                                "exchanged - the compile-time layout's answer - read as correct")
         print("layout: " + layout["text"])
         for line in lines:
             print(line)
@@ -361,13 +482,16 @@ def main(argv):
             for failure in failures:
                 print("  - " + failure)
         else:
-            print("PASSED: one square in the call-time colour, one in the list's own, the line loop and the control"
-                  + ("" if control_ok is None else "; the baked-colour positive control is rejected"))
+            print("PASSED: one square in the call-time colour, one in the list's own, each layout arm in the colour the"
+                  + " call-time state selects, the line loop and the controls"
+                  + ("" if control_ok is None else "; the baked-colour positive control is rejected")
+                  + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected"))
         if args.json:
             pathlib.Path(args.json).write_text(json.dumps({
                 "leg": args.leg, "picture": str(args.picture), "passed": not failures,
                 "layout": layout["text"], "reading": reading,
-                "control_baked_colour_rejected": control_ok, "failures": failures}, indent=2) + "\n")
+                "control_baked_colour_rejected": control_ok,
+                "control_compile_layout_rejected": layout_control_ok, "failures": failures}, indent=2) + "\n")
         return 0 if not failures else 1
     
     if layout["compiles"] <= 0:
@@ -446,6 +570,10 @@ def main(argv):
             passed = False
             failures.append(stage + ": the direct glBegin control left no ink (" + str(reading["direct_yellow"])
                             + " px); this frame's immediate path drew nothing, so the list result is not attributable")
+        arm_failed = arm_failures(reading, stage)
+        if arm_failed:
+            passed = False
+            failures.extend(arm_failed)
 
     # The panel's markers must be where the layout says, or the picture is of something else.
     for stage, (image, scale, reading) in sorted(readings.items()):
@@ -486,6 +614,25 @@ def main(argv):
                 failures.append("the positive control did not read as a baked colour: the analysis cannot see green "
                                 "in both bands, so a clean result would not mean the call-time colour was applied")
 
+    # Second positive control: the picture the compile-time layout leaves, built by exchanging the two layout arms'
+    # squares in a frame that passed. The arm assertions above have to reject it.
+    layout_control_ok = None
+    if ordered:
+        (stage_first, (image_first, scale_first, _)) = ordered[0]
+        swapped = swap_arms(image_first, layout, scale_first)
+        if swapped is not None:
+            swapped_reading = analyse(swapped, layout, scale_first, "control(compile-layout)")
+            layout_control_ok = bool(arm_failures(swapped_reading, "control"))
+            report_lines.append("control (" + stage_first + "'s layout arms exchanged) armA_white="
+                                + str(swapped_reading["armA_white"]) + " armA_magenta="
+                                + str(swapped_reading["armA_magenta"]) + " armB_white="
+                                + str(swapped_reading["armB_white"]) + " armB_magenta="
+                                + str(swapped_reading["armB_magenta"]) + " rejected=" + str(layout_control_ok))
+            if not layout_control_ok:
+                passed = False
+                failures.append("the layout-arm positive control was accepted: a picture with the two arms' colours "
+                                "exchanged - the compile-time layout's answer - read as correct")
+
     print("layout: " + layout["text"])
     for line in report_lines:
         print(line)
@@ -495,13 +642,15 @@ def main(argv):
             print("  - " + failure)
     else:
         print("PASSED: the outer list draws in the call-time colour, the inner list keeps its own, both move with the"
-              + " frame and the line loop replays"
-              + ("" if control_ok is None else "; the positive control reads as the baked-colour failure"))
+              + " frame, the line loop replays and each layout arm is drawn in the colour the call-time state selects"
+              + ("" if control_ok is None else "; the positive control reads as the baked-colour failure")
+              + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected"))
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({
             "leg": args.leg, "passed": passed and not failures, "layout": layout["text"],
             "readings": {stage: reading for stage, (_, _, reading) in readings.items()},
-            "control_baked_colour_detected": control_ok, "failures": failures}, indent=2) + "\n")
+            "control_baked_colour_detected": control_ok,
+            "control_compile_layout_rejected": layout_control_ok, "failures": failures}, indent=2) + "\n")
     return 0 if passed and not failures else 1
 
 

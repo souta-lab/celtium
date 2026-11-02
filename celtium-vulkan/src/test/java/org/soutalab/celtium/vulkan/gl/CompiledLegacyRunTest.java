@@ -149,4 +149,106 @@ class CompiledLegacyRunTest {
         run.free();
         MemoryUtil.memFree(source);
     }
+
+    /**
+     * The layout is chosen at {@code glCallList}, not at {@code glNewList}: GL reads the texturing state when the vertex
+     * is executed, so a textured-compiled list drawn with texturing off submits the untextured layout and the colour it
+     * stored. Getting this wrong is not a missing draw - it samples the caller's texture - which is why the conversion's
+     * colour offset is what the leg measures.
+     */
+    @Test
+    void aTexturedRunDrawnUntexturedIsRepackedWithTheStoredColour() {
+        ByteBuffer source = MemoryUtil.memAlloc(2 * LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR);
+        long address = MemoryUtil.memAddress(source);
+        for (int vertex = 0; vertex < 2; vertex++) {
+            long at = address + (long) vertex * LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR;
+            MemoryUtil.memPutFloat(at, 10.0f + vertex);
+            MemoryUtil.memPutFloat(at + 4L, 20.0f);
+            MemoryUtil.memPutFloat(at + 8L, 0.0f);
+            MemoryUtil.memPutFloat(at + 12L, 0.125f);
+            MemoryUtil.memPutFloat(at + 16L, 0.875f);
+            MemoryUtil.memPutByte(at + 20L, (byte) 0x11);
+            MemoryUtil.memPutByte(at + 21L, (byte) 0x22);
+            MemoryUtil.memPutByte(at + 22L, (byte) 0x33);
+            MemoryUtil.memPutByte(at + 23L, (byte) 0x44);
+        }
+        CompiledLegacyRun run = CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR,
+                LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR, 2, 7, address,
+                CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL);
+        CompiledLegacyRun.Submission submission = run.prepareCall(true, false, 1.0f, 1.0f, 1.0f, 1.0f, 0.5f, 0.5f);
+        assertEquals(LegacyImmediateCapture.FORMAT_POSITION_COLOR, submission.format,
+                "a list called with GL_TEXTURE_2D off submits the untextured layout");
+        assertEquals(LegacyImmediateCapture.STRIDE_POSITION_COLOR, submission.stride);
+        assertNotEquals(run.address, submission.address, "the converted vertices are their own buffer");
+        for (int vertex = 0; vertex < 2; vertex++) {
+            long at = submission.address + (long) vertex * LegacyImmediateCapture.STRIDE_POSITION_COLOR;
+            assertEquals(10.0f + vertex, MemoryUtil.memGetFloat(at), "positions are copied (x of vertex " + vertex + ")");
+            assertEquals(20.0f, MemoryUtil.memGetFloat(at + 4L));
+            assertEquals((byte) 255, MemoryUtil.memGetByte(at + 12L), "the call-time white is the colour");
+            assertEquals((byte) 255, MemoryUtil.memGetByte(at + 15L));
+        }
+        assertEquals(1, run.layoutRepacks());
+        assertEquals(1, run.callTimeColourReplays(), "the colour was still left to the call");
+        // The copy the list owns is untouched, so a call with texturing on still submits the compiled layout.
+        assertEquals((byte) 0x11, MemoryUtil.memGetByte(run.address + 20L));
+        CompiledLegacyRun.Submission textured = run.prepareCall(true, true, 1.0f, 1.0f, 1.0f, 1.0f, 0.5f, 0.5f);
+        assertEquals(LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR, textured.format);
+        assertEquals(run.address, textured.address);
+        assertEquals(1, run.layoutRepacks(), "a matching layout needs no repack");
+
+        run.free();
+        MemoryUtil.memFree(source);
+    }
+
+    /**
+     * The other direction: an untextured-compiled list drawn with texturing on samples the caller's texture at the
+     * caller's coordinate. The layout cannot hold a coordinate, so the call-time one is the only possible answer, and
+     * the stored colour has to move from offset 12 to the textured layout's offset 20.
+     */
+    @Test
+    void anUntexturedRunDrawnTexturedSamplesTheCallTimeCoordinate() {
+        ByteBuffer source = MemoryUtil.memAlloc(LegacyImmediateCapture.STRIDE_POSITION_COLOR);
+        long address = MemoryUtil.memAddress(source);
+        MemoryUtil.memPutFloat(address, 5.0f);
+        MemoryUtil.memPutFloat(address + 4L, 6.0f);
+        MemoryUtil.memPutFloat(address + 8L, 7.0f);
+        MemoryUtil.memPutByte(address + 12L, (byte) 0x7E);
+        MemoryUtil.memPutByte(address + 13L, (byte) 0x7F);
+        MemoryUtil.memPutByte(address + 14L, (byte) 0x80);
+        MemoryUtil.memPutByte(address + 15L, (byte) 0x81);
+        CompiledLegacyRun run = CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_COLOR,
+                LegacyImmediateCapture.STRIDE_POSITION_COLOR, 1, 7, address, 0);
+        CompiledLegacyRun.Submission submission = run.prepareCall(true, true, 0.0f, 0.0f, 0.0f, 0.0f, 0.25f, 0.75f);
+        assertEquals(LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR, submission.format,
+                "a list called with GL_TEXTURE_2D on submits the textured layout");
+        assertEquals(5.0f, MemoryUtil.memGetFloat(submission.address));
+        assertEquals(0.25f, MemoryUtil.memGetFloat(submission.address + 12L), "the call-time s is the coordinate");
+        assertEquals(0.75f, MemoryUtil.memGetFloat(submission.address + 16L));
+        assertEquals((byte) 0x7E, MemoryUtil.memGetByte(submission.address + 20L),
+                "the list's own colour moves to the textured layout's offset");
+        assertEquals((byte) 0x81, MemoryUtil.memGetByte(submission.address + 23L));
+        assertEquals(1, run.layoutRepacks());
+        assertEquals(1, run.callTimeTexReplays());
+
+        run.free();
+        MemoryUtil.memFree(source);
+    }
+
+    @Test
+    void aRunWithNoRepackKeepsItsBakedColourWhenTheCallStateSwitchIsOff() {
+        ByteBuffer source = MemoryUtil.memAlloc(LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR);
+        long address = MemoryUtil.memAddress(source);
+        MemoryUtil.memPutByte(address + 20L, (byte) 0x40);
+        CompiledLegacyRun run = CompiledLegacyRun.copy(LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR,
+                LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR, 1, 7, address,
+                CompiledLegacyRun.ATTRIBUTE_COLOUR_FROM_CALL);
+        CompiledLegacyRun.Submission submission = run.prepareCall(false, false, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+        assertEquals(LegacyImmediateCapture.FORMAT_POSITION_COLOR, submission.format, "the layout still follows the call");
+        assertEquals((byte) 0x40, MemoryUtil.memGetByte(submission.address + 12L),
+                "with the call-state switch off the compiled colour is kept");
+        assertEquals(0, run.callTimeColourReplays());
+
+        run.free();
+        MemoryUtil.memFree(source);
+    }
 }

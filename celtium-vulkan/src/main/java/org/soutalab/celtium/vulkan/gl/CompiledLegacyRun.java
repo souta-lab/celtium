@@ -39,6 +39,22 @@ public final class CompiledLegacyRun {
      */
     public static final Object TAG = new Object();
 
+    /**
+     * The layout one replay submits, decided at {@code glCallList}.
+     *
+     * <p>A field holder rather than three return values because the caller needs all three and a replay happens
+     * hundreds of times a frame: the object belongs to the run and is rewritten in place, so the decision costs no
+     * allocation on the drawing path.
+     */
+    public static final class Submission {
+        /** Where the vertices to submit are. */
+        public long address;
+        /** Their vertex width. */
+        public int stride;
+        /** Their immediate layout id. */
+        public int format;
+    }
+
     /** The copied vertices, owned here until {@link #free()}. */
     private final ByteBuffer bytes;
     /** The copied vertices' address, kept because it is what the immediate path takes. */
@@ -56,6 +72,16 @@ public final class CompiledLegacyRun {
     /** How many replays substituted the call-time colour, and how many the call-time coordinate, into the copy. */
     private int callTimeColourReplays;
     private int callTimeTexReplays;
+    /**
+     * The copy in the other layout, for a replay whose texturing state differs from the compile's, and its address.
+     * Allocated on the first such replay and freed with the run: it is only ever the one other layout.
+     */
+    private ByteBuffer alternate;
+    private long alternateAddress;
+    /** How many replays repacked the vertices into that other layout. */
+    private int layoutRepacks;
+    /** The layout one replay submits; written by {@link #prepareCall}. */
+    private final Submission submission = new Submission();
 
     /**
      * The colour was not set by any command inside the compile, so GL draws these vertices with the current colour at
@@ -175,6 +201,142 @@ public final class CompiledLegacyRun {
         return true;
     }
 
+    /**
+     * Decides the layout this replay submits, and writes the call-time attributes into it.
+     *
+     * <p>GL selects the vertex layout from the <em>enabled</em> state when the vertex is executed, not when it was
+     * compiled: a list compiled with {@code GL_TEXTURE_2D} enabled and called with it disabled draws untextured
+     * geometry (the coordinates it recorded are simply not sampled), and the reverse draws textured geometry with the
+     * caller's current coordinate. Replaying the compile-time layout instead is a different picture, and the two ways it
+     * differs are both visible: a textured list drawn under {@code glDisable(GL_TEXTURE_2D)} samples whatever texture
+     * the caller bound - or a transparent texel - where GL draws the stored colour, and an untextured list drawn with
+     * texturing on leaves the caller's texture unsampled.
+     *
+     * <p>Converting costs one pass over the run and one buffer per converted run, paid only when the state differs from
+     * the compile's; the common case ({@code glCallList} under the state it was compiled with) returns the copy
+     * unchanged.
+     *
+     * <p>The coordinate in the untextured-to-textured direction is always the caller's: an untextured layout cannot
+     * hold one, and under GL the texcoord of a list's vertex is whatever was current when the list ran.
+     *
+     * @param substituteCallState whether an attribute the list never set takes the caller's value; the call-state
+     *                            switch, so a JAR can be asked for the baked answer
+     * @param texturedAtCall      whether {@code GL_TEXTURE_2D} is enabled at {@code glCallList}
+     * @param red                 the current colour at {@code glCallList}
+     * @param u                   the current texture coordinate
+     * @return the layout to submit, owned by this run and valid until the next call
+     */
+    public Submission prepareCall(boolean substituteCallState, boolean texturedAtCall,
+                                  float red, float green, float blue, float alpha, float u, float v) {
+        boolean compiledTextured = this.format == LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR;
+        boolean known = compiledTextured || this.format == LegacyImmediateCapture.FORMAT_POSITION_COLOR;
+        if (!known || texturedAtCall == compiledTextured) {
+            return prepareCompiled(substituteCallState, red, green, blue, alpha, u, v);
+        }
+        int targetStride = texturedAtCall ? LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR
+                : LegacyImmediateCapture.STRIDE_POSITION_COLOR;
+        int targetFormat = texturedAtCall ? LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR
+                : LegacyImmediateCapture.FORMAT_POSITION_COLOR;
+        if (!celtium$ensureAlternate(targetStride)) {
+            // The conversion could not be paid for: submitting the compiled layout is a wrong picture, a refusal is a
+            // missing one, and a list that draws nothing is the defect this path exists to end.
+            return prepareCompiled(substituteCallState, red, green, blue, alpha, u, v);
+        }
+        boolean colourFromCall = substituteCallState && (this.attributes & ATTRIBUTE_COLOUR_FROM_CALL) != 0;
+        long source = this.address;
+        long stride = this.stride;
+        long target = this.alternateAddress;
+        long targetWidth = targetStride;
+        byte r = LegacyImmediateCapture.colourByte(red);
+        byte g = LegacyImmediateCapture.colourByte(green);
+        byte b = LegacyImmediateCapture.colourByte(blue);
+        byte a = LegacyImmediateCapture.colourByte(alpha);
+        for (int vertex = 0; vertex < this.count; vertex++) {
+            long from = source + (long) vertex * stride;
+            long to = target + (long) vertex * targetWidth;
+            // The position is the first twelve bytes of both layouts.
+            MemoryUtil.memCopy(from, to, 12L);
+            if (texturedAtCall) {
+                MemoryUtil.memPutFloat(to + 12L, u);
+                MemoryUtil.memPutFloat(to + 16L, v);
+                if (colourFromCall) {
+                    MemoryUtil.memPutByte(to + 20L, r);
+                    MemoryUtil.memPutByte(to + 21L, g);
+                    MemoryUtil.memPutByte(to + 22L, b);
+                    MemoryUtil.memPutByte(to + 23L, a);
+                } else {
+                    // The untextured layout has the colour at 12; copy the stored bytes to the textured offset.
+                    MemoryUtil.memCopy(from + 12L, to + 20L, 4L);
+                }
+            } else if (colourFromCall) {
+                MemoryUtil.memPutByte(to + 12L, r);
+                MemoryUtil.memPutByte(to + 13L, g);
+                MemoryUtil.memPutByte(to + 14L, b);
+                MemoryUtil.memPutByte(to + 15L, a);
+            } else {
+                // The textured layout has the colour at 20; move it to the untextured offset 12.
+                MemoryUtil.memCopy(from + 20L, to + 12L, 4L);
+            }
+        }
+        if (colourFromCall) {
+            this.callTimeColourReplays++;
+        }
+        if (texturedAtCall) {
+            this.callTimeTexReplays++;
+        }
+        this.layoutRepacks++;
+        this.submission.address = target;
+        this.submission.stride = targetStride;
+        this.submission.format = targetFormat;
+        return this.submission;
+    }
+
+    /**
+     * {@return the layout to submit without changing it}, after writing any attribute the list never set.
+     *
+     * @param substituteCallState whether an attribute the list never set takes the caller's value
+     * @param red                 the current colour at {@code glCallList}
+     * @param u                   the current texture coordinate
+     */
+    public Submission prepareCompiled(boolean substituteCallState, float red, float green, float blue, float alpha,
+                                      float u, float v) {
+        if (substituteCallState) {
+            applyCallState(red, green, blue, alpha, u, v);
+        }
+        this.submission.address = this.address;
+        this.submission.stride = this.stride;
+        this.submission.format = this.format;
+        return this.submission;
+    }
+
+    /** Allocates the converted copy once, sized for the other layout's width; {@code false} when it cannot be paid for. */
+    private boolean celtium$ensureAlternate(int targetStride) {
+        if (this.alternate != null && this.alternate.capacity() >= this.count * targetStride) {
+            return true;
+        }
+        if (this.alternate != null) {
+            MemoryUtil.memFree(this.alternate);
+            this.alternate = null;
+        }
+        long size = (long) this.count * (long) targetStride;
+        if (size <= 0L || size > Integer.MAX_VALUE) {
+            return false;
+        }
+        try {
+            this.alternate = MemoryUtil.memAlloc((int) size);
+        } catch (RuntimeException | OutOfMemoryError refused) {
+            this.alternate = null;
+            return false;
+        }
+        this.alternateAddress = MemoryUtil.memAddress(this.alternate);
+        return true;
+    }
+
+    /** {@return how many replays repacked this run into the other vertex layout}. */
+    public int layoutRepacks() {
+        return this.layoutRepacks;
+    }
+
     /** {@return how many replays have written the call-time colour into this run}. */
     public int callTimeColourReplays() {
         return this.callTimeColourReplays;
@@ -200,12 +362,17 @@ public final class CompiledLegacyRun {
      * replay it again: a freed address would otherwise be read by the next {@code glCallList}.
      */
     public void free() {
+        if (this.alternate != null) {
+            MemoryUtil.memFree(this.alternate);
+            this.alternate = null;
+            this.alternateAddress = 0L;
+        }
         MemoryUtil.memFree(this.bytes);
     }
 
     /** {@return the run as one line, for a bounded diagnostic}. */
     public String describe() {
         return "mode=" + this.mode + " vertices=" + this.count + " format=" + this.format + " stride=" + this.stride
-                + " attributes=" + this.attributes;
+                + " attributes=" + this.attributes + " repacks=" + this.layoutRepacks;
     }
 }

@@ -43,6 +43,12 @@ import org.lwjgl.opengl.GL11;
  *       yellow quad is in the picture and the compiled square is not, the list replay is at fault rather than the
  *       immediate path, the transform or the colour pipeline - and both are in one frame, so no cross-run comparison is
  *       needed to say so.</li>
+ *   <li><b>The vertex layout comes from the state at {@code glCallList}, not from the compile.</b> Arm A is compiled
+ *       with {@code GL_TEXTURE_2D} enabled and called with it disabled, so GL draws the stored <b>white</b> colour and
+ *       samples nothing; arm B is compiled untextured and called textured, so GL samples the caller's <b>magenta</b>
+ *       texture at the caller's coordinate. Both are called with that magenta bound, which makes the compile-time
+ *       layout's answer the <em>other</em> arm's colour - the two count as each other's failure mode - and a small
+ *       directly-drawn textured quad in the same state is the control that the texture and sampler work at all.</li>
  * </ul>
  *
  * <p>Two things about this scene were measured on earlier runs of it and are built in deliberately. <b>The quads are
@@ -73,6 +79,15 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     /** The compiled square's half extent, in GUI units, and the line loop's radius. */
     private static final int SQUARE_HALF = 30;
     private static final int TRIANGLE_RADIUS = 24;
+    /**
+     * The two layout arms' half extent, in GUI units.
+     * <p>
+     * Smaller than the squares because they sit between the direct control and the line loop: the four existing
+     * elements already use the middle band, and a new arm that overlapped one would make the ink counts ambiguous.
+     */
+    private static final int ARM_HALF = 10;
+    /** The magenta texture's edge: a power of two, so no mipmap or extent rule is being tested by accident. */
+    private static final int TEXTURE_SIZE = 16;
     /** The green set outside the outer list, which GL ignores in favour of the call-time colour. */
     private static final float OUTSIDE_RED = 0.0f;
     private static final float OUTSIDE_GREEN = 1.0f;
@@ -100,6 +115,12 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private int outerList;
     private int innerList;
     private int triangleList;
+    /** A list compiled with {@code GL_TEXTURE_2D} enabled, replayed with it disabled. */
+    private int texturedList;
+    /** A list compiled with {@code GL_TEXTURE_2D} disabled, replayed with it enabled. */
+    private int plainList;
+    /** The 1x1-equivalent magenta texture the layout arms sample, so the wrong layout is a measurable colour. */
+    private int magentaTexture;
     /** How many times each list was compiled, so a scene that silently recompiled is visible. */
     private int compiles;
     private final StringBuilder dumpStages = new StringBuilder();
@@ -137,6 +158,9 @@ public final class DisplayListLegacyScreen extends GuiScreen {
                 + " direct=" + celtium$directX(panel) + "," + (panel[1] + panel[3]) / 2 + "," + DIRECT_HALF
                 + " even=" + celtium$slotA(panel) + "," + celtium$slotB(panel)
                 + " odd=" + celtium$slotB(panel) + "," + celtium$slotA(panel)
+                + " armA=" + celtium$armAX(panel) + "," + (panel[1] + panel[3]) / 2 + "," + ARM_HALF
+                + " armB=" + celtium$armBX(panel) + "," + (panel[1] + panel[3]) / 2 + "," + ARM_HALF
+                + " texControl=" + celtium$centreX(panel) + "," + celtium$textureControlY(panel) + "," + ARM_HALF
                 + " callColour=" + (int) (CALL_RED * 255) + "," + (int) (CALL_GREEN * 255) + ","
                 + (int) (CALL_BLUE * 255)
                 + " insideColour=" + (int) (INSIDE_RED * 255) + "," + (int) (INSIDE_GREEN * 255) + ","
@@ -173,6 +197,23 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     /** The line loop's horizontal centre: four fifths of the way across, the other side of the square. */
     private static int celtium$triangleX(int[] panel) {
         return panel[0] + 4 * (panel[2] - panel[0]) / 5;
+    }
+
+    /**
+     * The layout arms' horizontal centres: either side of the middle, clear of both the direct control (a fifth of the
+     * way across, half extent 20) and the line loop (four fifths, radius 24).
+     */
+    private static int celtium$armAX(int[] panel) {
+        return celtium$centreX(panel) - 90;
+    }
+
+    private static int celtium$armBX(int[] panel) {
+        return celtium$centreX(panel) + 90;
+    }
+
+    /** The direct textured control's vertical centre: below the squares' lower slot, above the panel marker. */
+    private static int celtium$textureControlY(int[] panel) {
+        return panel[3] - 15;
     }
 
     /** The direct immediate quad's half extent, in GUI units. */
@@ -239,10 +280,67 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         }
         GL11.glEnd();
         GL11.glEndList();
+
+        // The layout arms' lists. Arm A is compiled with texturing on and records a coordinate; its colour is set
+        // *outside* the compile, so the run carries colour-from-call like the outer square and the replay has to take
+        // the call-time white. Arm B is compiled with texturing off and sets white inside the compile, so its colour is
+        // the list's own; the only thing the call can change is the layout.
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        this.texturedList = GLAllocation.generateDisplayLists(1);
+        GL11.glNewList(this.texturedList, GL11.GL_COMPILE);
+        GL11.glTexCoord2f(0.0f, 0.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+        GL11.glEnd();
+        GL11.glEndList();
+
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        this.plainList = GLAllocation.generateDisplayLists(1);
+        GL11.glNewList(this.plainList, GL11.GL_COMPILE);
+        GL11.glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+        GL11.glEnd();
+        GL11.glEndList();
+        // Back to the state drawScreen's own geometry is drawn with.
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
         System.out.println("[Celtium] CELTIUM_DISPLAYLIST_COMPILED outer=" + this.outerList + " inner="
-                + this.innerList + " triangle=" + this.triangleList
+                + this.innerList + " triangle=" + this.triangleList + " textured=" + this.texturedList + " plain="
+                + this.plainList
                 + " (GL_COMPILE: nothing is drawn here; the outer list's green was set outside it and is not part of"
-                + " the list, the inner list's green is)");
+                + " the list, the inner list's green is, and both layout lists are drawn under the opposite texturing"
+                + " state from the one they were compiled with)");
+    }
+
+    /**
+     * Creates the magenta texture the layout arms sample, once.
+     * <p>
+     * A solid colour rather than a real atlas corner on purpose: the question is which layout the replay submits, and
+     * a sampled magenta is that question's answer in one count. Nearest filtering and a 16x16 extent keep the texture
+     * complete without a mip chain, so a refused sample cannot be mistaken for the layout decision.
+     */
+    private void celtium$ensureTexture() {
+        if (this.magentaTexture != 0) {
+            return;
+        }
+        this.magentaTexture = GL11.glGenTextures();
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.magentaTexture);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+        java.nio.ByteBuffer pixels = GLAllocation.createDirectByteBuffer(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+        for (int texel = 0; texel < TEXTURE_SIZE * TEXTURE_SIZE; texel++) {
+            pixels.put((byte) 0xFF).put((byte) 0x00).put((byte) 0xFF).put((byte) 0xFF);
+        }
+        pixels.flip();
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, TEXTURE_SIZE, TEXTURE_SIZE, 0,
+                GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
     }
 
     @Override
@@ -267,6 +365,7 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         try {
             if (this.outerList == 0) {
+                celtium$ensureTexture();
                 celtium$compileLists();
             }
             int frame = this.frames++;
@@ -315,6 +414,46 @@ public final class DisplayListLegacyScreen extends GuiScreen {
             GL11.glTranslatef(celtium$triangleX(panel), (panel[1] + panel[3]) / 2, 0.0f);
             GL11.glCallList(this.triangleList);
             GL11.glPopMatrix();
+            // The layout arms. GL chooses the vertex layout from the *enabled* state when the list runs, not from the
+            // state at the compile, so these two lists are drawn under the opposite texturing state:
+            //   arm A (white) - compiled with GL_TEXTURE_2D on, called with it off: the coordinate it recorded is not
+            //       sampled and GL draws the colour the list carries (white). A renderer that keeps the compile-time
+            //       layout samples the magenta bound below - the opposite colour.
+            //   arm B (magenta) - compiled with GL_TEXTURE_2D off, called with it on: GL samples the caller's texture at
+            //       the caller's coordinate, so every vertex reads magenta. A renderer that keeps the compile-time
+            //       layout draws it untextured - white, again the opposite colour.
+            // Both are called with the magenta texture bound on purpose: it makes the wrong answer a counted colour
+            // instead of "whatever the GUI bound last", and the direct textured control below proves the texture and the
+            // sampler work in this frame at all.
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.magentaTexture);
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
+            GL11.glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            GL11.glPushMatrix();
+            GL11.glTranslatef(celtium$armAX(panel), (panel[1] + panel[3]) / 2, 0.0f);
+            GL11.glCallList(this.texturedList);
+            GL11.glPopMatrix();
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.magentaTexture);
+            GL11.glTexCoord2f(0.5f, 0.5f);
+            GL11.glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            GL11.glPushMatrix();
+            GL11.glTranslatef(celtium$armBX(panel), (panel[1] + panel[3]) / 2, 0.0f);
+            GL11.glCallList(this.plainList);
+            GL11.glPopMatrix();
+            // The control: the same textured state, drawn directly, so a missing magenta square can be told from a
+            // texture that never reached the sampler.
+            GL11.glPushMatrix();
+            GL11.glTranslatef(celtium$centreX(panel), celtium$textureControlY(panel), 0.0f);
+            GL11.glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            GL11.glTexCoord2f(0.5f, 0.5f);
+            GL11.glBegin(GL11.GL_QUADS);
+            GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+            GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+            GL11.glVertex2i(ARM_HALF, ARM_HALF);
+            GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+            GL11.glEnd();
+            GL11.glPopMatrix();
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
         } finally {
             // Restored in a finally: the rest of the frame is the game's GUI, which draws text and icons with this
             // state on, and a scene that left it off would break every screen after it.
