@@ -877,9 +877,10 @@ public final class VulkanTextureRegistry {
      * <p>
      * The size comes from the capture itself, checked against every size already established for the texture: a capture
      * whose extent disagrees with a size the registry knows, or with the extent the stub recorded for the level, describes
-     * a surface other than the whole one, and filling with it would mark texels that never arrived as content. A dimension
-     * of 1 is not a known size - the backend's size query coerces its own 0 answer to 1 - so a placeholder mirror is still
-     * established from the capture.
+     * a surface other than the whole one, and filling with it would mark texels that never arrived as content. A recorded
+     * 1 is not a known size: the stub answers 0 when it recorded nothing at all, and desktop GL lets the game re-specify a
+     * level at another size, so a 1x1 record can predate the whole image or be a placeholder allocation. Only a record
+     * above 1 on both axes is compared; anything else leaves the capture free to establish the mirror.
      * <p>
      * <b>A surface with no game pixels is not content, except when the game is announcing the write that fills it.</b>
      * {@code glTexImage2D} with a NULL data pointer lays down zeros so that the sub-image writes that follow have a
@@ -939,7 +940,8 @@ public final class VulkanTextureRegistry {
                 // the atlas allocates first and uploads sprite by sprite - so a capture whose extent disagrees with
                 // that record is a sub-image that arrived before the surface was known. Taking it would build a mirror
                 // the size of one sprite and mark it whole, which is worse than having none. A dimension of 1 is not a
-                // record: it is what the backend's own size query coerces a 0 answer to.
+                // record either: 0 is what the stub answers when it recorded nothing, and a 1x1 allocation (or a level
+                // the game re-specified at another size) says nothing about the whole image.
                 int recordedWidth = textureLevelParameter(glTextureId, 0,
                         org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
                 int recordedHeight = textureLevelParameter(glTextureId, 0,

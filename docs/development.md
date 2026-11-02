@@ -124,6 +124,14 @@ scripts/gv-leg.sh <different-leg> .gv-verify/jars/<tag> cohort intel 900
   2026-11-02実測: SupersymmetryのTipTheScalesがVideo Settingsボタンに自前の画面
   （`com.blamejared.tipthescales.client.GuiNewVideoSettings`）を返し、fixtureの `videoSettings` sceneが前提
   （`GuiVideoSettings` であること）で落ちてGUI stageが判定不能だった。外すと scene が通り、判定が返る。
+- **packの内容ディレクトリは必要なlegだけ運ぶ**: `CELTIUM_LEG_COPY_PACK_DIRS=resources`（空白区切り、`scripts` /
+  `schematics` / `structures` / `resources` のみ。既定では `recipe` だけが resources/structures/scripts を運ぶ）。
+  `resources/` は ResourceLoader 系modがリソースパックとして読むフォルダで、packのGUI/メニュー画像・lang・ブロック
+  テクスチャ上書きが入る。source instanceに無いディレクトリやharnessが知らない名前は起動前に拒否し、runが実際に
+  運んだ数を result の `copyPackDirs` に残す（要求と実態の食い違いを合格にしない）。
+  2026-11-02実測: 運ばないrun（leg `r10-gui3`）は `supersymmetry:menu_background/gui.png` の読込に失敗し、
+  CustomBackgrounds が `GuiScreen.OPTIONS_BACKGROUND` をその画像へ差し替えているため、GuiVideoSettings の背景が
+  ミッシングテクスチャの市松（48px）になった。rendererの拒否ではない。
 - **Cleanroom Relauncher 構成（2026-10-29・テスターと同条件）**: 実プレイ報告の環境は「CurseForgeのForge profile +
   `!cleanroom-relauncher-*.jar`」。ForgeのcoremodがCleanroomを用意し、**2つ目のJVM**をCleanroomのclasspathで起動する。
   検証時の要点:

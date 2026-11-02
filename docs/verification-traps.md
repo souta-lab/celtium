@@ -281,3 +281,27 @@ static final は、初期化時点で読まれない（実行時にしか読ま�
 配列やレイアウトのように初期化時に確定する値は、static 配列ではなく**呼び出し時に組み立てるメソッド**にすると
 順序依存が構造的に消える。`TerrainVertexLayoutTest` が offset 12 を固定する（配列を先に戻すと
 `expected: <12> but was: <0>` で赤）。
+
+## pack の内容ディレクトリを運ばない leg は、無い texture を描いた絵を renderer の欠陥に見せる（2026-11-02 実測）
+
+**症状**: `scene=videoSettings` の GUI frame の背景が全面ミッシングテクスチャの市松（48px セル、magenta/黒）で、
+`presentedBlackFraction=0.325654`（上限 0.118）で落ちる。widget 自体は正しく描けている。
+
+**原因**: Supersymmetry の `CustomBackgrounds` が `GuiScreen.OPTIONS_BACKGROUND` を config の
+`supersymmetry:menu_background/gui.png` に差し替えている。そのファイルは instance の
+`minecraft/resources/supersymmetry/...` にあり、`resources/` は ResourceLoader mod がリソースパックとして読む
+フォルダ。leg harness の隔離copyは既定で `resources/` を運ばない（`recipe` だけが運ぶ）ため、**ゲームは実在する
+リソースを見つけられず**、`SimpleTexture` が missingno を upload した。run の log は
+`Failed to load texture: supersymmetry:menu_background/gui.png` を1行残していた（VintageFix の
+`FastFileNotFoundException`）。GL で同じ条件なら同じ市松になる＝renderer の拒否ではない。
+
+**判別**: log の `Failed to load texture` の有無と、その名前のリソースが instance のどこにあるか（`resources/` /
+`resourcepacks/` / mod jar）。`CELTIUM_LEG_COPY_PACK_DIRS=resources` で運ぶと失敗行が消え、背景が
+40,40,40（`GuiScreen.drawBackground` の 64/255 tint で 10,10,10）になる。**この時も gate は通らない**:
+背景が pack 自身のほぼ黒い画像なので `presentedBlackFraction=0.314154`（pack の widgets は (19,19,19) 面＋
+(33,34,36) 枠＋(0,93,112) アクセントで、frame の画素値は `widgets.png` と一致する）。つまり floor 側が
+vanilla 風 widget で測られており、pack の画面にはそのまま使えない。
+
+**規約**: pack の scene を判定する時は、その scene が読むコンテンツディレクトリを leg に明示的に運び、run が実際に
+運んだ数（`result.copyPackDirs`）を確認する。運んでいない run の「背景が変」「色数が少ない」を renderer の欠陥に
+しない。pack 固有の見た目は pack と同じ instance の GL 参照で測る。

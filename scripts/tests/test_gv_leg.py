@@ -49,8 +49,14 @@ for source in a.mod:
     shutil.copy2(source, game / 'mods' / source.name)
 for source in a.library:
     shutil.copy2(source, game / 'test-libraries' / source.name)
+carried = []
 for name in a.copy_pack_dir:
-    shutil.copytree(Path(a.instance) / 'minecraft' / name, game / name)
+    if scenario == 'pack_dirs_ignored':
+        continue
+    source = Path(a.instance) / 'minecraft' / name
+    shutil.copytree(source, game / name)
+    carried.append({'name': name, 'copied': True,
+        'files': sum(1 for path in (game / name).rglob('*') if path.is_file())})
 (game / 'argv.json').write_text(json.dumps({'argv': sys.argv[1:], 'jvmArgs': a.jvm_arg,
     'supplemental': a.copy_pack_dir, 'DRI_PRIME': os.environ.get('DRI_PRIME'),
     'MESA_VK_DEVICE_SELECT': os.environ.get('MESA_VK_DEVICE_SELECT'),
@@ -59,6 +65,8 @@ lock = {'sourceInstance': a.instance, 'isolatedGameDirectory': str(game),
     'effectiveConfig': {'runnerJvmArgs': a.jvm_arg, 'jvmArgs': a.jvm_arg},
     'testMods': [{'file': path.name, 'sha256': digest(path)} for path in (game / 'mods').glob('*.jar')],
     'extraTestLibraries': [{'file': path.name, 'sha256': digest(path)} for path in (game / 'test-libraries').glob('*.jar')]}
+if carried:
+    lock['supplementalPackDirs'] = carried
 if scenario == 'wrong_lock_hash': lock['testMods'][0]['sha256'] = '0' * 64
 if scenario != 'missing_lock': a.output.write_text(json.dumps(lock))
 for role in ('renderer', 'fixture'):
@@ -162,6 +170,7 @@ class LegRunnerTests(unittest.TestCase):
                             "CELTIUM_LEG_REFERENCE_RENDERER": "", "CELTIUM_LEG_EXCLUDE_INSTANCE_MODS": ""}
         self.environment["CELTIUM_LEG_WINDOW_SYSTEM"] = "x11"
         self.environment["CELTIUM_LEG_SEED_OPTIONS"] = ""
+        self.environment["CELTIUM_LEG_COPY_PACK_DIRS"] = ""
         self.env_patch = patch.dict(os.environ, self.environment)
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
@@ -373,6 +382,50 @@ class LegRunnerTests(unittest.TestCase):
         self.assertEqual([p.name for p in (isolated / "mods").iterdir()], ["content-mod.jar"])
         self.assertTrue((self.instance / "minecraft/mods" / replacement).is_file(),
                         "the exclusion is for the isolated copy; the source instance is not modified")
+
+    def test_a_leg_can_carry_the_pack_content_dirs_a_scene_reads(self):
+        # Measured 2026-11-02 (leg r10-gui3): the videoSettings frame on the Supersymmetry clone drew the
+        # missing-texture checker over its whole background, because the CustomBackgrounds config names
+        # `supersymmetry:menu_background/gui.png`, that file lives in the pack's `minecraft/resources` - a folder
+        # the ResourceLoader mod serves as a resource pack - and only the recipe mode carried the folder. The run's
+        # own log named the failed load. The frame was a fixture artifact, not a renderer refusal.
+        background = self.instance / "minecraft/resources/supersymmetry/menu_background"
+        background.mkdir(parents=True)
+        (background / "gui.png").write_bytes(b"pack background")
+        os.environ["CELTIUM_LEG_COPY_PACK_DIRS"] = "resources"
+        plan = self.plan()
+        copies = [plan.command[i + 1] for i, arg in enumerate(plan.command[:-1]) if arg == "--copy-pack-dir"]
+        self.assertEqual(copies, ["resources"])
+        self.assertEqual(plan.manifest["copyPackDirs"], ["resources"])
+        result = runner.execute(plan, timeout=5, terminate_grace=.1)
+        self.assertTrue(result["accepted"], result)
+        self.assertEqual(result["copyPackDirs"], [{"name": "resources", "files": 1}])
+        game = self.root / ".gv-verify/run-test"
+        self.assertEqual((game / "resources/supersymmetry/menu_background/gui.png").read_bytes(),
+                         b"pack background")
+        # A directory the request names but the source profile does not have, and a name the harness does not
+        # accept, are refused before a run directory exists rather than silently left out.
+        os.environ["CELTIUM_LEG_COPY_PACK_DIRS"] = "scripts"
+        with self.assertRaises(runner.LegError):
+            self.plan(leg="missing-content")
+        os.environ["CELTIUM_LEG_COPY_PACK_DIRS"] = "assets"
+        with self.assertRaises(runner.LegError):
+            self.plan(leg="unknown-content")
+
+    def test_a_requested_pack_directory_the_run_did_not_carry_fails_the_leg(self):
+        (self.instance / "minecraft/resources").mkdir()
+        (self.instance / "minecraft/resources/pack.mcmeta").write_text("{}")
+        os.environ["CELTIUM_LEG_COPY_PACK_DIRS"] = "resources"
+        os.environ["FAKE_SCENARIO"] = "pack_dirs_ignored"
+        plan = self.plan()
+        result = runner.execute(plan, timeout=5, terminate_grace=.1)
+        self.assertFalse(result["accepted"], result)
+        self.assertTrue(any("resources" in problem and "did not carry" in problem
+                            for problem in result["problems"]), result)
+
+    def test_copyable_pack_dirs_agree_with_the_launcher(self):
+        from prism_validation import SUPPLEMENTAL_PACK_DIRS
+        self.assertEqual(tuple(runner.COPYABLE_PACK_DIRS), tuple(SUPPLEMENTAL_PACK_DIRS))
 
     def test_recipe_copies_content_and_manifest_dependencies_have_sources(self):
         for name in ("resources", "structures", "scripts"):

@@ -36,6 +36,10 @@ STARTUP_BUDGET = 120
 # HeadlessWayland can spend up to nine seconds stopping its separate Sway session.
 TERMINATE_GRACE = 12
 NATIVE_DEVICE = re.compile(r'CELTIUM_NATIVE_DEVICE name="([^"]+)" uuid=([0-9a-fA-F-]+) matchedOpenGl=(?:true|false)')
+#: Pack content directories a leg may ask the harness to carry into the isolated copy. The harness owns the same
+#: list; the tests compare the two rather than importing the harness here, because this wrapper has to run - and
+#: refuse a bad request - without the launcher module being importable.
+COPYABLE_PACK_DIRS = ("scripts", "schematics", "structures", "resources")
 
 
 class LegError(Exception):
@@ -198,7 +202,20 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     require_file(instance / "mmc-pack.json")
     require_file(instance / "instance.cfg")
     require_dir(instance / "minecraft/mods")
-    supplemental = ("resources", "structures", "scripts") if mode == "recipe" else ()
+    supplemental = ["resources", "structures", "scripts"] if mode == "recipe" else []
+    # The pack's own content directories (`resources` carries its GUI/menu textures, sounds and lang files, and a
+    # ResourceLoader-style mod serves the folder as a resource pack). Only `recipe` carried them before, so a scene
+    # opened on a pack instance saw a directory the game reads but the leg had left behind: measured 2026-11-02, the
+    # videoSettings frame on the Supersymmetry clone drew the missing-texture checker for the whole background because
+    # `supersymmetry:menu_background/gui.png` (in `resources/`) was absent, and the run logged the failed load. A
+    # requested directory that the source profile does not have is refused before anything is created, so the leg
+    # cannot silently run without the content it says it needs.
+    for name in shlex.split(os.environ.get("CELTIUM_LEG_COPY_PACK_DIRS", "")):
+        if name not in COPYABLE_PACK_DIRS:
+            raise LegError("CELTIUM_LEG_COPY_PACK_DIRS accepts only " + ", ".join(COPYABLE_PACK_DIRS)
+                           + f"; refused: {name}")
+        if name not in supplemental:
+            supplemental.append(name)
     for name in supplemental:
         require_dir(instance / "minecraft" / name)
     mods = [renderer, fixture]
@@ -308,7 +325,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
                 "durationSeconds": duration, "slotWaitSeconds": SLOT_WAIT,
                 "sourceInstance": str(instance), "isolatedGameDirectory": str(paths["game"]),
                 "artifacts": artifacts, "dependencies": dependencies, "git": git_state(root),
-                "instanceModExclusions": instance_exclusions, "jvmArgs": jvm_args, "command": command,
+                "instanceModExclusions": instance_exclusions, "copyPackDirs": supplemental,
+                "jvmArgs": jvm_args, "command": command,
                 "deviceEnvironment": {key: environment.get(key) for key in
                                       ("DRI_PRIME", "MESA_VK_DEVICE_SELECT", "SDL_VIDEODRIVER")}}
     return Plan(root, leg, mode, gpu, duration, paths, renderer, fixture, required_gpu, command, environment, manifest,
@@ -425,6 +443,17 @@ def postcheck(plan: Plan, harness_code: int) -> dict:
             problems.append("runtime-lock source instance differs from the requested instance")
         if runtime.get("effectiveConfig", {}).get("runnerJvmArgs") != plan.manifest["jvmArgs"]:
             problems.append("runtime-lock JVM arguments differ from the requested arguments")
+        # What the leg asked the harness to carry, checked against what the run says it carried. A requested
+        # directory the run does not report is the ambiguity that produced the missing-texture GUI background: the
+        # package's content was named in the request and simply absent from the isolated copy.
+        carried = {item.get("name"): item for item in runtime.get("supplementalPackDirs") or []}
+        result["copyPackDirs"] = [{"name": name, "files": (carried.get(name) or {}).get("files")}
+                                  for name in plan.manifest.get("copyPackDirs") or []]
+        for item in result["copyPackDirs"]:
+            record = carried.get(item["name"])
+            if (record is None or record.get("copied") is not True
+                    or not isinstance(record.get("files"), int) or record["files"] <= 0):
+                problems.append(f"pack content directory {item['name']} was requested but the run did not carry it")
         for artifact in result["copiedArtifacts"]:
             named = [item for item in runtime.get("testMods", []) if item.get("file") == Path(artifact["path"]).name]
             if len(named) != 1 or named[0].get("sha256") != artifact["sha256"]:
