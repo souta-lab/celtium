@@ -189,12 +189,12 @@ public final class VulkanImmediateTexturePipeline {
     private final VulkanColorBlendState colorBlend;
     private final boolean depthTest;
     private final boolean depthWrite;
-    private final boolean cull;
+    private final int cull;
     /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
     private final int depthCompareOp;
 
     private VulkanImmediateTexturePipeline(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
-                                           boolean depthTest, boolean depthWrite, boolean cull,
+                                           boolean depthTest, boolean depthWrite, int cull,
                                            int depthCompareOp) {
         this.context = context;
         this.renderPass = renderPass;
@@ -207,7 +207,7 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
     public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass) {
-        return create(context, renderPass, VulkanColorBlendState.legacy(), true, false, false,
+        return create(context, renderPass, VulkanColorBlendState.legacy(), true, false, VulkanCullState.NONE,
                 VK_COMPARE_OP_LESS_OR_EQUAL);
     }
 
@@ -228,7 +228,7 @@ public final class VulkanImmediateTexturePipeline {
             VulkanImmediateTexturePipeline state, long recordsSetLayout) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, state.celtium$renderPass(),
                 state.celtium$colorBlend(), state.celtium$depthTests(), state.celtium$depthWrites(),
-                state.celtium$culls(), state.celtium$depthCompareOp());
+                state.celtium$cullState(), state.celtium$depthCompareOp());
         pipeline.records = true;
         pipeline.recordsLayout = recordsSetLayout;
         pipeline.positionOnly = state.celtium$positionOnly();
@@ -237,7 +237,7 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     public static VulkanImmediateTexturePipeline createRecords(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
             long recordsSetLayout) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
@@ -252,7 +252,7 @@ public final class VulkanImmediateTexturePipeline {
      * A run of this pipeline does not stop when the texture changes, which is the point of the array.
      */
     public static VulkanImmediateTexturePipeline createRecordsArray(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
             long recordsSetLayout, long arraySetLayout) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
@@ -268,7 +268,7 @@ public final class VulkanImmediateTexturePipeline {
      * is not sampled), one texture, and the fragment stage that evaluates the combine the group's push block selects.
      */
     public static VulkanImmediateTexturePipeline createForCombine4(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.combine4 = true;
@@ -278,7 +278,7 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Creates the colourless {@code POSITION_TEX} variant, which is how the sky, the clouds and the water arrive. */
     public static VulkanImmediateTexturePipeline createForPositionTex(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
@@ -290,7 +290,7 @@ public final class VulkanImmediateTexturePipeline {
      * texture at the coordinate {@link NativeTexGen} generates, which the backend writes as three rows at 64/80/96.
      */
     public static VulkanImmediateTexturePipeline createForTexGen(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.texGen = true;
@@ -310,7 +310,7 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
     public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
@@ -329,7 +329,7 @@ public final class VulkanImmediateTexturePipeline {
      * binding has to step 16 bytes, not the position-only layout's 12.
      */
     public static VulkanImmediateTexturePipeline createForPositionNormal(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
@@ -345,7 +345,7 @@ public final class VulkanImmediateTexturePipeline {
      * layout has to be declared honestly or the pipeline reads the next vertex's bytes as this one's colour.
      */
     public static VulkanImmediateTexturePipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
@@ -367,7 +367,7 @@ public final class VulkanImmediateTexturePipeline {
      * 3,Normal,Float]}).
      */
     public static VulkanImmediateTexturePipeline createForPositionTexNormalFloat(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
@@ -378,7 +378,7 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Creates the {@code POSITION_TEX_NORMAL} variant, 24 bytes: colourless shaders, wider stride than the 20-byte one. */
     public static VulkanImmediateTexturePipeline createForPositionTexNormal(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
@@ -388,7 +388,7 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
-                            boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+                            boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
         return allocate(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp).build();
     }
 
@@ -409,7 +409,7 @@ public final class VulkanImmediateTexturePipeline {
      * now builds only after its fields are final.
      */
     private static VulkanImmediateTexturePipeline allocate(VulkanContext context, long renderPass,
-                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
                             int depthCompareOp) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
@@ -613,6 +613,11 @@ public final class VulkanImmediateTexturePipeline {
 
     /** {@return whether face culling is on}, which a twin has to reproduce to draw the same pixels. */
     public boolean celtium$culls() {
+        return VulkanCullState.culls(this.cull);
+    }
+
+    /** {@return the encoded cull state (enable, face and winding) this pipeline was built with}. */
+    public int celtium$cullState() {
         return this.cull;
     }
 
@@ -1182,8 +1187,11 @@ public final class VulkanImmediateTexturePipeline {
                                 // polygon offset the game sets; the enable bit is what has to be declared here, and it is a
                                 // rasterization field - the multisample state next door has no such member.
                                 .depthBiasEnable(true)
-                                .cullMode(this.cull ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE)
-                                .frontFace(VK_FRONT_FACE_CLOCKWISE)
+                                // The enable, the face and the winding are one encoded state (VulkanCullState): a
+                                // mod's glCullFace(GL_FRONT) or glFrontFace(GL_CW) selects its own pipeline here
+                                // instead of being drawn with GL's default pair.
+                                .cullMode(VulkanCullState.vkCullMode(this.cull))
+                                .frontFace(VulkanCullState.vkFrontFace(this.cull))
                                 .lineWidth(1.0f);
                 VkPipelineMultisampleStateCreateInfo multisample =
                         VkPipelineMultisampleStateCreateInfo.calloc(stack).sType$Default()

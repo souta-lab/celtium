@@ -2587,7 +2587,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.recordsColourPipelines.put(colourState, VulkanImmediatePipeline.createRecords(this.context,
                         colourState.celtium$renderPass(), colourState.celtium$colorBlend(),
                         colourState.celtium$depthTests(), colourState.celtium$depthWrites(),
-                        colourState.celtium$culls(), colourState.celtium$depthCompareOp(),
+                        colourState.celtium$cullState(), colourState.celtium$depthCompareOp(),
                         this.drawRecords.descriptorSetLayout()));
             }
         }
@@ -2646,7 +2646,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 if (twin == null) {
                     twin = VulkanImmediateItemPipeline.createRecords(this.context, itemState.celtium$renderPass(),
                             itemState.celtium$colorBlend(), itemState.celtium$depthTests(),
-                            itemState.celtium$depthWrites(), itemState.celtium$culls(),
+                            itemState.celtium$depthWrites(), itemState.celtium$cullState(),
                             itemState.celtium$depthCompareOp(), this.drawRecords.descriptorSetLayout());
                     this.recordsItemPipelines.put(itemState, twin);
                 }
@@ -6755,7 +6755,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
                                 org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD, org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
                                 VulkanColorBlendState.allChannels()),
-                        this.currentGroupPreTransformed && !this.celtium$axisAlignedModelView(), false, false, org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
+                        this.currentGroupPreTransformed && !this.celtium$axisAlignedModelView(), false, VulkanCullState.NONE,
+                        org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
             }
             boolean ok = celtium$descriptorSet(
                     this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture), "probe") != 0L;
@@ -8349,7 +8350,8 @@ this.frameBufferOpen = false;
                 + (state.length > 14 ? " srcA=" + state[9] + " dstA=" + state[10]
                         + " mask=0x" + Integer.toHexString(state[11]) + " eq=" + state[12] + "/" + state[13]
                         + " alphaFunc=" + state[14] : " (pre-BH-07 array)")
-                + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + state[5]
+                + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + VulkanCullState.describe(state[5])
+                + "(" + state[5] + ")"
                 + " alphaRef=" + Float.intBitsToFloat(state[6]) + " depthFunc=" + state[7]
                 // The other copy of the same facts, and the trap in reading it. The mirror is fed at the head of
                 // every hooked GlStateManager call; the GL enable record behind glIsEnabled is fed by whatever
@@ -8545,6 +8547,15 @@ this.frameBufferOpen = false;
     static final int SIGNATURE_ENV_MODE = 16;
     static final int SIGNATURE_ENV_RGB = 17;
     static final int SIGNATURE_WINDOW_TARGET = 18;
+    /**
+     * The culled face and the front-face winding, appended so the state's cull slot can carry all three parts.
+     * <p>
+     * The enable alone was enough while every pipeline baked GL's default pair (back, counter-clockwise). A mod that
+     * asks for {@code GL_FRONT} or {@code glFrontFace(GL_CW)} needs its own pipeline, and a value the state does not
+     * read would be a comparison the replay guard pays for and a change it cannot see.
+     */
+    static final int SIGNATURE_CULL_FACE = 19;
+    static final int SIGNATURE_FRONT_FACE = 20;
 
     /** Fills {@code out} with the raw inputs of the state capture: see {@link #celtium$stateFromSignature}. */
     void celtium$stateSignature(int[] out) {
@@ -8563,6 +8574,8 @@ this.frameBufferOpen = false;
         out[SIGNATURE_ALPHA_REF] = Float.floatToIntBits(this.immediateState.alphaFuncReference());
         out[SIGNATURE_ALPHA_FUNC] = this.immediateState.alphaFunc();
         out[SIGNATURE_CULL] = this.immediateState.cullEnabled() ? 1 : 0;
+        out[SIGNATURE_CULL_FACE] = this.immediateState.cullFace();
+        out[SIGNATURE_FRONT_FACE] = this.immediateState.frontFace();
         out[SIGNATURE_DEPTH_TEST] = this.immediateState.depthTestEnabled() ? 1 : 0;
         out[SIGNATURE_DEPTH_WRITE] = this.immediateState.depthMask() ? 1 : 0;
         out[SIGNATURE_DEPTH_FUNC] = this.immediateState.depthFunc();
@@ -8627,7 +8640,10 @@ this.frameBufferOpen = false;
         state[2] = destination < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destination;
         state[3] = signature[SIGNATURE_DEPTH_TEST] != 0 ? 1 : 0;
         state[4] = signature[SIGNATURE_DEPTH_WRITE] != 0 ? 1 : 0;
-        state[5] = signature[SIGNATURE_CULL] != 0 ? 1 : 0;
+        // The cull slot carries the enable, the face and the winding: the pipelines bake all three (VulkanCullState),
+        // and with GL's default pair this is still 1, so every existing pipeline key is unchanged.
+        state[5] = VulkanCullState.encode(signature[SIGNATURE_CULL] != 0, signature[SIGNATURE_CULL_FACE],
+                signature[SIGNATURE_FRONT_FACE]);
         state[6] = Float.floatToIntBits(alphaReference);
         state[7] = signature[SIGNATURE_DEPTH_FUNC];
         state[8] = signature[SIGNATURE_LIGHTING] != 0 ? 1 : 0;
@@ -10610,7 +10626,7 @@ this.frameBufferOpen = false;
             VulkanImmediateParticlePipeline value = this.particlePipelineCache.get(particleKey);
             if (value == null) {
                 value = VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
-                        true, false, false, celtium$vkCompareOp(state[7]));
+                        true, false, VulkanCullState.NONE, celtium$vkCompareOp(state[7]));
                 if (value != null) {
                     this.particlePipelineCache.put(particleKey, value);
                 }
@@ -10631,7 +10647,7 @@ this.frameBufferOpen = false;
             VulkanImmediateItemPipeline value = this.itemPipelineCache.get(key);
             if (value == null) {
                 value = VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]), itemLit);
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), itemLit);
                 if (value != null) {
                     this.itemPipelineCache.put(key, value);
                 }
@@ -10647,7 +10663,7 @@ this.frameBufferOpen = false;
             VulkanImmediateBlockPipeline value = this.blockPipelineCache.get(key);
             if (value == null) {
                 value = VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]));
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]));
                 if (value != null) {
                     this.blockPipelineCache.put(key, value);
                 }
@@ -10657,7 +10673,7 @@ this.frameBufferOpen = false;
             VulkanImmediateTexturePipeline value = this.texGenPipelineCache.get(key);
             if (value == null) {
                 value = VulkanImmediateTexturePipeline.createForTexGen(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]));
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]));
                 if (value != null) {
                     this.texGenPipelineCache.put(key, value);
                 }
@@ -10682,21 +10698,21 @@ this.frameBufferOpen = false;
                 boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
                 VulkanColorBlendState colorBlend = celtium$blendState(state);
                 value = format == VulkanImmediateFormats.COMBINE4 ? VulkanImmediateTexturePipeline.createForCombine4(
-                        this.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        this.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
                         : format == 11 ? VulkanImmediateTexturePipeline.createForPositionTexNormalFloat(this.context,
-                        pass, colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
                         : format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
-                        colorBlend, positionNormalDepthTest, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, positionNormalDepthTest, state[4] != 0, state[5], compareOp)
                         : format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
                         : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
                         : format == 7 ? VulkanImmediateTexturePipeline.createForPosition(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
                         : format == 6 ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
                         : VulkanImmediateTexturePipeline.create(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp);
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp);
                 cache.put(key, value);
             }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
@@ -10711,9 +10727,9 @@ this.frameBufferOpen = false;
             if (pipeline == null) {
                 VulkanImmediatePipeline created = lineBatch
                         ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
-                                state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]))
+                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]))
                         : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
-                                state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]));
+                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]));
                 if (created != null) {
                     pipelineCache.put(key, created);
                 }

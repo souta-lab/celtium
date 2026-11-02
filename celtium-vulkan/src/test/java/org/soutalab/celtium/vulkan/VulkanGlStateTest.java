@@ -95,6 +95,27 @@ class VulkanGlStateTest {
     }
 
     @Test
+    void thePipelineKeyTracksTheCulledFaceAndTheWinding() {
+        // The face and the winding bake into the rasteriser state, so two draws that differ only in them cannot share
+        // a pipeline. The fixture's front-culled arm is the picture that measures it.
+        VulkanGlState state = new VulkanGlState();
+        state.cullEnabled(true);
+        long back = state.pipelineKey(42);
+        state.cullFace(VulkanCullState.GL_FRONT);
+        assertNotEquals(back, state.pipelineKey(42), "GL_FRONT needs its own pipeline");
+        long front = state.pipelineKey(42);
+        state.frontFace(VulkanCullState.GL_CW);
+        assertNotEquals(front, state.pipelineKey(42), "the winding needs its own pipeline");
+        state.cullEnabled(false);
+        long off = state.pipelineKey(42);
+        state.cullFace(VulkanCullState.GL_BACK);
+        state.frontFace(VulkanCullState.GL_CCW);
+        assertEquals(off, state.pipelineKey(42), "with culling off neither the face nor the winding is read");
+        state.cullEnabled(true);
+        assertEquals(VulkanCullState.BACK, state.cullState(), "and the mirror answers GL's own default pair");
+    }
+
+    @Test
     void theKeyDependsOnTheVertexFormat() {
         VulkanGlState state = new VulkanGlState();
         assertNotEquals(state.pipelineKey(1), state.pipelineKey(2));

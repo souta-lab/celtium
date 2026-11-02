@@ -81,6 +81,15 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   float/tex の答えを読む）。fixture は `attrib*` に `cmB=`（boolean 幅）と `textureFilter=`/
   `textureFilterExpected=` を併記し、checker が「同じ状態は全ての幅で同じ値」「設定した filter が返る」を主張する。
   根拠: [query routes](evidence/query-routes-2026-11-02.md) |
+| `glCullFace` / `glFrontFace` | **enable は状態、面と winding は pipeline 状態**（2026-11-03 修正）。状態モデルは cull の
+  enable だけを持ち、全 pipeline が GL 既定ペア（back・CCW）を焼き込んでいたため、`GL_FRONT` を選ぶ mod は逆の面を
+  cull され geometry が消えた。同一 frame の `glGetIntegerv(GL_CULL_FACE_MODE)` は `1028` と正しく答えていた
+  （ミラーは忠実、読む者がいない）。`VulkanCullState` が (enable, face, winding) を1個の int に符号化し
+  （既定ペアは `1` のままなので既存 key・既存の絵は不変）、`SIGNATURE_CULL_FACE`/`SIGNATURE_FRONT_FACE` から
+  `state[5]` に載り、5つの immediate pipeline と `VulkanModelInstances`（間接描画の twin も）が
+  `VK_CULL_MODE_FRONT*`/`VK_FRONT_FACE_*` を選ぶ。`NativeRasterState.cullFace/frontFace` は version を上げる
+  （model replay の値 guard が見える）。根拠: [cull face](evidence/cull-face-2026-11-03.md)
+  （fixture の arm F/G が same-scene で Celtium と Celeritas 実 GL の両方 `armF=3600 armG=0`、validation 0） |
 | ミラー（GL名→画像） | 供給元が無い名前には**空のミラーを作らない**（2026-11-02）。作っても sampling 側が
   「全内容が来ていないミラー」として拒否するので描けず、しかも entry が存在するせいで以後の lookup が plain hit に
   なり、後から届いた upload を二度と拾えなかった。いまは null を返し、その判断を**level の write serial ごとに記憶**

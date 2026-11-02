@@ -192,6 +192,21 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private String attribAfter = "none";
     private String attribOutsideAfter = "none";
     private int attribFrames;
+    /**
+     * Arms F and G: which of the two faces {@code glCullFace(GL_FRONT)} culls, measured as pixels.
+     * <p>
+     * The state model carried the cull <em>enable</em> but every pipeline baked GL's default pair, so a mod that asked
+     * for {@code GL_FRONT} was culled the wrong way round: the mirror agreed with it and nothing read the face. The two
+     * arms draw the same green quad in the two windings under {@code GL_FRONT}, in one frame and one draw state apart
+     * from the winding itself, so the picture separates "the face is ignored" (both quads, or neither) from either
+     * fixed answer.
+     */
+    private int cullArmFrames;
+    /** The cull mode {@code glGetIntegerv(GL_CULL_FACE_MODE)} answered inside the arms; GL_FRONT is the expectation. */
+    private int cullArmFace = -1;
+    /** How many frames answered a face other than GL_FRONT after the arm set it. */
+    private int cullArmMismatches;
+    private java.nio.IntBuffer cullInts;
     private java.nio.IntBuffer attribInts;
     private java.nio.FloatBuffer attribFloats;
     private java.nio.ByteBuffer attribBooleans;
@@ -262,6 +277,11 @@ public final class DisplayListLegacyScreen extends GuiScreen {
                 + " attribMask=0x" + Integer.toHexString(ATTRIB_PUSH_MASK)
                 + " armD=" + celtium$armDX(panel) + "," + celtium$armCY(panel) + "," + ARM_HALF
                 + " armE=" + celtium$armEX(panel) + "," + celtium$armCY(panel) + "," + ARM_HALF
+                + " armF=" + celtium$armFX(panel) + "," + celtium$armFY(panel) + "," + ARM_HALF
+                + " armG=" + celtium$armGX(panel) + "," + celtium$armFY(panel) + "," + ARM_HALF
+                + " cullArms=" + this.cullArmFrames
+                + " cullArmFace=" + this.cullArmFace
+                + " cullArmMismatches=" + this.cullArmMismatches
                 + " attribColour=" + (int) (ATTRIB_RED * 255) + "," + (int) (ATTRIB_GREEN * 255) + ","
                 + (int) (ATTRIB_BLUE * 255)
                 + " attribBefore=" + this.attribBefore
@@ -354,6 +374,25 @@ public final class DisplayListLegacyScreen extends GuiScreen {
 
     private static int celtium$armEX(int[] panel) {
         return panel[0] + 4 * (panel[2] - panel[0]) / 5;
+    }
+
+    /**
+     * Arms F and G: the row above the bottom one, at three and seven tenths across.
+     *
+     * <p>That row is free where they sit: the slot B square occupies the middle third horizontally, the direct textured
+     * control the centre of the row above, and the two arms D and E the bottom row. Twenty GUI units above the bottom
+     * row puts them clear of both.
+     */
+    private static int celtium$armFX(int[] panel) {
+        return panel[0] + 3 * (panel[2] - panel[0]) / 10;
+    }
+
+    private static int celtium$armGX(int[] panel) {
+        return panel[0] + 7 * (panel[2] - panel[0]) / 10;
+    }
+
+    private static int celtium$armFY(int[] panel) {
+        return celtium$textureControlY(panel) - 24;
     }
 
     /** The direct immediate quad's half extent, in GUI units. */
@@ -596,6 +635,7 @@ public final class DisplayListLegacyScreen extends GuiScreen {
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             celtium$drawCompileColourArm(panel);
             celtium$drawAttribArms(panel);
+            celtium$drawCullArms(panel);
         } finally {
             // Restored in a finally: the rest of the frame is the game's GUI, which draws text and icons with this
             // state on, and a scene that left it off would break every screen after it.
@@ -702,6 +742,67 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         this.attribOutsideAfter = celtium$attribState();
         celtium$drawAttribQuad(celtium$armEX(panel));
         GL11.glColorMask(true, true, true, true);
+    }
+
+    /**
+     * Arms F and G: {@code glCullFace(GL_FRONT)} against the two windings, in one frame and one green.
+     *
+     * <p>Both quads are the same size and colour as the attribute arms, so a missing one is a count of zero in its own
+     * region and never "some other element is missing". The winding is the only difference between them:
+     * <ul>
+     *   <li><b>arm F</b> - the back-facing winding (the reverse of every other quad in this scene): {@code GL_FRONT}
+     *       culls the other face, so this one must stay.</li>
+     *   <li><b>arm G</b> - the front-facing winding: {@code GL_FRONT} culls it, so it must leave no ink.</li>
+     * </ul>
+     * A renderer that bakes cull-back (what every pipeline did before the face reached them) draws exactly the
+     * opposite pair: arm F empty and arm G green.
+     *
+     * <p>The caller's own cull state is read first and put back afterwards, because the rest of the frame is the game's
+     * GUI. The readback of {@code GL_CULL_FACE_MODE} inside the arm is reported beside the pixels: a state query that
+     * agrees while the picture is inverted is the one combination that says "the face is captured and not read".
+     */
+    private void celtium$drawCullArms(int[] panel) {
+        if (this.cullInts == null) {
+            this.cullInts = GLAllocation.createDirectIntBuffer(4);
+        }
+        this.cullArmFrames++;
+        GL11.glGetIntegerv(GL11.GL_CULL_FACE_MODE, this.cullInts);
+        int previousFace = this.cullInts.get(0);
+        boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        GL11.glEnable(GL11.GL_CULL_FACE);
+        GL11.glCullFace(GL11.GL_FRONT);
+        GL11.glGetIntegerv(GL11.GL_CULL_FACE_MODE, this.cullInts);
+        if (this.cullArmFace < 0) {
+            this.cullArmFace = this.cullInts.get(0);
+        }
+        if (this.cullInts.get(0) != GL11.GL_FRONT) {
+            this.cullArmMismatches++;
+        }
+        GL11.glColor4f(ATTRIB_RED, ATTRIB_GREEN, ATTRIB_BLUE, 1.0f);
+        // Arm F: back-facing, so a front-face cull leaves it in place.
+        GL11.glPushMatrix();
+        GL11.glTranslatef(celtium$armFX(panel), celtium$armFY(panel), 0.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+        GL11.glEnd();
+        GL11.glPopMatrix();
+        // Arm G: the winding every other quad here uses (front-facing), which GL_FRONT culls.
+        GL11.glPushMatrix();
+        GL11.glTranslatef(celtium$armGX(panel), celtium$armFY(panel), 0.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2i(-ARM_HALF, -ARM_HALF);
+        GL11.glVertex2i(-ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, ARM_HALF);
+        GL11.glVertex2i(ARM_HALF, -ARM_HALF);
+        GL11.glEnd();
+        GL11.glPopMatrix();
+        GL11.glCullFace(previousFace);
+        if (!cullWasEnabled) {
+            GL11.glDisable(GL11.GL_CULL_FACE);
+        }
     }
 
     /**

@@ -104,12 +104,18 @@ public final class NativeRasterState {
         if (this.cullFace == face) return;
         changing();
         this.cullFace = face;
+        // The face decides a pipeline now (see VulkanCullState), so a model replay's tuple has to see it move. These
+        // two setters were the only raster writers that did not bump the version: a replay that changed only the culled
+        // face between two frames kept serving the previous tuple - and with it the previous cull mode - while the
+        // mirror and every glGet answered the new one.
+        this.version++;
     }
     public int frontFace() { return this.frontFace; }
     public void frontFace(int face) {
         if (this.frontFace == face) return;
         changing();
         this.frontFace = face;
+        this.version++;
     }
     public boolean scissorTest() { return this.scissorEnabled; }
     public void scissorTest(boolean enabled) {

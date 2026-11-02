@@ -495,7 +495,7 @@ final class ModelReplay {
             VulkanModelInstances.Pipeline pipeline;
             try {
                 pipeline = instances.pipelineFor(pass, key, b.celtium$blendState(state), state[3] != 0, state[4] != 0,
-                        state[5] != 0, b.celtium$vkCompareOp(state[7]));
+                        state[5], b.celtium$vkCompareOp(state[7]));
             } catch (RuntimeException | LinkageError error) {
                 System.out.println("[Celtium] CELTIUM_MODEL_INSTANCES pipeline failed: " + error);
                 b.modelInstancesFailed = true;

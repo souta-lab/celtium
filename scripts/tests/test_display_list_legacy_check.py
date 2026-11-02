@@ -46,6 +46,12 @@ ARM_C_INSIDE = (255, 0, 0)
 ARM_D_X = GUI_WIDTH // 3
 ARM_E_X = 4 * GUI_WIDTH // 5
 ATTRIB_COLOUR = (0, 255, 0)
+#: The cull arms: three and seven tenths across, twenty GUI units above the bottom row (from the screen).
+ARM_F_X = 3 * GUI_WIDTH // 10
+ARM_G_X = 7 * GUI_WIDTH // 10
+ARM_F_Y = TEX_CONTROL_Y - 24
+#: GL_FRONT, the face the cull arms set and the readback has to answer.
+GL_FRONT = 0x0404
 #: The state strings the arms report: the pushed block changes every key, and the pop has to put them all back. `cmB`
 #: is the boolean width of the same colour-write-mask state; GL answers it from the same state, so it must equal `cm`.
 ATTRIB_BEFORE = "cm=1111,cmB=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
@@ -61,13 +67,14 @@ MAGENTA = (255, 0, 255)
 
 def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE, attrib_after=ATTRIB_AFTER,
            attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None, boolean_mismatches=0, texture_filter=TEXTURE_FILTER,
-           filter_expected=TEXTURE_FILTER):
+           filter_expected=TEXTURE_FILTER, cull_frames=None, cull_face=GL_FRONT, cull_mismatches=0):
     """The layout `DisplayListLegacyScreen.describeLayout` prints, for a 427x240 GUI at scale 3."""
     return ("gui=%dx%d panel=%s square=%d slots=%d,%d triangle=%d,%d,%d direct=%d,%d,%d even=%d,%d odd=%d,%d "
             "armA=%d,%d,%d armB=%d,%d,%d texControl=%d,%d,%d "
             "armC=%d,%d,%d armCOutside=0,0,255 armCInside=255,0,0 "
             "colourAfterCompile=0,0,255 compileColourLeaks=%d compileColourFrames=%d "
             "attribMask=0x4f20c armD=%d,%d,%d armE=%d,%d,%d attribColour=0,255,0 "
+            "armF=%d,%d,%d armG=%d,%d,%d cullArms=%d cullArmFace=%d cullArmMismatches=%d "
             "attribBefore=%s attribInside=%s attribAfter=%s attribOutsideAfter=%s attribFrames=%d "
             "booleanQueryMismatches=%d textureFilter=%d textureFilterExpected=%d "
             "callColour=255,0,0 insideColour=0,255,0 frames=%d compiles=1 dumps=2 stages=displaylist-f40-a "
@@ -76,6 +83,8 @@ def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB
                                    ARM_A_X, ARM_Y, ARM_HALF, ARM_B_X, ARM_Y, ARM_HALF, CENTRE_X, TEX_CONTROL_Y,
                                    ARM_HALF, ARM_C_X, ARM_C_Y, ARM_HALF, leaks, frames,
                                    ARM_D_X, ARM_C_Y, ARM_HALF, ARM_E_X, ARM_C_Y, ARM_HALF,
+                                   ARM_F_X, ARM_F_Y, ARM_HALF, ARM_G_X, ARM_F_Y, ARM_HALF,
+                                   frames if cull_frames is None else cull_frames, cull_face, cull_mismatches,
                                    attrib_before, attrib_inside, attrib_after, attrib_outside,
                                    frames if attrib_frames is None else attrib_frames,
                                    boolean_mismatches, texture_filter, filter_expected, frames))
@@ -89,7 +98,7 @@ def load_check():
 
 
 def frame(path, outer_y, inner_y, outer_colour, inner_colour, compile_layout=False, compile_colour_leak=False,
-          attrib_restored=True, attrib_leaked=False):
+          attrib_restored=True, attrib_leaked=False, cull_back_drawn=True, cull_front_drawn=False):
     """Draws one frame of the scene at scale 3: backdrop, markers, the two squares, the loop and the controls.
 
     `compile_layout` paints the layout arms the way a renderer that keeps the compile-time vertex layout leaves them -
@@ -138,6 +147,12 @@ def frame(path, outer_y, inner_y, outer_colour, inner_colour, compile_layout=Fal
         arm(ARM_D_X, ARM_C_Y, ATTRIB_COLOUR)
     if attrib_leaked:
         arm(ARM_E_X, ARM_C_Y, ATTRIB_COLOUR)
+    # The cull arms: the back-facing quad survives GL_FRONT (arm F) and the front-facing one is culled (arm G).
+    # `cull_front_drawn` paints arm G, which is the cull-back pipeline's answer; `cull_back_drawn=False` removes arm F.
+    if cull_back_drawn:
+        arm(ARM_F_X, ARM_F_Y, ATTRIB_COLOUR)
+    if cull_front_drawn:
+        arm(ARM_G_X, ARM_F_Y, ATTRIB_COLOUR)
     image.save(path)
 
 
@@ -146,7 +161,9 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
                   compile_colour_leak=False, leaks=0, second_stage_kept_only=False, attrib_restored=True,
                   attrib_leaked=False, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE,
                   attrib_after=ATTRIB_AFTER, attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None,
-                  boolean_mismatches=0, texture_filter=TEXTURE_FILTER, filter_expected=TEXTURE_FILTER):
+                  boolean_mismatches=0, texture_filter=TEXTURE_FILTER, filter_expected=TEXTURE_FILTER,
+                  cull_back_drawn=True, cull_front_drawn=False, cull_face=GL_FRONT, cull_frames=None,
+                  cull_mismatches=0):
         """Builds the two frames and runs the checker; returns (exit code, output)."""
         check = load_check()
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,17 +174,21 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
                 # The failure shape: the colour set outside the compile was baked, so both squares are green.
                 frame(pictures / "displaylist-f40-a.png", SLOT_A, SLOT_B, (0, 255, 0), (0, 255, 0),
                       compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
-                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked,
+                      cull_back_drawn=cull_back_drawn, cull_front_drawn=cull_front_drawn)
                 frame(pictures / "displaylist-f41-b.png", SLOT_B, SLOT_A, (0, 255, 0), (0, 255, 0),
                       compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
-                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked,
+                      cull_back_drawn=cull_back_drawn, cull_front_drawn=cull_front_drawn)
             else:
                 frame(pictures / "displaylist-f40-a.png", SLOT_A, SLOT_B, outer_colour, inner_colour,
                       compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
-                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked,
+                      cull_back_drawn=cull_back_drawn, cull_front_drawn=cull_front_drawn)
                 frame(pictures / "displaylist-f41-b.png", SLOT_B, SLOT_A, outer_colour, inner_colour,
                       compile_layout=compile_layout, compile_colour_leak=compile_colour_leak,
-                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked)
+                      attrib_restored=attrib_restored, attrib_leaked=attrib_leaked,
+                      cull_back_drawn=cull_back_drawn, cull_front_drawn=cull_front_drawn)
             if second_stage_kept_only:
                 # A report line serialized just before the completion was recorded names the plain file; the harness
                 # only kept the completed copy. The check has to read it rather than call the frame missing.
@@ -177,7 +198,9 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
                 "displayListLayout": layout(leaks=leaks, attrib_before=attrib_before, attrib_inside=attrib_inside,
                                             attrib_after=attrib_after, attrib_outside=attrib_outside,
                                             attrib_frames=attrib_frames, boolean_mismatches=boolean_mismatches,
-                                            texture_filter=texture_filter, filter_expected=filter_expected),
+                                            texture_filter=texture_filter, filter_expected=filter_expected,
+                                            cull_frames=cull_frames, cull_face=cull_face,
+                                            cull_mismatches=cull_mismatches),
                 "displayListCompiles": 1,
                 "displayListDumpCount": 2,
                 "displayListDump_displaylist-f40-a": "screenshots/displaylist-f40-a.png completed=true frame=40",
@@ -269,6 +292,41 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
         code, output = self.run_check((255, 0, 0), (0, 255, 0), leaks=1)
         self.assertEqual(1, code, "the run's own colourAfterCompile must be judged: " + output)
         self.assertIn("colourAfterCompile", output)
+
+    def test_the_cull_arms_are_judged_and_their_control_is_rejected(self):
+        """The clean picture draws the back-facing quad and leaves the front-facing one empty, and the control is refused."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0))
+        self.assertEqual(0, code, output)
+        self.assertIn("the cull-face control is rejected", output)
+        self.assertIn("front-culled quad pasted into arm G", output)
+
+    def test_a_culled_back_facing_quad_fails(self):
+        """The shape a pipeline that bakes cull-back leaves: the back-facing quad under GL_FRONT is gone."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), cull_back_drawn=False)
+        self.assertEqual(1, code, "GL_FRONT culls the other face, so the back-facing quad must stay: " + output)
+        self.assertIn("armF_green=", output)
+        self.assertIn("GL_FRONT culls the other face", output)
+
+    def test_a_drawn_front_facing_quad_fails(self):
+        """The same defect from the other side: cull-back draws the quad GL_FRONT has to cull."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), cull_front_drawn=True)
+        self.assertEqual(1, code, "GL_FRONT culls the front-facing quad, so ink there is the wrong pipeline: " + output)
+        self.assertIn("armG_green=", output)
+
+    def test_a_cull_readback_that_did_not_answer_gl_front_fails(self):
+        """The state half stands alone: a picture cannot excuse a run whose own query never saw the face it set."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), cull_face=0x0405)
+        self.assertEqual(1, code, output)
+        self.assertIn("GL_CULL_FACE_MODE", output)
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), cull_mismatches=2)
+        self.assertEqual(1, code, output)
+        self.assertIn("frame(s) answered a cull mode other", output)
+
+    def test_a_scene_without_the_cull_arms_is_refused(self):
+        """A run from before the arms existed must not read as "the face is fine"."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), cull_frames=0)
+        self.assertEqual(1, code, output)
+        self.assertIn("cull arms never ran", output)
 
     def test_the_compile_colour_control_is_rejected(self):
         code, output = self.run_check((255, 0, 0), (0, 255, 0))

@@ -79,7 +79,7 @@ public final class VulkanImmediatePipeline {
     public boolean celtium$blends() {
         return this.colorBlend != null && this.colorBlend.celtium$blends();
     }
-    private final boolean cull;
+    private final int cull;
     /** Whether this instance is the record-reading variant: its vertex block comes from the draw records. */
     private boolean records;
     /** The records set layout, owned by {@link ImmediateDrawRecords}; this pipeline only references it. */
@@ -90,7 +90,7 @@ public final class VulkanImmediatePipeline {
     private final int depthCompareOp;
 
     private VulkanImmediatePipeline(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
-               boolean depthTest, boolean depthWrite, boolean cull, boolean lines, int depthCompareOp) {
+               boolean depthTest, boolean depthWrite, int cull, boolean lines, int depthCompareOp) {
         this.context = context;
         this.renderPass = renderPass;
         this.colorBlend = colorBlend;
@@ -103,7 +103,7 @@ public final class VulkanImmediatePipeline {
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
     public static VulkanImmediatePipeline create(VulkanContext context, long renderPass) {
-        return create(context, renderPass, VulkanColorBlendState.legacy(), true, false, false,
+        return create(context, renderPass, VulkanColorBlendState.legacy(), true, false, VulkanCullState.NONE,
                 VK_COMPARE_OP_LESS_OR_EQUAL);
     }
 
@@ -114,7 +114,7 @@ public final class VulkanImmediatePipeline {
      * hardcoded combination.
      */
     public static VulkanImmediatePipeline create(VulkanContext context, long renderPass,
-                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
                             int depthCompareOp) {
         return create(context, renderPass, colorBlend, depthTest, depthWrite, cull, false, depthCompareOp);
     }
@@ -128,12 +128,12 @@ public final class VulkanImmediatePipeline {
      * builds the variant it is told to.
      */
     public static VulkanImmediatePipeline createForLines(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
         return create(context, renderPass, colorBlend, depthTest, depthWrite, cull, true, depthCompareOp);
     }
 
     private static VulkanImmediatePipeline create(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, boolean lines,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, boolean lines,
             int depthCompareOp) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
@@ -231,7 +231,7 @@ public final class VulkanImmediatePipeline {
      * layout declares that set and nothing else, and no push block is read by the vertex stage.
      */
     public static VulkanImmediatePipeline createRecords(VulkanContext context, long renderPass,
-            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
             long recordsSetLayout) {
         VulkanImmediatePipeline result = new VulkanImmediatePipeline(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, false, depthCompareOp);
@@ -272,6 +272,11 @@ public final class VulkanImmediatePipeline {
 
     /** {@return whether face culling is on}. */
     public boolean celtium$culls() {
+        return VulkanCullState.culls(this.cull);
+    }
+
+    /** {@return the encoded cull state (enable, face and winding) this pipeline was built with}. */
+    public int celtium$cullState() {
         return this.cull;
     }
 
@@ -410,8 +415,11 @@ public final class VulkanImmediatePipeline {
                                 // polygon offset the game sets; the enable bit is what has to be declared here, and it is a
                                 // rasterization field - the multisample state next door has no such member.
                                 .depthBiasEnable(true)
-                                .cullMode(this.cull ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE)
-                                .frontFace(VK_FRONT_FACE_CLOCKWISE)
+                                // The enable, the face and the winding are one encoded state (VulkanCullState): a
+                                // mod's glCullFace(GL_FRONT) or glFrontFace(GL_CW) selects its own pipeline here
+                                // instead of being drawn with GL's default pair.
+                                .cullMode(VulkanCullState.vkCullMode(this.cull))
+                                .frontFace(VulkanCullState.vkFrontFace(this.cull))
                                 .lineWidth(1.0f);
                 VkPipelineMultisampleStateCreateInfo multisample =
                         VkPipelineMultisampleStateCreateInfo.calloc(stack).sType$Default()

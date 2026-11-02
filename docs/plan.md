@@ -2,11 +2,11 @@
 
 開発ベース **0.1.4-alpha-rc.26**（[build定義](<../build-1122/build.gradle.kts>)）。Windows検証用プレリリースは **v0.1.4-alpha-rc.26**（2026-10-30、[release notes](<releases/0.1.4-alpha-rc.26.md>)）。これまでの性能検証は本文に記載した 0.1.1-alpha を基準とする。
 2026-10-30 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
-製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案であり拘束しない（利用者指示 2026-10-28）。実測でより良い方法があればそちらを採る。
+製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案で拘束しない（利用者指示 2026-10-28）。実測が勝ればそちらを採る。
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
-- **未解決**: Supersymmetryでの最初の `VK_ERROR_DEVICE_LOST` と約10 FPS。RC5の喪失後Fence reset修正は後続AV対策であり、根本解決の証拠ではない。明示されたasync presentは維持する。
+- **未解決**: Supersymmetryの最初の `VK_ERROR_DEVICE_LOST` と約10 FPS。RC5のFence reset修正は後続AV対策で根本解決の証拠ではない。async presentは維持。
 - **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（公開JAR `release-rc8-{amd,intel}2`、renderer `72665b41e3040da63bfc0555aded6f8b053babd5b304ec2df5d6c4e7208a1d7d`、fixture `c82c4bc8d8fdcbfe6d131db6ad8964ae874c7ebcb1b6f49dc556fec1789fcc72`、`rawFboIdentityProbePassed=true`・`CELTIUM_OPAQUE_COPY_PROBE partial/alpha/resize` PASSED）。Bloom画素やWindows受入ではない。
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
@@ -66,7 +66,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）と描画側残差は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: instance fog・96B run定数化・MVP合成のGPU移動・照明OFF統合・alpha全比較まで実装済み。glint画素/inventory・actor較正/lit fogは未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
+3. **native 状態・実行**: instance fog・96B run定数化・MVP合成のGPU移動・照明OFF統合・alpha全比較・**cull の面と winding**（[証拠](evidence/cull-face-2026-11-03.md)）まで実装済み。glint画素/inventory・actor較正/lit fogは未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。

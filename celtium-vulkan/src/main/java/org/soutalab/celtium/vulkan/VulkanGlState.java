@@ -612,6 +612,25 @@ public final class VulkanGlState {
         noteStateMutation();
     }
 
+    public int frontFace() {
+        return this.raster.frontFace();
+    }
+
+    public void frontFace(int face) {
+        this.raster.frontFace(face);
+        noteStateMutation();
+    }
+
+    /**
+     * {@return the cull enable, face and winding in the one int the immediate state array carries}.
+     * <p>
+     * The pipelines bake all three (see {@link VulkanCullState}), so this is the value their cache is keyed by rather
+     * than the enable alone.
+     */
+    public int cullState() {
+        return VulkanCullState.encode(this.raster.cullEnabled(), this.raster.cullFace(), this.raster.frontFace());
+    }
+
     public boolean alphaTestEnabled() {
         return this.alphaTestEnabled;
     }
@@ -973,7 +992,7 @@ public final class VulkanGlState {
         key = (key * 31) + this.raster.colorMask();
         key = (key * 31) + (this.depthTestEnabled ? this.depthFunc + 1 : 0);
         key = (key * 31) + (this.depthMask ? 1 : 0);
-        key = (key * 31) + (this.raster.cullEnabled() ? this.raster.cullFace() + 1 : 0);
+        key = (key * 31) + this.cullState();
         key = (key * 31) + (this.alphaTestEnabled ? this.alphaFunc + 1 : 0);
         key = (key * 31) + (this.lightingEnabled ? 1 : 0);
         key = (key * 31) + this.shadeModel;

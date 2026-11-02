@@ -458,7 +458,7 @@ final class VulkanModelInstances {
 
     /** {@return the pipeline for this pass and state}, creating it on first use. */
     Pipeline pipelineFor(long renderPass, long stateKey, VulkanColorBlendState blend, boolean depthTest,
-            boolean depthWrite, boolean cull, int depthCompareOp) {
+            boolean depthWrite, int cull, int depthCompareOp) {
         long key = stateKey * 31L + renderPass;
         Pipeline pipeline = this.pipelines.get(key);
         if (pipeline == null) {
@@ -727,7 +727,7 @@ final class VulkanModelInstances {
     }
 
     private long createPipeline(long renderPass, VulkanColorBlendState colorBlend, boolean depthTest,
-            boolean depthWrite, boolean cull, int depthCompareOp) {
+            boolean depthWrite, int cull, int depthCompareOp) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ByteBuffer vertexCode = SpirvShaders.load(SpirvShaders.MODEL_INSTANCE_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(SpirvShaders.MODEL_INSTANCE_FRAGMENT);
@@ -763,8 +763,8 @@ final class VulkanModelInstances {
                         .sType$Default().viewportCount(1).scissorCount(1);
                 VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
                         .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).depthBiasEnable(true)
-                        .cullMode(cull ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE)
-                        .frontFace(VK_FRONT_FACE_CLOCKWISE).lineWidth(1.0f);
+                        .cullMode(VulkanCullState.vkCullMode(cull))
+                        .frontFace(VulkanCullState.vkFrontFace(cull)).lineWidth(1.0f);
                 VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
                         .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
                 VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)

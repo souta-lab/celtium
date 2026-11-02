@@ -49,12 +49,13 @@ final class ModelReplayFastPath {
     /**
      * The raw inputs the sixteen-int state array is a function of, in the order {@link VulkanTerrainGpuBackend}
      * fills them: the blend enable and its four factors and two equations, the colour mask, the alpha test's enable,
-     * reference and function, cull, depth enable/write/function, lighting, unit 0's texture environment mode and RGB
-     * function, and whether the current target is the window (which masks the alpha write). Comparing these is
-     * cheaper than the VP conversion, the light-map lookups and the sixteen stores the state capture performs, and it
-     * is exactly as strong: every one of the sixteen captured values reads only these.
+     * reference and function, the cull enable, the culled face and the front-face winding, depth
+     * enable/write/function, lighting, unit 0's texture environment mode and RGB function, and whether the current
+     * target is the window (which masks the alpha write). Comparing these is cheaper than the VP conversion, the
+     * light-map lookups and the sixteen stores the state capture performs, and it is exactly as strong: every one of
+     * the sixteen captured values reads only these.
      */
-    static final int SIGNATURE = 19;
+    static final int SIGNATURE = 21;
 
     /**
      * One replay's values, and the storage of a cached tuple.

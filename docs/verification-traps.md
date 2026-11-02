@@ -445,3 +445,22 @@ descriptor は戻り値型を含む（`(IJ)V`）ので**一度も一致しない
 
 **規約**: 平文 key=value を足すときは、その parser の key 文法（大文字・数字・`_`）を先に確認する。
 checker の test は「key を消したとき」と「key があるのに読めないとき」を別々に持つ。
+
+## 状態クエリが正しく答えていても、描画側が読んでいなければ絵は嘘をつく（2026-11-03 実測）
+
+**症状**: `glGetIntegerv(GL_CULL_FACE_MODE)` は同じ frame で `1028`（`GL_FRONT`）と正しく答えるのに、
+`glCullFace(GL_FRONT)` の下で描いた quad は **cull-back の pipeline** で描かれ、残るべき back-facing の quad が消え、
+消えるべき front-facing の quad が残った。
+
+**原因**: cull の状態モデルは **enable の真偽値1個**だけを持ち、面と winding は全 pipeline に固定で焼かれていた
+（`state[5]` は boolean、`SIGNATURE_CULL` は enable のみ）。ミラー・保存/復元・`glGet*` はすべて一致していたので、
+状態の readback を見る限りどこにも欠落が無い。time をかけたのは「状態が正しい」＝「描画がその状態を使っている」と
+読んだこと。
+
+**規約**: 状態を1つ描画へ通すときは、(a) その状態を**読む**コード（pipeline の state key と raster state）と、
+(b) その状態を**変えたとき絵が変わる** fixture の両方を同じ変更に含める。fixture は同じ frame に「片方だけが残る」
+2つの quad を置き、実 GL 参照（`CELTIUM_LEG_REFERENCE_RENDERER`）で期待値を先に取る。cull の場合は
+`armF`（back-facing・`GL_FRONT` で残る）と `armG`（front-facing・消える）で、旧実装はこの2つが**逆転**する。
+renderer 側の変更が「新しい pipeline を作る」だけで終わっていないことも確かめる: 間接描画の record-reading twin は
+`celtium$culls()` の真偽値だけを受けていたので、符号化した state を渡すよう直した（渡し忘れると run の中だけ
+cull-back に戻る）。

@@ -38,6 +38,9 @@ class ModelStateSignatureTest {
         signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE] = NativeTextureEnvironment.MODULATE;
         signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB] = 0x1702;
         signature[VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET] = 0;
+        // The cull face and the winding GL starts with; the enable is above.
+        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = VulkanCullState.GL_BACK;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CCW;
         return signature;
     }
 
@@ -54,7 +57,8 @@ class ModelStateSignatureTest {
         assertEquals(0, state[2]);
         assertEquals(1, state[3], "depth test on");
         assertEquals(1, state[4], "depth write on");
-        assertEquals(1, state[5], "cull on");
+        assertEquals(VulkanCullState.BACK, state[5],
+                "cull on with GL_BACK and GL_CCW is the encoding the pipelines always baked");
         assertEquals(0, state[6], "an alpha test that is off captures a reference of zero");
         assertEquals(515, state[7], "the GL depth function travels unchanged");
         assertEquals(0, state[8], "lighting off");
@@ -63,6 +67,30 @@ class ModelStateSignatureTest {
         assertEquals(org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD, state[13]);
         assertEquals(0, state[14], "the function is zero while the test is off");
         assertEquals(0, state[15], "unit 0 MODULATE is not the combine the shader evaluates");
+    }
+
+    @Test void theCullSlotCarriesTheFaceAndTheWinding() {
+        int[] front = signature();
+        front[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = VulkanCullState.GL_FRONT;
+        assertEquals(VulkanCullState.FRONT, state(front)[5]);
+        assertEquals(org.lwjgl.vulkan.VK10.VK_CULL_MODE_FRONT_BIT,
+                VulkanCullState.vkCullMode(state(front)[5]));
+
+        int[] clockwise = signature();
+        clockwise[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CW;
+        assertEquals(org.lwjgl.vulkan.VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE,
+                VulkanCullState.vkFrontFace(state(clockwise)[5]));
+
+        // With the enable off the face and the winding are not state: two of the three inputs may differ and the
+        // captured array must not, or a disabled-cull batch would split into pipelines that draw identically.
+        int[] off = signature();
+        int[] otherOff = signature();
+        off[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 0;
+        otherOff[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 0;
+        otherOff[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = VulkanCullState.GL_FRONT_AND_BACK;
+        otherOff[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CW;
+        assertEquals(VulkanCullState.NONE, state(off)[5]);
+        assertEquals(state(off)[5], state(otherOff)[5]);
     }
 
     @Test void theWindowTargetMasksTheAlphaWrite() {
@@ -132,6 +160,8 @@ class ModelStateSignatureTest {
                 VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE,
                 VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB,
                 VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET,
+                VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE,
+                VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE,
         };
         // Each slot is driven by a change that is meaningful for it: enabling the term it belongs to, or moving the
         // value it carries. The alpha reference and function need the test on, the factors and equations blending on.
@@ -173,6 +203,13 @@ class ModelStateSignatureTest {
                     break;
                 case VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC:
                     changed[slot] = VulkanGlState.DEPTH_ALWAYS;
+                    break;
+                case VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE:
+                    // The cull enable is already on in the base signature, so moving the face has to move the state.
+                    changed[slot] = VulkanCullState.GL_FRONT;
+                    break;
+                case VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE:
+                    changed[slot] = VulkanCullState.GL_CW;
                     break;
                 case VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE:
                     changed[slot] = NativeTextureEnvironment.COMBINE;

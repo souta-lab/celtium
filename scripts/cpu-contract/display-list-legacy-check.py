@@ -68,6 +68,23 @@ and a renderer whose colour mirror follows the recorded command draws it red. Th
 picture are two instruments on one rule. Its list is recompiled every frame because the state it must leave behind is
 only observable immediately after its own close; the rest of the scene sets colours of its own before the dump.
 
+## The cull arms
+
+The state model carried the cull *enable* while every pipeline baked GL's default pair - cull back with a
+counter-clockwise front face. A mod that asks for `GL_FRONT` (the face an inside-out or mirrored model is drawn with)
+was therefore culled exactly the wrong way round, and every state query agreed with it: the mirror was faithful and
+nothing read the face. Two arms measure both directions in one frame, with one green 20x20 quad each:
+
+* **arm F** - the winding the rest of this scene does not use (the back-facing one), drawn under `glCullFace(GL_FRONT)`:
+  GL culls the other face, so this quad **must stay**;
+* **arm G** - the winding every other quad here uses (front-facing), under the same `GL_FRONT`: it **must leave no
+  ink**.
+
+A renderer that bakes cull-back draws exactly the opposite pair, and one that ignores the enable draws both. The scene
+also reports `cullArmFace`, the answer `glGetIntegerv(GL_CULL_FACE_MODE)` gave inside the arm, so "the face is captured
+but not read" is separable from "the face never reached the mirror". The positive control pastes arm F's ink into arm G,
+which is the cull-back picture, and requires that reading to be rejected.
+
 ## The reference arm
 
 The same fixture runs under Celeritas (real OpenGL) through `CELTIUM_LEG_REFERENCE_RENDERER`, which is what settles the
@@ -214,6 +231,8 @@ def layout_of(report):
     arm_c_inside = numbers(fields, "armCInside")
     arm_d = numbers(fields, "armD")
     arm_e = numbers(fields, "armE")
+    arm_f = numbers(fields, "armF")
+    arm_g = numbers(fields, "armG")
     attrib_colour = numbers(fields, "attribColour")
     attrib_before = parse_attrib_state(fields.get("attribBefore", "none"))
     attrib_inside = parse_attrib_state(fields.get("attribInside", "none"))
@@ -223,11 +242,12 @@ def layout_of(report):
             or len(even) != 2 or len(odd) != 2 or len(call_colour) != 3 or len(inside_colour) != 3
             or len(arm_a) != 3 or len(arm_b) != 3 or len(tex_control) != 3
             or len(arm_c) != 3 or len(arm_c_outside) != 3 or len(arm_c_inside) != 3
-            or len(arm_d) != 3 or len(arm_e) != 3 or len(attrib_colour) != 3):
+            or len(arm_d) != 3 or len(arm_e) != 3 or len(arm_f) != 3 or len(arm_g) != 3
+            or len(attrib_colour) != 3):
         raise SystemExit("displayListLayout is not the expected shape (the layout arms armA=/armB=/texControl=, the"
-                         " compile-colour arm armC=/armCOutside=/armCInside= and the attribute arms"
-                         " armD=/armE=/attribColour= included; a dump from before they existed cannot be judged): "
-                         + text)
+                         " compile-colour arm armC=/armCOutside=/armCInside=, the attribute arms"
+                         " armD=/armE=/attribColour= and the cull arms armF=/armG=/cullArms= included; a dump from"
+                         " before they existed cannot be judged): " + text)
     return {
         "gui": (gui_width, gui_height),
         "panel": panel,
@@ -245,6 +265,11 @@ def layout_of(report):
         "arm_c_inside": arm_c_inside,
         "armD": arm_d,
         "armE": arm_e,
+        "armF": arm_f,
+        "armG": arm_g,
+        "cull_arms": int(fields.get("cullArms", "0")),
+        "cull_arm_face": int(fields.get("cullArmFace", "-1")),
+        "cull_arm_mismatches": int(fields.get("cullArmMismatches", "0")),
         "attrib_colour": attrib_colour,
         "attrib_mask": fields.get("attribMask", ""),
         "attrib_before": attrib_before,
@@ -411,7 +436,7 @@ def arm_reading(image, layout, scale):
     reading["armC_inside"] = count_colour(image, rect, colour_mask(layout["arm_c_inside"]))
     # The attribute arms are one colour, so the count is the whole question: arm D's quad appears because its push
     # selected the colour group, arm E's does not because its push did not.
-    for name, key in (("armD", "armD"), ("armE", "armE")):
+    for name, key in (("armD", "armD"), ("armE", "armE"), ("armF", "armF"), ("armG", "armG")):
         ax, ay, ahalf = layout[key]
         reading[name + "_green"] = count_colour(image, arm_rect_for(scale, (ax, ay), ahalf),
                                                 colour_mask(layout["attrib_colour"]))
@@ -447,6 +472,42 @@ def arm_c_failures(reading, label):
         failures.append(label + ": the colour recorded inside GL_COMPILE is the current colour after glEndList "
                         "(armC_inside=" + str(reading["armC_inside"]) + " px); GL runs that command at glCallList, not "
                         "at the compile")
+    return failures
+
+
+#: GL_FRONT, the face the cull arms ask for; the readback has to answer it or the picture is not measuring the arm.
+GL_FRONT = 0x0404
+#: The cull arms' empty quad may still leave a few pixels of edge, so its counter is judged against a floor.
+CULL_EMPTY_INK = 40
+
+
+def cull_arm_failures(reading, layout, label):
+    """{@return} the named failures of the cull arms, or [] when the face reached the rasteriser.
+
+    The state and the picture are two instruments on one rule. `cullArmFace` says the scene's own
+    `glGetIntegerv(GL_CULL_FACE_MODE)` answered GL_FRONT inside the arm - a renderer whose mirror ignores the call fails
+    here before the picture is read - and the two counts say whether the pipeline that drew the two quads culled the
+    face GL names: the back-facing quad has to survive a front-face cull and the front-facing one has to leave nothing.
+    Both quads are drawn in the same frame, in the same colour and state, so a renderer that ignores the *enable* draws
+    both and one that bakes cull-back draws exactly the opposite pair.
+    """
+    failures = []
+    if layout["cull_arms"] <= 0:
+        return [label + ": the cull arms never ran (cullArms=0), so the face the pipelines cull was not measured"]
+    if layout["cull_arm_face"] != GL_FRONT:
+        failures.append(label + ": glGetIntegerv(GL_CULL_FACE_MODE) answered " + str(layout["cull_arm_face"])
+                        + " inside the cull arms, not GL_FRONT (" + str(GL_FRONT) + "); the arm did not set the face")
+    if layout["cull_arm_mismatches"] > 0:
+        failures.append(label + ": " + str(layout["cull_arm_mismatches"]) + " frame(s) answered a cull mode other"
+                        + " than GL_FRONT after the arm set it")
+    if reading.get("armF_green", 0) < ARM_INK:
+        failures.append(label + ": the back-facing quad drawn under glCullFace(GL_FRONT) left no ink (armF_green="
+                        + str(reading.get("armF_green", 0)) + " px); GL_FRONT culls the other face, so this quad has"
+                        + " to stay - a renderer that bakes cull-back loses exactly this one")
+    if reading.get("armG_green", 0) >= CULL_EMPTY_INK:
+        failures.append(label + ": the front-facing quad drawn under glCullFace(GL_FRONT) left ink (armG_green="
+                        + str(reading.get("armG_green", 0)) + " px); GL_FRONT culls it, so the pipeline that drew it"
+                        + " is not culling the face the mirror reports")
     return failures
 
 
@@ -654,11 +715,14 @@ def single_picture_report(image, layout, scale, label):
                  " armC_outside=%d armC_inside=%d" % (
                      arms["armA_white"], arms["armA_magenta"], arms["armB_white"], arms["armB_magenta"],
                      arms["texControl_magenta"], arms["armC_outside"], arms["armC_inside"]))
+    lines.append(label + " armD_green=%d armE_green=%d armF_green=%d armG_green=%d cullArmFace=%d" % (
+        arms["armD_green"], arms["armE_green"], arms["armF_green"], arms["armG_green"], layout["cull_arm_face"]))
     failures.extend(arm_failures(arms, label))
     failures.extend(compile_colour_failures(layout, label))
     failures.extend(attrib_state_failures(layout, label))
     failures.extend(query_width_failures(layout, label))
     failures.extend(attrib_picture_failures(arms, label))
+    failures.extend(cull_arm_failures(arms, layout, label))
     reading = {"stage": label, "band0_red": bands[0][0], "band0_green": bands[0][1],
                "band1_red": bands[1][0], "band1_green": bands[1][1], "triangle_cyan": cyan, "direct_yellow": yellow,
                "outer_band": red_bands[0] if len(red_bands) == 1 else -1}
@@ -739,6 +803,20 @@ def main(argv):
                 if not attrib_control_ok:
                     failures.append("the attribute-mask positive control was accepted: a picture with the restored "
                                     "quad in the arm whose push did not select the colour group read as correct")
+        # And the cull-face control: the surviving quad pasted into the arm GL_FRONT has to cull.
+        cull_control_ok = None
+        if reading.get("armF_green", 0) >= ARM_INK:
+            painted = image.copy()
+            if copy_square(painted, image, scale, (layout["armF"][0], layout["armF"][1]),
+                           (layout["armG"][0], layout["armG"][1]), layout["armG"][2]):
+                painted_reading = analyse(painted, layout, scale, "control(cull-face)")
+                cull_control_ok = bool(cull_arm_failures(painted_reading, layout, "control"))
+                lines.append("control (front-culled quad pasted into arm G) armF_green="
+                             + str(painted_reading["armF_green"]) + " armG_green="
+                             + str(painted_reading["armG_green"]) + " rejected=" + str(cull_control_ok))
+                if not cull_control_ok:
+                    failures.append("the cull-face positive control was accepted: a picture with ink in the quad"
+                                    " glCullFace(GL_FRONT) has to cull read as correct")
         print("layout: " + layout["text"])
         for line in lines:
             print(line)
@@ -753,7 +831,8 @@ def main(argv):
                   + ("" if control_ok is None else "; the baked-colour positive control is rejected")
                   + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected")
                   + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected")
-                  + ("" if attrib_control_ok is None else "; the attribute-mask control is rejected"))
+                  + ("" if attrib_control_ok is None else "; the attribute-mask control is rejected")
+                  + ("" if cull_control_ok is None else "; the cull-face control is rejected"))
         if args.json:
             pathlib.Path(args.json).write_text(json.dumps({
                 "leg": args.leg, "picture": str(args.picture), "passed": not failures,
@@ -762,6 +841,7 @@ def main(argv):
                 "control_compile_layout_rejected": layout_control_ok,
                 "control_compile_colour_rejected": compile_colour_control_ok,
                 "control_attrib_mask_rejected": attrib_control_ok,
+                "control_cull_face_rejected": cull_control_ok,
                 "failures": failures}, indent=2) + "\n")
         return 0 if not failures else 1
     
@@ -861,6 +941,10 @@ def main(argv):
         if attrib_failed:
             passed = False
             failures.extend(attrib_failed)
+        cull_failed = cull_arm_failures(reading, layout, stage)
+        if cull_failed:
+            passed = False
+            failures.extend(cull_failed)
 
     # The attribute arms' state readback: the same in every frame, so it is judged once. The picture half ran per stage
     # above, where the ink is.
@@ -972,6 +1056,25 @@ def main(argv):
                     failures.append("the attribute-mask positive control was accepted: a picture with the restored "
                                     "quad in the arm whose push did not select the colour group read as correct")
 
+    # Fifth positive control: arm F's surviving quad pasted into arm G. That is exactly the picture a renderer that
+    # bakes cull-back leaves (the back-facing quad gone, the front-facing one drawn), so the cull rule has to reject it.
+    cull_control_ok = None
+    if ordered:
+        (stage_first, (image_first, scale_first, reading_first)) = ordered[0]
+        if reading_first.get("armF_green", 0) >= ARM_INK:
+            painted = image_first.copy()
+            if copy_square(painted, image_first, scale_first, (layout["armF"][0], layout["armF"][1]),
+                           (layout["armG"][0], layout["armG"][1]), layout["armG"][2]):
+                painted_reading = analyse(painted, layout, scale_first, "control(cull-face)")
+                cull_control_ok = bool(cull_arm_failures(painted_reading, layout, "control"))
+                report_lines.append("control (" + stage_first + "'s front-culled quad pasted into arm G) armF_green="
+                                    + str(painted_reading["armF_green"]) + " armG_green="
+                                    + str(painted_reading["armG_green"]) + " rejected=" + str(cull_control_ok))
+                if not cull_control_ok:
+                    passed = False
+                    failures.append("the cull-face positive control was accepted: a picture with ink in the quad"
+                                    " glCullFace(GL_FRONT) has to cull read as correct")
+
     print("layout: " + layout["text"])
     for line in report_lines:
         print(line)
@@ -986,7 +1089,8 @@ def main(argv):
               + ("" if control_ok is None else "; the positive control reads as the baked-colour failure")
               + ("" if layout_control_ok is None else "; the compile-layout arms control is rejected")
               + ("" if compile_colour_control_ok is None else "; the compile-colour arm control is rejected")
-              + ("" if attrib_control_ok is None else "; the attribute-mask control is rejected"))
+              + ("" if attrib_control_ok is None else "; the attribute-mask control is rejected")
+              + ("" if cull_control_ok is None else "; the cull-face control is rejected"))
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({
             "leg": args.leg, "passed": passed and not failures, "layout": layout["text"],
@@ -994,7 +1098,8 @@ def main(argv):
             "control_baked_colour_detected": control_ok,
             "control_compile_layout_rejected": layout_control_ok,
             "control_compile_colour_rejected": compile_colour_control_ok,
-            "control_attrib_mask_rejected": attrib_control_ok, "failures": failures}, indent=2) + "\n")
+            "control_attrib_mask_rejected": attrib_control_ok,
+            "control_cull_face_rejected": cull_control_ok, "failures": failures}, indent=2) + "\n")
     return 0 if passed and not failures else 1
 
 
