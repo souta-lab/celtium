@@ -1641,7 +1641,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             @Override public boolean depthTestEnabled() { return VulkanTerrainGpuBackend.this.immediateState.depthTestEnabled(); }
             @Override public boolean depthWriteEnabled() { return VulkanTerrainGpuBackend.this.immediateState.depthMask(); }
             @Override public boolean blendEnabled() { return VulkanTerrainGpuBackend.this.immediateState.blendEnabled(); }
-            @Override public boolean cullEnabled() { return VulkanTerrainGpuBackend.this.immediateState.cullEnabled(); }
+            @Override public int cullState() { return VulkanTerrainGpuBackend.this.immediateState.cullState(); }
             @Override public int colorMask() { return VulkanTerrainGpuBackend.this.immediateState.colorMask(); }
             @Override public long scissorKey() {
                 if (!VulkanTerrainGpuBackend.this.rasterState.scissorTest()

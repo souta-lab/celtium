@@ -54,11 +54,15 @@ ARM_F_Y = TEX_CONTROL_Y - 24
 GL_FRONT = 0x0404
 #: The state strings the arms report: the pushed block changes every key, and the pop has to put them all back. `cmB`
 #: is the boolean width of the same colour-write-mask state; GL answers it from the same state, so it must equal `cm`.
-ATTRIB_BEFORE = "cm=1111,cmB=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
-ATTRIB_INSIDE = "cm=0000,cmB=0000,dm=0,bs=1,bd=0,dt=0,cf=1028,sb=1,2,3,4,po=7.0"
+ATTRIB_BEFORE = "cm=1111,cmB=1111,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0,vw=0,0,1280,720"
+ATTRIB_INSIDE = "cm=0000,cmB=0000,dm=0,bs=1,bd=0,dt=0,cf=1028,sb=1,2,3,4,po=7.0,vw=11,13,17,19"
 ATTRIB_AFTER = ATTRIB_BEFORE
-#: The ENABLE_BIT-only arm: only the colour write mask is written inside it, so only that may survive the pop.
-ATTRIB_OUTSIDE = "cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0"
+#: The ENABLE_BIT-only arm: only the colour write mask and the viewport are written inside it, so only those may
+#: survive the pop - GL_ENABLE_BIT selects neither group.
+ATTRIB_OUTSIDE = "cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,sb=0,0,1280,720,po=0.0,vw=23,29,31,37"
+#: The two rectangles the arms set: the masked push must be undone, the unmasked one must survive (from the screen).
+ATTRIB_VIEWPORT_MASKED = "11,13,17,19"
+ATTRIB_VIEWPORT_UNMASKED = "23,29,31,37"
 #: GL_LINEAR, the filter the scene sets on its probe texture (not GL's initial value and not the zero-writer's 0).
 TEXTURE_FILTER = 9729
 WHITE = (255, 255, 255)
@@ -67,13 +71,15 @@ MAGENTA = (255, 0, 255)
 
 def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE, attrib_after=ATTRIB_AFTER,
            attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None, boolean_mismatches=0, texture_filter=TEXTURE_FILTER,
-           filter_expected=TEXTURE_FILTER, cull_frames=None, cull_face=GL_FRONT, cull_mismatches=0):
+           filter_expected=TEXTURE_FILTER, cull_frames=None, cull_face=GL_FRONT, cull_mismatches=0,
+           viewport_masked=ATTRIB_VIEWPORT_MASKED, viewport_unmasked=ATTRIB_VIEWPORT_UNMASKED):
     """The layout `DisplayListLegacyScreen.describeLayout` prints, for a 427x240 GUI at scale 3."""
     return ("gui=%dx%d panel=%s square=%d slots=%d,%d triangle=%d,%d,%d direct=%d,%d,%d even=%d,%d odd=%d,%d "
             "armA=%d,%d,%d armB=%d,%d,%d texControl=%d,%d,%d "
             "armC=%d,%d,%d armCOutside=0,0,255 armCInside=255,0,0 "
             "colourAfterCompile=0,0,255 compileColourLeaks=%d compileColourFrames=%d "
             "attribMask=0x4f20c armD=%d,%d,%d armE=%d,%d,%d attribColour=0,255,0 "
+            "attribViewportCaller=0,0,1280,720 attribViewportMasked=%s attribViewportUnmasked=%s "
             "armF=%d,%d,%d armG=%d,%d,%d cullArms=%d cullArmFace=%d cullArmMismatches=%d "
             "attribBefore=%s attribInside=%s attribAfter=%s attribOutsideAfter=%s attribFrames=%d "
             "booleanQueryMismatches=%d textureFilter=%d textureFilterExpected=%d "
@@ -83,6 +89,7 @@ def layout(frames=42, leaks=0, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB
                                    ARM_A_X, ARM_Y, ARM_HALF, ARM_B_X, ARM_Y, ARM_HALF, CENTRE_X, TEX_CONTROL_Y,
                                    ARM_HALF, ARM_C_X, ARM_C_Y, ARM_HALF, leaks, frames,
                                    ARM_D_X, ARM_C_Y, ARM_HALF, ARM_E_X, ARM_C_Y, ARM_HALF,
+                                   viewport_masked, viewport_unmasked,
                                    ARM_F_X, ARM_F_Y, ARM_HALF, ARM_G_X, ARM_F_Y, ARM_HALF,
                                    frames if cull_frames is None else cull_frames, cull_face, cull_mismatches,
                                    attrib_before, attrib_inside, attrib_after, attrib_outside,
@@ -161,6 +168,7 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
                   compile_colour_leak=False, leaks=0, second_stage_kept_only=False, attrib_restored=True,
                   attrib_leaked=False, attrib_before=ATTRIB_BEFORE, attrib_inside=ATTRIB_INSIDE,
                   attrib_after=ATTRIB_AFTER, attrib_outside=ATTRIB_OUTSIDE, attrib_frames=None,
+                  viewport_masked=ATTRIB_VIEWPORT_MASKED, viewport_unmasked=ATTRIB_VIEWPORT_UNMASKED,
                   boolean_mismatches=0, texture_filter=TEXTURE_FILTER, filter_expected=TEXTURE_FILTER,
                   cull_back_drawn=True, cull_front_drawn=False, cull_face=GL_FRONT, cull_frames=None,
                   cull_mismatches=0):
@@ -200,7 +208,8 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
                                             attrib_frames=attrib_frames, boolean_mismatches=boolean_mismatches,
                                             texture_filter=texture_filter, filter_expected=filter_expected,
                                             cull_frames=cull_frames, cull_face=cull_face,
-                                            cull_mismatches=cull_mismatches),
+                                            cull_mismatches=cull_mismatches,
+                                            viewport_masked=viewport_masked, viewport_unmasked=viewport_unmasked),
                 "displayListCompiles": 1,
                 "displayListDumpCount": 2,
                 "displayListDump_displaylist-f40-a": "screenshots/displaylist-f40-a.png completed=true frame=40",
@@ -361,9 +370,33 @@ class DisplayListLegacyCheckTest(unittest.TestCase):
         right, and the group is named by key."""
         code, output = self.run_check((255, 0, 0), (0, 255, 0),
                                       attrib_after="cm=0000,cmB=0000,dm=1,bs=770,bd=771,dt=1,cf=1029,"
-                                                   "sb=0,0,1280,720,po=0.0")
+                                                   "sb=0,0,1280,720,po=0.0,vw=0,0,1280,720")
         self.assertEqual(1, code, "a pop that left the colour write mask off must not pass: " + output)
         self.assertIn("glPopAttrib did not put back cm", output)
+
+    def test_a_pop_that_did_not_restore_the_viewport_fails_by_key(self):
+        """GL_VIEWPORT_BIT is the group this pack's mods actually select and change, so the key is claimed too.
+
+        The rectangle is the one the screen's masked arm sets: a pop that put every other group back and left this one
+        is named by key rather than passing on the picture, which a 17x19 viewport does not change in this scene.
+        """
+        code, output = self.run_check((255, 0, 0), (0, 255, 0),
+                                      attrib_after=ATTRIB_BEFORE.replace("vw=0,0,1280,720", "vw=11,13,17,19"))
+        self.assertEqual(1, code, "a pop that left the viewport at the block's rectangle must not pass: " + output)
+        self.assertIn("glPopAttrib did not put back vw", output)
+
+    def test_an_enable_only_push_that_restored_the_viewport_fails(self):
+        """The mask rule for the same group: GL_ENABLE_BIT saves capabilities, not GL_VIEWPORT."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0),
+                                      attrib_outside=ATTRIB_OUTSIDE.replace("vw=23,29,31,37", "vw=0,0,1280,720"))
+        self.assertEqual(1, code, "a GL_ENABLE_BIT push that restored the viewport must not pass: " + output)
+        self.assertIn("GL_VIEWPORT is GL_VIEWPORT_BIT state", output)
+
+    def test_a_scene_without_the_viewport_rectangles_is_refused(self):
+        """A dump whose layout does not name the rectangles it set cannot be judged, and the missing field is named."""
+        code, output = self.run_check((255, 0, 0), (0, 255, 0), viewport_masked="", viewport_unmasked="")
+        self.assertEqual(1, code, "a dump without the forced viewport rectangles must not pass: " + output)
+        self.assertIn("attribViewportMasked/attribViewportUnmasked missing", output)
 
     def test_a_boolean_query_that_answers_another_state_fails(self):
         """GL answers the colour write mask through every width. `cmB=0000` with `cm=1111` is the shape leg r30b

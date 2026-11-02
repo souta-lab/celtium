@@ -66,9 +66,24 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   `celtium/attrib[masks= pushes= pops= unmatchedPops= overflow= restoredGroups= selectedUnrestoredGroups= last=
   histogram=[mask:count]]`。`-Dceltium.glstub.attribMasks=false` は旧「全部戻す」動作で、この規則のA/B対照。
   **未対応集団は数える**: `GL_TRANSFORM_BIT`（行列は mirror 側。modは `glPushMatrix` を使う）、`GL_LIGHTING_BIT`・
-  `GL_FOG_BIT`・`GL_STENCIL_BUFFER_BIT`・`GL_VIEWPORT_BIT`。vanilla の mask `8256` は `GL_LIGHTING_BIT` を含むので
-  item frame/totem 経路では実在の穴。根拠: [attribute stack](evidence/attribute-stack-mask-2026-11-02.md)
+  `GL_FOG_BIT`・`GL_STENCIL_BUFFER_BIT`。vanilla の mask `8256` は `GL_LIGHTING_BIT` を含むが、その中身（light 参数）は
+  パック内の mod が一切書かない（下記）。根拠: [attribute stack](evidence/attribute-stack-mask-2026-11-02.md)
   （fixture の arm D/E が same-scene で Celtium と Celeritas 実GLの両方で一致、validation 0） |
+| `glViewport` と `GL_VIEWPORT_BIT` | **viewport は状態であり、push した集団が戻す**（2026-11-03 修正）。`glViewport` の
+  記録自体は既にあった（`GL_VIEWPORT` クエリと、offer ごとに読む packed 値）が、attribute stack の `GL_VIEWPORT_BIT`
+  は未対応のままだった。パック193 JARの `glPushAttrib` 呼び出しを `javap -c` で全数読み、mask を取った実測:
+  Susy-Core の `SunGlowRenderer`/`PlanetSurfaceRenderer`/`RingFeatureRenderer` が `0xFFFFF` を push して
+  **block 内で `glViewport` を呼び pop で戻す**（宇宙次元の sky。較正済み overworld leg では走らない）、
+  BetterQuesting `RenderUtils` は `0x40B71`（`GL_VIEWPORT_BIT` を含む）、
+  GregTech は `0x40`（`GL_LIGHTING_BIT` のみ）、SGCraft/architecturecraft は `0x41040`
+  （`TEXTURE|TRANSFORM|LIGHTING`）。逆に light 系（`glLightfv`/`glLightModelfv`/`glMaterialfv`/`glColorMaterial`）を
+  呼ぶ mod は**ゼロ**、`glFog` は BiomesOPlenty のみ、という全数結果なので、`GL_LIGHTING_BIT`/`GL_FOG_BIT` を
+  未対応のまま残す理由も推測ではなく数えられる。pop は backend の `viewport(...)` 経由で戻す（group key の viewport 項と
+  live サイズを所有しているため）。fixture の attribute arm は `GL_VIEWPORT_BIT` を mask に含めて 17x19 の矩形を
+  block 内で設定し `attribBefore/Inside/After/OutsideAfter` の `vw=` として前後を報告、`GL_ENABLE_BIT` のみの push では
+  31x37 が**残る**ことを同じ frame で主張する。較正済み world leg の census は `histogram=[0x40:1038]`
+  `restoredGroups=0`（= この scene の push は GregTech の `GL_LIGHTING_BIT` だけ）。根拠:
+  [viewport group](evidence/viewport-attrib-2026-11-03.md) |
 | ネイティブ `glGet*` のクエリ | **ルートが一致しなければ「それらしい0」が返る**（2026-11-02 修正）。transformer は
   LWJGL3 の `ngl*` を Java 本体に置き換えるが、置き換え先が専用ハンドラでなく汎用 zero-writer
   （`glGetZero` が1個の0を書く）に落ちても、class は正常にロードされ例外も出ない。実測: `nglGetBooleanv` と

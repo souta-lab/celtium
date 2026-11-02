@@ -464,3 +464,24 @@ checker の test は「key を消したとき」と「key があるのに読め�
 renderer 側の変更が「新しい pipeline を作る」だけで終わっていないことも確かめる: 間接描画の record-reading twin は
 `celtium$culls()` の真偽値だけを受けていたので、符号化した state を渡すよう直した（渡し忘れると run の中だけ
 cull-back に戻る）。
+
+## 「状態を戻す」を集団の数で数えると、戻っていない集団を見落とす（2026-11-03 実測）
+
+**症状**: `celtium/attrib[... restoredGroups= selectedUnrestoredGroups=]` は「何集団を戻したか」を数えるが、
+その数は**マスクが選んだ集団の数**であって、その集団の中身が実際に変わったかは言わない。plain leg の
+`selectedUnrestoredGroups=105` は fixture 自身の `GL_LIGHTING_BIT` push 105回で、パックの mod の push は
+その scene では一度も走っていなかった。集団の対応表を作るには、まず**誰がどのマスクで push しているか**を
+数える必要がある。
+
+**やったこと**: パックの193 JARを `javap -c` で全数走査し、`glPushAttrib` の呼び出しの直前に積まれる
+mask 定数を取った。結果は `0xFFFFF`（Susy-Core の space renderer 3種・OpenComputers の MFU・Commons0815・
+LagGoggles）、`0x41040`（SGCraft/architecturecraft の render target: `TEXTURE|TRANSFORM|LIGHTING`）、
+`0x40B71`（BetterQuesting）、`0x40`（GregTech の `useLightMap`/central monitor）、`0x80000`（MrTJPCore）。
+この一覧と「その block の中で実際に何を変えているか」（同じく全数走査）を突き合わせると、未対応集団のうち
+**中身が変わるのは `GL_VIEWPORT_BIT` だけ**だった（Susy-Core の `SunGlowRenderer` は block 内で
+`glViewport(0,0,displayWidth,displayHeight)` を呼び pop に戻させる）。`glLightfv`/`glLightModelfv`/
+`glMaterialfv`/`glColorMaterial` を呼ぶ mod はゼロ、`glFog` は BiomesOPlenty のみ。
+
+**規約**: 集団の実装順は「マスクの出現数」ではなく「**その集団の中身を block 内で書く呼び出しの数**」で決める。
+集団を対応済みに移すときは、(a) fixture が block 内でその状態を設定し、(b) クエリで前後を報告し、
+(c) マスク外の push では**戻らない**ことも同じ frame で主張する（`vw=17,13..` と `vw=31,37..` の対）。

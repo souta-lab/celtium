@@ -51,7 +51,7 @@ public final class LegacyAttribSnapshot {
 
     /** The groups this stack puts back. Kept beside {@link #UNMODELLED_GROUPS} so the census names a real gap. */
     public static final int MODELLED_GROUPS = CURRENT_BIT | POINT_BIT | LINE_BIT | POLYGON_BIT | DEPTH_BUFFER_BIT
-            | ENABLE_BIT | COLOR_BUFFER_BIT | LIST_BIT | TEXTURE_BIT | SCISSOR_BIT;
+            | ENABLE_BIT | COLOR_BUFFER_BIT | LIST_BIT | TEXTURE_BIT | SCISSOR_BIT | VIEWPORT_BIT;
     /**
      * The groups a push may select that this renderer cannot restore.
      *
@@ -59,9 +59,20 @@ public final class LegacyAttribSnapshot {
      * backend's mirror, and {@code glPushMatrix}/{@code glPopMatrix} are the calls mods use for them (both are routed).
      * A caller that saves the matrix stack with {@code glPushAttrib} alone gets the matrices back unchanged - counted,
      * so the day a pack depends on it the run says so instead of the picture going quietly wrong.
+     *
+     * <p>{@code GL_VIEWPORT_BIT} is <em>not</em> in this list any more, and the reason is measured rather than assumed.
+     * A scan of the 193 mod jars in the Supersymmetry instance found its push sites and their masks: three
+     * Supersymmetry space renderers ({@code SunGlowRenderer}, {@code PlanetSurfaceRenderer}, {@code RingFeatureRenderer})
+     * push {@code 0xFFFFF} and call {@code glViewport} inside the block, relying on the pop to put the rectangle back
+     * (they run in the space dimensions, not in the calibrated overworld scene); BetterQuesting's {@code RenderUtils}
+     * pushes {@code 0x40B71}, which also selects the group. {@code GL_LIGHTING_BIT}
+     * stays unmodelled for the opposite reason: no mod in the pack calls {@code glLightfv}, {@code glLightModelfv},
+     * {@code glMaterialfv} or {@code glColorMaterial} at all, so the only values a pop could protect are the two constant
+     * light sets vanilla re-applies. {@code GL_FOG_BIT} has no in-pack provider either (only BiomesOPlenty references
+     * {@code glFog}, and no {@code 0xFFFFF} pusher changes fog state).
      */
     public static final int UNMODELLED_GROUPS = POLYGON_STIPPLE_BIT | PIXEL_MODE_BIT | LIGHTING_BIT | FOG_BIT
-            | ACCUM_BUFFER_BIT | STENCIL_BUFFER_BIT | VIEWPORT_BIT | TRANSFORM_BIT | HINT_BIT | EVAL_BIT
+            | ACCUM_BUFFER_BIT | STENCIL_BUFFER_BIT | TRANSFORM_BIT | HINT_BIT | EVAL_BIT
             | MULTISAMPLE_BIT;
 
     /** The mask the caller passed to {@code glPushAttrib}. */
@@ -97,6 +108,19 @@ public final class LegacyAttribSnapshot {
     public int scissorHeight;
     public float polygonOffsetFactor;
     public float polygonOffsetUnits;
+    /**
+     * {@code GL_VIEWPORT}'s rectangle, in GL's bottom-left pixels.
+     * <p>
+     * This is the group a push is most likely to protect without knowing it: a renderer that sets a sub-rectangle for
+     * one pass (a render target, a GUI preview, a full-screen shader quad at the window size) pushes the attribute block
+     * first and lets the pop undo the rectangle. The renderer reads the rectangle per offer from
+     * {@code celtium$viewportPacked}, so a pop that only wrote the stub's fields would leave the packed value - the one
+     * the group key and the capture use - describing the popped block's rectangle.
+     */
+    public int viewportX;
+    public int viewportY;
+    public int viewportWidth;
+    public int viewportHeight;
     /** {@code GL_LIST_BASE}. */
     public int listBase;
     /** {@code GL_ACTIVE_TEXTURE}'s unit index and the texture bound to {@code GL_TEXTURE_2D} on it. */

@@ -177,9 +177,11 @@ def numbers(fields, key):
 
 
 #: The state keys the attribute arms read around their push and pop. They are the groups the two arms differ in:
-#: colour write mask, depth write mask, blend source/destination, depth-test enable, cull mode, scissor box and polygon
-#: offset factor. Each arm writes all of them inside its push, so "the probe changed nothing" is a failure too.
-ATTRIB_STATE_KEYS = ("cm", "dm", "bs", "bd", "dt", "cf", "sb", "po")
+#: colour write mask, depth write mask, blend source/destination, depth-test enable, cull mode, scissor box, polygon
+#: offset factor and the viewport rectangle. Each arm writes all of them inside its push, so "the probe changed nothing"
+#: is a failure too. `vw` is the group the pack's own mods select and change (three Supersymmetry space renderers push
+#: 0xFFFFF and call glViewport inside the block; BetterQuesting's RenderUtils pushes 0x40B71, which also selects it).
+ATTRIB_STATE_KEYS = ("cm", "dm", "bs", "bd", "dt", "cf", "sb", "po", "vw")
 
 
 def parse_attrib_state(text):
@@ -238,6 +240,8 @@ def layout_of(report):
     attrib_inside = parse_attrib_state(fields.get("attribInside", "none"))
     attrib_after = parse_attrib_state(fields.get("attribAfter", "none"))
     attrib_outside_after = parse_attrib_state(fields.get("attribOutsideAfter", "none"))
+    attrib_viewport_masked = fields.get("attribViewportMasked", "")
+    attrib_viewport_unmasked = fields.get("attribViewportUnmasked", "")
     if (len(panel) != 4 or len(slots) != 2 or len(triangle) != 3 or len(direct) != 3
             or len(even) != 2 or len(odd) != 2 or len(call_colour) != 3 or len(inside_colour) != 3
             or len(arm_a) != 3 or len(arm_b) != 3 or len(tex_control) != 3
@@ -277,6 +281,8 @@ def layout_of(report):
         "attrib_after": attrib_after,
         "attrib_outside_after": attrib_outside_after,
         "attrib_frames": int(fields.get("attribFrames", "0")),
+        "attrib_viewport_masked": attrib_viewport_masked,
+        "attrib_viewport_unmasked": attrib_viewport_unmasked,
         "boolean_query_mismatches": int(fields.get("booleanQueryMismatches", "0")),
         "attrib_frames_reported": "attribFrames" in fields,
         "texture_filter": int(fields.get("textureFilter", "-1")),
@@ -517,9 +523,12 @@ def attrib_state_failures(layout, label):
     Three claims, each a way the stack can be wrong:
 
     * the probe changed the state it reports (a renderer that ignored the writes would otherwise "restore" trivially);
-    * the pop put every group its mask selected back (`attribAfter` == `attribBefore`);
-    * the push that selected only `GL_ENABLE_BIT` did *not* put the colour write mask back - GL's rule, and the exact
-      superset the old "restore everything" stack got wrong.
+    * the pop put every group its mask selected back (`attribAfter` == `attribBefore`), the viewport included;
+    * the push that selected only `GL_ENABLE_BIT` did *not* put the colour write mask or the viewport back - GL's rule,
+      and the exact superset the old "restore everything" stack got wrong.
+    * the arms' two viewport writes landed where the scene said they did: `attribInside` must carry the masked
+      rectangle and `attribOutsideAfter` the unmasked one. Without those two, `vw` equality could pass on a scene that
+      never wrote the state at all.
     """
     label = label + ": "
     if layout["attrib_frames"] <= 0:
@@ -548,6 +557,19 @@ def attrib_state_failures(layout, label):
         failures.append(label + "a glPushAttrib(GL_ENABLE_BIT) restored the colour write mask (inside="
                         + str(inside.get("cm")) + " after=" + str(outside.get("cm")) + "); GL_ENABLE_BIT saves "
                         "capabilities only, and GL_COLOR_WRITEMASK is GL_COLOR_BUFFER_BIT state")
+    masked = layout.get("attrib_viewport_masked", "")
+    unmasked = layout.get("attrib_viewport_unmasked", "")
+    if not masked or not unmasked:
+        failures.append(label + "the scene did not report the viewport rectangles its arms set "
+                        "(attribViewportMasked/attribViewportUnmasked missing); the GL_VIEWPORT_BIT arm was not judged")
+    else:
+        if inside.get("vw") != masked:
+            failures.append(label + "the pushed block did not set the viewport (attribInside vw="
+                            + str(inside.get("vw")) + ", the scene set " + masked + ")")
+        if outside.get("vw") != unmasked:
+            failures.append(label + "a glPushAttrib(GL_ENABLE_BIT) put the viewport back (attribOutsideAfter vw="
+                            + str(outside.get("vw")) + " where the block left " + unmasked + "); GL_VIEWPORT is "
+                            "GL_VIEWPORT_BIT state, which GL_ENABLE_BIT does not save")
     return failures
 
 

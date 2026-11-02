@@ -2210,6 +2210,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         snapshot.scissorHeight = stub.raster.scissorHeight();
         snapshot.polygonOffsetFactor = stub.raster.polygonOffsetFactor();
         snapshot.polygonOffsetUnits = stub.raster.polygonOffsetUnits();
+        snapshot.viewportX = stub.viewportX;
+        snapshot.viewportY = stub.viewportY;
+        snapshot.viewportWidth = stub.viewportW;
+        snapshot.viewportHeight = stub.viewportH;
         snapshot.listBase = stub.listBase;
         snapshot.activeTextureUnit = stub.textures.activeUnit();
         snapshot.texture2d = stub.textures.texture2d();
@@ -2312,6 +2316,20 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.raster.scissor(snapshot.scissorX, snapshot.scissorY,
                     snapshot.scissorWidth, snapshot.scissorHeight);
             restored |= LegacyAttribSnapshot.SCISSOR_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.VIEWPORT_BIT)) {
+            // Through the backend when there is one: it owns the group key's viewport term and the live sizes the
+            // offers outside the full-target contract are refused against, and its own viewport writer updates the
+            // packed rectangle and this stub's fields. Without a backend the packed value is still what the capture
+            // reads, so it is written directly rather than left describing the popped block's rectangle.
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.viewport(snapshot.viewportX, snapshot.viewportY,
+                        snapshot.viewportWidth, snapshot.viewportHeight);
+            } else {
+                celtium$viewport(snapshot.viewportX, snapshot.viewportY,
+                        snapshot.viewportWidth, snapshot.viewportHeight);
+            }
+            restored |= LegacyAttribSnapshot.VIEWPORT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIST_BIT)) {
             this.listBase = snapshot.listBase;
@@ -3431,14 +3449,26 @@ public final class CeltiumGlStub implements FunctionProvider {
         return viewportSeen ? viewportPacked : -1L;
     }
 
-    public static void celtium$viewport(int x, int y, int width, int height) {
-        // Kept for the renderer's own viewport reader: the GL query goes through a direct IntBuffer allocation per
-        // call, and the immediate path asks once per group. Four 16-bit fields are enough for any real viewport.
+    /**
+     * Records the rectangle the capture reads per offer, from whichever route set the viewport.
+     * <p>
+     * Both entries that can set it go through here: the transformed native's route ({@code celtium$viewport}, which the
+     * hint calls) and the stub's own dispatch table ({@code SEM_VIEWPORT}, the entry the legacy trampoline and the
+     * in-process callers use). A route that updated only one of the two records would answer {@code GL_VIEWPORT}
+     * correctly while every group key and every offer still described the previous rectangle.
+     */
+    private static void recordViewportPacked(int x, int y, int width, int height) {
+        // Four 16-bit fields are enough for any real viewport; a negative or oversized rectangle is left out rather
+        // than truncated into a different one.
         if (width >= 0 && height >= 0 && width <= 0xFFFF && height <= 0xFFFF) {
             viewportPacked = ((long) (x & 0xFFFF) << 48) | ((long) (y & 0xFFFF) << 32)
                     | ((long) (width & 0xFFFF) << 16) | (height & 0xFFFF);
             viewportSeen = true;
         }
+    }
+
+    public static void celtium$viewport(int x, int y, int width, int height) {
+        recordViewportPacked(x, y, width, height);
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.viewportX = x;
@@ -5408,6 +5438,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.viewportY = (int) c[1];
                 this.viewportW = (int) c[2];
                 this.viewportH = (int) c[3];
+                recordViewportPacked(this.viewportX, this.viewportY, this.viewportW, this.viewportH);
                 return 0L;
             case SEM_FOG_I:
                 org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], (int) c[1]);

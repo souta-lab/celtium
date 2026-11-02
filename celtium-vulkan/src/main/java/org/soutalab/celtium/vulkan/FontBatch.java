@@ -121,6 +121,22 @@ public final class FontBatch {
             return false;
         }
 
+        /**
+         * The cull triple the run must be closed across: the enable, the face and the winding, encoded as
+         * {@code VulkanCullState} encodes it.
+         * <p>
+         * {@link #cullEnabled()} alone is one third of the state the group is drawn under. A caller that keeps culling
+         * on and switches {@code glCullFace(GL_FRONT)} between two glyph runs changes which of the two windings
+         * survives; a key that only sees the enable keeps one run open and draws the earlier quads under the later
+         * face - the same hole the immediate pipelines had until the face reached them. The default answers the enable
+         * with GL's default pair, so a view that does not implement this keeps the old behaviour exactly.
+         */
+        default int cullState() {
+            return cullEnabled()
+                    ? org.soutalab.celtium.vulkan.VulkanCullState.encode(true, 0x0405, 0x0901)
+                    : org.soutalab.celtium.vulkan.VulkanCullState.NONE;
+        }
+
         /** The colour write mask, {@code 0xF} when every channel is written. */
         default int colorMask() {
             return 0xF;
@@ -259,7 +275,8 @@ public final class FontBatch {
     private boolean pendingDepthTest = true;
     private boolean pendingDepthWrite = true;
     private boolean pendingBlend = true;
-    private boolean pendingCull;
+    /** The encoded cull triple (enable, face, winding) the open run was appended under; see {@code cullState()}. */
+    private int pendingCull;
     private int pendingColorMask = 0xF;
     private long pendingScissorKey;
     private boolean pendingActive;
@@ -420,7 +437,7 @@ public final class FontBatch {
             boolean depthTest = view.depthTestEnabled();
             boolean depthWrite = view.depthWriteEnabled();
             boolean blend = view.blendEnabled();
-            boolean cull = view.cullEnabled();
+            int cull = view.cullState();
             int colorMask = view.colorMask();
             long scissorKey = view.scissorKey();
             if (this.pendingActive
@@ -521,7 +538,7 @@ public final class FontBatch {
 
     private boolean celtium$fontRunMatches(int formatId, int stride, int drawMode, int texture, long colourBits,
                                            boolean alphaTest, float alphaRef, boolean depthTest, boolean depthWrite,
-                                           boolean blend, boolean cull, int colorMask, long scissorKey,
+                                           boolean blend, int cull, int colorMask, long scissorKey,
                                            FontRunState view) {
         // The matrix pair is part of the witness, exactly as it is for the normal path's group key: a run that spans a
         // matrix change is drawn with one matrix for all of its quads. Leaving it out was measured as the garbled
@@ -546,7 +563,7 @@ public final class FontBatch {
     }
 
     /** Whether the difference that closed the run was in the draw state rather than in colour/texture/matrices. */
-    private boolean celtium$drawStateDiffers(boolean depthTest, boolean depthWrite, boolean blend, boolean cull,
+    private boolean celtium$drawStateDiffers(boolean depthTest, boolean depthWrite, boolean blend, int cull,
                                              int colorMask, long scissorKey) {
         return this.pendingDepthTest != depthTest || this.pendingDepthWrite != depthWrite
                 || this.pendingBlend != blend || this.pendingCull != cull
@@ -803,7 +820,8 @@ public final class FontBatch {
                 + " depthTest=" + this.pendingDepthTest
                 + " depthWrite=" + this.pendingDepthWrite
                 + " blend=" + this.pendingBlend
-                + " cull=" + this.pendingCull
+                + " cull=" + org.soutalab.celtium.vulkan.VulkanCullState.describe(this.pendingCull)
+                + "(" + this.pendingCull + ")"
                 + " colorMask=" + Integer.toHexString(this.pendingColorMask)
                 + " scissor=" + Long.toHexString(this.pendingScissorKey);
     }

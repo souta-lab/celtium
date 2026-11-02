@@ -98,6 +98,21 @@ class LegacyAttribStackTest {
         }
     }
 
+    /** One tracked query, as a mod's own save/restore reads it: the vector form, count ints wide. */
+    private int[] queryInts(int pname, int count) throws Exception {
+        var out = MemoryUtil.memAlloc(16 * Math.max(1, count));
+        try {
+            call("glGetIntegerv", pname, MemoryUtil.memAddress(out));
+            int[] values = new int[count];
+            for (int i = 0; i < count; i++) {
+                values[i] = MemoryUtil.memGetInt(MemoryUtil.memAddress(out) + 4L * i);
+            }
+            return values;
+        } finally {
+            MemoryUtil.memFree(out);
+        }
+    }
+
     private long queryInt(int pname) throws Exception {
         var out = MemoryUtil.memAlloc(16);
         try {
@@ -314,6 +329,48 @@ class LegacyAttribStackTest {
         // Vanilla's own mask is 8256 = GL_ENABLE_BIT | GL_LIGHTING_BIT: it selects one modelled and one unmodelled
         // group, which is why the lighting state is named in the census rather than guessed at.
         assertEquals(LegacyAttribSnapshot.ENABLE_BIT, LegacyAttribSnapshot.modelled(8256));
+    }
+
+    /**
+     * {@code GL_VIEWPORT_BIT}: the group this pack's own mods select and change.
+     *
+     * <p>The provider is measured rather than invented: three Supersymmetry space renderers push {@code 0xFFFFF}, call
+     * {@code glViewport} to the window size inside the block and rely on the pop to undo it, and BetterQuesting's
+     * {@code RenderUtils} pushes {@code 0x40B71}, which selects the same group. The renderer reads the rectangle per
+     * offer from {@code celtium$viewportPacked}, so the assertion is on the query a mod's save/restore uses and on the
+     * packed value the capture uses - a restore that wrote only one of the two would leave the other describing the
+     * popped block.
+     */
+    @Test
+    void aPushThatSelectsTheViewportPutsTheRectangleBack() throws Exception {
+        call("glViewport", 0, 0, 800, 600);
+        assertArrayEquals(new int[] {0, 0, 800, 600}, queryInts(0x0BA2, 4), "the caller's rectangle, through GL_VIEWPORT");
+        assertEquals(((long) 0 << 48) | ((long) 0 << 32) | ((long) 800 << 16) | 600L,
+                CeltiumGlStub.celtium$viewportPacked(), "and the packed rectangle the capture reads");
+        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.VIEWPORT_BIT);
+        call("glViewport", 11, 13, 17, 19);
+        assertArrayEquals(new int[] {11, 13, 17, 19}, queryInts(0x0BA2, 4),
+                "the block's own rectangle is in force inside the push");
+        assertEquals(((long) 11 << 48) | ((long) 13 << 32) | ((long) 17 << 16) | 19L,
+                CeltiumGlStub.celtium$viewportPacked());
+        CeltiumGlStub.celtium$popAttrib();
+        assertArrayEquals(new int[] {0, 0, 800, 600}, queryInts(0x0BA2, 4), "the pop put the caller's rectangle back");
+        assertEquals(((long) 0 << 48) | ((long) 0 << 32) | ((long) 800 << 16) | 600L,
+                CeltiumGlStub.celtium$viewportPacked(),
+                "and the packed rectangle the group key and the capture read - not only the query's fields");
+    }
+
+    /** The mask rule for the same group: a push that does not select it leaves the block's rectangle in force. */
+    @Test
+    void aPushWithoutTheViewportGroupLeavesTheBlockRectangleInForce() throws Exception {
+        call("glViewport", 0, 0, 800, 600);
+        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
+        call("glViewport", 23, 29, 31, 37);
+        CeltiumGlStub.celtium$popAttrib();
+        assertArrayEquals(new int[] {23, 29, 31, 37}, queryInts(0x0BA2, 4),
+                "GL_ENABLE_BIT saves capabilities, not GL_VIEWPORT");
+        assertEquals(((long) 23 << 48) | ((long) 29 << 32) | ((long) 31 << 16) | 37L,
+                CeltiumGlStub.celtium$viewportPacked());
     }
 
     /** Two pushes own separate records, so the second push cannot overwrite what the first one saved. */

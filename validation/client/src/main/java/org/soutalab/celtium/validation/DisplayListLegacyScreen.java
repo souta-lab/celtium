@@ -147,9 +147,25 @@ public final class DisplayListLegacyScreen extends GuiScreen {
      * <p>The mask deliberately contains nothing that changes the picture by itself: the scissor test stays disabled, the
      * pushed block draws nothing, and the depth/cull/polygon writes are unobservable in this scene. The colour mask is
      * the one variable the dump can count.
+     * <p>{@code GL_VIEWPORT_BIT} is in the mask for the reason the group was added: three of the pack's own mods push
+     * {@code 0xFFFFF} or {@code 0x40B71}, change the viewport inside the block and let the pop undo it. The arm sets a
+     * rectangle no other element of this scene uses and reads it back with {@code glGetIntegerv(GL_VIEWPORT)}, so a pop
+     * that restores every modelled field but not this one is a named value in the report rather than a guess. The second
+     * arm sets a different one under {@code GL_ENABLE_BIT} only, which must survive the pop - that is GL's rule, and the
+     * pair is what separates "the group is restored" from "every pop restores everything".
      */
     private static final int ATTRIB_PUSH_MASK = GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-            | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_POLYGON_BIT | GL11.GL_SCISSOR_BIT;
+            | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_POLYGON_BIT | GL11.GL_SCISSOR_BIT | GL11.GL_VIEWPORT_BIT;
+    /** The rectangle the masked arm sets and the pop must undo; deliberately not 0,0,0,0 and not the window's. */
+    private static final int ATTRIB_VIEWPORT_MASKED_X = 11;
+    private static final int ATTRIB_VIEWPORT_MASKED_Y = 13;
+    private static final int ATTRIB_VIEWPORT_MASKED_W = 17;
+    private static final int ATTRIB_VIEWPORT_MASKED_H = 19;
+    /** The rectangle the unmasked arm sets, which a pop that selected only GL_ENABLE_BIT must leave in force. */
+    private static final int ATTRIB_VIEWPORT_UNMASKED_X = 23;
+    private static final int ATTRIB_VIEWPORT_UNMASKED_Y = 29;
+    private static final int ATTRIB_VIEWPORT_UNMASKED_W = 31;
+    private static final int ATTRIB_VIEWPORT_UNMASKED_H = 37;
     /** The colour both arms draw after their pop: green, which no other element of this scene uses there. */
     private static final float ATTRIB_RED = 0.0f;
     private static final float ATTRIB_GREEN = 1.0f;
@@ -188,6 +204,9 @@ public final class DisplayListLegacyScreen extends GuiScreen {
     private java.nio.FloatBuffer currentColour;
     /** The state read back around the attribute arms, for the report line (and the checker). */
     private String attribBefore = "none";
+    /** The caller's own viewport rectangle, read before the arms change it and put back by hand after them. */
+    private int[] attribCallerViewport;
+    private String attribViewportCaller = "none";
     private String attribInside = "none";
     private String attribAfter = "none";
     private String attribOutsideAfter = "none";
@@ -275,6 +294,11 @@ public final class DisplayListLegacyScreen extends GuiScreen {
                 + " compileColourLeaks=" + this.compileColourLeaks
                 + " compileColourFrames=" + this.compileColourFrames
                 + " attribMask=0x" + Integer.toHexString(ATTRIB_PUSH_MASK)
+                + " attribViewportCaller=" + this.attribViewportCaller
+                + " attribViewportMasked=" + ATTRIB_VIEWPORT_MASKED_X + "," + ATTRIB_VIEWPORT_MASKED_Y + ","
+                + ATTRIB_VIEWPORT_MASKED_W + "," + ATTRIB_VIEWPORT_MASKED_H
+                + " attribViewportUnmasked=" + ATTRIB_VIEWPORT_UNMASKED_X + "," + ATTRIB_VIEWPORT_UNMASKED_Y + ","
+                + ATTRIB_VIEWPORT_UNMASKED_W + "," + ATTRIB_VIEWPORT_UNMASKED_H
                 + " armD=" + celtium$armDX(panel) + "," + celtium$armCY(panel) + "," + ARM_HALF
                 + " armE=" + celtium$armEX(panel) + "," + celtium$armCY(panel) + "," + ARM_HALF
                 + " armF=" + celtium$armFX(panel) + "," + celtium$armFY(panel) + "," + ARM_HALF
@@ -714,6 +738,12 @@ public final class DisplayListLegacyScreen extends GuiScreen {
      *
      * <p>The colour mask is put back by hand after arm E. That is the caller's own restore - the same one a mod has to
      * make - and without it the rest of the frame (and every later frame) would be drawn with three channels masked.
+     *
+     * <p>The viewport is set inside both arms and read back with the query a mod's save/restore uses. The caller's own
+     * rectangle is put back by hand at the end as well: if the pop did not restore it, the rest of this frame would be
+     * clipped to a 31x37 corner, and the dump would measure the probe's failure instead of the scene's arms. The picture
+     * is the second witness: arm D's quad is drawn after the masked pop, well outside either rectangle, so a viewport
+     * that stayed at the block's 17x19 loses that quad as well as reporting the wrong `vw`.
      */
     private void celtium$drawAttribArms(int[] panel) {
         if (this.attribInts == null) {
@@ -723,6 +753,14 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         }
         this.attribFrames++;
         celtium$readTextureFilter();
+        if (this.attribCallerViewport == null) {
+            this.attribCallerViewport = new int[4];
+        }
+        this.attribInts.clear();
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, this.attribInts);
+        this.attribInts.get(this.attribCallerViewport);
+        this.attribViewportCaller = this.attribCallerViewport[0] + "," + this.attribCallerViewport[1] + ","
+                + this.attribCallerViewport[2] + "," + this.attribCallerViewport[3];
         this.attribBefore = celtium$attribState();
         GL11.glPushAttrib(ATTRIB_PUSH_MASK);
         GL11.glColorMask(false, false, false, false);
@@ -732,16 +770,22 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         GL11.glCullFace(GL11.GL_FRONT);
         GL11.glScissor(1, 2, 3, 4);
         GL11.glPolygonOffset(7.0f, 8.0f);
+        GL11.glViewport(ATTRIB_VIEWPORT_MASKED_X, ATTRIB_VIEWPORT_MASKED_Y,
+                ATTRIB_VIEWPORT_MASKED_W, ATTRIB_VIEWPORT_MASKED_H);
         this.attribInside = celtium$attribState();
         GL11.glPopAttrib();
         this.attribAfter = celtium$attribState();
         celtium$drawAttribQuad(celtium$armDX(panel));
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT);
         GL11.glColorMask(false, false, false, false);
+        GL11.glViewport(ATTRIB_VIEWPORT_UNMASKED_X, ATTRIB_VIEWPORT_UNMASKED_Y,
+                ATTRIB_VIEWPORT_UNMASKED_W, ATTRIB_VIEWPORT_UNMASKED_H);
         GL11.glPopAttrib();
         this.attribOutsideAfter = celtium$attribState();
         celtium$drawAttribQuad(celtium$armEX(panel));
         GL11.glColorMask(true, true, true, true);
+        GL11.glViewport(this.attribCallerViewport[0], this.attribCallerViewport[1], this.attribCallerViewport[2],
+                this.attribCallerViewport[3]);
     }
 
     /**
@@ -904,6 +948,12 @@ public final class DisplayListLegacyScreen extends GuiScreen {
         this.attribFloats.clear();
         GL11.glGetFloatv(GL11.GL_POLYGON_OFFSET_FACTOR, this.attribFloats);
         state.append(",po=").append(String.format(java.util.Locale.ROOT, "%.1f", this.attribFloats.get(0)));
+        // GL_VIEWPORT through the same query a mod's save/restore uses: the renderer reads the packed rectangle per
+        // offer, so a pop that only wrote the stub's fields would leave this answer right and the capture wrong.
+        this.attribInts.clear();
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, this.attribInts);
+        state.append(",vw=").append(this.attribInts.get(0)).append(",").append(this.attribInts.get(1))
+                .append(",").append(this.attribInts.get(2)).append(",").append(this.attribInts.get(3));
         return state.toString();
     }
 
