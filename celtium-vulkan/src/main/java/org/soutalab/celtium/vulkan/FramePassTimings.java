@@ -78,7 +78,12 @@ public final class FramePassTimings {
             // The immediate window's group loop on its own: the window's recording is 0.95 ms a frame and the loop's
             // per-group work is the part the driver-call probes could not explain (skipping the pushes and the draws
             // changed neither the loop's own timer nor the frame).
-            "wrecLoop", "rcPrepared"};
+            "wrecLoop", "rcPrepared",
+            // The window's two unnamed halves (leg r36win): the prefix before vkCmdBeginRenderPass - the target
+            // resolution, the sampling-side transitions and the begin-info - and the pass close after the group loop.
+            // winRecord is 0.5-0.7 ms a frame over 35.8 windows, and winBeginPass plus wrecLoop accounted for only
+            // part of it; these two names say which side the rest is on.
+            "winPrefix", "winPassEnd"};
 
     private static final int CAPACITY = 512;
 

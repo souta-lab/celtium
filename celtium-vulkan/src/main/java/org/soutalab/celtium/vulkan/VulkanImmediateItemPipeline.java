@@ -336,42 +336,54 @@ public final class VulkanImmediateItemPipeline {
         }
         // OPT-12: pipeline and descriptor binds dedup against the flush's bind cache; a pipeline rebind
         // disturbs the set bound under the old layout, so the descriptor slot resets whenever this re-emits.
-        long pipelineStart = System.nanoTime();
+        long pipelineStart = BIND_TIMINGS ? System.nanoTime() : 0L;
         if (bindCache[4] != this.pipeline) {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }
-        ITEM_PIPELINE_NANOS += System.nanoTime() - pipelineStart;
-        long descriptorStart = System.nanoTime();
+        if (BIND_TIMINGS) ITEM_PIPELINE_NANOS += System.nanoTime() - pipelineStart;
+        long descriptorStart = BIND_TIMINGS ? System.nanoTime() : 0L;
         if (bindCache[5] != descriptorSetToBind) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
             bindCache[5] = descriptorSetToBind;
         }
-        ITEM_DESCRIPTOR_NANOS += System.nanoTime() - descriptorStart;
+        if (BIND_TIMINGS) ITEM_DESCRIPTOR_NANOS += System.nanoTime() - descriptorStart;
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
-        long viewStart = System.nanoTime();
+        long viewStart = BIND_TIMINGS ? System.nanoTime() : 0L;
         ByteBuffer view = this.clampedView.view(pushConstants, pushBytes());
-        ITEM_VIEW_NANOS += System.nanoTime() - viewStart;
+        if (BIND_TIMINGS) ITEM_VIEW_NANOS += System.nanoTime() - viewStart;
         // The shared block may be wider than this layout's declared range (the lit variant's block is) - pushing past
         // the range is a validation error, so the view is clamped to what this pipeline declared.
         
-        long itemPushStart = System.nanoTime();
+        long itemPushStart = BIND_TIMINGS ? System.nanoTime() : 0L;
         if (this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, view)) {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, view);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, view);
         }
-        ITEM_PUSH_NANOS += System.nanoTime() - itemPushStart;
+        if (BIND_TIMINGS) ITEM_PUSH_NANOS += System.nanoTime() - itemPushStart;
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
-        long meshStart = System.nanoTime();
+        long meshStart = BIND_TIMINGS ? System.nanoTime() : 0L;
         mesh.bindAndDraw(commandBuffer, bindCache);
-        ITEM_MESH_NANOS += System.nanoTime() - meshStart;
+        if (BIND_TIMINGS) ITEM_MESH_NANOS += System.nanoTime() - meshStart;
     }
+
+    /**
+     * Whether the per-draw bind timings are collected: {@code -Dceltium.vulkan.bindTimings=true}.
+     * <p>
+     * The texture pipeline's five clock reads were made opt-in when they were measured as unconditional cost; this
+     * family's were not, and the item pipeline is the busiest one in a world scene (124 of a frame's 194 draws on the
+     * dense scene). Ten {@code System.nanoTime()} calls per draw is ~1.2 us of clock reads on a 124-draw frame, paid
+     * by every run to fill counters only a diagnostics report reads. The counters keep their meaning: with the flag
+     * off they read 0, which the reports already treat as a missing measurement, and the draw counts beside them stay
+     * unconditional.
+     */
+    private static final boolean BIND_TIMINGS = Boolean.getBoolean("celtium.vulkan.bindTimings");
 
     /** Nanoseconds inside an item draw's parts, to locate the ten microseconds one draw costs. */
     public static long ITEM_PIPELINE_NANOS;

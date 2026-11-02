@@ -7240,8 +7240,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (reason != null) {
             celtium$noteFlushSite(2);
             this.immediateLastRefusal = reason;
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         if (formatId == 5 && this.lightCoordLogged < 4 && vertexAddress != 0 && vertexCount > 0) {
@@ -7391,8 +7392,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // of the vanilla layouts the mask is holding back, and the mask is a comma-separated list of numbers.
             this.immediateLastRefusal = "format " + formatId + " ("
                     + VulkanImmediateFormats.nameOf(formatId) + ") not in celtium.vulkan.immediateFormats";
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         celtium$offerStage(6);
@@ -7417,8 +7419,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     ? "no native layout for a " + vertexStride + "-byte vertex (id 0: the uploader's CELTIUM_UNMAPPED"
                     + " and CELTIUM_UNMAPPED_LAYOUT lines carry its element list, width, count and indices)"
                     : "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ", no such layout)";
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         celtium$offerStage(7);
@@ -7429,8 +7432,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateLastRefusal = "layout id " + formatId + " ("
                     + VulkanImmediateFormats.nameOf(formatId) + ") has stride " + vertexStride + ", expected "
                     + expectedStride;
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         if (formatId == 3 || formatId == 5) {
@@ -7441,29 +7445,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // that never fires with no way to tell whether it is unreachable or merely rare.
             this.immediateLastRefusal = "lightmapped batch with no lightmap texture mirrored (id=" + this.lightmapGlId
                     + " unit=" + this.lightmapUnit + ")";
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         celtium$offerStage(8);
         if (formatId >= 2 && this.immediateState.boundTextureName() == 0 && !celtium$layoutHasNoTexture(formatId)) {
             this.immediateLastRefusal = "textured batch with no texture bound";
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         if (formatId == 3 && this.lightmapTexture == null) {
             // The BLOCK family samples the lightmap, so a missing mirror means the batch would be lit wrongly.
             this.immediateLastRefusal = "block batch with no lightmap texture mirrored";
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
         if (indices == null) {
             this.immediateLastRefusal = "topology " + drawMode + " has no expansion";
-            // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            this.flushPendingBeforeGlDraw();
+            // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+            // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+            celtium$flushBeforeRefusal();
             return false;
         }
         try {
@@ -8117,8 +8125,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
                 this.textureStats.noteTextureRefusalBeforeAccept();
                 this.immediateStatistics.noteRefusedBeforeAppend();
-                // Order (S10): what is already accepted is drawn before this batch goes to GL.
-                this.flushPendingBeforeGlDraw();
+                // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+                // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+                celtium$flushBeforeRefusal();
                 return false;
             }
             }
@@ -8140,8 +8149,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
                 this.immediateStatistics.noteParticleDescriptorRefusals();
                 this.immediateStatistics.noteRefusedBeforeAppend();
-                // Order (S10): what is already accepted is drawn before this batch goes to GL.
-                this.flushPendingBeforeGlDraw();
+                // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+                // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+                celtium$flushBeforeRefusal();
                 return false;
             }
 
@@ -8171,8 +8181,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateStatistics.noteAppendCount();
             if (!appended) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
-                // Order (S10): what is already accepted is drawn before this batch goes to GL.
-                this.flushPendingBeforeGlDraw();
+                // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
+                // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
+                celtium$flushBeforeRefusal();
                 return false;
             }
             if (this.currentGroupPreTransformed) {
@@ -9556,6 +9567,28 @@ this.frameBufferOpen = false;
     private void celtium$noteFlushSite(int site) {
         if (site >= 0 && site < this.flushSiteCounts.length) {
             this.flushSiteCounts[site]++;
+        }
+    }
+
+    /**
+     * The ordering flush a refusal site runs before it declines a batch.
+     * <p>
+     * The rule it serves is S10: what the renderer already accepted is drawn before the batch that is about to be
+     * refused is handed to OpenGL. Under the GL-less renderer there is no OpenGL to hand it to - a refused batch is
+     * drawn by nobody, which the refusal counters already name - so there is nothing for the accepted work to be
+     * ordered against, and the window the flush opened is cost with no consequence. Measured on leg {@code r36win}
+     * (the shipped profile, 2428 frames, AMD RX 6400): the warm window refuses nothing ({@code refusedBeforeAppend=0},
+     * {@code offTargetRefusals=none}), so this changes no picture there; in a pack whose mods offer layouts the
+     * immediate path declines it removes one window per refused batch, and a window is the renderer's most expensive
+     * unit (35.8 a frame at ~17 us of recording each on that leg).
+     * <p>
+     * The comparison switch that <em>does</em> hand batches to GL ({@code -Dceltium.vulkan.immediate=false}) keeps the
+     * flush, because there the rule is true again. The call sites keep their own {@code celtium$noteFlushSite} calls:
+     * that census counts requests, and a request that no longer opens a window is still the fact it records.
+     */
+    private void celtium$flushBeforeRefusal() {
+        if (!IMMEDIATE_DRAWING_ENABLED) {
+            this.flushPendingBeforeGlDraw();
         }
     }
 
@@ -11359,6 +11392,13 @@ this.frameBufferOpen = false;
         }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                 celtium$windowBeginInfo(renderPass, framebuffer, passWidth, passHeight);
+        // The window's own fixed cost, split off from the group loop: the two brackets that existed inside a window
+        // (winBeginPass, wrecLoop) left ~10 us of the measured ~17 us per window unnamed on leg r36win (35.8 windows
+        // a frame, winRecord 0.5-0.7 ms). This one is the sampling-side transitions and the probes between the begin
+        // info and the pass; winPassEnd is the pass close. Both are opt-in like every other bracket
+        // (-Dceltium.vulkan.passSplit / -Dceltium.vulkan.brackets).
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("winPrefix");
+        try {
         if (this.publishedChainOutput != null
                 && celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)) {
             // The immediate pipelines declare SHADER_READ_ONLY_OPTIMAL in their descriptors while the published
@@ -11428,6 +11468,9 @@ this.frameBufferOpen = false;
                 record(probeLine);
             }
         }
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("winPrefix");
+        }
         // The window timestamps feed the GPU pass report and, through windowGpuMainNanos, the frame budget's gpu
         // column: -Dceltium.vulkan.frameBudget=true asks for that column, so it opens this path too. The cost (two
         // timestamp writes per window and one readback per frame) is paid only by a run that asked for a measurement.
@@ -11482,7 +11525,10 @@ this.frameBufferOpen = false;
             drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         }
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
+        // The pass close on its own (see winPrefix): the unnamed remainder of a window is either its prefix or this.
+        FramePassTimings.begin("winPassEnd");
         vkCmdEndRenderPass(this.commandBuffer);
+        FramePassTimings.end("winPassEnd");
         gpuMark("win-end");
         if (windowSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
@@ -18043,26 +18089,30 @@ this.frameBufferOpen = false;
                             }
                         }
                     }
-                    long variantStart = System.nanoTime();
+                    // The per-family draw clock pair is opt-in with the other batch timings: two System.nanoTime()
+                    // calls per group draw is 324 clock reads on the shipped profile's 162 groups, paid by every run
+                    // to fill counters only the diagnostics report reads. The counts stay unconditional, so "how many
+                    // draws of each family" is still answered without the timings.
+                    long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
                     if (pipeline instanceof VulkanImmediateTexturePipeline value) {
                         value.draw(this.commandBuffer, mesh, push, bindDescriptor, this.immediateBindCache);
-                        this.textureDrawNanos += System.nanoTime() - variantStart;
+                        if (BATCH_TIMINGS) this.textureDrawNanos += System.nanoTime() - variantStart;
                         this.textureDrawCount++;
                     } else if (pipeline instanceof VulkanImmediateItemPipeline value) {
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                        this.itemDrawNanos += System.nanoTime() - variantStart;
+                        if (BATCH_TIMINGS) this.itemDrawNanos += System.nanoTime() - variantStart;
                         this.itemDrawCount++;
                     } else if (pipeline instanceof VulkanImmediateBlockPipeline value) {
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                        this.blockDrawNanos += System.nanoTime() - variantStart;
+                        if (BATCH_TIMINGS) this.blockDrawNanos += System.nanoTime() - variantStart;
                         this.blockDrawCount++;
                     } else if (pipeline instanceof VulkanImmediateParticlePipeline value) {
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                        this.particleDrawNanos += System.nanoTime() - variantStart;
+                        if (BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
                         this.particleDrawCount++;
                     } else {
                         ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);
-                        this.genericDrawNanos += System.nanoTime() - variantStart;
+                        if (BATCH_TIMINGS) this.genericDrawNanos += System.nanoTime() - variantStart;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
