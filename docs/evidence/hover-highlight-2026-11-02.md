@@ -55,13 +55,21 @@ CELTIUM_GROUP_BOUNDS frame=8 group=1417 fmt=1 worldPass=false target=1077150275 
 ⇒ **alpha write は原因ではない**（この group は window target ではない: `target=1077150275` ≠ 0）。
 変更は revert した。この 1 点で「coverage 説」は落ちる。
 
+## 棄却した仮説 2: 「prepared pipeline が違う」
+
+`CELTIUM_GROUP_BOUNDS` に `prepared=<pipeline class>` を足して測った leg `r23c-prepared`（同じ scene/flags、
+新 JAR `d6e7bce663cf70043b638c97`）: その frame の POSITION_COLOR group 6 個は**すべて**
+`prepared=VulkanImmediatePipeline`（highlight だけ別 class、ではない）。この仮説も落ちる。
+
 ## 残る候補（次の判別）
 
 group は受理・close・draw されているので、残るのは **draw が画素を残さない形**だけ:
 
-1. **prepared pipeline が mesh の layout と合っていない**（例: POSITION_COLOR mesh を texture pipeline で描く、
-   stride 違い）。この round で `CELTIUM_GROUP_BOUNDS` に `prepared=<pipeline class>` を追加したので、
-   次の leg でこの group と隣の group の pipeline class を 1 行で比べられる。
+1. **group の scissor**。BH-09 の規則で clip 矩形は group ごとに capture され（`currentGroupScissor` /
+   `currentGroupScissorEnabled`）、draw 時に `celtium$setGroupViewport` が適用する。highlight の group だけ
+   scissor が有効/別矩形なら、GL の参照では出る絵がここでだけ消える。次の leg はこの 2 値を
+   `CELTIUM_GROUP_BOUNDS` に足して、highlight と隣の可視 group を比べる（`glScissor` の呼び出し回数は
+   `CELTIUM_GLSTUB` の scissor census で読める）。
 2. viewport / descriptor がこの group だけ違う（同じ window の他 group は出ているので、group 単位の差）。
 3. depth attachment の内容（`depthTest=0` なので test では落ちないが、pass 側の attachment が
    depth を持たない/別物という構成差は残る）。
