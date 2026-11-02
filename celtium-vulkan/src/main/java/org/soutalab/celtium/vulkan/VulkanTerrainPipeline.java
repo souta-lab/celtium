@@ -171,7 +171,6 @@ public final class VulkanTerrainPipeline {
     };
 
     private static final int[] COMPACT_ATTRIBUTE_OFFSETS = { 0, 8, 12, 16, 20 };
-    private static final int[] VANILLA_ATTRIBUTE_OFFSETS = { 0, colourAttributeOffset(), 16, 24, 28 };
 
     /**
      * Where the vanilla-like layout's {@code a_Color} is read from, normally byte 12.
@@ -180,12 +179,24 @@ public final class VulkanTerrainPipeline {
      * change the frame, and if it does not, the attribute description is being ignored rather than reading data that
      * happens to be wrong.
      */
-    private static final boolean NO_TERRAIN_DEPTH = Boolean.getBoolean("celtium.vulkan.noTerrainDepth");
     private static final int COLOUR_ATTR_OFFSET =
             Integer.getInteger("celtium.vulkan.colourAttrOffset", 12).intValue();
 
-    private static int colourAttributeOffset() {
-        return COLOUR_ATTR_OFFSET;
+    /** The depth-test A/B switch: a frame that stays black without depth says the loss is not in depth. */
+    private static final boolean NO_TERRAIN_DEPTH = Boolean.getBoolean("celtium.vulkan.noTerrainDepth");
+
+    /**
+     * {@return the vanilla-like layout's attribute offsets, built when a layout is asked for}.
+     * <p>
+     * A method rather than a static array, because Java assigns static finals in declaration order: an array
+     * initialised above {@link #COLOUR_ATTR_OFFSET} captures that field's default 0 and declares {@code a_Color} at
+     * byte 0, so the shader reads the first position float's low byte as the colour. That is not hypothetical - it
+     * shipped on 2026-11-01 ("twelve startup properties are resolved once") and the leg's
+     * {@code CELTIUM_TERRAIN_LAYOUT colorOffset=0} against rc26's {@code 12} was the black floor covering 20.02% of
+     * the presented frame. Building the array at call time reads the field after class initialisation has finished.
+     */
+    private static int[] vanillaAttributeOffsets() {
+        return new int[] { 0, COLOUR_ATTR_OFFSET, 16, 24, 28 };
     }
 
     /**
@@ -211,16 +222,26 @@ public final class VulkanTerrainPipeline {
         }
 
         static VertexLayout forPass(TerrainRenderPass pass) {
-            int stride = pass.vertexType().getVertexFormat().getStride();
+            return forVertexStride(pass.vertexType().getVertexFormat().getStride(), pass.name());
+        }
+
+        /**
+         * {@return the layout a vertex stride selects}.
+         * <p>
+         * Separated from {@link #forPass} so the stride-to-layout mapping - including the colour offset the shader
+         * depends on - can be checked without constructing a game pass. The refusal stays here: a format this backend
+         * does not implement must not be drawn wrong.
+         */
+        static VertexLayout forVertexStride(int stride, String passName) {
             if (stride == 24) {
                 return new VertexLayout(24, COMPACT_ATTRIBUTE_FORMATS, COMPACT_ATTRIBUTE_OFFSETS,
                         SpirvShaders.SOLID_VERTEX);
             }
             if (stride == 32) {
-                return new VertexLayout(32, VANILLA_ATTRIBUTE_FORMATS, VANILLA_ATTRIBUTE_OFFSETS,
+                return new VertexLayout(32, VANILLA_ATTRIBUTE_FORMATS, vanillaAttributeOffsets(),
                         SpirvShaders.SOLID_VERTEX_VANILLA);
             }
-            throw new IllegalArgumentException("Terrain pass '" + pass.name() + "' uses a " + stride
+            throw new IllegalArgumentException("Terrain pass '" + passName + "' uses a " + stride
                     + " byte vertex format that the Vulkan backend does not implement; OpenGL stays active");
         }
     }

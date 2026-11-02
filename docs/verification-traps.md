@@ -263,3 +263,21 @@ slow path（prepareImmediate・group open・mirror supply）だった。同じ�
 **規約**: bracket は**全経路**（成功・拒否・早期 return の全て）で閉じる。片方の経路にしか `end` が無い計器の値は、
 「その区間のコスト」ではなく**別の区間の残差**として読む。修正後は `offMerge` が判定だけを、slow path は
 offer stage 10→12 のマーク（`BATCH_TIMINGS`）と `acceptPreflightNanos` が持つ。
+
+## 静的 final の宣言順は設定値を黙って 0 にする（2026-11-02 実測）
+
+**症状**: ワールドの地形だけが黒く、空・TESR（チェスト）・HUD は正しく点灯する。同じ fixture・同じ scene の
+rc26 JAR は通るので「renderer の回帰」に見える。`presentedBlackFraction=0.200206`（scene 上限 0.05）。
+
+**原因**: 2026-11-01 の「startup property を1回だけ読む」変更で `COLOUR_ATTR_OFFSET` を static final にしたが、
+宣言が**それを読む配列より後**に置かれた。`VANILLA_ATTRIBUTE_OFFSETS = { 0, colourAttributeOffset(), ... }` は
+クラス初期化の宣言順で評価されるため、この時点の `COLOUR_ATTR_OFFSET` は既定値 0。地形の `a_Color` が
+byte 12 ではなく byte 0（position の float の下位バイト）を読み、地形が黒くなった。
+
+**判別**: `CELTIUM_TERRAIN_LAYOUT` の `colorOffset` が rc26 の 12 に対し 0。ログ1行で決まる。同じ変更群の他の
+static final は、初期化時点で読まれない（実行時にしか読まれない）ため無事だった。
+
+**規約**: 設定値を static final にする時は、**その値を初期化時に読む static 初期化子より前**に宣言する。
+配列やレイアウトのように初期化時に確定する値は、static 配列ではなく**呼び出し時に組み立てるメソッド**にすると
+順序依存が構造的に消える。`TerrainVertexLayoutTest` が offset 12 を固定する（配列を先に戻すと
+`expected: <12> but was: <0>` で赤）。
