@@ -62,13 +62,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // The remaining vertex/texcoord/colour spellings a mod may use: none is in the stub's table, so each one
             // reaches the generic unknown-symbol no-op - one notice and then nothing per call.
             //
-            // The spellings that now have a legacy route are not listed here: glVertex2f/2d/3d/3i and
-            // glTexCoord2i/2s are routed above, and a name in this set would shadow its route if the two were ever
-            // evaluated in the other order - the trap the glLightfv note at the top of this set records.
-            "glNormal3d", "glColor3b", "glColor3d", "glColor4ui", "glRectf", "glRecti",
+            // The spellings that now have a legacy route are not listed here: glVertex2f/2d/3d/4f/4d/3i and
+            // glTexCoord2i/2s, and this round's glRectf/glRecti/glRectd, are routed above - and a name in this set
+            // would shadow its route if the two were ever evaluated in the other order, the trap the glLightfv note at
+            // the top of this set records. glVertex4f/glVertex4d were in this set while already routed above; they are
+            // gone rather than left as a trap that only the evaluation order keeps from firing.
+            "glNormal3d", "glColor3b", "glColor3d", "glColor4ui",
             "glIndexi", "glIndexf", "glEdgeFlag", "glFogCoordf",
-            "glVertex4f", "glVertex4d", "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
-            "glMultiTexCoord4f", "glNormal3i", "glColor4b", "glRectd", "glRasterPos2i", "glRasterPos4f",
+            "glTexCoord3f", "glTexCoord4f", "glMultiTexCoord2d", "glMultiTexCoord3f",
+            "glMultiTexCoord4f", "glNormal3i", "glColor4b", "glRasterPos2i", "glRasterPos4f",
             "glIndexd", "glIndexs",
             // The rest of the raster/clear state that the table lists as a no-op on purpose (the Vulkan side mirrors
             // that state through the GlStateManager hooks, not through these raw setters).
@@ -497,10 +499,23 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             return;
         }
         if ("glMultiTexCoord2f".equals(name) && "(IFF)V".equals(descriptor)) {
-            // A no-op by design: the light map's coordinate pair reaches the renderer through LightmapCoordsMixin
-            // (OpenGlHelper.setLightmapTextureCoords), not through this call. It was still crossing a native trampoline
-            // to do nothing - measured at 3.3e6 calls in one session, the hottest entry point in the log - so the call
-            // answers with a bare return instead.
+            // The light map's coordinate pair reaches the renderer through LightmapCoordsMixin
+            // (OpenGlHelper.setLightmapTextureCoords), not through this call, so the default answer is a bare return:
+            // it was still crossing a native trampoline to do nothing - measured at 3.3e6 calls in one session, the
+            // hottest entry point in the log.
+            //
+            // With the legacy capture armed this is not a no-op any more: unit 0 IS the coordinate the capture's
+            // layouts carry, and a mod drawing legacy geometry with the multi-texture spelling was keeping the previous
+            // UV - the same wrong-atlas-region defect glTexCoord2i had. The unit decides, inside the capture: unit 0
+            // is applied, any other unit is counted, because writing a lightmap coordinate into the albedo pair is a
+            // wrong picture rather than a missing one.
+            if (LEGACY_IMMEDIATE) {
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.FLOAD, 1);
+                method.visitVarInsn(Opcodes.FLOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glLegacyMultiTexCoord2f", "(IFF)V", false);
+            }
             method.visitInsn(Opcodes.RETURN);
             return;
         }
@@ -618,6 +633,31 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (LEGACY_IMMEDIATE && "glTexCoord2s".equals(name) && "(SS)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyTexCoord2s", "(II)V");
+            return;
+        }
+        // glRect* is the one legacy primitive that is not a vertex spelling: GL defines it as a whole quad, so each
+        // call is a draw. It was in VOID_NOOPS, which means a mod drawing its boxes this way lost the rectangle itself.
+        // The capture expands it with GL's own four (texcoord, vertex) pairs, in the layout the run is opened for.
+        if (LEGACY_IMMEDIATE && "glRectf".equals(name) && "(FFFF)V".equals(descriptor)) {
+            for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyRectf", "(FFFF)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glRectd".equals(name) && "(DDDD)V".equals(descriptor)) {
+            for (int slot = 0; slot < 8; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glLegacyRectd", "(DDDD)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glRecti".equals(name) && "(IIII)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyRecti", "(IIII)V");
+            return;
+        }
+        if (LEGACY_IMMEDIATE && "glRects".equals(name) && "(SSSS)V".equals(descriptor)) {
+            emitLegacyIntRoute(method, "glLegacyRects", "(IIII)V");
             return;
         }
         // The stub's table answers these state setters with SEM_NOOP ("record only - state the Vulkan side owns or

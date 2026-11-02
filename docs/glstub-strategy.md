@@ -10,18 +10,25 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
 
 ## 現行コードの事実（2026-10-29 時点で確認）
 
-| 項目 | 現状 |
+| 項目 | 現状（2026-11-02 改訂） |
 |---|---|
-| `glBegin` | `SEM_BEGIN` → `celtium$noteImmediateBegin(mode)`。**呼び出し元の記録のみで頂点は取らない** |
-| `glEnd` | `SEM_END` → `BEGIN_END_CALLS` を加算するだけ |
-| `glVertex3f` / `glTexCoord2f` / `glMultiTexCoord2f` | 汎用 no-op 表に登録。**頂点は捨てられる** |
+| `glBegin`/`glEnd` | `-Dceltium.gless.legacyImmediate=true` の時だけ `LegacyImmediateCapture` が区間を開閉し、頂点を
+  `POSITION_TEX_COLOR`(24B)/`POSITION_COLOR`(16B) に詰めて既存の即時描画経路へ渡す。**既定offでは従来どおり記録のみ** |
+| `glVertex*` | 2f/2d/3f/3d/4f/4d/2i/3i/4i/2s/3s を capture が受ける（4成分は w で除算、w=0 は理由付き拒否）。既定offでは no-op |
+| `glTexCoord*` / `glMultiTexCoord2f` | 2f/2d/2i/2s と、`glMultiTexCoord2f` の **unit 0** を capture が受ける。unit≠0 は数えるだけで書かない
+  （lightmap座標をalbedoのUVにしない）。変換器の既定応答は bare return のまま（lightmapは`LightmapCoordsMixin`経由） |
+| `glRect*` | 1呼び出し＝1クアッド。`Begin(QUADS)`＋GL定義の4組(TexCoord,Vertex)＋`End`に展開して同じ sink へ渡す。
+  `glBegin`の内側での`glRect`はGL自身のエラーなので名前付きで数える |
 | Tessellator / 即時描画（vanilla 経路） | `submitImmediateBatch(null, stride, formatId, address, count, mode)` で実描画。
   format 1 = POSITION_COLOR（stride 16）、format 2 = POSITION_TEX_COLOR（stride 24） |
 | FBO / chain pair | `GllessFrameTarget` / `PostChainBridge` / `VulkanImmediateTexturePipeline` で既定描画は通る。
   多段 FBO（GregTech Bloom）・Raw FBO の整合は RC7/RC8 で前進、Windows 実測は未完 |
-| Display List | `glNewList`/`glCallList` は描画内容の再実行/コンパイル経路が限定的 |
+| Display List | `glNewList`/`glCallList` は描画内容の再実行/コンパイル経路が限定的。**list compile中のlegacy geometryは
+  captureが拒否して数える**（モデル経路がlistの頂点を持つ） |
 
-⇒ ユーザー指摘の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**現行コードで事実**（2026-10-29 確認）。
+⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、現在は上の表の状態。
+legacy capture は既定offのまま: 受入は[plan.md](plan.md)のgateどおり（validation 0・device lost 0・AMD/Intelの
+world+menu leg）で、それまで既定を反転しない。頂点は取るが、**画面に出ることをGPUで確認していない**。
 
 ## 参考実装と採用順位
 

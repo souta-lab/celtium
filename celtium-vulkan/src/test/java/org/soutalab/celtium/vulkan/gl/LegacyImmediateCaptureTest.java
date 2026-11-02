@@ -343,4 +343,84 @@ class LegacyImmediateCaptureTest {
         assertEquals(1, refusing.refusals(), "the loss is counted");
         assertTrue(refusing.lastRefusal().contains("w=0"), "and named: " + refusing.lastRefusal());
     }
+
+    /**
+     * {@code glRect} is a whole quad in one call, so the capture has to write exactly the four (texcoord, vertex) pairs
+     * GL defines for it - in this order, with the sheet-corner UVs, and leaving the current coordinate at {@code (0,1)}
+     * as the four {@code TexCoord2f} calls would.
+     */
+    @Test
+    void aRectPacksTheFourCornersGlExpandsItInto() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, true, false, GATE));
+        assertTrue(capture.rect(1.0f, 2.0f, 5.0f, 6.0f), "the rectangle is appended");
+        assertTrue(capture.end(sink));
+        assertArrayEquals(new int[] {LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR,
+                LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR, 4, GL11.GL_QUADS}, sink.lastShape(),
+                "a rect run is one four-vertex quad in the textured layout");
+        float[][] corners = {{1.0f, 2.0f, 0.0f, 0.0f}, {5.0f, 2.0f, 1.0f, 0.0f},
+                {5.0f, 6.0f, 1.0f, 1.0f}, {1.0f, 6.0f, 0.0f, 1.0f}};
+        long base = capture.address();
+        for (int vertex = 0; vertex < corners.length; vertex++) {
+            long at = base + (long) vertex * LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR;
+            assertEquals(corners[vertex][0], MemoryUtil.memGetFloat(at), "x of vertex " + vertex);
+            assertEquals(corners[vertex][1], MemoryUtil.memGetFloat(at + 4L), "y of vertex " + vertex);
+            assertEquals(0.0f, MemoryUtil.memGetFloat(at + 8L), "a rect is flat: z stays zero");
+            assertEquals(corners[vertex][2], MemoryUtil.memGetFloat(at + 12L), "u of vertex " + vertex);
+            assertEquals(corners[vertex][3], MemoryUtil.memGetFloat(at + 16L), "v of vertex " + vertex);
+        }
+        assertEquals(4, capture.submittedVertices());
+    }
+
+    /** An untextured rect still appends its corners; the layout simply has no coordinate to carry. */
+    @Test
+    void anUntexturedRectUsesTheColourOnlyLayout() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, false, false, GATE));
+        assertTrue(capture.rect(-1.0f, -1.0f, 1.0f, 1.0f));
+        assertTrue(capture.end(sink));
+        assertArrayEquals(new int[] {LegacyImmediateCapture.STRIDE_POSITION_COLOR,
+                LegacyImmediateCapture.FORMAT_POSITION_COLOR, 4, GL11.GL_QUADS}, sink.lastShape());
+        long base = capture.address();
+        assertEquals(-1.0f, MemoryUtil.memGetFloat(base), "first x");
+        long last = base + 3L * LegacyImmediateCapture.STRIDE_POSITION_COLOR;
+        assertEquals(-1.0f, MemoryUtil.memGetFloat(last), "the fourth corner is the first x again");
+        assertEquals(1.0f, MemoryUtil.memGetFloat(last + 4L), "and the second y");
+    }
+
+    /** A {@code glRect} with no run open is GL's own error, and it is counted rather than appended to nothing. */
+    @Test
+    void aRectWithoutAnOpenRunIsRefusedByName() {
+        LegacyImmediateCapture capture = capture();
+        assertFalse(capture.rect(0.0f, 0.0f, 1.0f, 1.0f), "no run is open");
+        assertEquals(1, capture.rectRefusals());
+        assertTrue(capture.lastRefusal().contains("glRect"), "named: " + capture.lastRefusal());
+        assertEquals(0, capture.submittedVertices(), "nothing was drawn");
+    }
+
+    /**
+     * {@code glMultiTexCoord2f(GL_TEXTURE0, ...)} is {@code glTexCoord2f}: the one coordinate pair these layouts carry.
+     * Any other unit has no consumer, and writing it into that pair would make a light-map coordinate the albedo UVs -
+     * a wrong picture rather than a missing one - so it is counted instead.
+     */
+    @Test
+    void theMultiTextureSpellingAppliesUnitZeroAndCountsTheOthers() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, true, false, GATE));
+        capture.texCoordUnit0(0.25f, 0.75f);
+        capture.vertex3f(1.0f, 1.0f, 0.0f);
+        capture.noteOtherTexUnit(1);
+        capture.vertex3f(2.0f, 2.0f, 0.0f);
+        assertTrue(capture.end(sink));
+        long base = capture.address();
+        assertEquals(0.25f, MemoryUtil.memGetFloat(base + 12L), "unit 0 reaches the quad");
+        assertEquals(0.75f, MemoryUtil.memGetFloat(base + 16L));
+        long second = base + LegacyImmediateCapture.STRIDE_POSITION_TEX_COLOR;
+        assertEquals(0.25f, MemoryUtil.memGetFloat(second + 12L), "unit 1 does not overwrite the pair");
+        assertEquals(1, capture.otherTexUnitCoords(), "and is counted");
+        assertEquals(1, capture.lastOtherTexUnit(), "with its unit named");
+    }
 }

@@ -1545,6 +1545,34 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2s(u, v);
     }
 
+    /**
+     * {@code glMultiTexCoord2f}: unit 0 is the coordinate every immediate layout here carries, so it is the same call as
+     * {@code glTexCoord2f}; any other unit is counted rather than written into that one pair.
+     */
+    public static void glLegacyMultiTexCoord2f(int unit, float u, float v) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyMultiTexCoord2f(unit, u, v);
+    }
+
+    /** {@code glRectf}: one complete quad, expanded by the capture into four texcoord/vertex pairs. */
+    public static void glLegacyRectf(float x1, float y1, float x2, float y2) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRectf(x1, y1, x2, y2);
+    }
+
+    /** {@code glRectd}, narrowed to the float layout the capture stores. */
+    public static void glLegacyRectd(double x1, double y1, double x2, double y2) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRectd(x1, y1, x2, y2);
+    }
+
+    /** {@code glRecti}: GL rounds the corners to float, which is what the layout carries. */
+    public static void glLegacyRecti(int x1, int y1, int x2, int y2) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRecti(x1, y1, x2, y2);
+    }
+
+    /** {@code glRects}: a {@code (SSSS)V} caller leaves the shorts sign-extended in int locals. */
+    public static void glLegacyRects(int x1, int y1, int x2, int y2) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRects(x1, y1, x2, y2);
+    }
+
     /** {@code glColor4ub}: the bytes are unsigned and map to [0, 1], as GL does. */
     public static void glColor4ub(byte red, byte green, byte blue, byte alpha) {
         glColor4f((red & 0xFF) / 255.0F, (green & 0xFF) / 255.0F, (blue & 0xFF) / 255.0F, (alpha & 0xFF) / 255.0F);

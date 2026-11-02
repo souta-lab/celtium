@@ -73,6 +73,11 @@ public class TransformerRouteVerifierCheck {
         "glVertex2f", "glVertex2d", "glVertex3f", "glVertex3d", "glVertex4f", "glVertex4d",
         "glVertex2i", "glVertex3i", "glVertex4i", "glVertex2s", "glVertex3s",
         "glTexCoord2i", "glTexCoord2s",
+        // The rectangle spellings and the multi-texture one. glRect* is a whole quad per call rather than a vertex
+        // spelling, so its route is a composite one; glMultiTexCoord2f routes only when the capture is armed - its
+        // default answer stays the bare return the light map's own path made it. Each is verified in the configuration
+        // that installs it, which is why the script runs this list twice.
+        "glRectf", "glRectd", "glRecti", "glRects", "glMultiTexCoord2f",
         "glBindFramebufferEXT", "glBindFramebufferARB", "glFramebufferTexture2DEXT", "glFramebufferTexture2DARB",
         "glCheckFramebufferStatusEXT", "glCheckFramebufferStatusARB",
         "nglDeleteTextures", "nglDeleteBuffers", "nglDeleteFramebuffers", "nglGenTextures", "nglGenBuffers",

@@ -31,9 +31,11 @@ import org.lwjgl.system.MemoryUtil;
  * in a named counter. Under GL-less a refusal draws nothing, so the count is the only way the loss is visible.</li>
  * </ul>
  * <p>
- * Not captured, deliberately: normals and multi-texture coordinates. Every mode here is drawn through an unlit
- * immediate layout, so a normal would have no consumer; a mod that needs lit geometry has to arrive through a layout
- * with a normal element.
+ * Not captured, deliberately: normals, and multi-texture coordinates on units other than 0. Every mode here is drawn
+ * through an unlit immediate layout, so a normal would have no consumer; a mod that needs lit geometry has to arrive
+ * through a layout with a normal element. Unit 0 is captured because it is the pair these layouts carry - a
+ * {@code glMultiTexCoord2f(GL_TEXTURE0, ...)} is the same coordinate as {@code glTexCoord2f} - while a unit-1
+ * coordinate is only counted, never written into that pair.
  */
 public final class LegacyImmediateCapture {
 
@@ -99,6 +101,9 @@ public final class LegacyImmediateCapture {
     private long listRefusals;
     private long nestedRefusals;
     private long sinkRefusals;
+    private long rectRefusals;
+    private long otherTexUnitCoords;
+    private int lastOtherTexUnit = -1;
     private String lastRefusal = "";
 
     /** {@return whether a run is currently being collected}. */
@@ -245,6 +250,69 @@ public final class LegacyImmediateCapture {
         texCoord((float) u, (float) v);
     }
 
+    /**
+     * {@code glMultiTexCoord2f(GL_TEXTURE0, s, t)}: the unit-0 spelling of {@link #texCoord}.
+     * <p>
+     * GL keeps one current texture coordinate per unit and the immediate layouts here carry exactly one pair, which is
+     * the pair the sampler reads - so unit 0 is the same coordinate and every other unit has no consumer. The caller
+     * counts those other units instead of applying them: writing a unit-1 coordinate into the only pair would make a
+     * mod's light-map coordinate its albedo coordinate, which is a wrong picture rather than a missing one.
+     */
+    public void texCoordUnit0(float u, float v) {
+        texCoord(u, v);
+    }
+
+    /**
+     * {@code glRectf}/{@code glRecti}/{@code glRectd}/{@code glRects}: GL defines the rectangle as one complete quad, not
+     * as a vertex spelling, so it arrives as a whole run rather than as four calls the mod made.
+     * <p>
+     * The expansion is GL's own, in this order, and it leaves the current texture coordinate at {@code (0,1)} exactly as
+     * the four {@code TexCoord2f} calls would: {@code (0,0)->(x1,y1)}, {@code (1,0)->(x2,y1)},
+     * {@code (1,1)->(x2,y2)}, {@code (0,1)->(x1,y2)}. The colour is untouched. It is written through {@link #texCoord}
+     * and {@link #vertex} so a two-component rectangle lands in whichever layout the run was opened for - textured
+     * rectangles carry the sweep above, untextured ones ignore it.
+     *
+     * @return whether the four vertices were appended; {@code false} when no run is open, which is what a mod calling
+     *         {@code glRect} between its own {@code glBegin}/{@code glEnd} gets (GL rejects that call outright)
+     */
+    public boolean rect(float x1, float y1, float x2, float y2) {
+        if (!this.active) {
+            this.rectRefusals++;
+            this.lastRefusal = "glRect outside a run the capture opened";
+            return false;
+        }
+        texCoord(0.0f, 0.0f);
+        vertex(x1, y1, 0.0f);
+        texCoord(1.0f, 0.0f);
+        vertex(x2, y1, 0.0f);
+        texCoord(1.0f, 1.0f);
+        vertex(x2, y2, 0.0f);
+        texCoord(0.0f, 1.0f);
+        vertex(x1, y2, 0.0f);
+        return true;
+    }
+
+    /** Records one multi-texture coordinate for a unit other than 0, which these layouts cannot carry. */
+    public void noteOtherTexUnit(int unit) {
+        this.otherTexUnitCoords++;
+        this.lastOtherTexUnit = unit;
+    }
+
+    /** {@return how many multi-texture coordinates for a non-zero unit were counted instead of applied}. */
+    public long otherTexUnitCoords() {
+        return this.otherTexUnitCoords;
+    }
+
+    /** {@return the unit of the last non-zero multi-texture coordinate seen}. */
+    public int lastOtherTexUnit() {
+        return this.lastOtherTexUnit;
+    }
+
+    /** {@return how many {@code glRect} calls arrived with no run open to put them in}. */
+    public long rectRefusals() {
+        return this.rectRefusals;
+    }
+
     /** {@code glColor4f}: the colour every following vertex carries until it is set again. */
     public void color(float red, float green, float blue, float alpha) {
         this.red = red;
@@ -331,7 +399,9 @@ public final class LegacyImmediateCapture {
         return "legacyImmediate runs=" + this.runs + " submitted=" + this.submittedRuns
                 + " vertices=" + this.submittedVertices + " modeRefusals=" + this.modeRefusals
                 + " listRefusals=" + this.listRefusals + " nestedRefusals=" + this.nestedRefusals
-                + " sinkRefusals=" + this.sinkRefusals + " refusals=" + this.refusals;
+                + " sinkRefusals=" + this.sinkRefusals + " rectRefusals=" + this.rectRefusals
+                + " otherTexUnits=" + this.otherTexUnitCoords
+                + " refusals=" + this.refusals;
     }
 
     public long runs() {

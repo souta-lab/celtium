@@ -2452,6 +2452,91 @@ public final class CeltiumGlStub implements FunctionProvider {
         celtium$legacyTexCoord2f((float) u, (float) v);
     }
 
+    /** {@code GL_QUADS}: the primitive {@code glRect} is defined to expand into. */
+    private static final int LEGACY_RECT_MODE = 7;
+    /** {@code GL_TEXTURE0}: the only unit the immediate layouts here carry a coordinate for. */
+    private static final int LEGACY_TEXTURE0 = 0x84C0;
+
+    /** {@code glRectf}: a complete quad asked for in one call, not a vertex spelling. */
+    public static void celtium$legacyRectf(float x1, float y1, float x2, float y2) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            legacyRect(stub, x1, y1, x2, y2);
+        }
+    }
+
+    /** {@code glRectd}, narrowed to the float layout the capture stores. */
+    public static void celtium$legacyRectd(double x1, double y1, double x2, double y2) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            legacyRect(stub, (float) x1, (float) y1, (float) x2, (float) y2);
+        }
+    }
+
+    /** {@code glRecti}: GL rounds the integer corners to float, which is what the layout carries. */
+    public static void celtium$legacyRecti(int x1, int y1, int x2, int y2) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            legacyRect(stub, (float) x1, (float) y1, (float) x2, (float) y2);
+        }
+    }
+
+    /** {@code glRects}: a {@code (SSSS)V} descriptor's locals are sign-extended ints, so this is the integer form. */
+    public static void celtium$legacyRects(int x1, int y1, int x2, int y2) {
+        celtium$legacyRecti(x1, y1, x2, y2);
+    }
+
+    /**
+     * The one expansion every {@code glRect*} spelling reaches: GL defines the call as {@code Begin(QUADS)}, four
+     * texcoord/vertex pairs and {@code End}, so it is recorded as a run of its own through the same begin/rect/end path
+     * a mod's own {@code glBegin} uses - same layout choice, same mode gate, same sink.
+     * <p>
+     * The caller's own run is never disturbed: a {@code glRect} between {@code glBegin} and {@code glEnd} is an error in
+     * GL, and it is counted by name rather than silently appended to a run it does not belong to.
+     */
+    private static void legacyRect(CeltiumGlStub stub, float x1, float y1, float x2, float y2) {
+        if (stub.legacyCapture.active()) {
+            stub.legacyCapture.noteRefusal("glRect inside a glBegin the capture already opened");
+            if (stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
+                stub.legacyRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED rect reason=a glBegin is already open");
+            }
+            return;
+        }
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        boolean textured = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                && vulkan.celtium$texture2dEnabled();
+        // Only a run this call opened is filled: a begin that refused (a display-list compile, a mode the renderer has
+        // no draw for) has already named its reason, and appending into nothing would replace that name with a second
+        // one that says the wrong thing.
+        if (stub.legacyCapture.begin(LEGACY_RECT_MODE, textured, stub.compilingList != 0, LEGACY_MODE_GATE)
+                && stub.legacyCapture.rect(x1, y1, x2, y2)) {
+            celtium$legacyEnd();
+        }
+    }
+
+    /**
+     * {@code glMultiTexCoord2f(unit, s, t)}: unit 0 is the coordinate the immediate layouts here carry, so it is the
+     * same call as {@code glTexCoord2f}; any other unit has no consumer, and it is counted instead of being written into
+     * the one pair - a unit-1 lightmap coordinate used as albedo UVs is a wrong picture, not a missing one.
+     * <p>
+     * The light map's own coordinate pair does not come through here: {@code LightmapCoordsMixin} carries it from
+     * {@code OpenGlHelper.setLightmapTextureCoords}, which is why the transformer's default answer for this name was a
+     * bare return.
+     */
+    public static void celtium$legacyMultiTexCoord2f(int unit, float u, float v) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        if (unit == LEGACY_TEXTURE0) {
+            stub.legacyCapture.texCoordUnit0(u, v);
+        } else {
+            stub.legacyCapture.noteOtherTexUnit(unit);
+        }
+    }
+
     /** Records the colour for {@code glGetFloatv(GL_CURRENT_COLOR)}; fed by every path that sets the mirror. */
     public static void celtium$setCurrentColor(float red, float green, float blue, float alpha) {
         CeltiumGlStub stub = installed;
