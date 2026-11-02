@@ -972,32 +972,132 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<Object[]>> displayLists =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
-    /** Replays and recorded calls per display-list id, for the sky lists' census (RenderGlobal's two of them). */
-    private final int[] listReplayCounts = new int[512];
-    private final long[] listReplayTotals = new long[512];
+    /**
+     * Replays, recorded calls and unresolved calls per display-list id, for the verification line.
+     *
+     * <p><b>Sparse, and that is the fix.</b> These were a fixed {@code int[512]} / {@code long[512]} pair indexed by the
+     * list's GL name, and the census only recorded a replay whose id was below 512. Every measured run replays model
+     * lists whose ids start above 110000 - {@code glGenLists} hands out names from a process-wide counter, and vanilla's
+     * model renderers compile theirs after the GUI and the Tessellator have taken thousands - so the array could not
+     * record the lists the census exists for. Measured on the calibrated world leg {@code r40b-gate}: the verification
+     * line read {@code celtium/lists[none]} on all four of its prints while the same log holds
+     * {@code CELTIUM_DISPLAY_LIST_ORIGIN list=110244 … 110338} for the chest, sign, banner, bed, skull and biped models.
+     * A clean reading produced by a blind instrument is the one failure mode this project keeps finding.
+     *
+     * <p>A {@code Int2IntOpenHashMap} has no id ceiling, and the replay path already does one open-address lookup for the
+     * list payload itself, so this is the same shape of cost as the array it replaces.
+     */
+    /**
+     * The census maps, in a holder of their own.
+     *
+     * <p>Not a style choice: {@code CeltiumGlStub.<clinit>} is at 7936 of HotSpot's 8000-byte {@code HugeMethodLimit}
+     * with these three allocations inline, and a method over the limit is never JIT-compiled - it runs interpreted for
+     * the whole session. Round 20 hit the same wall with the drawing-name set and moved it here; any new static field
+     * initializer in the outer class has to go into a holder like this one.
+     */
+    private static final class ListCensus {
+        static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap REPLAYS =
+                new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+        static final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap CALLS =
+                new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+        /** {@code glCallList} names that resolved to no stored list: the spec ignores them, so geometry is lost. */
+        static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap UNRESOLVED =
+                new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    }
+    /** How many replays were refused because the list was nested deeper than {@link #MAX_LIST_NESTING}. */
+    private static long listReplayNestingOverflow;
+    /**
+     * {@code glCallList} calls whose name was not a list at all ({@code -1} or {@code 0}).
+     * <p>
+     * Kept apart from the unresolved count because the two mean opposite things about the picture: a non-positive name
+     * is the caller saying "this part has no list" and GL defines the call as a no-op, while a real name that resolves
+     * to nothing is geometry the caller expected to draw and did not. The entity leg {@code r41a-entities} measured 1250
+     * of the former and none of the latter, which the single counter reported as {@code unresolved=1250}.
+     */
+    private static long listCallsWithoutAList;
 
-    /** {@return the most-replayed display lists and their recorded call counts}, for the verification line. */
+    /**
+     * {@return the display-list measurement: compiled, replayed, unresolved, held, then the busiest lists}.
+     *
+     * <p>Reported as named totals rather than a bare {@code none}, because the totals are what answer the reported
+     * defect: a run that compiled lists and replayed none has every model in the frame drawn by nobody, and that has to
+     * be readable from the line instead of inferred from the absence of a token. {@code top} carries each id's replay
+     * count and the recorded calls one replay executes, which is what says whether a replay is a model (dozens of calls)
+     * or a sky quad (two).
+     */
     public static String listCensus() {
         CeltiumGlStub stub = installed;
-        if (stub == null) {
-            return "none";
-        }
         StringBuilder text = new StringBuilder();
-        Integer[] ids = new Integer[stub.listReplayCounts.length];
-        for (int i = 0; i < ids.length; i++) {
-            ids[i] = Integer.valueOf(i);
+        text.append("compiled=").append(stub == null ? 0L : stub.displayListsCompiled)
+                .append(" replayed=").append(stub == null ? 0L : stub.displayListsReplayed)
+                .append(" unresolved=").append(stub == null ? 0L : stub.displayListsUnresolved)
+                .append(" noList=").append(listCallsWithoutAList)
+                .append(" nestingOverflow=").append(listReplayNestingOverflow)
+                .append(" held=").append(stub == null ? 0 : stub.displayLists.size())
+                .append(" distinct=").append(ListCensus.REPLAYS.size());
+        if (ListCensus.REPLAYS.isEmpty() && ListCensus.UNRESOLVED.isEmpty()) {
+            return text.toString();
         }
-        java.util.Arrays.sort(ids, (a, b) -> Integer.compare(stub.listReplayCounts[b.intValue()],
-                stub.listReplayCounts[a.intValue()]));
-        for (int i = 0; i < 10 && i < ids.length; i++) {
-            int id = ids[i].intValue();
-            if (stub.listReplayCounts[id] == 0) {
-                break;
+        text.append(" top=[");
+        // Bounded copy, sorted by replay count: the map holds every list the process ever allocated and this line is
+        // printed on every verification pass.
+        it.unimi.dsi.fastutil.ints.Int2IntMap.Entry[] ranked = ListCensus.REPLAYS.int2IntEntrySet()
+                .toArray(new it.unimi.dsi.fastutil.ints.Int2IntMap.Entry[0]);
+        java.util.Arrays.sort(ranked, (a, b) -> Integer.compare(b.getIntValue(), a.getIntValue()));
+        for (int i = 0; i < ranked.length && i < 10; i++) {
+            int id = ranked[i].getIntKey();
+            if (i > 0) {
+                text.append(',');
             }
-            text.append(text.length() == 0 ? "" : ",").append(id).append(":x").append(stub.listReplayCounts[id])
-                    .append("/calls=").append(stub.listReplayTotals[id]);
+            text.append(id).append(":x").append(ranked[i].getIntValue())
+                    .append("/calls=").append(ListCensus.CALLS.get(id));
         }
-        return text.length() == 0 ? "none" : text.toString();
+        text.append(']');
+        if (!ListCensus.UNRESOLVED.isEmpty()) {
+            text.append(" unresolvedTop=[");
+            int unresolvedWritten = 0;
+            for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry : ListCensus.UNRESOLVED.int2IntEntrySet()) {
+                if (unresolvedWritten >= 10) {
+                    break;
+                }
+                text.append(unresolvedWritten == 0 ? "" : ",").append(entry.getIntKey())
+                        .append(":x").append(entry.getIntValue());
+                unresolvedWritten++;
+            }
+            text.append(']');
+        }
+        return text.toString();
+    }
+
+    /** {@return how many replays were refused for nesting past the limit}, for the CPU contract test. */
+    static long listReplayNestingOverflows() {
+        return listReplayNestingOverflow;
+    }
+
+    /**
+     * Registers one replay into the census without a GL call, so the CPU check can prove an id above the old array's
+     * 512 is counted at all.
+     *
+     * <p>The failure this guards against is not hypothetical: the previous census was an {@code int[512]} keyed by the
+     * GL name, every model list in every measured run has an id above 110000, and the line therefore read
+     * {@code celtium/lists[none]} while the run replayed model lists every frame. A summary that says
+     * {@code replayed=0} on such a run is indistinguishable from a summary that cannot count, so the check writes a high
+     * id and reads the line back - the same positive control the no-op and drawing censuses carry.
+     */
+    public static void celtium$noteListReplayForCheck(int list, boolean resolved) {
+        if (resolved) {
+            noteListReplayed(list, 1L);
+        } else if (list <= 0) {
+            listCallsWithoutAList++;
+        } else {
+            ListCensus.UNRESOLVED.addTo(list, 1);
+        }
+    }
+
+    /** The one place a resolved replay is filed, so the totals and the per-list table cannot disagree. */
+    private static void noteListReplayed(int list, long recordedCalls) {
+        ListCensus.REPLAYS.addTo(list, 1);
+        ListCensus.CALLS.addTo(list, recordedCalls);
     }
 
     /** How deep a replay currently is. glCallList may appear inside a list; the spec puts the limit at 64 or more. */
@@ -1164,14 +1264,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 // Display lists: printed only when one was compiled or replayed, so a run that never touches them
                 // stays silent rather than claiming a measurement it did not take. `replayed` is the number that
-                // matters for the reported defects - it is the count of glCallList calls that found a list and
-                // drew it, and `unresolved` is the count that found nothing, which the spec says is ignored.
+                // matters for the reported defects - it is the count of glCallList calls that found a list and drew
+                // it, and `unresolved` is the count that found nothing, which the spec says is ignored. The format is
+                // listCensus()'s, so this hook and the verification line cannot report two different shapes of the
+                // same measurement (the hook's output is not in the log, which round 20 measured; the line is).
                 if (installed != null && (installed.displayListsCompiled > 0 || installed.displayListsReplayed > 0
                         || installed.displayListsUnresolved > 0)) {
-                    celtium$printAtExit("CELTIUM_DISPLAY_LISTS compiled=" + installed.displayListsCompiled
-                            + " replayed=" + installed.displayListsReplayed
-                            + " unresolved=" + installed.displayListsUnresolved
-                            + " held=" + installed.displayLists.size());
+                    celtium$printAtExit("CELTIUM_DISPLAY_LISTS " + listCensus());
                 }
             }, "celtium-noop-census"));
         }
@@ -10000,8 +10099,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.lastCalledList = listId;
         List<Object[]> list = this.displayLists.get(this.lastCalledList);
         if (list == null) {
-            // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible.
-            this.displayListsUnresolved++;
+            // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible - and filed
+            // under the id that missed, because "12 unresolved" says nothing about which lists a caller expected.
+            //
+            // Two different events used to share this counter, and the measured run says why they must not: the entity
+            // leg r41a-entities reported `unresolved=1250` and every one of them was list -1, which is what
+            // ModelRenderer passes for a part whose list was never compiled - so the number read as 1250 lost draws
+            // when it was 1250 calls GL defines as no-ops. A real name that resolves to nothing is a lost draw and is
+            // counted as `unresolved`; a non-positive name is the caller's own "no list" sentinel and is counted as
+            // `noList`, which is a fact about the caller rather than about the renderer.
+            if (listId <= 0) {
+                listCallsWithoutAList++;
+            } else {
+                this.displayListsUnresolved++;
+                ListCensus.UNRESOLVED.addTo(listId, 1);
+            }
         } else if (this.replayDepth < MAX_LIST_NESTING) {
             this.replayDepth++;
             this.executingList = this.lastCalledList;
@@ -10024,10 +10136,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.executingList = this.replayDepth == 0 ? 0 : this.executingList;
             }
             this.displayListsReplayed++;
-            if (this.lastCalledList >= 0 && this.lastCalledList < this.listReplayCounts.length) {
-                this.listReplayCounts[this.lastCalledList]++;
-                this.listReplayTotals[this.lastCalledList] += list.size();
-            }
+            noteListReplayed(this.lastCalledList, list.size());
+        } else {
+            // The spec's floor for the nesting limit is 64 and this class stops there. A stopped replay used to be
+            // counted nowhere at all - displayListsReplayed only counted the ones that ran - so a recursive list was
+            // an invisible loss rather than a named one.
+            listReplayNestingOverflow++;
         }
     }
 
