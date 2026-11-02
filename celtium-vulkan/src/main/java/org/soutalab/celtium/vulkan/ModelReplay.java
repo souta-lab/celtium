@@ -140,6 +140,56 @@ final class ModelReplay {
                     return false;
                 }
             }
+            // The live matrices, resolved once for both the guard and the unchanged path. A display list is replayed
+            // under the matrix in effect at that moment, and the projection gets the same clip-depth remap the immediate
+            // path uses. The mirror, not glGetFloatv: asking GL here was measured to give the orthographic projection the
+            // HUD last installed - "proj=0.0,0.0,-1.0,-0.05" for the model group against the terrain's perspective
+            // "0,0,-1.001,-1" - which is exactly what the one-quad image showed: model quads laid out in screen space.
+            float[] projectionNow = b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+            // Scratch, as is the remapped projection: a queued group clones what it keeps (enqueue below).
+            float[] modelViewNow = b.modelReplayView;
+            System.arraycopy(b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, modelViewNow, 0, 16);
+            // Six pairings were measured for the model view (mirror 5.80 % of the entity frame, identity 8.08, the
+            // captured compile-time matrix 13.19, GL's live view 18.30, the mirror's rotation with GL's translation 18.40,
+            // GL's projection too 18.49): no translation helping and a rotation helping says the vertices are already in
+            // the view space of the moment they were captured in, so what has to be applied is the change of camera since
+            // then - V_now * C_compile^-1, which is what ModelViewRelativizer composes.
+            // V_now * C_compile^-1, with the matrices and the inverse reused and the identity short-circuited: the three
+            // Matrix4f temporaries and an inversion per replay were ~128 allocations a frame, and the capture answers the
+            // identity for every list, so nearly all of that work composed the live view with itself.
+            try {
+                b.modelViewRelativizer.makeRelative(modelViewNow, listId);
+            } catch (RuntimeException | LinkageError error) {
+                b.modelLastRefusal = "relative view failed: " + error;
+            }
+            // The remap is cached by the projection contents: it is installed per pass, and this path asked for the same
+            // sixteen floats once per replay. The suspicion that the live projection had already been remapped was tested
+            // with a switch that copied it through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the
+            // remap is right and the switch was removed rather than kept.
+            float[] projectionRemapped = b.celtium$replayProjection(projectionNow);
+            // A model is drawn through the lit ITEM pipeline, whose descriptor set needs the light map; with no mirror the
+            // descriptor is 0 and the enqueue refuses. The terrain pass recovers the mirror before it gives up
+            // (ensureLightmapMirror), and the model path has to do the same: the first-person arm is drawn before the
+            // frame's first terrain pass and was the one refusal per plain leg - measured reason, leg gv-cohort-dl15:
+            // "could not queue list 109 (prepareImmediate null (format=4 texture=108 (mirror has full content: descriptor
+            // creation failed) pipeline=present))". The recovery is idempotent and does nothing once the mirror holds whole
+            // content, so this costs one content check per model draw in the steady state. The check is the content, not
+            // the field: an image a failed supply left behind is not a mirror the sampler can use.
+            b.ensureUsableLightmap();
+            // Resolved before the guard so a replay counts once either way: the light-map coordinate it samples and the
+            // combine colour its record carries.
+            float[] lightCoord = b.celtium$lightmapForGroup();
+            float[] combineColor = b.celtium$envCombineColor();
+            // The whole replay, when it is the one this path resolved last time: measured need, leg r16b-model-growth-4k -
+            // 2,509,753 replays in 112 frames and 781 ms in this path (311 ns a replay) while modelInstances reported 98
+            // runs, i.e. about one per frame. A run only grows on a matching stateKey/target/projection/fog/viewport/pass,
+            // so every replay of a run re-captured a state that could not have changed and re-resolved a texture, an
+            // affine, a light map and a lit payload that were already in hand. A hit writes the same record bytes the
+            // path below would and only pays for its own matrix; anything that differs takes the path below unchanged.
+            if (celtium$tryModelReplayFastPath(listId, texture, mesh, projectionRemapped, modelViewNow, lightCoord,
+                    combineColor)) {
+                return true;
+            }
             int[] state = b.celtium$captureState();
             long key = b.celtium$stateKey(VulkanImmediateFormats.ITEM, state);
             // The layer passes: a display list replayed under a texture other than the one it was compiled with. The
@@ -172,47 +222,6 @@ final class ModelReplay {
                         + " glDepthMask=" + org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK)
                         + " key=" + key);
             }
-            // Asked of GL here rather than taken from the immediate path's fields: a display list is replayed under the
-            // matrix in effect at that moment, and the projection gets the same clip-depth remap the immediate path uses.
-            // The mirror, not glGetFloatv. Asking GL here was measured to give the orthographic projection the HUD last
-            // installed - "proj=0.0,0.0,-1.0,-0.05" for the model group against the terrain's perspective
-            // "0,0,-1.001,-1" - which is exactly what the one-quad image showed: model quads laid out in screen space.
-            // The immediate path's matrices come from this mirror for the same reason.
-            // The mirror for both, which is the best measured pairing. Taking the model-view from GL instead was tested and
-            // made the difference worse (6.35 % -> 18.30 % of the entity frame), so the live model-view is not the entity's
-            // either - both sources report the camera there. That is consistent with what the capture records: a display
-            // list stores its vertices already transformed, so the parts carry their own placement and the matrix must not
-            // put them somewhere else. What the remaining difference is belongs to the capture's side of the pairing, not to
-            // the live state.
-            // Read in place: only the remap below and the log read it.
-            float[] projectionNow = b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
-            // A list's stored vertices are model space, so the replay transform is the camera's change since the list
-            // was captured: V_now * C_compile^-1 (ModelViewRelativizer, which short-circuits the identity the capture
-            // currently reports for every list).
-            // Identity was tried as an experiment - if the captured vertices carried their own placement, no model-view at all
-            // would be right - and it measured worse than the mirror (8.08 % against 5.80 % of the entity frame), so the
-            // camera rotation the mirror holds is needed. The mirror stays until the vertex space itself is settled.
-            // Six pairings were measured: the mirror 5.80 % of the entity frame, identity 8.08, the captured compile-time
-            // matrix 13.19, GL's live view 18.30, the mirror's rotation with GL's translation 18.40, GL's projection too
-            // 18.49. No translation helping and a rotation helping says the vertices are already in the view space of the
-            // moment they were captured in - so what has to be applied is the change of camera since then, which is exactly
-            // V_now * C_compile^-1. Both halves are in hand: the mirror is V_now, the capture kept C_compile.
-            // Scratch, as is the remapped projection: a queued group clones what it keeps (enqueue below).
-            float[] modelViewNow = b.modelReplayView;
-            System.arraycopy(b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, modelViewNow, 0, 16);
-            // V_now * C_compile^-1, with the matrices and the inverse reused and the identity short-circuited: the
-            // three Matrix4f temporaries and an inversion per replay were ~128 allocations a frame, and the capture
-            // answers the identity for every list, so nearly all of that work composed the live view with itself.
-            try {
-                b.modelViewRelativizer.makeRelative(modelViewNow, listId);
-            } catch (RuntimeException | LinkageError error) {
-                b.modelLastRefusal = "relative view failed: " + error;
-            }
-            // The suspicion that the live projection had already been remapped was tested with a switch that copied it
-            // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
-            // switch was removed rather than kept. The remap is cached by the projection contents: it is installed per
-            // pass, and this path asked for the same sixteen floats once per replay.
-            float[] projectionRemapped = b.celtium$replayProjection(projectionNow);
             // Gated and bounded: this line is per model list per frame, and on the operator's own session it was the
             // flood that pushed the game's log past 100,000 lines.
             if (VulkanDiagnostics.withinLimit(b.modelMatrixLines, b.MODEL_MATRIX_LINES)) {
@@ -226,32 +235,15 @@ final class ModelReplay {
                         + b.round3(projectionNow[10]) + ")");
             }
 
-            // A model is drawn through the lit ITEM pipeline, whose descriptor set needs the light map; with no mirror
-            // the descriptor is 0 and the enqueue refuses. The terrain pass recovers the mirror before it gives up
-            // (ensureLightmapMirror), and the model path has to do the same: the first-person arm is drawn before the
-            // frame's first terrain pass and was the one refusal per plain leg - measured reason, leg gv-cohort-dl15:
-            // "could not queue list 109 (prepareImmediate null (format=4 texture=108 (mirror has full content:
-            // descriptor creation failed) pipeline=present))". The recovery is idempotent and does nothing once the
-            // mirror holds whole content, so this costs one content check per model draw in the steady state. The check
-            // is the content, not the field: an image a failed supply left behind is not a mirror the sampler can use.
-            b.ensureUsableLightmap();
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
-                    mesh.indexCount() / 6, b.celtium$envCombineColor())) {
+                    mesh.indexCount() / 6, combineColor, lightCoord)) {
                 b.modelDrawRefusals++;
                 b.modelLastRefusal = "could not queue list " + listId + " (" + b.modelQueueRefusal + ")";
                 return false;
             }
             // Queued, not drawn: the draw happens in the window's pass, and the group counters (submitted/completed) are
             // what show that the queued batch was actually drawn. The caller cancels the GL replay on this basis.
-            b.modelStats.noteReplay(b.lastModelSeen
-                    && b.lastModelTexture == texture && b.lastModelStateKey == key
-                    && java.util.Arrays.equals(b.lastModelProjection, projectionRemapped)
-                    && java.util.Arrays.equals(b.lastModelViewMatrix, modelViewNow));
-            System.arraycopy(projectionRemapped, 0, b.lastModelProjection, 0, 16);
-            System.arraycopy(modelViewNow, 0, b.lastModelViewMatrix, 0, 16);
-            b.lastModelTexture = texture;
-            b.lastModelStateKey = key;
-            b.lastModelSeen = true;
+            celtium$noteModelReplayServed(texture, key, projectionRemapped, modelViewNow);
             b.modelDraws++;
             if (offTargetCall) {
                 b.modelOffTargetDraws++;
@@ -269,9 +261,10 @@ final class ModelReplay {
     }
 
     boolean celtium$enqueueModelMesh(VulkanDynamicMesh mesh, int texture, int[] state, long key,
-            float[] projection, float[] modelView, int quads, float[] combineColor) {
+            float[] projection, float[] modelView, int quads, float[] combineColor, float[] lightCoord) {
         if (b.MODEL_INSTANCES && mesh != null && !mesh.isEmpty()
-                && celtium$appendModelInstance(mesh, texture, state, key, projection, modelView, quads, combineColor)) {
+                && celtium$appendModelInstance(mesh, texture, state, key, projection, modelView, quads, combineColor,
+                        lightCoord)) {
             return true;
         }
         if (mesh == null || mesh.isEmpty()) {
@@ -342,7 +335,7 @@ final class ModelReplay {
         // unit disabled - GuiInventory.java:154-165 only *disables* the unit at the end of its draw and never enables
         // it, so nothing lights the player model by the world either. A chest in the hotbar of a dark place was drawn
         // with the cave's light because this line took the captured coordinate unconditionally.
-        group.lightmapCoords = b.celtium$lightmapForGroup();
+        group.lightmapCoords = lightCoord;
         group.fog = b.fog.snapshot();
         group.batches = quads;
         group.viewportValues = b.currentGroupViewportValues;
@@ -414,7 +407,7 @@ final class ModelReplay {
     private static int modelLightLines;
 
     boolean celtium$appendModelInstance(VulkanDynamicMesh mesh, int texture, int[] state, long key,
-            float[] projection, float[] modelView, int quads, float[] combineColor) {
+            float[] projection, float[] modelView, int quads, float[] combineColor, float[] lightCoord) {
         if (b.modelInstancesFailed || state.length <= 14 || !b.context.textureArraySupported()) {
             return false;
         }
@@ -518,9 +511,194 @@ final class ModelReplay {
                     + (colour == null ? "none" : java.util.Arrays.toString(colour)));
         }
         instances.append(open.modelRun, listId, modelView, colour, combineColor, affine, Float.intBitsToFloat(state[6]), state[14],
-                light, b.celtium$lightmapForGroup(), textureIndex, lightmapIndex, texture);
+                light, lightCoord, textureIndex, lightmapIndex, texture);
         open.batches += quads;
+        // The tuple this replay resolved, for the next replay to compare against: recorded only after the record was
+        // written, so a tuple that could not be drawn is never offered as a hit.
+        celtium$noteModelReplayTuple(listId, mesh, texture, state, key, projection, modelView, colour, combineColor,
+                affine, light, lightCoord, textureIndex, lightmapIndex);
         return true;
+    }
+
+    /**
+     * Serves a replay from {@link ModelReplayFastPath}'s cached tuple when the live inputs are exactly the ones that
+     * tuple was resolved from, and answers whether it did.
+     * <p>
+     * The guard is the whole contract: the identities that decide which objects the replay is about, then every value
+     * the record carries besides the matrix, then the open run's own conditions - the same ones the unchanged path's
+     * extend predicate checks. Any difference is a miss, counted, and the unchanged path runs; a hit writes the same
+     * record bytes and only pays for its own matrix. The census-per-batch counters are applied here as well, from the
+     * cached state, so a hit is still a batch in the report.
+     */
+    private boolean celtium$tryModelReplayFastPath(int listId, int texture, VulkanDynamicMesh mesh,
+            float[] projection, float[] modelView, float[] lightCoord, float[] combineColor) {
+        if (!ModelReplayFastPath.ENABLED || b.modelInstances == null || b.textureArray == null) {
+            return false;
+        }
+        long target = b.targetRegistry.currentIdentity();
+        if (target != b.targetRegistry.mainIdentity()) {
+            // The instance path draws the main target only, and an off-target replay has its own pass: it keeps the
+            // per-group path (and its coalesced flush), exactly as the unchanged path decides.
+            return false;
+        }
+        ModelReplayFastPath fast = b.modelReplayFastPath;
+        ModelReplayFastPath.Probe probe = fast.probe();
+        probe.listId = listId;
+        probe.texture = texture;
+        probe.frameId = b.frameId;
+        probe.target = target;
+        probe.pass = b.lastUiPass;
+        probe.meshTable = b.modelGeometry.modelMeshes();
+        probe.openGroup = b.openModelRunGroup;
+        probe.instances = b.modelInstances;
+        probe.registry = b.textureRegistry;
+        probe.textureArray = b.textureArray;
+        probe.lightmap = b.lightmapTexture;
+        probe.combine = combineColor;
+        if (!fast.matchesShape(probe)) {
+            fast.noteMiss(ModelReplayFastPath.MISS_SHAPE);
+            return false;
+        }
+        // The value half. The state is compared through its raw inputs, not captured: a hit must not pay for the
+        // sixteen stores, the two light-map lookups and the key it already holds.
+        b.celtium$stateSignature(probe.signature);
+        System.arraycopy(projection, 0, probe.projection, 0, 16);
+        probe.colourValid = b.colorMirrorHasValue;
+        if (probe.colourValid) {
+            probe.colour[0] = b.immediateState.colorRed();
+            probe.colour[1] = b.immediateState.colorGreen();
+            probe.colour[2] = b.immediateState.colorBlue();
+            probe.colour[3] = b.immediateState.colorAlpha();
+        }
+        probe.affineValid = b.celtium$readTextureAffine(probe.affine);
+        probe.lightCoordValid = lightCoord != null;
+        if (probe.lightCoordValid) {
+            System.arraycopy(lightCoord, 0, probe.lightCoord, 0, 2);
+        }
+        probe.combineValid = combineColor != null;
+        if (probe.combineValid) {
+            System.arraycopy(combineColor, 0, probe.combineColour, 0, 4);
+        }
+        // The lit payload is a function of the rotation and the light generation, both of which the cached state and
+        // the guard cover: asking the cache is what makes the comparison free when it is right, and what makes it a
+        // miss when the rotation moved.
+        float[] light = b.celtium$replayLight(fast.cached().state, modelView);
+        probe.lightValid = light != null;
+        if (probe.lightValid) {
+            System.arraycopy(light, 0, probe.light, 0, 20);
+        }
+        if (!fast.matchesInputs(probe)) {
+            fast.noteMiss(ModelReplayFastPath.MISS_INPUTS);
+            return false;
+        }
+        ModelReplayFastPath.Probe cached = fast.cached();
+        ImmediateGroup open = (ImmediateGroup) cached.openGroup;
+        if (open == null || open != b.openModelRunGroup || b.immediateGroups.isEmpty()
+                || b.immediateGroups.get(b.immediateGroups.size() - 1) != open
+                || b.currentImmediateMesh != null
+                || open.stateKey != cached.stateKey
+                || open.target != target
+                || open.modelRun == null
+                || open.modelRun.pipeline.renderPass != cached.renderPass
+                || open.stamp == null || open.stamp.frameId != b.frameId
+                || !java.util.Arrays.equals(open.projection, probe.projection)
+                || b.fog.movedFrom(open.fog)
+                || !java.util.Arrays.equals(open.viewportValues, b.currentGroupViewportValues)
+                || !b.modelInstances.sameBuffers(open.modelRun)
+                || !b.modelInstances.hasRoom()) {
+            fast.noteMiss(ModelReplayFastPath.MISS_RUN);
+            return false;
+        }
+        b.celtium$noteStateStatistics(cached.state, cached.signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK]);
+        b.modelInstances.appendCached(open.modelRun, cached.firstIndex, cached.vertexOffset, cached.indexCount,
+                modelView, cached.colourValid ? cached.colour : null,
+                cached.combineValid ? cached.combineColour : null,
+                cached.affineValid ? cached.affine : null, Float.intBitsToFloat(cached.state[6]), cached.state[14],
+                cached.lightValid ? cached.light : null, cached.lightCoordValid ? cached.lightCoord : null,
+                cached.textureIndex, cached.lightmapIndex, cached.texture);
+        open.batches += cached.quads;
+        celtium$noteModelReplayServed(texture, cached.stateKey, projection, modelView);
+        b.modelDraws++;
+        fast.noteHit();
+        return true;
+    }
+
+    /**
+     * The repeat census and the packet identity both tails of this path keep: what the replay that just reached the
+     * frame compared against, and what the next one will compare against.
+     */
+    private void celtium$noteModelReplayServed(int texture, long key, float[] projection, float[] modelView) {
+        b.modelStats.noteReplay(b.lastModelSeen
+                && b.lastModelTexture == texture && b.lastModelStateKey == key
+                && java.util.Arrays.equals(b.lastModelProjection, projection)
+                && java.util.Arrays.equals(b.lastModelViewMatrix, modelView));
+        System.arraycopy(projection, 0, b.lastModelProjection, 0, 16);
+        System.arraycopy(modelView, 0, b.lastModelViewMatrix, 0, 16);
+        b.lastModelTexture = texture;
+        b.lastModelStateKey = key;
+        b.lastModelSeen = true;
+    }
+
+    /** Records the tuple a replay resolved, for the next replay to compare against: see {@link ModelReplayFastPath}. */
+    private void celtium$noteModelReplayTuple(int listId, VulkanDynamicMesh mesh, int texture, int[] state, long key,
+            float[] projection, float[] modelView, float[] colour, float[] combineColor, float[] affine,
+            float[] light, float[] lightCoord, int textureIndex, int lightmapIndex) {
+        ModelReplayFastPath fast = b.modelReplayFastPath;
+        if (!ModelReplayFastPath.ENABLED) {
+            return;
+        }
+        ImmediateGroup open = b.openModelRunGroup;
+        int[] entry = b.modelInstances == null || open == null || open.modelRun == null
+                ? null : b.modelInstances.poolEntry(listId);
+        if (entry == null || mesh == null || mesh.isEmpty() || state == null || state.length <= 14) {
+            fast.invalidate();
+            return;
+        }
+        ModelReplayFastPath.Probe probe = fast.probe();
+        probe.listId = listId;
+        probe.texture = texture;
+        probe.frameId = b.frameId;
+        probe.target = b.targetRegistry.currentIdentity();
+        probe.pass = b.lastUiPass;
+        probe.renderPass = open.modelRun.pipeline.renderPass;
+        probe.quads = mesh.indexCount() / 6;
+        probe.textureIndex = textureIndex;
+        probe.lightmapIndex = lightmapIndex;
+        probe.stateKey = key;
+        System.arraycopy(state, 0, probe.state, 0, 16);
+        b.celtium$stateSignature(probe.signature);
+        System.arraycopy(projection, 0, probe.projection, 0, 16);
+        probe.colourValid = colour != null;
+        if (probe.colourValid) {
+            System.arraycopy(colour, 0, probe.colour, 0, 4);
+        }
+        probe.combine = combineColor;
+        probe.combineValid = combineColor != null;
+        if (probe.combineValid) {
+            System.arraycopy(combineColor, 0, probe.combineColour, 0, 4);
+        }
+        probe.affineValid = affine != null;
+        if (probe.affineValid) {
+            System.arraycopy(affine, 0, probe.affine, 0, 6);
+        }
+        probe.lightValid = light != null;
+        if (probe.lightValid) {
+            System.arraycopy(light, 0, probe.light, 0, 20);
+        }
+        probe.lightCoordValid = lightCoord != null;
+        if (probe.lightCoordValid) {
+            System.arraycopy(lightCoord, 0, probe.lightCoord, 0, 2);
+        }
+        probe.meshTable = b.modelGeometry.modelMeshes();
+        probe.openGroup = open;
+        probe.instances = b.modelInstances;
+        probe.registry = b.textureRegistry;
+        probe.textureArray = b.textureArray;
+        probe.lightmap = b.lightmapTexture;
+        probe.firstIndex = entry[0];
+        probe.vertexOffset = entry[1];
+        probe.indexCount = entry[2];
+        fast.note(probe);
     }
 
     /**

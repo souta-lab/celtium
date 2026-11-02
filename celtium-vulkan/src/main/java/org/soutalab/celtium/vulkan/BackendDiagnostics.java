@@ -361,6 +361,10 @@ final class BackendDiagnostics {
                 // multiply (projection) that produced bytes already in hand. The miss side is what a scene that
                 // repeats nothing would pay, so the pair is the measurement of this optimisation on that scene.
                 + " modelReplayCache[" + b.modelReplayInputCache.describe() + "]"
+                // The whole-replay fast path: hits are replays whose record this path wrote without resolving the
+                // state, the texture, the affine, the light map or the lit payload again; the miss reasons say which
+                // half of the guard a scene fails, so a scene that repeats nothing reports that instead of a saving.
+                + " modelFastPath[" + b.modelReplayFastPath.describe() + "]"
                 + " texMatrixGroups=" + b.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + b.modelDrawRefusals
                 + " modelLastRefusal=" + b.modelLastRefusal

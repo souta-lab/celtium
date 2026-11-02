@@ -500,6 +500,30 @@ final class VulkanModelInstances {
     void append(Run run, int listId, float[] modelView, float[] colour, float[] combine, float[] affine, float alphaRef, int alphaFunction,
             float[] light, float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
         int[] entry = this.poolEntries.get(listId);
+        writeInstance(run, entry[2], entry[0], entry[1], modelView, colour, combine, affine, alphaRef, alphaFunction,
+                light, lightCoord, textureIndex, lightmapIndex, glTexture);
+    }
+
+    /** {@return the pool slice of one list, or null when the pool does not hold it}. */
+    int[] poolEntry(int listId) {
+        return this.poolEntries.get(listId);
+    }
+
+    /**
+     * The same write with the pool slice handed in: a replay whose whole tuple repeated does not look its list up
+     * again. See {@link ModelReplayFastPath}.
+     */
+    void appendCached(Run run, int firstIndex, int vertexOffset, int indexCount, float[] modelView, float[] colour,
+            float[] combine, float[] affine, float alphaRef, int alphaFunction, float[] light, float[] lightCoord,
+            int textureIndex, int lightmapIndex, int glTexture) {
+        writeInstance(run, indexCount, firstIndex, vertexOffset, modelView, colour, combine, affine, alphaRef,
+                alphaFunction, light, lightCoord, textureIndex, lightmapIndex, glTexture);
+    }
+
+    /** One record and one indirect command, from a resolved tuple; the command names the record's own index. */
+    private void writeInstance(Run run, int indexCount, int firstIndex, int vertexOffset, float[] modelView,
+            float[] colour, float[] combine, float[] affine, float alphaRef, int alphaFunction, float[] light,
+            float[] lightCoord, int textureIndex, int lightmapIndex, int glTexture) {
         int index = this.segment * this.segmentRecords + this.used;
         long r = this.records.mappedAddress() + (long) index * RECORD_BYTES;
         for (int i = 0; i < 16; i++) {
@@ -527,10 +551,10 @@ final class VulkanModelInstances {
         writeShadingRecord(r, light, lightCoord, textureIndex, lightmapIndex, alphaFunction);
         if (light == null) this.unlitAppended++;
         long c = this.commands.mappedAddress() + (long) index * COMMAND_BYTES;
-        MemoryUtil.memPutInt(c, entry[2]);
+        MemoryUtil.memPutInt(c, indexCount);
         MemoryUtil.memPutInt(c + 4, 1);
-        MemoryUtil.memPutInt(c + 8, entry[0]);
-        MemoryUtil.memPutInt(c + 12, entry[1]);
+        MemoryUtil.memPutInt(c + 8, firstIndex);
+        MemoryUtil.memPutInt(c + 12, vertexOffset);
         MemoryUtil.memPutInt(c + 16, index);
         this.used++;
         run.count++;

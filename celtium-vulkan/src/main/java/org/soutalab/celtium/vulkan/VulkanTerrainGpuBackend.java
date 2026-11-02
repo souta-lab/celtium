@@ -795,6 +795,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + this.modelStats.run0(this.modelDraws)
                 + " texMatrixGroups=" + this.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + this.modelDrawRefusals
+                + " modelFastPath[" + this.modelReplayFastPath.describe() + "]"
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary()
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary()
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() + " modelMissingMeshes=" + this.modelGeometry.modelMissingMeshes()
@@ -3210,6 +3211,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * how often the scene's own repetitions let the work be skipped. See {@link ModelReplayInputCache}.
      */
     final ModelReplayInputCache modelReplayInputCache = new ModelReplayInputCache();
+    /**
+     * The last model replay's whole resolved tuple, so the next replay that repeats it writes its record without
+     * resolving anything but its own matrix. Its census is on the verification line as {@code modelFastPath}; the
+     * control arm is {@code -Dceltium.vulkan.modelReplayFastPath=false}. See {@link ModelReplayFastPath}.
+     */
+    final ModelReplayFastPath modelReplayFastPath = new ModelReplayFastPath();
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> texGenPipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
@@ -8427,35 +8434,87 @@ this.frameBufferOpen = false;
     /** {@code -Dceltium.debug.noAffineBake}, read once: the pre-transform check asks it per offer. */
     private static final boolean NO_AFFINE_BAKE = Boolean.getBoolean("celtium.debug.noAffineBake");
 
-    private final int[] celtium$stateScratch = new int[16];
+    /**
+     * The sixteen integers a batch's pipeline is keyed by, plus the raw inputs a replay can compare instead.
+     * <p>
+     * Split out of {@link #celtium$captureState()} for the model replay path: the replay asks whether the state is the
+     * one it resolved last time, and answering that from the raw inputs costs a comparison per input instead of the
+     * whole capture. {@link #celtium$stateFromSignature} is the only place the mapping lives, so a captured state and a
+     * signature can never disagree about what the state would be - which is what lets a hit reuse the array.
+     */
+    static final int SIGNATURE_BLEND = 0;
+    static final int SIGNATURE_SRC_RGB = 1;
+    static final int SIGNATURE_DST_RGB = 2;
+    static final int SIGNATURE_SRC_ALPHA = 3;
+    static final int SIGNATURE_DST_ALPHA = 4;
+    static final int SIGNATURE_EQ_RGB = 5;
+    static final int SIGNATURE_EQ_ALPHA = 6;
+    static final int SIGNATURE_COLOR_MASK = 7;
+    static final int SIGNATURE_ALPHA_TEST = 8;
+    static final int SIGNATURE_ALPHA_REF = 9;
+    static final int SIGNATURE_ALPHA_FUNC = 10;
+    static final int SIGNATURE_CULL = 11;
+    static final int SIGNATURE_DEPTH_TEST = 12;
+    static final int SIGNATURE_DEPTH_WRITE = 13;
+    static final int SIGNATURE_DEPTH_FUNC = 14;
+    static final int SIGNATURE_LIGHTING = 15;
+    static final int SIGNATURE_ENV_MODE = 16;
+    static final int SIGNATURE_ENV_RGB = 17;
+    static final int SIGNATURE_WINDOW_TARGET = 18;
 
-    int[] celtium$captureState() {
+    /** Fills {@code out} with the raw inputs of the state capture: see {@link #celtium$stateFromSignature}. */
+    void celtium$stateSignature(int[] out) {
         boolean blend = this.immediateState.blendEnabled();
-        int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
-        int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
-        int sourceAlpha = blend ? glBlendFactorToVk(this.immediateState.blendSrcAlpha()) : 0;
-        int destinationAlpha = blend ? glBlendFactorToVk(this.immediateState.blendDstAlpha()) : 0;
-        // Zeroed when blending is off, exactly like the factors above. The equations were captured unconditionally, so a
-        // pass that had blending disabled still carried whatever equation the game last set into the state key - and a
-        // differing key means a different pipeline and a new group, for state that cannot affect the draw at all.
-        int colorOp = blend ? glBlendEquationToVk(this.immediateState.blendEquationRgb()) : 0;
-        int alphaOp = blend ? glBlendEquationToVk(this.immediateState.blendEquationAlpha()) : 0;
-        int writeMask = this.immediateState.colorMask();
+        out[SIGNATURE_BLEND] = blend ? 1 : 0;
+        // The GL values, not the Vulkan ones: the mapping is pure, so comparing what the game asked for is as strong
+        // as comparing what it maps to, and the factors stay readable in a dump.
+        out[SIGNATURE_SRC_RGB] = this.immediateState.blendSrcRgb();
+        out[SIGNATURE_DST_RGB] = this.immediateState.blendDstRgb();
+        out[SIGNATURE_SRC_ALPHA] = this.immediateState.blendSrcAlpha();
+        out[SIGNATURE_DST_ALPHA] = this.immediateState.blendDstAlpha();
+        out[SIGNATURE_EQ_RGB] = this.immediateState.blendEquationRgb();
+        out[SIGNATURE_EQ_ALPHA] = this.immediateState.blendEquationAlpha();
+        out[SIGNATURE_COLOR_MASK] = this.immediateState.colorMask();
+        out[SIGNATURE_ALPHA_TEST] = this.immediateState.alphaTestEnabled() ? 1 : 0;
+        out[SIGNATURE_ALPHA_REF] = Float.floatToIntBits(this.immediateState.alphaFuncReference());
+        out[SIGNATURE_ALPHA_FUNC] = this.immediateState.alphaFunc();
+        out[SIGNATURE_CULL] = this.immediateState.cullEnabled() ? 1 : 0;
+        out[SIGNATURE_DEPTH_TEST] = this.immediateState.depthTestEnabled() ? 1 : 0;
+        out[SIGNATURE_DEPTH_WRITE] = this.immediateState.depthMask() ? 1 : 0;
+        out[SIGNATURE_DEPTH_FUNC] = this.immediateState.depthFunc();
+        out[SIGNATURE_LIGHTING] = this.immediateState.lightingEnabled() ? 1 : 0;
+        NativeTextureEnvironment environment = NativeTextureEnvironment.current();
+        out[SIGNATURE_ENV_MODE] = environment.unitParameter(0, NativeTextureEnvironment.MODE);
+        out[SIGNATURE_ENV_RGB] = environment.unitParameter(0, NativeTextureEnvironment.RGB);
+        out[SIGNATURE_WINDOW_TARGET] = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
+    }
+
+    /**
+     * The sixteen-int state a signature maps to, with the lab switches applied.
+     * <p>
+     * Pure and static: the same signature always produces the same state, which is the property the model replay path
+     * depends on when it keeps the array instead of capturing it again. The switches keep their meaning - each
+     * substitutes the value the pipeline baked before a finding was fixed - and the window-target alpha mask stays
+     * here because it is part of what a batch is told, not of the state the game asked for.
+     */
+    static void celtium$stateFromSignature(int[] signature, int[] state) {
+        boolean blend = signature[SIGNATURE_BLEND] != 0;
+        int source = blend ? glBlendFactorToVk(signature[SIGNATURE_SRC_RGB]) : 0;
+        int destination = blend ? glBlendFactorToVk(signature[SIGNATURE_DST_RGB]) : 0;
+        int sourceAlpha = blend ? glBlendFactorToVk(signature[SIGNATURE_SRC_ALPHA]) : 0;
+        int destinationAlpha = blend ? glBlendFactorToVk(signature[SIGNATURE_DST_ALPHA]) : 0;
+        int colorOp = blend ? glBlendEquationToVk(signature[SIGNATURE_EQ_RGB]) : 0;
+        int alphaOp = blend ? glBlendEquationToVk(signature[SIGNATURE_EQ_ALPHA]) : 0;
+        int writeMask = signature[SIGNATURE_COLOR_MASK];
         // Comparison switch, default on: forcing the threshold to zero isolates alpha testing in one build.
-        float alphaReference = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
-                ? this.immediateState.alphaFuncReference() : 0.0f;
+        boolean alphaTest = ALPHA_TEST_ENABLED && signature[SIGNATURE_ALPHA_TEST] != 0;
+        float alphaReference = alphaTest ? Float.intBitsToFloat(signature[SIGNATURE_ALPHA_REF]) : 0.0f;
+        int alphaFunction = alphaTest ? signature[SIGNATURE_ALPHA_FUNC] : 0;
         // The one-flag controls. Each keeps the captured state but substitutes the value the pipeline baked before the
         // finding was fixed, so a single build can be run twice and the picture compared against itself rather than
-        // against another build's picture - the difference between the legs is then the state and nothing else.
-        //
-        // The counters below are taken from the *captured* values, before these substitutions: a control leg has to
-        // report the same "the game asked for this" numbers as the fixed leg, or the one number that says the state
-        // arrived at all would read zero exactly in the leg that uses it as a control.
-        int capturedSourceAlpha = sourceAlpha;
-        int capturedDestinationAlpha = destinationAlpha;
-        int capturedWriteMask = writeMask;
-        int capturedColorOp = colorOp;
-        int capturedAlphaOp = alphaOp;
+        // against another build's picture - the difference between the legs is then the state and nothing else. The
+        // census keeps reading the captured values (see celtium$noteStateStatistics), because a control leg has to
+        // report the same "the game asked for this" numbers as the fixed leg.
         if (!IMMEDIATE_BLEND_ALPHA) {
             sourceAlpha = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE;
             destinationAlpha = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -8467,82 +8526,28 @@ this.frameBufferOpen = false;
         if (!IMMEDIATE_COLOR_MASK) {
             writeMask = VulkanColorBlendState.allChannels();
         }
-        // The delivered frame stands in for GL's default framebuffer, which has no alpha bits: a draw's alpha write
-        // is not observable there, and every read of it - a glCopyTexSubImage2D or a native blit - must yield 1.
-        // Masking the alpha write keeps the acquire's alpha-1 clear for the whole frame. Measured before this: the
-        // panorama's quads blended SRC_ALPHA into the image's alpha (0x80/0x00 over the 256x256 the menu blur
-        // copies), so the blurred panorama - itself blended by SRC_ALPHA - could not cover the frame and the native
-        // window copy had to decline into a synchronous host readback, seven of them per menu frame.
-        if (this.targetRegistry.currentIdentity() == 0L) {
+        // The delivered frame stands in for GL's default framebuffer, which has no alpha bits: a draw's alpha write is
+        // not observable there, and every read of it - a glCopyTexSubImage2D or a native blit - must yield 1. Masking
+        // the alpha write keeps the acquire's alpha-1 clear for the whole frame. Measured before this: the panorama's
+        // quads blended SRC_ALPHA into the image's alpha, so the blurred panorama - itself blended by SRC_ALPHA - could
+        // not cover the frame and the native window copy had to decline into a synchronous host readback, seven of them
+        // per menu frame.
+        if (signature[SIGNATURE_WINDOW_TARGET] != 0) {
             writeMask &= ~0x8;
         }
-        // BH-03: the comparison function travels with the batch, next to the reference it is compared against. The
-        // slot must distinguish "disabled" (0 - no GL enum is 0) from "enabled with a reference of 0", which the old
-        // shader's `alphaRef > 0.0` guard could not: for GL_GREATER and a reference of 0 the discard is *not* off.
-        int alphaFunction = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
-                ? this.immediateState.alphaFunc() : 0;
-        // The measurement switch for the comparison-function half of BH-03: vanilla's own code only ever asks for
-        // GL_GREATER (read in the sources - every `GlStateManager.alphaFunc` call in the client passes 516), so a
-        // non-GREATER comparison cannot be reached from the game's own state in this fixture. This substitutes the
-        // comparison for the batches whose test is enabled, leaving the reference and the enable alone, so one build
-        // can be run at GREATER, LESS and ALWAYS and the crops compared with each other. A batch with the test
-        // disabled keeps the 0 that means "disabled" - otherwise the flag would switch the test on where the game
-        // switched it off, and the leg would measure two changes at once.
         if (alphaFunction != 0 && ALPHA_FUNC_OVERRIDE != 0) {
             alphaFunction = ALPHA_FUNC_OVERRIDE;
         }
-        // BH-08's per-batch proof, counted here where the group's own state is taken rather than at draw time, where
-        // it would be the flush's state.
-        if (this.immediateState.cullEnabled()) {
-            this.immediateStatistics.noteCullEnabledGroups();
-        } else {
-            this.immediateStatistics.noteCullDisabledGroups();
-        }
-        // BH-07/BH-10/BH-03's own per-batch counts, at the same instant and for the same reason: a batch whose alpha
-        // pair is not the pair the pipelines used to bake is the case the finding is about, and "the state reached the
-        // key" is only readable if the number of batches that carried a different one is on the report.
-        // Taken from the captured values (see above), so a control leg reports the same arrival numbers as the
-        // fixed leg rather than zeroes that would read as "the state never arrived".
-        if (blend) {
-            if (capturedSourceAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE
-                    || capturedDestinationAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
-                this.immediateStatistics.noteBlendAlphaNonDefaultGroups();
-            }
-            this.immediateStatistics.noteBlendGroups();
-        }
-        this.colorMaskHistogram[capturedWriteMask & 0xF]++;
-        if (capturedWriteMask != VulkanColorBlendState.allChannels()) {
-            this.immediateStatistics.notePartialColorMaskGroups();
-            this.immediateStatistics.setLastPartialColorMask(capturedWriteMask);
-        }
-        if (capturedColorOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD
-                || capturedAlphaOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD) {
-            this.immediateStatistics.noteNonAddBlendEquationGroups();
-        }
-        if (alphaFunction != 0) {
-            this.immediateStatistics.noteAlphaFuncGroups();
-            this.immediateStatistics.setLastAlphaFunc(alphaFunction);
-            if (alphaFunction != 0x0204) {
-                this.immediateStatistics.noteNonGreaterAlphaFuncGroups();
-            }
-        } else {
-            this.immediateStatistics.noteAlphaTestDisabledGroups();
-        }
-        int[] state = this.celtium$stateScratch;
         state[0] = blend ? 1 : 0;
         state[1] = source < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA : source;
         state[2] = destination < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destination;
-        state[3] = this.immediateState.depthTestEnabled() ? 1 : 0;
-        state[4] = this.immediateState.depthMask() ? 1 : 0;
-        state[5] = this.immediateState.cullEnabled() ? 1 : 0;
+        state[3] = signature[SIGNATURE_DEPTH_TEST] != 0 ? 1 : 0;
+        state[4] = signature[SIGNATURE_DEPTH_WRITE] != 0 ? 1 : 0;
+        state[5] = signature[SIGNATURE_CULL] != 0 ? 1 : 0;
         state[6] = Float.floatToIntBits(alphaReference);
-        // The comparison itself rather than a boolean: the glint draws at GL_EQUAL and the held item at
-        // GL_ALWAYS, neither of which a fixed LESS_OR_EQUAL pipeline would pass correctly.
-        state[7] = this.immediateState.depthFunc();
-        // Fixed-function lighting: only the normal-carrying formats (8 and 9) can act on it, but it rides the
-        // state key so a lit batch and an unlit batch never share a pipeline - or a group.
-        state[8] = this.immediateState.lightingEnabled() ? 1 : 0;
-        // ---- appended by BH-07/BH-10/BH-03; the first nine slots above keep their meaning.
+        state[7] = signature[SIGNATURE_DEPTH_FUNC];
+        state[8] = signature[SIGNATURE_LIGHTING] != 0 ? 1 : 0;
+        // The first nine slots above keep their meaning; the appended ones follow.
         state[9] = sourceAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE : sourceAlpha;
         state[10] = destinationAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destinationAlpha;
         state[11] = writeMask;
@@ -8552,9 +8557,61 @@ this.frameBufferOpen = false;
         // The multi-unit light combine (COMBINE4's fragment stage): unit 0 COMBINE with a SUBTRACT RGB function is the
         // set-up GuiMap.setupTextures makes, and the only one that shader evaluates beyond MODULATE. In the key, so a
         // combined tile and a plain one never share a group.
-        NativeTextureEnvironment environment = NativeTextureEnvironment.current();
-        state[15] = environment.unitParameter(0, NativeTextureEnvironment.MODE) == NativeTextureEnvironment.COMBINE
-                && environment.unitParameter(0, NativeTextureEnvironment.RGB) == 0x84E7 ? 1 : 0;
+        state[15] = signature[SIGNATURE_ENV_MODE] == NativeTextureEnvironment.COMBINE
+                && signature[SIGNATURE_ENV_RGB] == 0x84E7 ? 1 : 0;
+    }
+
+    /**
+     * The per-batch census a state capture performs, taken from a captured state rather than from the live mirror.
+     * <p>
+     * Separated so a replay served from {@link ModelReplayFastPath} can count itself: a hit does not capture the state,
+     * and letting these numbers fall to the immediate path's offers alone would read as "the state stopped arriving".
+     * Every value the census uses is in the array; {@code rawColorMask} is the mask the game asked for, which the
+     * window-target alpha mask above does not change.
+     */
+    void celtium$noteStateStatistics(int[] state, int rawColorMask) {
+        if (state[5] != 0) {
+            this.immediateStatistics.noteCullEnabledGroups();
+        } else {
+            this.immediateStatistics.noteCullDisabledGroups();
+        }
+        if (state[0] != 0) {
+            if (state[9] != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE
+                    || state[10] != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
+                this.immediateStatistics.noteBlendAlphaNonDefaultGroups();
+            }
+            this.immediateStatistics.noteBlendGroups();
+        }
+        this.colorMaskHistogram[rawColorMask & 0xF]++;
+        if (rawColorMask != VulkanColorBlendState.allChannels()) {
+            this.immediateStatistics.notePartialColorMaskGroups();
+            this.immediateStatistics.setLastPartialColorMask(rawColorMask);
+        }
+        if (state[12] != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD
+                || state[13] != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD) {
+            this.immediateStatistics.noteNonAddBlendEquationGroups();
+        }
+        if (state[14] != 0) {
+            this.immediateStatistics.noteAlphaFuncGroups();
+            this.immediateStatistics.setLastAlphaFunc(state[14]);
+            if (state[14] != 0x0204) {
+                this.immediateStatistics.noteNonGreaterAlphaFuncGroups();
+            }
+        } else {
+            this.immediateStatistics.noteAlphaTestDisabledGroups();
+        }
+    }
+
+    private final int[] celtium$stateSignature = new int[ModelReplayFastPath.SIGNATURE];
+    /** The captured state's scratch: shared, so anything that keeps the values past the next offer must clone it. */
+    private final int[] celtium$stateScratch = new int[16];
+
+    int[] celtium$captureState() {
+        int[] signature = this.celtium$stateSignature;
+        celtium$stateSignature(signature);
+        int[] state = this.celtium$stateScratch;
+        celtium$stateFromSignature(signature, state);
+        celtium$noteStateStatistics(state, signature[SIGNATURE_COLOR_MASK]);
         return state;
     }
 
