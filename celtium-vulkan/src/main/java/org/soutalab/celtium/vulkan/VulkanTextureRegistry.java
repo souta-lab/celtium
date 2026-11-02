@@ -148,6 +148,14 @@ public final class VulkanTextureRegistry {
      * whose whole content never arrived is refused by the sampling side rather than drawn.
      */
     private int readbacksSkippedWithoutContent;
+    /**
+     * Stale lookups answered "ask the framebuffer's owner" instead of handing back a mirror nothing ever wrote.
+     * <p>
+     * The sibling answer - building the mirror content-less and deferring - has counted itself separately for as long
+     * as it has existed; this one is the same deferral on the branch that runs after a name was invalidated, and it
+     * needs its own number or a leg cannot say which of the two a run used.
+     */
+    private int staleAttachmentsDeferred;
     /** Readback refreshes by the origin that asked for them. */
     private final java.util.Map<String, Integer> readbackByOrigin = new java.util.HashMap<String, Integer>();
     private String currentOrigin = "unknown";
@@ -1406,6 +1414,19 @@ public final class VulkanTextureRegistry {
     }
 
     /**
+     * {@return how many stale content-less lookups were deferred to the framebuffer that owns the name}, instead of
+     * answering with a mirror nothing ever wrote.
+     * <p>
+     * A non-zero number here is the case the stale branch used to draw black: the name is a framebuffer's colour
+     * attachment, the write that marked it stale could not refresh the mirror, and the image it stands for is the one
+     * the prepare path publishes or adopts. Paired with {@link #readbacksSkippedWithoutContent()}, a leg can tell the
+     * two answers to the same situation apart - the creation branch's deferral and this one.
+     */
+    public int staleAttachmentsDeferred() {
+        return this.staleAttachmentsDeferred;
+    }
+
+    /**
      * Names the source a mirror's content came from, and what that source's pixels look like, once per name and
      * source.
      * <p>
@@ -1898,6 +1919,7 @@ public final class VulkanTextureRegistry {
         // game pixels at all (an allocation with a NULL data pointer - the stub's own answer, not a pixel guess).
         return costs + " glLess[fromAnnouncement=" + this.filledFromAnnouncement + " fromCapture=" + this.filledFromCapture
                 + " noContent=" + this.readbacksSkippedWithoutContent
+                + " staleAttachmentDeferred=" + this.staleAttachmentsDeferred
                 + " noGamePixels=" + this.capturesRefusedWithoutGamePixels
                 + " wrapDefaults=" + wrapDefaultsUsed + "]";
     }
@@ -2003,6 +2025,24 @@ public final class VulkanTextureRegistry {
                     return existing.texture;
                 }
                 this.readbacksSkippedWithoutContent++;
+                // A framebuffer's colour attachment stands for the image that framebuffer draws into, and the prepare
+                // path publishes or adopts that image before this name is sampled (CELTIUM_EXTERNAL_IMAGE) - the rule
+                // the content-less creation below already follows. This branch did not follow it: a name that had been
+                // marked stale (invalidateAll runs on a resource reload, and a write announcement marks a name stale)
+                // reached here and was handed back as a mirror nothing ever wrote, so it sampled as black. That is what
+                // a mod's own render target looks like when something samples the image it draws into; the 1920x1080
+                // background framebuffer in the Supersymmetry evidence is the measured instance, and its
+                // CELTIUM_PATCH_REJECTED "no announced pixels" lines are this branch's or the creation branch's.
+                //
+                // Deferring is the trade the creation branch already documents: the publisher owns the association,
+                // and when it cannot publish either the draw refuses and says so instead of drawing black. Counted
+                // apart from the creation deferral, so a leg can say which of the two ran.
+                if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferForColorTexture(glTextureId) != 0) {
+                    this.staleAttachmentsDeferred++;
+                    this.noteMirrorDeferred(glTextureId, existing.width, existing.height,
+                            "stale and content-less, but a framebuffer's colour attachment");
+                    return null;
+                }
                 this.rejectPatch("GL-less mirror: stale GL texture " + glTextureId + " has no announced pixels and"
                         + " no usable captured upload; the mirror keeps its " + existing.width + "x" + existing.height
                         + " content (full=" + existing.texture.hasFullContent() + ")");
