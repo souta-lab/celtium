@@ -6,7 +6,7 @@
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
-- **未解決**: Supersymmetryの最初の `VK_ERROR_DEVICE_LOST`。RC5のFence reset修正は後続AV対策で根本解決の証拠ではない（約10 FPSも未解決）。async presentは維持。
+- **未解決**: Supersymmetryの最初の `VK_ERROR_DEVICE_LOST`。RC5のFence reset修正は後続AV対策で根本解決の証拠ではない。async presentは維持。
 - **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0（公開JAR `release-rc8-{amd,intel}2`、renderer `72665b41e3040da63bfc0555aded6f8b053babd5b304ec2df5d6c4e7208a1d7d`、fixture `c82c4bc8d8fdcbfe6d131db6ad8964ae874c7ebcb1b6f49dc556fec1789fcc72`、`rawFboIdentityProbePassed=true`・`CELTIUM_OPAQUE_COPY_PROBE partial/alpha/resize` PASSED）。Bloom画素やWindows受入ではない。
 
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
@@ -60,7 +60,7 @@ validation off・warm 窓の client thread サンプル692）: block entity 描�
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）と描画側残差は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: instance fog・96B run定数化・MVP合成のGPU移動・照明OFF統合・alpha全比較・**cull の面と winding**（[証拠](evidence/cull-face-2026-11-03.md)）・**attribute stack の `GL_VIEWPORT_BIT`**（[証拠](evidence/viewport-attrib-2026-11-03.md)）・**`GL_LIGHTING_BIT` の部分復元**（[証拠](evidence/lighting-attrib-2026-11-03.md)。較正legで`changed=0`＝意味論のみ）・**font run の拒否を保持**（[証拠](evidence/font-run-refusal-2026-11-03.md)。sinkが戻り値を捨て保持キューが到達不能だった。較正sceneは拒否0で絵は不変）まで実装済み。glint画素/inventory・actor較正/lit fogは未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
+3. **native 状態・実行**: instance fog・96B run定数化・MVP合成のGPU移動・照明OFF統合・alpha全比較・**cull の面と winding**（[証拠](evidence/cull-face-2026-11-03.md)）・**attribute stack の `GL_VIEWPORT_BIT`**（[証拠](evidence/viewport-attrib-2026-11-03.md)）・**`GL_LIGHTING_BIT` の部分復元**（[証拠](evidence/lighting-attrib-2026-11-03.md)）・**font run の拒否を保持**（[証拠](evidence/font-run-refusal-2026-11-03.md)。sinkが戻り値を捨て保持キューが到達不能だった）・**no-op census は出荷経路で発火しない**→ 生きた描画census `CELTIUM_GL_SURFACE_DRAWING`（[証拠](evidence/noop-census-unreachable-2026-11-03.md)）まで実装済み。glint画素/inventory・actor較正/lit fogは未対応（[証拠](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
