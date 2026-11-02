@@ -75,10 +75,10 @@ Celtium (`display-list-legacy-check.py --run`), both frames:
 displaylist-f8-a band0_red=32400 band0_green=0 band1_red=0 band1_green=32400 triangle_cyan=340 direct_yellow=14400
                  armA_white=3600 armA_magenta=0 armB_white=0 armB_magenta=3600 texControl_magenta=3600
                  armC_outside=3600 armC_inside=0
-displaylist-f41-b (the same, bands swapped: band0_green=32400 band1_red=32400) armC_outside=3600 armC_inside=0
-control (displaylist-f40-a's inner square pasted into displaylist-f41-b's outer band) both=True
-control (displaylist-f40-a's layout arms exchanged) rejected=True
-control (displaylist-f40-a's list colour painted over arm C) armC_outside=0 armC_inside=3600 rejected=True
+displaylist-f9-b (the same, bands swapped: band0_green=32400 band1_red=32400) armC_outside=3600 armC_inside=0
+control (displaylist-f8-a's inner square pasted into displaylist-f9-b's outer band) both=True
+control (displaylist-f8-a's layout arms exchanged) rejected=True
+control (displaylist-f8-a's list colour painted over arm C) armC_outside=0 armC_inside=3600 rejected=True
 PASSED
 ```
 
@@ -105,7 +105,7 @@ check would have rejected.
 
 ## What this does not claim
 
-* A *pack* list's compile being rolled back is not separately counted: the counter shows the mechanism ran 57 times, and
+* A *pack* list's compile being rolled back is not separately counted: the counter shows the mechanism ran 66 times, and
   GregTech's marker compile is the shape the scene reproduces, but no leg here sat in a world with a wrench held.
 * The font colour capture (`CeltiumFontGlyphCapture.currentColor`) is a third mirror of the same GL state and is *not*
   rolled back; vanilla sets a colour before every glyph run, so the stale value is unlikely to be read, but that is an
