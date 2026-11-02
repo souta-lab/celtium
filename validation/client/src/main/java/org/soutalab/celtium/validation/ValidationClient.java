@@ -1033,6 +1033,20 @@ public final class ValidationClient {
     private final int celtium$menuHoldTicks =
             Integer.getInteger("celtium.validation.menuHoldTicks", 0).intValue();
     private int celtium$menuHeldTicks;
+    /**
+     * Client ticks the title screen may be held while the menu dump it requested waits for its present,
+     * {@code -Dceltium.validation.menuCaptureTicks}.
+     * <p>
+     * Separate from {@link #celtium$menuHoldTicks} because they are different waits: this one ends as soon as the
+     * presented frame that wrote the menu picture is observed, and is a bounded give-up when no present comes. The
+     * hold ticks are spent afterwards, for the panorama copy a menu leg may also be measuring. Without a bound, a
+     * fixture whose menu never presents would hold the world launch for the whole leg.
+     */
+    private final int celtium$menuCaptureTicks =
+            Integer.getInteger("celtium.validation.menuCaptureTicks", 60).intValue();
+    private int celtium$menuCaptureHeldTicks;
+    /** Whether the menu-capture wait is over, either because the picture completed or because it was abandoned. */
+    private boolean celtium$menuCaptureFinished;
     private final int celtium$resizeMenuHoldTicks =
             Integer.getInteger("celtium.validation.resizeMenuHoldTicks", 40).intValue();
     private boolean celtium$resizeRequested;
@@ -3602,6 +3616,101 @@ public final class ValidationClient {
         return line.append(']').toString();
     }
 
+    /**
+     * Holds the title screen while the menu dump requested this run waits for the present that writes it.
+     * <p>
+     * The request is for the next presented frame, and the launch path would dismiss the screen on the same tick, so
+     * without this hold the only frame that can answer it is the first world frame - a picture of the world filed
+     * under the menu's name. Measured on the Supersymmetry instance (leg r11-menu): the title screen is
+     * {@code lumien.custommainmenu.gui.GuiCustom}, the request condition demanded {@code GuiMainMenu} and never
+     * fired, the 40-tick hold ran with no screen up after 41 dismissals, and the run ended with no
+     * {@code celtium-presented-menu-*.png}. This holds any non-null screen, including a custom menu, and stops at
+     * {@link #celtium$menuCaptureTicks} with a named reason instead of waiting out the leg.
+     *
+     * @return whether the world launch must wait this tick
+     */
+    private boolean celtium$holdTitleScreenForCapture(Minecraft mc) {
+        if (this.celtium$menuCaptureFinished || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")
+                || this.celtium$menuDumpTick <= 0 || worldTicks != 0 || launched) {
+            return false;
+        }
+        PictureEvidence menu = this.celtium$evidence.get("menu");
+        if (menu != null && menu.completed && SOURCE_PRESENTED_DUMP.equals(menu.source)) {
+            this.celtium$menuCaptureFinished = true;
+            report.addProperty("menuCaptureReleasedAtClientTick", Integer.valueOf(this.celtium$clientTicks));
+            report.addProperty("menuCapturePresentedFrame", Integer.valueOf(menu.presentedFrame));
+            report.addProperty("menuCaptureHeldTicks", Integer.valueOf(this.celtium$menuCaptureHeldTicks));
+            return false;
+        }
+        if (this.celtium$menuDumpRequested && !celtium$hasPendingMenuDump() && menu == null) {
+            // The renderer did not take the request - a GL arm has no Vulkan presented dump to write. Its own
+            // screenshot is that arm's menu picture, so the hold has nothing to wait for; waiting out the budget
+            // would spend seconds of a reference leg on a frame the arm cannot produce.
+            this.celtium$menuCaptureFinished = true;
+            report.addProperty("menuCaptureReleasedAtClientTick", Integer.valueOf(this.celtium$clientTicks));
+            report.addProperty("menuCaptureNote",
+                    "the presented-image request was not accepted (the live backend is not the Vulkan one), so the"
+                            + " GL screenshot stage is this arm's menu picture");
+            return false;
+        }
+        if (this.celtium$menuCaptureHeldTicks >= this.celtium$menuCaptureTicks) {
+            this.celtium$menuCaptureFinished = true;
+            celtium$cancelMenuDump("no presented frame wrote the menu picture within " + this.celtium$menuCaptureTicks
+                    + " held client ticks (requested=" + this.celtium$menuDumpRequested
+                    + " clientTicks=" + this.celtium$clientTicks
+                    + " presentedFrames=" + celtium$presentedFrameCount()
+                    + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName()) + ")");
+            report.addProperty("menuCaptureReleasedAtClientTick", Integer.valueOf(this.celtium$clientTicks));
+            report.addProperty("menuCaptureHeldTicks", Integer.valueOf(this.celtium$menuCaptureHeldTicks));
+            return false;
+        }
+        if (this.celtium$menuDumpRequested && mc.currentScreen == null) {
+            // The screen closed after the request. No present can be the menu now, and holding the launch would not
+            // bring it back; stop and file the reason rather than letting the world frame complete the request.
+            this.celtium$menuCaptureFinished = true;
+            celtium$cancelMenuDump("the title screen closed before any present wrote the menu picture");
+            return false;
+        }
+        this.celtium$menuCaptureHeldTicks++;
+        if (this.celtium$menuCaptureHeldTicks == 1) {
+            report.addProperty("menuCaptureHeldScreen",
+                    mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
+        }
+        return true;
+    }
+
+    /** {@return whether a menu request is still waiting for a present}. */
+    private boolean celtium$hasPendingMenuDump() {
+        for (PictureEvidence evidence : this.celtium$pendingDumps) {
+            if ("menu".equals(evidence.stage)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Drops the pending menu request so a later world frame cannot be filed as the menu picture, and records why.
+     * <p>
+     * The completion path ({@link #celtium$completePendingDumps()}) names the frame a request was written on but does
+     * not know which screen was up, so a request that outlives the title screen would otherwise complete against the
+     * world's first present and read as a menu capture. The reason is a report property, not a log line, because the
+     * verdict and the reader both need it after the run.
+     */
+    private void celtium$cancelMenuDump(String why) {
+        java.util.Iterator<PictureEvidence> iterator = this.celtium$pendingDumps.iterator();
+        while (iterator.hasNext()) {
+            PictureEvidence evidence = iterator.next();
+            if (!"menu".equals(evidence.stage)) {
+                continue;
+            }
+            iterator.remove();
+            evidence.completionError = why;
+            this.celtium$evidence.put(evidence.stage, evidence);
+        }
+        report.addProperty("menuCaptureIncomplete", why);
+    }
+
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
         if (!enabled || finished) return;
@@ -3653,11 +3762,18 @@ public final class ValidationClient {
         // the window at the title screen - the user's own 1920x1080 window is the case - it can never fire: there is no
         // world and the counter stays 0. This one is keyed on client ticks and only fires while no world exists yet, so
         // it can only ever be a menu frame. Off unless the property is set; its stage is not one the verdict judges.
+        //
+        // Any screen, not just GuiMainMenu: the acceptance instance ships CustomMainMenu, whose title screen is
+        // `lumien.custommainmenu.gui.GuiCustom`. The old `instanceof GuiMainMenu` condition therefore never fired
+        // there, and the leg's only "menu" picture was the first world frame - measured on r11-menu, whose report has
+        // menuHeldTicks=40, 41 screen dismissals and no menuDumpClientTick at all. The hold below is what keeps the
+        // screen up until a present has actually written the request.
         if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$menuDumpRequested
                 && celtium$menuDumpTick > 0 && worldTicks == 0 && celtium$clientTicks >= celtium$menuDumpTick
-                && mc.currentScreen instanceof GuiMainMenu) {
+                && mc.currentScreen != null) {
             celtium$menuDumpRequested = true;
             report.addProperty("menuDumpClientTick", Integer.valueOf(celtium$clientTicks));
+            report.addProperty("menuDumpScreen", mc.currentScreen.getClass().getName());
             report.addProperty("menuDumpWindowSize", mc.displayWidth + "x" + mc.displayHeight);
             // What drives the panorama's rotation, read rather than inferred: `GuiMainMenu.drawScreen` adds
             // `partialTicks` to `panoramaTimer` (field_73979_m) and rotates by `-panoramaTimer * 0.1F`
@@ -3672,8 +3788,10 @@ public final class ValidationClient {
             celtium$requestPresentedDump(mc, "menu");
             // The game's own screenshot beside the presented dump: on a GL arm this is the only picture the menu can
             // have at all, and under GL-less it is the path a player's F2 takes. They are the same picture when both
-            // work, so the pair is what says whether the menu's own frame is right.
-            celtium$captureGlScreenshot(mc, "celtium-validation-menu.png", "menu");
+            // work, so the pair is what says whether the menu's own frame is right. It is a separate stage: filed as
+            // "menu" it shadowed the presented evidence with a picture bound by construction (presentedFrame=-1), and
+            // the hold below released on it before the present it had asked for had written anything.
+            celtium$captureGlScreenshot(mc, "celtium-validation-menu.png", "menu-gl");
         }
         // Legacy post-launch sample. This handler resumes after the synchronous server-start loop;
         // launched/loadingScreen != null do not establish that LoadingScreenRenderer is drawing now.
@@ -3692,6 +3810,14 @@ public final class ValidationClient {
             celtium$requestPresentedDump(mc, "world-load");
         }
         try {
+            // A requested menu picture is a precondition of the launch, not a side effect of it. The request above
+            // asks the renderer for the *next* presented frame; this tick's dismissal would make that next frame the
+            // first world frame, which is how a leg could "have" a menu picture that is the world. Hold whichever
+            // title screen the instance ships - a custom menu included - until the present writes the request, or
+            // until the bounded wait names why it did not.
+            if (celtium$holdTitleScreenForCapture(mc)) {
+                return;
+            }
             // A mod may put its own screen up before the title screen is ever reached. Reaching the world is this
             // fixture's job, so a foreign screen is dismissed and named.
             //

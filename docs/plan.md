@@ -87,7 +87,7 @@ model instance producer・JIT分割/arena・staging ring・native raster/texture
 | **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤未解決** | 利用者の実機報告＋画面 | ②未実行 | ①メニューのパノラマ（[画像](evidence/2026-10-24-menu-panorama-fixed.png)） ②エンドポータル（texgen、[証拠](<evidence/end-portal-texgen-2026-10-24.md>)） ③F2スクショ真っ黒（`nglGetTexImage`） ④色付きガラスのちらつき（背面cull `5f75fc009`） ⑤視点移動時の看板文字の残像＝静止条件では0差分、動き依存として未測定 |
 
 
-| **画質（4画面＋QMAGNET、2026-10-28）** | **settings画素一致・menuはsplash/パノラマ位相のみ・worldは16階調超 0.97 %（AMD）/1.05 %（Intel）** | AMD/Intel PASSED・validation clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)。修正: 半透明の背面cull・lit色のclamp・Forgeブロックモデル経路を既定。残り: 遠い壁1面の陰影勾配、loadingは参照の撮影手段なし |
+| **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menuはcustom menuの画像未描画** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)。修正: 半透明の背面cull・lit色のclamp・Forgeブロックモデル経路を既定。残り: menu背景・遠い壁1面の陰影勾配、loadingは参照の撮影手段なし |
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0（`e2ee-amd-c4`）、Intel未実行。残課題は[証拠](evidence/e2e-cleanroom07-2026-10-26.md)の末尾** | AMD | 未実行 | Cleanroom 0.7環境差はlocal置換と上流PR、Celtium側修正は`8f121acfb`ほか。詳細・残り5項目・既知のuse-after-freeは証拠ファイルへ移動。 |
 

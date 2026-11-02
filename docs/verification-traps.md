@@ -305,3 +305,19 @@ vanilla 風 widget で測られており、pack の画面にはそのまま使�
 **規約**: pack の scene を判定する時は、その scene が読むコンテンツディレクトリを leg に明示的に運び、run が実際に
 運んだ数（`result.copyPackDirs`）を確認する。運んでいない run の「背景が変」「色数が少ない」を renderer の欠陥に
 しない。pack 固有の見た目は pack と同じ instance の GL 参照で測る。
+
+## menu の presented dump は「要求した」だけでは撮れない（2026-11-02 実測）
+
+**症状**: `-Dceltium.validation.dumpPresentedMenuTick=20 -Dceltium.validation.menuHoldTicks=40` の leg が
+`menuHeldTicks=40` を報告するのに `celtium-presented-menu-*.png` も `menuDumpClientTick` も無い。
+
+**原因は3つ重なっていた**。(1) 要求条件が `mc.currentScreen instanceof GuiMainMenu` で、受け入れ instance の
+title screen は CustomMainMenu の `lumien.custommainmenu.gui.GuiCustom` なので一度も要求されない。
+(2) 要求が通っても同じ tick の launch 処理が screen を dismiss するので、次の present は menu ではなく world の
+最初の frame になる。(3) 同じ `menu` stage に書いた GL screenshot の evidence（`presentedFrame=-1`）が presented
+dump の evidence を上書きし、`completed` を見る hold が presented を待たずに解放される。
+
+**規約**: title screen を撮る時は (a) 画面クラスを限定しない、(b) 要求した present が書くまで launch を hold する、
+(c) screenshot と presented dump を別 stage にする、(d) hold に上限を置き、未完了なら pending request を破棄して
+理由を report に残す（world frame を menu の絵として完了させない）。GL arm は presented dump を要求できないので、
+そこで hold を待たせない。実測は [menu撮影の証拠](evidence/menu-capture-2026-11-02.md)。
