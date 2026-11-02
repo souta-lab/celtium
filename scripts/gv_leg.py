@@ -61,6 +61,7 @@ class Plan:
     environment: dict[str, str]
     manifest: dict
     reference_renderer: bool = False
+    jfr: dict | None = None
 
 
 def sha256(path: Path) -> str:
@@ -123,6 +124,93 @@ def foundation_pids() -> list[int]:
     return pids
 
 
+def jfr_spec() -> dict | None:
+    """Parse ``CELTIUM_LEG_JFR=delay=SECONDS,duration=SECONDS,path=FILE``, or ``None`` when unset.
+
+    Why this exists rather than ``-XX:StartFlightRecording``: that option reaches both the Java 8 launcher and the
+    Cleanroom relauncher, and both write the same file. The launcher exits last, so its recording - two idle threads
+    and no Java samples - overwrites the game's. Measured on leg ``r45a-accept``: the file held 1031 samples, all of
+    them ``AWT-XAWT`` and ``process reaper``, and ``jdk.ExecutionSample`` was 0 while the client thread was rendering
+    a world. Attaching with ``jcmd`` to the process that owns the run directory records the thread the profile is
+    about; the same leg re-run that way (``r45b-accept``) gave 1824 client-thread samples in 45 s.
+    """
+    raw = os.environ.get("CELTIUM_LEG_JFR", "").strip()
+    if not raw:
+        return None
+    fields = {}
+    for part in raw.split(","):
+        key, separator, value = part.partition("=")
+        key = key.strip()
+        if not separator or key not in ("delay", "duration", "path"):
+            raise LegError("CELTIUM_LEG_JFR must be delay=SECONDS,duration=SECONDS,path=FILE")
+        if key in fields:
+            raise LegError(f"CELTIUM_LEG_JFR names {key} twice")
+        fields[key] = value.strip()
+    if set(fields) != {"delay", "duration", "path"}:
+        raise LegError("CELTIUM_LEG_JFR needs delay, duration and path")
+    try:
+        delay = int(fields["delay"])
+        duration = int(fields["duration"])
+    except ValueError:
+        raise LegError("CELTIUM_LEG_JFR delay and duration must be whole seconds")
+    if delay < 1 or duration < 1:
+        raise LegError("CELTIUM_LEG_JFR delay and duration must be at least one second")
+    path = Path(fields["path"])
+    if not path.is_absolute():
+        raise LegError("CELTIUM_LEG_JFR path must be absolute")
+    if os.path.lexists(path):
+        raise LegError(f"JFR output already exists; preserve it and choose a fresh path: {path}")
+    return {"delay": delay, "duration": duration, "path": str(path)}
+
+
+def game_pid(plan: Plan) -> int | None:
+    """The JVM whose command line names this leg's run directory, preferring the one that renders.
+
+    The launcher and the relauncher both carry the run directory. The relauncher is the process that loads
+    Foundation and renders (it has no child JVM of its own), so it is the one a recording belongs in.
+    """
+    marker = str(plan.paths["game"])
+    found = []
+    for process in Path("/proc").glob("[0-9]*"):
+        try:
+            cmdline = (process / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if marker in cmdline and "bin/java" in cmdline:
+            found.append((b"RelaunchMainWrapper" in cmdline.encode("utf-8", "replace"), int(process.name)))
+    return max(found)[1] if found else None
+
+
+def jfr_attach(plan: Plan) -> dict:
+    """Start the recording in the game JVM; returns what happened and never raises.
+
+    A profile that cannot start is a fact about the leg's evidence, not a reason to fail an acceptance run: the
+    caller records this dict in the result so a leg whose recording is missing says so instead of leaving an empty
+    file to be read as "nothing was running".
+    """
+    spec = plan.jfr
+    if spec is None:
+        return {"started": False, "reason": "no CELTIUM_LEG_JFR"}
+    pid = game_pid(plan)
+    if pid is None:
+        return {"started": False, "reason": "no process owns the run directory yet"}
+    try:
+        java = Path(f"/proc/{pid}/exe").resolve()
+    except OSError as error:
+        return {"started": False, "pid": pid, "reason": f"cannot resolve the game JVM's own java: {error}"}
+    jcmd = java.parent / "jcmd"
+    if not jcmd.is_file():
+        return {"started": False, "pid": pid, "reason": f"no jcmd beside the game JVM: {jcmd}"}
+    command = [str(jcmd), str(pid), "JFR.start", f"name={plan.leg}", "settings=profile",
+               f"duration={spec['duration']}s", f"filename={spec['path']}"]
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"started": False, "pid": pid, "reason": f"jcmd failed: {error}"}
+    return {"started": done.returncode == 0, "pid": pid, "command": command,
+            "output": (done.stdout + done.stderr).strip()[:400]}
+
+
 def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
               extras: list[str], *, root: Path | None = None) -> Plan:
     if sys.platform != "linux":
@@ -133,6 +221,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         raise LegError("duration must be a positive integer number of seconds")
     if mode not in ("cohort", "plain", "e2e", "recipe", "world") or gpu not in ("amd", "intel"):
         raise LegError("unknown mode or GPU")
+    # Parsed before any artifact is reserved, so a malformed profile request fails the leg before it costs a run.
+    jfr = jfr_spec()
     for arg in extras:
         # -XX: is part of the allowlist because profiling needs it: a JFR recording is started with
         # -XX:StartFlightRecording=..., and attributing sub-microsecond work with homemade brackets stopped working
@@ -326,11 +416,11 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
                 "sourceInstance": str(instance), "isolatedGameDirectory": str(paths["game"]),
                 "artifacts": artifacts, "dependencies": dependencies, "git": git_state(root),
                 "instanceModExclusions": instance_exclusions, "copyPackDirs": supplemental,
-                "jvmArgs": jvm_args, "command": command,
+                "jvmArgs": jvm_args, "command": command, "jfrAttach": jfr,
                 "deviceEnvironment": {key: environment.get(key) for key in
                                       ("DRI_PRIME", "MESA_VK_DEVICE_SELECT", "SDL_VIDEODRIVER")}}
     return Plan(root, leg, mode, gpu, duration, paths, renderer, fixture, required_gpu, command, environment, manifest,
-                bool(reference_renderer))
+                bool(reference_renderer), jfr)
 
 
 def json_object(path: Path) -> dict:
@@ -636,6 +726,7 @@ def execute(plan: Plan, *, timeout: float | None = None, terminate_grace: float 
     requested_signal = None
     old_handlers = {}
     process = None
+    jfr_state = None
 
     def cancel(signum, _frame):
         nonlocal requested_signal
@@ -672,6 +763,11 @@ def execute(plan: Plan, *, timeout: float | None = None, terminate_grace: float 
                             if runtime.get("isolatedGameDirectory") == str(plan.paths["game"]):
                                 copied_artifacts(plan)  # Fatal early rather than wasting the whole leg on the wrong jars.
                                 checked_copy = True
+                        if plan.jfr is not None and jfr_state is None \
+                                and time.monotonic() - started >= plan.jfr["delay"]:
+                            # Attached once, at the requested offset from the leg's start: the recording belongs to the
+                            # game JVM, not to the launcher whose own -XX:StartFlightRecording overwrites the file.
+                            jfr_state = jfr_attach(plan)
                         try:
                             process.wait(timeout=min(0.2, max(0.001, deadline - time.monotonic())))
                         except subprocess.TimeoutExpired:
@@ -697,6 +793,11 @@ def execute(plan: Plan, *, timeout: float | None = None, terminate_grace: float 
         result["harnessExitCode"] = process.returncode if process is not None else None
         result["elapsedSeconds"] = time.monotonic() - started
         result["leg"] = plan.leg
+        if plan.jfr is not None:
+            # Recorded even when the attach failed: a leg whose profile is missing says so, rather than leaving a
+            # zero-byte file that reads as "nothing was running".
+            result["jfrAttach"] = jfr_state if jfr_state is not None else {
+                "started": False, "reason": "the leg ended before the attach offset"}
         write_json_new(plan.paths["result"], result)
     return result
 

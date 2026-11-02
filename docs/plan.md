@@ -31,7 +31,7 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
    | 報告 | 状況 |
    |---|---|
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
-   | 入world直後 約3秒の強いラグ | **縮小・qmagnetではCeleritas同等**: vanillaの未使用chunk dispatcherがbuilder 61個（~610 MB）を入world時に確保・ゼロ埋め→1個に（`99e1daf77`、146→8 JFRサンプル）。AMD最初60tickの50ms超フレーム合計 Celtium 1.67–1.95 s / Celeritas 1.67–1.79 s（最初のフレーム 462–512 vs 661–671 ms）。残りは両者共通のchunk packet・class load。利用者の3秒は未再現 |
+   | 入world直後 約3秒の強いラグ | **縮小・qmagnetではCeleritas同等**: 未使用chunk dispatcherのbuilder 61個（~610 MB）→1個（`99e1daf77`）。最初60tickの50ms超フレーム Celtium 1.67–1.95 s / Celeritas 1.67–1.79 s。残りは共通のchunk packet・class load。利用者の3秒は未再現 |
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚、Celtium同期は2–3枚。入室停止は未帰属。計器: `flightBlocksPerSecond`・`warmSpikes` |
    | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`、A4がCeleritas参照と一致）。A4のserver crashはMod側の不具合→`scripts/fix_gvcr2_a4.py` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
@@ -53,7 +53,9 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
      **窓の固定費はもう主因ではない**（35.8窓/フレーム、`winHead`0.1＋`wrecLoop`0.2 ms、[証拠](evidence/window-split-2026-11-03.md)）。
      **prepareキャッシュの負荷率76%が欠陥**（ミス9.8→1.8%、p50 −5.8%、[証拠](evidence/prepare-cache-load-2026-11-03.md)）。
      鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには**鎖~0.2 ms**。
-     **次の性能単位は記録の client thread 外への移動**（§12のexecutor案）か 1 batch 3.6→1 µs。sceneは未決。
+     **次の性能単位は記録の client thread 外への移動**（§12）か offer/窓の削減。client threadのprofile
+     （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
+     **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
      棄却済み: GC・client thread CPU・safepoint・非同期探索（[証拠](evidence/intel-p99-2026-10-28.md)の末尾）。
@@ -90,7 +92,6 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
 
 - ABBA（クール・アイドル時）: Susy **1.27–1.48×**、ATM3 **~1.45×**。CPU律速。**測定はアイドル窓必須**。
 - 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier/submit各0.1）。30 windows・112 groups/frame。
-- 除去済み: raw-write flush -38%、published遷移 3.5→0.8%、epoch spin 3.0→0、nanoTime 1.2→0、window構造体再生成廃止。
 - 残差はwindow固定費とper-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate（singletonで悪化）、フレーム再利用（アニメ凍結）。
 

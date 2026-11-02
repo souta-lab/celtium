@@ -171,6 +171,24 @@ wrapperのexit 0は、当該legについて実装された受入条件をすべ�
 そのlegの`presentedImageVerdict`がFAILEDなのは想定どおり**と扱います。KPI/性能比較のlegはdumpを残してよい
 （比較は**arm別中央値**で行い、数十枚のspikeは中央値を動かさない。平均は動くので使わない）。
 
+**JFRは `-XX:StartFlightRecording` ではなく `CELTIUM_LEG_JFR` で取る**（2026-11-03 実測）。
+`-XX:` はJava 8 launcherとCleanroom relauncherの**両方**に届き、両方が同じファイルに書きます。launcherが最後に終了するので
+**ゲームの記録をlauncherの記録（idle 2スレッド・Javaサンプル0）が上書き**します。leg `r45a-accept` の実測: 1031サンプルが
+すべて `AWT-XAWT`/`process reaper`、`jdk.ExecutionSample` は0（client threadが描画中でも）。同じlegをattachで取り直した
+`r45b-accept` は45秒で**client thread 1824サンプル**。使い方:
+
+```sh
+CELTIUM_LEG_JFR="delay=120,duration=45,path=$PWD/.celtium-work/<leg>.jfr" \
+CELTIUM_LEG_SEED_OPTIONS=$PWD/.celtium-work/options/guiScale3.txt \
+scripts/gv-leg.sh <fresh> .gv-verify/jars/<stage> world amd 240 <flags>
+# 結果は .gv-verify/<leg>-result.json の jfrAttach（started/pid/command/output）に残る。
+python3 .celtium-work/jfr-top.py .celtium-work/<leg>.jfr "Client thread" 1 40
+```
+
+`delay` はleg開始からの秒（fixtureのtick 400は約110秒、600は約167秒）。attachは`jcmd`をゲームJVMの`java`と同じディレクトリから
+引くので、JDKを選ばない。記録できなかった場合は`jfrAttach.started=false`と理由が残り、空ファイルを「何も動いていなかった」と
+読み違えません。
+
 **Intel**は `CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)"` と `gpuRequirementMet=true`。
 `fixtureStatus=PASSED`でもVulkan validationが失敗すれば受入失敗。古いIntel resize legはまさにその例。
 `validationClean=true`だけでも正しい絵は証明しない。図の対照・画像gateの適用範囲は [検証の罠](<verification-traps.md>)。

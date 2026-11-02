@@ -235,6 +235,31 @@ class LegRunnerTests(unittest.TestCase):
                 with self.assertRaises(runner.LegError):
                     self.plan(extras=[bad])
 
+    def test_jfr_attach_spec_is_whole_and_refuses_to_overwrite_a_recording(self):
+        # The attach is the only form that records the game JVM: -XX:StartFlightRecording reaches the launcher too,
+        # and the launcher exits last and overwrites the game's file (measured on leg r45a-accept: 1031 samples, all
+        # AWT-XAWT/process reaper, zero jdk.ExecutionSample). A malformed spec must fail before any artifact exists.
+        target = self.root / "profile.jfr"
+        os.environ["CELTIUM_LEG_JFR"] = f"delay=120,duration=45,path={target}"
+        plan = self.plan()
+        self.assertEqual(plan.jfr, {"delay": 120, "duration": 45, "path": str(target)})
+        self.assertEqual(plan.manifest["jfrAttach"], plan.jfr)
+        # The recording is not a JVM argument: it is attached to the process that owns the run directory.
+        self.assertFalse(any("StartFlightRecording" in arg for arg in plan.command))
+        target.write_bytes(b"an earlier recording")
+        with self.assertRaisesRegex(runner.LegError, "already exists"):
+            self.plan(leg="second")
+        target.unlink()
+        for bad in ("delay=120,duration=45", "delay=0,duration=45,path=/tmp/x.jfr",
+                    "delay=120,duration=45,path=relative.jfr", "delay=x,duration=45,path=/tmp/x.jfr",
+                    "delay=120,duration=45,path=/tmp/x.jfr,extra=1", "delay=120,delay=1,duration=45,path=/tmp/x.jfr"):
+            with self.subTest(bad=bad):
+                os.environ["CELTIUM_LEG_JFR"] = bad
+                with self.assertRaises(runner.LegError):
+                    self.plan(leg="third")
+        os.environ.pop("CELTIUM_LEG_JFR", None)
+        self.assertIsNone(self.plan(leg="fourth").jfr)
+
     def test_leg_and_duration_rejected_before_output_creation(self):
         for leg in ("", "../escape", "x/../../escape", "a.b", "-dash", "x" * 65, "é"):
             with self.subTest(leg=leg), self.assertRaises(runner.LegError):

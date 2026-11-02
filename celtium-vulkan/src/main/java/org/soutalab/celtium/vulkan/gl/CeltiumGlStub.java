@@ -8306,6 +8306,30 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * The recorded extent of a named texture's level, in one lookup: {@code out[0]} is the width and {@code out[1]}
+     * the height.
+     * <p>
+     * The accept path asks for both on every offer, and they are one record - {@code texLevels} is keyed by
+     * (name, level) - so the two {@link #textureLevelParameter} calls hashed the same key twice. This is the same
+     * answer with one hash. A level with no record answers {@code false} and leaves {@code out} alone, which is what
+     * the caller's "no extent" test needs; a query before the stub is installed answers {@code false} too.
+     */
+    public static boolean textureLevelExtent(int name, int level, int[] out) {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.texLevelExtentForName(name, level, out);
+    }
+
+    private boolean texLevelExtentForName(int name, int level, int[] out) {
+        int[] dims = this.texLevels.get(texLevelKey(name, level));
+        if (dims == null) {
+            return false;
+        }
+        out[0] = dims[0];
+        out[1] = dims[1];
+        return true;
+    }
+
     /** The pname's recorded value for the bound texture's level, or 0 when nothing was uploaded. */
     private int texLevelParam(int target, int level, int pname) {
         int name = uploadTargetName(target);

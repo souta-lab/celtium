@@ -7656,12 +7656,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // batch. The test is the stub's extent only: an earlier version asked the registry first, and a
                 // registry.get() on a name with no entry runs the capture path - per batch, in this hot loop. Measured
                 // on ATM3: warm P50 20.3 ms against 4.3 ms with the same flags and the previous jar.
-                int width = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1000);
-                int height = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(boundTexture, 0, 0x1001);
+                //
+                // One lookup, not two: the width and the height are the same record (`texLevels` is keyed by
+                // (name, level)), so asking for them separately hashed the same key twice on every offer. Measured on
+                // the accept profile (leg r45b-accept, client thread, 1824 samples): the pair is ~0.2% of the frame,
+                // small but paid on each of ~220 offers.
+                boolean hasExtent = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelExtent(
+                        boundTexture, 0, this.textureExtentScratch);
                 // Either dimension missing is "no extent": a valid upload records both, so a record with one zero
                 // cannot describe a surface. The test used to require both to be zero, which would let a half-record
                 // through to the sampler.
-                if (width <= 0 || height <= 0) {
+                if (!hasExtent || this.textureExtentScratch[0] <= 0 || this.textureExtentScratch[1] <= 0) {
                     this.blackTextureSubstitutions++;
                     boundTexture = blackTextureId();
                     if (this.blackTextureSubstitutions == 1) {
@@ -8935,6 +8940,12 @@ this.frameBufferOpen = false;
     private final int[] celtium$stateSignature = new int[ModelReplayFastPath.SIGNATURE];
     /** The captured state's scratch: shared, so anything that keeps the values past the next offer must clone it. */
     private final int[] celtium$stateScratch = new int[16];
+    /**
+     * The bound texture's recorded extent, {width, height}, filled by one stub lookup per offer.
+     * <p>
+     * Shared scratch like the state array: the accept path reads it immediately and keeps nothing.
+     */
+    private final int[] textureExtentScratch = new int[2];
 
     int[] celtium$captureState() {
         int[] signature = this.celtium$stateSignature;
