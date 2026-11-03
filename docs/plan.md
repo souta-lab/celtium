@@ -41,7 +41,7 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round41-2026-11-03.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
      **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
-     鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない。
+     鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない（**3 µs/窓**、[証拠](evidence/window-split-2026-11-04.md)）。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`はuploadではなかった**:
      62,564呼が`bytes=0`＝serial checkで即return（[証拠](evidence/mirror-upload-census-2026-11-03.md)、A/Bで97呼・
@@ -53,9 +53,9 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run
      （0.53/frame）、captureの時計bracketは既定OFF（`-Dceltium.font.timings`）。**warm windowはflagが要る**
      （`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。同JARのidle 1 armはwarm p50 **2.873 ms**（pairedではない）。
-     **font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）: 旧記述の
-     `fontRunsStarted=236`は**menu合計**（worldは`118407`/1254 frame＝94/フレーム）、`fontQuadsAppended`は
-     **append呼び出し数**。censusは`by[colour=142]`＝witnessで閉じたrunは全部colour。
+     **font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）:
+     `fontRunsStarted=236`は**menu合計**（worldは94/フレーム）、`fontQuadsAppended`は**append回数**。
+     censusは`by[colour=142]`＝witnessで閉じたrunは全部colour。
      `-Dceltium.font.colourWitness=false`のA/Bはmenu run 284→123・frame 3.8→3.7・gui 1.1→1.0だが
      **grpDrawは0.9のまま**＝group数比例ではない。既定は安全側（ON）。**off-target windowはframe imageを
      動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）: `winBarrier` 0.3→0.2 ms。

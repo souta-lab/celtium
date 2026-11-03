@@ -1730,6 +1730,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Whether the font run census has printed; a leg may tear down more than one world. */
     private boolean fontRunCensusPrinted;
 
+    /**
+     * {@code -Dceltium.vulkan.windowSplit=true}: the window's fixed cost, split into the parts that own it.
+     * <p>
+     * The project's own evidence names this as the open question: "the content of a window's ~10 us fixed cost is
+     * unattributed" (window-census-2026-11-03.md), and the brackets that exist ({@code winHead}, {@code winPrefix},
+     * {@code winPublish}, {@code winPassEnd}, {@code winBarrier}) are per-frame p50s at 0.1 ms resolution over 22
+     * windows, which cannot separate a 2 us part from a 5 us one. These accumulate per window and are reported as
+     * microseconds per window, so the next change has a number to move.
+     * <p>
+     * Off by default: seven clock pairs per window is 14 reads, and the shipping path pays none of them.
+     */
+    private static final boolean WINDOW_SPLIT = Boolean.getBoolean("celtium.vulkan.windowSplit");
+    private long wsRouteNanos;
+    private long wsPairNanos;
+    private long wsPublishNanos;
+    private long wsBeginNanos;
+    private long wsCommandsNanos;
+    private long wsAcquireNanos;
+    private long wsReleaseNanos;
+    private long wsWindows;
+    private long wsMark;
+
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
     final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
 
@@ -7411,6 +7433,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
         }
     }
+
+    /**
+     * Prints the window's fixed cost in microseconds per window, split into the parts that own it.
+     * <p>
+     * Only when {@code -Dceltium.vulkan.windowSplit=true}. The per-frame p50 brackets cannot separate a 2 us part from
+     * a 5 us one at 0.1 ms resolution over 22 windows, which is why the project's own evidence still says the content
+     * of a window's ~10 us is unattributed. The parts are: {@code route} (identity and target resolution),
+     * {@code pair} (the chain pair's ensure, the published hand-back, the clear and the framebuffer), {@code publish}
+     * (the colour-texture publication, a sub-part of {@code pair}), {@code begin} (the begin-info), {@code commands}
+     * (the command buffer's begin and the stack push), {@code acquire} and {@code release} (the two barrier records).
+     */
+    private void celtium$printWindowSplit() {
+        if (!WINDOW_SPLIT || this.wsWindows <= 0L) {
+            return;
+        }
+        long windows = this.wsWindows;
+        System.out.println("[Celtium] CELTIUM_WINDOW_SPLIT windows=" + windows
+                + " route=" + (this.wsRouteNanos / windows / 1000L)
+                + " pair=" + (this.wsPairNanos / windows / 1000L)
+                + " publish=" + (this.wsPublishNanos / windows / 1000L)
+                + " begin=" + (this.wsBeginNanos / windows / 1000L)
+                + " commands=" + (this.wsCommandsNanos / windows / 1000L)
+                + " acquire=" + (this.wsAcquireNanos / windows / 1000L)
+                + " release=" + (this.wsReleaseNanos / windows / 1000L)
+                + " (us per window; publish is inside pair)");
+    }
+
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
     }
@@ -8243,6 +8292,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             org.soutalab.celtium.vulkan.FramePassTimings.end("offMerge");
             long acceptPreflightStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             if (!fastMerged) {
+            // The accept path's own bracket for the section no bracket held: the mirror supply and the pipeline/descriptor
+            // preparation. `offPrepare` closes before the merge decision and `offAppend` opens after the group is opened,
+            // so everything between them - which is the whole slow path - was inside `batch` and inside no named part of
+            // it. The JFR profile put `submitGeometryBatch` at 19.0% of the client thread and said half of it is the
+            // window flush; this bracket is what says whether the other half is here or in the append.
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("offPreflight");
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
             long preflightStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -8284,6 +8339,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
             if (preflightCpuStart >= 0 && preflightCpuEnd >= 0) this.preflightCpuNanos += preflightCpuEnd - preflightCpuStart;
             this.immediateStatistics.notePrepareImmediateCalls();
+            org.soutalab.celtium.vulkan.FramePassTimings.end("offPreflight");
             if (prepared == null) {
                 // The reason comes from prepareImmediate, which is the one place that knows which of its conditions failed.
                 this.immediateLastRefusal = "preflight: " + this.lastPrepareFailure;
@@ -10795,8 +10851,14 @@ this.frameBufferOpen = false;
                         }
                     }
                     this.windowOpen = true;
+                    long wsCommandsMark = WINDOW_SPLIT ? System.nanoTime() : 0L;
                     beginCommands();
                     try (MemoryStack stack = MemoryStack.stackPush()) {
+                        if (WINDOW_SPLIT) {
+                            long now = System.nanoTime();
+                            this.wsCommandsNanos += now - wsCommandsMark;
+                            this.wsMark = now;
+                        }
                         // The acquire barriers advance owner state that only a submission makes true - the first
                         // transition, the consumed clear, both layouts and both pairs' acquired flags. A record that is
                         // discarded before it reaches the queue must put that state back, or the re-record skips the
@@ -10811,6 +10873,11 @@ this.frameBufferOpen = false;
                                 this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                             }
                             gpuMark("acq2");
+                            if (WINDOW_SPLIT) {
+                                long now = System.nanoTime();
+                                this.wsAcquireNanos += now - this.wsMark;
+                                this.wsMark = now;
+                            }
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
                             long windowRecordStarted = System.nanoTime();
@@ -10824,11 +10891,18 @@ this.frameBufferOpen = false;
                             this.windowRecordsByArm[arm]++;
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winRecord");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
+                            if (WINDOW_SPLIT) {
+                                this.wsMark = System.nanoTime();
+                            }
                             if (gllessTarget != null) {
                                 gllessTarget.recordReleaseBarriers(this.commandBuffer,
                                         this.windowFrameImageAttached);
                             } else {
                                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                            }
+                            if (WINDOW_SPLIT) {
+                                long now = System.nanoTime();
+                                this.wsReleaseNanos += now - this.wsMark;
                             }
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                         } catch (RuntimeException | LinkageError recordError) {
@@ -12028,6 +12102,9 @@ this.frameBufferOpen = false;
         // winRecord is 0.5 ms a frame over 35.8 windows and winPrefix/winPassEnd were added to split the remainder;
         // this bracket says whether the remainder is before the prefix or inside it. Opt-in like every other bracket.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("winHead");
+        if (WINDOW_SPLIT) {
+            this.wsMark = System.nanoTime();
+        }
         this.terrainStatistics.noteImmediateOnlyPasses();
         // Recorded for the model draw: it needs a render pass, and this is the one the frame is using. When no
         // terrain pass has run (the GL-less menu is all UI batches), the standalone frame-compatible pass stands in.
@@ -12074,6 +12151,11 @@ this.frameBufferOpen = false;
         // The image this pass attaches, so the sampling-side transition below can leave it alone. Default is the frame
         // image, which is what both the plain path and the fallback path attach.
         this.passAttachedColorImage = this.frameTarget.colorImage();
+        if (WINDOW_SPLIT) {
+            long now = System.nanoTime();
+            this.wsRouteNanos += now - this.wsMark;
+            this.wsMark = now;
+        }
         if (offTarget != null) {
             try {
                 if (chainIdentity) {
@@ -12174,8 +12256,14 @@ this.frameBufferOpen = false;
                         // textures over one image made framebufferRender's quad sample the main framebuffer's
                         // white-cleared picture instead of the splash's. Main goes to the frame image, identity 0 to
                         // the default pair, every other non-main identity to the chain pair.
+                        long publishMark = WINDOW_SPLIT ? System.nanoTime() : 0L;
                         celtium$publishFramebufferColorTexture((int) reported[0],
                                 this.targetRegistry.currentIdentity(), reported);
+                        if (WINDOW_SPLIT) {
+                            long now = System.nanoTime();
+                            this.wsPublishNanos += now - publishMark;
+                            this.wsMark = now;
+                        }
                     }
                 } else {
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
@@ -12215,8 +12303,18 @@ this.frameBufferOpen = false;
         } else {
             framebuffer = ensureFramebuffer(renderPass);
         }
+        if (WINDOW_SPLIT) {
+            long now = System.nanoTime();
+            this.wsPairNanos += now - this.wsMark;
+            this.wsMark = now;
+        }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                 celtium$windowBeginInfo(renderPass, framebuffer, passWidth, passHeight);
+        if (WINDOW_SPLIT) {
+            long now = System.nanoTime();
+            this.wsBeginNanos += now - this.wsMark;
+            this.wsWindows++;
+        }
         org.soutalab.celtium.vulkan.FramePassTimings.end("winHead");
         // The window's own fixed cost, split off from the group loop: the two brackets that existed inside a window
         // (winBeginPass, wrecLoop) left ~10 us of the measured ~17 us per window unnamed on leg r36win (35.8 windows
@@ -13623,6 +13721,10 @@ this.frameBufferOpen = false;
         // leg r39a-gate, where CELTIUM_FONT_GLYPH_SUMMARY appears in no file of the run at all. World teardown is the
         // last point whose output the log actually holds.
         celtium$printFontRunCensus();
+        // The window's fixed cost, in microseconds per window, when -Dceltium.vulkan.windowSplit asked for it. Printed
+        // at the same point and for the same reason as the census above: world teardown is the last point whose output
+        // the log actually holds.
+        celtium$printWindowSplit();
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
         // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
         // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a

@@ -88,7 +88,11 @@ public final class FramePassTimings {
             // transition loop (every published name, every window - the per-name work is hash lookups under
             // VulkanGlTexture's monitor), and winHead is everything recordImmediateOnlyPass does before winPrefix
             // (the target routing, the pair clear and the begin-info). One of the two owns the remainder.
-            "winPublish", "winHead"};
+            "winPublish", "winHead",
+            // The slow path's own section: the mirror supply and the pipeline/descriptor preparation, between the merge
+            // decision and the group open. It sat inside `batch` and inside no named part of it, so the JFR profile's
+            // 19.0% `submitGeometryBatch` had its other half (beside the window flush) unattributed.
+            "offPreflight"};
 
     private static final int CAPACITY = 512;
 
