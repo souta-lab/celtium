@@ -46,9 +46,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.66–1.76×遅い**（p50 median 1.677、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
-     **窓の固定費は主因ではない**（[証拠](evidence/window-split-2026-11-03.md)）。
-     **prepareキャッシュの負荷率76%が欠陥**（ミス9.8→1.8%、p50 −5.8%、[証拠](evidence/prepare-cache-load-2026-11-03.md)）。
-     鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには~0.2 ms。
+     **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
+     鎖は `record`0.5＋`batch`0.6＋`present`0.1。render bracket 1.5（flush 0.5・gui 0.4・terrain 0.1）＝3.1 p50の残り1.6はrenderer外で、窓の固定費は主因ではない。Celeritas 1.79 ms 超えには~0.2 ms。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: offer毎に
      `supply`3072・`prepare`1064・`registry`821 ns・52.7 offer/フレーム＝**~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`はuploadではなかった**:
      62,564呼が`bytes=0`＝serial checkで即return（[証拠](evidence/mirror-upload-census-2026-11-03.md)、A/Bで97呼・

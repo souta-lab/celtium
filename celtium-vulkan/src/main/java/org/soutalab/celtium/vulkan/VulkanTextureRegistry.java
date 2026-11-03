@@ -81,10 +81,31 @@ public final class VulkanTextureRegistry {
     private long memoHits;
     private long memoMisses;
     /**
+     * How many times the memo was cleared whole, and how many times one name's entry was dropped on its own.
+     * <p>
+     * The two are the question the miss rate asks. Every mutation of {@code entries} used to clear all 256 slots, so a
+     * single texture created or forgotten mid-frame threw away every other name's entry and the next lookup of each of
+     * them was a full {@link #get(int, boolean)}. A leg that reports {@code drops} against {@code forgets} says whether
+     * the misses are the table's own churn or the names' announcements moving.
+     */
+    private long memoDrops;
+    private long memoForgets;
+    /**
      * The announcement generation each memo entry was resolved at, so a hit can tell "nothing was announced for this
      * name since" from "an announcement is pending somewhere in the frame". See {@link #get(int)}.
      */
     private final int[] memoAnnouncedGenerations = new int[MEMO_SLOTS];
+
+    /**
+     * {@code -Dceltium.vulkan.memoPerName=false}: restore the whole-table clear on every mutation.
+     * <p>
+     * The default is per name, because the memo's validity is already per name: an entry is trusted only while the
+     * name's own announcement generation is unchanged and the name is not stale, and every mutation site below touches
+     * exactly one name. The switch exists so the two behaviours can be measured on one JAR - the change's own control
+     * arm - rather than compared across builds.
+     */
+    private static final boolean MEMO_PER_NAME =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.memoPerName", "true"));
 
     private static int[] celtium$emptyMemoIds() {
         int[] ids = new int[MEMO_SLOTS];
@@ -93,9 +114,55 @@ public final class VulkanTextureRegistry {
     }
 
     private void celtium$dropMemo() {
+        this.memoDrops++;
         java.util.Arrays.fill(this.memoTextureIds, Integer.MIN_VALUE);
         java.util.Arrays.fill(this.memoTextures, null);
         java.util.Arrays.fill(this.memoAnnouncedGenerations, 0);
+    }
+
+    /**
+     * Drops the memo entry for one GL name, which is the only entry a mutation of that name can invalidate.
+     * <p>
+     * The slot is direct-mapped, so the entry there belongs to this name only when the stored id matches; when another
+     * name has taken the slot this name's entry is already gone and there is nothing to clear. The whole-table clear
+     * stays for {@link #delete()}, which removes every entry at once.
+     */
+    private void celtium$dropMemoFor(int glTextureId) {
+        if (!MEMO_PER_NAME) {
+            celtium$dropMemo();
+            return;
+        }
+        this.memoForgets++;
+        celtium$dropMemoEntry(this.memoTextureIds, this.memoTextures, this.memoAnnouncedGenerations, glTextureId);
+    }
+
+    /**
+     * Clears the memo entry for one name in the three parallel arrays, and says whether there was one.
+     * <p>
+     * Package-private and static so the rule can be tested without a device: the arrays are the whole state the memo
+     * has, and "a mutation of one name must not cost another name its entry" is the property the change rests on.
+     *
+     * @return whether an entry for this name was present and has been cleared
+     */
+    static boolean celtium$dropMemoEntry(int[] ids, VulkanGlTexture[] textures, int[] generations, int glTextureId) {
+        int slot = glTextureId & (MEMO_SLOTS - 1);
+        if (ids[slot] != glTextureId) {
+            return false;
+        }
+        ids[slot] = Integer.MIN_VALUE;
+        textures[slot] = null;
+        generations[slot] = 0;
+        return true;
+    }
+
+    /** {@return the memo slot a GL name is direct-mapped to}, for the tests that need a colliding pair. */
+    static int celtium$memoSlot(int glTextureId) {
+        return glTextureId & (MEMO_SLOTS - 1);
+    }
+
+    /** {@return the memo's slot count}, so a test can build a colliding name from the real size. */
+    static int celtium$memoSlots() {
+        return MEMO_SLOTS;
     }
     /**
      * Images this registry does not own, published under a GL name so the immediate path can sample them.
@@ -339,11 +406,11 @@ public final class VulkanTextureRegistry {
             // Same name, different handles: the owner replaced its image, so this wrapper stands for a resource that
             // no longer exists. Dropped (the image itself is the owner's) rather than kept as a stale view.
             this.externalImages.remove((int) (id));
-            retireExternal(existing, "GL texture " + glTextureId + " was published with new handles");
+            retireExternal(glTextureId, existing, "GL texture " + glTextureId + " was published with new handles");
         }
         Entry superseded = this.entries.remove((int) (id));
         celtium$noteLargeRemoval(glTextureId, superseded, "superseded by a published image");
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
         if (superseded != null) {
             // A mirror this registry created for the same name is superseded by the renderer's own live image. It is
             // this registry's object, so it is destroyed - through the retire queue, because a recorded frame may
@@ -370,7 +437,7 @@ public final class VulkanTextureRegistry {
         // Publishing also supersedes an owned mirror or a previous negative lookup. Queued groups must resolve
         // the new owner even when this is the name's first external publication (no retireExternal call occurred).
         this.mutations++;
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
         this.fullyInitialized.add(id);
         this.staleIds.remove(glTextureId);
         this.externalPublished++;
@@ -402,7 +469,7 @@ public final class VulkanTextureRegistry {
         }
         this.externalUnpublished++;
         this.fullyInitialized.remove(id);
-        retireExternal(existing, "GL texture " + glTextureId + " was unpublished");
+        retireExternal(glTextureId, existing, "GL texture " + glTextureId + " was unpublished");
         return true;
     }
 
@@ -423,9 +490,9 @@ public final class VulkanTextureRegistry {
         return this.mutations;
     }
 
-    private void retireExternal(final VulkanGlTexture wrapper, String why) {
+    private void retireExternal(int glTextureId, final VulkanGlTexture wrapper, String why) {
         this.mutations++;
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
         if (this.externalRetireLogs < 8) {
             this.externalRetireLogs++;
             System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE dropped: " + why
@@ -460,7 +527,9 @@ public final class VulkanTextureRegistry {
                 + " unpublished=" + this.externalUnpublished + " supersededMirrors=" + this.externalSupersededMirrors
                 + " invalidatesIgnored=" + this.externalInvalidatesIgnored
                 + " live=" + this.externalImages.size()
-                + " memo[hits=" + this.memoHits + " misses=" + this.memoMisses + " slots=" + MEMO_SLOTS + "]"
+                + " memo[hits=" + this.memoHits + " misses=" + this.memoMisses + " slots=" + MEMO_SLOTS
+                + " drops=" + this.memoDrops + " forgets=" + this.memoForgets
+                + " perName=" + MEMO_PER_NAME + "]"
                 + " layout[" + VulkanGlTexture.foreignLayoutSummary() + "]"
                 + " patchLevels[" + VulkanGlTexture.mirrorLevelSummary() + "]";
     }
@@ -531,7 +600,7 @@ public final class VulkanTextureRegistry {
         VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
         this.entries.put((int) (glTextureId), new Entry(glTextureId, width, height, texture));
         this.mutations++;
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
         this.mirrorCount++;
         return texture;
     }
@@ -548,7 +617,7 @@ public final class VulkanTextureRegistry {
         }
         this.entries.put((int) (id), new Entry(id, width, height, texture));
         this.mutations++;
-        celtium$dropMemo();
+        celtium$dropMemoFor(id);
         this.mirrorCount++;
         recordApplication(id, true);
         return id;
@@ -976,7 +1045,7 @@ public final class VulkanTextureRegistry {
                 entry = new Entry(glTextureId, extent[0], extent[1], texture);
                 this.entries.put((int) (id), entry);
                 this.mutations++;
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
                 this.mirrorCount++;
             }
             // Control: -Dceltium.vulkan.mirrorCapturedLevels=false keeps the pre-N07b behaviour (level 0 only, the
@@ -1035,7 +1104,7 @@ public final class VulkanTextureRegistry {
                 entry = new Entry(glTextureId, width, height, texture);
                 this.entries.put((int) (glTextureId), entry);
                 this.mutations++;
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
                 this.mirrorCount++;
             }
             if (ANNOUNCE_EXTENT_LOGS < 32) {
@@ -1195,7 +1264,7 @@ public final class VulkanTextureRegistry {
                 entry = new Entry(glTextureId, textureWidth, textureHeight, created);
                 this.entries.put((int) (glTextureId), entry);
                 this.mutations++;
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
                 this.mirrorCount++;
                 this.createdByAnnouncement++;
             } catch (RuntimeException | LinkageError error) {
@@ -1795,11 +1864,11 @@ public final class VulkanTextureRegistry {
         VulkanGlTexture external = this.externalImages.remove((int) (id));
         if (external != null) {
             this.externalUnpublished++;
-            retireExternal(external, "GL texture " + glTextureId + " was forgotten by its owner");
+            retireExternal(glTextureId, external, "GL texture " + glTextureId + " was forgotten by its owner");
         }
         Entry entry = this.entries.remove((int) (id));
         celtium$noteLargeRemoval(glTextureId, entry, "forgetTexture");
-        celtium$dropMemo();
+        celtium$dropMemoFor(glTextureId);
         // A deleted name's id is free for reuse, and the deferral is an answer about the content the previous owner
         // had: keeping it would let the next texture under this name inherit "nothing writes this" until its serial
         // happened to differ from a number that described different pixels.
